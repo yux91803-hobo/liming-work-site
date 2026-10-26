@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="same-origin">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#faf9f5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>协作中心 · Liming</title>
+<script>
+  // 嵌入工具箱 iframe 时加 embed 类；尽早应用主题（默认浅色）
+  try { if (window.self !== window.top) document.documentElement.classList.add('embed'); } catch (e) { document.documentElement.classList.add('embed'); }
+  (function () {
+    var t = 'light';
+    try { t = localStorage.getItem('lm.theme') || 'light'; } catch (e) {}
+    var dark = t === 'dark' || (t === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  })();
+</script>
+<link rel="stylesheet" href="hub.css">
+<link rel="stylesheet" href="quota-card.css">
+<script src="quota-card.js" defer></script>
+<script src="hub.js" defer></script>
+</head>
+<body>
+
+  <!-- 登录 -->
+  <section id="login" class="login" hidden>
+    <form id="loginForm" class="login-card" autocomplete="on" novalidate>
+      <h1 class="login-title"><span class="spark" aria-hidden="true">✻</span>协作中心</h1>
+      <label class="prompt">
+        <span class="caret" aria-hidden="true">&gt;</span>
+        <input id="pw" type="password" name="password" autocomplete="current-password" enterkeyhint="go" placeholder="密码" aria-label="密码">
+      </label>
+      <button id="loginBtn" class="btn" type="submit"><span class="btn-label">进入 ↵</span><span class="spinner" aria-hidden="true">✻</span></button>
+      <p id="loginMsg" class="login-msg" role="alert" aria-live="polite"></p>
+    </form>
+  </section>
+
+  <!-- 主界面 -->
+  <section id="app" class="app" hidden>
+    <header id="top" class="top">
+      <div class="top-row">
+        <h1 class="brand"><span class="spark" aria-hidden="true">✻</span>协作中心</h1>
+        <label class="picker">
+          <select id="batch" aria-label="批次"></select>
+          <span class="picker-arrow" aria-hidden="true">▾</span>
+        </label>
+        <span id="sync" class="sync"></span>
+        <button id="logout" class="icon-btn" type="button" aria-label="退出登录">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="views">
+      <div id="pane-board" class="pane active" data-pane="board" role="tabpanel">
+        <div id="quota" class="quota-slot"></div>
+        <section id="summary" class="summary is-loading" aria-live="polite">
+          <div class="sum-head">
+            <span class="sum-big"><span id="sumDone" class="num">0</span><span class="of">/<span id="sumTotal">0</span></span></span>
+            <span class="sum-word">完成</span>
+            <span class="legend">
+              <button type="button" class="lg lg-run" data-jump="run"><i aria-hidden="true">✻</i><b id="sumRun">0</b></button>
+              <button type="button" class="lg lg-done" data-jump="done"><i aria-hidden="true">✓</i><b id="sumDoneL">0</b></button>
+              <button type="button" class="lg lg-bad" data-jump="bad"><i aria-hidden="true">✗</i><b id="sumBad">0</b></button>
+            </span>
+          </div>
+          <div class="bar" aria-hidden="true"><i id="barDone" class="b-done"></i><i id="barRun" class="b-run"></i><i id="barBad" class="b-bad"></i></div>
+        </section>
+        <div id="board" class="board"></div>
+      </div>
+      <div id="pane-chat" class="pane" data-pane="chat" role="tabpanel"><div id="chat" class="chat"></div></div>
+      <div id="pane-log" class="pane" data-pane="log" role="tabpanel"><ol id="log" class="timeline"></ol></div>
+    </main>
+
+    <nav id="tabbar" class="tabbar" role="tablist" aria-label="视图">
+      <button type="button" class="tab" role="tab" data-tab="board" aria-selected="true"><span>看板</span></button>
+      <button type="button" class="tab" role="tab" data-tab="chat" aria-selected="false"><span>群聊</span></button>
+      <button type="button" class="tab" role="tab" data-tab="log" aria-selected="false"><span>日志</span></button>
+    </nav>
+
+    <!-- 任务详情 -->
+    <section id="detail" class="detail" aria-hidden="true">
+      <header id="dTop" class="top dtop">
+        <div class="top-row">
+          <button id="back" class="back" type="button" aria-label="返回">←</button>
+          <span id="dId" class="tid"></span>
+          <span id="dBadge" class="pill"></span>
+        </div>
+        <h2 id="dTitle" class="dtitle"></h2>
+        <div id="dMeta" class="facts"></div>
+      </header>
+      <div id="dScroll" class="dscroll">
+        <div id="dChat" class="chat"></div>
+      </div>
+    </section>
+  </section>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

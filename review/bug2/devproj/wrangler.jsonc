@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "liming-worldmap",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./site",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "SPACE", "class_name": "Space" },
+      { "name": "LIMITER", "class_name": "Limiter" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Space", "Limiter"] }
+  ],
+  "observability": { "enabled": false },
+  "routes": [
+    { "pattern": "liming-work.com", "custom_domain": true },
+    { "pattern": "www.liming-work.com", "custom_domain": true }
+  ]
+}

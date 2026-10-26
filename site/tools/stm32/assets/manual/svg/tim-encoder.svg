@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="409.56" height="178.89" viewBox="0 0 409.56 178.89">
+<title>编码器模式下的计数器操作实例</title>
+<style>@font-face{font-family:'STL';font-weight:normal;src:url(data:font/woff2;base64,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) format('woff2');}@font-face{font-family:'STC';font-weight:normal;src:url(data:font/woff2;base64,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) format('woff2');}text{font-family:STL,STC,sans-serif;white-space:pre;fill:#000;text-rendering:geometricPrecision}</style>
+<rect width="100%" height="100%" fill="#fff"/>
+<g><defs>
+<clipPath id="clip_1">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M121.38 563.63H530.94V742.52H121.38Z"/>
+</clipPath>
+<clipPath id="clip_2">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M0 0H595.22V842H0Z"/>
+</clipPath>
+<clipPath id="clip_3">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M496.8 104.96H525.18V89.84H496.8Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_4">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+<clipPath id="clip_5">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M124.14 739.58H527.94V560.96H124.14Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_6">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+<clipPath id="clip_7">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M124.041 560.217H527.995V736.724H124.041Z"/>
+</clipPath>
+<clipPath id="clip_8">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M124.02 736.7H528V560.24H124.02Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_9">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M124.14 739.58H527.94V560.96H124.14Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_10">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+<clipPath id="clip_11">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M123.96 506.96H527.94V328.4H123.96Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_12">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+<clipPath id="clip_13">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M123.97 327.211H527.924V511.21803H123.97Z"/>
+</clipPath>
+<clipPath id="clip_14">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M123.96 511.22H527.94V327.2H123.96Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_15">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M123.96 506.96H527.94V328.4H123.96Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_16">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+</defs>
+<g clip-path="url(#clip_1)">
+<g clip-path="url(#clip_2)">
+<g clip-path="url(#clip_3)">
+<g clip-path="url(#clip_4)">
+</g>
+</g>
+<g clip-path="url(#clip_5)">
+<g clip-path="url(#clip_6)">
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M124.08 560.94H527.94V736.7H124.08Z" fill="#ffffff"/>
+</g>
+</g>
+<g clip-path="url(#clip_7)">
+<g clip-path="url(#clip_8)">
+<g clip-path="url(#clip_9)">
+<g clip-path="url(#clip_10)">
+<path transform="matrix(1,0,0,-1,67.65603,146.28199)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H8.504V8.504H17.009V17.009H25.513V25.514H34.017V34.018H42.522V42.523H51.026V51.027H59.53V59.531H68.035V68.036H76.539V76.54H85.043V68.036H93.548V76.54H102.052V68.036H110.555V59.531H119.06V51.027H127.564V42.523H136.068V34.018H144.575V25.514H153.077V17.009H161.58V8.504H170.085V0H178.59V-8.501H187.095V0H195.599V-8.501H204.103V0H212.608V-8.501H229.617V0H238.121V8.504H246.624V17.009H255.128V25.514H263.633V34.018H272.137V42.523H280.641V51.027H289.146V59.531H297.65V68.036H306.154"/>
+<path transform="matrix(1,0,0,-1,348.29704,55.567987)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V8.504H17.009V0H25.513"/>
+<path transform="matrix(1,0,0,-1,84.66403,56.152986)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V9.089H17.009V.585H34.017V9.089H51.026V.585H93.547V9.089H110.556V.585H127.566V9.089H144.572V.585H161.581V9.089H170.086V0H178.59V9.089H187.095V.585H195.599V9.089H212.609V.585H229.615V9.089H246.624V.585H263.633V9.089"/>
+<path transform="matrix(1,0,0,-1,373.81004,41.393987)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-17.009V8.504H-34.017V0H-51.026V8.504H-68.034V0H-136.069V8.504H-153.077V0H-170.086V8.504H-187.095V0H-204.102V8.504H-212.607V0H-221.111V8.504H-229.615V0H-246.624V8.504H-263.633V0H-280.641V8.504H-297.65V0H-306.154"/>
+<path transform="matrix(1,0,0,-1,76.16003,27.21997)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#818181" d="M0 0V-133.234"/>
+<path transform="matrix(1,0,0,-1,84.72102,27.21997)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#818181" d="M0 0V-133.234"/>
+<path transform="matrix(1,0,0,-1,93.16802,27.21997)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#818181" d="M0 0V-133.234"/>
+<path transform="matrix(1,0,0,-1,101.67202,27.21997)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#818181" d="M0 0V-133.234"/>
+<path transform="matrix(1,0,0,-1,144.44602,27.21997)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#818181" d="M0 0V-133.234"/>
+<path transform="matrix(1,0,0,-1,169.70702,27.21997)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#818181" d="M0 0V-133.234"/>
+<path transform="matrix(1,0,0,-1,297.29804,27.21997)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#818181" d="M0 0V-133.234"/>
+<path transform="matrix(1,0,0,-1,246.15004,27.21997)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#818181" d="M0 0V-133.234"/>
+<path transform="matrix(1,0,0,-1,365.30506,27.21997)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#818181" d="M0 0V-133.234"/>
+<path transform="matrix(1,0,0,-1,84.66503,55.567934)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-17.008"/>
+</g>
+</g>
+</g>
+</g>
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M124.38 739.04H527.94V739.51998H124.38Z"/>
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M527.46 560.96H527.94V739.28H527.46Z"/>
+<path transform="matrix(1,0,0,-1,-121.37997,742.51998)" d="M124.14 561.2H124.62V739.52H124.14Z"/>
+<g clip-path="url(#clip_11)">
+<g clip-path="url(#clip_12)">
+</g>
+</g>
+<g clip-path="url(#clip_13)">
+<g clip-path="url(#clip_14)">
+<g clip-path="url(#clip_15)">
+<g clip-path="url(#clip_16)">
+</g>
+</g>
+</g>
+</g>
+</g>
+</g></g>
+<g>
+<text x="47.82" y="38.15" font-size="8.00">TI1</text>
+<text x="192.39" y="18.72" font-size="8.00" text-anchor="start">向后</text>
+<text x="147.03" y="18.72" font-size="8.00" text-anchor="start">毛刺</text>
+<text x="263.26" y="18.72" font-size="8.00" text-anchor="start">毛刺</text>
+<text x="108.62" y="144.72" font-size="5.76" text-anchor="start">向上</text>
+<text x="181.52" y="143.93" font-size="8.00" text-anchor="start">向下</text>
+<text x="319.23" y="144.72" font-size="5.76" text-anchor="start">向上</text>
+<text x="47.82" y="54.35" font-size="8.00">TI2</text>
+<text x="30.80" y="111.06" font-size="8.26" text-anchor="start">计数器</text>
+<text x="93.17" y="18.72" font-size="8.00" text-anchor="start">向前</text>
+<text x="317.11" y="18.72" font-size="8.00" text-anchor="start">向前</text>
+<text x="365.31" y="174.64" font-size="6.00">MS33107V1</text>
+</g>
+</svg>

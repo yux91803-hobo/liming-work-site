@@ -1,0 +1,157 @@
+/* shell.css — LIMING 工具箱首页 · Claude Code 风格（与协作中心 hub.css 同一套设计）
+   奶白/炭黑底、陶土橙强调、等宽字体、1px 细边框、✻ 符号，无装饰光斑。 */
+:root{
+  --bg:#faf9f5;--panel:#ffffff;--sunk:#f0eee6;--ink:#141413;--ink-2:#5e5d59;--ink-3:#9a988f;
+  --line:#e6e3d8;--line-2:#d6d2c4;--clay:#d97757;--clay-soft:#f7e6de;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"PingFang SC","Hiragino Sans GB","Noto Sans Mono CJK SC","Noto Sans CJK SC",monospace;
+  --ease:cubic-bezier(.2,.8,.2,1);--out:cubic-bezier(.22,1,.36,1);
+  --st:env(safe-area-inset-top,0px);--sb:env(safe-area-inset-bottom,0px);--sl:env(safe-area-inset-left,0px);--sr:env(safe-area-inset-right,0px);
+  color-scheme:light;
+}
+[data-theme=dark]{
+  --bg:#1f1e1d;--panel:#262624;--sunk:#2f2e2b;--ink:#ece9e1;--ink-2:#b4b1a8;--ink-3:#7d7a72;
+  --line:#34332f;--line-2:#44423d;--clay:#e08a6c;--clay-soft:#3b2a23;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+  font:14px/1.55 var(--mono);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;
+  transition:background-color .3s var(--ease),color .3s var(--ease)}
+body{overflow-x:hidden;overscroll-behavior-y:none}
+body.locked{overflow:hidden}
+button,input{font:inherit;color:inherit}
+button{border:0;background:none;padding:0;cursor:pointer}
+a{color:inherit;text-decoration:none}
+svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg .fill{fill:currentColor;stroke:none}
+svg .a{stroke:var(--clay);transition:stroke .2s var(--ease)}
+:focus-visible{outline:1px solid var(--clay);outline-offset:2px}
+.sr{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ---------- 首页 ---------- */
+#home{position:relative;z-index:1;max-width:760px;margin:0 auto;
+  padding:calc(14px + var(--st)) calc(16px + var(--sr)) calc(40px + var(--sb)) calc(16px + var(--sl));
+  transform-origin:50% 30%;transition:transform .55s var(--out),opacity .55s var(--out)}
+body.tool-open #home{transform:scale(.94);opacity:.55}
+/* 主屏幕 App + 触屏：首页永远是终态外观（不缩放、不变暗、无过渡），左缘滑动时露出的就是返回后的首页 */
+.standalone.lite #home{transition:none!important}
+.standalone.lite body.tool-open #home{transform:none;opacity:1}
+body.covered #home{visibility:hidden}
+.lite body.covered #home{visibility:visible}
+/* 系统手势返回/前进后直接落到终态，不补播动画 */
+body.snap #home,body.snap .panel,body.snap .panel .back{transition:none!important}
+
+.hd{display:flex;align-items:center;justify-content:space-between;min-height:44px;margin:4px 0 14px}
+h1{margin:0;display:flex;align-items:center;font-size:20px;line-height:28px;font-weight:700;letter-spacing:0}
+.spark{display:inline-block;margin-right:10px;color:var(--clay);font-weight:400;animation:spark .9s var(--out) .05s both}
+@keyframes spark{from{opacity:0;transform:rotate(-140deg) scale(.4)}}
+
+/* 圆角方按钮（主题） */
+.round{position:relative;width:40px;height:40px;border-radius:8px;border:1px solid var(--line-2);background:var(--panel);color:var(--ink-2);
+  -webkit-appearance:none;appearance:none;touch-action:manipulation;
+  transition:transform .32s var(--out),background-color .2s var(--ease),border-color .2s var(--ease),color .2s var(--ease)}
+.round.press{transform:scale(.9);background:var(--sunk);transition:transform .1s ease-out,background-color .08s,border-color .08s}
+#themeBtn svg{position:absolute;inset:0;margin:auto;display:block;width:18px;height:18px;opacity:0;transform:rotate(-90deg) scale(.5);
+  transition:transform .45s var(--out),opacity .22s var(--ease)}
+[data-pref=light] #themeBtn .sun,[data-pref=dark] #themeBtn .moon,[data-pref=auto] #themeBtn .auto{opacity:1;transform:none}
+
+/* 搜索框（终端 prompt） */
+.cmd{display:flex;align-items:center;gap:10px;height:46px;margin-bottom:16px;padding:0 12px;border:1px solid var(--line-2);border-radius:8px;background:var(--panel);
+  cursor:text;touch-action:manipulation;
+  transition:border-color .18s var(--ease),box-shadow .25s var(--ease),transform .3s var(--out),background-color .3s var(--ease)}
+.cmd.press{transform:scale(.988);transition:transform .1s ease-out,border-color .18s,box-shadow .25s}
+.cmd:focus-within{border-color:var(--clay);box-shadow:0 0 0 3px var(--clay-soft)}
+.cmd .caret{flex:none;width:10px;color:var(--ink-3);font-weight:700;transition:color .18s var(--ease),transform .3s var(--out)}
+.cmd:focus-within .caret{color:var(--clay);transform:translateX(2px)}
+.cmd input{flex:1;min-width:0;height:100%;border:0;outline:0;background:none;color:var(--ink);font-size:16px;caret-color:var(--clay);
+  -webkit-appearance:none;appearance:none;border-radius:0}
+.cmd input::-webkit-search-cancel-button,.cmd input::-webkit-search-decoration{-webkit-appearance:none;display:none}
+.cmd input::placeholder{color:var(--ink-3);opacity:1}
+.cmd kbd{flex:none;font:11px/16px var(--mono);color:var(--ink-3);border:1px solid var(--line-2);border-radius:4px;padding:0 6px;transition:opacity .18s var(--ease)}
+.cmd:focus-within kbd{opacity:0}
+@media (hover:none){.cmd kbd{display:none}}
+
+/* ---------- 工具网格 ---------- */
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (min-width:560px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (min-width:740px){.grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
+.card{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-width:0;aspect-ratio:1/1;
+  padding:14px 8px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);
+  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation;
+  transition:transform .34s var(--out),background-color .22s var(--ease),border-color .22s var(--ease);
+  animation:rise .5s var(--out) backwards;animation-delay:calc(var(--i,0)*50ms + 60ms)}
+.card .ic{width:46px;height:46px;border-radius:11px;display:grid;place-items:center;background:var(--sunk);color:var(--ink);
+  transition:transform .38s var(--out),background-color .22s var(--ease)}
+.card .ic svg{width:26px;height:26px;stroke-width:1.6}
+.card .nm{max-width:100%;font-size:13px;line-height:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 按下：整卡微缩 + 底色下沉，图标再多压一点，形成层次；松开用较长的 ease-out 平稳回位（不回弹） */
+.card.press{transform:scale(.955);background:var(--sunk);border-color:var(--line-2);
+  transition:transform .12s ease-out,background-color .08s linear,border-color .08s linear}
+.card.press .ic{transform:scale(.92);background:var(--panel);transition:transform .12s ease-out,background-color .08s linear}
+@media (hover:hover) and (pointer:fine){
+  .card:hover{border-color:var(--clay)}
+  .card:hover .ic{background:var(--clay-soft);transform:translateY(-2px)}
+  .card.press:hover .ic{transform:scale(.92)}
+  .round:hover{border-color:var(--clay);color:var(--ink)}
+  .cmd:hover:not(:focus-within){border-color:var(--ink-3)}
+  .panel .back:hover{border-color:var(--clay)}
+}
+.card.hide{display:none}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}}
+/* 首屏入场动画播完后关掉，之后任何显示切换都不会补播 */
+.settled .card{animation:none!important}
+/* 打开工具前的「定格」帧：首页元素直接到终态，保证系统返回快照与返回后的页面一致 */
+body.freeze #home,body.freeze .card,body.freeze .card .ic,body.freeze .round,body.freeze .cmd,body.freeze .cmd .caret{transition:none!important}
+.empty{margin:0;padding:40px 0;text-align:center;font-size:13px;color:var(--ink-3);animation:fadein .3s var(--ease)}
+@keyframes fadein{from{opacity:0}}
+
+/* ---------- 工具面板 ---------- */
+#stage{position:fixed;inset:0;z-index:10;pointer-events:none}
+.panel{position:absolute;inset:0;background:var(--bg);display:none;pointer-events:none;
+  clip-path:inset(0 round 0);-webkit-clip-path:inset(0 round 0)}
+/* 关闭的面板用 display:none：整个子树和合成层被销毁，启动页等子元素不可能残留；iframe 不会因此重新加载 */
+.panel.show{display:block;pointer-events:auto}
+.panel:not(.show) *{transition:none!important;animation:none!important}
+/* 触屏 / iOS：面板永不使用 clip-path，开关用整块 opacity + transform */
+.lite .panel{clip-path:none!important;-webkit-clip-path:none!important}
+.lite .panel.fade{will-change:opacity,transform;transition:opacity .3s var(--out),transform .38s var(--out)!important}
+.lite .panel.l-in{opacity:0;transform:translate3d(0,22px,0) scale(.97)}
+.lite .panel.l-out{opacity:0;transform:translate3d(0,14px,0) scale(.98);pointer-events:none}
+.lite .panel.l-out.fade{transition:opacity .26s ease-out,transform .3s ease-out!important}
+.panel.closing .splash{display:none!important}
+.panel.closing .back{transition:none}
+.panel.anim{will-change:clip-path,transform;transition:clip-path .58s var(--out),-webkit-clip-path .58s var(--out),transform .45s var(--out),opacity .45s var(--out)}
+.panel iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:var(--bg)}
+.panel .splash{position:absolute;inset:0;z-index:2;display:grid;place-items:center;background:var(--bg);transition:opacity .5s var(--ease),visibility .5s}
+.panel .splash .ic{width:68px;height:68px;border-radius:15px;display:grid;place-items:center;background:var(--panel);border:1px solid var(--line);color:var(--ink);
+  animation:pulse 1.4s var(--ease) infinite alternate}
+.panel .splash .ic svg{width:36px;height:36px;stroke-width:1.5}
+.panel .splash .ic svg .a{animation:glow 1.4s var(--ease) infinite alternate}
+.panel.ready .splash{opacity:0;visibility:hidden}
+/* 转场期间用启动页盖住 iframe（桌面 iOS clip-path 动画只作用于纯色+图标） */
+.panel.cover .splash{opacity:1;visibility:visible;transition:none}
+.panel.cover iframe{visibility:hidden}
+.panel.ready:not(.cover) .splash .ic,.panel.ready:not(.cover) .splash .ic svg .a{animation-play-state:paused}
+@keyframes pulse{to{transform:scale(1.05)}}
+@keyframes glow{to{opacity:.45}}
+/* 返回键：与协作中心顶栏对齐（top 8px、40px 高，右缘不超过 hub 嵌入时预留的 52px） */
+.panel .back{position:absolute;z-index:3;left:calc(10px + var(--sl));top:calc(8px + var(--st));width:40px;height:40px;border-radius:8px;
+  display:grid;place-items:center;background:var(--panel);border:1px solid var(--line-2);color:var(--ink);touch-action:manipulation;
+  transition:transform .32s var(--out),opacity .25s var(--ease),background-color .2s var(--ease),border-color .2s var(--ease);opacity:0;transform:scale(.8)}
+.panel .back svg{width:18px;height:18px;stroke-width:2}
+.panel.ready .back,.panel.opened .back{opacity:1;transform:none}
+.panel .back.press{transform:scale(.88);background:var(--sunk);transition:transform .1s ease-out,background-color .08s linear}
+.panel .edge{position:absolute;z-index:4;left:0;top:0;bottom:0;width:18px;display:none;touch-action:none}
+.standalone .panel .edge{display:block}
+.native-back .panel .edge{display:none!important}
+
+/* ---------- 提示 ---------- */
+#toast{position:fixed;z-index:50;left:50%;bottom:calc(24px + var(--sb));transform:translate(-50%,8px);opacity:0;pointer-events:none;
+  padding:8px 14px;border-radius:8px;font-size:12px;line-height:18px;white-space:nowrap;color:var(--bg);background:var(--ink);
+  transition:transform .28s var(--out),opacity .2s var(--ease)}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}

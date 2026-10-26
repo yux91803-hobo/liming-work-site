@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#f6f7f9">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="世界地图">
+<title>世界地图</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="favicon.svg">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map"></div>
+
+<div id="splash"><div class="globe"></div><div class="splash-t">世界地图</div></div>
+
+<header id="top">
+  <form id="search" autocomplete="off" role="search">
+    <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="搜索地点" enterkeyhint="search" aria-label="搜索地点">
+    <button type="button" id="clear" aria-label="清除" hidden>×</button>
+  </form>
+  <ul id="results" hidden></ul>
+</header>
+
+<div id="tools">
+  <button id="layersBtn" class="fab" aria-label="图层">
+    <svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
+  </button>
+  <div class="zoom">
+    <button id="zin" class="fab" aria-label="放大"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button id="zout" class="fab" aria-label="缩小"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+  </div>
+  <button id="locate" class="fab" aria-label="定位">
+    <svg viewBox="0 0 24 24"><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2" class="fill"/></svg>
+  </button>
+</div>
+
+<div id="sheet" aria-hidden="true">
+  <div class="grip"></div>
+  <div class="opts">
+    <button data-layer="amap" class="opt"><span class="thumb t-amap"></span><span>街道</span></button>
+    <button data-layer="sat" class="opt"><span class="thumb t-sat"></span><span>卫星</span></button>
+    <button data-layer="light" class="opt"><span class="thumb t-light"></span><span>简洁</span></button>
+    <button data-layer="osm" class="opt"><span class="thumb t-osm"></span><span>OSM</span></button>
+  </div>
+  <label class="toggle"><input type="checkbox" id="borders" checked><i></i><span>国家边界</span></label>
+</div>
+<div id="scrim"></div>
+
+<div id="toast" role="status"></div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

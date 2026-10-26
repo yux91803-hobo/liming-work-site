@@ -1,0 +1,268 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="409.74" height="414.13" viewBox="0 0 409.74 414.13">
+<title>USB设备框图</title>
+<style>@font-face{font-family:'STL';font-weight:normal;src:url(data:font/woff2;base64,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) format('woff2');}@font-face{font-family:'STC';font-weight:normal;src:url(data:font/woff2;base64,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) format('woff2');}text{font-family:STL,STC,sans-serif;white-space:pre;fill:#000;text-rendering:geometricPrecision}</style>
+<rect width="100%" height="100%" fill="#fff"/>
+<g><defs>
+<clipPath id="clip_1">
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M121.2 328.39H530.94V742.52H121.2Z"/>
+</clipPath>
+<clipPath id="clip_2">
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M0 0H595.22V842H0Z"/>
+</clipPath>
+<clipPath id="clip_3">
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M71.52 104.96H99.899997V89.84H71.52Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_4">
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+<clipPath id="clip_5">
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M123.96 739.58H527.94V326.96003H123.96Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_6">
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+<clipPath id="clip_7">
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M123.96 760.04H527.94V306.49998H123.96Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_8">
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M123.96 739.58H527.94V326.96003H123.96Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_9">
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+</defs>
+<g clip-path="url(#clip_1)">
+<g clip-path="url(#clip_2)">
+<g clip-path="url(#clip_3)">
+<g clip-path="url(#clip_4)">
+</g>
+</g>
+<g clip-path="url(#clip_5)">
+<g clip-path="url(#clip_6)">
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M123.96 326.94H527.94V739.62H123.96Z" fill="#ffffff"/>
+</g>
+</g>
+<g clip-path="url(#clip_7)">
+<g clip-path="url(#clip_8)">
+<g clip-path="url(#clip_9)">
+<path transform="matrix(1,0,0,-1,234.07,78.20996)" d="M0 0H-211.188V-144.576L-109.134-145.136V-75.683H0V0" fill="#cbdbab" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,234.07,78.20996)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0H-211.188V-144.576L-109.134-145.136V-75.683H0V0Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M223.455 597.414H338.259V659.777H223.455Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,217.05902,82.74396)" stroke-width=".72" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M-114.804 0H0V-62.363H-114.804Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M227.707 611.018H275.898V625.75906H227.707Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M227.707 625.758H275.898V611.01699H227.707Z"/>
+<path transform="matrix(1,0,0,-1,234.06702,78.20593)" d="M0 0H144.576V-144.856H-109.134V-75.943H0V0" fill="#dadada" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,234.06702,78.20593)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0H144.576V-144.856H-109.134V-75.943H0V0Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M144.081 373.465H499.843V509.534H144.081Z" fill="#dadada"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M144.081 509.533H499.843V373.464H144.081Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M392.123 722.139H499.844V693.792H392.123Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M394.957 709.384H403.4614V717.88827H394.957Z" fill="#cbdbab"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M394.957 717.888H403.4614V709.3837H394.957Z"/>
+<path transform="matrix(1,0,0,-1,229.81903,198.97296)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0H-7.94"/>
+<path transform="matrix(1,0,0,-1,236.90604,176.28896)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0V5.65H59.532L57.632 5.67"/>
+<path transform="matrix(1,0,0,-1,241.15804,170.63697)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0V5.65H63.783"/>
+<path transform="matrix(1,0,0,-1,296.72206,170.62296)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0V-28.351"/>
+<path transform="matrix(1,0,0,-1,296.71907,198.97296)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0H-7.94"/>
+<path transform="matrix(1,0,0,-1,304.94306,164.98796)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0V-26.891"/>
+<path transform="matrix(1,0,0,-1,304.93907,191.88697)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0H-8.22"/>
+<path transform="matrix(1,0,0,-1,22.884064,232.98796)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0V-136.066"/>
+<path transform="matrix(1,0,0,-1,22.691063,369.05299)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0H355.954"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M152.586 452.838H200.77701V475.51603H152.586Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M152.586 475.516H200.77701V452.83799H152.586Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M253.22 435.829H301.411V484.02003H253.22Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M253.22 484.02H301.411V435.82899H253.22Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M312.75 447.167H410.549V481.184H312.75Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M312.75 481.184H410.549V447.167H312.75Z"/>
+<path transform="matrix(1,0,0,-1,213.37503,97.62494)" d="M0 0V4.25L-4.25 2.12 0 0ZM47.622 0V4.25L51.882 2.12 47.622 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,213.37503,97.62494)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L-4.25 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,260.99705,97.62494)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L4.26 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,213.37503,95.50494)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H47.622"/>
+<path transform="matrix(1,0,0,-1,213.37503,124.55493)" d="M0 0V4.25L-4.25 2.12 0 0ZM47.622 0V4.25L51.882 2.12 47.622 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,213.37503,124.55493)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L-4.25 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,260.99705,124.55493)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L4.26 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,213.37503,122.43493)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H47.622"/>
+<path transform="matrix(1,0,0,-1,237.75403,135.89496)" d="M0 0V4.25L-4.25 2.12 0 0ZM23.251 0V4.25L27.501 2.12 23.251 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,237.75403,135.89496)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L-4.25 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,261.00505,135.89496)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L4.25 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,237.75403,133.77497)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H23.251"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M386.453 628.592H492.756V652.121H386.453Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M386.453 652.121H492.756V628.592H386.453Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M387.02 599.819H492.473V623.34799H387.02Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M387.02 623.348H492.473V599.81906H387.02Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M284.402 537.88H344.64V566.227H284.402Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M284.402 566.228H344.64V537.88107H284.402Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M351.019 537.88H411.25703V566.227H351.019Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M351.019 566.228H411.25703V537.88107H351.019Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M281.568 603.08H329.759V625.758H281.568Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M281.568 625.758H329.759V603.08H281.568Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M281.568 628.593H329.759V651.271H281.568Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M281.568 651.271H329.759V628.593H281.568Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M227.707 628.593H275.898V651.271H227.707Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M227.707 651.271H275.898V628.593H227.707Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M148.334 615.837H196.525V638.51498H148.334Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M148.334 638.515H196.525V615.83706H148.334Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M148.334 536.462H196.525V591.74H148.334Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M148.334 591.741H196.525V536.463H148.334Z"/>
+<path transform="matrix(1,0,0,-1,80.06102,117.75195)" d="M0 0V4.25L-4.25 2.12 0 0ZM17.091 0V4.25L21.341 2.12 17.091 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,80.06102,117.75195)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L-4.25 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,97.15202,117.75195)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L4.25 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,80.06102,115.63195)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H17.091"/>
+<path transform="matrix(1,0,0,-1,79.57501,201.09296)" d="M0 0V4.25L-4.25 2.12 0 0ZM79.183 0V4.25L83.443 2.12 79.183 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,79.57501,201.09296)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L-4.25 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,158.75801,201.09296)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L4.26 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,79.57501,198.97296)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H79.183"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M244.715 680.248H307.08V711.43H244.715Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M244.715 711.431H307.08V680.249H244.715Z"/>
+<path transform="matrix(1,0,0,-1,139.81803,14.676941)" d="M0 0H4.25L2.12 4.25 0 0ZM0-11.5H4.25L2.12-15.751 0-11.5" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,139.81803,14.676941)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,139.81803,26.17694)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,141.93802,14.676941)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-11.5"/>
+<path transform="matrix(1,0,0,-1,163.91403,14.834961)" d="M0 0H4.25L2.12 4.25 0 0ZM0-11.5H4.25L2.12-15.751 0-11.5" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,163.91403,14.834961)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,163.91403,26.33496)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,166.03403,14.834961)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-11.5"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M394.957 696.627H403.4614V705.1314H394.957Z" fill="#dadada"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M394.957 705.131H403.4614V696.6266H394.957Z"/>
+<path transform="matrix(1,0,0,-1,49.10501,210.30799)" d="M0 0H4.25L2.12 4.25 0 0ZM0-51.382H4.25L2.12-55.632 0-51.382" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,49.10501,210.30799)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,49.10501,261.68998)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,51.22501,210.30797)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-51.382"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M421.889 447.167H488.506V481.184H421.889Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M421.889 481.184H488.506V447.167H421.889Z"/>
+<path transform="matrix(1,0,0,-1,338.24604,386.91697)" d="M0 0H-4.25L-2.12-4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,338.24604,386.91697)" stroke-width="1" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-4.25L-2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,336.12605,386.91697)" stroke-width="1" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V91.564"/>
+<path transform="matrix(1,0,0,-1,338.24604,256.04597)" d="M0 0H-4.25L-2.12-4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,338.24604,256.04597)" stroke-width="1" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-4.25L-2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,336.12605,256.04597)" stroke-width="1" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V32.511"/>
+<path transform="matrix(1,0,0,-1,49.10501,293.57798)" d="M0 0H4.25L2.12 4.25 0 0ZM0-19.301H4.25L2.12-23.551 0-19.301" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,49.10501,293.57798)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,49.10501,312.87898)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,51.22501,293.57798)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-19.301"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M152.586 401.812H410.549V424.49003H152.586Z" fill="#ffffff"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M152.586 424.49H410.549V401.81199H152.586Z"/>
+<path transform="matrix(1,0,0,-1,83.82701,280.46696)" d="M0 0V4.25L-4.25 2.12 0 0ZM43.602 0V4.25L47.862 2.12 43.602 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,83.82701,280.46696)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L-4.25 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,127.429019,280.46696)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V4.25L4.26 2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,83.82701,278.34696)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H43.602"/>
+<path transform="matrix(1,0,0,-1,161.07901,345.50596)" d="M0 0H4.25L2.12 4.25 0 0ZM0-42.162H4.25L2.12-46.412 0-42.162" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,161.07901,345.50596)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,161.07901,387.66795)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,163.199,345.50596)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-42.162"/>
+<path transform="matrix(1,0,0,-1,132.44303,72.54193)" d="M0 0H-4.25L-2.12-4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,132.44303,72.54193)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-4.25L-2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,130.32303,72.54193)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V10.49"/>
+<path transform="matrix(1,0,0,-1,138.67902,72.54193)" d="M0 0H-4.25L-2.12-4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,138.67902,72.54193)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-4.25L-2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,136.55902,72.54193)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V10.49"/>
+<path transform="matrix(1,0,0,-1,144.63202,72.54193)" d="M0 0H-4.25L-2.12-4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,144.63202,72.54193)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-4.25L-2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,142.51203,72.54193)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V10.49"/>
+<path transform="matrix(1,0,0,-1,175.25202,67.22296)" d="M0 0H4.25L2.12 4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,175.25202,67.22296)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,177.37201,67.22296)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-9.85"/>
+<path transform="matrix(1,0,0,-1,169.01602,67.22296)" d="M0 0H4.25L2.12 4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,169.01602,67.22296)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,171.13602,67.22296)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-9.66"/>
+<path transform="matrix(1,0,0,-1,163.06302,67.22296)" d="M0 0H4.25L2.12 4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,163.06302,67.22296)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,165.18302,67.22296)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-9.79"/>
+<path transform="matrix(1,0,0,-1,53.92401,373.30598)" d="M0 0H4.25L2.12 4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,53.92401,373.30598)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,56.04401,373.30598)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-18.431"/>
+<path transform="matrix(1,0,0,-1,234.78302,299.88496)" d="M0 0H4.25L2.12 4.25 0 0ZM0-13.891H4.25L2.12-18.141 0-13.891" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,234.78302,299.88496)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,234.78302,313.77595)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,236.90302,299.88496)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-13.891"/>
+<path transform="matrix(1,0,0,-1,110.053028,150.20996)" d="M0 0H4.25L2.12 4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,110.053028,150.20996)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,112.17303,150.20996)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-13.041"/>
+<path transform="matrix(1,0,0,-1,79.592029,165.62696)" d="M0 0-.033 4.25-4.266 2.087 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,79.592029,165.62696)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0-.033 4.25-4.266 2.087 0 0"/>
+<path transform="matrix(1,0,0,-1,79.57603,163.50696)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0 32.6 .251"/>
+<path transform="matrix(1,0,0,-1,132.73102,149.92694)" d="M0 0H4.25L2.12 4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,132.73102,149.92694)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,134.85102,149.92694)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-36.292"/>
+<path transform="matrix(1,0,0,-1,158.48001,184.09095)" d="M0 0V-4.25L4.25-2.12 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,158.48001,184.09095)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-4.25L4.25-2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,158.48001,186.21094)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-23.621"/>
+<path transform="matrix(1,0,0,-1,241.86402,257.08497)" d="M0 0H-4.25L-2.12-4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,241.86402,257.08497)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-4.25L-2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,239.74402,257.08497)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V53.012"/>
+<path transform="matrix(1,0,0,-1,256.03804,257.08497)" d="M0 0H-4.25L-2.12-4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,256.03804,257.08497)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-4.25L-2.12-4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,253.91803,257.08497)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V19.781"/>
+<path transform="matrix(1,0,0,-1,253.67203,237.30097)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H13.771"/>
+<path transform="matrix(1,0,0,-1,265.321,209.79193)" d="M0 0H4.25L2.12 4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,265.321,209.79193)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,267.441,209.79193)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-27.811"/>
+<path transform="matrix(1,0,0,-1,225.64002,257.07395)" d="M0 0-4.25-.029-2.09-4.264 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,225.64002,257.07395)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0-4.25-.029-2.09-4.264 0 0"/>
+<path transform="matrix(1,0,0,-1,223.52002,257.08897)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0-.138 19.781"/>
+<path transform="matrix(1,0,0,-1,209.531,237.29996)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0 13.77 .096"/>
+<path transform="matrix(1,0,0,-1,207.40402,209.49494)" d="M0 0H4.25L2.12 4.25 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,207.40402,209.49494)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H4.25L2.12 4.25 0 0"/>
+<path transform="matrix(1,0,0,-1,209.52402,209.49494)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-27.811"/>
+<path transform="matrix(1,0,0,-1,261.00303,101.88196)" d="M0 0V-4.25L4.25-2.12 0 0" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,261.00303,101.88196)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-4.25L4.25-2.12 0 0"/>
+<path transform="matrix(1,0,0,-1,261.00303,104.00196)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0H-24.321"/>
+<path transform="matrix(1,0,0,-1,236.90903,104.26296)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="3" stroke-linejoin="miter" fill="none" stroke="#000000" d="M0 0V-60.702"/>
+<path transform="matrix(1,0,0,-1,236.906,176.29596)" d="M0 0V5.66H4.25V11.31H68.033V-15.591H59.812V-22.671H53.152V0H0" fill="#ffffff" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,236.906,176.29596)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0V5.66H4.25V11.31H68.033V-15.591H59.812V-22.671H53.152V0H0Z"/>
+<path transform="matrix(1,0,0,-1,241.158,170.63896)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0H55.562V-21.241"/>
+<path transform="matrix(1,0,0,-1,168.87104,176.29596)" d="M0 0V5.58H5.67V11.341H43.942L68.033 11.331V0H60.943V-22.671H54.572V0H0" fill="#ffffff" fill-rule="evenodd"/>
+<path transform="matrix(1,0,0,-1,168.87104,176.29596)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0V5.58H5.67V11.341H43.942L68.033 11.331V0H60.943V-22.671H54.572V0H0Z"/>
+<path transform="matrix(1,0,0,-1,174.54103,170.71396)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0H55.282"/>
+<path transform="matrix(1,0,0,-1,229.81504,176.29196)" stroke-width=".24" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="#000000" d="M0 0V5.57"/>
+</g>
+</g>
+</g>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M124.2 739.04H527.94V739.51998H124.2Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M527.46 327.02H527.94V739.28H527.46Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,742.51998)" d="M123.96 327.26H124.44V739.52H123.96Z"/>
+</g>
+</g></g>
+<g>
+<text x="130.60" y="127.13" font-size="10.00" text-anchor="middle">控制</text>
+<text x="361.21" y="409.87" font-size="6.00">MSv42086V1</text>
+<text x="119.09" y="141.65" font-size="10.00">S.I.E.</text>
+<text x="284.99" y="32.18" font-size="10.00" text-anchor="start">USB时钟(48MHz)</text>
+<text x="284.99" y="44.18" font-size="10.00">PCLK</text>
+<text x="146.72" y="15.58" font-size="10.00">DP</text>
+<text x="32.06" y="88.66" font-size="10.00">USB</text>
+<text x="221.38" y="273.97" font-size="10.00" text-anchor="start">寄存器</text>
+<text x="221.66" y="285.97" font-size="10.00" text-anchor="start">映像</text>
+<text x="34.15" y="359.30" font-size="10.00" text-anchor="start">APB1接口</text>
+<text x="59.46" y="391.90" font-size="10.00">PCLK1</text>
+<text x="167.89" y="391.90" font-size="10.00" text-anchor="start">APB1总线</text>
+<text x="263.28" y="391.90" font-size="10.00" text-anchor="start">至NVIC的中断</text>
+<text x="55.48" y="281.34" font-size="10.00" text-anchor="middle">仲裁器</text>
+<text x="157.51" y="273.60" font-size="10.00" text-anchor="middle">数据包</text>
+<text x="157.41" y="285.60" font-size="10.00" text-anchor="middle">缓冲器</text>
+<text x="156.12" y="297.60" font-size="10.00" text-anchor="middle">存储器</text>
+<text x="269.25" y="99.16" font-size="10.00" text-anchor="start">控制</text>
+<text x="269.25" y="111.26" font-size="9.74" text-anchor="start">寄存器及其逻辑电路</text>
+<text x="269.82" y="127.94" font-size="10.00" text-anchor="start">中断</text>
+<text x="269.82" y="140.03" font-size="9.74" text-anchor="start">寄存器及其逻辑电路</text>
+<text x="173.58" y="187.47" font-size="10.00" text-anchor="start">端点</text>
+<text x="174.15" y="199.47" font-size="10.00" text-anchor="start">寄存器</text>
+<text x="240.20" y="187.47" font-size="10.00" text-anchor="start">端点</text>
+<text x="240.77" y="199.47" font-size="10.00" text-anchor="start">寄存器</text>
+<text x="164.73" y="125.10" font-size="10.00" text-anchor="start">端点</text>
+<text x="164.73" y="137.10" font-size="10.00" text-anchor="start">选择</text>
+<text x="185.85" y="99.58" font-size="10.00" text-anchor="middle">时钟</text>
+<text x="184.46" y="111.58" font-size="10.00" text-anchor="middle">恢复</text>
+<text x="115.60" y="105.58" font-size="10.00">RX-TX</text>
+<text x="52.62" y="112.34" font-size="10.00" text-anchor="middle">挂起</text>
+<text x="51.22" y="125.01" font-size="8.07" text-anchor="middle">定时器</text>
+<text x="52.62" y="169.42" font-size="10.00" text-anchor="middle">数据包</text>
+<text x="52.53" y="181.42" font-size="10.00" text-anchor="middle">缓冲器</text>
+<text x="51.23" y="193.42" font-size="10.00" text-anchor="middle">接口</text>
+<text x="154.69" y="43.68" font-size="10.00" text-anchor="middle">模拟</text>
+<text x="154.70" y="55.68" font-size="10.00" text-anchor="middle">收发器</text>
+<text x="169.99" y="15.74" font-size="10.00">DM</text>
+<text x="335.39" y="275.35" font-size="10.00" text-anchor="middle">中断</text>
+<text x="333.99" y="287.35" font-size="10.00" text-anchor="middle">映像</text>
+<text x="129.52" y="332.36" font-size="10.00" text-anchor="start">APB1接口</text>
+</g>
+</svg>

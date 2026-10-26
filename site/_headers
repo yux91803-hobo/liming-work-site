@@ -1,0 +1,16 @@
+/vendor/*
+  Cache-Control: public, max-age=604800
+/data/*
+  Cache-Control: public, max-age=86400
+/tools/map/styles/*
+  Cache-Control: public, max-age=86400
+/manifest.webmanifest
+  Content-Type: application/manifest+json
+/tools/transfer/*
+  X-Robots-Tag: noindex, nofollow
+/transfer
+  X-Robots-Tag: noindex, nofollow
+/tools/hub/*
+  X-Robots-Tag: noindex, nofollow
+/hub
+  X-Robots-Tag: noindex, nofollow

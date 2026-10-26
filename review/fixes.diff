@@ -1,0 +1,294 @@
+diff -ruN -x vendor -x data a/site/shell.css b/site/shell.css
+--- a/site/shell.css	2026-10-25 01:37:38.702911540 +0800
++++ b/site/shell.css	2026-10-25 01:38:14.274842941 +0800
+@@ -32,8 +32,13 @@
+ /* 首页 */
+ #home{position:relative;z-index:1;max-width:760px;margin:0 auto;
+   padding:calc(26px + var(--st)) calc(20px + var(--sr)) calc(40px + var(--sb)) calc(20px + var(--sl));
+-  transform-origin:50% 30%;transition:transform .55s var(--ease),filter .55s var(--ease),opacity .55s var(--ease)}
+-body.tool-open #home{transform:scale(.94);filter:brightness(.92);opacity:.6}
++  transform-origin:50% 30%;transition:transform .55s var(--ease)}
++/* 不再对 #home 用 filter/opacity：它们会让卡片的 backdrop-filter 换「背景根」，iOS 上开/关瞬间卡片背景闪烁、撕裂 */
++body.tool-open #home{transform:scale(.96)}
++.slide #home{transition-duration:.45s}
++.slide body.tool-open #home{transform:translate3d(-22%,0,0)}
++body.tool-open .bg i{animation-play-state:paused}
++.noanim *,.noanim *::before,.noanim *::after{transition:none!important;animation:none!important}
+ .hd{display:flex;align-items:flex-end;justify-content:space-between;margin:8px 2px 22px}
+ .kicker{font-size:13px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--sub)}
+ h1{margin:2px 0 0;font-size:34px;line-height:1.1;font-weight:800;letter-spacing:-.02em}
+@@ -97,8 +102,11 @@
+ 
+ /* 工具面板 */
+ #stage{position:fixed;inset:0;z-index:10;pointer-events:none}
+-.panel{position:absolute;inset:0;background:var(--bg);visibility:hidden;pointer-events:none;will-change:clip-path,transform;
++.panel{position:absolute;inset:0;background:var(--bg);visibility:hidden;pointer-events:none;
+   clip-path:inset(0 round 0);-webkit-clip-path:inset(0 round 0)}
++.panel.anim{will-change:clip-path,transform}
++.slide .panel{clip-path:none;-webkit-clip-path:none;box-shadow:-12px 0 32px rgba(10,20,40,.14)}
++.slide .panel.anim{will-change:transform;transition:transform .45s cubic-bezier(.32,.72,0,1)}
+ .panel.show{visibility:visible;pointer-events:auto}
+ .panel.anim{transition:clip-path .58s var(--ease),-webkit-clip-path .58s var(--ease),transform .45s var(--ease),opacity .45s var(--ease)}
+ .panel iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:var(--bg)}
+diff -ruN -x vendor -x data a/site/shell.js b/site/shell.js
+--- a/site/shell.js	2026-10-25 01:37:38.702911540 +0800
++++ b/site/shell.js	2026-10-25 01:38:14.274842941 +0800
+@@ -8,6 +8,13 @@
+   var standalone = window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+   if (standalone) html.classList.add('standalone');
+   var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
++  // iPhone/iPad/触屏：WebKit 不能在合成线程上做 clip-path 动画，面板里又有 iframe(WebGL/backdrop-filter)，
++  // 逐帧重绘会出现撕裂/半帧。触屏改用纯 transform 的横向滑入（GPU 合成），与 Safari 原生返回手势一致。
++  var ua = navigator.userAgent, isIOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
++  var slide = isIOS || (window.matchMedia && matchMedia('(pointer: coarse)').matches);
++  if (slide) html.classList.add('slide');
++  // 瞬时切换（浏览器返回手势 / bfcache 恢复）时，关掉所有过渡，保证第一帧就是最终画面，和 Safari 的快照对得上
++  function freeze() { html.classList.add('noanim'); void body.offsetWidth; requestAnimationFrame(function () { requestAnimationFrame(function () { html.classList.remove('noanim'); }); }); }
+   function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+ 
+@@ -146,14 +153,24 @@
+     if (current) close({ instant: true });
+     var p = getPanel(t);
+     current = id; pushRecent(id);
++    // 「最近」在面板完全盖住首页后再刷新，避免返回时首页布局跳动
++    setTimeout(function () { if (current === id) renderRecent(); }, o.instant || reduce ? 0 : 650);
+     document.title = t.name + ' · Liming 工具箱';
+     if (o.push) history.pushState({ tool: id }, '', t.path);
+-    body.classList.add('tool-open', 'locked');
+     var r = o.from ? o.from.getBoundingClientRect() : null;
+-    if (o.instant || reduce || !r) {
++    if (o.instant || reduce || (!r && !slide)) {
++      freeze(); body.classList.add('tool-open', 'locked');
+       p.classList.remove('anim'); setClip(p, clip()); p.style.transform = ''; p.style.opacity = '';
+       p.classList.add('show', 'opened');
++    } else if (slide) {
++      body.classList.add('tool-open', 'locked');
++      p.classList.remove('anim', 'opened'); setClip(p, ''); p.style.opacity = ''; p.style.transform = 'translate3d(100%,0,0)';
++      p.classList.add('show');
++      void p.offsetWidth;
++      requestAnimationFrame(function () { p.classList.add('anim'); p.style.transform = ''; });
++      setTimeout(function () { if (current === id) { p.classList.add('opened'); p.classList.remove('anim'); } }, 480);
+     } else {
++      body.classList.add('tool-open', 'locked');
+       p.classList.remove('anim', 'opened'); setClip(p, clip(r)); p.style.transform = ''; p.style.opacity = '';
+       p.classList.add('show');
+       void p.offsetWidth;
+@@ -167,10 +184,14 @@
+     o = o || {};
+     var id = current, p = panels[id]; current = null;
+     document.title = 'Liming 工具箱';
++    var done = function () { p.classList.remove('show', 'anim', 'opened'); p.style.transform = ''; p.style.opacity = ''; setClip(p, slide ? '' : clip()); };
++    if (o.instant || reduce) { freeze(); body.classList.remove('tool-open', 'locked'); p.classList.remove('anim'); done(); return; }
+     body.classList.remove('tool-open', 'locked');
+-    renderRecent();
+-    var done = function () { p.classList.remove('show', 'anim', 'opened'); p.style.transform = ''; p.style.opacity = ''; setClip(p, clip()); };
+-    if (o.instant || reduce) { p.classList.remove('anim'); done(); return; }
++    if (slide) {
++      p.classList.add('anim'); p.style.transform = 'translate3d(100%,0,0)';
++      setTimeout(function () { if (current !== id) done(); }, 480);
++      return;
++    }
+     var r = cardFor(id);
+     p.classList.add('anim');
+     if (r) setClip(p, clip(r)); else { p.style.transform = 'translateX(30%)'; p.style.opacity = '0'; }
+@@ -196,12 +217,12 @@
+     edge.addEventListener('touchstart', function (e) { on = true; x0 = e.touches[0].clientX; dx = 0; p.classList.remove('anim'); }, { passive: true });
+     edge.addEventListener('touchmove', function (e) {
+       if (!on) return; dx = Math.max(0, e.touches[0].clientX - x0);
+-      p.style.transform = 'translateX(' + dx + 'px)'; body.classList.toggle('tool-open', dx < innerWidth * 0.35);
++      p.style.transform = 'translate3d(' + dx + 'px,0,0)'; body.classList.toggle('tool-open', dx < innerWidth * 0.35);
+     }, { passive: true });
+     edge.addEventListener('touchend', function () {
+       if (!on) return; on = false; p.classList.add('anim');
+-      if (dx > innerWidth * 0.3) { p.style.transform = 'translateX(100%)'; ignorePop++; var id = current; current = null; body.classList.remove('tool-open', 'locked');
+-        document.title = 'Liming 工具箱'; renderRecent(); history.back();
++      if (dx > innerWidth * 0.3) { p.style.transform = 'translate3d(100%,0,0)'; ignorePop++; var id = current; current = null; body.classList.remove('tool-open', 'locked');
++        document.title = 'Liming 工具箱'; history.back();
+         setTimeout(function () { if (current !== id) { p.classList.remove('show', 'anim', 'opened'); p.style.transform = ''; } }, 460); }
+       else { p.style.transform = ''; body.classList.add('tool-open'); }
+     });
+@@ -217,5 +238,11 @@
+   } else if (path && path !== '/' && path !== '/index.html') {
+     history.replaceState({}, '', '/');
+   }
++  // bfcache 恢复（从别的网站/下载页返回）：按地址栏重新对齐面板状态
++  window.addEventListener('pageshow', function (e) {
++    if (!e.persisted) return;
++    var t = byPath[location.pathname.replace(/\/+$/, '')];
++    if (t && current !== t.id) open(t.id, { instant: true }); else if (!t && current) close({ instant: true });
++  });
+   window.LimingShell = { open: open, back: back, tools: TOOLS };
+ })();
+diff -ruN -x vendor -x data a/site/tools/map/map.css b/site/tools/map/map.css
+--- a/site/tools/map/map.css	2026-10-25 01:37:38.702911540 +0800
++++ b/site/tools/map/map.css	2026-10-25 01:38:26.766818705 +0800
+@@ -14,6 +14,7 @@
+ .glass,.fab,#search,#results{background:var(--card);backdrop-filter:saturate(180%) blur(18px);-webkit-backdrop-filter:saturate(180%) blur(18px)}
+ #map{position:fixed;inset:0;background:var(--bg)}
+ #snap{position:fixed;inset:0;z-index:1;pointer-events:none;background-size:100% 100%;opacity:0;transition:opacity .45s var(--ease)}
++#snap img{display:block;width:100%;height:100%}
+ #snap.on{opacity:1;transition:none}
+ .maplibregl-canvas{outline:none}
+ 
+diff -ruN -x vendor -x data a/site/tools/map/map.js b/site/tools/map/map.js
+--- a/site/tools/map/map.js	2026-10-25 01:37:38.702911540 +0800
++++ b/site/tools/map/map.js	2026-10-25 01:38:26.766818705 +0800
+@@ -118,17 +118,27 @@
+ function markerEl(cls) { const el = document.createElement('div'); el.className = cls; el.innerHTML = '<i></i>'; return el; }
+ 
+ /* ---------- 切换底图（截图交叉淡化，避免闪白） ---------- */
++// 截图：缩到 ≤1.5x 再编码，并在显示前 decode()，否则 iPhone 上 3x 大图来不及解码，切换时会露出半张/空白（撕裂感）
+ function snapshot() {
+   return new Promise((res) => {
+     let done = false;
+-    map.once('render', () => { try { res(map.getCanvas().toDataURL('image/jpeg', 0.7)); } catch (e) { res(null); } done = true; });
++    map.once('render', () => {
++      done = true;
++      try {
++        const src = map.getCanvas(), k = Math.min(1, 1.5 / (window.devicePixelRatio || 1));
++        const c = document.createElement('canvas'); c.width = Math.round(src.width * k); c.height = Math.round(src.height * k);
++        c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
++        const img = new Image(); img.src = c.toDataURL('image/jpeg', 0.75);
++        (img.decode ? img.decode() : Promise.resolve()).then(() => res(img), () => res(null));
++      } catch (e) { res(null); }
++    });
+     map.triggerRepaint(); setTimeout(() => { if (!done) res(null); }, 300);
+   });
+ }
+ async function setLayer(key, quiet) {
+   if (key === curKey && !quiet) return;
+   const snap = $('#snap');
+-  if (!reduce) { const url = await snapshot(); if (url) { snap.style.backgroundImage = `url(${url})`; snap.classList.add('on'); } }
++  if (!reduce) { const img = await snapshot(); if (img) { snap.replaceChildren(img); snap.classList.add('on'); } }
+   curKey = key; gcj = LAYERS[key].gcj;
+   map.setStyle(LAYERS[key].style(), { diff: false });
+   points.forEach(place);
+diff -ruN -x vendor -x data a/site/tools/transfer/transfer.js b/site/tools/transfer/transfer.js
+--- a/site/tools/transfer/transfer.js	2026-10-25 01:37:38.702911540 +0800
++++ b/site/tools/transfer/transfer.js	2026-10-25 01:43:00.574305703 +0800
+@@ -105,10 +105,13 @@
+       '<button class="ab' + (it.expires ? '' : ' on') + '" data-a="keep" aria-label="' + (it.expires ? '永久保留' : '取消永久') + '">' + (it.expires ? IC.pin : IC.pinOn) + '</button>' +
+       '<button class="ab" data-a="del" aria-label="删除">' + IC.del + '</button></div>';
+   }
++  var sigs = {};
+   function upsert(it, isNew) {
+     var had = !!items[it.id]; items[it.id] = it;
+     var li = list.querySelector('[data-id="' + it.id + '"]');
+-    if (li) { var full = li.querySelector('.tx.full'); fill(li, it); if (full) li.querySelector('.tx').classList.add('full'); }
++    var old = sigs[it.id], sig = JSON.stringify(it); sigs[it.id] = sig;
++    if (li && old === sig && !uploads[it.id]) { /* 未变化：不重绘，保留选区/按钮状态/缩略图 */ }
++    else if (li) { var full = li.querySelector('.tx.full'); fill(li, it); if (full) li.querySelector('.tx').classList.add('full'); }
+     else { li = itemEl(it); if (isNew) li.classList.add('new'); insertSorted(li, it); }
+     $('#empty').hidden = true;
+     return had;
+@@ -122,6 +125,7 @@
+     ids.forEach(function (id) {
+       delete items[id]; var li = list.querySelector('[data-id="' + id + '"]'); if (!li) return;
+       li.style.height = li.offsetHeight + 'px'; li.classList.add('out');
++      li.dataset.id = ''; // 让 300ms 内重新 upsert 的同 id 条目新建节点，而不是被这里删掉
+       setTimeout(function () { li.remove(); checkEmpty(); }, 300);
+     });
+   }
+@@ -147,24 +151,33 @@
+   setInterval(function () { list.querySelectorAll('.it').forEach(function (li) { var it = items[li.dataset.id]; if (it && !uploads[it.id]) { var mt = li.querySelector('.mt'); if (mt) { var tmp = document.createElement('li'); fill(tmp, it); mt.innerHTML = tmp.querySelector('.mt').innerHTML; } } }); }, 60000);
+ 
+   /* ---------- 实时：WebSocket，失败则轮询 ---------- */
+-  var ws = null, wsFails = 0, pollT = null, pingT = null, live = $('#live'), running = false;
++  var ws = null, wsFails = 0, pollT = null, pingT = null, live = $('#live'), running = false, reT = null, pongT = null;
+   function connect() {
+-    if (!running) return;
++    clearTimeout(reT); reT = null;
++    if (!running || (ws && ws.readyState <= 1)) return;
+     try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + API + '/ws'); } catch (e) { return poll(); }
++    var me = ws;
+     ws.onopen = function () { wsFails = 0; live.className = 'live on'; clearInterval(pollT); pollT = null; refresh(); clearInterval(pingT); pingT = setInterval(function () { try { ws.send('ping'); } catch (e) {} }, 25000); };
+     ws.onmessage = function (e) {
++      clearTimeout(pongT); pongT = null;
+       var m; try { m = JSON.parse(e.data); } catch (x) { return; }
+       if (m.type === 'item') { if (!uploads[m.item.id]) { var had = upsert(m.item, true); if (!had && m.item.kind === 'text' && m.item.dev !== DEV) navigator.vibrate && navigator.vibrate(10); } else items[m.item.id] = m.item; recalcUsed(); }
+       else if (m.type === 'progress') { var it = items[m.id]; if (it && !uploads[m.id]) { it.got = m.got; it.chunks = m.chunks; var li2 = list.querySelector('[data-id="' + m.id + '"]'); if (li2) fill(li2, it); } }
+       else if (m.type === 'removed') { removeIds(m.ids); recalcUsed(); }
+       else if (m.type === 'cleared') { removeIds(Object.keys(items)); used = 0; usage(); }
+     };
+-    ws.onclose = function () { clearInterval(pingT); ws = null; if (!running) return; wsFails++; live.className = 'live poll'; poll(); setTimeout(connect, Math.min(30000, 1000 * Math.pow(2, wsFails))); };
++    ws.onclose = function () { if (me !== ws) return; clearInterval(pingT); clearTimeout(pongT); ws = null; if (!running) return; wsFails++; live.className = 'live poll'; poll(); clearTimeout(reT); reT = setTimeout(connect, Math.min(30000, 1000 * Math.pow(2, wsFails))); };
+   }
+   function recalcUsed() { used = 0; for (var id in items) if (items[id].kind === 'file') used += items[id].size; usage(); }
+   function poll() { if (pollT || !running) return; pollT = setInterval(function () { if (!document.hidden) refresh(); }, 4000); }
+-  function stopLive() { running = false; clearInterval(pollT); pollT = null; clearInterval(pingT); if (ws) try { ws.close(); } catch (e) {} ws = null; }
+-  document.addEventListener('visibilitychange', function () { if (!document.hidden && running) { refresh(); if (!ws) connect(); } });
++  function stopLive() { running = false; clearInterval(pollT); pollT = null; clearInterval(pingT); clearTimeout(reT); clearTimeout(pongT); if (ws) try { ws.close(); } catch (e) {} ws = null; }
++  // iOS 从后台回来时 socket 可能“假在线”：发 ping，3 秒没回包就重连
++  document.addEventListener('visibilitychange', function () {
++    if (document.hidden || !running) return;
++    refresh();
++    if (!ws) return connect();
++    if (ws.readyState === 1) { try { ws.send('ping'); } catch (e) {} clearTimeout(pongT); var s0 = ws; pongT = setTimeout(function () { if (s0 === ws) { ws = null; try { s0.close(); } catch (e) {} connect(); } }, 3000); }
++  });
+ 
+   function start() {
+     $('#login').hidden = true; $('#app').hidden = false; running = true;
+@@ -175,7 +188,7 @@
+   var ta = $('#text'), sendBtn = $('#send');
+   function grow() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, innerHeight * 0.4) + 'px'; sendBtn.disabled = !ta.value.trim(); }
+   ta.addEventListener('input', grow);
+-  ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || (!e.shiftKey && !isIOS && matchMedia('(hover:hover)').matches))) { e.preventDefault(); sendText(); } });
++  ta.addEventListener('keydown', function (e) { if (e.isComposing || e.keyCode === 229) return; if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || (!e.shiftKey && !isIOS && matchMedia('(hover:hover)').matches))) { e.preventDefault(); sendText(); } });
+   sendBtn.addEventListener('click', sendText);
+   function sendText() {
+     var t = ta.value; if (!t.trim()) return;
+@@ -255,10 +268,10 @@
+     }
+     return Promise.all([worker(), worker(), worker()]).then(function () {
+       if (U.cancel) return;
+-      delete uploads[id]; it.done = true; it.got = U.n; upsert(it); recalcUsed(); toast('已上传');
++      delete uploads[id]; it = items[id] || it; it.done = true; it.got = U.n; upsert(it); recalcUsed(); toast('已上传');
+     }).catch(function (e) {
+       if (U.cancel || e.message === 'cancel') return;
+-      if (e.message === 'auth') return;
++      if (e.message === 'auth') { U.failed = true; U.xhrs.forEach(function (x) { x.abort(); }); refill(id); return; } // 显示「重试」，并解除 beforeunload 拦截
+       if (e.status === 404) { delete uploads[id]; removeIds([id]); toast('上传已被取消'); return; }
+       U.failed = true; U.xhrs.forEach(function (x) { x.abort(); }); refill(id); toast('上传中断，可点重试续传');
+     });
+@@ -281,7 +294,7 @@
+     if ($('#app').hidden || !e.clipboardData) return;
+     var files = Array.prototype.slice.call(e.clipboardData.files || []);
+     if (files.length) { e.preventDefault(); addFiles(files.map(function (f, i) { return f.name && f.name !== 'image.png' ? f : new File([f], '粘贴图片-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '') + (i ? '-' + i : '') + '.' + ((f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')), { type: f.type }); })); return; }
+-    if (document.activeElement !== ta) { var t = e.clipboardData.getData('text'); if (t) { e.preventDefault(); ta.value = t; grow(); ta.focus(); } }
++    if (document.activeElement !== ta && !ta.value.trim()) { var t = e.clipboardData.getData('text'); if (t) { e.preventDefault(); ta.value = t; grow(); ta.focus(); } }
+   });
+ 
+   /* ---------- 条目操作 ---------- */
+@@ -294,6 +307,7 @@
+     var li = b.closest('.it'), it = items[li.dataset.id]; if (!it) return;
+     var a = b.dataset.a;
+     if (a === 'copy') copy(it.text).then(function () { flash(b); toast('已复制'); }, function () { toast('复制失败'); });
++    else if (a === 'view' && !it.done) return;
+     else if (a === 'view') { $('#vimg').src = raw(it); $('#viewer').hidden = false; document.body.classList.add('noscroll'); }
+     else if (a === 'save') save(it, b);
+     else if (a === 'cancel') cancelUpload(it.id);
+@@ -317,6 +331,7 @@
+       if (f) { return navigator.share({ files: [f] }).catch(function (e) { if (e && e.name === 'NotAllowedError') location.href = raw(it, true); }); }
+       b.classList.add('busy'); b.innerHTML = IC.spin;
+       fetch(raw(it), { credentials: 'same-origin' }).then(function (r) { if (!r.ok) throw 0; return r.blob(); }).then(function (bl) {
++        fetched = {}; // 只缓存最近一个，避免 iPhone 内存被几百 MB Blob 占满
+         f = fetched[it.id] = new File([bl], it.name, { type: it.mime });
+         b.classList.remove('busy'); b.innerHTML = IC.share;
+         navigator.share({ files: [f] }).catch(function (e) { if (e && e.name === 'NotAllowedError') toast('已就绪，再点一次保存'); });
+diff -ruN -x vendor -x data a/src/worker.js b/src/worker.js
+--- a/src/worker.js	2026-10-25 01:37:38.702911540 +0800
++++ b/src/worker.js	2026-10-25 01:43:04.026301739 +0800
+@@ -205,9 +205,10 @@
+       const r = this.row(mt[1]);
+       if (!r || r.kind !== 'file' || !r.done || (r.expires && r.expires <= Date.now())) return err(404, 'not_found');
+       const dl = url.searchParams.has('dl');
+-      const fn = encodeURIComponent(r.name);
++      const fn = encodeURIComponent(r.name).replace(/['()*!]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
++      const ascii = (r.name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\;]/g, '_') || 'file');
+       const h = { ...SEC_HEADERS, 'Content-Type': r.mime, 'Content-Length': String(r.size),
+-        'Content-Disposition': `${dl ? 'attachment' : 'inline'}; filename*=UTF-8''${fn}`, 'Cache-Control': 'private, max-age=3600',
++        'Content-Disposition': `${dl ? 'attachment' : 'inline'}; filename="${ascii}"; filename*=UTF-8''${fn}`, 'Cache-Control': 'private, max-age=3600',
+         'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox" };
+       h['Accept-Ranges'] = 'bytes';
+       let start = 0, end = r.size - 1, status = 200;

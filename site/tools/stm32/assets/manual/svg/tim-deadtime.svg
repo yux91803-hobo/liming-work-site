@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="409.74" height="144.77" viewBox="0 0 409.74 144.77">
+<title>带死区插入的互补输出</title>
+<style>@font-face{font-family:'STL';font-weight:normal;src:url(data:font/woff2;base64,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) format('woff2');}@font-face{font-family:'STC';font-weight:normal;src:url(data:font/woff2;base64,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) format('woff2');}text{font-family:STL,STC,sans-serif;white-space:pre;fill:#000;text-rendering:geometricPrecision}</style>
+<rect width="100%" height="100%" fill="#fff"/>
+<g><defs>
+<clipPath id="clip_1">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M121.2 210.75H530.94V355.52H121.2Z"/>
+</clipPath>
+<clipPath id="clip_2">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M0 0H595.22V842H0Z"/>
+</clipPath>
+<clipPath id="clip_3">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M71.52 104.96H99.899997V89.84H71.52Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_4">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+<clipPath id="clip_5">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M123.96 352.52H527.94V210.79999H123.96Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_6">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+<clipPath id="clip_7">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M123.97 209.755H527.924V365.3H123.97Z"/>
+</clipPath>
+<clipPath id="clip_8">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M123.96 365.3H527.94V209.77999H123.96Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_9">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M123.96 352.52H527.94V210.79999H123.96Z" clip-rule="evenodd"/>
+</clipPath>
+<clipPath id="clip_10">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M0 841.98H595.2V0H0Z"/>
+</clipPath>
+</defs>
+<g clip-path="url(#clip_1)">
+<g clip-path="url(#clip_2)">
+<g clip-path="url(#clip_3)">
+<g clip-path="url(#clip_4)">
+</g>
+</g>
+<g clip-path="url(#clip_5)">
+<g clip-path="url(#clip_6)">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M123.96 210.78H527.94V352.56H123.96Z" fill="#ffffff"/>
+</g>
+</g>
+<g clip-path="url(#clip_7)">
+<g clip-path="url(#clip_8)">
+<g clip-path="url(#clip_9)">
+<g clip-path="url(#clip_10)">
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M303.169 300.276H303.64805V300.515H303.169Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M303.169 300.279H303.40605V300.758H303.169Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M400.373 300.276H400.85203V300.515H400.373Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M319.371 284.317H319.85V284.556H319.371Z"/>
+<path transform="matrix(1,0,0,-1,91.77402,22.348969)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#1e191a" d="M0 0H90.195V-8.114H171.677V-.014H276.677"/>
+<path transform="matrix(1,0,0,-1,91.77402,47.016969)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#1e191a" d="M0 0H90.195V-8.113H187.678V-.013H276.677"/>
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M319.272 284.098H319.75105V284.33598H319.272Z"/>
+<path transform="matrix(1,0,0,-1,368.95,79.412967)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#1e191a" d="M0 0H-105.529V8.114H-170.676V.013H-276.677"/>
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" stroke-width=".5" stroke-linecap="butt" stroke-dasharray="2.0001,2.0001" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#000000" d="M303.138 338.005V262.502M319.473 338.172V262.168M384.64 339.505V259.169M400.641 339.171V258.835"/>
+<path transform="matrix(1,0,0,-1,184.10602,88.18497)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#1e191a" d="M0 0H11.834"/>
+<path transform="matrix(1,0,0,-1,195.50202,89.68497)" d="M0 0 2.59 1.495 0 2.991" fill="#1e191a"/>
+<path transform="matrix(1,0,0,-1,184.544,86.68497)" d="M0 0-2.591-1.494 0-2.99" fill="#1e191a"/>
+<path transform="matrix(1,0,0,-1,265.77604,64.349948)" stroke-width=".5" stroke-linecap="butt" stroke-miterlimit="4" stroke-linejoin="miter" fill="none" stroke="#1e191a" d="M0 0H11.333"/>
+<path transform="matrix(1,0,0,-1,276.67103,65.849948)" d="M0 0 2.589 1.495 0 2.991" fill="#1e191a"/>
+<path transform="matrix(1,0,0,-1,266.212,62.849946)" d="M0 0-2.589-1.494 0-2.99" fill="#1e191a"/>
+</g>
+</g>
+</g>
+</g>
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M124.2 352.04H527.94V352.52003H124.2Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M527.46 210.8H527.94V352.28H527.46Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M123.96 210.8H527.7V211.28002H123.96Z"/>
+<path transform="matrix(1,0,0,-1,-121.19998,355.51997)" d="M123.96 211.04H124.44V352.52H123.96Z"/>
+</g>
+</g></g>
+<g>
+<text x="202.23" y="92.11" font-size="8.05" text-anchor="start">延迟</text>
+<text x="283.73" y="66.31" font-size="8.05" text-anchor="start">延迟</text>
+<text x="47.30" y="25.51" font-size="8.05">OCxREF</text>
+<text x="62.40" y="50.80" font-size="8.05">OCx</text>
+<text x="57.40" y="80.10" font-size="8.05">OCxN</text>
+<text x="367.75" y="140.51" font-size="6.00">MS31095V1</text>
+</g>
+</svg>

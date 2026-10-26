@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="same-origin">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#faf9f5">
+<meta name="format-detection" content="telephone=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>STM32 · Liming</title>
+<script>
+  // 嵌入工具箱 iframe（?embed=1）时加 embed 类；尽早应用主题（默认浅色）
+  (function () {
+    var h = document.documentElement;
+    try { if (window.self !== window.top || /[?&]embed=1(&|$)/.test(location.search)) h.classList.add('embed'); } catch (e) { h.classList.add('embed'); }
+    var t = 'light';
+    try { t = localStorage.getItem('lm.theme') || 'light'; } catch (e) {}
+    var dark = t === 'dark' || (t === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+    h.setAttribute('data-theme', dark ? 'dark' : 'light');
+  })();
+</script>
+<link rel="stylesheet" href="stm32.css">
+<link rel="stylesheet" href="regs.css">
+<script src="pins.js" defer></script>
+<script src="snippets.js" defer></script>
+<script src="assets/board.js" defer></script>
+<script src="assets/assets.js" defer></script>
+<script src="assets/manual.js" defer></script>
+<script src="assets/teach-arch/teach-arch.js" defer></script>
+<script src="assets/courseware/courseware.js" defer></script>
+<script src="assets/courseware/errata.js" defer></script>
+<script src="assets/cw-regs.js" defer></script>
+<script src="stm32.js" defer></script>
+</head>
+<body>
+<div id="app" class="app">
+  <header id="top" class="top">
+    <div class="top-row">
+      <h1 class="brand"><span class="spark" aria-hidden="true">✻</span>STM32</h1>
+    </div>
+    <nav id="seg" class="seg" role="tablist" aria-label="功能">
+      <span class="seg-ink" aria-hidden="true"></span>
+      <button type="button" class="seg-btn" role="tab" data-tab="pins" aria-selected="true" aria-controls="pane-pins" tabindex="0"><span>引脚速查</span></button>
+      <button type="button" class="seg-btn" role="tab" data-tab="regs" aria-selected="false" aria-controls="pane-regs" tabindex="-1"><span>寄存器</span></button>
+      <button type="button" class="seg-btn" role="tab" data-tab="code" aria-selected="false" aria-controls="pane-code" tabindex="-1"><span>代码片段</span></button>
+      <button type="button" class="seg-btn" role="tab" data-tab="chip" aria-selected="false" aria-controls="pane-chip" tabindex="-1"><span>芯片/板子</span></button>
+      <button type="button" class="seg-btn" role="tab" data-tab="arch" aria-selected="false" aria-controls="pane-arch" tabindex="-1"><span>架构图</span></button>
+      <button type="button" class="seg-btn" role="tab" data-tab="course" aria-selected="false" aria-controls="pane-course" tabindex="-1"><span>课件</span></button>
+    </nav>
+  </header>
+
+  <main class="views">
+    <section id="pane-pins" class="pane active" data-pane="pins" role="tabpanel">
+      <label id="cmd" class="cmd">
+        <span class="caret" aria-hidden="true">&gt;</span>
+        <input id="q" type="search" placeholder="PA9 / USART1 / TIM2_CH1" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="搜索引脚或外设">
+        <span id="qn" class="qn" aria-hidden="true"></span>
+        <button id="qx" class="qx" type="button" aria-label="清除" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>
+        </button>
+      </label>
+      <div id="pinList" class="pin-list"></div>
+      <div id="pinEmpty" class="vstate" hidden></div>
+    </section>
+
+    <section id="pane-regs" class="pane" data-pane="regs" role="tabpanel"></section>
+
+    <section id="pane-code" class="pane" data-pane="code" role="tabpanel">
+      <div id="codeCats" class="chips" role="tablist" aria-label="分类"></div>
+      <div id="codeList" class="code-list"></div>
+    </section>
+
+    <section id="pane-chip" class="pane" data-pane="chip" role="tabpanel">
+      <h2 class="ttl">尚硅谷 STM32F103ZET6 开发板</h2>
+      <div class="blk">
+        <h3 class="blk-h">板载资源</h3>
+        <div id="boardRes" class="board-res"></div>
+      </div>
+      <div class="blk">
+        <h3 class="blk-h">LQFP144</h3>
+        <div id="pkg" class="pkg zoom-view"><div id="pkgContent" class="zoom-content"></div></div>
+      </div>
+      <div id="photoBlk" class="blk" hidden>
+        <h3 class="blk-h">实物图</h3>
+        <button id="photoBtn" class="photo" type="button" aria-label="实物图"></button>
+      </div>
+      <div class="blk">
+        <h3 class="blk-h">原理图</h3>
+        <div id="schGroups" class="chips" role="tablist" aria-label="原理图分组"></div>
+        <div id="schList" class="doc-list"></div>
+      </div>
+    </section>
+
+    <section id="pane-arch" class="pane" data-pane="arch" role="tabpanel">
+      <div class="kbar">
+        <div id="figKind" class="kseg" role="tablist" aria-label="架构图分区" data-k="manual" hidden>
+          <span class="kseg-ink" aria-hidden="true"></span>
+          <button type="button" class="kseg-btn" role="tab" data-kind="manual" aria-selected="true" aria-controls="figList" tabindex="0"><span>手册</span></button>
+          <button type="button" class="kseg-btn" role="tab" data-kind="teach" aria-selected="false" aria-controls="teachList" tabindex="-1"><span>教学</span></button>
+        </div>
+      </div>
+      <div id="figList" class="doc-list" role="tabpanel" aria-label="手册"></div>
+      <div id="teachList" class="doc-list" role="tabpanel" aria-label="教学" hidden></div>
+    </section>
+
+    <section id="pane-course" class="pane" data-pane="course" role="tabpanel">
+      <div id="cwList" class="doc-list cw-list"></div>
+    </section>
+  </main>
+</div>
+
+<section id="viewer" class="viewer" role="dialog" aria-modal="true" aria-labelledby="vwTitle" aria-hidden="true">
+  <header class="vw-top">
+    <button id="vwClose" class="icon-btn vw-close" type="button" aria-label="关闭">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>
+    </button>
+    <div class="vw-title">
+      <span id="vwLabel" class="vw-label"></span>
+      <span id="vwTitle" class="vw-name"></span>
+    </div>
+    <span id="vwCount" class="vw-count"></span>
+    <button id="vwPrev" class="icon-btn" type="button" aria-label="上一页">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>
+    </button>
+    <button id="vwNext" class="icon-btn" type="button" aria-label="下一页">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>
+    </button>
+  </header>
+  <div id="vwStage" class="vw-stage zoom-view">
+    <div id="vwContent" class="zoom-content"></div>
+    <span id="vwLoad" class="vw-load" aria-hidden="true">✻</span>
+    <div id="vwEmpty" class="vstate vw-empty" hidden></div>
+  </div>
+</section>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
