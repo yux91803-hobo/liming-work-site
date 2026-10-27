@@ -15,7 +15,7 @@
   function applyTheme() {
     var t = ui.lsGet('lm.theme') || 'light', dark = t === 'dark' || (t === 'auto' && mq && mq.matches);
     html.setAttribute('data-theme', dark ? 'dark' : 'light');
-    var m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', dark ? '#0e1814' : '#f2f4f1');
+    var m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', dark ? '#1f1e1d' : '#faf9f5');
   }
   applyTheme();
   if (mq) (mq.addEventListener ? mq.addEventListener('change', applyTheme) : mq.addListener(applyTheme));
@@ -47,6 +47,7 @@
     // 寄存器 / 片段没给主题时，补上它所属的主题
     if (t.v === 'topic' && !t.t) { var tp = (t.reg && M.topicOfReg(t.reg)) || (t.snip && M.topicOfSnip(t.snip)); if (tp) t.t = tp.id; else t = strip(t, ['snip']); }
     if (t.v === 'topic' && !M.topicById[t.t]) { t.v = 'home'; delete t.t; delete t.snip; }
+    if (t.v === 'think' && t.t && !(STM.think && STM.think.chapter(t.t))) { delete t.t; delete t.p; }
     if (t.reg && !M.R.reg(t.reg)) t = strip(t, LAYER_REG);
     return t;
   }
@@ -107,7 +108,7 @@
 
   /* ---------- 布局：侧栏（宽屏）/ 顶栏（窄屏） ---------- */
   var side = document.getElementById('side'), bar = document.getElementById('bar'), main = document.getElementById('main');
-  var NAV = [['home', '学习地图', 'map'], ['chip', '芯片引脚', 'chip'], ['board', '开发板', 'board'], ['course', '课件', 'book']];
+  var NAV = [['home', '学习地图', 'map'], ['think', '编程思维', 'idea'], ['chip', '芯片引脚', 'chip'], ['board', '开发板', 'board'], ['course', '课件', 'book']];
   function hue(t) { return t ? t.hue[html.getAttribute('data-theme') === 'dark' ? 1 : 0] : ''; }
   function link(route, cls, label) {
     var a = el('a', cls); a.href = urlOf(resolve(route));
@@ -117,7 +118,7 @@
   }
   function buildSide() {
     var brand = el('div', 'brand');
-    brand.appendChild(ui.icon('chip', 'ic brand-ic'));
+    var sp = el('span', 'brand-spark', '✻'); sp.setAttribute('aria-hidden', 'true'); brand.appendChild(sp);   // 与工具箱首页同一个符号
     var bt = el('div', 'brand-t'); bt.appendChild(el('b', null, 'STM32F103')); bt.appendChild(el('span', null, '学习台')); brand.appendChild(bt);
     side.appendChild(brand);
     var sb = ui.btn('side-search', null, '搜索'); sb.appendChild(ui.icon('search')); sb.appendChild(el('span', null, '搜索')); sb.appendChild(el('kbd', null, '/'));
@@ -144,12 +145,12 @@
     bar.appendChild(barBack); bar.appendChild(barTitle); bar.appendChild(s);
   }
   function syncChrome(r, title) {
-    Array.prototype.forEach.call(side.querySelectorAll('.nav-i'), function (a) { a.classList.toggle('on', a.dataset.v === r.v && r.v !== 'topic'); a.setAttribute('aria-current', a.dataset.v === r.v ? 'page' : 'false'); });
+    Array.prototype.forEach.call(side.querySelectorAll('.nav-i'), function (a) { var on = a.dataset.v === r.v && r.v !== 'topic'; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     Array.prototype.forEach.call(side.querySelectorAll('.nav-t'), function (a) { var on = r.v === 'topic' && a.dataset.t === r.t; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     barBack.hidden = embedded || r.v === 'home';
     barTitle.textContent = title;
     document.title = (r.v === 'home' ? '' : title + ' · ') + 'STM32 学习台';
-    var t = r.v === 'topic' ? M.topicById[r.t] : null;
+    var t = (r.v === 'topic' || r.v === 'think') && r.t ? M.topicById[r.t] : null;
     html.style.setProperty('--h', t ? hue(t) : '');
     html.classList.toggle('in-topic', !!t);
   }

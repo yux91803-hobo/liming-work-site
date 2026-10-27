@@ -79,6 +79,7 @@
       var meta = el('span', 'trow-m');
       if (t.chapters.length) { var c0 = t.chapters[0], pt = M.partById[c0.part]; meta.appendChild(el('span', null, pt.short + ' 第 ' + (c0.start + 1) + ' 页起')); }
       meta.appendChild(el('span', null, t.regCount + ' 个寄存器'));
+      if (STM.think && STM.think.chapter(t.id)) { var tb = el('span', 'trow-think', '有思维训练'); meta.appendChild(tb); }
       a.appendChild(meta);
       var pins = t.pins.map(function (h) { return h.p.n; });
       function on() { chip.light(pins, app.hue(t)); cap.textContent = t.code + (pins.length ? ' 用到 ' + pins.length + ' 个引脚' + (t.board ? '（开发板上接的）' : '') + '。' : ' 不直接占用引脚。'); }
@@ -92,7 +93,8 @@
     var more = el('section', 'more');
     more.appendChild(h2('资料'));
     var pos = readPos();
-    [[{ v: 'chip' }, 'chip', '芯片引脚', '144 个脚逐个看：复用功能、重映射、开发板上接了什么。'],
+    [[{ v: 'think' }, 'idea', '编程思维', '拿到需求，自己想出代码：GPIO、USART、I2C 三章，每章从「为什么」推到能运行的程序。'],
+     [{ v: 'chip' }, 'chip', '芯片引脚', '144 个脚逐个看：复用功能、重映射、开发板上接了什么。'],
      [{ v: 'board' }, 'board', '开发板', M.board.length + ' 个板载资源和对应引脚，' + M.sch.length + ' 页原理图。'],
      [{ v: 'course' }, 'book', '课件', M.course.map(function (p) { return p.short + ' ' + p.n + ' 页' + (pos[p.id] ? '，读到第 ' + pos[p.id] + ' 页' : ''); }).join('；') + '。']
     ].forEach(function (x) {
@@ -123,6 +125,16 @@
     head.appendChild(mc);
     art.appendChild(head);
 
+    var ch = STM.think && STM.think.chapter(t.id);
+    if (ch) {
+      var d = STM.think.progress(t.id), nDone = d.filter(Boolean).length;
+      var en = app.link({ v: 'think', t: t.id }, 'thinkin');
+      en.appendChild(ui.icon('idea'));
+      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, '编程思维：从需求自己想出代码'));
+      et.appendChild(el('span', null, ch.goal + (nDone ? '　已完成 ' + nDone + ' / 4 步' : ''))); en.appendChild(et);
+      en.appendChild(el('span', 'thinkin-go', nDone === 4 ? '复习' : nDone ? '继续' : '开始'));
+      art.appendChild(en);
+    }
     var parts = [];
     var snav = el('nav', 'snav'); snav.setAttribute('aria-label', '本页内容');
     art.appendChild(snav);

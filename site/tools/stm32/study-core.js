@@ -2,8 +2,8 @@
    外壳 shell.js 也加载本文件：用 params(fromParams(x)) 清洗 iframe 报上来的定位参数。
 
    路由（URL 查询参数）：
-     v    基础视图 home | topic | chip | board | course
-     t    外设主题 id（v=topic）
+     v    基础视图 home | topic | chip | board | course | think
+     t    外设主题 id（v=topic / v=think）；p 编程思维的第几段 1~4
      reg  寄存器 id，i 实例，n 通道 / 序号，val 计算值（0x 8 位）
      pin  芯片引脚号 1~144，q 引脚筛选词（v=chip）
      snip 代码片段标题（v=topic，定位到该片段）
@@ -15,7 +15,7 @@
   else root.STM32StudyCore = api;
 })(typeof window === 'object' ? window : this, function () {
   'use strict';
-  var VIEWS = ['home', 'topic', 'chip', 'board', 'course'];
+  var VIEWS = ['home', 'topic', 'chip', 'board', 'course', 'think'];
   function text(v, n) { return typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, '').trim().slice(0, n).trim() : ''; }
   function hex8(v) {
     var s = String(v == null ? '' : v).trim();
@@ -29,7 +29,8 @@
     o.v = VIEWS.indexOf(x.v) >= 0 ? x.v : 'home';
     if (/^[a-z][a-z0-9]{1,7}$/.test(x.t || '')) o.t = x.t;
     if (o.v === 'topic' && !o.t && !x.reg && !x.snip) o.v = 'home';
-    if (o.v !== 'topic') delete o.t;
+    if (o.v !== 'topic' && o.v !== 'think') delete o.t;
+    if (o.v === 'think' && o.t && /^[1-4]$/.test(String(x.p == null ? '' : x.p))) o.p = String(x.p);   // 编程思维：第几段
     if (/^[A-Za-z][A-Za-z0-9_]{1,31}$/.test(x.reg || '')) {
       o.reg = x.reg;
       if (/^[A-Za-z0-9_]{1,16}$/.test(x.i || '')) o.i = x.i;

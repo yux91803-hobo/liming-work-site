@@ -192,6 +192,105 @@ async def main():
         await pg.wait_for_timeout(600)
         check('手机：左滑翻到下一页', (await pg.inner_text('.vw-n')).startswith('11 /'))
         await pg.context.close()
+
+        # ---------- 10. 编程思维：把三章每一道题都实际做一遍 ----------
+        pg = await page(b)
+        await pg.goto(TOOL + '?v=think'); await pg.wait_for_selector('.tk-ch')
+        check('编程思维总览：三章 + 五步骨架', await pg.evaluate("document.querySelectorAll('.tk-ch').length") == 3 and await pg.evaluate("document.querySelectorAll('.tk-skbox .skstrip li').length") == 5)
+        SOLVE = """async (sel) => {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          const box = document.querySelector(sel); const log = [];
+          const q = box.__q;
+          return log;
+        }"""
+        async def solve_current(scope):
+            """做当前显示的那一道题：先故意错一次，看提示，再做对。返回 (类型, 错误提示是否对得上, 是否解出)"""
+            info = await pg.evaluate("""(scope) => {
+              const box = document.querySelector(scope + ' .q:not(.solved)'); if (!box) return null;
+              return { type: [...box.classList].find(c => c.startsWith('q-') && c !== 'q').slice(2), text: box.querySelector('.q-q').textContent };
+            }""", scope)
+            if not info: return None
+            data = await pg.evaluate("""(text) => {
+              for (const c of STM32_THINK.chapters) {
+                for (const w of c.why) if (w.q && w.q.q === text) return w.q;
+                for (const t of c.tasks) for (const q of t.qs) if (q.q === text) return q;
+              }
+              return null; }""", info['text'])
+            hint_ok = True
+            box = scope + ' .q:not(.solved)'
+            if info['type'] == 'choice':
+                wrong = [i for i, o in enumerate(data['opts']) if not o.get('ok')]
+                right = [i for i, o in enumerate(data['opts']) if o.get('ok')][0]
+                if wrong:
+                    await pg.click(f'{box} .q-opt >> nth={wrong[0]}')
+                    fb = await pg.inner_text(f'{box} .q-fb')
+                    hint_ok = data['opts'][wrong[0]]['why'][:12] in fb
+                await pg.click(f'{box} .q-opt >> nth={right}')
+            elif info['type'] == 'fill':
+                await pg.fill(f'{box} .q-fill input', 'zzz'); await pg.click(f'{box} .q-fill .pill')
+                fb = await pg.inner_text(f'{box} .q-fb'); hint_ok = '提示 1' in fb
+                await pg.fill(f'{box} .q-fill input', data['answers'][0]); await pg.click(f'{box} .q-fill .pill')
+            else:   # order / parsons
+                want = data['lines'] if info['type'] == 'parsons' else [x['t'] for x in sorted(data['items'], key=lambda x: x['rank'])]
+                if info['type'] == 'parsons' and data.get('extra'):
+                    await pg.evaluate("""([sel, t]) => { [...document.querySelectorAll(sel + ' .q-pool .q-chip')].find(b => b.querySelector('.q-t').textContent === t).click(); }""", [box, data['extra'][0]['t']])
+                    for t in want[:-1]:
+                        await pg.evaluate("""([sel, t]) => { [...document.querySelectorAll(sel + ' .q-pool .q-chip')].find(b => b.querySelector('.q-t').textContent === t).click(); }""", [box, t])
+                    await pg.click(f'{box} .q-check')
+                    fb = await pg.inner_text(f'{box} .q-fb'); hint_ok = '不该放进来' in fb
+                    await pg.evaluate("(sel) => { [...document.querySelectorAll(sel + ' .q-ans .q-chip:not(.lock)')].reverse().forEach(b => b.click()); }", box)
+                for t in want:
+                    placed = await pg.evaluate("(sel) => [...document.querySelectorAll(sel + ' .q-ans .q-chip .q-t')].map(x => x.textContent)", box)
+                    if t in placed: continue
+                    await pg.evaluate("""([sel, t]) => { [...document.querySelectorAll(sel + ' .q-pool .q-chip')].find(b => b.querySelector('.q-t').textContent === t).click(); }""", [box, t])
+                await pg.click(f'{box} .q-check')
+            await pg.wait_for_timeout(80)
+            solved = await pg.evaluate("(t) => [...document.querySelectorAll('.q.solved .q-q')].some(x => x.textContent === t)", info['text'])
+            return info['type'], hint_ok, solved
+        for chap in ['gpio', 'usart', 'i2c']:
+            await pg.goto(TOOL + '?v=think&t=' + chap + '&p=1'); await pg.wait_for_selector('.tk-card')
+            ncards = await pg.evaluate("(id) => STM32_THINK.chapters.find(c => c.id === id).why.length", chap)
+            why_ok = True
+            for k in range(ncards):
+                r = await solve_current('.tk-card')
+                if r and not (r[1] and r[2]): why_ok = False
+                await pg.click('.tk-cardnav .pill.solid')
+                await pg.wait_for_timeout(120)
+            check(chap.upper() + '：「为什么」%d 张卡片走完，题目提示对得上' % ncards, why_ok and 'p=2' in pg.url, pg.url)
+            await pg.wait_for_selector('.tk-step')
+            await pg.click('.tk-step >> nth=1 >> summary'); await pg.wait_for_timeout(150)
+            hl = await pg.evaluate("document.querySelectorAll('.tk-code .seg.on').length")
+            check(chap.upper() + '：点开骨架第 2 步，完整程序里对应的行高亮', hl >= 1, hl)
+            await pg.click('.tk-endrow .tk-next'); await pg.wait_for_selector('.tk-task')
+            for part in (3, 4):
+                if part == 4:
+                    await pg.goto(TOOL + '?v=think&t=' + chap + '&p=4'); await pg.wait_for_selector('.tk-task')
+                stats = {'n': 0, 'hint': 0, 'solved': 0}
+                for _ in range(80):
+                    r = await solve_current('.tk-stage')
+                    if r is None:
+                        nxt = await pg.query_selector('.tk-stage .tk-go')
+                        if nxt: await nxt.click(); await pg.wait_for_timeout(80); continue
+                        break
+                    stats['n'] += 1; stats['hint'] += 1 if r[1] else 0; stats['solved'] += 1 if r[2] else 0
+                    go = await pg.query_selector('.tk-stage .tk-go')
+                    if go: await go.click(); await pg.wait_for_timeout(80)
+                finals = await pg.evaluate("document.querySelectorAll('.tk-final').length")
+                tasks = await pg.evaluate("(a) => STM32_THINK.chapters.find(c => c.id === a[0]).tasks.filter(t => t.kind === a[1]).length", [chap, 'guided' if part == 3 else 'transfer'])
+                check('%s：第 %d 段 %d 道题全部做完，错答都给出对应提示' % (chap.upper(), part, stats['n']), stats['n'] > 0 and stats['hint'] == stats['n'] and stats['solved'] == stats['n'] and finals == tasks, stats)
+            await pg.goto(TOOL + '?v=think'); await pg.wait_for_selector('.tk-ch')
+            st = await pg.evaluate("(id) => document.querySelector('.tk-ch[href*=\"t=' + id + '\"] .tk-ch-h span').textContent", chap)
+            check(chap.upper() + '：进度保存，总览显示已完成', st == '已完成', st)
+        await pg.goto(TOOL + '?v=topic&t=usart'); await pg.wait_for_selector('.topic')
+        check('外设页有编程思维入口', await pg.evaluate("!!document.querySelector('.thinkin')"))
+        await pg.context.close()
+        pg = await page(b, 390, 844, mobile=True)
+        overflow = []
+        for qs in ['?v=think', '?v=think&t=gpio&p=1', '?v=think&t=usart&p=2', '?v=think&t=i2c&p=3']:
+            await pg.goto(TOOL + qs); await pg.wait_for_timeout(700)
+            if await pg.evaluate("document.documentElement.scrollWidth > innerWidth"): overflow.append(qs)
+        check('手机：编程思维各页没有横向溢出', not overflow, overflow)
+        await pg.context.close()
         await b.close()
 
     print('\n==== %d/%d 通过 ====' % (sum(1 for r in results if r[1]), len(results)))

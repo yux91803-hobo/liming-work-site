@@ -4,7 +4,7 @@
    hue 是主题色，light / dark 两套，界面用它给芯片引脚、标题色块、列表标记上色。 */
 window.STM32_TOPICS = [
   {
-    id: 'sys', code: 'RCC', name: '系统与时钟', hue: ['#5d6b7e', '#9aa9bd'], icon: 'clock',
+    id: 'sys', code: 'RCC', name: '系统与时钟', hue: ['#7a7266', '#b8b0a3'], icon: 'clock',
     summary: '时钟树、启动方式、存储器映射：所有外设工作的前提。',
     groups: [{ id: 'rcc' }, { id: 'flash' }],
     chapters: ['v20-ch01', 'v20-ch02', 'v20-ch05', 'v20-ch06', 'v21-ch05'],
@@ -19,7 +19,7 @@ window.STM32_TOPICS = [
     ]
   },
   {
-    id: 'gpio', code: 'GPIO', name: 'GPIO 通用输入输出', hue: ['#2f8a57', '#5ec48a'], icon: 'gpio',
+    id: 'gpio', code: 'GPIO', name: 'GPIO 通用输入输出', hue: ['#5b8336', '#9dc47c'], icon: 'gpio',
     summary: '点灯、读按键、驱动蜂鸣器：每个引脚的 8 种工作模式。',
     groups: [{ id: 'gpio' }, { id: 'afio', except: /^AFIO_EXTICR/ }],
     chapters: ['v20-ch03', 'v20-ch04'],
@@ -34,7 +34,7 @@ window.STM32_TOPICS = [
     ]
   },
   {
-    id: 'exti', code: 'EXTI', name: '外部中断与 NVIC', hue: ['#b77d12', '#e3ae4a'], icon: 'bolt',
+    id: 'exti', code: 'EXTI', name: '外部中断与 NVIC', hue: ['#b07a14', '#e3b35a'], icon: 'bolt',
     summary: '按键触发中断：EXTI 选线、NVIC 排优先级、回调里处理。',
     groups: [{ id: 'exti' }, { id: 'nvic' }, { id: 'afio', only: /^AFIO_EXTICR/ }],
     chapters: ['v20-ch07'],
@@ -49,7 +49,7 @@ window.STM32_TOPICS = [
     ]
   },
   {
-    id: 'usart', code: 'USART', name: 'USART 串口', hue: ['#2a6fb8', '#6aa8ec'], icon: 'serial',
+    id: 'usart', code: 'USART', name: 'USART 串口', hue: ['#3c6a9c', '#86acd6'], icon: 'serial',
     summary: '和电脑收发数据、printf 打印调试信息。',
     groups: [{ id: 'usart' }],
     chapters: ['v20-ch08'],
@@ -64,7 +64,7 @@ window.STM32_TOPICS = [
     ]
   },
   {
-    id: 'i2c', code: 'I2C', name: 'I2C 总线', hue: ['#7651b8', '#ab8ef0'], icon: 'bus',
+    id: 'i2c', code: 'I2C', name: 'I2C 总线', hue: ['#875a9f', '#bd9ad4'], icon: 'bus',
     summary: '两根线挂多个器件：读写板载 EEPROM。',
     groups: [{ id: 'i2c' }],
     chapters: ['v20-ch09'],
@@ -79,7 +79,7 @@ window.STM32_TOPICS = [
     ]
   },
   {
-    id: 'tim', code: 'TIM', name: '定时器', hue: ['#c25d22', '#ee9056'], icon: 'timer',
+    id: 'tim', code: 'TIM', name: '定时器', hue: ['#a8502a', '#e4936a'], icon: 'timer',
     summary: '定时中断、PWM 呼吸灯、SysTick 延时。',
     groups: [{ id: 'systick' }, { id: 'tim' }],
     chapters: ['v21-ch01'],
@@ -94,7 +94,7 @@ window.STM32_TOPICS = [
     ]
   },
   {
-    id: 'dma', code: 'DMA', name: 'DMA 直接存储器访问', hue: ['#13868a', '#4fc6c8'], icon: 'dma',
+    id: 'dma', code: 'DMA', name: 'DMA 直接存储器访问', hue: ['#2c7f7b', '#6cbfba'], icon: 'dma',
     summary: '不占 CPU 搬数据：串口收发、ADC 连续采样。',
     groups: [{ id: 'dma' }],
     chapters: ['v21-ch02'],
@@ -108,7 +108,7 @@ window.STM32_TOPICS = [
     ]
   },
   {
-    id: 'adc', code: 'ADC', name: 'ADC 模数转换', hue: ['#b33c6c', '#e77aa4'], icon: 'wave',
+    id: 'adc', code: 'ADC', name: 'ADC 模数转换', hue: ['#a8445f', '#e08aa4'], icon: 'wave',
     summary: '把电压变成数字：读电位器。',
     groups: [{ id: 'adc' }],
     chapters: ['v21-ch03'],
@@ -123,7 +123,7 @@ window.STM32_TOPICS = [
     ]
   },
   {
-    id: 'spi', code: 'SPI', name: 'SPI 总线', hue: ['#3f50c2', '#8592ef'], icon: 'spi',
+    id: 'spi', code: 'SPI', name: 'SPI 总线', hue: ['#4f5aa6', '#96a0de'], icon: 'spi',
     summary: '四线高速通信：读写板载 SPI Flash。',
     groups: [{ id: 'spi' }],
     chapters: ['v21-ch04'],
@@ -138,7 +138,7 @@ window.STM32_TOPICS = [
     ]
   },
   {
-    id: 'fsmc', code: 'FSMC', name: 'FSMC 与 LCD', hue: ['#7a7a24', '#bdbd5a'], icon: 'lcd',
+    id: 'fsmc', code: 'FSMC', name: 'FSMC 与 LCD', hue: ['#77732b', '#bcb86a'], icon: 'lcd',
     summary: '把外部存储器和 LCD 当内存访问。',
     groups: [{ id: 'fsmc' }],
     chapters: ['v21-ch06', 'v21-ch07'],
