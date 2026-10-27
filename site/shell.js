@@ -167,7 +167,7 @@
       if (ty === 'ready') p._ready();
       if (ty === 'route' && id === 'stm32' && window.STM32StudyCore && typeof e.data.params === 'string' && e.data.params.length < 1600) {
         p._route = window.STM32StudyCore.params(window.STM32StudyCore.fromParams(e.data.params));
-        if (current === id) history.replaceState(history.state, '', byId[id].path + '?' + p._route);
+        if (current === id) try { history.replaceState(history.state, '', byId[id].path + '?' + p._route); } catch (err) {}   // 浏览器限流时只是地址没更新，不影响后面的消息处理
       }
       if (ty === 'back' && current === id) back();
       // 工具要求整体关闭（如查看器未开时在 iframe 内按 Escape）

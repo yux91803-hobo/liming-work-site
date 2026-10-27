@@ -30,3 +30,10 @@ test('search ranks exact pin names first and supports Chinese peripheral aliases
   assert.equal(core.search(index, '串口').length, 2);
   assert.equal(core.search(index, 'USART1 TX').length, 1);
 });
+test('search expands UART/USART and IIC/I2C by prefix and ranks title hits above detail-only hits', () => {
+  const index = [{ title: 'PA9', words: 'USART1_TX' }, { title: 'IIC 通信协议' }, { title: 'GPIOx_CRL', detail: 'GPIO', words: 'GPIO_CRL GPIOA_CRL' }, { title: 'USART1 中断收发', words: 'HAL' }];
+  assert.deepEqual(core.search(index, 'UART1').map((x) => x.title), ['USART1 中断收发', 'PA9']);
+  assert.equal(core.search(index, 'I2C')[0].title, 'IIC 通信协议');
+  assert.equal(core.search(index, 'gpioa_crl')[0].title, 'GPIOx_CRL');
+  assert.equal(core.search(index, 'GPIO_CRL 8').length, 0);   // 词边界：GPIO_CRL 8 不会被粘成 GPIO_CRL8
+});

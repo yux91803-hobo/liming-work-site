@@ -413,11 +413,17 @@
   var seg = $('seg'), segInk = seg.querySelector('.seg-ink');
   var segBtns = Array.prototype.slice.call(seg.querySelectorAll('.seg-btn'));
   var curTab = 'pins', activeSnippet = '', packagePin = null;
-  var routeRAF = 0;
+  /* 节流：单次操作照旧在下一帧同步；连续触发（打字、按住方向键翻课件）最多每 300ms 同步一次。
+     Safari / Chrome 对 replaceState / pushState 有频率上限（约 100 次 / 10s），超出会抛 SecurityError，
+     外壳同一时间压的子视图历史记录也会失败，返回键就错乱了 */
+  var routeRAF = 0, routeT = 0, routeLast = 0, ROUTE_GAP = 300;
   function contextChanged() {
-    if (routeRAF) return;
-    routeRAF = requestAnimationFrame(function () { routeRAF = 0; syncContext(); });
+    if (routeRAF || routeT) return;
+    var wait = ROUTE_GAP - (Date.now() - routeLast);
+    if (wait > 0) routeT = setTimeout(function () { routeT = 0; routeRAF = requestAnimationFrame(runRoute); }, wait);
+    else routeRAF = requestAnimationFrame(runRoute);
   }
+  function runRoute() { routeRAF = 0; routeLast = Date.now(); syncContext(); }
   function context() {
     var t = { tab: curTab }, title = { pins: '引脚速查', regs: '寄存器', code: '代码片段', chip: '芯片 / 板子', arch: '架构图', course: '课件' }[curTab];
     if (viewer && viewer.isOpen()) { var vc = viewer.context(); if (vc) return vc; }
@@ -432,7 +438,7 @@
     var c = context(), qs = window.STM32StudyCore.params(c.target);
     if (embedded) qs = 'embed=1&' + qs;
     var href = location.pathname + '?' + qs;
-    if (location.pathname + location.search !== href) history.replaceState(history.state, '', href);
+    if (location.pathname + location.search !== href) try { history.replaceState(history.state, '', href); } catch (e) {}
     toShell({ type: 'route', params: window.STM32StudyCore.params(c.target) });
     window.dispatchEvent(new CustomEvent('stm32:context', { detail: c }));
   }
@@ -922,6 +928,12 @@
     renderCode();
     $('pane-code').scrollTop = 0; syncScrolled();
   }
+  // 高亮结果按片段缓存：切分类 / 从课件跳过来都会整表重建，同一段代码不必每次重新扫描，克隆一份即可
+  var snipHLCache = [];
+  function snipHL(i) {
+    if (!snipHLCache[i]) snipHLCache[i] = hlC(SNIPS[i].code);
+    return snipHLCache[i].cloneNode(true);
+  }
   function renderCode() {
     var list = $('codeList');
     while (list.firstChild) list.removeChild(list.firstChild);
@@ -945,7 +957,7 @@
       usage.appendChild(el('p', null, '头文件放 USER CODE Includes；函数和回调放 USER CODE 0；启动代码放初始化后的 USER CODE 2；循环逻辑合入 while (1)。同名回调应合并，每个函数只保留一个定义。'));
       card.appendChild(usage);
       var pre = el('pre', 'code'), code = el('code');
-      code.appendChild(hlC(s.code));
+      code.appendChild(snipHL(i));
       pre.appendChild(code);
       card.appendChild(pre);
       list.appendChild(card);

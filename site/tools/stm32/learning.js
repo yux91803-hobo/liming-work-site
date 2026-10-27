@@ -49,7 +49,11 @@
     d.setAttribute('aria-labelledby', t.id); h.appendChild(t); h.appendChild(button('关闭', closeDialog, 'lm-btn lm-close'));
     d.appendChild(h); document.body.appendChild(d);
     d.addEventListener('cancel', function (e) { e.preventDefault(); closeDialog(); });
-    d.addEventListener('keydown', function (e) { e.stopPropagation(); });
+    // 搜索框里有字时，浏览器的第一次 Esc 只清空输入、不触发 cancel；这里统一成「Esc 直接关闭」，与提示一致
+    d.addEventListener('keydown', function (e) {
+      e.stopPropagation();
+      if (e.key === 'Escape' && !e.isComposing && e.target && e.target.type === 'search') { e.preventDefault(); closeDialog(); }
+    });
     d.addEventListener('click', function (e) { if (e.target !== d) return; var r = d.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeDialog(); });
     return d;
   }
@@ -88,12 +92,19 @@
   });
   (window.STM32_MANUAL_FIGS || []).concat(window.STM32_TEACH_FIGS || []).forEach(function (f) { add('arch', f.title, (f.label || '') + ' · ' + (f.group || '架构图'), f.title_en || '', { fig: f.id }); });
   (((window.STM32_ASSETS || {}).schematic) || []).forEach(function (s) { add('chip', s.title, s.group, '', { page: String(s.src).replace(/^.*\//, '').replace(/\.svg$/i, '') }); });
+  // 寄存器常见写法：GPIO_CRL（r.id）、GPIOA_CRL / USART1_SR（按实例展开 GPIOx_ 这类占位名），否则只能搜 GPIOx_CRL
+  function aliasNames(g, r) {
+    var name = String(r.name || ''), k = name.indexOf('_'), member = k > -1 ? name.slice(k + 1) : '';
+    var out = [String(r.id || '')];
+    if (member) (g.instances || []).forEach(function (i) { if (i && i.name) out.push(i.name + '_' + member); });
+    return out.join(' ');
+  }
   function indexRegisters() {
     if (indexedRegs || !window.STM32_REGS) return;
     indexedRegs = true;
     window.STM32_REGS.groups.forEach(function (g) { g.regs.forEach(function (r) {
       var addresses = (g.instances || []).map(function (i) { return '0x' + ((parseInt(i.base, 16) + parseInt(r.offset, 16)) >>> 0).toString(16); }).join(' ');
-      add('regs', r.name, g.title + ' · ' + (r.title || ''), addresses + ' ' + (g.instances || []).map(function (i) { return i.name; }).join(' ') + ' ' + (r.fields || []).map(function (f) { return f.name + ' ' + (f.desc || ''); }).join(' ') + ' ' + (r.quick || []).map(function (q) { return q.title; }).join(' '), { reg: r.id });
+      add('regs', r.name, g.title + ' · ' + (r.title || ''), addresses + ' ' + (g.instances || []).map(function (i) { return i.name; }).join(' ') + ' ' + (r.fields || []).map(function (f) { return f.name + ' ' + (f.desc || ''); }).join(' ') + ' ' + (r.quick || []).map(function (q) { return q.title; }).join(' ') + ' ' + aliasNames(g, r), { reg: r.id });
     }); });
   }
   function renderSearch() {
