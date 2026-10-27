@@ -4,12 +4,13 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const root = path.join(__dirname, '../site/tools/stm32');
-const sandbox = { window: {}, document: {} };
+const sandbox = { window: {} };
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(path.join(root, 'assets/registers.js'), 'utf8'), sandbox);
-const source = fs.readFileSync(path.join(root, 'regs.js'), 'utf8');
-vm.runInContext(source.replace(/\}\)\(\);\s*$/, 'window.__generator = { genCode, P, layout, quickVal, fmask }; })();'), sandbox);
-const api = sandbox.window.__generator, groups = sandbox.window.STM32_REGS.groups;
+const core = require('../site/tools/stm32/reg-core.js');
+const R = core.create(sandbox.window.STM32_REGS);
+const api = { genCode: R.genCode, P: R.P, layout: R.layout, quickVal: R.quickVal, fmask: core.fmask };
+const groups = R.groups;
 function context(id, values, touched) {
   const g = groups.find(g => g.regs.some(r => r.id === id));
   const r = g.regs.find(r => r.id === id), inst = g.instances[0];
@@ -53,4 +54,24 @@ test('write-zero flags clear only the chosen flag with a single direct write', (
   const instance = g.instances[0].name;
   vm.runInNewContext(code.replace(/->/g, '.'), { [instance]: TIM1, ...macros(context(r.id, 0, ['UIF'])) });
   assert.equal(writes, 1); assert.equal(written & 1, 0); assert.equal(written & 2, 2);
+});
+test('every quick configuration in the data matches the computed register value', () => {
+  assert.deepEqual(R.verifyQuicks(), []);
+});
+test('addresses and C expressions resolve per instance and channel', () => {
+  const crl = R.reg('GPIO_CRL'), ccr = R.reg('DMA_CCR'), brr = R.reg('USART_BRR');
+  assert.equal(R.regExpr(crl, R.findInst(crl, 'GPIOB'), null), 'GPIOB->CRL');
+  assert.equal(core.hexC(R.addrOf(crl, R.findInst(crl, 'GPIOB'), null), 32), '0x40010C00');
+  assert.equal(R.regExpr(ccr, R.findInst(ccr, 'DMA1'), 3), 'DMA1_Channel3->CCR');
+  assert.equal(core.hexC(R.addrOf(brr, R.findInst(brr, 'USART1'), null), 32), '0x40013808');
+});
+test('baud and I2C helpers give the textbook values at 72 MHz / 36 MHz', () => {
+  const b = R.baud(72, 115200); assert.equal(b.m, 39); assert.equal(b.fr, 1);
+  const c = R.i2cCcr(36, 100, 0); assert.equal(c.ccr, 180); assert.equal(c.fast, false);
+});
+test('TIM_CCER cases follow the peer CCMR register (output vs input capture)', () => {
+  const ccer = R.reg('TIM_CCER'), f = R.P(ccer).byName.CC1P, inst = R.findInst(ccer, 'TIM2');
+  const out = R.info({ r: ccer, inst, peer: () => 0 }, f, 0);
+  const inp = R.info({ r: ccer, inst, peer: () => 1 }, f, 0);   // CC1S=01 → 输入
+  assert.notDeepEqual(out.vals, inp.vals);
 });

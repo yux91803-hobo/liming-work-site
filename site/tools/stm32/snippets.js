@@ -87,9 +87,10 @@ uint8_t Key_Scan(void)
     uint8_t down = (HAL_GPIO_ReadPin(keys[i].port, keys[i].pin) == keys[i].press);
     if (down != state[i]) {
       if (++cnt[i] >= 3) {
+        if (down && ret) continue;   /* 本轮已报了别的键：这次先不确认，下一轮（10ms 后）再报，同时按下也不丢 */
         state[i] = down;
         cnt[i] = 0;
-        if (down && ret == 0) ret = i + 1;
+        if (down) ret = i + 1;
       }
     } else {
       cnt[i] = 0;
@@ -258,7 +259,9 @@ int __io_putchar(int ch)
    72MHz / 7200 / 10000 = 1Hz；NVIC：勾选 TIM6 global interrupt */
 extern TIM_HandleTypeDef htim6;
 
-/* main() —— USER CODE BEGIN 2 */
+/* main() —— USER CODE BEGIN 2
+   初始化时产生的更新事件会置位 UIF：不清的话一启动就立刻进一次中断（LED 在 0s 就翻转，而不是 1s 后） */
+  __HAL_TIM_CLEAR_FLAG(&htim6, TIM_FLAG_UPDATE);
   HAL_TIM_Base_Start_IT(&htim6);
 
 /* main.c —— USER CODE BEGIN 4
