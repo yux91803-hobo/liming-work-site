@@ -114,6 +114,7 @@
     if (e.origin !== location.origin || !e.data) return;
     if (e.data.type === 'theme') applyTheme();
     if (e.source !== window.parent) return;
+    if (e.data.type === 'back' && document.querySelector('.lm-dialog[open]')) return;
     if (e.data.type === 'back' && viewer.isOpen()) viewer.back();
     if (e.data.type === 'reset' && viewer.isOpen()) viewer.close(true, true);
   });
@@ -122,9 +123,11 @@
   var readySent = false;
   function notifyReady() { if (readySent) return; readySent = true; try { if (window.self !== window.top) parent.postMessage({ type: 'ready' }, location.origin); } catch (e) {} }
 
-  // iOS Safari：阻止整页双指缩放（缩放区域自己处理手势）
+  // 仅图片/封装查看器处理缩放；正文保留 Safari 原生双指放大。
   ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (n) {
-    document.addEventListener(n, function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener(n, function (e) {
+      if (e.target && e.target.closest && e.target.closest('.zoom-view')) e.preventDefault();
+    }, { passive: false });
   });
 
   /* ================= 顶栏高度 / 分隔线 ================= */
@@ -409,10 +412,47 @@
 
   var seg = $('seg'), segInk = seg.querySelector('.seg-ink');
   var segBtns = Array.prototype.slice.call(seg.querySelectorAll('.seg-btn'));
-  var curTab = 'pins';
+  var curTab = 'pins', activeSnippet = '', packagePin = null;
+  var routeRAF = 0;
+  function contextChanged() {
+    if (routeRAF) return;
+    routeRAF = requestAnimationFrame(function () { routeRAF = 0; syncContext(); });
+  }
+  function context() {
+    var t = { tab: curTab }, title = { pins: '引脚速查', regs: '寄存器', code: '代码片段', chip: '芯片 / 板子', arch: '架构图', course: '课件' }[curTab];
+    if (viewer && viewer.isOpen()) { var vc = viewer.context(); if (vc) return vc; }
+    if (curTab === 'pins' && q && q.value.trim()) { t.q = q.value.trim(); title = '引脚 · ' + t.q; }
+    if (curTab === 'regs' && regsReady && regsUI() && regsUI().context) { var rc = regsUI().context(); if (rc) return rc; }
+    if (curTab === 'code') { t.cat = codeCat; if (activeSnippet) t.snip = activeSnippet; title = activeSnippet || ('代码 · ' + codeCat); }
+    if (curTab === 'chip' && packagePin) { t.pin = String(packagePin); title = '封装引脚 · ' + packagePin; }
+    return { target: t, title: title };
+  }
+  function syncContext() {
+    if (!window.STM32StudyCore) return;
+    var c = context(), qs = window.STM32StudyCore.params(c.target);
+    if (embedded) qs = 'embed=1&' + qs;
+    var href = location.pathname + '?' + qs;
+    if (location.pathname + location.search !== href) history.replaceState(history.state, '', href);
+    toShell({ type: 'route', params: window.STM32StudyCore.params(c.target) });
+    window.dispatchEvent(new CustomEvent('stm32:context', { detail: c }));
+  }
+  function navigateTarget(raw) {
+    var t = window.STM32StudyCore.target(raw);
+    if (viewer.isOpen()) viewer.close(true, true);
+    if (t.cw) { var m = /^(.*)-(\d+)$/.exec(t.cw); switchTab('course'); window.STM32_APP.openCw(m[1], Number(m[2])); }
+    else if (t.page) { switchTab('chip'); openSchematicPage(t.page); }
+    else if (t.fig) gotoFig([t.fig]);
+    else if (t.reg) regsOpen(t);
+    else if (t.tab === 'pins') gotoPins(t.q || '');
+    else if (t.tab === 'code') gotoCode(t.cat || '全部', t.snip || '');
+    else if (t.pin) showOnPackage(Number(t.pin));
+    else switchTab(t.tab);
+    contextChanged();
+  }
   function moveInk() {
     var b = seg.querySelector('.seg-btn[aria-selected="true"]');
     if (!b) return;
+    if (b.scrollIntoView) b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     segInk.style.width = b.offsetWidth + 'px';
     segInk.style.transform = 'translateX(' + b.offsetLeft + 'px)';
   }
@@ -429,6 +469,8 @@
     Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (p) { p.classList.toggle('active', p.dataset.pane === name); });
     moveInk();
     lsSet('lm.stm32.tab', name);
+    if (name !== 'chip') packagePin = null;
+    contextChanged();
     syncScrolled();
     regsTabHook(name, regsWas);                            // HUB-T7：进入 regs 懒加载 / 离开时 leave()
     if (name === 'chip') requestAnimationFrame(function () { if (pkgZoom && !pkgZoom.ready()) pkgZoom.fit(PK.S, PK.S); });
@@ -634,6 +676,7 @@
     var groups = parseQuery(raw);
     var q = JSON.stringify(groups);
     $('qx').hidden = !String(raw || '').trim();
+    contextChanged();
     if (q === lastQ) return;
     lastQ = q;
     var flat = [];
@@ -667,6 +710,7 @@
   pressable($('cmd'));
   pressable($('qx'));
   document.addEventListener('keydown', function (e) {
+    if (document.querySelector('.lm-dialog[open]')) return;
     if (e.key === '/' && curTab === 'pins' && document.activeElement !== q && !viewer.isOpen()) { e.preventDefault(); q.focus(); }
   });
 
@@ -872,6 +916,7 @@
   function selectCat(b) {
     var bar = $('codeCats');
     codeCat = b.dataset.cat;
+    activeSnippet = ''; contextChanged();
     revealChip(bar, b);
     Array.prototype.forEach.call(bar.children, function (x) { x.setAttribute('aria-selected', x === b ? 'true' : 'false'); });
     renderCode();
@@ -893,6 +938,12 @@
       regsSnipBtn(h, s);                                   // HUB-T7
       h.appendChild(b);
       card.appendChild(h);
+      card.appendChild(el('p', 'snip-scope', 'HAL · STM32F103ZET6 · 需合并到已初始化工程'));
+      var usage = el('details', 'snip-usage');
+      usage.appendChild(el('summary', null, '使用前先检查'));
+      usage.appendChild(el('p', null, '按片段顶部注释完成 CubeMX 外设、引脚、时钟及 NVIC 配置，并生成工程。先执行 HAL_Init、SystemClock_Config 和对应 MX_*_Init，再调用示例。'));
+      usage.appendChild(el('p', null, '头文件放 USER CODE Includes；函数和回调放 USER CODE 0；启动代码放初始化后的 USER CODE 2；循环逻辑合入 while (1)。同名回调应合并，每个函数只保留一个定义。'));
+      card.appendChild(usage);
       var pre = el('pre', 'code'), code = el('code');
       code.appendChild(hlC(s.code));
       pre.appendChild(code);
@@ -1080,7 +1131,7 @@
     if (!pinPos[n] || !pkgZoom) return;
     if (markWait) { markWait(); markWait = null; }
     clearPinMark();
-    switchTab('chip');
+    switchTab('chip'); packagePin = n; contextChanged();
     var view = $('pkg');
     requestAnimationFrame(function () {
       if (!pkgZoom.ready()) pkgZoom.fit(PK.S, PK.S);
@@ -1423,6 +1474,7 @@
     Array.prototype.forEach.call(bar.children, function (x) { if (!b && x.dataset.cat === cat) b = x; });
     requestAnimationFrame(function () {
       if (b) { if (b.dataset.cat !== codeCat) selectCat(b); else revealChip(bar, b); }
+      activeSnippet = title || ''; contextChanged();
       if (!title) return;
       var card = null;
       Array.prototype.forEach.call($('codeList').querySelectorAll('.copy'), function (c) {
@@ -1724,7 +1776,7 @@
         setEmpty();
         return;
       }
-      idx = i;
+      idx = i; contextChanged();
       var full = (it.title || '') + (it.page != null ? '  p.' + it.page : '');
       $('vwLabel').textContent = it.label || '';
       $('vwTitle').textContent = full;
@@ -1901,7 +1953,7 @@
       try { n.focus({ preventScroll: true }); } catch (err) { n.focus(); }
     }
     document.addEventListener('focusin', function (e) {
-      if (open && !scope().contains(e.target)) focusIn();
+      if (open && !document.querySelector('.lm-dialog[open]') && !scope().contains(e.target)) focusIn();
     });
 
     /* N3：查看器关闭后去掉深链参数 page / cw（保留 tab、embed 等其他参数和当前 state），刷新不会再自动打开 */
@@ -1985,6 +2037,7 @@
       if (steps && !fromHistory) goBack(steps);
       else if (fromHistory && !embedded && !hInFlight && stDepth() > 0) goBack(stDepth());   // 系统返回落在刷新残留的旧记录上：退到底层
       if (!hInFlight) stripParams();
+      contextChanged();
       setTimeout(function () { if (!open) { dropImgs(); content.classList.remove('shown', 'wait'); zoom.clear(); } }, 360);
       var lf = lastFocus; lastFocus = null;
       if (!noFocus && lf && lf.focus && document.contains(lf)) try { lf.focus({ preventScroll: true }); } catch (e) {}
@@ -2008,6 +2061,7 @@
     $('vwNext').addEventListener('click', function () { if (idx < items.length - 1) show(idx + 1); });
     pressable(vtop, '.icon-btn');
     document.addEventListener('keydown', function (e) {
+    if (document.querySelector('.lm-dialog[open]')) return;
       if (e.isComposing) return;
       if (!open) {
         // 嵌入模式、查看器未开：Escape 交给外壳关闭整个工具（搜索框里有字时已被清空并 preventDefault）
@@ -2045,7 +2099,17 @@
       close: function (fromShell, noFocus) { closeV(!!fromShell && embedded, !!noFocus); },
       // 外壳的「返回」（嵌入）：一次只退一层；外壳已把 depth 记成 0，关抽屉后报 depth 1 让它补回 sub 记录
       back: function () { if (dOpen) closeDrawer(true); else closeV(embedded); },
+      depth: function () { return open ? (dOpen ? 2 : 1) : 0; },
       isOpen: function () { return open; },
+      context: function () {
+        if (!open || !items[idx]) return null;
+        var it = items[idx], t = { tab: curTab };
+        if (mode === 'course' && cwPart) { t.tab = 'course'; t.cw = cwPart.id + '-' + (idx + 1); }
+        else if (mode === 'sch' && SCH[idx]) { t.tab = 'chip'; t.page = pageIdOf(SCH[idx].src); }
+        else if (mode === 'fig' && FIGL[idx]) { t.tab = 'arch'; t.fig = String(FIGL[idx].id); }
+        else if (mode === 'teach' && TEACHL[idx]) { t.tab = 'arch'; t.fig = String(TEACHL[idx].id); }
+        return { target: t, title: (mode === 'course' && cwPart ? cwPart.short + ' p.' + (idx + 1) + ' · ' : '') + (it.title || '资料') };
+      },
       // 启动时查看器没打开、当前条目却带 stm32v（刷新时查看器 / 抽屉开着）：退回底层那条，避免死记录
       settle: function () { if (!embedded && !open && !hInFlight && stDepth() > 0) goBack(stDepth()); }
     };
@@ -2144,6 +2208,8 @@
     if (f && /^[A-Za-z0-9_\/]{1,32}$/.test(f)) t.f = f;
     if (i && /^[A-Za-z0-9_]{1,16}$/.test(i)) t.i = i;
     if (y && /^\d{1,2}$/.test(y)) t.y = Number(y);
+    var value = sp.get('v'); if (value && /^0x[0-9a-f]{1,8}$/i.test(value)) t.v = value;
+    var mask = sp.get('m'); if (mask && /^0x[0-9a-f]{1,8}$/i.test(mask)) t.m = mask;
     return t;
   }
   // 引脚行（PA0~PG15）右侧小「寄存器」按钮；自己的 click / Enter / 空格 / pointerdown 不冒泡到 .prow
@@ -2193,6 +2259,8 @@
   // 给 regs.js 的接口：只放已有函数的引用 / 薄封装
   window.STM32_APP = Object.freeze({
     el: el, hlC: hlC, plainCode: plainCode, copyText: copyText, copyBtn: copyBtn, toast: toast, reduced: reduced,
+    context: context, contextChanged: contextChanged, navigate: navigateTarget, loadRegisters: regsLoad,
+    overlayDepth: notifyDepth, viewerDepth: function () { return viewer.depth(); },
     lsGet: lsGet, lsSet: lsSet, pressable: pressable, rovingKeys: rovingKeys, syncScrolled: syncScrolled,
     emptyState: function (node, word, ic) { return emptyState(node, word, ic && IC[ic] ? IC[ic] : null); },
     icon: function (name) { return icon(IC[name] || IC.empty); },
@@ -2212,6 +2280,7 @@
   });
   // Escape 等按键：regs tab 可见、查看器没开时先交给 regs.js（捕获阶段，早于「Escape 关闭工具」）
   document.addEventListener('keydown', function (e) {
+    if (document.querySelector('.lm-dialog[open]')) return;
     if (curTab !== 'regs' || !regsReady || viewer.isOpen()) return;
     var ui = regsUI();
     if (ui && ui.onKey) ui.onKey(e);
@@ -2242,6 +2311,7 @@
     var cpi = mcw ? cwPartIdx(mcw[1]) : -1, cnum = mcw ? Number(mcw[2]) : 0;
     if (cpi >= 0 && cnum >= 1 && cnum <= CWP[cpi].n) cwTarget = { p: cpi, i: cnum - 1 };
   }
+  var routeTarget = window.STM32StudyCore ? window.STM32StudyCore.fromParams(params ? params.toString() : '') : null;
   var regsQ = regsParams(params);                         // HUB-T7：?reg=…&f=…&i=…&y=…（page / cw 优先）
   if (regsQ && !startPage && startCw == null) { startTab = 'regs'; regsWant = regsQ; }
   switchTab(startTab);
@@ -2250,8 +2320,14 @@
     requestAnimationFrame(function () { seg.classList.add('ready'); });
     if (startPage) openSchematicPage(startPage);
     else if (cwTarget) viewer.openCourse(cwTarget.p, cwTarget.i);
+    else if (routeTarget && (routeTarget.fig || routeTarget.pin || routeTarget.q || routeTarget.cat || routeTarget.snip)) navigateTarget(routeTarget);
     if (!viewer.isOpen()) viewer.settle();
     notifyReady();
   });
   window.addEventListener('load', function () { syncTop(); moveInk(); });
+  window.addEventListener('popstate', contextChanged);
+  document.addEventListener('click', function (e) {
+    var card = e.target.closest && e.target.closest('.snip');
+    if (card) { var cp = card.querySelector('.copy[data-i]'); var sn = cp && SNIPS[Number(cp.dataset.i)]; if (sn) { activeSnippet = sn.title; contextChanged(); } }
+  });
 })();

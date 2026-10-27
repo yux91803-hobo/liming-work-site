@@ -748,7 +748,12 @@
     p.codes = E('div', 'rg-codes');
     p.cReg = codeBlock('寄存器写法');
     p.cHal = codeBlock('HAL 写法'); p.cHal.hidden = true;
+    p.codes.appendChild(E('p', 'rg-code-scope', '局部配置计算器 · 当前值来自本页计算，未连接开发板。使用前完成对应外设时钟和初始化。'));
     p.codes.appendChild(p.cReg); p.codes.appendChild(p.cHal);
+    p.whole = E('details', 'rg-whole');
+    p.whole.appendChild(E('summary', null, '完整寄存器值（会覆盖其他字段）'));
+    p.whole.appendChild(E('p', 'rg-warn', '仅在确认整个寄存器的目标状态时使用。下面这条是另一种写法，不要追加到局部修改代码后面。'));
+    p.cWhole = codeBlock('完整赋值 · 独立复制'); p.whole.appendChild(p.cWhole); p.codes.appendChild(p.whole);
     p.quick = null;
     if (Array.isArray(r.quick) && r.quick.length) {
       p.quick = E('div', 'rg-qs');
@@ -844,6 +849,7 @@
       renderQuick(c);
     });
     updateHeader(c);
+    if (app.contextChanged) app.contextChanged();
   }
 
   function renderMeta(c) {
@@ -1284,8 +1290,7 @@
       var macOK = p.kind === 'direct' && setFs.length && setFs.every(function (f) { return f.cmsis && fget(st.v, f) === p2(fw(f)) - 1; }) &&
         setFs.reduce(function (a, f) { return (a | fmask(f)) >>> 0; }, 0) === enc;
       if (p.kind === 'direct' && !enc) L.push('/* 把要写 1 的位设成 1（写 0 无作用） */');
-      if (macOK) L.push(Ex + ' = ' + setFs.map(function (f) { return f.cmsis; }).join(' | ') + ';');
-      L.push(Ex + ' = ' + hx(enc) + ';' + (macOK ? '   /* 同上 */' : ''));
+      L.push(Ex + ' = ' + (macOK ? setFs.map(function (f) { return f.cmsis; }).join(' | ') : hx(enc)) + ';');
       if (ts.length) L.push('/* ' + valComment(c, ts) + ' */');
       L.push(p.kind === 'key' ? '/* 带 VECTKEY 的寄存器：整体直接赋值，不读-改-写 */' : '/* 只写 / 写 1 生效：直接赋值，不读-改-写 */');
       return L.join('\n');
@@ -1294,8 +1299,7 @@
       var clr = ts.filter(function (f) { return fget(st.v, f) === 0; });
       if (!clr.length) { L.push('/* 把要清除的标志位设成 0（rc_w0：写 0 清除） */'); return L.join('\n'); }
       var cm = clr.reduce(function (a, f) { return (a | fmask(f)) >>> 0; }, 0);
-      if (clr.every(function (f) { return f.cmsis; })) L.push(Ex + ' = ~' + joinMac(clr) + ';   /* 写 0 清除，其余位写 1 无影响 */');
-      L.push(Ex + ' = ' + hx((~cm & (p2(w) - 1)) >>> 0) + ';' + (clr.every(function (f) { return f.cmsis; }) ? '   /* 同上 */' : '   /* 写 0 清除，其余位写 1 无影响 */'));
+      L.push(Ex + ' = ' + (clr.every(function (f) { return f.cmsis; }) ? '~' + joinMac(clr) : hx((~cm & (p2(w) - 1)) >>> 0)) + ';   /* 写 0 清除，其余位写 1 无影响 */');
       L.push('/* 清 ' + clr.map(function (f) { return f.name; }).join(' · ') + '；不要用 &=（读-改-写可能清掉刚置位的其他标志） */');
       return L.join('\n');
     }
@@ -1317,7 +1321,6 @@
       L.push('/* ' + valComment(c, fs) + ' */');
       if (p.kind === 'swj') L.push('/* SWJ_CFG 只写、读回无意义：每次写 MAPR 都把想要的 SWJ_CFG 一起写进去 */');
     }
-    L.push(Ex + ' = ' + hx(enc) + ';   /* 整体赋值 */');
     return L.join('\n');
   }
   function halMatch(c) {
@@ -1333,7 +1336,13 @@
     setCode(c.p.cReg, genCode(c));
     var i = halMatch(c), q = i > -1 ? c.r.quick[i] : null;
     c.p.cHal.hidden = !(q && q.hal);
-    if (q && q.hal) setCode(c.p.cHal, String(q.hal), 'HAL 写法 · ' + q.title);
+    if (q && q.hal) {
+      var code = String(q.hal), port = c.inst && /^GPIO[A-G]$/.test(c.inst.name) ? c.inst.name : null;
+      if (port && !/GPIO_InitTypeDef/.test(code)) code = '/* main.c: USER CODE 2，HAL_Init / SystemClock_Config 之后 */\nGPIO_InitTypeDef GPIO_InitStruct = {0};\n__HAL_RCC_' + port + '_CLK_ENABLE();\n\n' + code;
+      setCode(c.p.cHal, code, 'HAL 局部初始化 · ' + q.title);
+    }
+    var kind = P(c.r).kind; c.p.whole.hidden = kind !== 'rmw' && kind !== 'swj';
+    if (!c.p.whole.hidden) setCode(c.p.cWhole, '/* 独立写法：覆盖整个寄存器，请先确认其他字段 */\n' + regExpr(c.r, c.inst, c.n) + ' = ' + hexC(encode(c.r, c.st.v), P(c.r).w) + ';');
   }
 
   /* ---- 常用配置 ---- */
@@ -1394,12 +1403,12 @@
     refresh(c, { anim: true, morph: a.bits });
     syncUrl();
   }
-  function decode(c, x, typing) {
+  function decode(c, x, typing, mask) {
     var r = c.r, p = P(r), st = c.st;
     st.v = (x & (p2(p.w) - 1)) >>> 0;
     st.touched = {};
     var base = initVal(r, c.n);
-    layout(r, st.v).forEach(function (f) { if (writable(f, c.inst) && fget(st.v, f) !== fget(base, f)) st.touched[f.name] = true; });
+    layout(r, st.v).forEach(function (f) { if (writable(f, c.inst) && (mask != null ? ((fmask(f) & mask) >>> 0) === fmask(f) : fget(st.v, f) !== fget(base, f))) st.touched[f.name] = true; });
     st.quick = -1;
     refresh(c, { anim: true, fromHex: typing });
   }
@@ -1412,6 +1421,7 @@
   function applyQuick(c, i) {
     var r = c.r, q = r.quick && r.quick[i];
     if (!q) return;
+    if (q.port && instList(r).some(function (i) { return i.name === q.port; })) { U.inst[GOF[r.id].id] = q.port; ctx(c); }
     var qv = quickVal(r, q), st = c.st, ys = [];
     st.v = qv.v; st.touched = {}; st.quick = i;
     qv.keys.forEach(function (k) {
@@ -1419,7 +1429,7 @@
       var f = P(r).byName[k];
       if (f && isRep(r, f)) ys.push(yOf(f));
     });
-    if (ys.length) U.y[r.id] = Math.min.apply(null, ys);
+    if (ys.length) { U.y[r.id] = Math.min.apply(null, ys); if (P(r).byName['MODE' + U.y[r.id]]) U.sel = 'MODE' + U.y[r.id]; }
     var lay = layout(r, st.v);
     if (U.sel && !lay.some(function (f) { return f.name === U.sel; })) U.sel = null;
     refresh(c, { anim: true });
@@ -1576,6 +1586,7 @@
     if (!c) return false;
     if (field) { U.sel = field; refresh(c, {}); syncUrl(); }
     if (o.quick != null) applyQuick(c, o.quick);
+    if (o.value != null) { decode(c, o.value, false, o.mask); syncUrl(); }
     requestAnimationFrame(function () {
       if (field && o.flash) flashField(c, field);
       else {
@@ -1623,7 +1634,7 @@
       }
       if (y != null && reg.id === 'GPIO_CRH' && y < 8) y += 8;
       var url = t.from === 'url';
-      return goReg(reg.id, { field: fld, inst: t.i != null ? String(t.i) : null, y: y, flash: !!fld, focus: url ? null : (fld ? 'field' : 'hdr'), instant: url });
+      return goReg(reg.id, { field: fld, inst: t.i != null ? String(t.i) : null, y: y, value: t.v != null ? parseHexStr(t.v) : null, mask: t.m != null ? parseHexStr(t.m) : null, flash: !!fld, focus: url ? null : (fld ? 'field' : 'hdr'), instant: url });
     }
     return false;
   }
@@ -1659,7 +1670,7 @@
       history.replaceState(history.state, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
     } catch (e) {}
   }
-  function syncUrl() { if (mounted && app.curTab() === 'regs') { urlTry = 0; writeUrl(urlWant(), false); } }
+  function syncUrl() { if (mounted && app.curTab() === 'regs') { urlTry = 0; writeUrl(urlWant(), false); if (app.contextChanged) app.contextChanged(); } }
 
   function save() {
     try { app.lsSet(LS_KEY, JSON.stringify({ g: U.g, r: U.open })); } catch (e) {}
@@ -1720,5 +1731,11 @@
     return false;
   }
 
-  window.STM32_REGS_UI = { mount: mount, show: show, leave: leave, onKey: onKey };
+  function context() {
+    var t = urlWant(); if (!t) return null;
+    var c = cards[U.open]; t.tab = 'regs';
+    if (c && c.st) { t.v = hexC(c.st.v, P(c.r).w); t.m = hexC(fieldsTouched(c).reduce(function (m, f) { return (m | fmask(f)) >>> 0; }, 0), P(c.r).w); }
+    return { target: t, title: (c && c.inst ? c.inst.name + ' · ' : '') + REG[U.open].name + (U.sel ? ' · ' + U.sel : '') };
+  }
+  window.STM32_REGS_UI = { mount: mount, show: show, leave: leave, onKey: onKey, context: context };
 })();

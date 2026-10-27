@@ -138,7 +138,7 @@
   }
   function post(p, msg) { try { p._frame.contentWindow.postMessage(msg, location.origin); } catch (e) {} }
   // 工具被关掉时：让 iframe 收起所有子视图（查看器等），下次打开从干净状态开始
-  function resetFrame(p) { if (!p) return; p._depth = 0; post(p, { type: 'reset' }); }
+  function resetFrame(p) { if (!p) return; p._depth = 0; p._pendingBack = false; clearTimeout(p._pbT); post(p, { type: 'reset' }); }
   function getPanel(t) {
     if (panels[t.id]) return panels[t.id];
     var p = document.createElement('section');
@@ -165,6 +165,10 @@
     for (var id in panels) if (panels[id]._frame.contentWindow === e.source) {
       var p = panels[id], ty = e.data.type;
       if (ty === 'ready') p._ready();
+      if (ty === 'route' && id === 'stm32' && window.STM32StudyCore && typeof e.data.params === 'string' && e.data.params.length < 1600) {
+        p._route = window.STM32StudyCore.params(window.STM32StudyCore.fromParams(e.data.params));
+        if (current === id) history.replaceState(history.state, '', byId[id].path + '?' + p._route);
+      }
       if (ty === 'back' && current === id) back();
       // 工具要求整体关闭（如查看器未开时在 iframe 内按 Escape）
       if (ty === 'close' && current === id) { p._depth = 0; back(); }
@@ -174,12 +178,44 @@
   });
   /* depth 变化同步到历史：0→N 时压一条 {tool,sub:1}，系统/浏览器返回先落在它上面（popstate 里转发 back 给工具）；
      工具自己关掉子视图（N→0）时，把这条 sub 记录退掉，保证再按一次返回就是关闭工具 */
+  /* N2：history.back() 是异步的。同一事件循环里「关子视图 → 立即开新的」时，depth 1 到达时 history.state 仍是 sub，
+     不能据此跳过 pushState，更不能让随后落到 {tool} 的 popstate 把 back 转发给工具。
+     所以 back() 前记 _pendingBack；popstate 落到 {tool} 时先消费它（不转发 back），若此时又有子视图（_depth>0）就补压一条 sub。
+     兜底：约 1s 内 popstate 没来也自动解除，按当前 state 补救。 */
+  function clearPending(p) { p._pendingBack = false; clearTimeout(p._pbT); }
+  function pendBack(id, p) {
+    p._pendingBack = true; clearTimeout(p._pbT);
+    p._pbT = setTimeout(function () {
+      if (!p._pendingBack) return;
+      p._pendingBack = false;
+      var st = history.state || {};
+      if (current !== id || st.tool !== id) return;
+      if (st.sub) return;                             // back 根本没发生：sub 还在，与 depth>0 一致；depth 0 时下次返回会被 popstate 清掉
+      stripTop();
+      if (p._depth > 0) history.pushState({ tool: id, sub: 1 }, '');
+    }, 1000);
+    history.back();
+  }
+  /* N3：子视图关闭后去掉顶层地址里的深链参数 page / cw（保留路径、其他参数、hash 和当前 state 对象），刷新不会自动重开 */
+  function stripTop() {
+    try {
+      var sp = new URLSearchParams(location.search);
+      if (!sp.has('page') && !sp.has('cw')) return;
+      sp.delete('page'); sp.delete('cw');
+      var qs = sp.toString();
+      history.replaceState(history.state, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+    } catch (e) {}
+  }
   function onDepth(id, p, d) {
     var prev = p._depth || 0; p._depth = d;
     if (current !== id) return;
     var st = history.state || {};
+    if (p._pendingBack) return;                       // 返回进行中：等 popstate 落地后统一处理
     if (d > 0 && prev === 0 && st.tool === id && !st.sub) history.pushState({ tool: id, sub: 1 }, '');
-    else if (d === 0 && prev > 0 && st.tool === id && st.sub) history.back();
+    else if (d === 0 && prev > 0) {
+      if (st.tool === id && st.sub) pendBack(id, p);  // 地址在 popstate 落到 {tool} 后再清
+      else stripTop();
+    }
   }
 
   /* 卡片的「真实」位置：关闭时首页还处在 scale(.94) 的过渡起点，直接量出来的是缩小后的矩形。
@@ -277,6 +313,7 @@
     run();
 
     function run() {
+      if (id === 'stm32' && p._route) history.replaceState(history.state, '', t.path + '?' + p._route);
       if (o.instant || reduce || !r) {
         if (o.instant) snap();
         body.classList.add('tool-open', 'locked');
@@ -356,11 +393,13 @@
     var cp = panels[current], st = history.state || {};
     if (cp && cp._depth > 0) {
       // 有 sub 记录：走历史返回，popstate 里再把 back 转给工具（历史与界面保持一致）
-      if (st.tool === current && st.sub) { history.back(); return; }
-      cp._depth = 0; post(cp, { type: 'back' }); return;
+      if (st.tool === current && st.sub && !cp._pendingBack) { history.back(); return; }
+      // 返回进行中（sub 已在退）或没有 sub：直接让工具退一层，popstate 落地时不会再补压
+      cp._depth = 0; post(cp, { type: 'back' }); if (!cp._pendingBack) stripTop(); return;
     }
     var viaHistory = st.tool === current;
-    var steps = st.sub ? -2 : -1;
+    var steps = st.sub && !(cp && cp._pendingBack) ? -2 : -1;   // 已在退 sub 时只再退一步
+    if (cp) clearPending(cp);
     close();
     if (viaHistory) history.go(steps); else history.replaceState({}, '', '/');
   }
@@ -371,12 +410,21 @@
     var st = e.state || {}, id = st.tool;
     if (id && byId[id] && id === current) {
       var cp = panels[id];
+      // 自己（onDepth）发出的 back 落地：消费标记、不转发；期间工具又开了子视图就补压一条 sub
+      if (!st.sub && cp && cp._pendingBack) {
+        clearPending(cp);
+        stripTop();
+        if (cp._depth > 0) history.pushState({ tool: id, sub: 1 }, '');
+        return;
+      }
       // 从 {tool,sub} 退回 {tool}：只关工具里的子视图（查看器），不关工具
-      if (!st.sub && cp && cp._depth > 0) { cp._depth = 0; post(cp, { type: 'back' }); }
+      if (!st.sub && cp && cp._depth > 0) { cp._depth = 0; post(cp, { type: 'back' }); stripTop(); }
       // 前进到一条已失效的 sub 记录（子视图早已关闭）：退回去，不留空记录
       else if (st.sub && cp && !(cp._depth > 0)) history.back();
+      else if (!st.sub) stripTop();
       return;
     }
+    for (var pk in panels) clearPending(panels[pk]);
     if (id && byId[id]) open(id, { instant: true });
     else if (current) close({ instant: true });     // Safari 手势已经播过动画：直接到终态
     else settle();
@@ -429,13 +477,13 @@
       if (!moving) { on = false; return; }
       on = false; moving = false; if (edgeDrag === p) edgeDrag = null;
       if (dx > innerWidth * 0.3 && current) {
-        var id = current; current = null; p._closing = true;
+        var id = current, pend = p._pendingBack; current = null; p._closing = true;
         resetFrame(p);
         p.classList.add('anim'); p.style.transform = 'translate3d(100%,0,0)';
         body.classList.remove('tool-open', 'locked', 'covered');
         document.title = 'Liming 工具箱';
         var hs = history.state || {};
-        if (hs.tool === id) history.go(hs.sub ? -2 : -1);                       // 系统手势已经返回过就不再返回一次
+        if (hs.tool === id) history.go(hs.sub && !pend ? -2 : -1);                       // 系统手势已经返回过就不再返回一次
         later(p, function () { if (current !== id) { park(p); settle(); } }, 480);
         setTimeout(function () { if (!current) { for (var k in panels) panels[k]._closing = false; settle(); } }, 1200);
       } else {

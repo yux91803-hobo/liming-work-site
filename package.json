@@ -1,1 +1,11 @@
-{"name":"liming-worldmap","private":true}
+{
+  "name": "liming-worldmap",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Liming 工具箱 / STM32 学习工作台",
+  "scripts": {
+    "dev": "node scripts/preview.mjs",
+    "check": "node scripts/check.mjs",
+    "test": "node --test test/*.test.cjs"
+  }
+}

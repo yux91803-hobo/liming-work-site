@@ -1,10 +1,17 @@
-# STM32 HUB 交接（2026-10-26 21:45 北京 · T10 已上正式站）
+# STM32 HUB 交接（2026-10-27 11:55 北京 · EXT1+EXT1b 已上正式站）
 
 ## 现状
+- 正式站 liming-worldmap（https://liming-work.com/tools/stm32/）：**6b478c95**（EXT1+EXT1b 学习功能：搜索/记录/收藏/分享/Aa、手机 tab 一行、≤359px ⋯ 菜单；= 测试站 cbc3fafe），2026-10-27 11:08 北京部署；报告 `reports/report-prod-EXT1-20261027-1155.md`；冒烟 `project/hub/EXT1-prod-check/`（全过，0 console error）
+- 回滚：**8cb7bdac**（T10）：`cd /workspace/worldmap && npx wrangler rollback 8cb7bdac-d4ee-41f2-99cd-8a76d08dd2d6`；备份 `archive/worldmap-backup-preEXT1-20261027-110836/`（含 ROLLBACK.txt）；再早 d88b828b（T9）
+- GitHub 私有仓库 yux91803-hobo/liming-work-site 已同步到正式 6b478c95 源码（工作副本 /tmp/stm32repo）
+- 正式站 /cdn-cgi/rum（Cloudflare 统计信标）在 webkit 下偶尔 requestfailed，测试脚本需过滤（EXT1-prod-check 已过滤）
+- 以下为上线前记录：
 - 正式站 liming-worldmap（https://liming-work.com/tools/stm32/）：**8cb7bdac**（T6+T7+T8+T10 新引脚高亮，对齐测试站 229a267a），21:40 部署
 - 回滚：**d88b828b**（T9）；`cd /workspace/worldmap && npx wrangler rollback d88b828b-25f5-4b9a-b07c-b2ec203bf938`（更早：8bbd1b7f T6+T7+T8、d6893fbf HUB-T2）
 - 备份：`archive/worldmap-backup-preT10-20261026-213958/`（stm32.js d756ec98 / stm32.css 0b1d45f5 + 其它顶层文件 + stm32-tree.md5 + ROLLBACK.txt）；更早 `archive/worldmap-backup-preT9-20261026-211717/`
-- 测试站 liming-hub-staging：**229a267a**（T10，与正式站一致）；回滚 **25634990**（T9）
+- 测试站 liming-hub-staging：**cbc3fafe**（EXT1b：手机 tab 一行、≤359px 顶栏收进 ⋯ 菜单、导入恢复阅读设置；2026-10-27 约 10:20 北京部署）；回滚 **0a5ff36b**（EXT1）：`cd /workspace/limhub-staging && npx wrangler rollback 0a5ff36b-9d58-47b4-9015-5820b36d26da`；文件备份 `archive/staging-backup-preEXT1b-20261027-100841/`
+- 上一版 测试站 EXT1 **0a5ff36b**（EXT1 外部 AI 学习功能增量，2026-10-27 09:41 北京）；回滚 **229a267a**（T10，=正式站）：`cd /workspace/limhub-staging && npx wrangler rollback 229a267a-7b2e-4ed1-9222-27dd0e31f19f`；备份 `archive/staging-backup-preEXT1-20261027-094020/`
+- ⚠ EXT1 的 shell.js 是「staging shell（含 N2/N3 返回修复）+ 包 diff」合并版（存档 archive/merge-EXT1/shell.js，与 staging site/shell.js 相同）；正式站 shell.js 没有 N2/N3，上正式时要传合并版（staging 上这份），不能直接用包里的 shell.js。报告 reports/report-EXT1-staging-20261027-1006.md
 - 报告：`reports/report-prod-T10-20261026-2145.md`；部署日志 `project/hub/HUB-prod-T10-deploy.log`；冒烟脚本/结果 `project/hub/HUB-prod-T10-check/`
 
 ## 验收摘要（T10 正式站）

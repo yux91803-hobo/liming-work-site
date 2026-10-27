@@ -2,3 +2,9 @@ node_modules/
 .wrangler/
 .env*
 .dev.vars*
+login.log
+*.log
+screens/
+videos/
+*.mp4
+*.webm
