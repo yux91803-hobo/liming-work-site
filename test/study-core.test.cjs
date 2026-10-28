@@ -58,3 +58,8 @@ test('every topic id defined in topics.js survives the route whitelist', () => {
   const sandbox = { window: {} }; require('node:vm').runInNewContext(require('node:fs').readFileSync(require('node:path').join(__dirname, '../site/tools/stm32/topics.js'), 'utf8'), sandbox);
   sandbox.window.STM32_TOPICS.forEach((t) => assert.deepEqual(core.fromParams(core.params({ v: 'topic', t: t.id })), { v: 'topic', t: t.id }, t.id));
 });
+
+test('外设页分页 sec 只认五种，和旧版 tab 参数不冲突', () => {
+  assert.deepEqual(core.fromParams('v=topic&t=gpio&sec=code'), { v: 'topic', t: 'gpio', sec: 'code' });
+  assert.deepEqual(core.fromParams('v=topic&t=gpio&sec=evil'), { v: 'topic', t: 'gpio' });
+});

@@ -165,36 +165,40 @@
       parts.push([s6, '图']);
     }
 
+    // 分页：上面一排标签，一次只显示一页
+    var tabs = {};
+    art.classList.add('tabbed');
     parts.forEach(function (x) {
-      art.appendChild(x[0]);
-      var a = el('a', 'snav-i', x[1]); a.href = '#' + x[0].id;
-      a.addEventListener('click', function (e) { e.preventDefault(); x[0].scrollIntoView({ behavior: ui.reduced() ? 'auto' : 'smooth', block: 'start' }); });
-      snav.appendChild(a);
+      var id = x[0].id.replace(/^s-/, '');
+      art.appendChild(x[0]); x[0].hidden = true; x[0].setAttribute('role', 'tabpanel');
+      var a = el('a', 'snav-i', x[1]); a.href = app.urlOf({ v: 'topic', t: t.id, sec: id }); a.setAttribute('role', 'tab');
+      a.addEventListener('click', function (e) { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button > 0) return; e.preventDefault(); app.update({ sec: id, snip: null }); });
+      snav.appendChild(a); tabs[id] = [x[0], a];
     });
+    snav.setAttribute('role', 'tablist');
+    var curTab = null;
+    function showTab(r) {
+      var id = r.snip ? 'code' : r.sec && tabs[r.sec] ? r.sec : r.reg && tabs.regs ? 'regs' : parts.length ? parts[0][0].id.replace(/^s-/, '') : null;
+      if (!id || id === curTab) return;
+      var first = curTab === null; curTab = id;
+      Object.keys(tabs).forEach(function (k) { var on = k === id; tabs[k][0].hidden = !on; tabs[k][1].classList.toggle('on', on); tabs[k][1].setAttribute('aria-selected', on ? 'true' : 'false'); });
+      // 切页时如果已经往下翻过了，回到标签那一行
+      if (!first) { var top = snav.getBoundingClientRect().top + window.scrollY - (parseFloat(getComputedStyle(snav).top) || 0); if (window.scrollY > top) window.scrollTo(0, top); }
+      var on = tabs[id][1]; if (on.scrollIntoView && snav.scrollWidth > snav.clientWidth) snav.scrollLeft = on.offsetLeft - 16;
+    }
 
-    // 上一站 / 下一站
-    var foot = el('nav', 'tnext'); foot.setAttribute('aria-label', '学习路径');
+    // 上一个 / 下一个外设
+    var foot = el('nav', 'tnext'); foot.setAttribute('aria-label', '外设');
     var prev = M.topics[t.order - 2], next = M.topics[t.order];
-    [[prev, '上一站'], [next, '下一站']].forEach(function (x) {
+    [[prev, '上一个'], [next, '下一个']].forEach(function (x) {
       if (!x[0]) { foot.appendChild(el('span')); return; }
       var a = app.link({ v: 'topic', t: x[0].id }, 'tnext-i'); a.style.setProperty('--h', app.hue(x[0]));
-      a.appendChild(el('span', null, x[1])); a.appendChild(el('b', null, x[0].code + '  ' + (x[0].name.replace(x[0].code, '').trim() || x[0].name)));
+      a.appendChild(el('span', null, x[1])); a.appendChild(el('b', null, x[0].code));
       foot.appendChild(a);
     });
     art.appendChild(foot);
     root.appendChild(art);
-
-    // 分节导航：滚动时标出当前所在的节
-    var io = null;
-    if ('IntersectionObserver' in window) {
-      io = new IntersectionObserver(function (es) {
-        es.forEach(function (e) {
-          if (!e.isIntersecting) return;
-          Array.prototype.forEach.call(snav.children, function (a) { a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id); });
-        });
-      }, { rootMargin: '-20% 0px -70% 0px' });
-      parts.forEach(function (x) { io.observe(x[0]); });
-    }
+    showTab(route);
     var lastSnip = null;
     function focusSnip(r) {
       if (!r.snip || r.snip === lastSnip) return;
@@ -208,8 +212,7 @@
     focusSnip(route);
     return {
       title: function () { return t.code; },
-      update: function (r) { focusSnip(r); },
-      destroy: function () { if (io) io.disconnect(); }
+      update: function (r) { showTab(r); focusSnip(r); }
     };
   }
   // GPIO 8 种模式速查表（CNF / MODE / 半字节 / HAL 写法）
