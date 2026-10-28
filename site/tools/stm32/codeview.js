@@ -97,10 +97,10 @@
     row.appendChild(b);
     if (l.why) {
       var why = el('div', 'rc-why'); why.hidden = true;
-      why.appendChild(el('b', 'rc-why-h', '为什么这样写'));
+      why.appendChild(el('b', 'rc-why-h', '原因'));
       why.appendChild(rich(l.why, prog, app));
       var fl = fromList(l, prog, app);
-      if (fl) { why.appendChild(el('b', 'rc-why-h', '怎么想到的：推导里的这一步')); why.appendChild(fl); }
+      if (fl) { why.appendChild(el('b', 'rc-why-h', '出处')); why.appendChild(fl); }
       row.appendChild(why);
       b.addEventListener('click', function () { var on = why.hidden; why.hidden = !on; row.classList.toggle('open', on); b.setAttribute('aria-expanded', on ? 'true' : 'false'); });
     }
@@ -122,7 +122,7 @@
     tools.appendChild(ui.copyBtn('复制「' + prog.title + '」', function () { return textOf(prog); }));
     hh.appendChild(tools); box.appendChild(hh);
     if (prog.plan.length) {
-      var pl = el('div', 'rc-plan'); pl.appendChild(el('b', null, '动笔前先想清楚'));
+      var pl = el('div', 'rc-plan'); pl.appendChild(el('b', null, '思路'));
       var ol = el('ol'); prog.plan.forEach(function (x) { ol.appendChild(el('li', null, x)); }); pl.appendChild(ol);
       box.appendChild(pl);
     }
@@ -137,7 +137,6 @@
       fig.appendChild(fb);
     });
     box.appendChild(fig);
-    box.appendChild(el('p', 'rc-tip', '点任意一行，看为什么这样写。'));
     return box;
   }
 
@@ -157,7 +156,7 @@
     row.appendChild(b);
     if (l.why) {
       var why = el('div', 'rc-why'); why.hidden = true;
-      why.appendChild(el('b', 'rc-why-h', '为什么这样写'));
+      why.appendChild(el('b', 'rc-why-h', '原因'));
       var t = el('div', 'rc-why-t'); t.appendChild(el('p', null, l.why)); why.appendChild(t);
       row.appendChild(why);
       b.addEventListener('click', function () { var on = why.hidden; why.hidden = !on; row.classList.toggle('open', on); b.setAttribute('aria-expanded', on ? 'true' : 'false'); });
@@ -217,7 +216,7 @@
     });
     // 最后拼出完整文件
     var all = el('section', 'cd-step cd-all');
-    var ah = el('h2', 'cd-q'); ah.appendChild(el('span', 'cd-n', '✓')); ah.appendChild(el('span', null, '拼起来：完整的 ' + cd.files.length + ' 个文件')); all.appendChild(ah);
+    var ah = el('h2', 'cd-q'); ah.appendChild(el('span', 'cd-n', '✓')); ah.appendChild(el('span', null, '完整代码')); all.appendChild(ah);
     var seg = el('div', 'cseg'), boxes = [];
     cd.files.forEach(function (f, i) {
       var b = ui.btn('cseg-b mono' + (i ? '' : ' on'), f.name); seg.appendChild(b);

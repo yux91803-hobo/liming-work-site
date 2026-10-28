@@ -39,6 +39,13 @@
       var bar = el('div', 'tk-dots'); for (var k = 0; k < 10; k++) bar.appendChild(el('span', k < Math.round(pg.done / pg.total * 10) ? 'on' : null)); a.appendChild(bar);
       grid.appendChild(a);
     });
+    // 没有推导链的外设：卡片直接进代码推导
+    M.topics.forEach(function (t) {
+      if ((STM.derive && STM.derive.has(t.id)) || !(STM.codederive && STM.codederive.has(t.id))) return;
+      var a = app.link({ v: 'think', t: t.id }, 'tk-ch tk-ch-d'); a.style.setProperty('--h', app.hue(t));
+      var top = el('div', 'tk-ch-h'); top.appendChild(el('b', 'mono', t.code)); top.appendChild(el('span', null, '代码推导')); a.appendChild(top);
+      grid.appendChild(a);
+    });
     list.appendChild(grid);
     wrap.appendChild(list);
     return { title: function () { return 'Code reasoning'; } };

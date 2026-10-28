@@ -1,3 +1,12 @@
+# 修改清单 · 2026-10-28（代码推导十章、寄存器写法改用宏名）
+
+- Code reasoning：侧栏不再单独放入口，入口在外设页；章节首页点「完整推导 / 自主推导」直接进入；「完整代码」改为「代码推导」。
+- 代码推导（`codederive.js` + `codederive-more.js`）：十个外设都按同一套写法推出驱动：对外接口 → .h 框架 → 硬件连接 → .c 骨架 → 初始化 → 功能函数 → main.c → 改需求。
+  - GPIO：led.h / led.c；USART：usart（含 printf 重定向）；I2C：eeprom + i2c 两层；TIM：1 ms 节拍 + PWM；ADC：adc；SPI：w25q + spi 两层；RCC：clock + delay（SysTick）；EXTI：key（中断记标志、主循环处理）；DMA：uart_dma；FSMC：lcd 总线层。
+  - RCC / EXTI / DMA / FSMC 没有推导链，外设页的 Code reasoning 直接进代码推导。
+- 标题精简：步骤标题不用问号；「动笔前先想清楚」→「思路」，「为什么这样写」→「原因」，「怎么想到的」→「出处」。
+- 寄存器写法改用宏名：GPIO 配置写成 `GPIOB->CRH &= ~(GPIO_CRH_CNF11 | GPIO_CRH_MODE11);` + `GPIOB->CRH |= (GPIO_CRH_MODE11 | GPIO_CRH_CNF11_0);`，不再写 `0x00007700` 这类数字；FSMC 用 `FSMC_BCRx_*` / `FSMC_BTRx_*_Pos`；LED 表存 `GPIO_ODR_ODRy`。测试里把这些宏「执行」一遍，核对每个脚最后的 4 位。
+
 # 修改清单 · 2026-10-28（外设页分页、寄存器字段从低到高）
 
 - 外设页上面的标签（要点 / 引脚 / 寄存器 / 代码 / 图）改成分页：一次只显示一页，地址里记下当前页（`sec=code`），可以直接分享到某一页；打开寄存器或代码片段的链接会自动切到对应页。页底「上一个 / 下一个」只写外设缩写。

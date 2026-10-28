@@ -839,7 +839,7 @@
           { c: 'RCC->APB2ENR |= RCC_APB2ENR_IOPBEN;', why: 'GPIOB 挂在 APB2 上，不开时钟，后面写 GPIOB 的寄存器都不生效。', from: ['s18'], op: [] },
           { c: 'SCL_H();', why: '先把 ODR 置 1（松手）。ODR 复位值是 0，如果先切成输出，切换那一刻引脚会把线拉低。', from: ['s18'], op: [] },
           { c: 'SDA_H();', why: '同上：切换成输出时两根线都保持「松手」，总线上不会出现意外的下降沿。', from: ['s18', 'F3'], op: [] },
-          { c: 'GPIOB->CRH = (GPIOB->CRH & 0xFFFF00FF) | 0x00007700;', why: 'PB10、PB11 的 4 位都改成 0111：CNF = 01 通用开漏输出，MODE = 11 50 MHz。先清掉这 8 位再写，别的引脚不受影响。复位后结果是 0x4444 7744。', from: ['s4', 's18'], op: [] }
+          { c: 'GPIOB->CRH = (GPIOB->CRH & ~(GPIO_CRH_CNF10 | GPIO_CRH_MODE10 | GPIO_CRH_CNF11 | GPIO_CRH_MODE11)) | (GPIO_CRH_MODE10 | GPIO_CRH_CNF10_0 | GPIO_CRH_MODE11 | GPIO_CRH_CNF11_0);', why: 'PB10、PB11 的 4 位都改成 0111：CNF = 01 通用开漏输出，MODE = 11 50 MHz。先清掉这 8 位再写，别的引脚不受影响。复位后结果是 0x4444 7744。', from: ['s4', 's18'], op: [] }
         ],
         rules: [
           { a: 0, b: 3, why: '时钟没开之前写 CRH 不生效。', back: 's18' },
