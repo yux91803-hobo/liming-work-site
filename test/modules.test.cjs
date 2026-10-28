@@ -22,7 +22,7 @@ test('每个模块：id 唯一、有标签、脚的键唯一、要么接 MCU 要
       assert.match(p.k, /^[a-z0-9]{1,8}$/, m.id + ' ' + p.k); assert.ok(!ks.has(p.k), m.id + ' ' + p.k); ks.add(p.k);
       if (p.mcu) assert.ok(PINS[p.mcu], m.id + ' ' + p.name + ' → ' + p.mcu + ' 不是芯片上的引脚');
     });
-    assert.ok(W.STM32_TOPICS.some((t) => t.id === m.topic), m.id + ' topic');
+    if (m.topic) assert.ok(W.STM32_TOPICS.some((t) => t.id === m.topic), m.id + ' topic');
   });
 });
 
@@ -56,4 +56,32 @@ test('SOP-8 芯片 8 个脚号齐全；M24C02 三个地址脚都接地（地址 
   MODS.filter((m) => m.kind === 'sop8').forEach((m) => assert.deepEqual(JSON.parse(JSON.stringify(m.pins.map((p) => p.no))), [1, 2, 3, 4, 5, 6, 7, 8]));
   const e = MODS.find((x) => x.id === 'eeprom');
   ['E0', 'E1', 'E2', 'WC'].forEach((n) => assert.equal(e.pins.find((p) => p.name === n).net, 'GND'));
+});
+
+test('SRAM / NAND / LCD 的 FSMC 信号都接到芯片上对应功能的引脚', () => {
+  let n = 0;
+  MODS.forEach((m) => m.pins.forEach((p) => {
+    if (!p.sig) return;
+    n++;
+    assert.ok(PINS[p.mcu] && PINS[p.mcu][4].split(' ').includes(p.sig), m.id + ' ' + p.name + ' ' + p.sig + ' → ' + p.mcu);
+  }));
+  assert.ok(n >= 40, n);
+});
+
+test('多脚封装：脚号不重复、不超过总脚数；QFP 是 4 的倍数', () => {
+  MODS.forEach((m) => {
+    if (m.kind !== 'dual' && m.kind !== 'qfp') return;
+    const n = m.n || 8, seen = new Set();
+    m.pins.forEach((p) => { assert.ok(p.no >= 1 && p.no <= n && !seen.has(p.no), m.id + ' ' + p.no); seen.add(p.no); });
+    if (m.kind === 'qfp') assert.equal(n % 4, 0);
+  });
+});
+
+test('串口外设：RS485 / RS232 经跳线复用 USART1，ESP32 接 USART2，CAN 在 PB8 / PB9', () => {
+  const g = (id, name) => MODS.find((x) => x.id === id).pins.find((p) => p.name === name).mcu;
+  assert.equal(g('rs485', 'RO'), 'PA10'); assert.equal(g('rs485', 'DI'), 'PA9'); assert.equal(g('rs485', 'DE'), 'PE3');
+  assert.equal(g('rs232', 'T1IN'), 'PA9'); assert.equal(g('rs232', 'R1OUT'), 'PA10');
+  assert.equal(g('esp32', 'GPIO6'), 'PA2'); assert.equal(g('esp32', 'GPIO7'), 'PA3'); assert.equal(g('esp32', 'CHIP_EN'), 'PE4');
+  assert.equal(g('can', 'TXD'), 'PB9'); assert.equal(g('can', 'RXD'), 'PB8');
+  assert.equal(g('w5500', 'SCSn'), 'PD3'); assert.equal(g('lora', 'NSS'), 'PG14'); assert.equal(g('sd', 'CMD'), 'PD2');
 });

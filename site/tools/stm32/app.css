@@ -1244,3 +1244,24 @@ svg.mod { display: block; width: 100%; height: 100%; overflow: visible; }
 .pd-mini .mk { fill: var(--lit, var(--mask)); stroke: var(--surface); stroke-width: 2; }
 .pd-mini .mk.sel { fill: var(--mask); }
 .pd-mini svg.chip { overflow: visible; padding: 8px; box-sizing: content-box; }
+.mod .can { fill: #d8d4c8; stroke: #a9a497; stroke-width: 1.5; }
+.mod .can-in { fill: #e9e6dd; stroke: #c4bfb2; stroke-width: 1; }
+.mod .mark3 { font-size: 15px; font-weight: 600; fill: #6b6960; letter-spacing: .04em; }
+.mod .usb-hole { fill: #2b2a27; }
+.mod .usb-tongue { fill: #5e5d59; }
+.mod .trace.thin { stroke-width: 1.5; opacity: .55; }
+.mod .slot.thin { stroke-width: 2.5; }
+.mod .termbody { fill: #3f8a5a; stroke: #2f6e46; stroke-width: 1.5; }
+.mod .screw { fill: #d8d4c8; stroke: #a9a497; stroke-width: 1.5; }
+.mod .termhole { fill: #24553a; }
+.mod .shield { fill: #cfcbc0; stroke: #a9a497; stroke-width: 1.5; }
+.mod .shield-in { fill: none; stroke: #b3aea0; stroke-width: 1; }
+.mod .shield ~ .mark, .mod-dual .shield ~ text { fill: #5e5d59; }
+.mod .bevel { fill: none; stroke: var(--chip-edge); stroke-width: 1; }
+.mod .sdcard { fill: #2f3d4c; stroke: #22303d; stroke-width: 1.5; }
+.mod .sdcard ~ .mark3 { fill: #a9b6c3; }
+.mod .nc .ld { opacity: .55; }
+.mod .nc .no { opacity: .6; }
+[data-theme="dark"] .mod .can { fill: #8a867d; stroke: #6b6960; }
+[data-theme="dark"] .mod .can-in { fill: #a39e93; }
+[data-theme="dark"] .mod .shield { fill: #8f8b82; stroke: #6b6960; }
