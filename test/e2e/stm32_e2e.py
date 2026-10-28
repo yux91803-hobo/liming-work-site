@@ -290,7 +290,8 @@ async def main():
         pg = await page(b)
         await pg.goto(TOOL + '?v=think&t=i2c'); await pg.wait_for_selector('.dv-map')
         check('I2C 推导章首页：推导链 22 环、7 条主干结论、两种学法', await pg.evaluate("document.querySelectorAll('.dv-node').length") == 22 and await pg.evaluate("document.querySelectorAll('.dv-factl li').length") == 7 and await pg.evaluate("document.querySelectorAll('.dv-modeb').length") == 2)
-        await pg.click('.dv-modeb >> nth=1'); await pg.wait_for_selector('.dv-modeb.on')
+        await pg.click('.dv-modeb >> nth=1'); await pg.wait_for_selector('.dv-step')
+        await pg.goto(TOOL + '?v=think&t=i2c'); await pg.wait_for_selector('.dv-map')
         check('切到自主推导：结论在推出来之前隐藏', await pg.evaluate("document.querySelectorAll('.dv-node-g').length") == 0 and await pg.evaluate("document.querySelectorAll('.dv-factl li.locked').length") == 7)
         ANSWER = """async ([chid, id]) => {
           const sleep = (ms) => new Promise(r => setTimeout(r, ms));
