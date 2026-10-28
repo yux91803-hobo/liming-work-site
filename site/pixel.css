@@ -1,7 +1,7 @@
-/* pixel.css — 全站像素风（工具箱首页、STM32 学习台、世界地图共用，放在各页自己的样式之后）
+/* pixel.css — 工具箱首页的像素风（放在 shell.css 之后；工具里面保持原来的样式）
    点阵字体是 Unifont 的裁剪版（scripts/build-font.py），16px 的整数倍最整齐，其他字号也看得清。
    方角、2px 粗边框、没有模糊和渐变的硬阴影；颜色沿用各页自己的变量。 */
-@font-face { font-family: "Pixel"; src: url(/fonts/pixel.woff?v=px1) format("woff"); font-display: swap; }
+@font-face { font-family: "Pixel"; src: url(/fonts/pixel.woff?v=px2) format("woff"); font-display: swap; }
 :root {
   --pxf: "Pixel", ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", "Noto Sans Mono CJK SC", monospace;
   --sans: var(--pxf); --mono: var(--pxf);

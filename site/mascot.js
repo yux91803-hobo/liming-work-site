@@ -12,10 +12,11 @@
   var G = 20, W = 80, H = 80, SLEEP_AFTER = 30000;
 
   /* ---------- 像素造型 ----------
-     身子：x 4..15、y 6..15（外框一圈深色，顶边正中一个芯片缺口）；姿势里的 b 是身子往下蹲几格。
-     脚：x = 5 / 8 / 11 / 14，从身子下面一直到地面 y = 19；蹲下时膝盖往外弯。
-     手：从身子两侧 y = 10 水平伸出来。 */
-  var LEG_X = [5, 8, 11, 14];
+     身子：x 4..15、y 7..16（外框一圈深色，顶边正中一个芯片缺口）；姿势里的 b 是身子往下蹲几格。
+     脚：x = 4 / 7 / 12 / 15（中间两条隔得开一点），3 格长，从身子下面到地面 y = 19；蹲下时脚尖往外撇。
+     手：从身子两侧水平伸出来。
+     下面 ARM / FACE / 饼干 / LED 的坐标都按身子在 y 6 写的，画的时候整体再往下挪 OY 格。 */
+  var LEG_X = [4, 7, 12, 15], OY = 1;
   // 手是一根粗引脚（2 格粗、3 格长），不分节：平时水平伸出、垂直于身子侧边，做动作时整根换个朝向。
   // [x, y, 宽, 高]，左手；右手按 x → 20 - x - 宽 镜像
   var ARM = {
@@ -42,20 +43,20 @@
   var COOKIE = [[1, 0, 'ck'], [2, 0, 'ck'], [0, 1, 'ck'], [1, 1, 'cc'], [2, 1, 'ck'], [3, 1, 'ck'], [0, 2, 'ck'], [1, 2, 'ck'], [2, 2, 'ck'], [3, 2, 'cc'], [1, 3, 'ck'], [2, 3, 'ck']];
   var BITE_ROWS = [-1, 0, 1, 3];   // 咬了 n 口以后，第几行（含）以上都没了
 
-  function straight(x) { return [[x, 16], [x, 17], [x, 18], [x, 19]]; }
+  function straight(x) { return [[x, 17], [x, 18], [x, 19]]; }
   // 蹲：脚变短，脚尖往外撇（b = 1 蹲一格，b = 2 蹲到底）
-  function bent(x, s, b) { return b === 1 ? [[x, 17], [x, 18], [x + s, 19]] : [[x + s, 18], [x + s, 19]]; }
+  function bent(x, s, b) { return b === 1 ? [[x, 18], [x + s, 19]] : [[x + s, 19]]; }
 
   function draw(p) {
-    var o = [], b = p.b | 0, sx = p.sx | 0, i;
+    var o = [], lb = p.b | 0, b = lb + OY, sx = p.sx | 0, i;
     function R(x, y, w, h, c) { o.push('<rect class="c-' + c + '" x="' + x + '" y="' + y + '" width="' + (w || 1) + '" height="' + (h || 1) + '"/>'); }
     // 脚（画在身子后面）
     for (i = 0; i < 4; i++) {
       var lx = LEG_X[i], s = i < 2 ? -1 : 1, A = i % 2 === 0, q = p.lp | 0, pix;
-      if (p.legs === 'walk') pix = ((q === 0 && A) || (q === 2 && !A)) ? [[lx, 16], [lx, 17], [lx + (p.dir || 1), 18]] : (b ? bent(lx, s, b) : straight(lx));
-      else if (p.legs === 'tuck') pix = [[lx, 16 + b], [lx + s, 17 + b]];
-      else if (p.legs === 'dangle') pix = ((q === 0) === A) ? straight(lx) : [[lx, 16], [lx, 17], [lx - s, 18]];
-      else pix = b ? bent(lx, s, b) : straight(lx);
+      if (p.legs === 'walk') pix = ((q === 0 && A) || (q === 2 && !A)) ? [[lx, 17], [lx + (p.dir || 1), 18]] : (lb ? bent(lx, s, lb) : straight(lx));
+      else if (p.legs === 'tuck') pix = [[lx, 17 + lb], [lx + s, 18 + lb]];
+      else if (p.legs === 'dangle') pix = ((q === 0) === A) ? straight(lx) : [[lx, 17], [lx - s, 18]];
+      else pix = lb ? bent(lx, s, lb) : straight(lx);
       pix.forEach(function (c) { R(c[0], c[1], 1, 1, 'p'); });
     }
     // 身子
@@ -218,7 +219,7 @@
       f.push(mix(Hd, { item: { k: 'cookie', n: 0 }, face: 'hap', t: 320 }));
       for (var n = 1; n <= 3; n++) {
         f.push(mix(Hd, { item: { k: 'cookie', n: n - 1 }, mouth: 2, ly: 1, t: 220 }));
-        f.push(mix(Hd, { item: { k: 'cookie', n: n }, mouth: 1, face: 'hap', fx: [[9 + n % 2, 15, 'ck']], t: 140 }));
+        f.push(mix(Hd, { item: { k: 'cookie', n: n }, mouth: 1, face: 'hap', fx: [[9 + n % 2, 16, 'ck']], t: 140 }));
         f.push(mix(Hd, { item: { k: 'cookie', n: n }, mouth: 1, face: 'hap', b: 1, fx: [[10 - n % 2, 17, 'ck']], t: 140 }));
         f.push(mix(Hd, { item: { k: 'cookie', n: n }, mouth: 1, face: 'hap', fx: [[9 + n % 2, 19, 'ck']], t: 180 }));
       }
@@ -226,14 +227,14 @@
       return { frames: f, after: function () { setMood('happy', 900); jump(2); } };
     },
     ball: function () {
-      var U = { armR: 'up' }, f = reach(), ys = [3, 0, -2, -3, -2, 0, 3, 5], r;
-      f.push(mix(U, { item: { k: 'ball', x: 16, y: 5 }, lx: 1, ly: -1, t: 420 }));
+      var U = { armR: 'up' }, f = reach(), ys = [4, 1, -1, -2, -1, 1, 4, 6], r;
+      f.push(mix(U, { item: { k: 'ball', x: 16, y: 6 }, lx: 1, ly: -1, t: 420 }));
       function toss(yy, i) { f.push(mix(U, { armR: i === 0 || i === ys.length - 1 ? 'up' : 'wave', item: { k: 'ball', x: 16, y: yy }, lx: 1, ly: -1, t: 70 })); }
       for (r = 0; r < 2; r++) ys.forEach(toss);
       // 最后一下抛歪了，正好砸到自己头上
-      [[16, 1], [14, -2], [12, -3], [10, -1], [9, 2]].forEach(function (c) { f.push(mix(U, { armR: 'wave', item: { k: 'ball', x: c[0], y: c[1] }, lx: 0, ly: -1, t: 70 })); });
-      f.push({ armL: 'wave', armR: 'wave', item: { k: 'ball', x: 9, y: 4 }, face: 'dz', b: 1, t: 260 });
-      [[11, 1], [13, 0], [15, 2], [17, 6], [18, 11], [19, 16], [21, 18], [24, 18], [27, 18]].forEach(function (c, i) {
+      [[16, 2], [14, -1], [12, -2], [10, 0], [9, 3]].forEach(function (c) { f.push(mix(U, { armR: 'wave', item: { k: 'ball', x: c[0], y: c[1] }, lx: 0, ly: -1, t: 70 })); });
+      f.push({ armL: 'wave', armR: 'wave', item: { k: 'ball', x: 9, y: 5 }, face: 'dz', b: 1, t: 260 });
+      [[11, 2], [13, 1], [15, 3], [17, 7], [18, 12], [19, 16], [21, 18], [24, 18], [27, 18]].forEach(function (c, i) {
         f.push({ item: { k: 'ball', x: c[0], y: c[1] }, face: i < 3 ? 'dz' : 'eyes', lx: 1, ly: c[1] < 8 ? -1 : 1, b: i < 2 ? 1 : 0, t: 70 });
       });
       f.push({ face: 'eyes', lx: 1, ly: 1, t: 600 });
@@ -298,7 +299,7 @@
     track.appendChild(s);
     setTimeout(function () { if (s.parentNode) s.remove(); }, 3000);
   }
-  function headY() { return track.clientHeight - H + y + H * 6 / G; }
+  function headY() { return track.clientHeight - H + y + H * (6 + OY) / G; }
   function sparks(n) {
     if (reduce) return;
     for (var i = 0; i < n; i++) {
