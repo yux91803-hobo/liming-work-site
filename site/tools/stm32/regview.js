@@ -354,7 +354,7 @@
       var links = el('div', 'qlinks');
       if (q.snippet && M.snipBy(q.snippet.cat, q.snippet.title)) { var sb = ui.btn('linkbtn', '代码：' + q.snippet.title); sb.addEventListener('click', function () { app.navigate({ v: 'topic', snip: String(q.snippet.title) }); }); links.appendChild(sb); }
       if (q.teach && M.figById[q.teach]) { var tb = ui.btn('linkbtn', '教学图：' + M.figById[q.teach].title); tb.addEventListener('click', function () { app.navigate({ fig: String(q.teach) }); }); links.appendChild(tb); }
-      if (q.port && q.pin != null && /^GPIO[A-G]$/.test(q.port)) { var pn = M.pinByName['P' + q.port.charAt(4) + q.pin]; if (pn) { var pb = ui.btn('linkbtn', '引脚：' + pn.name); pb.addEventListener('click', function () { app.navigate({ v: 'chip', pin: String(pn.n) }); }); links.appendChild(pb); } }
+      if (q.port && q.pin != null && /^GPIO[A-G]$/.test(q.port)) { var pn = M.pinByName['P' + q.port.charAt(4) + q.pin]; if (pn) { var pb = ui.btn('linkbtn', '引脚：' + pn.name); pb.addEventListener('click', function () { app.navigate({ v: 'home', pin: String(pn.n) }); }); links.appendChild(pb); } }
       if (links.firstChild) d.appendChild(links);
       if (d.firstChild) box.appendChild(d);
     }

@@ -1,0 +1,59 @@
+/* 板载模块：每个脚接到的 MCU 引脚都存在，并和开发板资源表（assets/board.js）一致 */
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const path = require('node:path');
+const root = path.join(__dirname, '../site/tools/stm32');
+const sb = { window: {} }; sb.window.window = sb.window; vm.createContext(sb);
+['pins.js', 'assets/board.js', 'modules.js', 'topics.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sb, { filename: f }));
+const W = sb.window, MODS = W.STM32_MODULES, PINS = {};
+W.STM32_PINS.forEach((p) => { PINS[p[1]] = p; });
+const BOARD = (W.STM32_BOARD || {}).resources.filter((r) => r && r.mcu);
+
+test('每个模块：id 唯一、有标签、脚的键唯一、要么接 MCU 要么接电源网络', () => {
+  const ids = new Set();
+  MODS.forEach((m) => {
+    assert.ok(!ids.has(m.id), m.id); ids.add(m.id);
+    assert.match(m.id, /^[a-z][a-z0-9]{1,11}$/);
+    assert.ok(m.tag && m.kind && m.pins.length >= 3, m.id);
+    const ks = new Set();
+    m.pins.forEach((p) => {
+      assert.match(p.k, /^[a-z0-9]{1,8}$/, m.id + ' ' + p.k); assert.ok(!ks.has(p.k), m.id + ' ' + p.k); ks.add(p.k);
+      if (p.mcu) assert.ok(PINS[p.mcu], m.id + ' ' + p.name + ' → ' + p.mcu + ' 不是芯片上的引脚');
+    });
+    assert.ok(W.STM32_TOPICS.some((t) => t.id === m.topic), m.id + ' topic');
+  });
+});
+
+test('和开发板资源表一致：EEPROM、Flash、LED、按键、蜂鸣器、电位器、串口、LCD', () => {
+  const want = {
+    eeprom: { SCL: 'PB10', SDA: 'PB11' }, flash: { CS: 'PC13', CLK: 'PA5', DO: 'PA6', DI: 'PA7' },
+    led: { LED1: 'PA0', LED2: 'PA1', LED3: 'PA8', LED5: 'PG11' }, key: { KEY1: 'PF8', KEY2: 'PF9', KEY3: 'PF10', KEY4: 'PF11', RESET: 'NRST' },
+    beep: { G: 'PB1' }, pot: { 2: 'PC0' }, stlink: { TX: 'PA9', RX: 'PA10', SWDIO: 'PA13', SWCLK: 'PA14' },
+    lcd: { CS: 'PG12', RS: 'PG0', RST: 'PG15', BL: 'PB0', T_SCL: 'PB6', T_SDA: 'PB7', T_INT: 'PC1' }
+  };
+  Object.entries(want).forEach(([id, map]) => {
+    const m = MODS.find((x) => x.id === id);
+    Object.entries(map).forEach(([name, mcu]) => {
+      const p = m.pins.find((x) => x.name === name);
+      assert.equal(p && p.mcu, mcu, id + ' ' + name);
+      assert.ok(BOARD.some((r) => r.mcu.split('/').includes(mcu) || r.mcu === mcu), mcu + ' 不在开发板资源表里');
+    });
+  });
+});
+
+test('LCD：16 根数据线接到芯片的 FSMC_D0~D15，控制线是 NE4 / A10 / NWE / NOE', () => {
+  const lcd = MODS.find((x) => x.id === 'lcd');
+  assert.equal(lcd.pins.length, 28);
+  for (let i = 0; i < 16; i++) { const p = lcd.pins.find((x) => x.name === 'D' + i); assert.ok(PINS[p.mcu][4].split(' ').includes('FSMC_D' + i), 'D' + i + ' → ' + p.mcu); }
+  [['CS', 'FSMC_NE4'], ['RS', 'FSMC_A10'], ['WR', 'FSMC_NWE'], ['RD', 'FSMC_NOE']].forEach(([n, sig]) => {
+    const p = lcd.pins.find((x) => x.name === n); assert.ok(PINS[p.mcu][4].split(' ').includes(sig), n);
+  });
+});
+
+test('SOP-8 芯片 8 个脚号齐全；M24C02 三个地址脚都接地（地址 0xA0）', () => {
+  MODS.filter((m) => m.kind === 'sop8').forEach((m) => assert.deepEqual(JSON.parse(JSON.stringify(m.pins.map((p) => p.no))), [1, 2, 3, 4, 5, 6, 7, 8]));
+  const e = MODS.find((x) => x.id === 'eeprom');
+  ['E0', 'E1', 'E2', 'WC'].forEach((n) => assert.equal(e.pins.find((p) => p.name === n).net, 'GND'));
+});

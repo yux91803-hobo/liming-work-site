@@ -11,7 +11,8 @@ test('route whitelist discards injected URLs, unknown keys and invalid values', 
   const x = core.fromParams('v=topic&t=usart&reg=javascript:alert(1)&next=https://example.com&embed=1&val=NaN&pin=999');
   assert.deepEqual(x, { v: 'topic', t: 'usart' });
   assert.deepEqual(core.target({ v: 'evil', cw: '../bad-16', fig: 'https://example.com/x' }), { v: 'home' });
-  assert.deepEqual(core.target({ v: 'chip', pin: '0' }), { v: 'chip' });
+  assert.deepEqual(core.target({ v: 'chip', pin: '0' }), { v: 'home' });
+  assert.deepEqual(core.target({ v: 'home', m: 'Evil!', mp: 'x' }), { v: 'home' });
 });
 test('home is the default and is left out of the address', () => {
   assert.equal(core.params({}), '');
@@ -22,11 +23,17 @@ test('only one viewer layer survives (courseware wins over figure and schematic)
   assert.deepEqual(core.target({ v: 'course', cw: 'v20-16', fig: 'usart', sch: 'board-05' }), { v: 'course', cw: 'v20-16' });
 });
 test('chip filter keeps Chinese text and trims control characters', () => {
-  assert.deepEqual(core.fromParams(core.params({ v: 'chip', q: ' 串口\u0007 ' })), { v: 'chip', q: '串口' });
+  assert.deepEqual(core.fromParams(core.params({ v: 'home', q: ' 串口\u0007 ' })), { v: 'home', q: '串口' });
+});
+test('home: old chip links land on home; a module and one of its pins round-trip', () => {
+  assert.deepEqual(core.fromParams('v=chip&pin=101'), { v: 'home', pin: '101' });
+  assert.equal(core.params({ v: 'home', m: 'eeprom', mp: 'p6' }), 'm=eeprom&mp=p6');
+  assert.deepEqual(core.fromParams('m=eeprom&mp=p6&pin=5'), { v: 'home', m: 'eeprom', mp: 'p6' });
+  assert.deepEqual(core.target({ v: 'topic', t: 'gpio', m: 'led' }), { v: 'topic', t: 'gpio' });
 });
 test('old links from the previous layout still open the right place', () => {
-  assert.deepEqual(core.fromParams('tab=pins&q=PA9'), { v: 'chip', q: 'PA9' });
-  assert.deepEqual(core.fromParams('tab=chip&pin=101'), { v: 'chip', pin: '101' });
+  assert.deepEqual(core.fromParams('tab=pins&q=PA9'), { v: 'home', q: 'PA9' });
+  assert.deepEqual(core.fromParams('tab=chip&pin=101'), { v: 'home', pin: '101' });
   assert.deepEqual(core.fromParams('tab=chip&page=board-05'), { v: 'board', sch: 'board-05' });
   assert.deepEqual(core.fromParams('tab=course&cw=v20-16'), { v: 'course', cw: 'v20-16' });
   assert.deepEqual(core.fromParams('tab=regs&reg=GPIO_CRH.MODE9&i=GPIOA&y=9&v=0x444444B4'), { v: 'topic', reg: 'GPIO_CRH', i: 'GPIOA', val: '0x444444B4' });

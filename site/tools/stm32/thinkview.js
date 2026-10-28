@@ -30,7 +30,6 @@
       var top = el('div', 'tk-ch-h'); top.appendChild(el('b', 'mono', t.code));
       top.appendChild(el('span', null, pg.done ? (pg.done === pg.total ? '推完了' : pg.done + ' / ' + pg.total) : pg.total + ' 问'));
       a.appendChild(top);
-      a.appendChild(el('h3', null, ch.title.replace(/^[^：]+：/, '')));
       if (pg.due) a.appendChild(el('span', 'tk-due', '待复习 ' + pg.due));
       var bar = el('div', 'tk-dots'); for (var k = 0; k < 10; k++) bar.appendChild(el('span', k < Math.round(pg.done / pg.total * 10) ? 'on' : null)); a.appendChild(bar);
       grid.appendChild(a);

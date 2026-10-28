@@ -76,7 +76,7 @@
       else if (l.sch) { var sc = M.schById[l.sch]; if (sc) { label = '原理图：' + sc.title; ic = 'board'; go = function () { app.navigate({ sch: l.sch }); }; } }
       else if (l.fig) { var f = M.figById[l.fig]; if (f) { label = '图：' + f.title; ic = 'image'; go = function () { app.navigate({ fig: l.fig }); }; } }
       else if (l.cw) { var m = /^(.*)-(\d+)$/.exec(l.cw), pt = m && M.partById[m[1]]; if (pt) { label = '课件：' + pt.short + ' 第 ' + m[2] + ' 页'; ic = 'book'; go = function () { app.navigate({ cw: l.cw }); }; } }
-      else if (l.pin) { var p = M.pinByName[String(l.pin).toUpperCase()]; if (p) { label = '引脚：' + p.name + (p.board.length ? '（' + p.board[0].name + '）' : ''); ic = 'chip'; go = function () { app.navigate({ v: 'chip', pin: String(p.n) }); }; } }
+      else if (l.pin) { var p = M.pinByName[String(l.pin).toUpperCase()]; if (p) { label = '引脚：' + p.name + (p.board.length ? '（' + p.board[0].name + '）' : ''); ic = 'chip'; go = function () { app.navigate({ v: 'home', pin: String(p.n) }); }; } }
       if (!go) return null;
       var b = ui.btn('linkbtn dv-link'); b.appendChild(ui.icon(ic)); b.appendChild(el('span', null, label));
       b.addEventListener('click', go);
@@ -893,10 +893,9 @@
       var st = chState(ch.id), m = mode();
       var head = el('header', 'dv-hero');
       var crumb = app.link({ v: 'think' }, 'tk-crumb'); crumb.textContent = '编程思维'; head.appendChild(crumb);
-      head.appendChild(el('h1', null, ch.title));
+      head.appendChild(el('h1', null, topic.code));
       var task = el('div', 'dv-task'); task.appendChild(ui.icon('flag'));
       var tt = el('div'); tt.appendChild(el('span', 'dv-task-l', '任务')); tt.appendChild(el('b', null, ch.task)); task.appendChild(tt); head.appendChild(task);
-      paras(ch.intro.slice(0, 1), head, 'dv-intro');
       var hon = el('details', 'dv-honest'); hon.appendChild(el('summary', null, '思路重建，不是真实历史'));
       hon.appendChild(el('p', null, ch.honesty.replace(/^说明：/, ''))); head.appendChild(hon);
       wrap.appendChild(head);

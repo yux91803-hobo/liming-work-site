@@ -41,13 +41,15 @@ async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch()
 
-        # ---------- 1. 独立打开：学习地图 → 主题 → 寄存器 → 返回 ----------
+        # ---------- 1. 独立打开：首页 → 主题 → 寄存器 → 返回 ----------
         pg = await page(b)
         await pg.goto(TOOL); await pg.wait_for_function("document.documentElement.classList.contains('ready')")
-        await pg.hover('.trow[href*="t=usart"]')
-        lit = await pg.evaluate("document.querySelectorAll('.home-chip .pin.lit').length")
-        check('首页：指到 USART，芯片上点亮它的引脚', lit == 31, lit)
-        await pg.click('.trow[href*="t=usart"]'); await pg.wait_for_selector('.topic')
+        await pg.hover('.mtag:has-text("M24C02")')
+        lit = await pg.evaluate("[...document.querySelectorAll('.boardh .chip .pin.lit')].map(g => g.dataset.pin).sort()")
+        check('首页：指到 M24C02 标签，芯片上点亮 PB10 / PB11', lit == ['69', '70'], lit)
+        side = await pg.evaluate("[...document.querySelectorAll('.nav-t')].map(a => a.textContent)")
+        check('侧栏外设只写缩写', side == ['RCC', 'GPIO', 'EXTI', 'USART', 'I2C', 'TIM', 'DMA', 'ADC', 'SPI', 'FSMC'], side)
+        await pg.click('.nav-t[data-t="usart"]'); await pg.wait_for_selector('.topic')
         check('进入 USART 主题页', 'v=topic&t=usart' in pg.url and await pg.inner_text('.th-code') == 'USART', pg.url)
         secs = await pg.evaluate("[...document.querySelectorAll('.snav-i')].map(a => a.textContent)")
         check('主题页分节齐全', secs == ['要点', '课件', '引脚', '寄存器', '代码', '图'], secs)
@@ -61,7 +63,7 @@ async def main():
         await pg.go_back(); await pg.wait_for_timeout(400)
         check('返回：关掉寄存器面板，留在主题页', not await pg.evaluate("!!document.querySelector('.sheet.on')") and 'reg=' not in pg.url)
         await pg.go_back(); await pg.wait_for_timeout(300)
-        check('再返回：回到学习地图', await pg.evaluate("!!document.querySelector('.home')"))
+        check('再返回：回到首页', await pg.evaluate("!!document.querySelector('.boardh')"))
 
         # ---------- 2. 位段条与常用配置 ----------
         await pg.goto(TOOL + '?v=topic&t=gpio&reg=GPIO_CRL&i=GPIOA'); await pg.wait_for_selector('.sheet.on')
@@ -76,16 +78,37 @@ async def main():
         grp = await pg.inner_text('.fgroup-h >> nth=7')
         check('GPIO 字段按引脚分组并标出板上用途', 'PA0' in grp and 'LED1' in grp, grp)
 
-        # ---------- 3. 芯片引脚 ----------
-        await pg.goto(TOOL + '?v=chip'); await pg.wait_for_selector('.chipv')
+        # ---------- 3. 首页：芯片引脚 + 板载模块 ----------
+        await pg.goto(TOOL + '?v=chip'); await pg.wait_for_selector('.boardh .chip')
+        check('旧地址 v=chip 打开首页', 'v=' not in pg.url)
         await pg.fill('.filter input', 'USART1'); await pg.wait_for_timeout(500)
-        n = await pg.evaluate("document.querySelectorAll('.chipv .pin.lit').length")
-        check('芯片页筛选 USART1 点亮对应引脚', n >= 4 and 'q=USART1' in pg.url, n)
-        await pg.click('.chipv [data-pin="101"] .hit', force=True); await pg.wait_for_timeout(500)
+        n = await pg.evaluate("document.querySelectorAll('.boardh .chip .pin.lit').length")
+        check('筛选 USART1 点亮对应引脚', n >= 4 and 'q=USART1' in pg.url, n)
+        await pg.click('.boardh [data-pin="101"] .hit', force=True); await pg.wait_for_timeout(500)
         det = await pg.inner_text('.pdetail')
-        check('点 101 脚：详情列出 USART1_TX 和板上用途', 'PA9' in det and 'USART1_TX' in det and 'STLink' in det)
+        check('点 101 脚：详情列出 USART1_TX，并指出接到 ST-Link 口的 TX', 'PA9' in det and 'USART1_TX' in det and 'ST-Link' in det, det[:80])
+        await pg.click('.pdetail .mlink'); await pg.wait_for_selector('svg.mod')
+        st = await pg.evaluate("[document.querySelector('.mod .mp.sel').dataset.mp, document.querySelector('.pdetail h2').textContent, document.querySelector('.mtag.on').textContent]")
+        check('跳到 ST-Link 模块图，选中 TX 脚', st == ['p6', 'TX', 'ST-Link'] and 'm=stlink' in pg.url, st)
+        await pg.click('.pdetail .mcubtn'); await pg.wait_for_selector('.boardh .chip .pin.sel')
+        await pg.wait_for_timeout(500)
+        sel = await pg.evaluate("document.querySelector('.boardh .chip .pin.sel').dataset.pin")
+        check('点「PA9」回到芯片图并选中 101 脚', sel == '101' and 'pin=101' in pg.url, (sel, pg.url))
         await pg.click('.pdetail a.sig:has-text("USART1_TX")'); await pg.wait_for_selector('.topic')
         check('从信号跳到所属外设', 't=usart' in pg.url)
+        await pg.goto(TOOL); await pg.wait_for_selector('.mtags')
+        tags = await pg.evaluate("[...document.querySelectorAll('.mtag')].map(b => b.textContent)")
+        bad = []
+        for tg in tags[1:]:
+            await pg.click('.mtag:has-text("%s")' % tg); await pg.wait_for_selector('svg.mod')
+            mp = await pg.evaluate("document.querySelectorAll('svg.mod .mp').length")
+            await pg.click('svg.mod .mp >> nth=0', force=True); await pg.wait_for_timeout(200)
+            ok = await pg.evaluate("(() => { const s = document.querySelector('svg.mod .mp.sel'); return !!s && document.querySelector('.pdetail .pd-mp.on') && document.querySelector('.pdetail .pd-mini .mk') !== undefined; })()")
+            if mp < 3 or not ok: bad.append((tg, mp, ok))
+        check('%d 个模块图都能打开、点脚选中、右边列出全部脚' % (len(tags) - 1), len(tags) >= 9 and not bad, bad or tags)
+        await pg.goto(TOOL + '?m=eeprom&mp=p6'); await pg.wait_for_selector('.pd-conn')
+        conn = await pg.inner_text('.pd-conn')
+        check('M24C02 第 6 脚 SCL 接 PB10（69 脚），小芯片图上标出这个脚', 'PB10' in conn and '69' in conn and await pg.evaluate("document.querySelectorAll('.pd-mini .mk.sel').length") == 1, conn)
 
         # ---------- 4. 课件查看器 ----------
         await pg.goto(TOOL + '?v=course'); await pg.wait_for_selector('.coursev')
@@ -117,7 +140,7 @@ async def main():
         # ---------- 6. 深链 / 旧链接 ----------
         for qs, test, name in [
             ('?cw=v20-16', "document.querySelector('.vw-n') && document.querySelector('.vw-n').textContent.startsWith('16 /')", '课件第 16 页'),
-            ('?tab=pins&q=PA9', "location.search.includes('v=chip') && document.querySelector('.filter input').value === 'PA9'", '旧链接 tab=pins'),
+            ('?tab=pins&q=PA9', "!location.search.includes('v=') && document.querySelector('.filter input').value === 'PA9'", '旧链接 tab=pins'),
             ('?tab=regs&reg=GPIO_CRH&i=GPIOB', "!!document.querySelector('.sheet.on') && document.querySelector('.sh-expr').textContent === 'GPIOB->CRH'", '旧链接 tab=regs'),
             ('?tab=chip&page=board-05', "!!document.querySelector('.viewer.on') && location.search.includes('v=board')", '旧链接原理图'),
             ('?tab=code&snip=' + 'USART1 中断收发', "location.search.includes('t=usart')", '旧链接代码片段'),
@@ -139,7 +162,7 @@ async def main():
         # ---------- 8. 嵌在工具箱里：返回键逐层退回 ----------
         pg = await page(b)
         await pg.goto(BASE + '/stm32'); f = await tool_frame(pg)
-        await f.click('.trow[href*="t=i2c"]'); await f.wait_for_selector('.topic')
+        await f.click('.nav-t[data-t="i2c"]'); await f.wait_for_selector('.topic')
         await f.click('.rrow[data-reg="I2C_CCR"]'); await f.wait_for_selector('.sheet.on')
         await f.click('.sh-meta .pgchip'); await wait_img(f)
         depth = lambda: f.evaluate("({ v: !!document.querySelector('.viewer.on'), s: !!document.querySelector('.sheet.on'), t: !!document.querySelector('.topic') })")
@@ -148,7 +171,7 @@ async def main():
         await pg.go_back(); await pg.wait_for_timeout(600); d2 = await depth()
         check('外壳返回 2：关寄存器，回到 I2C 页', not d2['s'] and d2['t'], d2)
         await pg.go_back(); await pg.wait_for_timeout(600)
-        check('外壳返回 3：回到学习地图', await f.evaluate("!!document.querySelector('.home')"))
+        check('外壳返回 3：回到首页', await f.evaluate("!!document.querySelector('.boardh')"))
         await pg.go_back(); await pg.wait_for_timeout(900)
         check('外壳返回 4：关闭工具', not await pg.evaluate("!!document.querySelector('#stage .panel.show')") and await pg.evaluate("location.pathname") == '/')
         # 连续翻页后返回
@@ -175,8 +198,15 @@ async def main():
         # ---------- 9. 手机 ----------
         pg = await page(b, 390, 844, mobile=True)
         await pg.goto(TOOL); await pg.wait_for_function("document.documentElement.classList.contains('ready')")
-        order = await pg.evaluate("['.home-h','.home-chip','.path'].map(s => Math.round(document.querySelector(s).getBoundingClientRect().top))")
-        check('手机首页：标题 → 芯片 → 学习路径', order[0] < order[1] < order[2], order)
+        order = await pg.evaluate("['.chipv-stage','.mtags','.pdetail'].map(s => Math.round(document.querySelector(s).getBoundingClientRect().top))")
+        check('手机首页：芯片图 → 模块标签 → 详情', order[0] < order[1] < order[2], order)
+        await pg.click('.bar-menu'); await pg.wait_for_timeout(350)
+        dr = await pg.evaluate("(() => { const r = document.querySelector('#side').getBoundingClientRect(); return [document.documentElement.classList.contains('drawer'), Math.round(r.left), Math.round(r.width)]; })()")
+        check('手机：点菜单从左边滑出侧栏', dr[0] and dr[1] == 0 and dr[2] > 200, dr)
+        await pg.click('#side .nav-t[data-t="gpio"]'); await pg.wait_for_selector('.topic')
+        check('手机：侧栏点 GPIO 进入外设页，侧栏收起', not await pg.evaluate("document.documentElement.classList.contains('drawer')") and 't=gpio' in pg.url)
+        await pg.click('.bar-menu'); await pg.wait_for_timeout(300); await pg.click('.scrim', position={'x': 370, 'y': 400}); await pg.wait_for_timeout(300)
+        check('手机：点遮罩收起侧栏', not await pg.evaluate("document.documentElement.classList.contains('drawer')"))
         await pg.goto(TOOL + '?v=topic&t=gpio&reg=GPIO_CRL'); await pg.wait_for_selector('.sheet.on')
         box = await pg.evaluate("(() => { const r = document.querySelector('.sheet-p').getBoundingClientRect(); const v = document.querySelector('.sh-valrow .pill').getBoundingClientRect(); return [r.width, v.right]; })()")
         check('手机：寄存器面板全屏，复位按钮不被截断', box[0] >= 389 and box[1] <= 390, box)
@@ -207,7 +237,7 @@ async def main():
         await pg.context.close()
         pg = await page(b, 390, 844, mobile=True)
         overflow = []
-        pages = ['?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
+        pages = ['', '?m=lcd', '?m=beep&mp=g', '?m=led', '?m=eeprom&mp=p6', '?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
                  '?v=think&t=gpio&s=s13', '?v=think&t=usart&s=s11', '?v=think&t=tim&s=s11', '?v=think&t=adc&s=s11', '?v=think&t=spi&s=s11', '?v=think&t=i2c&s=review']
         for qs in pages:
             await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)
