@@ -891,7 +891,7 @@
     function renderHome() {
       var st = chState(ch.id), m = mode();
       var head = el('header', 'dv-hero');
-      var crumb = app.link({ v: 'think' }, 'tk-crumb'); crumb.textContent = 'Code'; head.appendChild(crumb);
+      var crumb = app.link({ v: 'think' }, 'tk-crumb'); crumb.textContent = 'Code reasoning'; head.appendChild(crumb);
       head.appendChild(el('h1', null, topic.code));
       var task = el('div', 'dv-task'); task.appendChild(ui.icon('flag'));
       var tt = el('div'); tt.appendChild(el('span', 'dv-task-l', '任务')); tt.appendChild(el('b', null, ch.task)); task.appendChild(tt); head.appendChild(task);
@@ -899,16 +899,12 @@
       hon.appendChild(el('p', null, ch.honesty.replace(/^说明：/, ''))); head.appendChild(hon);
       wrap.appendChild(head);
 
-      wrap.appendChild(modeSwitch(function () { ui.clear(wrap); renderHome(); }));
-
-      var at = st.at && S[st.at] ? st.at : ch.steps[0].id, nDone = Object.keys(st.done || {}).filter(function (k) { return S[k]; }).length;
-      var go = app.link({ v: 'think', t: ch.id, s: at }, 'dv-go');
-      go.appendChild(el('span', 'dv-go-l', nDone ? '接着推：问题 ' + stepNo(at) : '从第一个问题开始'));
-      go.appendChild(el('b', null, S[at].q)); go.appendChild(ui.icon('next'));
-      wrap.appendChild(go);
-      if (STM.regcode && STM.regcode.progsOfChapter(ch.id).length) {
+      // 两种学法就是入口：点了直接进推导（有进度从上次那一环接着推）
+      var at = st.at && S[st.at] ? st.at : ch.steps[0].id;
+      wrap.appendChild(modeSwitch(function () { app.navigate({ v: 'think', t: ch.id, s: at }); }, true));
+      if (hasCodeDerive()) {
         var cl = app.link({ v: 'think', t: ch.id, s: 'code' }, 'dv-codein'); cl.appendChild(ui.icon('code'));
-        var ct = el('span'); ct.appendChild(el('b', null, '完整代码')); ct.appendChild(el('span', null, '寄存器写法，逐行注释')); cl.appendChild(ct); cl.appendChild(ui.icon('next'));
+        var ct = el('span'); ct.appendChild(el('b', null, '代码推导')); cl.appendChild(ct); cl.appendChild(ui.icon('next'));
         wrap.appendChild(cl);
       }
 
@@ -960,12 +956,14 @@
       });
       foot.appendChild(reset); wrap.appendChild(foot);
     }
-    function modeSwitch(onChange) {
-      var m = mode(), box = el('div', 'dv-mode'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', '学习方式');
-      [['full', '完整推导', '连着看'], ['self', '自主推导', '先自己答']].forEach(function (x) {
-        var b = ui.btn('dv-modeb' + (m === x[0] ? ' on' : '')); b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', m === x[0] ? 'true' : 'false');
-        b.appendChild(el('b', null, x[1])); b.appendChild(el('span', null, x[2]));
-        b.addEventListener('click', function () { if (mode() === x[0]) return; setMode(x[0]); onChange(); });
+    function hasCodeDerive() { return !!(STM.codederive && STM.codederive.has(ch.id)) || !!(STM.regcode && STM.regcode.progsOfChapter(ch.id).length); }
+    function modeSwitch(onChange, enter) {
+      var m = mode(), box = el('div', 'dv-mode' + (enter ? ' enter' : '')); box.setAttribute('role', enter ? 'group' : 'radiogroup'); box.setAttribute('aria-label', '学习方式');
+      [['full', '完整推导'], ['self', '自主推导']].forEach(function (x) {
+        var b = ui.btn('dv-modeb' + (!enter && m === x[0] ? ' on' : ''));
+        if (!enter) { b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', m === x[0] ? 'true' : 'false'); }
+        b.appendChild(el('b', null, x[1])); if (enter) b.appendChild(ui.icon('next'));
+        b.addEventListener('click', function () { if (!enter && mode() === x[0]) return; setMode(x[0]); onChange(); });
         box.appendChild(b);
       });
       return box;
@@ -973,9 +971,10 @@
 
     /* =================== 页面：完整代码 =================== */
     function renderCode() {
+      if (STM.codederive && STM.codederive.has(ch.id)) { STM.codederive.render(wrap, ch.id, app, { crumb: { v: 'think', t: ch.id }, crumbText: topic.code + ' · Code reasoning' }); return; }
       var head = el('header', 'dv-hero');
-      var crumb = app.link({ v: 'think', t: ch.id }, 'tk-crumb'); crumb.textContent = topic.code + ' · Code'; head.appendChild(crumb);
-      head.appendChild(el('h1', null, '完整代码'));
+      var crumb = app.link({ v: 'think', t: ch.id }, 'tk-crumb'); crumb.textContent = topic.code + ' · Code reasoning'; head.appendChild(crumb);
+      head.appendChild(el('h1', null, '代码推导'));
       wrap.appendChild(head);
       STM.regcode.progsOfChapter(ch.id).forEach(function (pg) { wrap.appendChild(STM.regcode.render(pg, app)); });
     }
@@ -1143,7 +1142,7 @@
     function rerender() { dispose(); ui.clear(wrap); var r = app.route(); if (r.s === 'review') renderReview(); else if (r.s === 'code') renderCode(); else if (r.s && S[r.s]) renderStep(r.s); else renderHome(); }
     rerender();
     return {
-      title: function (r) { return r.s && S[r.s] ? '问题 ' + (S[r.s]._i + 1) + ' · ' + topic.code + ' Code' : r.s === 'review' ? '常卡的地方 · ' + topic.code : r.s === 'code' ? topic.code + ' 完整代码' : topic.code + ' · Code'; },
+      title: function (r) { return r.s && S[r.s] ? '问题 ' + (S[r.s]._i + 1) + ' · ' + topic.code : r.s === 'review' ? '常卡的地方 · ' + topic.code : r.s === 'code' ? topic.code + ' 代码推导' : topic.code + ' · Code reasoning'; },
       update: function (r) { if (r.t !== ch.id) return; if ((r.s || '') !== (cur || '') || r.s === 'review') { cur = r.s || ''; rerender(); window.scrollTo(0, 0); } },
       destroy: dispose
     };
@@ -1154,6 +1153,6 @@
     chapter: function (id) { return CH[id] || null; },
     view: view,
     progress: function (id) { var c = CH[id]; if (!c) return null; var st = chState(id); return { done: Object.keys(st.done || {}).filter(function (k) { return c.steps.some(function (s) { return s.id === k; }); }).length, total: c.steps.length, due: C.dueCount(c, st.stuck || {}) }; },
-    validStep: function (id, s) { var c = CH[id]; return !!(c && (s === 'review' || (s === 'code' && STM.regcode && STM.regcode.progsOfChapter(id).length) || c.steps.some(function (x) { return x.id === s; }))); }
+    validStep: function (id, s) { var c = CH[id]; return !!(c && (s === 'review' || (s === 'code' && ((STM.codederive && STM.codederive.has(id)) || (STM.regcode && STM.regcode.progsOfChapter(id).length))) || c.steps.some(function (x) { return x.id === s; }))); }
   };
 })();

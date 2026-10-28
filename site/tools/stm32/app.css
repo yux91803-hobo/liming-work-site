@@ -1267,7 +1267,8 @@ svg.mod { display: block; width: 100%; height: 100%; overflow: visible; }
 [data-theme="dark"] .mod .shield { fill: #8f8b82; stroke: #6b6960; }
 
 /* ---------- 寄存器版代码（codeview.js） ---------- */
-.cseg { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 14px; border-radius: 10px; background: var(--sunk); }
+.cseg { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; margin-bottom: 14px; border-radius: 10px; background: var(--sunk); max-width: 100%; box-sizing: border-box; overflow-x: auto; }
+.cseg-b { flex: none; }
 .cseg-b { height: 32px; padding: 0 16px; border: 0; border-radius: 8px; background: none; color: var(--ink-2); font-weight: 600; font-size: 13.5px; }
 .cseg-b.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
 .code-reg { display: flex; flex-direction: column; gap: 28px; }
@@ -1308,12 +1309,28 @@ button.rc-lb:hover { background: var(--sunk); }
 .dv-codein > svg.ic:first-child { color: var(--h); }
 .dv-codein span { flex: 1; display: flex; flex-direction: column; }
 .dv-codein span span { font-size: 12.5px; color: var(--ink-3); }
-/* 手机：整段代码一起左右滑（缩进保持对齐），展开的理由固定在可视区里 */
+/* 手机：长行折行，续行缩进到代码下面，不用左右滑 */
 @media (max-width: 759px) {
-  .rc-code { overflow-x: auto; overscroll-behavior-x: contain; }
-  .rc-fn { width: max-content; min-width: 100%; }
-  .rc-lb, .rc-sig { overflow-x: visible; padding-left: 10px; padding-right: 14px; }
-  .rc-why { position: sticky; left: 8px; box-sizing: border-box; width: calc(100vw - 2 * var(--pad) - 18px); margin: 0 0 8px 8px; }
+  .rc-lb, .rc-sig { padding-left: 10px; padding-right: 10px; overflow-x: visible; }
+  .rc-cm, .rc-c, .rc-sig { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .rc-cm, .rc-c { padding-left: calc((var(--i, 0) + 4) * 1ch); text-indent: calc((var(--i, 0) + 4) * -1ch); }
 }
 .topic.tabbed > .sec > .sec-h { display: none; }
 .topic.tabbed > .sec { margin-top: 18px; }
+
+/* ---------- 代码推导 ---------- */
+.cd-method { margin-top: 26px; }
+.cd-flow { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; counter-reset: cd; }
+.cd-flow li { counter-increment: cd; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--sunk); font-size: 13px; color: var(--ink-2); }
+.cd-flow li::before { content: counter(cd); font: 700 11.5px var(--mono); color: var(--h, var(--mask)); }
+.cd-step { margin-top: 34px; display: flex; flex-direction: column; gap: 10px; max-width: 860px; }
+.cd-q { display: flex; align-items: baseline; gap: 10px; font-size: 19px; line-height: 1.45; }
+.cd-n { flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: color-mix(in srgb, var(--h, var(--mask)) 15%, transparent); color: var(--h, var(--mask)); font: 700 13px var(--mono); transform: translateY(-2px); }
+.cd-p { color: var(--ink); max-width: 44em; }
+.cd-file .code-h { padding-left: 14px; }
+.cd-file .rc-fn { padding: 8px 0; }
+.cd-gap { padding: 0 14px; color: var(--ink-3); font: 13px var(--mono); }
+.cd-all .cseg { align-self: flex-start; margin: 4px 0 0; }
+.dv-mode.enter .dv-modeb { flex-direction: row; align-items: center; justify-content: space-between; padding: 14px 16px; }
+.dv-mode.enter .dv-modeb b { font-size: 16px; }
+.dv-mode.enter .dv-modeb svg.ic { color: var(--h); }

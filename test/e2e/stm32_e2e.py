@@ -215,7 +215,7 @@ async def main():
         await pg.goto(TOOL + '?v=topic&t=gpio&reg=GPIO_CRL'); await pg.wait_for_selector('.sheet.on')
         box = await pg.evaluate("(() => { const r = document.querySelector('.sheet-p').getBoundingClientRect(); const v = document.querySelector('.sh-valrow .pill').getBoundingClientRect(); return [r.width, v.right]; })()")
         check('手机：寄存器面板全屏，复位按钮不被截断', box[0] >= 389 and box[1] <= 390, box)
-        overflow = await pg.evaluate("document.documentElement.scrollWidth > innerWidth")
+        overflow = await pg.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth")
         check('手机：页面没有横向溢出', not overflow)
         await pg.goto(TOOL + '?v=board&sch=board-05'); await wait_img(pg)
         st = await pg.query_selector('.vw-stage'); bb = await st.bounding_box(); y = bb['y'] + bb['height'] / 2
@@ -233,7 +233,7 @@ async def main():
         pg = await page(b)
         await pg.goto(TOOL + '?v=think'); await pg.wait_for_selector('.tk-ch')
         hrefs = await pg.evaluate("[...document.querySelectorAll('.tk-ch')].map(a => new URL(a.href).searchParams.get('t'))")
-        check('Code 总览：六章推导链', hrefs == CHAPS and await pg.evaluate("document.querySelectorAll('.tk-flow li').length") == 6, hrefs)
+        check('Code reasoning 总览：六章推导链 + 四章代码推导', hrefs == CHAPS + ['sys', 'exti', 'dma', 'fsmc'] and await pg.evaluate("document.querySelectorAll('.tk-flow li').length") == 6, hrefs)
         for chap in ['gpio', 'usart', 'tim', 'adc', 'spi']:
             await pg.goto(TOOL + '?v=topic&t=' + chap); await pg.wait_for_selector('.topic')
             ok = await pg.evaluate("!!document.querySelector('.thinkin')")
@@ -247,39 +247,64 @@ async def main():
         check('外设页代码：默认显示寄存器写法，HAL 在另一页', st == ['寄存器', True, True], st)
         await pg.click('.rc .rc-l.has .rc-lb >> nth=3'); await pg.wait_for_timeout(100)
         why = await pg.inner_text('.rc .rc-l.open .rc-why')
-        check('点一行展开「为什么这样写」', '为什么这样写' in why and 'AFIO' in why, why[:60])
+        check('点一行展开原因', '原因' in why and 'AFIO' in why, why[:60])
         await pg.click('.cseg-b:has-text("HAL")'); await pg.wait_for_timeout(100)
         check('切到 HAL 库写法', await pg.evaluate("document.querySelector('.code-reg').hidden && !document.querySelector('.code-hal').hidden && document.querySelectorAll('.code-hal .snip').length > 0"))
         await pg.evaluate("localStorage.removeItem('lm.stm32.codestyle')")
         bad = []
         for chap in CHAPS:
             await pg.goto(TOOL + '?v=think&t=' + chap); await pg.wait_for_selector('.dv-codein')
-            await pg.click('.dv-codein'); await pg.wait_for_selector('.rc')
-            n = await pg.evaluate("[document.querySelectorAll('.rc').length, document.querySelectorAll('.rc-l.has').length, document.querySelectorAll('.rc-cm').length]")
+            await pg.click('.dv-codein'); await pg.wait_for_selector('.rc, .cd-step')
+            n = await pg.evaluate("[document.querySelectorAll('.rc, .cd-step').length, document.querySelectorAll('.rc-l.has').length, document.querySelectorAll('.rc-cm').length]")
             if n[0] < 2 or n[1] < 6 or n[2] < 6: bad.append((chap, n))
-        check('Code 六章都有「完整代码」页：每章 2 段程序，逐行注释、能点开理由', not bad, bad)
-        await pg.goto(TOOL + '?v=think&t=i2c&s=code'); await pg.wait_for_selector('.rc')
+        check('Code reasoning 六章都有「代码推导」页：逐行注释、能点开理由', not bad, bad)
+        await pg.goto(TOOL + '?v=think&t=gpio&s=code'); await pg.wait_for_selector('.cd-step')
+        cd = await pg.evaluate("[document.querySelectorAll('.cd-step').length, [...document.querySelectorAll('.cd-all .cseg-b')].map(b => b.textContent), document.querySelectorAll('.cd-flow li').length]")
+        check('GPIO 代码推导：按通用写法分步推出 led.h / led.c / main.c', cd[0] >= 8 and cd[1] == ['led.h', 'led.c', 'main.c'] and cd[2] == 8, cd)
+        bad = []
+        for tid in ['sys', 'exti', 'dma', 'fsmc']:
+            await pg.goto(TOOL + '?v=topic&t=' + tid); await pg.wait_for_selector('.thinkin')
+            await pg.click('.thinkin'); await pg.wait_for_selector('.cd-step')
+            n = await pg.evaluate("[document.querySelectorAll('.cd-step').length, document.querySelectorAll('.cd-all .cseg-b').length, document.querySelectorAll('.rc-l.has').length]")
+            if n[0] < 9 or n[1] < 3 or n[2] < 10: bad.append((tid, n))
+        check('RCC / EXTI / DMA / FSMC：外设页的 Code reasoning 直接进代码推导', not bad, bad)
+        txt = await pg.evaluate("STM.codederive.fileText(STM.codederive.data.CD.gpio.files[0])")
+        check('led.h 带头文件保护和函数声明', '#ifndef __LED_H' in txt and 'void LED_On(uint8_t n);' in txt and '#endif' in txt, txt[:60])
+        await pg.goto(TOOL + '?v=think&t=gpio'); await pg.wait_for_selector('.dv-mode.enter')
+        await pg.click('.dv-modeb >> nth=1'); await pg.wait_for_selector('.dv-step')
+        check('章节首页：点「自主推导」直接进推导', 's=s' in pg.url and await pg.evaluate("JSON.parse(localStorage.getItem('lm.stm32.derive')).mode") == 'self', pg.url)
+        await pg.evaluate("(() => { const o = JSON.parse(localStorage.getItem('lm.stm32.derive')); o.mode = 'full'; localStorage.setItem('lm.stm32.derive', JSON.stringify(o)); })()")
+        await pg.goto(TOOL + '?v=topic&t=i2c&sec=code'); await pg.wait_for_selector('.rc')
         await pg.click('.rc .rc-l.has .rc-lb >> nth=6'); await pg.wait_for_timeout(100)
         fr = await pg.evaluate("(() => { const o = document.querySelector('.rc-l.open .rc-from'); return o ? o.querySelectorAll('a').length : 0; })()")
         check('理由下面列出它来自推导的哪一步（能点过去）', fr >= 1, fr)
         txt = await pg.evaluate("STM.regcode.textOf(STM.regcode.progsOfChapter('gpio')[0])")
+        side = await pg.evaluate("[...document.querySelectorAll('.nav-i')].map(a => a.textContent)")
+        check('侧栏不再有 Code 入口', side == ['首页', '开发板'], side)
         check('复制出来的代码带注释', '// 打开 GPIOA 的时钟' in txt and 'GPIOA->ODR ^= GPIO_ODR_ODR0;' in txt, txt[:80])
         await pg.context.close()
         pg = await page(b, 390, 844, mobile=True)
         overflow = []
-        pages = ['?v=think&t=gpio&s=code', '?v=think&t=i2c&s=code', '?v=topic&t=fsmc', '', '?m=lcd', '?m=beep&mp=g', '?m=led', '?m=eeprom&mp=p6', '?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
+        pages = ['?v=think&t=gpio&s=code', '?v=think&t=i2c&s=code', '?v=think&t=spi&s=code', '?v=think&t=sys', '?v=think&t=exti', '?v=think&t=dma', '?v=think&t=fsmc', '?v=think&t=usart&s=code', '?v=think&t=tim&s=code', '?v=think&t=adc&s=code', '?v=topic&t=fsmc', '', '?m=lcd', '?m=beep&mp=g', '?m=led', '?m=eeprom&mp=p6', '?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
                  '?v=think&t=gpio&s=s13', '?v=think&t=usart&s=s11', '?v=think&t=tim&s=s11', '?v=think&t=adc&s=s11', '?v=think&t=spi&s=s11', '?v=think&t=i2c&s=review']
         for qs in pages:
             await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)
-            if await pg.evaluate("document.documentElement.scrollWidth > innerWidth"): overflow.append(qs)
+            if await pg.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"): overflow.append(qs)
         check('手机：%d 个页面没有横向溢出' % len(pages), not overflow, overflow)
+        clipped = []
+        for qs in ['?v=topic&t=' + c + '&sec=code' for c in CHAPS + ['rcc', 'exti', 'dma', 'fsmc']] + ['?v=think&t=' + c + '&s=code' for c in CHAPS] + ['?v=think&t=' + c for c in ['sys', 'exti', 'dma', 'fsmc']]:
+            await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)
+            n = await pg.evaluate("Array.from(document.querySelectorAll('.rc-c, .rc-cm, .rc-sig')).filter(c => c.getClientRects().length && (c.scrollWidth > c.clientWidth + 1 || c.closest('.rc-code').scrollWidth > c.closest('.rc-code').clientWidth + 1)).length")
+            if n: clipped.append((qs, n))
+        check('手机：代码长行折行，没有被截掉的行', not clipped, clipped)
         await pg.context.close()
 
         # ---------- 11. 编程思维 · I2C 推导链：自主推导模式把 22 环的每一道题都答一遍 ----------
         pg = await page(b)
         await pg.goto(TOOL + '?v=think&t=i2c'); await pg.wait_for_selector('.dv-map')
         check('I2C 推导章首页：推导链 22 环、7 条主干结论、两种学法', await pg.evaluate("document.querySelectorAll('.dv-node').length") == 22 and await pg.evaluate("document.querySelectorAll('.dv-factl li').length") == 7 and await pg.evaluate("document.querySelectorAll('.dv-modeb').length") == 2)
-        await pg.click('.dv-modeb >> nth=1'); await pg.wait_for_selector('.dv-modeb.on')
+        await pg.click('.dv-modeb >> nth=1'); await pg.wait_for_selector('.dv-step')
+        await pg.goto(TOOL + '?v=think&t=i2c'); await pg.wait_for_selector('.dv-map')
         check('切到自主推导：结论在推出来之前隐藏', await pg.evaluate("document.querySelectorAll('.dv-node-g').length") == 0 and await pg.evaluate("document.querySelectorAll('.dv-factl li.locked').length") == 7)
         ANSWER = """async ([chid, id]) => {
           const sleep = (ms) => new Promise(r => setTimeout(r, ms));

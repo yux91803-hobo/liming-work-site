@@ -45,7 +45,8 @@ test('几个容易写错的寄存器值', () => {
   const lines = (tid) => RC.PROGS[tid].flatMap((p) => p.fns.flatMap((f) => f.lines.map((l) => l[0])));
   const fs_ = lines('fsmc').join('\n');
   assert.match(fs_, /0x6C000000/); assert.match(fs_, /0x6C000800/);          // NE4 起始；A10 → HADDR bit11
-  assert.match(fs_, /BTCR\[6\] = \(1 << 12\) \| \(1 << 4\) \| \(1 << 0\)/);   // BCR4：WREN | MWID=16 位 | MBKEN
+  assert.match(fs_, /BTCR\[6\] = FSMC_BCRx_WREN \| FSMC_BCRx_MWID_0 \| FSMC_BCRx_MBKEN/);   // BCR4：允许写、16 位、打开
+  assert.ok(!/->CR[LH].*0x[0-9A-F]{4,}/i.test(fs_), 'GPIO 配置要用宏名');
   const dma = lines('dma').join('\n');
   assert.match(dma, /DMA1_Channel4/); assert.match(dma, /TCIF4/);              // USART1_TX 在 DMA1 通道 4
   const rcc = lines('sys').join('\n');
