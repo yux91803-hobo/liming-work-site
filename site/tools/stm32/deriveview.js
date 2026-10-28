@@ -385,7 +385,7 @@
     /* ---------- 通用单片机模拟的结果：灯、串口助手、引脚波形、外设日志 ---------- */
     var PINLAB = { PA0: 'PA0 · LED1', PA1: 'PA1 · LED2', PA8: 'PA8 · LED3', PA9: 'PA9 · TX', PA10: 'PA10 · RX', PA5: 'PA5 · SCK', PA6: 'PA6 · MISO', PA7: 'PA7 · MOSI', PC13: 'PC13 · CS', PF8: 'PF8 · KEY1', PF10: 'PF10 · KEY3', PC0: 'PC0' };
     function mcuWave(res, v) {
-      var from = v.from || 0, to = v.to || res.t, pins = v.pins, W = Math.max(320, Math.min(900, v.w || 860)), H = 22, gap = 16, top = 8, lab = 92;
+      var from = v.from || 0, to = v.to || res.t, pins = v.pins, W = Math.max(240, Math.min(900, v.w || 860)), H = 22, gap = 16, top = 8, lab = 92;
       var Hh = top + pins.length * (H + gap) + 26;
       var s = sv('svg', { 'class': 'dv-wave mw', viewBox: '0 0 ' + (W + lab + 10) + ' ' + Hh, width: W + lab + 10, height: Hh, role: 'img', 'aria-label': '引脚波形 ' + pins.join('、') });
       function X(t) { return lab + (Math.max(from, Math.min(to, t)) - from) / (to - from) * W; }
@@ -457,7 +457,7 @@
       views.forEach(function (v) {
         if (!v.pins || !v.pins.length) return;
         if (v.label) box.appendChild(el('p', 'dv-wlab', v.label));
-        box.appendChild(mcuWave(res, v));
+        box.appendChild(mcuWave(res, opt.compact ? Object.assign({ w: 260 }, v) : v));
       });
       var logs = res.log;
       if (logs.length) {
