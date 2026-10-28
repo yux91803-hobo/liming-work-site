@@ -47,7 +47,8 @@
     // 寄存器 / 片段没给主题时，补上它所属的主题
     if (t.v === 'topic' && !t.t) { var tp = (t.reg && M.topicOfReg(t.reg)) || (t.snip && M.topicOfSnip(t.snip)); if (tp) t.t = tp.id; else t = strip(t, ['snip']); }
     if (t.v === 'topic' && !M.topicById[t.t]) { t.v = 'home'; delete t.t; delete t.snip; }
-    if (t.v === 'think' && t.t && !(STM.think && STM.think.chapter(t.t))) { delete t.t; delete t.p; delete t.s; }
+    if (t.v === 'think' && t.t && !(STM.think && STM.think.chapter(t.t)) && !(STM.codederive && STM.codederive.has(t.t))) { delete t.t; delete t.p; delete t.s; }
+    if (t.v === 'think' && t.t && !(STM.think && STM.think.chapter(t.t))) delete t.s;   // 没有推导链的外设：页面本身就是代码推导
     if (t.s && !(STM.derive && STM.derive.validStep(t.t, t.s))) delete t.s;
     if (t.reg && !M.R.reg(t.reg)) t = strip(t, LAYER_REG);
     return t;
@@ -109,7 +110,7 @@
 
   /* ---------- 布局：侧栏（宽屏）/ 顶栏（窄屏） ---------- */
   var side = document.getElementById('side'), bar = document.getElementById('bar'), main = document.getElementById('main');
-  var NAV = [['home', '首页', 'chip'], ['think', 'Code', 'code'], ['board', '开发板', 'board']];
+  var NAV = [['home', '首页', 'chip'], ['board', '开发板', 'board']];
   function hue(t) { return t ? t.hue[html.getAttribute('data-theme') === 'dark' ? 1 : 0] : ''; }
   function link(route, cls, label) {
     var a = el('a', cls); a.href = urlOf(resolve(route));

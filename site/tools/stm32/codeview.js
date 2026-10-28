@@ -143,3 +143,90 @@
 
   STM.regcode = { progsOf: progsOf, progsOfChapter: progsOfChapter, render: render, textOf: textOf };
 })();
+
+/* ---------- 代码推导：按通用写法一步步推出 .h / .c / main.c ---------- */
+(function () {
+  'use strict';
+  var STM = window.STM, ui = STM.ui, el = ui.el, DATA = window.STM32_CODEDERIVE || { METHOD: [], CD: {} };
+  function indentOf(c) { return (/^\s*/.exec(c) || [''])[0]; }
+  function lineRow(l) {
+    var row = el('div', 'rc-l' + (l.why ? ' has' : '')), b = el(l.why ? 'button' : 'div', 'rc-lb');
+    if (l.why) { b.type = 'button'; b.setAttribute('aria-expanded', 'false'); }
+    if (l.cm) { var cm = el('span', 'rc-cm'); cm.textContent = indentOf(l.c) + '// ' + l.cm; b.appendChild(cm); }
+    var code = el('code', 'rc-c'); if (l.c) code.appendChild(ui.hlC(l.c)); else code.textContent = ' '; b.appendChild(code);
+    row.appendChild(b);
+    if (l.why) {
+      var why = el('div', 'rc-why'); why.hidden = true;
+      why.appendChild(el('b', 'rc-why-h', '为什么这样写'));
+      var t = el('div', 'rc-why-t'); t.appendChild(el('p', null, l.why)); why.appendChild(t);
+      row.appendChild(why);
+      b.addEventListener('click', function () { var on = why.hidden; why.hidden = !on; row.classList.toggle('open', on); b.setAttribute('aria-expanded', on ? 'true' : 'false'); });
+    }
+    return row;
+  }
+  function norm(x) { return { c: x[0], cm: x[1] || '', why: x[2] || '', s: x[3] }; }
+  function fileText(f) {
+    var out = [];
+    f.lines.forEach(function (x) { var l = norm(x); if (l.cm) out.push(indentOf(l.c) + '// ' + l.cm); out.push(l.c); });
+    return out.join('\n').replace(/\n+$/, '') + '\n';
+  }
+  function codeBox(name, rows, copy) {
+    var fig = el('figure', 'code rc-code cd-file'), h = el('figcaption', 'code-h');
+    h.appendChild(el('span', 'code-t mono', name));
+    if (copy) h.appendChild(ui.copyBtn('复制 ' + name, copy));
+    fig.appendChild(h);
+    var body = el('div', 'rc-fn'); rows.forEach(function (r) { body.appendChild(r); }); fig.appendChild(body);
+    return fig;
+  }
+  // 某一步在各个文件里的那几行；不连续的地方用「…」隔开
+  function stepFiles(cd, sid) {
+    var out = [];
+    cd.files.forEach(function (f) {
+      var rows = [], last = -2;
+      f.lines.forEach(function (x, i) {
+        var l = norm(x); if (l.s !== sid) return;
+        if (!l.c && (last !== i - 1)) return;          // 开头的空行不要
+        if (last >= 0 && last !== i - 1) rows.push(el('div', 'cd-gap', '…'));
+        rows.push(lineRow(l)); last = i;
+      });
+      while (rows.length && rows[rows.length - 1].querySelector && !rows[rows.length - 1].querySelector('.rc-c').textContent.trim()) rows.pop();
+      if (rows.length) out.push(codeBox(f.name, rows));
+    });
+    return out;
+  }
+  function render(root, tid, app, opt) {
+    opt = opt || {};
+    var cd = DATA.CD[tid]; if (!cd) return;
+    var head = el('header', 'dv-hero');
+    if (opt.crumb) { var crumb = app.link(opt.crumb, 'tk-crumb'); crumb.textContent = opt.crumbText || ''; head.appendChild(crumb); }
+    head.appendChild(el('h1', null, '代码推导'));
+    var task = el('div', 'dv-task'); task.appendChild(ui.icon('flag'));
+    var tt = el('div'); tt.appendChild(el('span', 'dv-task-l', cd.title + '：' + cd.files.map(function (f) { return f.name; }).join(' / ')));
+    tt.appendChild(el('b', null, cd.goal)); task.appendChild(tt); head.appendChild(task);
+    root.appendChild(head);
+    var how = el('section', 'cd-method'); how.appendChild(el('h2', 'sec-h', '通用写法'));
+    var ol = el('ol', 'cd-flow'); DATA.METHOD.forEach(function (m) { ol.appendChild(el('li', null, m)); }); how.appendChild(ol);
+    root.appendChild(how);
+    cd.steps.forEach(function (st, i) {
+      var sec = el('section', 'cd-step'); sec.id = 'cd-' + st.id;
+      var h = el('h2', 'cd-q'); h.appendChild(el('span', 'cd-n', String(i + 1))); h.appendChild(el('span', null, st.q)); sec.appendChild(h);
+      st.say.forEach(function (p) { sec.appendChild(el('p', 'cd-p', p)); });
+      stepFiles(cd, st.id).forEach(function (f) { sec.appendChild(f); });
+      if (st.extra) sec.appendChild(codeBox(st.extra.name, st.extra.lines.map(function (x) { return lineRow(norm(x)); })));
+      root.appendChild(sec);
+    });
+    // 最后拼出完整文件
+    var all = el('section', 'cd-step cd-all');
+    var ah = el('h2', 'cd-q'); ah.appendChild(el('span', 'cd-n', '✓')); ah.appendChild(el('span', null, '拼起来：完整的 ' + cd.files.length + ' 个文件')); all.appendChild(ah);
+    var seg = el('div', 'cseg'), boxes = [];
+    cd.files.forEach(function (f, i) {
+      var b = ui.btn('cseg-b mono' + (i ? '' : ' on'), f.name); seg.appendChild(b);
+      var box = codeBox(f.name, f.lines.map(function (x) { return lineRow(norm(x)); }), function () { return fileText(f); });
+      box.hidden = !!i; boxes.push(box);
+      b.addEventListener('click', function () { boxes.forEach(function (x, j) { x.hidden = j !== i; }); Array.prototype.forEach.call(seg.children, function (y, j) { y.classList.toggle('on', j === i); }); });
+    });
+    all.appendChild(seg); boxes.forEach(function (x) { all.appendChild(x); });
+    root.appendChild(all);
+  }
+  STM.codederive = { has: function (tid) { return !!DATA.CD[tid]; }, render: render, fileText: fileText, data: DATA };
+})();

@@ -13,9 +13,14 @@
 
   function view(root, route, app) {
     if (route.t && STM.derive && STM.derive.has(route.t)) return STM.derive.view(root, route, app);
+    if (route.t && STM.codederive && STM.codederive.has(route.t)) {   // 没有推导链的外设：进来就是代码推导
+      var t0 = M.topicById[route.t], w0 = el('div', 'derive'); root.appendChild(w0);
+      STM.codederive.render(w0, route.t, app, { crumb: { v: 'topic', t: route.t }, crumbText: t0.code + ' · Code reasoning' });
+      return { title: function () { return t0.code + ' 代码推导'; } };
+    }
     var wrap = el('div', 'think'); root.appendChild(wrap);
     var head = el('header', 'pg-h tk-hero');
-    head.appendChild(el('h1', null, 'Code'));
+    head.appendChild(el('h1', null, 'Code reasoning'));
     wrap.appendChild(head);
 
     var ol = el('ol', 'tk-flow');
@@ -36,7 +41,7 @@
     });
     list.appendChild(grid);
     wrap.appendChild(list);
-    return { title: function () { return 'Code'; } };
+    return { title: function () { return 'Code reasoning'; } };
   }
 
   STM.views.think = view;

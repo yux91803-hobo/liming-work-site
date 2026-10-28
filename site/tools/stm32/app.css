@@ -1317,3 +1317,20 @@ button.rc-lb:hover { background: var(--sunk); }
 }
 .topic.tabbed > .sec > .sec-h { display: none; }
 .topic.tabbed > .sec { margin-top: 18px; }
+
+/* ---------- 代码推导 ---------- */
+.cd-method { margin-top: 26px; }
+.cd-flow { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; counter-reset: cd; }
+.cd-flow li { counter-increment: cd; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--sunk); font-size: 13px; color: var(--ink-2); }
+.cd-flow li::before { content: counter(cd); font: 700 11.5px var(--mono); color: var(--h, var(--mask)); }
+.cd-step { margin-top: 34px; display: flex; flex-direction: column; gap: 10px; max-width: 860px; }
+.cd-q { display: flex; align-items: baseline; gap: 10px; font-size: 19px; line-height: 1.45; }
+.cd-n { flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: color-mix(in srgb, var(--h, var(--mask)) 15%, transparent); color: var(--h, var(--mask)); font: 700 13px var(--mono); transform: translateY(-2px); }
+.cd-p { color: var(--ink); max-width: 44em; }
+.cd-file .code-h { padding-left: 14px; }
+.cd-file .rc-fn { padding: 8px 0; }
+.cd-gap { padding: 0 14px; color: var(--ink-3); font: 13px var(--mono); }
+.cd-all .cseg { align-self: flex-start; margin: 4px 0 0; }
+.dv-mode.enter .dv-modeb { flex-direction: row; align-items: center; justify-content: space-between; padding: 14px 16px; }
+.dv-mode.enter .dv-modeb b { font-size: 16px; }
+.dv-mode.enter .dv-modeb svg.ic { color: var(--h); }
