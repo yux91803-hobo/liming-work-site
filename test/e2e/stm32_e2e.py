@@ -294,6 +294,14 @@ async def main():
             n = await pg.evaluate("[document.querySelectorAll('.code-cd .cd-step').length, document.querySelectorAll('.code-reg .ftab').length, document.querySelectorAll('.code-cd .rc-l.has').length, document.querySelector('.code-cd').hidden]")
             if n[0] < 7 or n[1] < 3 or n[2] < 6 or n[3]: bad.append((chap, n))
         check('十个外设的代码页都有完整文件和代码推导', not bad, bad)
+        bad = []
+        for t, want, cx, files in [('i2c', ['软件 I2C', '硬件 I2C'], 'i2chw', 'i2c2.c'), ('tim', ['节拍 + PWM', '输入捕获', 'N 个脉冲'], 'timpulse', 'pulse.c'), ('adc', ['单通道', '多通道 + DMA'], 'adcdma', 'adc_dma.c')]:
+            await pg.goto(TOOL + '?v=topic&t=' + t + '&sec=code&cv=reg'); await pg.wait_for_selector('.cd-vars')
+            got = await pg.evaluate("[...document.querySelectorAll('.cd-var')].map(b => b.textContent)")
+            await pg.click('.cd-var:has-text("%s")' % want[-1]); await pg.wait_for_timeout(500)
+            ft = await pg.evaluate("[...document.querySelectorAll('.ftab')].map(b => b.textContent)")
+            if got != want or ('cx=' + (cx if t != 'tim' else 'timpulse')) not in pg.url or files not in ft: bad.append((t, got, pg.url, ft))
+        check('I2C / TIM / ADC：课件的另外几个案例可以切换（硬件 I2C、输入捕获、N 个脉冲、多通道 + DMA）', not bad, bad)
         cd = await pg.evaluate("STM.codederive.data.CD.gpio.files.map(f => f.name)")
         check('GPIO：led.h / led.c / main.c', cd == ['led.h', 'led.c', 'main.c'], cd)
         bad = []

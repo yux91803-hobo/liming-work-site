@@ -177,7 +177,7 @@
     Object.keys(DATA.CD).forEach(function (k) { if (DATA.CD[k].topic === tid) out.push(k); });
     return out;
   }
-  STM.codederive = { has: function (tid) { return variants(tid).length > 0; }, variants: variants, title: function (id) { return DATA.CD[id] ? DATA.CD[id].title : ''; },
+  STM.codederive = { has: function (tid) { return variants(tid).length > 0; }, variants: variants, title: function (id) { return DATA.CD[id] ? DATA.CD[id].title : ''; }, tag: function (id) { var cd = DATA.CD[id]; return cd ? cd.tag || cd.title : ''; },
     forBoard: function (mid) {   // 驱动这个板载模块的代码：[{ id, topic, file, title }]
       return Object.keys(DATA.CD).filter(function (k) { return (DATA.CD[k].boards || []).indexOf(mid) >= 0; }).map(function (k) {
         var cd = DATA.CD[k], f = cd.files.filter(function (x) { return x.name === cd.module + '.c'; })[0] || cd.files[1] || cd.files[0];

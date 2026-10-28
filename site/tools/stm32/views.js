@@ -143,7 +143,7 @@
       // 同一个外设有好几个驱动时（软件 / 硬件 I2C），上面一排切换
       var vs = hasCd ? CD.variants(t.id) : [], cx = null, filesFig = null, varBar = el('div', 'cd-vars');
       vs.forEach(function (id, k) {
-        var b = ui.btn('cd-var', CD.title(id)); b.dataset.k = id;
+        var b = ui.btn('cd-var', CD.tag(id)); b.dataset.k = id; b.title = CD.title(id);
         b.addEventListener('click', function () { if (cx !== id) app.update({ sec: 'code', cx: k ? id : null, cf: null }); });
         varBar.appendChild(b);
       });

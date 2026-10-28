@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const root = path.join(__dirname, '../site/tools/stm32');
 const sb = { window: {} }; sb.window.window = sb.window; vm.createContext(sb);
-['topics.js', 'pins.js', 'codederive.js', 'codederive-more.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sb, { filename: f }));
+['topics.js', 'pins.js', 'codederive.js', 'codederive-more.js', 'codederive-extra.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sb, { filename: f }));
 const W = sb.window, D = W.STM32_CODEDERIVE, PINS = {};
 W.STM32_PINS.forEach((p) => { PINS[p[1]] = p; });
 const STRUCT = /^\s*(\{|\}|\}\s*;?|)$/;
@@ -15,7 +15,7 @@ test('通用写法有 8 步', () => { assert.equal(D.METHOD.length, 8); });
 
 for (const [tid, cd] of Object.entries(D.CD)) {
   test(tid + '：外设存在；有 .h、.c、main.c', () => {
-    assert.ok(W.STM32_TOPICS.some((t) => t.id === tid), tid);
+    assert.ok(W.STM32_TOPICS.some((t) => t.id === (cd.topic || tid)), tid);
     const names = cd.files.map((f) => f.name);
     assert.ok(names.some((n) => /\.h$/.test(n)) && names.some((n) => /\.c$/.test(n) && n !== 'main.c') && names.includes('main.c'), names.join(','));
   });
@@ -46,7 +46,8 @@ test('GPIO：LED1~3 是 PA0 / PA1 / PA8（用 ODR 位的宏查表）', () => {
   assert.match(c, /led_pin\[\] = \{ 0, GPIO_ODR_ODR0, GPIO_ODR_ODR1, GPIO_ODR_ODR8 \}/);
 });
 
-test('十个外设都有代码推导', () => {
+test('十个外设都有代码推导；另外的驱动挂在已有的外设下', () => {
+  Object.values(D.CD).filter((cd) => cd.topic).forEach((cd) => assert.ok(D.CD[cd.topic] && !D.CD[cd.topic].topic, cd.title));
   W.STM32_TOPICS.forEach((t) => assert.ok(D.CD[t.id], t.id));
 });
 // 按宏名把 CRL / CRH 的配置语句「执行」一遍（复位值 0x44444444），得到每个脚最后的 4 位
@@ -78,6 +79,10 @@ test('代码推导：GPIO 配置用宏名写，按宏执行后每个脚的配置
     adc: [['GPIOC', 0, 0]],
     spi: [['GPIOC', 13, 2], ['GPIOA', 5, 0xB], ['GPIOA', 6, 4], ['GPIOA', 7, 0xB]],
     exti: [['GPIOF', 8, 8]],
+    i2chw: [['GPIOB', 10, 0xF], ['GPIOB', 11, 0xF]],
+    timcap: [['GPIOB', 6, 4]],
+    timpulse: [['GPIOA', 8, 0xB]],
+    adcdma: [['GPIOC', 0, 0], ['GPIOC', 2, 0]],
     fsmc: [['GPIOD', 0, 0xB], ['GPIOD', 5, 0xB], ['GPIOD', 14, 0xB], ['GPIOE', 7, 0xB], ['GPIOE', 15, 0xB], ['GPIOG', 0, 0xB], ['GPIOG', 12, 0xB], ['GPIOG', 15, 3], ['GPIOB', 0, 3], ['GPIOD', 2, 4], ['GPIOD', 6, 4]]
   };
   Object.entries(want).forEach(([id, pins]) => {
