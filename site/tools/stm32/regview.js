@@ -430,7 +430,7 @@
     if (pg.cn != null) bits.push('中文手册第 ' + pg.cn + ' 页');
     if (!bits.length && pg.pm) bits.push('PM0056 第 ' + pg.pm + ' 节');
     if (bits.length) { var p = el('p', 'sh-pg'); p.appendChild(ui.icon('book')); p.appendChild(el('span', null, '手册：' + bits.join('，') + (pg.adv ? '（高级定时器章节）' : ''))); box.appendChild(p); }
-    (Array.isArray(r.cw) ? r.cw : []).forEach(function (w) {
+    [].forEach(function (w) {   // 课件页码已不再显示
       var pt = w && M.partById[w.part]; if (!pt || !Array.isArray(w.pages)) return;
       var ok = w.pages.filter(function (n) { return n >= 1 && n <= pt.n; }); if (!ok.length) return;
       var row = el('div', 'cwrow'); row.appendChild(el('span', null, '课件' + pt.short));

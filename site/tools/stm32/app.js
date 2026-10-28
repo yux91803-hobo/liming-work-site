@@ -109,7 +109,7 @@
 
   /* ---------- 布局：侧栏（宽屏）/ 顶栏（窄屏） ---------- */
   var side = document.getElementById('side'), bar = document.getElementById('bar'), main = document.getElementById('main');
-  var NAV = [['home', '首页', 'chip'], ['think', '编程思维', 'idea'], ['board', '开发板', 'board'], ['course', '课件', 'book']];
+  var NAV = [['home', '首页', 'chip'], ['think', 'Code', 'code'], ['board', '开发板', 'board']];
   function hue(t) { return t ? t.hue[html.getAttribute('data-theme') === 'dark' ? 1 : 0] : ''; }
   function link(route, cls, label) {
     var a = el('a', cls); a.href = urlOf(resolve(route));
@@ -195,12 +195,12 @@
   }
 
   /* ---------- 全局搜索 ---------- */
-  var KINDS = [['topic', '外设'], ['reg', '寄存器'], ['pin', '引脚'], ['code', '代码'], ['course', '课件'], ['fig', '架构图'], ['board', '开发板'], ['sch', '原理图']];
+  var KINDS = [['topic', '外设'], ['reg', '寄存器'], ['pin', '引脚'], ['code', '代码'], ['fig', '架构图'], ['board', '开发板'], ['sch', '原理图']];
   var search = (function () {
     var box = el('div', 'search'), panel = el('div', 'search-p'), row = el('div', 'search-row'), input = el('input', 'search-in'), list = el('div', 'search-list');
     var hint = el('p', 'search-hint');
     box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', '搜索');
-    input.type = 'text'; input.placeholder = '引脚、寄存器、外设、课件章节…'; input.setAttribute('aria-label', '搜索');
+    input.type = 'text'; input.placeholder = '引脚、寄存器、外设、模块…'; input.setAttribute('aria-label', '搜索');
     input.setAttribute('autocomplete', 'off'); input.setAttribute('autocapitalize', 'characters'); input.setAttribute('spellcheck', 'false'); input.setAttribute('enterkeyhint', 'search');
     list.id = 'search-list'; list.setAttribute('role', 'listbox'); input.setAttribute('aria-controls', list.id);
     row.appendChild(ui.icon('search')); row.appendChild(input);

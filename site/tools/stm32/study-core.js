@@ -2,14 +2,14 @@
    外壳 shell.js 也加载本文件：用 params(fromParams(x)) 清洗 iframe 报上来的定位参数。
 
    路由（URL 查询参数）：
-     v    基础视图 home | topic | board | course | think（旧的 chip 并进了 home）
+     v    基础视图 home | topic | board | think（旧的 chip 并进了 home；课件 course 已去掉，打开首页）
      t    外设主题 id（v=topic / v=think）；p 编程思维（旧四段式）的第几段 1~4
      s    编程思维推导章节里的某一环 s1~s99，或 review（常卡的地方）
      reg  寄存器 id，i 实例，n 通道 / 序号，val 计算值（0x 8 位）
      pin  芯片引脚号 1~144，q 引脚筛选词（v=home）
      m    板载模块 id（v=home，打开这个模块的模拟图），mp 模块上的某个脚
      snip 代码片段标题（v=topic，定位到该片段）
-     cw   课件 册-页（v20-16）；fig 架构图 id；sch 原理图页 id —— 这三个是叠在当前页上的查看器
+     fig  架构图 id；sch 原理图页 id —— 叠在当前页上的查看器（课件 cw 已去掉）
    旧版链接（tab=pins / regs / code / chip / arch / course，page=…）在 fromParams 里换算成新路由。 */
 (function (root, factory) {
   var api = factory();
@@ -17,7 +17,7 @@
   else root.STM32StudyCore = api;
 })(typeof window === 'object' ? window : this, function () {
   'use strict';
-  var VIEWS = ['home', 'topic', 'board', 'course', 'think'];
+  var VIEWS = ['home', 'topic', 'board', 'think'];
   function text(v, n) { return typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, '').trim().slice(0, n).trim() : ''; }
   function hex8(v) {
     var s = String(v == null ? '' : v).trim();
@@ -51,8 +51,7 @@
     }
     if (o.v === 'topic' && text(x.snip, 120)) o.snip = text(x.snip, 120);
     // 查看器：同一时间只有一个
-    if (/^[a-zA-Z0-9_-]{1,40}-\d{1,4}$/.test(x.cw || '')) o.cw = x.cw;
-    else if (/^[a-zA-Z0-9_-]{1,80}$/.test(x.fig || '')) o.fig = x.fig;
+    if (/^[a-zA-Z0-9_-]{1,80}$/.test(x.fig || '')) o.fig = x.fig;
     else if (/^[a-zA-Z0-9_-]{1,80}$/.test(x.sch || '')) o.sch = x.sch;
     return o;
   }
@@ -66,13 +65,11 @@
     if (!x.tab && !x.page && !(x.reg && !x.v)) return x;
     var o = {};
     if (x.page) { o.v = 'board'; o.sch = x.page; return o; }
-    if (x.cw) { o.v = 'course'; o.cw = x.cw; return o; }
     if (x.fig) { o.v = 'home'; o.fig = x.fig; return o; }
     if (x.reg) { o.v = 'topic'; o.reg = String(x.reg).split('.')[0]; if (x.i) o.i = x.i; if (x.v && /^(?:0x)?[0-9a-f]{1,8}$/i.test(x.v)) o.val = x.v; return o; }
     if (x.tab === 'code') { o.v = x.snip ? 'topic' : 'home'; if (x.snip) o.snip = x.snip; return o; }
     if (x.tab === 'chip') { o.v = 'home'; if (x.pin) o.pin = x.pin; return o; }
     if (x.tab === 'pins') { o.v = 'home'; if (x.q) o.q = x.q; return o; }
-    if (x.tab === 'course') { o.v = 'course'; return o; }
     if (x.tab === 'regs' || x.tab === 'arch') return { v: 'home' };
     return { v: 'home' };
   }

@@ -19,8 +19,9 @@ test('home is the default and is left out of the address', () => {
   assert.equal(core.params({ v: 'home', fig: 'sys-arch' }), 'fig=sys-arch');
   assert.deepEqual(core.fromParams(''), { v: 'home' });
 });
-test('only one viewer layer survives (courseware wins over figure and schematic)', () => {
-  assert.deepEqual(core.target({ v: 'course', cw: 'v20-16', fig: 'usart', sch: 'board-05' }), { v: 'course', cw: 'v20-16' });
+test('only one viewer layer survives (figure wins over schematic); courseware links are gone and land on home', () => {
+  assert.deepEqual(core.target({ v: 'board', fig: 'usart', sch: 'board-05' }), { v: 'board', fig: 'usart' });
+  assert.deepEqual(core.target({ v: 'course', cw: 'v20-16' }), { v: 'home' });
 });
 test('chip filter keeps Chinese text and trims control characters', () => {
   assert.deepEqual(core.fromParams(core.params({ v: 'home', q: ' 串口\u0007 ' })), { v: 'home', q: '串口' });
@@ -35,7 +36,7 @@ test('old links from the previous layout still open the right place', () => {
   assert.deepEqual(core.fromParams('tab=pins&q=PA9'), { v: 'home', q: 'PA9' });
   assert.deepEqual(core.fromParams('tab=chip&pin=101'), { v: 'home', pin: '101' });
   assert.deepEqual(core.fromParams('tab=chip&page=board-05'), { v: 'board', sch: 'board-05' });
-  assert.deepEqual(core.fromParams('tab=course&cw=v20-16'), { v: 'course', cw: 'v20-16' });
+  assert.deepEqual(core.fromParams('tab=course&cw=v20-16'), { v: 'home' });
   assert.deepEqual(core.fromParams('tab=regs&reg=GPIO_CRH.MODE9&i=GPIOA&y=9&v=0x444444B4'), { v: 'topic', reg: 'GPIO_CRH', i: 'GPIOA', val: '0x444444B4' });
   assert.deepEqual(core.fromParams('tab=code&cat=串口&snip=USART1 中断收发'), { v: 'topic', snip: 'USART1 中断收发' });
   assert.deepEqual(core.fromParams('tab=arch&fig=sys-arch'), { v: 'home', fig: 'sys-arch' });

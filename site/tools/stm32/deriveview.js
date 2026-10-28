@@ -75,7 +75,6 @@
       if (l.reg) { var r = M.R.reg(l.reg); if (r) { var k = r.name.indexOf('_'); label = '寄存器计算器：' + (l.i && k > 0 ? l.i + r.name.slice(k) : r.name) + (l.val ? ' = ' + l.val : ''); ic = 'chip'; go = function () { app.navigate({ reg: l.reg, i: l.i, val: l.val }); }; } }
       else if (l.sch) { var sc = M.schById[l.sch]; if (sc) { label = '原理图：' + sc.title; ic = 'board'; go = function () { app.navigate({ sch: l.sch }); }; } }
       else if (l.fig) { var f = M.figById[l.fig]; if (f) { label = '图：' + f.title; ic = 'image'; go = function () { app.navigate({ fig: l.fig }); }; } }
-      else if (l.cw) { var m = /^(.*)-(\d+)$/.exec(l.cw), pt = m && M.partById[m[1]]; if (pt) { label = '课件：' + pt.short + ' 第 ' + m[2] + ' 页'; ic = 'book'; go = function () { app.navigate({ cw: l.cw }); }; } }
       else if (l.pin) { var p = M.pinByName[String(l.pin).toUpperCase()]; if (p) { label = '引脚：' + p.name + (p.board.length ? '（' + p.board[0].name + '）' : ''); ic = 'chip'; go = function () { app.navigate({ v: 'home', pin: String(p.n) }); }; } }
       if (!go) return null;
       var b = ui.btn('linkbtn dv-link'); b.appendChild(ui.icon(ic)); b.appendChild(el('span', null, label));
@@ -892,7 +891,7 @@
     function renderHome() {
       var st = chState(ch.id), m = mode();
       var head = el('header', 'dv-hero');
-      var crumb = app.link({ v: 'think' }, 'tk-crumb'); crumb.textContent = '编程思维'; head.appendChild(crumb);
+      var crumb = app.link({ v: 'think' }, 'tk-crumb'); crumb.textContent = 'Code'; head.appendChild(crumb);
       head.appendChild(el('h1', null, topic.code));
       var task = el('div', 'dv-task'); task.appendChild(ui.icon('flag'));
       var tt = el('div'); tt.appendChild(el('span', 'dv-task-l', '任务')); tt.appendChild(el('b', null, ch.task)); task.appendChild(tt); head.appendChild(task);
@@ -1130,7 +1129,7 @@
     function rerender() { dispose(); ui.clear(wrap); var r = app.route(); if (r.s === 'review') renderReview(); else if (r.s && S[r.s]) renderStep(r.s); else renderHome(); }
     rerender();
     return {
-      title: function (r) { return r.s && S[r.s] ? '问题 ' + (S[r.s]._i + 1) + ' · ' + topic.code + ' 编程思维' : r.s === 'review' ? '常卡的地方 · ' + topic.code : topic.code + ' 编程思维'; },
+      title: function (r) { return r.s && S[r.s] ? '问题 ' + (S[r.s]._i + 1) + ' · ' + topic.code + ' Code' : r.s === 'review' ? '常卡的地方 · ' + topic.code : topic.code + ' · Code'; },
       update: function (r) { if (r.t !== ch.id) return; if ((r.s || '') !== (cur || '') || r.s === 'review') { cur = r.s || ''; rerender(); window.scrollTo(0, 0); } },
       destroy: dispose
     };

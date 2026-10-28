@@ -52,7 +52,7 @@ async def main():
         await pg.click('.nav-t[data-t="usart"]'); await pg.wait_for_selector('.topic')
         check('进入 USART 主题页', 'v=topic&t=usart' in pg.url and await pg.inner_text('.th-code') == 'USART', pg.url)
         secs = await pg.evaluate("[...document.querySelectorAll('.snav-i')].map(a => a.textContent)")
-        check('主题页分节齐全', secs == ['要点', '课件', '引脚', '寄存器', '代码', '图'], secs)
+        check('主题页分节齐全（课件已去掉）', secs == ['要点', '引脚', '寄存器', '代码', '图'], secs)
         await pg.click('.rrow[data-reg="USART_BRR"]'); await pg.wait_for_selector('.sheet.on')
         await pg.click('.sh-fx .pill.solid'); await pg.wait_for_timeout(150)
         hexv = await pg.input_value('.hexin input')
@@ -110,21 +110,19 @@ async def main():
         conn = await pg.inner_text('.pd-conn')
         check('M24C02 第 6 脚 SCL 接 PB10（69 脚），小芯片图上标出这个脚', 'PB10' in conn and '69' in conn and await pg.evaluate("document.querySelectorAll('.pd-mini .mk.sel').length") == 1, conn)
 
-        # ---------- 4. 课件查看器 ----------
-        await pg.goto(TOOL + '?v=course'); await pg.wait_for_selector('.coursev')
-        await pg.click('.vol >> nth=0 >> .chap >> nth=0'); await wait_img(pg)
-        for _ in range(20):
-            await pg.keyboard.press('ArrowRight'); await pg.wait_for_timeout(30)
+        # ---------- 4. 原理图查看器；课件入口已去掉 ----------
+        await pg.goto(TOOL + '?v=board'); await pg.wait_for_selector('.boardv')
+        await pg.evaluate("STM.app.navigate({ sch: 'board-01' })"); await wait_img(pg)
+        for _ in range(6):
+            await pg.keyboard.press('ArrowRight'); await pg.wait_for_timeout(60)
         await pg.wait_for_timeout(600)
         cnt = await pg.inner_text('.vw-n')
-        check('课件连续翻 20 页', cnt.startswith('21 /'), cnt)
-        check('翻页地址跟上（只替换不新增记录）', 'cw=v20-21' in pg.url, pg.url)
+        check('原理图连续翻 6 页', cnt.startswith('7 /'), cnt)
+        check('翻页地址跟上（只替换不新增记录）', 'sch=board-07' in pg.url, pg.url)
         await pg.go_back(); await pg.wait_for_timeout(400)
-        check('返回关闭查看器，回到课件目录', not await pg.evaluate("!!document.querySelector('.viewer.on')") and await pg.evaluate("!!document.querySelector('.coursev')"))
-        cont = await pg.evaluate("(document.querySelector('.cont') || {}).textContent || ''")
-        check('课件目录记住读到的页', '21' in cont, cont)
-        await pg.goto(TOOL + '?v=course&cw=v20-134'); await wait_img(pg)
-        check('有勘误的页显示勘误', await pg.evaluate("!document.querySelector('.vw-er-b').hidden") and 'HAL_UART_Transmit' in await pg.inner_text('.vw-er'))
+        check('返回关闭查看器，回到开发板页', not await pg.evaluate("!!document.querySelector('.viewer.on')") and await pg.evaluate("!!document.querySelector('.boardv')"))
+        await pg.goto(TOOL + '?v=course&cw=v20-134'); await pg.wait_for_timeout(800)
+        check('旧的课件地址打开首页', await pg.evaluate("!!document.querySelector('.boardh') && !document.querySelector('.viewer.on')") and not await pg.evaluate("[...document.querySelectorAll('.nav-i')].some(a => a.textContent.includes('课件'))"))
 
         # ---------- 5. 搜索 ----------
         await pg.goto(TOOL); await pg.wait_for_function("document.documentElement.classList.contains('ready')")
@@ -139,7 +137,7 @@ async def main():
 
         # ---------- 6. 深链 / 旧链接 ----------
         for qs, test, name in [
-            ('?cw=v20-16', "document.querySelector('.vw-n') && document.querySelector('.vw-n').textContent.startsWith('16 /')", '课件第 16 页'),
+            ('?sch=board-05', "document.querySelector('.vw-n') && document.querySelector('.vw-n').textContent.startsWith('5 /')", '原理图第 5 页'),
             ('?tab=pins&q=PA9', "!location.search.includes('v=') && document.querySelector('.filter input').value === 'PA9'", '旧链接 tab=pins'),
             ('?tab=regs&reg=GPIO_CRH&i=GPIOB', "!!document.querySelector('.sheet.on') && document.querySelector('.sh-expr').textContent === 'GPIOB->CRH'", '旧链接 tab=regs'),
             ('?tab=chip&page=board-05', "!!document.querySelector('.viewer.on') && location.search.includes('v=board')", '旧链接原理图'),
@@ -164,7 +162,7 @@ async def main():
         await pg.goto(BASE + '/stm32'); f = await tool_frame(pg)
         await f.click('.nav-t[data-t="i2c"]'); await f.wait_for_selector('.topic')
         await f.click('.rrow[data-reg="I2C_CCR"]'); await f.wait_for_selector('.sheet.on')
-        await f.click('.sh-meta .pgchip'); await wait_img(f)
+        await f.evaluate("STM.app.navigate({ sch: 'board-04' })"); await wait_img(f)
         depth = lambda: f.evaluate("({ v: !!document.querySelector('.viewer.on'), s: !!document.querySelector('.sheet.on'), t: !!document.querySelector('.topic') })")
         await pg.go_back(); await pg.wait_for_timeout(600); d1 = await depth()
         check('外壳返回 1：关查看器，寄存器还在', not d1['v'] and d1['s'], d1)
@@ -175,17 +173,17 @@ async def main():
         await pg.go_back(); await pg.wait_for_timeout(900)
         check('外壳返回 4：关闭工具', not await pg.evaluate("!!document.querySelector('#stage .panel.show')") and await pg.evaluate("location.pathname") == '/')
         # 连续翻页后返回
-        await pg.goto(BASE + '/stm32?v=course&cw=v21-1'); f = await tool_frame(pg); await wait_img(f)
+        await pg.goto(BASE + '/stm32?v=board&sch=board-01'); f = await tool_frame(pg); await wait_img(f)
         rs0 = (await pg.evaluate('__rs')) + (await f.evaluate('__rs'))
         await f.focus('.vw-x') if await f.evaluate("getComputedStyle(document.querySelector('.vw-x')).display !== 'none'") else await f.focus('.viewer .icon-btn[aria-label="下一页"]')
-        for _ in range(100):
+        for _ in range(14):
             await pg.keyboard.press('ArrowRight'); await pg.wait_for_timeout(25)
         await pg.wait_for_timeout(900)
         rs = (await pg.evaluate('__rs')) + (await f.evaluate('__rs')) - rs0
         cnt = await f.inner_text('.vw-n')
-        check('嵌入：按住方向键翻 100 页，页码正确', cnt.startswith('101 /'), cnt)
-        check('嵌入：翻页期间地址写入被节流', rs <= 40, '%d 次' % rs)
-        check('外壳地址跟到当前页', 'cw=v21-101' in await pg.evaluate('location.search'), await pg.evaluate('location.search'))
+        check('嵌入：按住方向键翻 14 页，页码正确', cnt.startswith('15 /'), cnt)
+        check('嵌入：翻页期间地址写入被节流', rs <= 12, '%d 次' % rs)
+        check('外壳地址跟到当前页', 'sch=board-15' in await pg.evaluate('location.search'), await pg.evaluate('location.search'))
         await pg.go_back(); await pg.wait_for_timeout(700)
         check('翻页后返回只关查看器', not await f.evaluate("!!document.querySelector('.viewer.on')") and await pg.evaluate("!!document.querySelector('#stage .panel.show')"))
         # 外壳切主题
@@ -212,7 +210,7 @@ async def main():
         check('手机：寄存器面板全屏，复位按钮不被截断', box[0] >= 389 and box[1] <= 390, box)
         overflow = await pg.evaluate("document.documentElement.scrollWidth > innerWidth")
         check('手机：页面没有横向溢出', not overflow)
-        await pg.goto(TOOL + '?cw=v21-10'); await wait_img(pg)
+        await pg.goto(TOOL + '?v=board&sch=board-05'); await wait_img(pg)
         st = await pg.query_selector('.vw-stage'); bb = await st.bounding_box(); y = bb['y'] + bb['height'] / 2
         await pg.evaluate("""([x0, x1, y]) => {
           const s = document.querySelector('.vw-stage');
@@ -220,7 +218,7 @@ async def main():
           ev('pointerdown', x0); ev('pointermove', (x0 + x1) / 2); ev('pointermove', x1); ev('pointerup', x1);
         }""", [bb['x'] + 330, bb['x'] + 60, y])
         await pg.wait_for_timeout(600)
-        check('手机：左滑翻到下一页', (await pg.inner_text('.vw-n')).startswith('11 /'))
+        check('手机：左滑翻到下一页', (await pg.inner_text('.vw-n')).startswith('6 /'))
         await pg.context.close()
 
         # ---------- 10. 编程思维总览、外设页入口、手机布局 ----------
@@ -228,12 +226,12 @@ async def main():
         pg = await page(b)
         await pg.goto(TOOL + '?v=think'); await pg.wait_for_selector('.tk-ch')
         hrefs = await pg.evaluate("[...document.querySelectorAll('.tk-ch')].map(a => new URL(a.href).searchParams.get('t'))")
-        check('编程思维总览：六章推导链，按课件顺序', hrefs == CHAPS and await pg.evaluate("document.querySelectorAll('.tk-flow li').length") == 6, hrefs)
+        check('Code 总览：六章推导链', hrefs == CHAPS and await pg.evaluate("document.querySelectorAll('.tk-flow li').length") == 6, hrefs)
         for chap in ['gpio', 'usart', 'tim', 'adc', 'spi']:
             await pg.goto(TOOL + '?v=topic&t=' + chap); await pg.wait_for_selector('.topic')
             ok = await pg.evaluate("!!document.querySelector('.thinkin')")
             if not ok: break
-        check('五个外设页都有编程思维入口', ok)
+        check('五个外设页都有 Code 入口', ok)
         await pg.context.close()
         pg = await page(b, 390, 844, mobile=True)
         overflow = []
@@ -242,7 +240,7 @@ async def main():
         for qs in pages:
             await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)
             if await pg.evaluate("document.documentElement.scrollWidth > innerWidth"): overflow.append(qs)
-        check('手机：编程思维 %d 个页面没有横向溢出' % len(pages), not overflow, overflow)
+        check('手机：%d 个页面没有横向溢出' % len(pages), not overflow, overflow)
         await pg.context.close()
 
         # ---------- 11. 编程思维 · I2C 推导链：自主推导模式把 22 环的每一道题都答一遍 ----------

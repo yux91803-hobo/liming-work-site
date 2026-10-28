@@ -1,4 +1,4 @@
-/* views.js — 基础视图：首页（芯片 + 板载模块）/ 外设主题 / 开发板 / 课件
+/* views.js — 基础视图：首页（芯片 + 板载模块）/ 外设主题 / 开发板
    每个视图 = function (root, route, app) → { title(route), update(route), destroy() } */
 (function () {
   'use strict';
@@ -59,7 +59,7 @@
       var nDone = isD ? d.done : d.filter(Boolean).length, nAll = isD ? d.total : 4;
       var en = app.link({ v: 'think', t: t.id }, 'thinkin');
       en.appendChild(ui.icon('idea'));
-      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, '编程思维'));
+      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, 'Code'));
       if (nDone) et.appendChild(el('span', null, nDone + ' / ' + nAll)); en.appendChild(et);
       en.appendChild(el('span', 'thinkin-go', nDone === nAll ? '复习' : nDone ? '继续' : '开始'));
       art.appendChild(en);
@@ -73,21 +73,6 @@
     t.points.forEach(function (p) { ul.appendChild(el('li', null, p)); });
     s1.appendChild(ul); parts.push([s1, '要点']);
 
-    // 课件
-    if (t.chapters.length) {
-      var s2 = sec('course', '课件'), cl = el('div', 'chaps');
-      t.chapters.forEach(function (ch) {
-        [ch].concat(ch.kids).forEach(function (x) {
-          var pt = M.partById[x.part], b = ui.btn('chap lv' + x.level);
-          var tt = el('span', 'chap-t', x.title); b.appendChild(tt);
-          b.appendChild(el('span', 'chap-p', pt.short + ' ' + pagesText(x)));
-          var er = erBadge(pt.id, x.start + 1, x.end + 1); if (er) b.appendChild(er);
-          b.addEventListener('click', function () { app.navigate({ cw: pt.id + '-' + (x.start + 1) }); });
-          cl.appendChild(b);
-        });
-      });
-      s2.appendChild(cl); parts.push([s2, '课件']);
-    }
 
     // 引脚
     if (t.pins.length) {
@@ -512,45 +497,6 @@
     return { title: function () { return '开发板'; } };
   }
 
-  /* ====================== 课件 ====================== */
-  function courseView(root, route, app) {
-    var wrap = el('div', 'coursev');
-    var head = el('header', 'pg-h'); head.appendChild(el('h1', null, '课件'));
-    wrap.appendChild(head);
-    var conts = [];
-    // 「接着读」按钮：读过的页记在本机；从查看器回来时刷新
-    function syncCont() {
-      var pos = readPos();
-      conts.forEach(function (x) {
-        var p = Number(pos[x.pt.id]), ok = Number.isInteger(p) && p >= 1 && p <= x.pt.n;
-        x.b.hidden = !ok; x.p = p; if (ok) x.b.textContent = '接着读第 ' + p + ' 页';
-      });
-    }
-    M.course.forEach(function (pt) {
-      var s = el('section', 'vol'), vh = el('div', 'vol-h');
-      vh.appendChild(el('h2', null, pt.short)); vh.appendChild(el('span', null, pt.n + ' 页'));
-      var x = { pt: pt, b: ui.btn('cont'), p: 0 };
-      x.b.addEventListener('click', function () { app.navigate({ cw: pt.id + '-' + x.p }); });
-      vh.appendChild(x.b); conts.push(x);
-      s.appendChild(vh);
-      var list = el('div', 'chaps');
-      pt.chs.forEach(function (x) {
-        var row = el('div', 'chap-row lv' + x.level), b = ui.btn('chap lv' + x.level);
-        b.appendChild(el('span', 'chap-t', x.title)); b.appendChild(el('span', 'chap-p', pagesText(x)));
-        var er = erBadge(pt.id, x.start + 1, x.end + 1); if (er) b.appendChild(er);
-        b.addEventListener('click', function () { app.navigate({ cw: pt.id + '-' + (x.start + 1) }); });
-        row.appendChild(b);
-        var tp = x.level === 1 ? M.topicOfChapter(x) : null;
-        if (tp) row.appendChild(topicTag(tp, app));
-        list.appendChild(row);
-      });
-      s.appendChild(list); wrap.appendChild(s);
-    });
-    root.appendChild(wrap);
-    syncCont();
-    return { title: function () { return '课件'; }, update: syncCont };
-  }
-
-  STM.views = { home: home, topic: topic, board: boardView, course: courseView };
+  STM.views = { home: home, topic: topic, board: boardView };
   STM.viewsUtil = { figGrid: figGrid, thumb: thumb, CW_KEY: CW_KEY };
 })();

@@ -209,7 +209,7 @@
     });
     snips.forEach(function (s) { var t = topicOfSnip(s.title); if (t) add('code', s.title, t.name + '的代码片段', s.code, { v: 'topic', t: t.id, snip: s.title }); });
     figs.forEach(function (f) { add('fig', f.title, (f.kind === 'teach' ? '教学图' : '手册' + (f.label || '图')) + '，' + f.group, f.id, { fig: f.id }); });
-    course.forEach(function (pt) { pt.chs.forEach(function (x) { add('course', x.title, pt.short + ' 第 ' + (x.start + 1) + ' 页', '', { v: 'course', cw: pt.id + '-' + (x.start + 1) }); }); });
+    if (0) course.forEach(function (pt) { pt.chs.forEach(function (x) { add('course', x.title, pt.short + ' 第 ' + (x.start + 1) + ' 页', '', { v: 'course', cw: pt.id + '-' + (x.start + 1) }); }); });
     (W.STM32_MODULES || []).forEach(function (m) { add('board', m.tag, (m.part ? m.part + '，' : '') + '模块图', m.pins.map(function (p) { return p.name + ' ' + (p.mcu || ''); }).join(' '), { v: 'home', m: m.id }); });
     board.forEach(function (r) { add('board', r.name, (r.mcu ? r.mcu + '，' : '') + '开发板' + r.group, r.note, r.pins.length === 1 ? { v: 'home', pin: String(r.pins[0]) } : { v: 'board' }); });
     sch.forEach(function (s) { add('sch', s.title, s.group, s.id, { sch: s.id }); });
