@@ -1,3 +1,9 @@
+# 修改清单 · 2026-10-29（删掉互传、协作中心的后台）
+
+- Worker 只剩两件事：工具图片缺失回 404、`/api/*` 回 404。删掉 `/api/transfer`（互传）、`/api/hub`（协作中心）以及 src/hub.js、src/quota-api.mjs。
+- wrangler.jsonc 去掉 D1 `liming-hub` 绑定和 Durable Object 绑定，加迁移 `v2` 删除 `Space`、`Limiter`。部署这一版时，互传里存的文件和文字会被永久删除。
+- D1 数据库本身和旧密钥还在 Cloudflare 账号里，README 写了怎么删。
+
 # 修改清单 · 2026-10-29（全站像素风）
 
 - 新增 /pixel.css，首页、STM32 学习台、世界地图都接上：点阵字体（GNU Unifont 裁剪成只含站内用字的 44 KB woff，`python3 scripts/build-font.py` 重新生成，许可见 site/fonts/LICENSE.txt）、全部方角、2px 粗边框、不带模糊的硬阴影，按下时整块往右下压一格。

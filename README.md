@@ -1,6 +1,6 @@
 # Liming 工具箱 · STM32 学习工作台
 
-工具箱现在有两个工具：世界地图、STM32 学习台。互传和协作中心的页面已经去掉（Worker 里的接口还在）。
+工具箱现在有两个工具：世界地图、STM32 学习台。互传和协作中心已经整个删掉（页面、接口和存储）。
 
 ## 本地运行
 
@@ -10,7 +10,7 @@
 npm run dev
 ```
 
-打开终端显示的地址。`/stm32` 使用与正式站一致的工具箱外壳；也可以直接打开 `/tools/stm32/`。静态预览不模拟 Cloudflare 的数据库、登录或互传接口；API 请求会明确返回 501。需要验证这些接口时，在已有 Wrangler 开发环境使用 `npx wrangler dev`。
+打开终端显示的地址。`/stm32` 使用与正式站一致的工具箱外壳；也可以直接打开 `/tools/stm32/`。正式站的 Worker 只给缺失的工具图片回 404、给 `/api/*` 回 404，静态预览里 `/api/*` 同样不可用。
 
 ```sh
 npm run check
@@ -35,24 +35,28 @@ npm run check
 
 ```text
 site/                 网页、数据与完整图片资源
-src/                  原有 Cloudflare Worker / Hub API
+src/worker.js         Cloudflare Worker（资源 404、/api 404）
 scripts/preview.mjs   无依赖静态预览
 scripts/check.mjs     语法、资源与行为检查
 test/                 关键行为回归测试
 docs/CHANGES.md        修改清单与验证范围
 RESOURCE-MANIFEST.json 文件大小与 SHA-256
-wrangler.jsonc        原有站点名、域名与存储绑定
+wrangler.jsonc        站点名、域名；删除旧 Durable Object 的迁移
 ```
 
 从原站公开路径补齐了上传包中缺失的 STM32 数据、课件图、架构图、原理图和应用图标；文件清单记录其哈希。没有混入旧备份、历史审查目录、部署日志、会话数据或访问密钥。
 
 ## 更新现有 Cloudflare 站点
 
-包内的 `wrangler.jsonc` 保留原站 `liming-worldmap` 的域名、D1 和 Durable Object 配置。应在拥有该站点部署权限的原有环境中操作，避免创建新的数据库或空间。
+`wrangler.jsonc` 保留原站 `liming-worldmap` 的名字和域名。互传和协作中心删掉后：
+
+- 不再绑定 D1 数据库 `liming-hub`；数据库本身还在 Cloudflare 账号里，确认不要了可以执行 `npx wrangler d1 delete liming-hub`。
+- 迁移 `v2` 删除 Durable Object `Space`（互传的文件和文字）和 `Limiter`（登录限流）。**第一次部署这一版时，里面存的数据会被永久删除。**
+- 旧密钥 `TRANSFER_PASSWORD`、`TRANSFER_KEY`、`TRANSFER_PW_VERSION` 和协作中心的密钥已经用不到，可以用 `npx wrangler secret delete <名字>` 删掉。
 
 1. 保留当前正式版源码及可回滚的部署版本。
 2. 解压此包，在 `worldmap/` 执行 `npm run check`。
-3. 在已有 Wrangler 环境执行 `npx wrangler deploy --dry-run`，确认站点名、资源目录与绑定。
+3. 在已有 Wrangler 环境执行 `npx wrangler deploy --dry-run`，确认站点名、资源目录，以及迁移里只删除了 `Space`、`Limiter`。
 4. 按原有测试站流程验收后，使用该环境的既有部署方式上线。
 
 这一交付是完整修改后的源码和静态资源包，不代表正式站已经完成部署。
