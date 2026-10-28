@@ -1,4 +1,4 @@
-/* thinkview.js — 「原理」总览页；每一章（推导链）的界面在 deriveview.js
+/* thinkview.js — 「设计原理」总览页；每一章（推导链）的界面在 deriveview.js
    路由：v=think（总览）；v=think&t=gpio（某一章）→ 交给 STM.derive.view */
 (function () {
   'use strict';
@@ -15,7 +15,7 @@
     if (route.t && STM.derive && STM.derive.has(route.t)) return STM.derive.view(root, route, app);
     var wrap = el('div', 'think'); root.appendChild(wrap);
     var head = el('header', 'pg-h tk-hero');
-    head.appendChild(el('h1', null, '原理'));
+    head.appendChild(el('h1', null, '设计原理'));
     wrap.appendChild(head);
 
     var ol = el('ol', 'tk-flow');
@@ -36,7 +36,7 @@
     });
     list.appendChild(grid);
     wrap.appendChild(list);
-    return { title: function () { return '原理'; } };
+    return { title: function () { return '设计原理'; } };
   }
 
   STM.views.think = view;

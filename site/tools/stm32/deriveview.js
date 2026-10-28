@@ -891,7 +891,7 @@
     function renderHome() {
       var st = chState(ch.id), m = mode();
       var head = el('header', 'dv-hero');
-      var crumb = app.link({ v: 'think' }, 'tk-crumb'); crumb.textContent = '原理'; head.appendChild(crumb);
+      var crumb = app.link({ v: 'think' }, 'tk-crumb'); crumb.textContent = '设计原理'; head.appendChild(crumb);
       head.appendChild(el('h1', null, topic.code));
       var task = el('div', 'dv-task'); task.appendChild(ui.icon('flag'));
       var tt = el('div'); tt.appendChild(el('span', 'dv-task-l', '任务')); tt.appendChild(el('b', null, ch.task)); task.appendChild(tt); head.appendChild(task);
@@ -1127,7 +1127,7 @@
     function rerender() { dispose(); ui.clear(wrap); var r = app.route(); if (r.s === 'review') renderReview(); else if (r.s && S[r.s]) renderStep(r.s); else renderHome(); }
     rerender();
     return {
-      title: function (r) { return r.s && S[r.s] ? '问题 ' + (S[r.s]._i + 1) + ' · ' + topic.code : r.s === 'review' ? '常卡的地方 · ' + topic.code : topic.code + ' · 原理'; },
+      title: function (r) { return r.s && S[r.s] ? '问题 ' + (S[r.s]._i + 1) + ' · ' + topic.code : r.s === 'review' ? '常卡的地方 · ' + topic.code : topic.code + ' · 设计原理'; },
       update: function (r) { if (r.t !== ch.id) return; if ((r.s || '') !== (cur || '') || r.s === 'review') { cur = r.s || ''; rerender(); window.scrollTo(0, 0); } },
       destroy: dispose
     };

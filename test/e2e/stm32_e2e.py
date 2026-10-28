@@ -233,17 +233,17 @@ async def main():
         pg = await page(b)
         await pg.goto(TOOL + '?v=think'); await pg.wait_for_selector('.tk-ch')
         hrefs = await pg.evaluate("[...document.querySelectorAll('.tk-ch')].map(a => new URL(a.href).searchParams.get('t'))")
-        check('原理总览：六章推导链', hrefs == CHAPS and await pg.evaluate("document.querySelectorAll('.tk-flow li').length") == 6 and await pg.evaluate("document.querySelector('h1').textContent") == '原理', hrefs)
+        check('设计原理总览：六章推导链', hrefs == CHAPS and await pg.evaluate("document.querySelectorAll('.tk-flow li').length") == 6 and await pg.evaluate("document.querySelector('h1').textContent") == '设计原理', hrefs)
         for chap in ['gpio', 'usart', 'tim', 'adc', 'spi']:
             await pg.goto(TOOL + '?v=topic&t=' + chap); await pg.wait_for_selector('.topic')
-            ok = await pg.evaluate("(document.querySelector('.thinkin b') || {}).textContent === '原理'")
+            ok = await pg.evaluate("(document.querySelector('.thinkin b') || {}).textContent === '设计原理'")
             if not ok: break
-        check('五个外设页都有「原理」入口', ok)
+        check('五个外设页都有「设计原理」入口', ok)
         bad = []
         for tid in ['sys', 'exti', 'dma', 'fsmc']:
             await pg.goto(TOOL + '?v=topic&t=' + tid); await pg.wait_for_selector('.topic')
             if await pg.evaluate("!!document.querySelector('.thinkin')"): bad.append(tid)
-        check('没有推导链的外设不显示「原理」入口', not bad, bad)
+        check('没有推导链的外设不显示「设计原理」入口', not bad, bad)
         await pg.context.close()
         # 外设页代码：寄存器（完整文件）/ HAL 库 / 代码推导
         pg = await page(b)
