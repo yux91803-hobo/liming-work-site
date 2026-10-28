@@ -53,6 +53,11 @@ async def main():
         check('进入 USART 主题页', 'v=topic&t=usart' in pg.url and await pg.inner_text('.th-code') == 'USART', pg.url)
         secs = await pg.evaluate("[...document.querySelectorAll('.snav-i')].map(a => a.textContent)")
         check('主题页分节齐全（课件已去掉）', secs == ['要点', '引脚', '寄存器', '代码', '图'], secs)
+        vis = await pg.evaluate("[...document.querySelectorAll('.topic > .sec')].filter(x => !x.hidden).map(x => x.id)")
+        check('外设页分页：一次只显示一页（默认「要点」）', vis == ['s-points'], vis)
+        await pg.click('.snav-i:has-text("寄存器")'); await pg.wait_for_timeout(600)
+        vis = await pg.evaluate("[...document.querySelectorAll('.topic > .sec')].filter(x => !x.hidden).map(x => x.id)")
+        check('点「寄存器」标签：只剩寄存器这一页，地址记下分页', vis == ['s-regs'] and 'sec=regs' in pg.url, (vis, pg.url))
         await pg.click('.rrow[data-reg="USART_BRR"]'); await pg.wait_for_selector('.sheet.on')
         await pg.click('.sh-fx .pill.solid'); await pg.wait_for_timeout(150)
         hexv = await pg.input_value('.hexin input')
@@ -75,7 +80,9 @@ async def main():
         hexv = await pg.input_value('.hexin input')
         hal = await pg.evaluate("(() => { const f = [...document.querySelectorAll('.sh-code figure.code')][1]; return f && !f.hidden ? f.innerText : ''; })()")
         check('常用配置「LED1 推挽输出」→ 0x44444443，并给出 HAL 写法', hexv.replace(' ', '') == '0x44444443' and 'GPIO_InitStruct' in hal, hexv)
-        grp = await pg.inner_text('.fgroup-h >> nth=7')
+        grp = await pg.inner_text('.fgroup-h >> nth=0')
+        order = await pg.evaluate("[...document.querySelectorAll('.fields .frow-h b')].slice(0, 4).map(b => b.textContent)")
+        check('字段从低位到高位往下排', order == ['MODE0', 'CNF0', 'MODE1', 'CNF1'], order)
         check('GPIO 字段按引脚分组并标出板上用途', 'PA0' in grp and 'LED1' in grp, grp)
 
         # ---------- 3. 首页：芯片引脚 + 板载模块 ----------
@@ -147,7 +154,7 @@ async def main():
             check('深链：' + name, await pg.evaluate(test), pg.url)
 
         # ---------- 7. 架构图缩略图都能加载 ----------
-        await pg.goto(TOOL + '?v=topic&t=tim'); await pg.wait_for_selector('.fgrid')
+        await pg.goto(TOOL + '?v=topic&t=tim&sec=figs'); await pg.wait_for_selector('.fgrid')
         await pg.evaluate("document.querySelector('.fgrid').scrollIntoView()")
         await pg.wait_for_timeout(300)
         for i in range(8):
@@ -161,7 +168,7 @@ async def main():
         pg = await page(b)
         await pg.goto(BASE + '/stm32'); f = await tool_frame(pg)
         await f.click('.nav-t[data-t="i2c"]'); await f.wait_for_selector('.topic')
-        await f.click('.rrow[data-reg="I2C_CCR"]'); await f.wait_for_selector('.sheet.on')
+        await f.click('.snav-i:has-text("寄存器")'); await f.click('.rrow[data-reg="I2C_CCR"]'); await f.wait_for_selector('.sheet.on')
         await f.evaluate("STM.app.navigate({ sch: 'board-04' })"); await wait_img(f)
         depth = lambda: f.evaluate("({ v: !!document.querySelector('.viewer.on'), s: !!document.querySelector('.sheet.on'), t: !!document.querySelector('.topic') })")
         await pg.go_back(); await pg.wait_for_timeout(600); d1 = await depth()
@@ -235,7 +242,7 @@ async def main():
         await pg.context.close()
         # 寄存器版代码
         pg = await page(b)
-        await pg.goto(TOOL + '?v=topic&t=exti'); await pg.wait_for_selector('.rc')
+        await pg.goto(TOOL + '?v=topic&t=exti&sec=code'); await pg.wait_for_selector('.rc')
         st = await pg.evaluate("[document.querySelector('.cseg-b.on').textContent, !document.querySelector('.code-reg').hidden, document.querySelector('.code-hal').hidden]")
         check('外设页代码：默认显示寄存器写法，HAL 在另一页', st == ['寄存器', True, True], st)
         await pg.click('.rc .rc-l.has .rc-lb >> nth=3'); await pg.wait_for_timeout(100)

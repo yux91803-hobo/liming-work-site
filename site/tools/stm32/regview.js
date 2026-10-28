@@ -243,7 +243,8 @@
       ui.clear(box);
       box.appendChild(el('h3', 'sh-h3', '字段'));
       var lastY = null, gpio = c.inst && /^GPIO([A-G])$/.exec(c.inst.name);
-      c.lay.forEach(function (f) {
+      // 从低位到高位往下排：PA0 在最上面，同一个脚里先 MODE 后 CNF
+      c.lay.slice().sort(function (a, b) { return Math.min(a.bits[0], a.bits[1]) - Math.min(b.bits[0], b.bits[1]); }).forEach(function (f) {
         if (f.reserved) return;
         if (R.isRep(r, f)) {
           var y = C.yOf(f);
