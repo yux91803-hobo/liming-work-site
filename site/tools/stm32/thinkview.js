@@ -3,7 +3,7 @@
 (function () {
   'use strict';
   var STM = window.STM, ui = STM.ui, M = STM.model, el = ui.el;
-  var ORDER = ['gpio', 'usart', 'i2c', 'tim', 'adc', 'spi'];
+  var ORDER = ['gpio', 'exti', 'usart', 'i2c', 'tim', 'dma', 'adc', 'spi'];
 
   function chapters() {
     var D = window.STM32_DERIVE || {}, ids = ORDER.filter(function (id) { return D[id]; });

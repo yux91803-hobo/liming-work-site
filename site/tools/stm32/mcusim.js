@@ -2,7 +2,7 @@
    目的：让「编程思维」里一行行推出来的 C 代码真的跑起来，交换两行以后能看到线上 / 灯上 / 串口里发生了什么。
    · 代码：把课程里用到的 C 子集转成 JS 执行（寄存器读写、位运算、if / for / while、函数、#define、字符串、printf）。
    · 时间：离散事件。每次访问寄存器花一点点时间；Delay_us / Delay_ms 推进时间；while 轮询时直接跳到下一个外设事件。
-   · 外设：RCC 门控、GPIO（8 种模式与引脚电平）、USART1、TIM2 / 5 / 6、ADC1、SPI1、NVIC。
+   · 外设：RCC 门控、GPIO（8 种模式与引脚电平）、USART1、TIM2 / 5 / 6、ADC1、SPI1、AFIO + EXTI、DMA1（通道 4 / 5 接 USART1）、NVIC。
    · 板子：LED1~3（低电平亮）、KEY1~4、电位器 PC0、W25Q32（SPI1，片选 PC13）、经 STLink 虚拟串口相连的电脑。
    这是教学模型：行为按 RM0008 / 数据手册取主干，细节有简化，界面上会说明。 */
 (function (root, factory) {
@@ -32,10 +32,20 @@
     });
     // 中断号（大容量 F103）
     o.TIM2_IRQn = 28; o.TIM5_IRQn = 50; o.TIM6_IRQn = 54; o.TIM7_IRQn = 55; o.USART1_IRQn = 37; o.SPI1_IRQn = 35; o.ADC1_2_IRQn = 18; o.EXTI9_5_IRQn = 23;
+    o.EXTI0_IRQn = 6; o.EXTI1_IRQn = 7; o.EXTI2_IRQn = 8; o.EXTI3_IRQn = 9; o.EXTI4_IRQn = 10; o.EXTI15_10_IRQn = 40; o.DMA1_Channel4_IRQn = 14; o.DMA1_Channel5_IRQn = 15;
+    // 标准库 stm32f10x.h 的写法：AFIO_EXTICRx_EXTIy_Pz（选哪个端口）、DMA_CCRn_xxx（按通道起名）
+    for (var y = 0; y < 16; y++) for (var pz = 0; pz < 7; pz++) o['AFIO_EXTICR' + ((y >> 2) + 1) + '_EXTI' + y + '_P' + 'ABCDEFG'[pz]] = (pz << ((y & 3) * 4)) >>> 0;
+    ['EN', 'TCIE', 'HTIE', 'TEIE', 'DIR', 'CIRC', 'PINC', 'MINC', 'PSIZE', 'PSIZE_0', 'PSIZE_1', 'MSIZE', 'MSIZE_0', 'MSIZE_1', 'PL', 'MEM2MEM'].forEach(function (b) {
+      var v = { EN: 1, TCIE: 2, HTIE: 4, TEIE: 8, DIR: 16, CIRC: 32, PINC: 64, MINC: 128, PSIZE: 0x300, PSIZE_0: 0x100, PSIZE_1: 0x200, MSIZE: 0xC00, MSIZE_0: 0x400, MSIZE_1: 0x800, PL: 0x3000, MEM2MEM: 0x4000 }[b];
+      for (var ch = 1; ch <= 7; ch++) o['DMA_CCR' + ch + '_' + b] = v;
+    });
     if (!regs) return o;
     CONST_CACHE = o; return o;
   }
-  var IRQ_NAME = { 28: 'TIM2_IRQHandler', 50: 'TIM5_IRQHandler', 54: 'TIM6_IRQHandler', 55: 'TIM7_IRQHandler', 37: 'USART1_IRQHandler', 35: 'SPI1_IRQHandler', 18: 'ADC1_2_IRQHandler' };
+  var IRQ_NAME = { 28: 'TIM2_IRQHandler', 50: 'TIM5_IRQHandler', 54: 'TIM6_IRQHandler', 55: 'TIM7_IRQHandler', 37: 'USART1_IRQHandler', 35: 'SPI1_IRQHandler', 18: 'ADC1_2_IRQHandler',
+    6: 'EXTI0_IRQHandler', 7: 'EXTI1_IRQHandler', 8: 'EXTI2_IRQHandler', 9: 'EXTI3_IRQHandler', 10: 'EXTI4_IRQHandler', 23: 'EXTI9_5_IRQHandler', 40: 'EXTI15_10_IRQHandler',
+    14: 'DMA1_Channel4_IRQHandler', 15: 'DMA1_Channel5_IRQHandler' };
+  var EXTI_LINES = { 6: 0x1, 7: 0x2, 8: 0x4, 9: 0x8, 10: 0x10, 23: 0x3E0, 40: 0xFC00 };
 
   /* ===================== C 子集 → JS ===================== */
   function stripComments(s) { return s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ''); }
@@ -49,6 +59,10 @@
     s = s.replace(new RegExp('\\(\\s*(?:const\\s+)?(?:volatile\\s+)?' + TYPES + '\\s*\\*?\\s*\\)', 'g'), '');
     s = s.replace(new RegExp('\\b(?:static\\s+)?(?:volatile\\s+)?(?:const\\s+)?' + TYPES + '\\s+(?=[A-Za-z_])', 'g'), 'var ');
     s = s.replace(/\b(0x[0-9A-Fa-f]+|\d+)[uUlL]+\b/g, '$1');
+    s = s.replace(/\bvar\s+([A-Za-z_]\w*)\s*\[\s*\]\s*=/g, 'var $1 =');                                   // uint8_t a[] = "…";
+    s = s.replace(/\bvar\s+([A-Za-z_]\w*)\s*\[([^\]]+)\](\s*=\s*\{[^}]*\})?/g, 'var $1 = __arr($2)');     // uint8_t a[16] = {0};
+    s = s.replace(/\bsizeof\s*\(\s*([A-Za-z_]\w*)\s*\)/g, '__sizeof($1)');
+    s = s.replace(/(^|[=(,]\s*)&\s*([A-Z][A-Z0-9_]*\.[A-Z][A-Z0-9_]*)/g, '$1__addr("$2")');              // &USART1->DR：外设寄存器的地址
     // 循环里插入「时间流逝」检查：while 可以在空转时跳到下一个外设事件；for 每圈固定花一点时间
     var out = '', i = 0, re = /\b(while|for)\s*\(/g, m;
     while ((m = re.exec(s))) {
@@ -121,6 +135,7 @@
     M.gpio = {}; 'ABCDEFG'.split('').forEach(function (p, k) { M.gpio[p] = new Gpio(M, p, k + 2); });
     M.usart1 = new Usart(M); M.tim = { 2: new Tim(M, 2), 5: new Tim(M, 5), 6: new Tim(M, 6) };
     M.adc1 = new Adc(M); M.spi1 = new Spi(M); M.flash = new W25Q(M, opt.flash || {}); M.pc = new Pc(M, opt.board && opt.board.rx);
+    M.afio = { EXTICR: [0, 0, 0, 0] }; M.exti = { IMR: 0, EMR: 0, RTSR: 0, FTSR: 0, SWIER: 0, PR: 0, prev: {}, hits: 0 }; M.dma = new Dma(M);
     M.periphs = [M.usart1, M.tim[2], M.tim[5], M.tim[6], M.adc1, M.spi1, M.flash, M.pc];
     M.watch = ['PA0', 'PA1', 'PA8', 'PA9', 'PA10', 'PA5', 'PA6', 'PA7', 'PC13', 'PF8', 'PF10', 'PC0'];
     M.watch.forEach(function (p) { M.trace[p] = []; });
@@ -188,6 +203,24 @@
       }
       M.levels[p] = v;
     });
+    M.extiScan();
+  };
+  // EXTI：每条选了边沿的线，盯着 AFIO 选中的那个脚；电平一变、方向对，就把 PR 置 1
+  Machine.prototype.extiScan = function () {
+    var M = this, x = M.exti, sel = x.RTSR | x.FTSR;
+    if (!sel) return;
+    for (var l = 0; l < 16; l++) {
+      var bit = 1 << l; if (!(sel & bit)) continue;
+      var port = (M.afio.EXTICR[l >> 2] >> ((l & 3) * 4)) & 0xF, pin = 'P' + 'ABCDEFG'[port] + l;
+      if (!M.gpio[pin[1]]) continue;
+      var c = M.pinCfg(pin), v = c.mode === 0 && c.cnf === 0 ? 'Z' : M.level(pin), key = l + pin, pv = x.prev[l];
+      if (v === 'Z') { x.prev[l] = undefined; continue; }
+      if (pv && pv.pin === pin && pv.v !== v) {
+        if ((v === 1 && (x.RTSR & bit)) || (v === 0 && (x.FTSR & bit))) { x.PR |= bit; x.hits++; }
+      }
+      x.prev[l] = { pin: pin, v: v };
+      void key;
+    }
   };
   Machine.prototype.read = function (name) {   // IDR 位
     var c = this.pinCfg(name);
@@ -212,6 +245,7 @@
       if (++guard > 400000) throw new Stop('error', '事件太多，模拟中止');
       M.t = Math.max(M.t, e);
       M.periphs.forEach(function (p) { p.fire(M.t); });
+      M.dma.service();
       M.updatePins();
       M.irq();
     }
@@ -225,7 +259,7 @@
     if (write) this.writes++; else { this.reads++; this.lastRead = what; }
     this.spend(0.03);
   };
-  Machine.prototype.after = function () { this.updatePins(); this.irq(); };
+  Machine.prototype.after = function () { this.dma.service(); this.updatePins(); this.irq(); };
   // while 每转一圈：这一圈什么都没写（只在读标志或空转）→ 直接跳到下一个外设事件
   Machine.prototype.tickWhile = function (id) {
     var M = this, last = M.loops[id] || (M.loops[id] = { w: -1, d: -1, r: -1 });
@@ -251,7 +285,9 @@
       var fired = false;
       for (var n in M.irqEnabled) {
         if (!M.irqEnabled[n]) continue;
-        var src = n == 54 ? M.tim[6] : n == 50 ? M.tim[5] : n == 28 ? M.tim[2] : n == 37 ? M.usart1 : n == 18 ? M.adc1 : null;
+        var src = n == 54 ? M.tim[6] : n == 50 ? M.tim[5] : n == 28 ? M.tim[2] : n == 37 ? M.usart1 : n == 18 ? M.adc1
+          : EXTI_LINES[n] ? { irqPending: (function (mask) { return function () { return !!(M.exti.PR & M.exti.IMR & mask); }; })(EXTI_LINES[n]) }
+          : n == 14 || n == 15 ? M.dma.ch[n - 10] : null;
         if (!src || !src.irqPending()) continue;
         var h = M.handlers[IRQ_NAME[n]];
         if (!h) throw new Stop('nohandler', '中断 ' + IRQ_NAME[n].replace('Handler', '') + ' 被触发了，但程序里没有 ' + IRQ_NAME[n] + ' 这个函数：CPU 跳进了默认处理函数（一个死循环）。');
@@ -703,6 +739,90 @@
     this.cmd = null; this.pp = null; this.do = undefined;
   };
 
+  /* ===================== AFIO / EXTI ===================== */
+  function afioRegs(M) {
+    var o = {}, cr = {};
+    function on(w, i) { if (M.clockOn('APB2ENR', 0)) return true; M.warnOnce('clkAFIO' + w, (w ? '写' : '读') + ' AFIO_EXTICR' + (i + 1) + ' 时 AFIO 的时钟还没开：' + (w ? '写入不起作用，EXTI 线还接在 PA 口上。' : '读出来是 0。')); return false; }
+    [0, 1, 2, 3].forEach(function (i) {
+      reg(cr, String(i), function () { M.access(false, 'AFIO->EXTICR[' + i + ']'); return on(0, i) ? M.afio.EXTICR[i] : 0; },
+        function (v) { M.access(true); if (on(1, i)) { M.afio.EXTICR[i] = v & 0xFFFF; M.after(); } });
+    });
+    o.EXTICR = cr;
+    reg(o, 'MAPR', function () { M.access(false, 'AFIO->MAPR'); return 0; }, function () { M.access(true); });
+    return o;
+  }
+  function extiRegs(M) {
+    var o = {}, x = M.exti;
+    ['IMR', 'EMR', 'RTSR', 'FTSR'].forEach(function (r) {
+      reg(o, r, function () { M.access(false, 'EXTI->' + r); return x[r]; }, function (v) { M.access(true); x[r] = v & 0xFFFFF; M.after(); });
+    });
+    reg(o, 'SWIER', function () { M.access(false, 'EXTI->SWIER'); return x.SWIER; }, function (v) { M.access(true); x.PR |= v & ~x.SWIER & 0xFFFFF; x.SWIER = v & 0xFFFFF; M.after(); });
+    // PR：读出挂起的线；写 1 清除，写 0 没影响（不用读-改-写，免得把别的线清掉）
+    reg(o, 'PR', function () { M.access(false, 'EXTI->PR'); return x.PR; }, function (v) { M.access(true); x.PR &= ~v; x.SWIER &= ~v; M.after(); });
+    return o;
+  }
+
+  /* ===================== DMA1（通道 4 = USART1_TX，通道 5 = USART1_RX） ===================== */
+  function DmaCh(M, n) { this.M = M; this.n = n; this.CCR = 0; this.CNDTR = 0; this.CPAR = null; this.CMAR = null; this.left = 0; this.reload = 0; this.idx = 0; }
+  DmaCh.prototype.irqPending = function () { var s = (this.M.dma.ISR >> ((this.n - 1) * 4)) & 0xF; return !!(((this.CCR & 2) && (s & 2)) || ((this.CCR & 4) && (s & 4)) || ((this.CCR & 8) && (s & 8))); };
+  function Dma(M) { this.M = M; this.ISR = 0; this.ch = {}; for (var i = 1; i <= 7; i++) this.ch[i] = new DmaCh(M, i); this.moved = 0; }
+  Dma.prototype.en = function () { return this.M.clockOn('AHBENR', 0); };
+  Dma.prototype.done = function (c) {
+    var sh = (c.n - 1) * 4; c.left--; this.moved++;
+    if (c.reload > 1 && c.left === (c.reload >> 1)) this.ISR |= 5 << sh;                  // 搬了一半：HTIF
+    if (c.left <= 0) { this.ISR |= 3 << sh; this.M.note('info', 'DMA1 通道 ' + c.n + ' 搬完 ' + c.reload + ' 个（TCIF' + c.n + ' = 1）'); if (c.CCR & 32) { c.left = c.reload; c.idx = 0; } }
+  };
+  Dma.prototype.service = function () {
+    var M = this.M, u = M.usart1, c4 = this.ch[4], c5 = this.ch[5];
+    if (this.busy) return; this.busy = true;
+    try {
+      for (var g = 0; g < 4 && (c4.CCR & 1) && c4.left > 0 && (u.CR3 & 0x80) && (u.SR & 0x80) && u.on() && this.en(); g++) {
+        if (!(c4.CCR & 16)) { M.warnOnce('dma4dir', 'DMA1 通道 4 的方向是「外设 → 内存」（DIR = 0）：USART1 要发数据，它却在从 USART1->DR 往内存里搬，什么也没发出去。'); break; }
+        if (c4.CPAR !== 'USART1.DR') { M.warnOnce('dma4par', 'DMA1 通道 4 的外设地址（CPAR）不是 USART1->DR：搬出去的数据没有进串口。'); break; }
+        var arr = c4.CMAR;
+        if (!arr || typeof arr !== 'object') { M.warnOnce('dma4mar', 'DMA1 通道 4 的内存地址（CMAR）没有指向要发的数据。'); break; }
+        var b = (arr[c4.idx] | 0) & 0xFF;
+        if (c4.CCR & 128) c4.idx++;
+        u.tdr = b; u.SR &= ~0xC0; u.startNext(M.t);
+        this.done(c4);
+      }
+      if ((c5.CCR & 1) && c5.left > 0 && (u.CR3 & 0x40) && (u.SR & 0x20) && this.en()) {
+        if (c5.CCR & 16) M.warnOnce('dma5dir', 'DMA1 通道 5 的方向是「内存 → 外设」（DIR = 1）：收到的数据没有被搬进内存。');
+        else { var a5 = c5.CMAR; if (a5 && typeof a5 === 'object') { a5[c5.idx] = u.rdr; if (c5.CCR & 128) c5.idx++; } u.SR &= ~0x20; this.done(c5); }
+      }
+    } finally { this.busy = false; }
+  };
+  function dmaRegs(M) {
+    var d = M.dma, o = {};
+    function chk(w, r) { if (d.en()) return true; M.warnOnce('clkD' + w, (w ? '写' : '读') + ' DMA1_' + r + ' 时 DMA1 的时钟还没开：' + (w ? '写入不起作用。' : '读出来是 0。')); return false; }
+    reg(o, 'ISR', function () { M.access(false, 'DMA1->ISR'); return chk(0, 'ISR') ? d.ISR >>> 0 : 0; }, function () { M.access(true); });
+    reg(o, 'IFCR', function () { M.access(false, 'DMA1->IFCR'); return 0; }, function (v) {
+      M.access(true); if (!chk(1, 'IFCR')) return;
+      for (var c = 0; c < 7; c++) if (v & (1 << (c * 4))) v |= 0xF << (c * 4);         // CGIFx：这个通道的标志全清
+      d.ISR = (d.ISR & ~v) >>> 0; M.after();
+    });
+    return o;
+  }
+  function dmaChRegs(M, c) {
+    var o = {}, nm = 'DMA1_Channel' + c.n;
+    function chk(w, r) { if (M.dma.en()) return true; M.warnOnce('clkD' + w + c.n, (w ? '写' : '读') + ' ' + nm + '->' + r + ' 时 DMA1 的时钟还没开：' + (w ? '写入不起作用。' : '读出来是 0。')); return false; }
+    function locked(r) { if (!(c.CCR & 1)) return false; M.note('warn', nm + ' 还开着（EN = 1）就写 ' + r + '：通道开着时这个寄存器是只读的，这次写入不起作用。'); return true; }
+    reg(o, 'CCR', function () { M.access(false, nm + '->CCR'); return chk(0, 'CCR') ? c.CCR : 0; }, function (v) {
+      M.access(true); if (!chk(1, 'CCR')) return;
+      var old = c.CCR; c.CCR = v & 0x7FFF;
+      if (!(old & 1) && (v & 1)) {
+        c.left = c.reload = c.CNDTR; c.idx = 0;
+        M.note('info', nm + ' 打开：' + ((v & 16) ? '内存 → 外设' : '外设 → 内存') + '，搬 ' + c.CNDTR + ' 个' + ((v & 128) ? '，内存地址递增' : '，内存地址不递增') + ((v & 32) ? '，循环' : ''));
+        if (!c.CNDTR) M.warnOnce('dmazero' + c.n, nm + '：CNDTR = 0 就打开了通道，没有东西可搬。');
+      }
+      M.after();
+    });
+    reg(o, 'CNDTR', function () { M.access(false, nm + '->CNDTR'); return chk(0, 'CNDTR') ? ((c.CCR & 1) ? c.left : c.CNDTR) : 0; }, function (v) { M.access(true); if (chk(1, 'CNDTR') && !locked('CNDTR')) c.CNDTR = v & 0xFFFF; });
+    reg(o, 'CPAR', function () { M.access(false, nm + '->CPAR'); return 0; }, function (v) { M.access(true); if (chk(1, 'CPAR') && !locked('CPAR')) c.CPAR = v && v.addr ? v.addr : v; });
+    reg(o, 'CMAR', function () { M.access(false, nm + '->CMAR'); return 0; }, function (v) { M.access(true); if (chk(1, 'CMAR') && !locked('CMAR')) c.CMAR = v; });
+    return o;
+  }
+
   /* ===================== 运行 ===================== */
   function run(prog, opt) {
     opt = opt || {};
@@ -716,6 +836,10 @@
     'ABCDEFG'.split('').forEach(function (p) { env['GPIO' + p] = gpioRegs(M, M.gpio[p]); });
     env.USART1 = usartRegs(M, M.usart1); env.TIM2 = timRegs(M, M.tim[2]); env.TIM5 = timRegs(M, M.tim[5]); env.TIM6 = timRegs(M, M.tim[6]);
     env.ADC1 = adcRegs(M, M.adc1); env.SPI1 = spiRegs(M, M.spi1);
+    env.AFIO = afioRegs(M); env.EXTI = extiRegs(M); env.DMA1 = dmaRegs(M); env.DMA1_Channel4 = dmaChRegs(M, M.dma.ch[4]); env.DMA1_Channel5 = dmaChRegs(M, M.dma.ch[5]);
+    env.__arr = function (n) { var a = []; for (var i = 0; i < Number(n); i++) a.push(0); return a; };
+    env.__sizeof = function (a) { return a && a.length != null ? a.length : 4; };
+    env.__addr = function (name) { return { addr: name }; };
     env.__s = function (s) { var a = []; for (var i = 0; i < s.length; i++) a.push(s.charCodeAt(i)); a.push(0); a.isStr = true; return a; };
     env.__tw = function (id) { return M.tickWhile(id); };
     env.__tf = function () { return M.tickFor(); };
@@ -804,7 +928,7 @@
     warns.forEach(function (w) { if (desc.indexOf('⚠ ' + w) < 0) desc.push('⚠ ' + w); });
     return {
       engine: 'mcu', t: T, stop: stop, where: where, trace: M.trace, leds: leds, uart: rx, terminal: text, printf: M.printf, prints: M.prints || [],
-      log: M.log, desc: desc, flash: M.flash, adc: { n: M.adc1.nconv, dr: M.adc1.DR }, results: [], watch: [], timing: [], device: true
+      log: M.log, desc: desc, flash: M.flash, adc: { n: M.adc1.nconv, dr: M.adc1.DR }, exti: { hits: M.exti.hits }, dma: { moved: M.dma.moved }, results: [], watch: [], timing: [], device: true
     };
   }
   return { consts: consts, transpile: body, compile: compile, run: run, decodeUart: decodeUart, fmtT: fmtT, Machine: Machine };

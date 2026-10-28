@@ -63,7 +63,7 @@
     b.style.setProperty('--i', ind.length);
     if (l.cm) { var cm = el('span', 'rc-cm'); cm.textContent = ind + '// ' + l.cm; b.appendChild(cm); }
     var box = el('div', 'cd-in'); box.style.setProperty('--i', ind.length);
-    var inp = el('input', 'cd-inp'); inp.type = 'text'; inp.placeholder = '写这一行';
+    var inp = el('input', 'cd-inp'); inp.type = 'text';
     ['autocomplete', 'autocorrect', 'autocapitalize'].forEach(function (k) { inp.setAttribute(k, 'off'); });
     inp.spellcheck = false; inp.setAttribute('enterkeyhint', 'done'); inp.setAttribute('aria-label', '写出这一行' + (l.cm ? '：' + l.cm : ''));
     var chk = ui.btn('cd-ib cd-chk', '检查'), hint = ui.btn('cd-ib', '提示'), ans = ui.btn('cd-ib', '答案');
