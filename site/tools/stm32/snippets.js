@@ -157,52 +157,27 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 }` },
 
 { cat: '串口', title: 'USART1 中断收发', code: String.raw`/* CubeMX：USART1 Asynchronous，115200 8N1（PA9 TX / PA10 RX，板上默认接 STLink USB 虚拟串口）
-   NVIC：勾选 USART1 global interrupt */
+   NVIC：勾选 USART1 global interrupt
+   收：ReceiveToIdle —— 收满缓冲区或者线上空闲（一帧结束）就进回调，长度不用事先知道 */
 #include <string.h>
 
 extern UART_HandleTypeDef huart1;
 
-static uint8_t           rx_byte;
-static char              rx_line[64];
-static volatile uint16_t rx_len;
-static volatile uint8_t  line_ready;
-static uint8_t           tx_buf[128];
+static uint8_t           rx_buf[64];
+static uint8_t           tx_buf[64];
+static volatile uint16_t rx_len;          /* 收完的一帧有几个字节，0 = 还没有 */
 
-/* 启动接收：main() 初始化后调用一次 */
+/* 启动接收：main() 初始化后调用一次，每收完一帧再调用一次 */
 void UART1_StartRx(void)
 {
-  HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
+  HAL_UARTEx_ReceiveToIdle_IT(&huart1, rx_buf, sizeof(rx_buf));
 }
 
-/* 中断发送：等上一次发完再发（数据先拷到发送缓冲） */
-void UART1_SendIT(const char *s)
-{
-  uint16_t n = strlen(s);
-  if (n > sizeof(tx_buf)) n = sizeof(tx_buf);
-  while (huart1.gState != HAL_UART_STATE_READY) {}
-  memcpy(tx_buf, s, n);
-  HAL_UART_Transmit_IT(&huart1, tx_buf, n);
-}
-
-/* 每收到 1 字节进一次：按 \r 或 \n 断行 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+/* 一帧收完：Size = 实际收到的字节数 */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
   if (huart->Instance == USART1) {
-    if (!line_ready) {
-      if (rx_byte == '\r' || rx_byte == '\n') {
-        if (rx_len) { rx_line[rx_len] = '\0'; line_ready = 1; }
-      } else if (rx_len < sizeof(rx_line) - 1) {
-        rx_line[rx_len++] = rx_byte;
-      }
-    }
-    HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
-  }
-}
-
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
-{
-  if (huart->Instance == USART1) {
-    /* 发送完成 */
+    rx_len = Size;                        /* 交给主循环处理，回调里不发数据 */
   }
 }
 
@@ -210,20 +185,22 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART1) {
-    HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
+    UART1_StartRx();
   }
 }
 
-/* main.c —— 回显一整行 */
+/* main.c —— 电脑发什么就回什么 */
   UART1_StartRx();
-  UART1_SendIT("hello\r\n");
+  HAL_UART_Transmit(&huart1, (uint8_t *)"hello\r\n", 7, 100);
   while (1)
   {
-    if (line_ready) {
-      UART1_SendIT(rx_line);
-      UART1_SendIT("\r\n");
+    if (rx_len) {
+      uint16_t n = rx_len;
+      while (huart1.gState != HAL_UART_STATE_READY) {}   /* 上一次还没发完先等 */
+      memcpy(tx_buf, rx_buf, n);          /* 先拷走，再开始收下一帧 */
       rx_len = 0;
-      line_ready = 0;
+      UART1_StartRx();
+      HAL_UART_Transmit_IT(&huart1, tx_buf, n);
     }
   }` },
 

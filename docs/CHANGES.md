@@ -1,3 +1,17 @@
+# 修改清单 · 2026-10-28（对照尚硅谷课件改寄存器代码）
+
+对照《STM32 基础篇 2.0.0》《进阶篇 2.1.0》里的寄存器代码，改了外设页「寄存器 / 代码推导」里的 10 个驱动：
+
+- 头文件统一换成课件 Keil 工程用的 `stm32f10x.h`（原来写的是 CubeMX 的 `stm32f1xx.h`）。顺带把 `stm32f10x.h` 里没有的宏换掉：`FLASH_ACR_LATENCY_2`、`DMA_CCR4_*`、`FSMC_BCR4_*` / `FSMC_BTR4_*`。
+- 新增 `scripts/check-stm32-c.cjs`（`npm run check:c`）：把 23 个 .c 用 clang 按 Cortex-M3 + `stm32f10x.h` 编译、检查每章能链接上（头文件目录用 `STM32F10X_INC` 指定，不放进仓库）。
+- GPIO：main 改成课件的流水灯；修掉注释里的「PT0、PT1」笔误。
+- USART：接收改成课件的「中断 + 空闲帧」收不定长数据，加了缓冲区越界保护和 volatile；新增 `USART1_SendBytes`、`USART1_Receive`；波特率仍按公式算，不写死 0x271。HAL 页的串口片段改用 `HAL_UARTEx_ReceiveToIdle_IT`。
+- EXTI：按键加消抖（主循环里等 10 ms 再读引脚），不像课件那样在中断里 Delay。
+- I2C：新增 `EEPROM_Write` / `EEPROM_Read`，按 16 字节一页拆开写、连续读；停止信号保持「先拉低 SDA 再松开 SCL」（课件顺序反了）。
+- SPI：W25Q32 补上擦扇区、写（按 256 字节一页拆开）、写使能、等不忙；改需求换成「软件模拟 SPI」（课件案例 1）。
+- RCC：说明 Keil 启动文件的 SystemInit 已经切到 72 MHz。
+- FSMC：屏改成课件里的 Z350IT002 / ILI9486，main 里加 16 位颜色设置和整屏刷绿；背光确认高电平亮。
+
 # 修改清单 · 2026-10-28（代码推导挪进外设页，Code reasoning 改名「设计原理」）
 
 - 外设页「代码」分三页：寄存器 / HAL 库 / 代码推导（URL 参数 `cv=reg|hal|cd`）。

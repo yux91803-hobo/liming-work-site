@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node scripts/preview.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node --test test/*.test.cjs"
+    "test": "node --test test/*.test.cjs",
+    "check:c": "node scripts/check-stm32-c.cjs"
   }
 }

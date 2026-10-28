@@ -94,3 +94,43 @@ test('代码推导：GPIO 配置用宏名写，按宏执行后每个脚的配置
 test('步骤标题不用问号', () => {
   Object.values(D.CD).forEach((cd) => cd.steps.forEach((s) => assert.ok(!/[？?]/.test(s.q), s.q)));
 });
+
+// 和课件的 Keil 工程一致：标准库芯片头文件 stm32f10x.h，宏名也要是它里面有的
+test('代码推导：头文件用 stm32f10x.h，不用 stm32f10x.h 里没有的宏名', () => {
+  Object.entries(D.CD).forEach(([id, cd]) => cd.files.forEach((f) => f.lines.forEach((l) => {
+    assert.ok(!/stm32f1xx\.h/.test(l[0]), id + ' ' + f.name + '：' + l[0]);
+    assert.ok(!/_Pos\b|\bDMA_CCR_(EN|MINC|DIR|CIRC|TCIE)\b|FSMC_B[CT]Rx_/.test(l[0]), id + ' ' + f.name + ' 用了 stm32f10x.h 里没有的宏：' + l[0]);
+  })));
+  Object.entries(D.CD).forEach(([id, cd]) => cd.files.filter((f) => /\.h$/.test(f.name)).forEach((f) => assert.ok(f.lines.some((l) => l[0] === '#include "stm32f10x.h"'), id + ' ' + f.name)));
+});
+test('代码推导：「先清掉 Pxn」的注释和代码里的端口、脚号一致', () => {
+  Object.entries(D.CD).forEach(([id, cd]) => cd.files.forEach((f) => f.lines.forEach((l) => {
+    const m = /(GPIO([A-G])|LED_PORT)->CR[LH]\s*&=\s*~\(([^;]*)\);/.exec(l[0]); if (!m || !/^先清掉/.test(l[1])) return;
+    const port = m[1] === 'LED_PORT' ? 'A' : m[2];
+    const pins = [...new Set([...m[3].matchAll(/CNF(\d+)/g)].map((x) => 'P' + port + x[1]))];
+    assert.equal(l[1], '先清掉 ' + pins.join('、') + ' 的配置位', id + ' ' + f.name);
+  })));
+});
+test('代码推导：按课件的需求补齐功能', () => {
+  const txt = (id, name) => D.CD[id].files.find((f) => f.name === name).lines.map((l) => l[0]).join('\n');
+  // GPIO：流水灯
+  assert.match(txt('gpio', 'main.c'), /for \(uint8_t n = LED1; n <= LED3; n\+\+\)/);
+  // USART：中断 + 空闲帧收不定长数据，缓冲区不越界
+  const u = txt('usart', 'usart.c');
+  assert.match(u, /USART_CR1_RXNEIE \| USART_CR1_IDLEIE/); assert.match(u, /void USART1_IRQHandler\(void\)/);
+  assert.match(u, /rx_len < USART1_RX_MAX/); assert.match(u, /static volatile uint16_t rx_len;/);
+  // EXTI：消抖在主循环里做，中断里不 Delay
+  const k = txt('exti', 'key.c'), isr = k.slice(k.indexOf('void EXTI9_5_IRQHandler'));
+  assert.match(k, /Delay_ms\(10\);[\s\S]*GPIOF->IDR & GPIO_IDR_IDR8/); assert.ok(!/Delay/.test(isr));
+  // I2C：按页写、连续读
+  const e = txt('i2c', 'eeprom.c');
+  assert.match(e, /EEPROM_PAGE - addr % EEPROM_PAGE/); assert.match(e, /I2C_ReadByte\(i < n - 1\)/);
+  // I2C 停止：先拉低 SDA 再松开 SCL
+  const st = txt('i2c', 'i2c.c'); const stop = st.slice(st.indexOf('void I2C_Stop'));
+  assert.ok(stop.indexOf('SDA_L()') < stop.indexOf('SCL_H()'));
+  // SPI：擦、写、读都有，写之前写使能、写完等不忙
+  const w = txt('spi', 'w25q.c');
+  ['CMD_ERASE_4K', 'CMD_PAGE_PRG', 'CMD_WRITE_EN', 'CMD_STATUS', 'PAGE_SIZE - addr % PAGE_SIZE'].forEach((x) => assert.ok(w.includes(x), x));
+  // FSMC：板上的屏是 ILI9486，背光高电平亮
+  assert.match(D.CD.fsmc.steps[0].say[0], /ILI9486/);
+});
