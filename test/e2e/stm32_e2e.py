@@ -215,7 +215,7 @@ async def main():
         await pg.goto(TOOL + '?v=topic&t=gpio&reg=GPIO_CRL'); await pg.wait_for_selector('.sheet.on')
         box = await pg.evaluate("(() => { const r = document.querySelector('.sheet-p').getBoundingClientRect(); const v = document.querySelector('.sh-valrow .pill').getBoundingClientRect(); return [r.width, v.right]; })()")
         check('手机：寄存器面板全屏，复位按钮不被截断', box[0] >= 389 and box[1] <= 390, box)
-        overflow = await pg.evaluate("document.documentElement.scrollWidth > innerWidth")
+        overflow = await pg.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth")
         check('手机：页面没有横向溢出', not overflow)
         await pg.goto(TOOL + '?v=board&sch=board-05'); await wait_img(pg)
         st = await pg.query_selector('.vw-stage'); bb = await st.bounding_box(); y = bb['y'] + bb['height'] / 2
@@ -285,11 +285,11 @@ async def main():
         await pg.context.close()
         pg = await page(b, 390, 844, mobile=True)
         overflow = []
-        pages = ['?v=think&t=gpio&s=code', '?v=think&t=i2c&s=code', '?v=topic&t=fsmc', '', '?m=lcd', '?m=beep&mp=g', '?m=led', '?m=eeprom&mp=p6', '?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
+        pages = ['?v=think&t=gpio&s=code', '?v=think&t=i2c&s=code', '?v=think&t=spi&s=code', '?v=think&t=sys', '?v=think&t=exti', '?v=think&t=dma', '?v=think&t=fsmc', '?v=think&t=usart&s=code', '?v=think&t=tim&s=code', '?v=think&t=adc&s=code', '?v=topic&t=fsmc', '', '?m=lcd', '?m=beep&mp=g', '?m=led', '?m=eeprom&mp=p6', '?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
                  '?v=think&t=gpio&s=s13', '?v=think&t=usart&s=s11', '?v=think&t=tim&s=s11', '?v=think&t=adc&s=s11', '?v=think&t=spi&s=s11', '?v=think&t=i2c&s=review']
         for qs in pages:
             await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)
-            if await pg.evaluate("document.documentElement.scrollWidth > innerWidth"): overflow.append(qs)
+            if await pg.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"): overflow.append(qs)
         check('手机：%d 个页面没有横向溢出' % len(pages), not overflow, overflow)
         await pg.context.close()
 

@@ -1267,7 +1267,8 @@ svg.mod { display: block; width: 100%; height: 100%; overflow: visible; }
 [data-theme="dark"] .mod .shield { fill: #8f8b82; stroke: #6b6960; }
 
 /* ---------- 寄存器版代码（codeview.js） ---------- */
-.cseg { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 14px; border-radius: 10px; background: var(--sunk); }
+.cseg { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; margin-bottom: 14px; border-radius: 10px; background: var(--sunk); max-width: 100%; box-sizing: border-box; overflow-x: auto; }
+.cseg-b { flex: none; }
 .cseg-b { height: 32px; padding: 0 16px; border: 0; border-radius: 8px; background: none; color: var(--ink-2); font-weight: 600; font-size: 13.5px; }
 .cseg-b.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
 .code-reg { display: flex; flex-direction: column; gap: 28px; }
