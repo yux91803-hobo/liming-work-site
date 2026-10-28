@@ -1,10 +1,12 @@
 /* 工具注册表 —— 新增工具：在这里加一项 + 新建 /tools/<id>/index.html
+   cat：属于哪一类（见 TOOL_CATS，首页按类分区，空的类不显示）；art：首页卡片上的插画（shell.js 里画，没有就用放大的图标）
    icon：SVG 图元列表 [标签, 属性]，由 shell.js 用 createElementNS 绘制（24×24 网格，线宽统一）。
    class:'a' 的图元用强调色（陶土橙），每个图标只放一处强调。 */
 window.TOOLS = [
   {
     id: 'map',
     name: '世界地图',
+    cat: 'tool', art: 'world',
     keywords: 'map world 地图 卫星 定位 导航 搜索 ditu',
     path: '/map',              // 地址栏路由
     src: '/tools/map/',        // 工具页面
@@ -18,6 +20,7 @@ window.TOOLS = [
   {
     id: 'stm32',
     name: 'STM32',
+    cat: 'learn', art: 'chip',
     keywords: 'stm32 f103 f103zet6 zet6 stm32f103 arm cortex m3 mcu 单片机 嵌入式 开发板 尚硅谷 引脚 管脚 pin pinout 外设 复用 重映射 remap afio gpio usart uart spi i2c adc dac tim 定时器 pwm can usb sdio fsmc swd jtag hal cubemx 代码 片段 原理图 芯片 封装 lqfp144 架构图 时钟树 rm0008 danpianji yinjiao',
     path: '/stm32',
     src: '/tools/stm32/',
@@ -27,4 +30,10 @@ window.TOOLS = [
       ['circle', { cx: '9.6', cy: '9.6', r: '0.9', 'class': 'a' }]
     ]
   }
+];
+
+/* 首页分类（按这个顺序显示） */
+window.TOOL_CATS = [
+  { id: 'learn', name: '学习' },
+  { id: 'tool', name: '工具' }
 ];
