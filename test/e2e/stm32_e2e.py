@@ -193,103 +193,26 @@ async def main():
         check('手机：左滑翻到下一页', (await pg.inner_text('.vw-n')).startswith('11 /'))
         await pg.context.close()
 
-        # ---------- 10. 编程思维：把三章每一道题都实际做一遍 ----------
+        # ---------- 10. 编程思维总览、外设页入口、手机布局 ----------
+        CHAPS = ['gpio', 'usart', 'i2c', 'tim', 'adc', 'spi']
         pg = await page(b)
         await pg.goto(TOOL + '?v=think'); await pg.wait_for_selector('.tk-ch')
-        check('编程思维总览：I2C 推导章 + 两个四段式章 + 五步骨架', await pg.evaluate("document.querySelectorAll('.tk-ch').length") == 3 and await pg.evaluate("document.querySelectorAll('.tk-skbox .skstrip li').length") == 5)
-        SOLVE = """async (sel) => {
-          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-          const box = document.querySelector(sel); const log = [];
-          const q = box.__q;
-          return log;
-        }"""
-        async def solve_current(scope):
-            """做当前显示的那一道题：先故意错一次，看提示，再做对。返回 (类型, 错误提示是否对得上, 是否解出)"""
-            info = await pg.evaluate("""(scope) => {
-              const box = document.querySelector(scope + ' .q:not(.solved)'); if (!box) return null;
-              return { type: [...box.classList].find(c => c.startsWith('q-') && c !== 'q').slice(2), text: box.querySelector('.q-q').textContent };
-            }""", scope)
-            if not info: return None
-            data = await pg.evaluate("""(text) => {
-              for (const c of STM32_THINK.chapters) {
-                for (const w of c.why) if (w.q && w.q.q === text) return w.q;
-                for (const t of c.tasks) for (const q of t.qs) if (q.q === text) return q;
-              }
-              return null; }""", info['text'])
-            hint_ok = True
-            box = scope + ' .q:not(.solved)'
-            if info['type'] == 'choice':
-                wrong = [i for i, o in enumerate(data['opts']) if not o.get('ok')]
-                right = [i for i, o in enumerate(data['opts']) if o.get('ok')][0]
-                if wrong:
-                    await pg.click(f'{box} .q-opt >> nth={wrong[0]}')
-                    fb = await pg.inner_text(f'{box} .q-fb')
-                    hint_ok = data['opts'][wrong[0]]['why'][:12] in fb
-                await pg.click(f'{box} .q-opt >> nth={right}')
-            elif info['type'] == 'fill':
-                await pg.fill(f'{box} .q-fill input', 'zzz'); await pg.click(f'{box} .q-fill .pill')
-                fb = await pg.inner_text(f'{box} .q-fb'); hint_ok = '提示 1' in fb
-                await pg.fill(f'{box} .q-fill input', data['answers'][0]); await pg.click(f'{box} .q-fill .pill')
-            else:   # order / parsons
-                want = data['lines'] if info['type'] == 'parsons' else [x['t'] for x in sorted(data['items'], key=lambda x: x['rank'])]
-                if info['type'] == 'parsons' and data.get('extra'):
-                    await pg.evaluate("""([sel, t]) => { [...document.querySelectorAll(sel + ' .q-pool .q-chip')].find(b => b.querySelector('.q-t').textContent === t).click(); }""", [box, data['extra'][0]['t']])
-                    for t in want[:-1]:
-                        await pg.evaluate("""([sel, t]) => { [...document.querySelectorAll(sel + ' .q-pool .q-chip')].find(b => b.querySelector('.q-t').textContent === t).click(); }""", [box, t])
-                    await pg.click(f'{box} .q-check')
-                    fb = await pg.inner_text(f'{box} .q-fb'); hint_ok = '不该放进来' in fb
-                    await pg.evaluate("(sel) => { [...document.querySelectorAll(sel + ' .q-ans .q-chip:not(.lock)')].reverse().forEach(b => b.click()); }", box)
-                for t in want:
-                    placed = await pg.evaluate("(sel) => [...document.querySelectorAll(sel + ' .q-ans .q-chip .q-t')].map(x => x.textContent)", box)
-                    if t in placed: continue
-                    await pg.evaluate("""([sel, t]) => { [...document.querySelectorAll(sel + ' .q-pool .q-chip')].find(b => b.querySelector('.q-t').textContent === t).click(); }""", [box, t])
-                await pg.click(f'{box} .q-check')
-            await pg.wait_for_timeout(80)
-            solved = await pg.evaluate("(t) => [...document.querySelectorAll('.q.solved .q-q')].some(x => x.textContent === t)", info['text'])
-            return info['type'], hint_ok, solved
-        for chap in ['gpio', 'usart']:
-            await pg.goto(TOOL + '?v=think&t=' + chap + '&p=1'); await pg.wait_for_selector('.tk-card')
-            ncards = await pg.evaluate("(id) => STM32_THINK.chapters.find(c => c.id === id).why.length", chap)
-            why_ok = True
-            for k in range(ncards):
-                r = await solve_current('.tk-card')
-                if r and not (r[1] and r[2]): why_ok = False
-                await pg.click('.tk-cardnav .pill.solid')
-                await pg.wait_for_timeout(120)
-            check(chap.upper() + '：「为什么」%d 张卡片走完，题目提示对得上' % ncards, why_ok and 'p=2' in pg.url, pg.url)
-            await pg.wait_for_selector('.tk-step')
-            await pg.click('.tk-step >> nth=1 >> summary'); await pg.wait_for_timeout(150)
-            hl = await pg.evaluate("document.querySelectorAll('.tk-code .seg.on').length")
-            check(chap.upper() + '：点开骨架第 2 步，完整程序里对应的行高亮', hl >= 1, hl)
-            await pg.click('.tk-endrow .tk-next'); await pg.wait_for_selector('.tk-task')
-            for part in (3, 4):
-                if part == 4:
-                    await pg.goto(TOOL + '?v=think&t=' + chap + '&p=4'); await pg.wait_for_selector('.tk-task')
-                stats = {'n': 0, 'hint': 0, 'solved': 0}
-                for _ in range(80):
-                    r = await solve_current('.tk-stage')
-                    if r is None:
-                        nxt = await pg.query_selector('.tk-stage .tk-go')
-                        if nxt: await nxt.click(); await pg.wait_for_timeout(80); continue
-                        break
-                    stats['n'] += 1; stats['hint'] += 1 if r[1] else 0; stats['solved'] += 1 if r[2] else 0
-                    go = await pg.query_selector('.tk-stage .tk-go')
-                    if go: await go.click(); await pg.wait_for_timeout(80)
-                finals = await pg.evaluate("document.querySelectorAll('.tk-final').length")
-                tasks = await pg.evaluate("(a) => STM32_THINK.chapters.find(c => c.id === a[0]).tasks.filter(t => t.kind === a[1]).length", [chap, 'guided' if part == 3 else 'transfer'])
-                check('%s：第 %d 段 %d 道题全部做完，错答都给出对应提示' % (chap.upper(), part, stats['n']), stats['n'] > 0 and stats['hint'] == stats['n'] and stats['solved'] == stats['n'] and finals == tasks, stats)
-            await pg.goto(TOOL + '?v=think'); await pg.wait_for_selector('.tk-ch')
-            st = await pg.evaluate("(id) => document.querySelector('.tk-ch[href*=\"t=' + id + '\"] .tk-ch-h span').textContent", chap)
-            check(chap.upper() + '：进度保存，总览显示已完成', st == '已完成', st)
-        await pg.goto(TOOL + '?v=topic&t=usart'); await pg.wait_for_selector('.topic')
-        check('外设页有编程思维入口', await pg.evaluate("!!document.querySelector('.thinkin')"))
+        hrefs = await pg.evaluate("[...document.querySelectorAll('.tk-ch')].map(a => new URL(a.href).searchParams.get('t'))")
+        check('编程思维总览：六章推导链，按课件顺序', hrefs == CHAPS and await pg.evaluate("document.querySelectorAll('.tk-flow li').length") == 6, hrefs)
+        for chap in ['gpio', 'usart', 'tim', 'adc', 'spi']:
+            await pg.goto(TOOL + '?v=topic&t=' + chap); await pg.wait_for_selector('.topic')
+            ok = await pg.evaluate("!!document.querySelector('.thinkin')")
+            if not ok: break
+        check('五个外设页都有编程思维入口', ok)
         await pg.context.close()
         pg = await page(b, 390, 844, mobile=True)
         overflow = []
-        for qs in ['?v=think', '?v=think&t=gpio&p=1', '?v=think&t=usart&p=2', '?v=think&t=i2c', '?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21', '?v=think&t=i2c&s=review']:
-            await pg.goto(TOOL + qs); await pg.wait_for_timeout(700)
+        pages = ['?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
+                 '?v=think&t=gpio&s=s13', '?v=think&t=usart&s=s11', '?v=think&t=tim&s=s11', '?v=think&t=adc&s=s11', '?v=think&t=spi&s=s11', '?v=think&t=i2c&s=review']
+        for qs in pages:
+            await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)
             if await pg.evaluate("document.documentElement.scrollWidth > innerWidth"): overflow.append(qs)
-        check('手机：编程思维各页没有横向溢出', not overflow, overflow)
+        check('手机：编程思维 %d 个页面没有横向溢出' % len(pages), not overflow, overflow)
         await pg.context.close()
 
         # ---------- 11. 编程思维 · I2C 推导链：自主推导模式把 22 环的每一道题都答一遍 ----------
@@ -298,9 +221,9 @@ async def main():
         check('I2C 推导章首页：推导链 22 环、7 条主干结论、两种学法', await pg.evaluate("document.querySelectorAll('.dv-node').length") == 22 and await pg.evaluate("document.querySelectorAll('.dv-factl li').length") == 7 and await pg.evaluate("document.querySelectorAll('.dv-modeb').length") == 2)
         await pg.click('.dv-modeb >> nth=1'); await pg.wait_for_selector('.dv-modeb.on')
         check('切到自主推导：结论在推出来之前隐藏', await pg.evaluate("document.querySelectorAll('.dv-node-g').length") == 0 and await pg.evaluate("document.querySelectorAll('.dv-factl li.locked').length") == 7)
-        ANSWER = """async (id) => {
+        ANSWER = """async ([chid, id]) => {
           const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-          const ch = STM32_DERIVE.i2c, C = STM32DeriveCore, a = C.allAsks(ch)[id];
+          const ch = STM32_DERIVE[chid], C = STM32DeriveCore, a = C.allAsks(ch)[id];
           const box = document.querySelector('.dv-ask[data-ask="' + id + '"]');
           const fbText = () => (box.querySelector('.dv-fb') || {}).textContent || '';
           const r = { id, type: a.type, wrongOk: true, solved: false };
@@ -324,7 +247,7 @@ async def main():
             const pick = (t) => { const c = [...box.querySelectorAll('.dv-opool .dv-chip')].find(b => norm(b.textContent) === norm(t)); c.click(); };
             [...want].reverse().forEach(pick); box.querySelector('.dv-row .pill').click(); await sleep(30);
             r.wrongOk = fbText().includes('先后不对') && box.querySelectorAll('.dv-chip.bad').length === 2;
-            if (a.fn) r.wrongOk = r.wrongOk && !!box.querySelector('.dv-osim .dv-wave');
+            if (a.fn) r.wrongOk = r.wrongOk && !!box.querySelector('.dv-osim .dv-simres');
             [...box.querySelectorAll('.dv-oans .dv-chip')].reverse().forEach(b => b.click());
             want.forEach(pick); box.querySelector('.dv-row .pill').click();
           }
@@ -332,21 +255,28 @@ async def main():
           r.solved = box.classList.contains('solved');
           return r;
         }"""
-        total = {'asks': 0, 'wrongOk': 0, 'solved': 0, 'gated': 0}
-        bad = []
-        for k in range(1, 23):
-            await pg.goto(TOOL + '?v=think&t=i2c&s=s%d' % k); await pg.wait_for_selector('.dv-step')
-            for _ in range(10):
-                cur = await pg.evaluate("(() => { const b = [...document.querySelectorAll('.dv-ask:not(.soft):not(.solved)')]; return b.length ? b[0].dataset.ask : null; })()")
-                if not cur: break
-                gated = await pg.evaluate("!document.querySelector('.dv-gist')")
-                r = await pg.evaluate(ANSWER, cur)
-                total['asks'] += 1; total['wrongOk'] += r['wrongOk']; total['solved'] += r['solved']; total['gated'] += gated
-                if not (r['wrongOk'] and r['solved']): bad.append(r)
-                cont = await pg.query_selector('.dv-cont')
-                if cont: await cont.click(); await pg.wait_for_timeout(60)
-            if not await pg.evaluate("!!document.querySelector('.dv-gist')"): bad.append('s%d 没走到结论' % k)
-        check('自主推导：%d 道题逐一停下（答完才继续），错答都指出「默认了什么 + 反例 + 回看哪一环」，最后都答对' % total['asks'], total['asks'] >= 30 and not bad and total['gated'] == total['asks'], bad[:3] or total)
+        async def walk(chid, n):
+            total = {'asks': 0, 'wrongOk': 0, 'solved': 0, 'gated': 0}
+            bad = []
+            for k in range(1, n + 1):
+                await pg.goto(TOOL + '?v=think&t=%s&s=s%d' % (chid, k)); await pg.wait_for_selector('.dv-step')
+                for _ in range(10):
+                    cur = await pg.evaluate("(() => { const b = [...document.querySelectorAll('.dv-ask:not(.soft):not(.solved)')]; return b.length ? b[0].dataset.ask : null; })()")
+                    if not cur: break
+                    gated = await pg.evaluate("!document.querySelector('.dv-gist')")
+                    r = await pg.evaluate(ANSWER, [chid, cur])
+                    total['asks'] += 1; total['wrongOk'] += r['wrongOk']; total['solved'] += r['solved']; total['gated'] += gated
+                    if not (r['wrongOk'] and r['solved']): bad.append(r)
+                    cont = await pg.query_selector('.dv-cont')
+                    if cont: await cont.click(); await pg.wait_for_timeout(60)
+                if not await pg.evaluate("!!document.querySelector('.dv-gist')"): bad.append('s%d 没走到结论' % k)
+            return total, bad
+        total, bad = await walk('i2c', 22)
+        check('I2C 自主推导：%d 道题逐一停下（答完才继续），错答都指出「默认了什么 + 反例 + 回看哪一环」，最后都答对' % total['asks'], total['asks'] >= 30 and not bad and total['gated'] == total['asks'], bad[:3] or total)
+        for chid in ['gpio', 'usart', 'tim', 'adc', 'spi']:
+            n = await pg.evaluate("(id) => STM32_DERIVE[id].steps.length", chid)
+            total, bad = await walk(chid, n)
+            check('%s 自主推导：%d 环 %d 道题逐一停下、错答有针对的反馈、全部答对' % (chid.upper(), n, total['asks']), total['asks'] >= 12 and not bad and total['gated'] == total['asks'], bad[:3] or total)
         await pg.goto(TOOL + '?v=think&t=i2c'); await pg.wait_for_selector('.dv-map')
         check('22 环都标记为推完，主干结论全部解锁', await pg.evaluate("document.querySelectorAll('.dv-node.done').length") == 22 and await pg.evaluate("document.querySelectorAll('.dv-factl li.locked').length") == 0)
         check('首页出现「常卡的地方」入口', await pg.evaluate("!!document.querySelector('.dv-revin')"))
@@ -391,6 +321,27 @@ async def main():
         check('地址字节：E0 接 VCC 变成 0xA2，板上 EEPROM 不应答', '0xA2' in ad and '对不上' in ad, ad[:60])
         await pg.goto(TOOL + '?v=think&t=i2c&s=s14'); await pg.wait_for_selector('.dv-page')
         check('页回卷：从 0x0E 写 4 个，后两个落回 0x00、0x01', await pg.evaluate("[...document.querySelectorAll('.dv-gc.wrap')].length") == 2)
+        # 通用单片机模拟器的小部件
+        await pg.goto(TOOL + '?v=think&t=usart&s=s11'); await pg.wait_for_selector('.dv-term')
+        check('USART：模拟器里电脑收到 hello', await pg.evaluate("[...document.querySelectorAll('.dv-term')].some(t => t.textContent.includes('hello'))"))
+        await pg.goto(TOOL + '?v=think&t=gpio&s=s12'); await pg.wait_for_selector('.dv-fn')
+        await pg.click('.dv-fn >> nth=0 >> .dv-fn-tools .pill')
+        await pg.evaluate("""(() => { const f = document.querySelectorAll('.dv-fn')[0]; const ls = [...f.querySelectorAll('.dv-line.has .dv-lb')].filter(b => !b.closest('.pre'));
+          ls[0].click(); ls[2].click(); })()""")
+        await pg.wait_for_selector('.dv-swap .dv-simres')
+        sw = await pg.inner_text('.dv-fn >> nth=0 >> .dv-swap')
+        check('GPIO：交换「开时钟」和「清 CRL」→ 说出原因，模拟里 LED1 不再亮', '不能换' in sw and '时钟' in sw, sw[:160])
+        await pg.goto(TOOL + '?v=think&t=tim&s=s10'); await pg.wait_for_selector('.dv-lamp')
+        check('定时器：模拟结果里有 LED 灯和波形', await pg.evaluate("!!document.querySelector('.dv-sim .dv-lamp') && !!document.querySelector('.dv-sim .dv-wave, .dv-sim svg')"))
+        await pg.goto(TOOL + '?v=think&t=adc&s=s11'); await pg.wait_for_selector('.dv-simctl input[type=range]')
+        await pg.evaluate("(() => { const r = document.querySelector('.dv-simctl input[type=range]'); r.value = 100; r.dispatchEvent(new Event('input')); r.dispatchEvent(new Event('change')); })()")
+        await pg.wait_for_timeout(200)
+        adc = await pg.evaluate("document.querySelector('.dv-simctl').closest('.dv-sim').querySelector('.dv-term').textContent")
+        import re as _re
+        m = _re.search(r'ADC =\s*(\d+)', adc)
+        check('ADC：电位器拧到 1.00 V，读数约 1241', bool(m) and abs(int(m.group(1)) - 1241) <= 12, adc[:80])
+        await pg.goto(TOOL + '?v=think&t=spi&s=s11'); await pg.wait_for_selector('.dv-term')
+        check('SPI：模拟器读出 W25Q32 的 ID EF4016', await pg.evaluate("[...document.querySelectorAll('.dv-term')].some(t => t.textContent.includes('EF4016'))"))
         await pg.goto(TOOL + '?v=topic&t=i2c'); await pg.wait_for_selector('.thinkin')
         th = await pg.inner_text('.thinkin')
         check('I2C 资料页的入口显示推导进度', '22 / 22' in th or '复习' in th, th)

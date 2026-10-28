@@ -6,10 +6,11 @@
    · 常卡的地方：答错按「推理出错的那一环」归类，复习间隔逐次加长
    · 行内标记：**粗体**、`代码`、[[s5]] 跳到某一环、{F1} 主干结论 */
 (function (root, factory) {
-  var api = factory(root.STM32I2CSim || (typeof require === 'function' ? require('./i2csim.js') : null));
+  var req = typeof require === 'function' ? require : function () { return null; };
+  var api = factory(root.STM32I2CSim || req('./i2csim.js'), root.STM32McuSim || req('./mcusim.js'));
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.STM32DeriveCore = api;
-})(typeof window === 'object' ? window : this, function (Sim) {
+})(typeof window === 'object' ? window : this, function (Sim, Mcu) {
   'use strict';
 
   /* ===================== 程序 ===================== */
@@ -44,9 +45,19 @@
   }
 
   /* ===================== 场景 ===================== */
+  // 通用单片机模拟（GPIO / USART / TIM / ADC / SPI 章）：代码行就是 C，直接编译执行
+  function runMcu(ch, sc, opt) {
+    var patch = mergePatch(sc.patch, opt.patch), fns = {};
+    Object.keys(ch.fns).forEach(function (name) { var f = ch.fns[name]; fns[name] = { sig: f.sig, pre: f.pre, lines: patchLines(f, patch[name]) }; });
+    var board = Object.assign({}, sc.board || {}, opt.board || {});
+    var r = Mcu.run({ fns: fns, globals: ch.globals, entry: sc.entry || ['main'] }, { ms: opt.ms || sc.ms || 1000, board: board, flash: sc.flash });
+    r.sc = sc; r.err = r.stop.kind === 'error' ? r.stop.text : null;
+    return r;
+  }
   function runScenario(ch, id, opt) {
     opt = opt || {};
     var sc = typeof id === 'string' ? ch.scenarios[id] : id;
+    if (ch.engine === 'mcu') { if (!sc) throw new Error('no scenario ' + id); return runMcu(ch, sc, opt); }
     if (!sc || !sc.runs) throw new Error('no scenario ' + id);
     var bus = new Sim.Bus(), dev = null;
     var device = opt.device != null ? opt.device : sc.device !== false;
@@ -75,7 +86,22 @@
     };
   }
   // 两次运行的差别，用人话说出来
+  function diffMcu(ref, got) {
+    var out = [];
+    function pick(r, pre) { return r.desc.filter(function (d) { return d.indexOf(pre) === 0; }); }
+    ['LED1：', 'LED2：', 'LED3：'].forEach(function (p) {
+      var a = pick(ref, p)[0], b = pick(got, p)[0];
+      if (a !== b) out.push(p.slice(0, -1) + (b ? '：' + b.slice(p.length) : ' 一直没亮') + (a ? '（正确的程序：' + a.slice(p.length) + '）' : '（正确的程序里它不亮）'));
+    });
+    if (ref.terminal !== got.terminal) out.push('电脑收到的是「' + vis(got.terminal) + '」，应该是「' + vis(ref.terminal) + '」');
+    if (ref.printf !== got.printf) out.push('打印出来的是「' + vis(got.printf) + '」，应该是「' + vis(ref.printf) + '」');
+    if (got.stop.kind !== 'end' && got.stop.text !== ref.stop.text) out.push(got.stop.text);
+    pick(got, '⚠').forEach(function (w) { if (ref.desc.indexOf(w) < 0) out.push(w.slice(2)); });
+    return out;
+  }
+  function vis(s) { s = String(s || '').replace(/\r/g, '').replace(/\n/g, '⏎'); return s.length > 60 ? s.slice(0, 60) + '…' : s || '（什么也没有）'; }
   function diff(ref, got) {
+    if (ref.engine === 'mcu') return diffMcu(ref, got);
     var out = [];
     if (got.err) out.push('程序没能跑完：' + got.err);
     var a = ref.desc.join(' | '), b = got.desc.join(' | ');
@@ -137,6 +163,8 @@
   }
 
   /* ===================== 交换两行 ===================== */
+  // 结构行：for / while / if 的头、花括号——换了以后程序结构就变了
+  function isStruct(l) { if (!l) return true; if (l.loop || l.end) return true; var c = String(l.c || '').trim(); return /\{\s*$/.test(c) || /^\}/.test(c) || (/^(?:for|while|if|else)\b/.test(c) && /(?:\)|else)\s*$/.test(c)); }
   function swapOrder(fn, i, j) { var o = fn.lines.map(function (_, k) { return k; }); o[i] = j; o[j] = i; return o; }
   function swapCheck(ch, name, i, j) {
     var fn = ch.fns[name];
@@ -148,10 +176,10 @@
       var pa = r.a === i ? j : r.a === j ? i : r.a, pb = r.b === i ? j : r.b === j ? i : r.b;
       return pa > pb;
     });
-    var structural = fn.lines[i].loop || fn.lines[j].loop || fn.lines[i].end || fn.lines[j].end;
-    function acts(l) { return !!(l.op && l.op.length); }
+    var structural = isStruct(fn.lines[i]) || isStruct(fn.lines[j]);
+    function acts(l) { return ch.engine === 'mcu' ? !!l.c.trim() && !/^\s*(?:u?int\w*|volatile)\s+\w+\s*;/.test(l.c) : !!(l.op && l.op.length); }
     if (!acts(fn.lines[i]) && !acts(fn.lines[j])) return { broken: broken, nosim: true, diff: [], range: [lo, hi] };   // 寄存器配置这类行：只讲道理，不跑波形
-    var sc = broken.length && broken[0].sc ? broken[0].sc : 'write';
+    var sc = broken.length && broken[0].sc ? broken[0].sc : (fn.sc || ch.defaultSc || 'write');
     var patch = {}; patch[name] = { order: swapOrder(fn, i, j) };
     var ref = runScenario(ch, sc), got = structural ? null : runScenario(ch, sc, { patch: patch });
     return { broken: broken, sc: sc, ref: ref, got: got, structural: !!structural, diff: got ? diff(ref, got) : [], range: [lo, hi] };
@@ -220,7 +248,7 @@
   // 排序题的「项」：普通题用 items；函数题从函数里取行
   function orderItems(ch, ask) {
     if (ask.fn) {
-      var fn = ch.fns[ask.fn], sub = ask.lines || fn.lines.map(function (_, i) { return i; }).filter(function (i) { return fn.lines[i].op && fn.lines[i].op.length; });
+      var fn = ch.fns[ask.fn], sub = ask.lines || fn.lines.map(function (_, i) { return i; }).filter(function (i) { return ch.engine === 'mcu' ? !isStruct(fn.lines[i]) : fn.lines[i].op && fn.lines[i].op.length; });
       return { texts: sub.map(function (i) { return fn.lines[i].c.trim(); }), rules: subRules(fn, sub), sub: sub, fn: fn };
     }
     return { texts: ask.items.map(function (x) { return x.t; }), rules: ask.rules || [] };

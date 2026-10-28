@@ -1119,3 +1119,37 @@ button.bit:hover { background: color-mix(in srgb, var(--copper) 20%, var(--surfa
 /* 编程思维总览里的推导章节卡片 */
 .tk-ch-d { border-top-width: 4px; background: color-mix(in srgb, var(--h) 5%, var(--surface)); }
 .tk-new { align-self: flex-start; padding: 0 8px; border-radius: 6px; font-size: 11.5px; font-weight: 600; color: var(--h); border: 1px solid color-mix(in srgb, var(--h) 40%, transparent); }
+
+/* 通用单片机模拟结果 */
+.dv-stop { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--err-soft); color: var(--ink); }
+.dv-stop svg.ic { color: var(--err); margin-top: 2px; }
+.dv-stop > div { display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; min-width: 0; }
+.dv-stop b { color: var(--err); }
+.dv-stop-c { font: 12.5px var(--mono); padding: 2px 6px; border-radius: 6px; background: var(--surface); align-self: flex-start; white-space: pre-wrap; word-break: break-all; }
+.dv-leds { display: flex; flex-direction: column; gap: 6px; }
+.dv-led { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; }
+.dv-lamp { flex: none; width: 16px; height: 16px; margin-top: 3px; border-radius: 50%; background: var(--line-2); box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+.dv-lamp.on { background: #f2b544; box-shadow: 0 0 0 3px rgba(242,181,68,.25), 0 0 12px rgba(242,181,68,.7); }
+.dv-term { border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
+.dv-term-h { padding: 4px 10px; font-size: 12px; color: var(--ink-3); background: var(--sunk); border-bottom: 1px solid var(--line); }
+.dv-term pre { margin: 0; padding: 8px 10px; max-height: 9.5em; overflow: auto; font: 13px/1.55 var(--mono); background: #1f1e1d; color: #d9f2c7; white-space: pre-wrap; word-break: break-all; }
+.dv-wlab { font-size: 12.5px; color: var(--ink-2); margin-bottom: -4px; }
+.w-sig { stroke: var(--ink-2); stroke-width: 1.8; fill: none; }
+.w-sig.led { stroke: var(--h); }
+.w-z { stroke: var(--ink-3); stroke-width: 1.4; stroke-dasharray: 3 3; fill: none; }
+.dv-log.warn summary { color: var(--warn); font-weight: 600; }
+.dv-log .lg-warn { color: var(--err); }
+.dv-log .lg-flash { color: var(--slave); }
+.dv-log .lg-t { display: inline-block; min-width: 6.5em; font: 11.5px var(--mono); color: var(--ink-3); }
+.dv-simctl input[type=range] { flex: 1; min-width: 120px; accent-color: var(--h); }
+.dv-simctl label { flex: 1; }
+
+/* 编程思维总览 */
+.tk-flow { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; counter-reset: fl; }
+@media (min-width: 760px) { .tk-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.tk-flow li { position: relative; padding: 10px 12px 10px 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; gap: 2px; }
+.tk-flow li::before { counter-increment: fl; content: counter(fl); position: absolute; left: 12px; top: 11px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 700 12px var(--mono); color: var(--mask); background: var(--mask-soft); }
+.tk-flow b { font-size: 14px; }
+.tk-flow span { font-size: 12.5px; color: var(--ink-2); }
+.tk-how .sec-note { margin-top: 12px; }
+.tk-due { align-self: flex-start; padding: 0 8px; border-radius: 6px; font-size: 11.5px; font-weight: 600; color: var(--warn); background: var(--warn-soft); }

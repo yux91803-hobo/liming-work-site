@@ -8,7 +8,7 @@
 (function () {
   'use strict';
   var STM = window.STM, ui = STM.ui, M = STM.model, el = ui.el, sv = ui.sv;
-  var Sim = window.STM32I2CSim, C = window.STM32DeriveCore;
+  var Sim = window.STM32I2CSim, McuSim = window.STM32McuSim, C = window.STM32DeriveCore;
   var CH = window.STM32_DERIVE || {};
   var KEY = 'lm.stm32.derive';
   var KIND = { need: '想要', idea: '最朴素的想法', test: '做个实验', trouble: '问题来了', fix: '改进', why: '为什么这样设计', alt: '别的办法',
@@ -279,7 +279,7 @@
       box.appendChild(simResult(got, { compact: true }));
       return box;
     }
-    function defaultSc(fn) { return fn === 'i2c_read_byte' || fn === 'i2c_send_nack' || fn === 'eeprom_read_byte' ? 'read' : fn === 'i2c_wait_ack' ? 'nodev' : 'write'; }
+    function defaultSc(fn) { if (ch.engine === 'mcu') return (ch.fns[fn] && ch.fns[fn].sc) || ch.defaultSc; return fn === 'i2c_read_byte' || fn === 'i2c_send_nack' || fn === 'eeprom_read_byte' ? 'read' : fn === 'i2c_wait_ack' ? 'nodev' : 'write'; }
 
     /* =================== 波形 =================== */
     function waveform(res, opt) {
@@ -382,7 +382,95 @@
       if (bits.length) row.appendChild(el('li', 'ev-bits', '已送出 ' + bits.length + ' 位：' + bits.join('') + (bits.length === 8 ? '（还没有第 9 个时钟）' : '')));
       return row;
     }
+    /* ---------- 通用单片机模拟的结果：灯、串口助手、引脚波形、外设日志 ---------- */
+    var PINLAB = { PA0: 'PA0 · LED1', PA1: 'PA1 · LED2', PA8: 'PA8 · LED3', PA9: 'PA9 · TX', PA10: 'PA10 · RX', PA5: 'PA5 · SCK', PA6: 'PA6 · MISO', PA7: 'PA7 · MOSI', PC13: 'PC13 · CS', PF8: 'PF8 · KEY1', PF10: 'PF10 · KEY3', PC0: 'PC0' };
+    function mcuWave(res, v) {
+      var from = v.from || 0, to = v.to || res.t, pins = v.pins, W = Math.max(320, Math.min(900, v.w || 860)), H = 22, gap = 16, top = 8, lab = 92;
+      var Hh = top + pins.length * (H + gap) + 26;
+      var s = sv('svg', { 'class': 'dv-wave mw', viewBox: '0 0 ' + (W + lab + 10) + ' ' + Hh, width: W + lab + 10, height: Hh, role: 'img', 'aria-label': '引脚波形 ' + pins.join('、') });
+      function X(t) { return lab + (Math.max(from, Math.min(to, t)) - from) / (to - from) * W; }
+      pins.forEach(function (p, r) {
+        var y0 = top + r * (H + gap), tr = res.trace[p] || [], zs = [];
+        s.appendChild(sv('text', { x: 0, y: y0 + H / 2 + 4, 'class': 'w-lab' }, PINLAB[p] || p));
+        var cur = null, segs = [];
+        tr.forEach(function (e) { if (e[0] <= from) cur = e[1]; });
+        segs.push([from, cur]);
+        tr.forEach(function (e) { if (e[0] > from && e[0] < to) segs.push([e[0], e[1]]); });
+        // 分段画：浮空（Z）的地方画成中间的虚线
+        var parts = [], cur2 = '';
+        segs.forEach(function (sg, k) {
+          var x0 = X(sg[0]), x1 = X(k + 1 < segs.length ? segs[k + 1][0] : to), lv = sg[1];
+          if (lv === 'Z' || lv == null) { zs.push('M' + x0 + ' ' + (y0 + H / 2) + 'H' + x1); if (cur2) { parts.push(cur2); cur2 = ''; } return; }
+          var y = lv ? y0 : y0 + H;
+          cur2 += (cur2 ? 'L' : 'M') + x0 + ' ' + y + 'H' + x1;
+        });
+        if (cur2) parts.push(cur2);
+        parts.forEach(function (pd) { s.appendChild(sv('path', { d: pd, 'class': 'w-sig' + (/^PA[018]$/.test(p) ? ' led' : '') })); });
+        if (zs.length) s.appendChild(sv('path', { d: zs.join(''), 'class': 'w-z' }));
+        if (p === 'PA9' && v.bytes !== false) res.uart.forEach(function (u) {
+          if (u.t < from || u.t > to) return;
+          var xa = X(u.t), xb = X(u.t + 10 * 1e6 / 115200);
+          if (xb - xa < 14) return;
+          s.appendChild(sv('text', { x: (xa + xb) / 2, y: y0 + H + 13, 'class': 'w-byte', 'text-anchor': 'middle' }, u.b >= 32 && u.b < 127 ? "'" + String.fromCharCode(u.b) + "'" : '0x' + Sim.hx(u.b)));
+        });
+      });
+      // 时间轴
+      var ay = Hh - 14;
+      s.appendChild(sv('path', { d: 'M' + lab + ' ' + ay + 'H' + (lab + W), 'class': 'w-brk' }));
+      for (var k = 0; k <= 4; k++) {
+        var t = from + (to - from) * k / 4, x = X(t);
+        s.appendChild(sv('path', { d: 'M' + x + ' ' + (ay - 3) + 'V' + (ay + 3), 'class': 'w-brk' }));
+        s.appendChild(sv('text', { x: x, y: ay + 12, 'class': 'w-gapt', 'text-anchor': k === 0 ? 'start' : k === 4 ? 'end' : 'middle' }, McuSim.fmtT(t)));
+      }
+      var box = el('div', 'dv-wavebox'); box.appendChild(s); box.tabIndex = 0; box.setAttribute('aria-label', '波形（可以左右滚动）');
+      return box;
+    }
+    function mcuResult(res, opt) {
+      opt = opt || {};
+      var box = el('div', 'dv-simres mcu'), sc = res.sc || {};
+      if (res.stop.kind !== 'end') {
+        var st = el('div', 'dv-stop'); st.appendChild(ui.icon('warn'));
+        var tx = el('div'); tx.appendChild(el('b', null, { stuck: '程序卡住了', irq: '程序卡在中断里', nohandler: '进了默认中断处理', error: '模拟出错' }[res.stop.kind] || '程序停了'));
+        tx.appendChild(el('span', null, res.stop.text));
+        if (res.where && ch.fns[res.where[0]]) { var ln = ch.fns[res.where[0]].lines[res.where[1]]; if (ln) { var c = el('code', 'dv-stop-c'); c.textContent = res.where[0] + '() 第 ' + (res.where[1] + 1) + ' 行：' + ln.c.trim(); tx.appendChild(c); } }
+        st.appendChild(tx); box.appendChild(st);
+      }
+      var leds = el('div', 'dv-leds');
+      ['LED1', 'LED2', 'LED3'].forEach(function (n) {
+        var L = res.leds[n]; if (!L || !L.summary) return;
+        var row = el('div', 'dv-led'), lamp = el('i', 'dv-lamp'), on = L.ev.length ? L.ev[L.ev.length - 1][1] : false;
+        var many = L.ev.length > 12, tOn = 0;
+        if (many) { for (var i = 0; i < L.ev.length; i++) if (L.ev[i][1]) tOn += (i + 1 < L.ev.length ? L.ev[i + 1][0] : res.t) - L.ev[i][0]; lamp.style.opacity = String(0.25 + 0.75 * tOn / res.t); lamp.classList.add('on'); }
+        else if (on) lamp.classList.add('on');
+        row.appendChild(lamp); row.appendChild(el('span', null, L.summary));
+        leds.appendChild(row);
+      });
+      if (leds.firstChild) box.appendChild(leds);
+      if (res.terminal || res.printf || res.uart.length) {
+        var term = el('div', 'dv-term'), th = el('div', 'dv-term-h');
+        th.appendChild(el('span', null, res.printf && !res.terminal ? '串口助手（printf 已重定向到 USART1）' : '电脑上的串口助手（115200 8N1）'));
+        term.appendChild(th);
+        var pre = el('pre'); pre.textContent = (res.terminal || res.printf).replace(/\n$/, '') || ' '; term.appendChild(pre);
+        box.appendChild(term);
+      }
+      var views = sc.view ? [].concat(sc.view) : [{ pins: Object.keys(res.trace).filter(function (p) { return res.trace[p].length > 1; }).slice(0, 5) }];
+      views.forEach(function (v) {
+        if (!v.pins || !v.pins.length) return;
+        if (v.label) box.appendChild(el('p', 'dv-wlab', v.label));
+        box.appendChild(mcuWave(res, v));
+      });
+      var logs = res.log;
+      if (logs.length) {
+        var lg = el('details', 'dv-log' + (res.log.some(function (x) { return x.k === 'warn'; }) ? ' warn' : ''));
+        var nw = res.log.filter(function (x) { return x.k === 'warn'; }).length;
+        lg.appendChild(el('summary', null, '芯片里发生了什么（' + logs.length + ' 条' + (nw ? '，其中 ' + nw + ' 条警告' : '') + '）'));
+        if (nw && !opt.compact) lg.open = true;
+        var ul = el('ol'); logs.forEach(function (x) { var li = el('li', 'lg-' + x.k); li.appendChild(el('span', 'lg-t', McuSim.fmtT(x.t))); li.appendChild(el('span', null, x.text)); ul.appendChild(li); }); lg.appendChild(ul); box.appendChild(lg);
+      }
+      return box;
+    }
     function simResult(res, opt) {
+      if (res.engine === 'mcu') return mcuResult(res, opt);
       opt = opt || {};
       var box = el('div', 'dv-simres');
       box.appendChild(waveform(res));
@@ -416,7 +504,20 @@
       if (sc.compare) {
         var grid = el('div', 'dv-cmp');
         sc.compare.forEach(function (id) { var col = el('div', 'dv-cmpc'); col.appendChild(el('h4', null, ch.scenarios[id].title)); col.appendChild(simResult(C.runScenario(ch, id), { compact: true })); grid.appendChild(col); });
-        box.appendChild(grid); box.appendChild(legend());
+        box.appendChild(grid); if (ch.engine !== 'mcu') box.appendChild(legend());
+        return box;
+      }
+      if (ch.engine === 'mcu') {
+        var outM = el('div'), pot = sc.board && sc.board.pot != null ? sc.board.pot : 1.65;
+        var runM = function () { ui.clear(outM); outM.appendChild(simResult(C.runScenario(ch, sc, b.edit === 'pot' ? { board: { pot: pot } } : {}))); };
+        if (b.edit === 'pot') {
+          var pc = el('div', 'dv-simctl'), pl = el('label'), pin = el('input'), pv = el('b', 'mono');
+          pin.type = 'range'; pin.min = 0; pin.max = 330; pin.value = Math.round(pot * 100); pv.textContent = pot.toFixed(2) + ' V';
+          pl.appendChild(el('span', null, '电位器拧到')); pl.appendChild(pin); pl.appendChild(pv); pc.appendChild(pl); box.appendChild(pc);
+          pin.addEventListener('input', function () { pot = Number(pin.value) / 100; pv.textContent = pot.toFixed(2) + ' V'; });
+          pin.addEventListener('change', runM);
+        }
+        box.appendChild(outM); runM();
         return box;
       }
       var out = el('div');

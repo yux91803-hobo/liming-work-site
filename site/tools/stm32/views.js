@@ -93,7 +93,7 @@
     var more = el('section', 'more');
     more.appendChild(h2('资料'));
     var pos = readPos();
-    [[{ v: 'think' }, 'idea', '编程思维', '拿到需求，自己想出代码。I2C 从「两颗芯片想说话」一步步推到每一行代码；GPIO、USART 从「为什么」推到能运行的程序。'],
+    [[{ v: 'think' }, 'idea', '编程思维', '从最根本的需求出发，把 GPIO、串口、I2C、定时器、ADC、SPI 一步步「发明」出来，推到每一行能运行的代码。'],
      [{ v: 'chip' }, 'chip', '芯片引脚', '144 个脚逐个看：复用功能、重映射、开发板上接了什么。'],
      [{ v: 'board' }, 'board', '开发板', M.board.length + ' 个板载资源和对应引脚，' + M.sch.length + ' 页原理图。'],
      [{ v: 'course' }, 'book', '课件', M.course.map(function (p) { return p.short + ' ' + p.n + ' 页' + (pos[p.id] ? '，读到第 ' + pos[p.id] + ' 页' : ''); }).join('；') + '。']
