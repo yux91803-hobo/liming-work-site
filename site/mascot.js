@@ -1,5 +1,5 @@
-/* mascot.js — 首页小芯
-   标题栏里的一颗小芯片：走来走去、眼睛跟着指针/手指、会眨眼，没人理它就睡觉。
+/* mascot.js — 首页小芯（像素风）
+   标题栏里的一颗像素小芯片：走来走去、眼睛跟着指针/手指、会眨眼，没人理它就睡觉。
    点它会跳，连点会晕；按住拖到某张卡片上松手，就打开那个工具。 */
 (function () {
   'use strict';
@@ -7,31 +7,35 @@
   if (!track || !grid || !window.requestAnimationFrame) return;
   var body = document.body;
   var reduce = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
-  var W = 48, H = 50, SLEEP_AFTER = 30000;   // W/H 在元素挂上后按实际尺寸更新（大屏会放大一点）
+  var W = 48, H = 48, SLEEP_AFTER = 30000;   // W/H 在元素挂上后按实际尺寸更新（大屏会放大一点）
 
-  function eye(cx) {
-    return '<g class="x-eye"><circle class="x-sc" cx="' + cx + '" cy="24" r="4.9"/>' +
-      '<g class="x-pu"><circle class="x-pp" cx="' + cx + '" cy="24" r="2.5"/><circle class="x-hl" cx="' + (cx - 0.9) + '" cy="23" r=".9"/></g></g>';
+  /* 16×16 像素网格：俯视的 QFP 小芯片，四边各 4 根引脚，底边那排当脚；脸上只有两个方块眼 */
+  function R(x, y, w, h, c) { return '<rect' + (c ? ' class="' + c + '"' : '') + ' x="' + x + '" y="' + y + '" width="' + (w || 1) + '" height="' + (h || 1) + '"/>'; }
+  function pins(side) {
+    var o = '', P = [4, 6, 9, 11];
+    P.forEach(function (k, i) {
+      var c = 'x-pin p' + (i % 2);
+      if (side === 't') o += R(k, 1, 1, 2, c);
+      if (side === 'b') o += R(k, 13, 1, 2, c);
+      if (side === 'l') o += R(1, k, 2, 1, c);
+      if (side === 'r') o += R(13, k, 2, 1, c);
+    });
+    return '<g class="x-side x-' + side + '">' + o + '</g>';
   }
-  var SVG = '<svg viewBox="0 0 48 50" width="48" height="50" focusable="false">' +
-    '<g class="x-arm x-al"><rect x="2.4" y="19.2" width="5.8" height="2.6" rx="1.1"/><rect x="2.4" y="26.2" width="5.8" height="2.6" rx="1.1"/></g>' +
-    '<g class="x-arm x-ar"><rect x="39.8" y="19.2" width="5.8" height="2.6" rx="1.1"/><rect x="39.8" y="26.2" width="5.8" height="2.6" rx="1.1"/></g>' +
-    '<g class="x-leg x-ll"><rect x="15.4" y="38" width="3.4" height="8.2" rx="1"/><rect x="12.6" y="44.6" width="6.6" height="2.6" rx="1.3"/></g>' +
-    '<g class="x-leg x-lr"><rect x="29.2" y="38" width="3.4" height="8.2" rx="1"/><rect x="28.8" y="44.6" width="6.6" height="2.6" rx="1.3"/></g>' +
-    '<rect class="x-bd" x="7" y="8.6" width="34" height="31.4" rx="6.6"/>' +
-    '<rect class="x-fc" x="9.6" y="11.2" width="28.8" height="26.2" rx="4.6"/>' +
-    '<path class="x-nt" d="M20.6 8.6A3.4 3.4 0 0 0 27.4 8.6Z"/>' +
-    '<circle class="x-dm" cx="13.4" cy="15.2" r="1.35"/>' +
-    '<circle class="x-led" cx="34.6" cy="15.2" r="1.4"/>' +
-    '<ellipse class="x-bl" cx="13.2" cy="29.8" rx="2.2" ry="1.25"/><ellipse class="x-bl" cx="34.8" cy="29.8" rx="2.2" ry="1.25"/>' +
-    '<g class="x-eyes">' + eye(18) + eye(30) + '</g>' +
-    '<g class="x-alt x-hap"><path d="M14.2 25.4q3.8-4.6 7.6 0"/><path d="M26.2 25.4q3.8-4.6 7.6 0"/></g>' +
-    '<g class="x-alt x-shut"><path d="M14.4 24.2q3.6 2.8 7.2 0"/><path d="M26.4 24.2q3.6 2.8 7.2 0"/></g>' +
-    '<g class="x-alt x-dz"><path d="M15.6 21.8l4.8 4.8M20.4 21.8l-4.8 4.8"/><path d="M27.6 21.8l4.8 4.8M32.4 21.8l-4.8 4.8"/></g>' +
-    '<path class="x-mo x-m0" d="M21.8 31.4q2.2 1.9 4.4 0"/>' +
-    '<path class="x-mo x-m1" d="M21.2 30.8h5.6q-.3 3.2-2.8 3.2t-2.8-3.2z"/>' +
-    '<circle class="x-mo x-m2" cx="24" cy="32" r="1.6"/>' +
-    '<path class="x-mo x-m3" d="M21.8 33.2q2.2-1.9 4.4 0"/>' +
+  var SVG = '<svg viewBox="0 0 16 16" width="48" height="48" focusable="false" shape-rendering="crispEdges">' +
+    pins('t') + pins('l') + pins('r') + pins('b') +
+    R(3, 3, 10, 10, 'x-ol') + R(4, 4, 8, 8, 'x-bd') + R(4, 4, 8, 1, 'x-hi') +
+    R(5, 5, 1, 1, 'x-dm') + R(10, 5, 1, 1, 'x-led') +
+    R(4, 10, 1, 1, 'x-bl') + R(11, 10, 1, 1, 'x-bl') +
+    '<g class="x-face">' +
+      '<g class="x-f x-eyes">' + R(5, 7, 2, 2) + R(9, 7, 2, 2) + '</g>' +
+      '<g class="x-f x-blk">' + R(5, 8, 2, 1) + R(9, 8, 2, 1) + '</g>' +
+      '<g class="x-f x-hap">' + R(4, 8) + R(5, 7) + R(6, 8) + R(9, 8) + R(10, 7) + R(11, 8) + '</g>' +
+      '<g class="x-f x-shut">' + R(5, 8, 2, 1) + R(9, 8, 2, 1) + '</g>' +
+      '<g class="x-f x-dz">' + R(4, 6) + R(6, 6) + R(5, 7) + R(4, 8) + R(6, 8) + R(9, 6) + R(11, 6) + R(10, 7) + R(9, 8) + R(11, 8) + '</g>' +
+      '<g class="x-f x-wow">' + R(5, 6, 2, 3) + R(9, 6, 2, 3) + '</g>' +
+      '<g class="x-f x-sad">' + R(5, 8, 2, 2) + R(9, 8, 2, 2) + R(5, 6) + R(6, 5) + R(10, 6) + R(9, 5) + '</g>' +
+    '</g>' +
     '</svg>';
 
   var el = document.createElement('div');
@@ -40,7 +44,7 @@
   el.innerHTML = '<div class="xin-sh"></div><div class="xin-r"><div class="xin-s">' + SVG + '</div></div>';
   track.appendChild(el);
   var rEl = el.querySelector('.xin-r'), sEl = el.querySelector('.xin-s'), shEl = el.querySelector('.xin-sh');
-  function dims() { W = el.offsetWidth || 48; H = el.offsetHeight || 50; }
+  function dims() { W = el.offsetWidth || 48; H = el.offsetHeight || 48; }
   dims();
 
   /* ---------- 状态 ---------- */
@@ -55,8 +59,9 @@
   function paused() { return document.hidden || body.classList.contains('tool-open'); }
   function cls(c, on) { el.classList.toggle(c, !!on); }
   function place() {
-    el.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0)' + (sc !== 1 ? ' scale(' + sc.toFixed(3) + ')' : '');
-    rEl.style.transform = Math.abs(ang) > 0.05 ? 'rotate(' + ang.toFixed(2) + 'deg)' : '';
+    el.style.transform = 'translate3d(' + Math.round(x) + 'px,' + Math.round(y) + 'px,0)' + (sc !== 1 ? ' scale(' + sc.toFixed(3) + ')' : '');
+    var q = Math.round(ang / 12) * 12;            // 像素风：摆动角度按 12° 一档跳
+    rEl.style.transform = q ? 'rotate(' + q + 'deg)' : '';
   }
   function setMode(m) {
     mode = m;
@@ -76,9 +81,10 @@
   }
 
   /* ---------- 眼睛 ---------- */
+  // 眼睛整体按像素格挪：-1 / 0 / 1
   function pupils(px, py) {
-    el.style.setProperty('--px', px.toFixed(2) + 'px');
-    el.style.setProperty('--py', py.toFixed(2) + 'px');
+    el.style.setProperty('--px', clamp(Math.round(px / 1.6), -1, 1) + 'px');
+    el.style.setProperty('--py', clamp(Math.round(py / 1.6), -1, 1) + 'px');
   }
   function lookAt(cx, cy, hold) {
     var r = el.getBoundingClientRect();
@@ -108,7 +114,7 @@
     }, 2400 + Math.random() * 3600);
   }
 
-  /* ---------- 小粒子：睡觉的 z、开心的 ✻ ---------- */
+  /* ---------- 小粒子：睡觉的 z、开心时蹦出的像素块 ---------- */
   function particle(c, ch, left, top, dx, dy) {
     var s = document.createElement('span');
     s.className = c; s.textContent = ch;
@@ -123,7 +129,7 @@
     if (reduce) return;
     for (var i = 0; i < n; i++) {
       var a = -Math.PI / 2 + (i - (n - 1) / 2) * 0.75 + (Math.random() - 0.5) * 0.3;
-      particle('xin-p', '✻', x + W / 2 - 5, topY() + 4, Math.cos(a) * 26, Math.sin(a) * 24 - 6);
+      particle('xin-p', '', x + W / 2 - 3, topY() + 4, Math.round(Math.cos(a) * 26 / 3) * 3, Math.round((Math.sin(a) * 24 - 6) / 3) * 3);
     }
   }
   function zz() {
@@ -137,22 +143,18 @@
   function land() {
     setMode('idle');
     y = 0; sc = 1; angT = 0; place(); kick();
-    play(sEl, [{ transform: 'scale(1.18,.8)' }, { transform: 'scale(.95,1.05)', offset: 0.55 }, { transform: 'none' }], 380);
-    play(shEl, [{ transform: 'scaleX(1.3)', opacity: 1 }, { transform: 'none', opacity: 1 }], 380);
+    play(sEl, [{ transform: 'translateY(3px)' }, { transform: 'translateY(-3px)', offset: 0.5 }, { transform: 'none' }], 240, 'steps(3, end)');
     schedule();
   }
+  // 跳：一格一格地上去再下来（每格 3px），不做压扁拉伸，像素不会糊
   function jump(h) {
-    play(sEl, [
-      { transform: 'none' },
-      { transform: 'scale(1.12,.86)', offset: 0.14 },
-      { transform: 'translateY(-' + h + 'px) scale(.94,1.07)', offset: 0.5 },
-      { transform: 'scale(1.1,.9)', offset: 0.86 },
-      { transform: 'none' }
-    ], 520 + h * 4, 'ease-in-out');
-    play(shEl, [{ transform: 'none' }, { transform: 'scale(.5)', opacity: 0.35, offset: 0.5 }, { transform: 'none' }], 520 + h * 4, 'ease-in-out');
+    var n = Math.max(2, Math.round(h / 3)), fr = [];
+    for (var i = 0; i <= n * 2; i++) { var k = i <= n ? i : n * 2 - i; fr.push({ transform: k ? 'translateY(-' + Math.round(k * h / n / 3) * 3 + 'px)' : 'none' }); }
+    play(sEl, fr, 70 * n * 2, 'linear');
+    play(shEl, [{ opacity: 1 }, { opacity: 0.3, offset: 0.5 }, { opacity: 1 }], 70 * n * 2, 'steps(3, end)');
   }
   function stretch() {
-    play(sEl, [{ transform: 'none' }, { transform: 'scale(.94,1.1)', offset: 0.45 }, { transform: 'none' }], 600, 'ease-in-out');
+    play(sEl, [{ transform: 'none' }, { transform: 'translateY(-3px)', offset: 0.3 }, { transform: 'translateY(-3px)', offset: 0.7 }, { transform: 'none' }], 500, 'steps(4, end)');
   }
   function walkTo(target) {
     tx = clamp(target, 0, maxX());
@@ -184,8 +186,8 @@
     stopWalk();
     if (taps.length >= 5) {
       taps = [];
-      rEl.style.transformOrigin = '50% 60%';
-      play(rEl, [{ transform: 'rotate(0)' }, { transform: 'rotate(720deg)' }], 760, 'cubic-bezier(.2,.8,.2,1)');
+      rEl.style.transformOrigin = '50% 50%';
+      play(rEl, [0, 90, 180, 270, 360, 450, 540, 630, 720].map(function (a) { return { transform: 'rotate(' + a + 'deg)' }; }), 720, 'steps(8, end)');
       setMood('dizzy', 1900);
       return;
     }

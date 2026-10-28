@@ -1,0 +1,25 @@
+"""把站里用到的字从 Unifont（16px 点阵字体，GPL-2+ 带字体嵌入例外 / OFL 双许可）裁成一个小 woff。
+用法：python3 scripts/build-font.py  （需要 fonttools；新增了文字后重跑一次）"""
+import os, sys
+from fontTools import subset
+from fontTools.ttLib import TTFont
+
+SRC = os.environ.get('UNIFONT', '/usr/share/fonts/opentype/unifont/unifont.otf')
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'site')
+chars = set(chr(c) for c in range(0x20, 0x7f))
+for root, _, files in os.walk(ROOT):
+    if any(x in root for x in ('/vendor', '/data', '/styles', '/fonts')): continue
+    for f in files:
+        if f.endswith(('.js', '.html', '.css', '.json', '.webmanifest')):
+            try: chars |= set(open(os.path.join(root, f), encoding='utf8').read())
+            except Exception: pass
+chars = {c for c in chars if ord(c) >= 0x20}
+opts = subset.Options()
+opts.flavor = 'woff'; opts.layout_features = []; opts.name_IDs = [1, 2, 3, 4, 6]
+opts.notdef_outline = True; opts.hinting = False; opts.desubroutinize = True
+font = TTFont(SRC)
+sub = subset.Subsetter(opts); sub.populate(text=''.join(sorted(chars))); sub.subset(font)
+out = os.path.join(ROOT, 'fonts', 'pixel.woff')
+os.makedirs(os.path.dirname(out), exist_ok=True)
+font.flavor = 'woff'; font.save(out)
+print('%d 个字符 → %s (%d KB)' % (len(chars), out, os.path.getsize(out) // 1024))

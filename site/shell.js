@@ -125,7 +125,7 @@
     s.appendChild(g);
     s.appendChild(sv('rect', { x: B, y: B, width: W, height: W, rx: 7, 'class': 'body' }));
     s.appendChild(sv('rect', { x: B + 9, y: B + 9, width: W - 18, height: W - 18, rx: 4, 'class': 'bevel' }));
-    s.appendChild(sv('circle', { cx: B + 20, cy: B + 20, r: 4.5, 'class': 'dimple' }));
+    s.appendChild(sv('rect', { x: B + 15, y: B + 15, width: 10, height: 10, 'class': 'dimple' }));
     var t1 = sv('text', { x: B + W / 2, y: B + W / 2 - 2, 'class': 'mark' }); t1.textContent = 'STM32F103';
     var t2 = sv('text', { x: B + W / 2, y: B + W / 2 + 16, 'class': 'mark sub' }); t2.textContent = 'ZET6';
     s.appendChild(t1); s.appendChild(t2);
@@ -137,7 +137,7 @@
     var s = sv('svg', { viewBox: '0 0 384 168', 'class': 'art art-world', 'aria-hidden': 'true' });
     WORLD.forEach(function (row, r) {
       for (var c = 0; c < 64; c++) {
-        if ((parseInt(row[c >> 2], 16) >> (3 - (c & 3))) & 1) s.appendChild(sv('circle', { cx: c * 6 + 3, cy: r * 6 + 3, r: 1.9 }));
+        if ((parseInt(row[c >> 2], 16) >> (3 - (c & 3))) & 1) s.appendChild(sv('rect', { x: c * 6 + 1, y: r * 6 + 1, width: 4, height: 4 }));
       }
     });
     return s;

@@ -206,13 +206,27 @@
       var on = tabs[id][1]; if (on.scrollIntoView && snav.scrollWidth > snav.clientWidth) snav.scrollLeft = on.offsetLeft - 16;
     }
 
-    // 上一个 / 下一个外设
+    // 上一个 / 下一个外设：像素箭头 + 外设缩写，不写文字说明
+    function pixArrow(dir) {
+      var NS = 'http://www.w3.org/2000/svg', g = document.createElementNS(NS, 'svg');
+      g.setAttribute('viewBox', '0 0 6 10'); g.setAttribute('class', 'px-arrow'); g.setAttribute('aria-hidden', 'true');
+      var xs = [4, 3, 2, 1, 0, 1, 2, 3, 4, 4];
+      for (var r = 0; r < 9; r++) {
+        var x = dir === 'l' ? xs[r] : 4 - xs[r], b = document.createElementNS(NS, 'rect');
+        b.setAttribute('x', x); b.setAttribute('y', r); b.setAttribute('width', 2); b.setAttribute('height', 1);
+        g.appendChild(b);
+      }
+      return g;
+    }
     var foot = el('nav', 'tnext'); foot.setAttribute('aria-label', '外设');
     var prev = M.topics[t.order - 2], next = M.topics[t.order];
-    [[prev, '上一个'], [next, '下一个']].forEach(function (x) {
+    [[prev, 'l', '上一个'], [next, 'r', '下一个']].forEach(function (x) {
       if (!x[0]) { foot.appendChild(el('span')); return; }
       var a = app.link({ v: 'topic', t: x[0].id }, 'tnext-i'); a.style.setProperty('--h', app.hue(x[0]));
-      a.appendChild(el('span', null, x[1])); a.appendChild(el('b', null, x[0].code));
+      a.setAttribute('aria-label', x[2] + ' ' + x[0].code);
+      if (x[1] === 'l') a.appendChild(pixArrow('l'));
+      a.appendChild(el('b', null, x[0].code));
+      if (x[1] === 'r') a.appendChild(pixArrow('r'));
       foot.appendChild(a);
     });
     art.appendChild(foot);
