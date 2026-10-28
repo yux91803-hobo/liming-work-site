@@ -195,39 +195,45 @@
     });
     return out;
   }
-  function render(root, tid, app, opt) {
-    opt = opt || {};
+  // 外设页「代码推导」：按通用写法一步步推出各个文件
+  function render(root, tid) {
     var cd = DATA.CD[tid]; if (!cd) return;
-    var head = el('header', 'dv-hero');
-    if (opt.crumb) { var crumb = app.link(opt.crumb, 'tk-crumb'); crumb.textContent = opt.crumbText || ''; head.appendChild(crumb); }
-    head.appendChild(el('h1', null, '代码推导'));
     var task = el('div', 'dv-task'); task.appendChild(ui.icon('flag'));
     var tt = el('div'); tt.appendChild(el('span', 'dv-task-l', cd.title + '：' + cd.files.map(function (f) { return f.name; }).join(' / ')));
-    tt.appendChild(el('b', null, cd.goal)); task.appendChild(tt); head.appendChild(task);
-    root.appendChild(head);
-    var how = el('section', 'cd-method'); how.appendChild(el('h2', 'sec-h', '通用写法'));
+    tt.appendChild(el('b', null, cd.goal)); task.appendChild(tt); root.appendChild(task);
+    var how = el('section', 'cd-method'); how.appendChild(el('h3', 'cd-mh', '通用写法'));
     var ol = el('ol', 'cd-flow'); DATA.METHOD.forEach(function (m) { ol.appendChild(el('li', null, m)); }); how.appendChild(ol);
     root.appendChild(how);
     cd.steps.forEach(function (st, i) {
       var sec = el('section', 'cd-step'); sec.id = 'cd-' + st.id;
-      var h = el('h2', 'cd-q'); h.appendChild(el('span', 'cd-n', String(i + 1))); h.appendChild(el('span', null, st.q)); sec.appendChild(h);
+      var h = el('h3', 'cd-q'); h.appendChild(el('span', 'cd-n', String(i + 1))); h.appendChild(el('span', null, st.q)); sec.appendChild(h);
       st.say.forEach(function (p) { sec.appendChild(el('p', 'cd-p', p)); });
       stepFiles(cd, st.id).forEach(function (f) { sec.appendChild(f); });
       if (st.extra) sec.appendChild(codeBox(st.extra.name, st.extra.lines.map(function (x) { return lineRow(norm(x)); })));
       root.appendChild(sec);
     });
-    // 最后拼出完整文件
-    var all = el('section', 'cd-step cd-all');
-    var ah = el('h2', 'cd-q'); ah.appendChild(el('span', 'cd-n', '✓')); ah.appendChild(el('span', null, '完整代码')); all.appendChild(ah);
-    var seg = el('div', 'cseg'), boxes = [];
-    cd.files.forEach(function (f, i) {
-      var b = ui.btn('cseg-b mono' + (i ? '' : ' on'), f.name); seg.appendChild(b);
-      var box = codeBox(f.name, f.lines.map(function (x) { return lineRow(norm(x)); }), function () { return fileText(f); });
-      box.hidden = !!i; boxes.push(box);
-      b.addEventListener('click', function () { boxes.forEach(function (x, j) { x.hidden = j !== i; }); Array.prototype.forEach.call(seg.children, function (y, j) { y.classList.toggle('on', j === i); }); });
-    });
-    all.appendChild(seg); boxes.forEach(function (x) { all.appendChild(x); });
-    root.appendChild(all);
   }
-  STM.codederive = { has: function (tid) { return !!DATA.CD[tid]; }, render: render, fileText: fileText, data: DATA };
+  // 外设页「寄存器」：完整的 .h / .c / main.c，上面一排文件名切换
+  function files(tid) {
+    var cd = DATA.CD[tid]; if (!cd) return null;
+    var fig = el('figure', 'code rc-code cd-file cd-files'), h = el('figcaption', 'code-h');
+    var tabs = el('div', 'ftabs'); tabs.setAttribute('role', 'tablist'); h.appendChild(tabs);
+    var cur = 0, bodies = [];
+    h.appendChild(ui.copyBtn('复制当前文件', function () { return fileText(cd.files[cur]); }));
+    fig.appendChild(h);
+    cd.files.forEach(function (f, i) {
+      var b = ui.btn('ftab', f.name); b.setAttribute('role', 'tab'); tabs.appendChild(b);
+      var body = el('div', 'rc-fn');
+      f.lines.forEach(function (x) { var l = norm(x); l.why = ''; body.appendChild(lineRow(l)); });
+      bodies.push(body); fig.appendChild(body);
+      b.addEventListener('click', function () { cur = i; sync(); });
+    });
+    function sync() {
+      bodies.forEach(function (x, j) { x.hidden = j !== cur; });
+      Array.prototype.forEach.call(tabs.children, function (y, j) { y.classList.toggle('on', j === cur); y.setAttribute('aria-selected', j === cur ? 'true' : 'false'); });
+    }
+    sync();
+    return fig;
+  }
+  STM.codederive = { has: function (tid) { return !!DATA.CD[tid]; }, render: render, files: files, fileText: fileText, data: DATA };
 })();

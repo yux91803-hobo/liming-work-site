@@ -47,8 +47,9 @@
     // 寄存器 / 片段没给主题时，补上它所属的主题
     if (t.v === 'topic' && !t.t) { var tp = (t.reg && M.topicOfReg(t.reg)) || (t.snip && M.topicOfSnip(t.snip)); if (tp) t.t = tp.id; else t = strip(t, ['snip']); }
     if (t.v === 'topic' && !M.topicById[t.t]) { t.v = 'home'; delete t.t; delete t.snip; }
-    if (t.v === 'think' && t.t && !(STM.think && STM.think.chapter(t.t)) && !(STM.codederive && STM.codederive.has(t.t))) { delete t.t; delete t.p; delete t.s; }
-    if (t.v === 'think' && t.t && !(STM.think && STM.think.chapter(t.t))) delete t.s;   // 没有推导链的外设：页面本身就是代码推导
+    // 代码推导挪到了外设页「代码」里：旧的 think&s=code、没有推导链的 think&t=… 都转过去
+    if (t.v === 'think' && t.t && (t.s === 'code' || !(STM.think && STM.think.chapter(t.t))) && STM.codederive && STM.codederive.has(t.t) && M.topicById[t.t]) t = { v: 'topic', t: t.t, sec: 'code', cv: 'cd' };
+    if (t.v === 'think' && t.t && !(STM.think && STM.think.chapter(t.t))) { delete t.t; delete t.p; delete t.s; }
     if (t.s && !(STM.derive && STM.derive.validStep(t.t, t.s))) delete t.s;
     if (t.reg && !M.R.reg(t.reg)) t = strip(t, LAYER_REG);
     return t;

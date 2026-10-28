@@ -54,17 +54,12 @@
     art.appendChild(head);
 
     var ch = STM.think && STM.think.chapter(t.id);
-    if (!ch && STM.codederive && STM.codederive.has(t.id)) {
-      var cen = app.link({ v: 'think', t: t.id }, 'thinkin'); cen.appendChild(ui.icon('idea'));
-      var cet = el('span', 'thinkin-t'); cet.appendChild(el('b', null, 'Code reasoning')); cen.appendChild(cet);
-      cen.appendChild(el('span', 'thinkin-go', '开始')); art.appendChild(cen);
-    }
     if (ch) {
       var d = STM.think.progress(t.id), isD = !Array.isArray(d);
       var nDone = isD ? d.done : d.filter(Boolean).length, nAll = isD ? d.total : 4;
       var en = app.link({ v: 'think', t: t.id }, 'thinkin');
       en.appendChild(ui.icon('idea'));
-      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, 'Code reasoning'));
+      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, '原理'));
       if (nDone) et.appendChild(el('span', null, nDone + ' / ' + nAll)); en.appendChild(et);
       en.appendChild(el('span', 'thinkin-go', nDone === nAll ? '复习' : nDone ? '继续' : '开始'));
       art.appendChild(en);
@@ -123,27 +118,31 @@
       parts.push([s4, '寄存器']);
     }
 
-    // 代码：寄存器写法（逐行注释 + 为什么）在前，HAL 库写法在后，切换着看
-    var snipEls = {}, rprogs = STM.regcode ? STM.regcode.progsOf(t.id) : [];
-    if (t.snips.length || rprogs.length) {
+    // 代码：寄存器（完整文件）/ HAL 库 / 代码推导（按通用写法一步步推出这些文件）
+    var snipEls = {}, CD = STM.codederive, hasCd = !!(CD && CD.has(t.id));
+    var rprogs = !hasCd && STM.regcode ? STM.regcode.progsOf(t.id) : [];
+    if (t.snips.length || rprogs.length || hasCd) {
       var s5 = sec('code', '代码');
-      var CODE_KEY = 'lm.stm32.codestyle', style = ui.lsGet(CODE_KEY) === 'hal' && t.snips.length ? 'hal' : rprogs.length ? 'reg' : 'hal';
-      if (route.snip) style = 'hal';
+      var CODE_KEY = 'lm.stm32.codestyle', have = { reg: hasCd || rprogs.length > 0, hal: t.snips.length > 0, cd: hasCd };
+      function pick(k) { return have[k] ? k : have.reg ? 'reg' : have.hal ? 'hal' : 'cd'; }
+      var style = pick(route.snip ? 'hal' : route.cv || ui.lsGet(CODE_KEY) || 'reg');
       var seg = el('div', 'cseg'); seg.setAttribute('role', 'tablist');
-      var regBox = el('div', 'code-reg'), halBox = el('div', 'code-hal');
-      [['reg', '寄存器', rprogs.length], ['hal', 'HAL 库', t.snips.length]].forEach(function (x) {
-        if (!x[2]) return;
+      var regBox = el('div', 'code-reg'), halBox = el('div', 'code-hal'), cdBox = el('div', 'code-cd');
+      [['reg', '寄存器'], ['hal', 'HAL 库'], ['cd', '代码推导']].forEach(function (x) {
+        if (!have[x[0]]) return;
         var b = ui.btn('cseg-b', x[1]); b.dataset.k = x[0]; b.setAttribute('role', 'tab');
-        b.addEventListener('click', function () { style = x[0]; ui.lsSet(CODE_KEY, style); syncSeg(); });
+        b.addEventListener('click', function () { if (style === x[0]) return; ui.lsSet(CODE_KEY, x[0]); app.update({ sec: 'code', cv: x[0], snip: null }); });
         seg.appendChild(b);
       });
-      function syncSeg() {
+      var syncSeg = function (r) {
+        if (r) style = pick(r.snip ? 'hal' : r.cv || style);
         Array.prototype.forEach.call(seg.children, function (b) { var on = b.dataset.k === style; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
-        regBox.hidden = style !== 'reg'; halBox.hidden = style !== 'hal';
-      }
+        regBox.hidden = style !== 'reg'; halBox.hidden = style !== 'hal'; cdBox.hidden = style !== 'cd';
+      };
       if (seg.children.length > 1) s5.appendChild(seg);
+      if (hasCd) { regBox.appendChild(CD.files(t.id)); CD.render(cdBox, t.id); }
       rprogs.forEach(function (pg) { regBox.appendChild(STM.regcode.render(pg, app, { compact: true })); });
-      s5.appendChild(regBox); s5.appendChild(halBox);
+      s5.appendChild(regBox); s5.appendChild(halBox); s5.appendChild(cdBox);
       syncSeg();
       t.snips.forEach(function (s) {
         var card = el('div', 'snip'); card.id = 'snip-' + s.i;
@@ -217,7 +216,7 @@
     focusSnip(route);
     return {
       title: function () { return t.code; },
-      update: function (r) { showTab(r); focusSnip(r); }
+      update: function (r) { showTab(r); if (syncSeg) syncSeg(r); focusSnip(r); }
     };
   }
   // GPIO 8 种模式速查表（CNF / MODE / 半字节 / HAL 写法）

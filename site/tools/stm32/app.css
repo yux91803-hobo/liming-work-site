@@ -1334,3 +1334,18 @@ button.rc-lb:hover { background: var(--sunk); }
 .dv-mode.enter .dv-modeb { flex-direction: row; align-items: center; justify-content: space-between; padding: 14px 16px; }
 .dv-mode.enter .dv-modeb b { font-size: 16px; }
 .dv-mode.enter .dv-modeb svg.ic { color: var(--h); }
+/* 外设页「代码」：寄存器完整文件（文件名标签在代码框头上）、代码推导 */
+.cd-files .code-h { padding-left: 6px; }
+.ftabs { display: flex; flex-wrap: wrap; gap: 2px; min-width: 0; }
+.ftab { height: 28px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--ink-3); font: 600 12.5px var(--mono); cursor: pointer; }
+.ftab:hover { color: var(--ink); }
+.ftab.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+.code-cd > .dv-task { margin-top: 0; }
+.code-cd .cd-method { margin-top: 18px; }
+.cd-mh { font-size: 15px; }
+.code-cd .cd-q { font-size: 17.5px; }
+.code-cd .cd-step { margin-top: 28px; }
+.cd-file { padding-top: 0; }
+.cd-files .code-h { align-items: flex-start; }
+.cd-files .ftabs { flex: 1; }
+.cd-files .code-h > :last-child { flex: none; white-space: nowrap; }
