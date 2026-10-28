@@ -136,11 +136,28 @@
       var syncSeg = function (r) {
         if (r) style = pick(r.snip ? 'hal' : r.cv || style);
         Array.prototype.forEach.call(seg.children, function (b) { var on = b.dataset.k === style; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
-        regBox.hidden = style !== 'reg'; halBox.hidden = style !== 'hal'; cdBox.hidden = style !== 'cd';
+        regBox.hidden = style !== 'reg'; halBox.hidden = style !== 'hal'; cdBox.hidden = style !== 'cd'; varBar.hidden = style === 'hal';
+        if (r && hasCd) drawVar(r);
       };
       if (seg.children.length > 1) s5.appendChild(seg);
-      if (hasCd) { regBox.appendChild(CD.files(t.id)); CD.render(cdBox, t.id); }
+      // 同一个外设有好几个驱动时（软件 / 硬件 I2C），上面一排切换
+      var vs = hasCd ? CD.variants(t.id) : [], cx = null, filesFig = null, varBar = el('div', 'cd-vars');
+      vs.forEach(function (id, k) {
+        var b = ui.btn('cd-var', CD.title(id)); b.dataset.k = id;
+        b.addEventListener('click', function () { if (cx !== id) app.update({ sec: 'code', cx: k ? id : null, cf: null }); });
+        varBar.appendChild(b);
+      });
+      var drawVar = function (r) {
+        var want = r.cx && vs.indexOf(r.cx) > 0 ? r.cx : vs[0];
+        if (want !== cx) {
+          cx = want; ui.clear(regBox); ui.clear(cdBox);
+          filesFig = CD.files(cx, { file: r.cf }); regBox.appendChild(filesFig); CD.render(cdBox, cx);
+          Array.prototype.forEach.call(varBar.children, function (b) { b.classList.toggle('on', b.dataset.k === cx); });
+        } else if (r.cf && filesFig) filesFig.pick(r.cf);
+      };
+      if (vs.length > 1) s5.appendChild(varBar);
       s5.appendChild(regBox); s5.appendChild(halBox); s5.appendChild(cdBox);
+      if (hasCd) drawVar(route);
       syncSeg();
       t.snips.forEach(function (s) {
         var card = el('div', 'snip'); card.id = 'snip-' + s.i;
@@ -442,6 +459,11 @@
       detail.appendChild(list);
       var links = el('div', 'pd-row pd-links');
       if (tp) links.appendChild(topicTag(tp, app));
+      if (STM.codederive) STM.codederive.forBoard(m.id).forEach(function (d) {
+        var tt = M.topicById[d.topic]; if (!tt) return;
+        var r = { v: 'topic', t: d.topic, sec: 'code', cv: 'reg', cf: d.file }; if (d.id !== d.topic) r.cx = d.id;
+        var cb = app.link(r, 'linkbtn mono'); cb.textContent = d.file; cb.title = d.title + '：' + d.file; links.appendChild(cb);
+      });
       if (m.sch && M.schById[m.sch]) { var a = ui.btn('linkbtn', '原理图'); a.addEventListener('click', function () { app.navigate({ sch: m.sch }); }); links.appendChild(a); }
       detail.appendChild(links);
     }

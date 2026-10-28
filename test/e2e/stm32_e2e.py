@@ -141,6 +141,14 @@ async def main():
         await pg.fill('.search-in', 'USART_BRR'); await pg.wait_for_timeout(200); await pg.keyboard.press('Enter')
         await pg.wait_for_selector('.sheet.on')
         check('搜索结果回车直接打开寄存器', 'reg=USART_BRR' in pg.url)
+        await pg.keyboard.press('/'); await pg.wait_for_selector('.search.on')
+        await pg.fill('.search-in', 'USART1_IRQHandler'); await pg.wait_for_timeout(250)
+        first = await pg.evaluate("(document.querySelector('.search-it b') || {}).textContent")
+        await pg.keyboard.press('Enter'); await pg.wait_for_timeout(600)
+        check('搜索代码里的函数名：打开对应的寄存器文件', first == 'usart.c' and 'cf=usart.c' in pg.url and await pg.evaluate("document.querySelector('.ftab.on').textContent") == 'usart.c', [first, pg.url])
+        await pg.goto(TOOL + '?m=eeprom'); await pg.wait_for_selector('.pd-links')
+        await pg.click('.pd-links a.linkbtn:has-text("eeprom.c")'); await pg.wait_for_timeout(600)
+        check('模块图：从 M24C02 直接打开 eeprom.c', 't=i2c' in pg.url and await pg.evaluate("[document.querySelector('.cseg-b.on').textContent, document.querySelector('.ftab.on').textContent].join()") == '寄存器,eeprom.c', pg.url)
 
         # ---------- 6. 深链 / 旧链接 ----------
         for qs, test, name in [

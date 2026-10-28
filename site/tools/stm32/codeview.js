@@ -148,8 +148,8 @@
     draw();
   }
   // 外设页「寄存器」：完整的 .h / .c / main.c，上面一排文件名切换
-  function files(tid) {
-    var cd = DATA.CD[tid]; if (!cd) return null;
+  function files(tid, opt) {
+    var cd = DATA.CD[tid]; if (!cd) return null; opt = opt || {};
     var fig = el('figure', 'code rc-code cd-file cd-files'), h = el('figcaption', 'code-h');
     var tabs = el('div', 'ftabs'); tabs.setAttribute('role', 'tablist'); h.appendChild(tabs);
     var cur = 0, bodies = [];
@@ -166,8 +166,23 @@
       bodies.forEach(function (x, j) { x.hidden = j !== cur; });
       Array.prototype.forEach.call(tabs.children, function (y, j) { y.classList.toggle('on', j === cur); y.setAttribute('aria-selected', j === cur ? 'true' : 'false'); });
     }
+    fig.pick = function (name) { var i = cd.files.map(function (f) { return f.name; }).indexOf(name); if (i >= 0 && i !== cur) { cur = i; sync(); } };
+    if (opt.file) fig.pick(opt.file);
     sync();
     return fig;
   }
-  STM.codederive = { has: function (tid) { return !!DATA.CD[tid]; }, render: render, files: files, fileText: fileText, data: DATA };
+  // 一个外设可以有好几个驱动：CD[外设 id] 是主的，CD[别的 id].topic = 外设 id 的是另外几个（比如硬件 I2C）
+  function variants(tid) {
+    var out = DATA.CD[tid] && !DATA.CD[tid].topic ? [tid] : [];
+    Object.keys(DATA.CD).forEach(function (k) { if (DATA.CD[k].topic === tid) out.push(k); });
+    return out;
+  }
+  STM.codederive = { has: function (tid) { return variants(tid).length > 0; }, variants: variants, title: function (id) { return DATA.CD[id] ? DATA.CD[id].title : ''; },
+    forBoard: function (mid) {   // 驱动这个板载模块的代码：[{ id, topic, file, title }]
+      return Object.keys(DATA.CD).filter(function (k) { return (DATA.CD[k].boards || []).indexOf(mid) >= 0; }).map(function (k) {
+        var cd = DATA.CD[k], f = cd.files.filter(function (x) { return x.name === cd.module + '.c'; })[0] || cd.files[1] || cd.files[0];
+        return { id: k, topic: cd.topic || k, file: f.name, title: cd.title };
+      });
+    },
+    topicOf: function (id) { return DATA.CD[id] ? DATA.CD[id].topic || id : null; }, render: render, files: files, fileText: fileText, data: DATA };
 })();

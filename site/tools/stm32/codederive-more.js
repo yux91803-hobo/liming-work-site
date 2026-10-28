@@ -1057,4 +1057,8 @@
       ] }
     ]
   };
+
+  // 首页模块图上的板载模块 → 驱动它的代码（模块 id 见 modules.js）
+  var BOARDS = { gpio: ['led'], tim: ['led'], exti: ['key'], usart: ['stlink', 'rs232'], dma: ['stlink'], i2c: ['eeprom'], spi: ['flash'], adc: ['pot'], sys: ['xtal'], fsmc: ['lcd'] };
+  Object.keys(BOARDS).forEach(function (id) { if (CD[id]) CD[id].boards = BOARDS[id]; });
 })();
