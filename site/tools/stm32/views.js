@@ -120,10 +120,9 @@
 
     // 代码：寄存器（完整文件）/ HAL 库 / 代码推导（按通用写法一步步推出这些文件）
     var snipEls = {}, CD = STM.codederive, hasCd = !!(CD && CD.has(t.id));
-    var rprogs = !hasCd && STM.regcode ? STM.regcode.progsOf(t.id) : [];
-    if (t.snips.length || rprogs.length || hasCd) {
+    if (t.snips.length || hasCd) {
       var s5 = sec('code', '代码');
-      var CODE_KEY = 'lm.stm32.codestyle', have = { reg: hasCd || rprogs.length > 0, hal: t.snips.length > 0, cd: hasCd };
+      var CODE_KEY = 'lm.stm32.codestyle', have = { reg: hasCd, hal: t.snips.length > 0, cd: hasCd };
       function pick(k) { return have[k] ? k : have.reg ? 'reg' : have.hal ? 'hal' : 'cd'; }
       var style = pick(route.snip ? 'hal' : route.cv || ui.lsGet(CODE_KEY) || 'reg');
       var seg = el('div', 'cseg'); seg.setAttribute('role', 'tablist');
@@ -141,7 +140,6 @@
       };
       if (seg.children.length > 1) s5.appendChild(seg);
       if (hasCd) { regBox.appendChild(CD.files(t.id)); CD.render(cdBox, t.id); }
-      rprogs.forEach(function (pg) { regBox.appendChild(STM.regcode.render(pg, app, { compact: true })); });
       s5.appendChild(regBox); s5.appendChild(halBox); s5.appendChild(cdBox);
       syncSeg();
       t.snips.forEach(function (s) {

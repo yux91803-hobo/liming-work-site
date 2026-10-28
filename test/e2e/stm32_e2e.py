@@ -263,6 +263,22 @@ async def main():
         await pg.click('.code-cd .rc-l.has .rc-lb >> nth=2'); await pg.wait_for_timeout(100)
         why = await pg.inner_text('.code-cd .rc-l.open .rc-why')
         check('代码推导里点一行展开原因', '原因' in why, why[:60])
+        # 自己写：挡住代码行，写对了才露出来，进度记在本机
+        await pg.goto(TOOL + '?v=topic&t=gpio&sec=code&cv=cd'); await pg.wait_for_selector('.cd-modes')
+        await pg.click('.cd-mb:has-text("自己写")'); await pg.wait_for_timeout(200)
+        n0 = await pg.evaluate("[document.querySelectorAll('.cd-inp').length, document.querySelector('.cd-prog').textContent]")
+        inp = pg.locator('.cd-inp').first
+        await inp.fill('#define LED1 2'); await inp.press('Enter'); await pg.wait_for_timeout(150)
+        wrong = await pg.evaluate("document.querySelectorAll('.cd-bad').length == 1 && document.querySelector('.cd-bad .cd-msg').textContent.length > 0")
+        await inp.fill('#define LED1 1'); await inp.press('Enter'); await pg.wait_for_timeout(150)
+        n1 = await pg.evaluate("[document.querySelectorAll('.cd-inp').length, document.querySelectorAll('.cd-ok').length, document.querySelector('.cd-prog').textContent, document.activeElement.classList.contains('cd-inp')]")
+        await pg.click('.cd-blank.act button:has-text("答案")'); await pg.wait_for_timeout(100)
+        await pg.reload(); await pg.wait_for_selector('.cd-modes'); await pg.wait_for_timeout(300)
+        n2 = await pg.evaluate("[document.querySelector('.cd-mb.on').textContent, document.querySelectorAll('.cd-ok').length, document.querySelectorAll('.cd-shown').length, document.querySelector('.cd-prog').textContent]")
+        check('自己写：写错提示、写对露出代码并跳到下一行、刷新后进度还在', n0[0] >= 20 and n0[1] == '0 / %d' % n0[0] and wrong and n1[:3] == [n0[0] - 1, 1, '1 / %d' % n0[0]] and n1[3] and n2 == ['自己写', 1, 1, '2 / %d' % n0[0]], [n0, wrong, n1, n2])
+        await pg.click('.cd-reset'); await pg.wait_for_timeout(100)
+        await pg.click('.cd-mb:has-text("看推导")'); await pg.wait_for_timeout(100)
+        check('重来清空进度；切回看推导没有输入框', await pg.evaluate("document.querySelectorAll('.cd-inp').length == 0 && !(JSON.parse(localStorage.getItem('lm.stm32.cdself') || '{}').gpio)"))
         await pg.evaluate("localStorage.removeItem('lm.stm32.codestyle')")
         bad = []
         for chap in CHAPS + ['sys', 'exti', 'dma', 'fsmc']:
