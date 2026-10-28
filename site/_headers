@@ -6,11 +6,3 @@
   Cache-Control: public, max-age=86400
 /manifest.webmanifest
   Content-Type: application/manifest+json
-/tools/transfer/*
-  X-Robots-Tag: noindex, nofollow
-/transfer
-  X-Robots-Tag: noindex, nofollow
-/tools/hub/*
-  X-Robots-Tag: noindex, nofollow
-/hub
-  X-Robots-Tag: noindex, nofollow

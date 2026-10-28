@@ -8,7 +8,7 @@ const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 const server = http.createServer((req, res) => {
   let p; try { p = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); } catch { res.writeHead(400).end(); return; }
   if (p.startsWith('/api/')) { res.writeHead(501, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'Static preview: use wrangler dev for authenticated APIs.' })); return; }
-  if (['/map', '/transfer', '/hub', '/stm32'].includes(p.replace(/\/$/, ''))) p = '/index.html';
+  if (['/map', '/stm32'].includes(p.replace(/\/$/, ''))) p = '/index.html';
   let file = path.resolve(site, '.' + p);
   if (!file.startsWith(site + path.sep) && file !== site) { res.writeHead(403).end(); return; }
   try { if (fs.statSync(file).isDirectory()) file = path.join(file, 'index.html'); if (!fs.statSync(file).isFile()) throw new Error(); }
