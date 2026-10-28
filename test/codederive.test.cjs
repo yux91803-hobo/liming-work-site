@@ -134,3 +134,25 @@ test('代码推导：按课件的需求补齐功能', () => {
   // FSMC：板上的屏是 ILI9486，背光高电平亮
   assert.match(D.CD.fsmc.steps[0].say[0], /ILI9486/);
 });
+
+// 「自己写」模式：哪些行挡住、写的对不对
+test('自己写：结构行不挡，每章都有足够多的行要写，答案和自己比是对的', () => {
+  ['{', '}', '', '#include "led.h"', '#ifndef __LED_H', '#define __LED_H', '#endif', 'void LED_Init(void)', 'int main(void)', '    while (1) {', '/* 主循环里的其它事 */', 'else']
+    .forEach((c) => assert.equal(D.blankable(c), false, c));
+  ['    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;', '#define LED1  1', 'void LED_On(uint8_t n);', '    if (n < 1 || n > 3) return;', '        for (uint8_t n = LED1; n <= LED3; n++) {']
+    .forEach((c) => assert.equal(D.blankable(c), true, c));
+  Object.entries(D.CD).forEach(([id, cd]) => {
+    const ls = cd.files.flatMap((f) => f.lines.map((l) => l[0])).filter(D.blankable);
+    assert.ok(ls.length >= 15, id + ' 只有 ' + ls.length + ' 行');
+    ls.forEach((c) => assert.ok(D.same(c, c) && D.same(c, c.trim().replace(/;$/, '')), id + '：' + c));
+  });
+});
+test('自己写：比较时不管空格、分号、或运算的顺序和括号，写错的不算对', () => {
+  assert.ok(D.same('    GPIOA->CRH |= (GPIO_CRH_MODE9 | GPIO_CRH_CNF9_1 | GPIO_CRH_CNF10_0);', 'GPIOA->CRH|=GPIO_CRH_CNF10_0|GPIO_CRH_MODE9|GPIO_CRH_CNF9_1'));
+  assert.ok(D.same('GPIOB->CRH &= ~(GPIO_CRH_CNF10 | GPIO_CRH_MODE10);', 'GPIOB->CRH &= ~(GPIO_CRH_MODE10 | GPIO_CRH_CNF10)'));
+  assert.ok(D.same('#define EEPROM_ADDR  0xA0', '#define EEPROM_ADDR 0xa0'));
+  assert.ok(!D.same('RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;', 'RCC->APB2ENR = RCC_APB2ENR_IOPAEN;'));
+  assert.ok(!D.same('GPIOB->CRH &= ~(GPIO_CRH_CNF10 | GPIO_CRH_MODE10);', 'GPIOB->CRH &= (GPIO_CRH_CNF10 | GPIO_CRH_MODE10);'));
+  assert.ok(!D.same('GPIOA->CRH |= (GPIO_CRH_MODE9 | GPIO_CRH_CNF9_1);', 'GPIOA->CRH |= (GPIO_CRH_MODE9 | GPIO_CRH_CNF9_0);'));
+  assert.ok(!D.same('x = 1;', ''));
+});

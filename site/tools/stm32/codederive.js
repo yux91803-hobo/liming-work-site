@@ -127,5 +127,28 @@
     }
   };
 
-  W.STM32_CODEDERIVE = { METHOD: METHOD, CD: CD };
+  /* ---------- 「自己写」模式用：哪些行挡起来让人写、写的对不对 ---------- */
+  // 结构行（括号、空行、头文件保护、include、函数头、占位注释、while (1)）和特别长的行不挡，其余都挡
+  function blankable(c) {
+    var t = String(c || '').trim();
+    if (!t || /^[{}]\s*;?$/.test(t) || t === 'else' || t === 'while (1) {') return false;
+    if (t.length > 140) return false;   // 一行十几个宏的引脚配置（FSMC）照抄没意义，直接给出
+    if (/^#\s*(include|ifndef|endif)\b/.test(t) || /^#define __\w+_H$/.test(t) || /^\/\*.*\*\/$/.test(t)) return false;
+    if (!/;/.test(t) && !/^(if|for|while|else)\b/.test(t) && /^[\w\s\*]+\([^)]*\)$/.test(t)) return false;   // 函数头
+    return true;
+  }
+  // 比较时不管空格、结尾分号、十六进制大小写和 u 后缀；「a |= (X | Y)」这类只由宏名组成的或运算不管顺序和括号
+  function canon(s) {
+    s = String(s || '').replace(/\/\/.*$/, '').replace(/\s+/g, ' ').trim().replace(/ ?([^\w ]) ?/g, '$1').replace(/;+$/, '');   // 两个词之间留一个空格，符号两边的空格去掉
+    s = s.replace(/\b(0x[0-9a-f]+|\d+)u\b/gi, '$1').replace(/\b0x[0-9a-f]+\b/gi, function (h) { return h.toLowerCase(); });
+    var m = /^([\w\->\[\]\.]+)(\|=|&=|=)(.+)$/.exec(s);
+    if (m && /^[~()\w|]+$/.test(m[3]) && m[3].indexOf('|') >= 0) {
+      var neg = /^~/.test(m[3]), terms = m[3].replace(/^~/, '').replace(/[()]/g, '').split('|').filter(Boolean).sort();
+      if (terms.every(function (x) { return /^\w+$/.test(x); })) return m[1] + m[2] + (neg ? '~' : '') + terms.join('|');
+    }
+    return s;
+  }
+  function same(answer, input) { return canon(answer) === canon(input) && canon(input) !== ''; }
+
+  W.STM32_CODEDERIVE = { METHOD: METHOD, CD: CD, blankable: blankable, same: same, canon: canon };
 })();
