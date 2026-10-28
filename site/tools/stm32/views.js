@@ -47,7 +47,7 @@
     var cap = el('p', 'home-cap');
     chipCol.appendChild(chip.svg); chipCol.appendChild(cap);
     var ioCount = M.pins.filter(function (p) { return p.type === 'I'; }).length;
-    function idle() { chip.light(null); cap.textContent = '144 个引脚，其中 ' + ioCount + ' 个可作 I/O。指到下面的外设，看它用到哪些脚。'; }
+    function idle() { chip.light(null); cap.textContent = '144 脚 · ' + ioCount + ' 个 I/O'; }
     idle();
 
     var col = el('div', 'home-main');
@@ -58,14 +58,13 @@
       var d = el('div'); d.appendChild(el('dt', null, s[0])); d.appendChild(el('dd', null, s[1])); spec.appendChild(d);
     });
     head.appendChild(spec);
-    head.appendChild(el('p', 'home-lead', '按外设学：每个外设一页，用到的引脚、寄存器、代码、架构图和课件章节都放在一起。'));
     var fake = ui.btn('home-search'); fake.appendChild(ui.icon('search')); fake.appendChild(el('span', null, '搜引脚、寄存器、外设或课件章节'));
     fake.appendChild(el('kbd', null, '/')); fake.addEventListener('click', app.openSearch);
     head.appendChild(fake);
     col.appendChild(head);
 
     var path = el('section', 'path');
-    var ph = el('div', 'path-h'); ph.appendChild(h2('学习路径')); ph.appendChild(el('p', null, '顺序和课件一致，从系统时钟到 FSMC。')); path.appendChild(ph);
+    var ph = el('div', 'path-h'); ph.appendChild(h2('学习路径')); path.appendChild(ph);
     var ol = el('ol', 'path-list');
     M.topics.forEach(function (t) {
       var li = el('li'), a = app.link({ v: 'topic', t: t.id }, 'trow');
@@ -74,15 +73,10 @@
       var ic = el('span', 'trow-ic'); ic.appendChild(ui.icon(t.icon)); a.appendChild(ic);
       var tx = el('span', 'trow-tx');
       var tt = el('span', 'trow-t'); tt.appendChild(el('b', 'trow-code', t.code)); tt.appendChild(el('span', null, t.name.replace(t.code, '').trim() || t.name)); tx.appendChild(tt);
-      tx.appendChild(el('span', 'trow-s', t.summary));
       a.appendChild(tx);
-      var meta = el('span', 'trow-m');
-      if (t.chapters.length) { var c0 = t.chapters[0], pt = M.partById[c0.part]; meta.appendChild(el('span', null, pt.short + ' 第 ' + (c0.start + 1) + ' 页起')); }
-      meta.appendChild(el('span', null, t.regCount + ' 个寄存器'));
-      if (STM.think && STM.think.chapter(t.id)) { var tb = el('span', 'trow-think', '有思维训练'); meta.appendChild(tb); }
-      a.appendChild(meta);
+      if (STM.think && STM.think.chapter(t.id)) { var tb = el('span', 'trow-think'); tb.appendChild(ui.icon('idea')); tb.title = '有编程思维章节'; a.appendChild(tb); }
       var pins = t.pins.map(function (h) { return h.p.n; });
-      function on() { chip.light(pins, app.hue(t)); cap.textContent = t.code + (pins.length ? ' 用到 ' + pins.length + ' 个引脚' + (t.board ? '（开发板上接的）' : '') + '。' : ' 不直接占用引脚。'); }
+      function on() { chip.light(pins, app.hue(t)); cap.textContent = t.code + (pins.length ? ' · ' + pins.length + ' 个引脚' : ' · 不占引脚'); }
       a.addEventListener('mouseenter', on); a.addEventListener('focus', on);
       a.addEventListener('mouseleave', idle); a.addEventListener('blur', idle);
       li.appendChild(a); ol.appendChild(li);
@@ -92,14 +86,10 @@
 
     var more = el('section', 'more');
     more.appendChild(h2('资料'));
-    var pos = readPos();
-    [[{ v: 'think' }, 'idea', '编程思维', '从最根本的需求出发，把 GPIO、串口、I2C、定时器、ADC、SPI 一步步「发明」出来，推到每一行能运行的代码。'],
-     [{ v: 'chip' }, 'chip', '芯片引脚', '144 个脚逐个看：复用功能、重映射、开发板上接了什么。'],
-     [{ v: 'board' }, 'board', '开发板', M.board.length + ' 个板载资源和对应引脚，' + M.sch.length + ' 页原理图。'],
-     [{ v: 'course' }, 'book', '课件', M.course.map(function (p) { return p.short + ' ' + p.n + ' 页' + (pos[p.id] ? '，读到第 ' + pos[p.id] + ' 页' : ''); }).join('；') + '。']
+    [[{ v: 'think' }, 'idea', '编程思维'], [{ v: 'chip' }, 'chip', '芯片引脚'], [{ v: 'board' }, 'board', '开发板'], [{ v: 'course' }, 'book', '课件']
     ].forEach(function (x) {
       var a = app.link(x[0], 'mrow'); a.appendChild(ui.icon(x[1]));
-      var t = el('span'); t.appendChild(el('b', null, x[2])); t.appendChild(el('span', null, x[3])); a.appendChild(t);
+      var t = el('span'); t.appendChild(el('b', null, x[2])); a.appendChild(t);
       more.appendChild(a);
     });
     col.appendChild(more);
@@ -113,15 +103,15 @@
     var t = M.topicById[route.t], art = el('article', 'topic');
     art.style.setProperty('--h', app.hue(t));
     var head = el('header', 'th'), tx = el('div', 'th-tx');
-    tx.appendChild(el('p', 'th-step', '学习路径第 ' + t.order + ' 站，共 ' + M.topics.length + ' 站'));
+    tx.appendChild(el('p', 'th-step', t.order + ' / ' + M.topics.length));
     var h1 = el('h1', 'th-code', t.code); tx.appendChild(h1);
-    tx.appendChild(el('p', 'th-name', t.name));
+    tx.appendChild(el('p', 'th-name', t.name.replace(t.code, '').trim() || t.name));
     tx.appendChild(el('p', 'th-sum', t.summary));
     head.appendChild(tx);
     var mini = STM.chip.create({ labels: false }), mc = el('div', 'th-chip');
     mini.light(t.pins.map(function (h) { return h.p.n; }), app.hue(t));
     mc.appendChild(mini.svg);
-    mc.appendChild(el('span', null, t.pins.length ? t.pins.length + ' 个相关引脚' : '不直接占用引脚'));
+    mc.appendChild(el('span', null, t.pins.length ? t.pins.length + ' 个引脚' : '不占引脚'));
     head.appendChild(mc);
     art.appendChild(head);
 
@@ -131,8 +121,8 @@
       var nDone = isD ? d.done : d.filter(Boolean).length, nAll = isD ? d.total : 4;
       var en = app.link({ v: 'think', t: t.id }, 'thinkin');
       en.appendChild(ui.icon('idea'));
-      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, isD ? '编程思维：从零推导到代码' : '编程思维：从需求自己想出代码'));
-      et.appendChild(el('span', null, (isD ? ch.task : ch.goal) + (nDone ? '　已完成 ' + nDone + ' / ' + nAll + (isD ? ' 个问题' : ' 步') : ''))); en.appendChild(et);
+      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, '编程思维'));
+      if (nDone) et.appendChild(el('span', null, nDone + ' / ' + nAll)); en.appendChild(et);
       en.appendChild(el('span', 'thinkin-go', nDone === nAll ? '复习' : nDone ? '继续' : '开始'));
       art.appendChild(en);
     }
@@ -164,7 +154,6 @@
     // 引脚
     if (t.pins.length) {
       var s3 = sec('pins', '引脚'), LIMIT = 18;
-      s3.appendChild(el('p', 'sec-note', t.board ? '开发板上接到这些脚，点一个看它的全部功能。' : '能作 ' + t.code + ' 用的脚（含重映射）；板上已经接了东西的排在前面。'));
       var grid = el('div', 'pgrid');
       t.pins.forEach(function (h, k) {
         var p = h.p, a = app.link({ v: 'chip', pin: String(p.n) }, 'ptile' + (k >= LIMIT ? ' extra' : ''));
@@ -185,7 +174,6 @@
     // 寄存器
     if (t.regCount) {
       var s4 = sec('regs', '寄存器');
-      s4.appendChild(el('p', 'sec-note', '点一个寄存器打开计算器：逐位改值，直接得到 C 代码。'));
       t.regGroups.forEach(function (x) {
         var gb = el('div', 'rgroup'), gh = el('div', 'rgroup-h');
         gh.appendChild(el('b', null, x.g.name)); gh.appendChild(el('span', null, x.g.title));
@@ -211,7 +199,6 @@
     var snipEls = {};
     if (t.snips.length) {
       var s5 = sec('code', '代码');
-      s5.appendChild(el('p', 'sec-note', 'HAL 写法，按片段开头的注释在 CubeMX 里配好外设和引脚，再把代码合进生成的工程。'));
       t.snips.forEach(function (s) {
         var card = el('div', 'snip'); card.id = 'snip-' + s.i;
         var hh = el('div', 'snip-h'); hh.appendChild(el('h3', null, s.title)); card.appendChild(hh);
@@ -233,7 +220,6 @@
     // 图
     if (t.figs.length) {
       var s6 = sec('figs', '架构图');
-      s6.appendChild(el('p', 'sec-note', '手册里的框图和课件里的教学图，点开可以放大。'));
       s6.appendChild(figGrid(t.figs, app));
       parts.push([s6, '图']);
     }
@@ -315,7 +301,6 @@
   function chipView(root, route, app) {
     var wrap = el('div', 'chipv');
     var head = el('header', 'pg-h'); head.appendChild(el('h1', null, '芯片引脚'));
-    head.appendChild(el('p', null, 'LQFP144 封装，1 脚在左上角，逆时针编号。点一个脚，或者在下面按名字、功能筛选。'));
     wrap.appendChild(head);
     var fl = el('label', 'filter'); fl.appendChild(ui.icon('search'));
     var fin = el('input'); fin.type = 'search'; fin.placeholder = 'PA9、USART1、TIM2_CH1、LED…'; fin.setAttribute('aria-label', '筛选引脚');
@@ -327,8 +312,7 @@
     var stage = el('div', 'chipv-stage zoom-view'), content = el('div', 'zoom-content');
     var chip = STM.chip.create({ labels: true, interactive: true, onPick: function (n) { app.update({ pin: String(n) }); } });
     content.appendChild(chip.svg); stage.appendChild(content);
-    var zoomHint = el('p', 'chipv-hint', '双击或双指放大；按 Tab 进入引脚后可用方向键逐脚移动。');
-    var left = el('div', 'chipv-l'); left.appendChild(stage); left.appendChild(zoomHint);
+    var left = el('div', 'chipv-l'); left.appendChild(stage);
     var legend = el('div', 'legend');
     [['t-I', 'I/O'], ['t-P', '电源'], ['t-G', '地'], ['t-S', '系统'], ['used', '开发板上已接']].forEach(function (x) { var s = el('span', 'lg ' + x[0]); s.appendChild(el('i')); s.appendChild(el('span', null, x[1])); legend.appendChild(s); });
     left.appendChild(legend);
@@ -360,7 +344,6 @@
       var p = M.pinByN[n];
       if (!p) {
         detail.appendChild(el('h2', 'pd-empty-h', '选一个引脚'));
-        detail.appendChild(el('p', 'sec-note', '这里会列出它的主功能、全部复用功能、重映射条件，以及开发板上接了什么。'));
         var quick = el('div', 'pd-quick');
         ['PA9', 'PA0', 'PB10', 'PC13', 'PA13'].forEach(function (nm) { var q = M.pinByName[nm]; if (!q) return; var b = ui.btn('chipbtn', nm); b.addEventListener('click', function () { app.update({ pin: String(q.n) }); }); quick.appendChild(b); });
         detail.appendChild(quick);
@@ -405,7 +388,7 @@
         var rr = el('div', 'pd-row'); rr.appendChild(rb); detail.appendChild(rr);
       }
     }
-    var lastPin = null, lastQ = null;
+    var lastPin, lastQ = null;
     function apply(r) {
       var q = r.q || '';
       if (q !== lastQ) {
@@ -431,7 +414,6 @@
   function boardView(root, route, app) {
     var wrap = el('div', 'boardv');
     var head = el('header', 'pg-h'); head.appendChild(el('h1', null, '开发板'));
-    head.appendChild(el('p', null, (M.boardInfo.board || '尚硅谷 STM32F103ZET6 开发板') + '：板上每个资源接在哪个脚、高电平还是低电平有效。'));
     wrap.appendChild(head);
     if (M.photo) {
       var ph = ui.btn('photo'); ph.appendChild(thumb(M.photo)); ph.appendChild(el('span', null, '实物图，点开放大'));
@@ -476,7 +458,6 @@
   function courseView(root, route, app) {
     var wrap = el('div', 'coursev');
     var head = el('header', 'pg-h'); head.appendChild(el('h1', null, '课件'));
-    head.appendChild(el('p', null, '尚硅谷 STM32 课件，上下两册。章节右边是它所属的外设；标了勘误的章节，翻到那页时会提示具体问题。'));
     wrap.appendChild(head);
     var conts = [];
     // 「接着读」按钮：读过的页记在本机；从查看器回来时刷新

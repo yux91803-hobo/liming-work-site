@@ -422,6 +422,7 @@
         s.appendChild(sv('path', { d: 'M' + x + ' ' + (ay - 3) + 'V' + (ay + 3), 'class': 'w-brk' }));
         s.appendChild(sv('text', { x: x, y: ay + 12, 'class': 'w-gapt', 'text-anchor': k === 0 ? 'start' : k === 4 ? 'end' : 'middle' }, McuSim.fmtT(t)));
       }
+      if (v.fit) { s.setAttribute('width', '100%'); s.removeAttribute('height'); }
       var box = el('div', 'dv-wavebox'); box.appendChild(s); box.tabIndex = 0; box.setAttribute('aria-label', '波形（可以左右滚动）');
       return box;
     }
@@ -457,7 +458,7 @@
       views.forEach(function (v) {
         if (!v.pins || !v.pins.length) return;
         if (v.label) box.appendChild(el('p', 'dv-wlab', v.label));
-        box.appendChild(mcuWave(res, opt.compact ? Object.assign({ w: 260 }, v) : v));
+        box.appendChild(mcuWave(res, opt.compact ? Object.assign({ w: 260, fit: true }, v) : v));
       });
       var logs = res.log;
       if (logs.length) {
@@ -894,9 +895,10 @@
       var crumb = app.link({ v: 'think' }, 'tk-crumb'); crumb.textContent = '编程思维'; head.appendChild(crumb);
       head.appendChild(el('h1', null, ch.title));
       var task = el('div', 'dv-task'); task.appendChild(ui.icon('flag'));
-      var tt = el('div'); tt.appendChild(el('span', 'dv-task-l', '最后要完成的任务')); tt.appendChild(el('b', null, ch.task)); task.appendChild(tt); head.appendChild(task);
-      paras(ch.intro, head, 'dv-intro');
-      head.appendChild(el('p', 'dv-honest', ch.honesty));
+      var tt = el('div'); tt.appendChild(el('span', 'dv-task-l', '任务')); tt.appendChild(el('b', null, ch.task)); task.appendChild(tt); head.appendChild(task);
+      paras(ch.intro.slice(0, 1), head, 'dv-intro');
+      var hon = el('details', 'dv-honest'); hon.appendChild(el('summary', null, '思路重建，不是真实历史'));
+      hon.appendChild(el('p', null, ch.honesty.replace(/^说明：/, ''))); head.appendChild(hon);
       wrap.appendChild(head);
 
       wrap.appendChild(modeSwitch(function () { ui.clear(wrap); renderHome(); }));
@@ -911,16 +913,15 @@
       if (groups.length) {
         var rv = app.link({ v: 'think', t: ch.id, s: 'review' }, 'dv-revin');
         rv.appendChild(ui.icon('retry'));
-        var rt = el('span'); rt.appendChild(el('b', null, '常卡的地方：' + groups.length + ' 处')); rt.appendChild(el('span', null, due ? '今天该复习 ' + due + ' 题' : '都复习过了，过几天再来'));
+        var rt = el('span'); rt.appendChild(el('b', null, '常卡的地方：' + groups.length + ' 处')); if (due) rt.appendChild(el('span', null, '待复习 ' + due));
         rv.appendChild(rt); wrap.appendChild(rv);
       }
 
       // 推导链
-      var map = el('section', 'dv-map'); map.appendChild(el('h2', 'sec-h', '推导链：每个问题都是上一个问题逼出来的'));
-      map.appendChild(el('p', 'sec-note', m === 'self' ? '自主推导模式：结论在你推出来之前不显示。' : '每一环下面那句是它的结论；点开就从这一环开始推。'));
+      var map = el('section', 'dv-map'); map.appendChild(el('h2', 'sec-h', '推导链'));
       ch.stages.forEach(function (sg) {
         var sec = el('div', 'dv-stage');
-        var sh = el('div', 'dv-stage-h'); sh.appendChild(el('b', null, sg.id)); var stt = el('span'); stt.appendChild(el('span', 'dv-stage-n', sg.name)); stt.appendChild(el('span', 'dv-stage-d', sg.desc)); sh.appendChild(stt);
+        var sh = el('div', 'dv-stage-h'); sh.appendChild(el('b', null, sg.id)); var stt = el('span'); stt.appendChild(el('span', 'dv-stage-n', sg.name)); sh.appendChild(stt);
         sec.appendChild(sh);
         var ol = el('ol', 'dv-chain');
         ch.steps.filter(function (s) { return s.stage === sg.id; }).forEach(function (s) {
@@ -928,8 +929,6 @@
           var a = app.link({ v: 'think', t: ch.id, s: s.id }, 'dv-node-a');
           a.appendChild(el('span', 'dv-node-n', s._i + 1));
           var tx = el('span', 'dv-node-t'); tx.appendChild(el('b', null, s.q));
-          var showGist = m === 'full' || (st.done && st.done[s.id]);
-          if (showGist) tx.appendChild(rich(s.gist, 'span', 'dv-node-g'));
           if (s.from && S[s.from] && S[s.from]._i !== s._i - 1) tx.appendChild(el('span', 'dv-node-f', '← 接着问题 ' + stepNo(s.from)));
           a.appendChild(tx); li.appendChild(a); ol.appendChild(li);
         });
@@ -939,13 +938,12 @@
 
       // 主干结论
       var fx = el('section', 'dv-facts'); fx.appendChild(el('h2', 'sec-h', '主干结论'));
-      fx.appendChild(el('p', 'sec-note', '这几条是从推导里得出来的，后面的规则和每一行代码都追溯到它们。'));
       var ul = el('ul', 'dv-factl');
       Object.keys(ch.facts).forEach(function (k) {
         var f = ch.facts[k], got = m === 'full' || (st.done && st.done[f.from]);
         var li = el('li', got ? null : 'locked'); li.appendChild(el('span', 'dv-fact-k', k));
-        var t = el('div'); t.appendChild(el('b', null, got ? f.t : '推到问题 ' + stepNo(f.from) + ' 时得出'));
-        var a = app.link({ v: 'think', t: ch.id, s: f.from }, 'dv-sl'); a.textContent = '出自问题 ' + stepNo(f.from); t.appendChild(a);
+        var t = el('div'); t.appendChild(el('b', null, got ? f.t : '还没推到'));
+        var a = app.link({ v: 'think', t: ch.id, s: f.from }, 'dv-sl'); a.textContent = '问题 ' + stepNo(f.from); t.appendChild(a);
         li.appendChild(t); ul.appendChild(li);
       });
       fx.appendChild(ul); wrap.appendChild(fx);
@@ -961,8 +959,7 @@
     }
     function modeSwitch(onChange) {
       var m = mode(), box = el('div', 'dv-mode'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', '学习方式');
-      [['full', '完整推导', '像听一位工程师边想边讲：推理连续展开，「先想一想」可以答也可以跳过。'],
-       ['self', '自主推导', '每到一个问题就停下来，你先答；答错会指出是哪一步想错了，并给反例。一次只问一个小问题。']].forEach(function (x) {
+      [['full', '完整推导', '连着看'], ['self', '自主推导', '先自己答']].forEach(function (x) {
         var b = ui.btn('dv-modeb' + (m === x[0] ? ' on' : '')); b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', m === x[0] ? 'true' : 'false');
         b.appendChild(el('b', null, x[1])); b.appendChild(el('span', null, x[2]));
         b.addEventListener('click', function () { if (mode() === x[0]) return; setMode(x[0]); onChange(); });
