@@ -61,5 +61,7 @@ test('every topic id defined in topics.js survives the route whitelist', () => {
 
 test('外设页分页 sec 只认五种，和旧版 tab 参数不冲突', () => {
   assert.deepEqual(core.fromParams('v=topic&t=gpio&sec=code'), { v: 'topic', t: 'gpio', sec: 'code' });
+  assert.deepEqual(core.fromParams('v=topic&t=spi&cv=cd'), { v: 'topic', t: 'spi', sec: 'code', cv: 'cd' });
+  assert.deepEqual(core.fromParams('v=topic&t=spi&sec=code&cv=xx'), { v: 'topic', t: 'spi', sec: 'code' });
   assert.deepEqual(core.fromParams('v=topic&t=gpio&sec=evil'), { v: 'topic', t: 'gpio' });
 });

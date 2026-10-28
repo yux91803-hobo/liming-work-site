@@ -1,4 +1,4 @@
-/* thinkview.js — 「编程思维」总览页；每一章（推导链）的界面在 deriveview.js
+/* thinkview.js — 「设计原理」总览页；每一章（推导链）的界面在 deriveview.js
    路由：v=think（总览）；v=think&t=gpio（某一章）→ 交给 STM.derive.view */
 (function () {
   'use strict';
@@ -13,14 +13,9 @@
 
   function view(root, route, app) {
     if (route.t && STM.derive && STM.derive.has(route.t)) return STM.derive.view(root, route, app);
-    if (route.t && STM.codederive && STM.codederive.has(route.t)) {   // 没有推导链的外设：进来就是代码推导
-      var t0 = M.topicById[route.t], w0 = el('div', 'derive'); root.appendChild(w0);
-      STM.codederive.render(w0, route.t, app, { crumb: { v: 'topic', t: route.t }, crumbText: t0.code + ' · Code reasoning' });
-      return { title: function () { return t0.code + ' 代码推导'; } };
-    }
     var wrap = el('div', 'think'); root.appendChild(wrap);
     var head = el('header', 'pg-h tk-hero');
-    head.appendChild(el('h1', null, 'Code reasoning'));
+    head.appendChild(el('h1', null, '设计原理'));
     wrap.appendChild(head);
 
     var ol = el('ol', 'tk-flow');
@@ -39,16 +34,9 @@
       var bar = el('div', 'tk-dots'); for (var k = 0; k < 10; k++) bar.appendChild(el('span', k < Math.round(pg.done / pg.total * 10) ? 'on' : null)); a.appendChild(bar);
       grid.appendChild(a);
     });
-    // 没有推导链的外设：卡片直接进代码推导
-    M.topics.forEach(function (t) {
-      if ((STM.derive && STM.derive.has(t.id)) || !(STM.codederive && STM.codederive.has(t.id))) return;
-      var a = app.link({ v: 'think', t: t.id }, 'tk-ch tk-ch-d'); a.style.setProperty('--h', app.hue(t));
-      var top = el('div', 'tk-ch-h'); top.appendChild(el('b', 'mono', t.code)); top.appendChild(el('span', null, '代码推导')); a.appendChild(top);
-      grid.appendChild(a);
-    });
     list.appendChild(grid);
     wrap.appendChild(list);
-    return { title: function () { return 'Code reasoning'; } };
+    return { title: function () { return '设计原理'; } };
   }
 
   STM.views.think = view;
