@@ -291,6 +291,12 @@ async def main():
             await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)
             if await pg.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"): overflow.append(qs)
         check('手机：%d 个页面没有横向溢出' % len(pages), not overflow, overflow)
+        clipped = []
+        for qs in ['?v=topic&t=' + c + '&sec=code' for c in CHAPS + ['rcc', 'exti', 'dma', 'fsmc']] + ['?v=think&t=' + c + '&s=code' for c in CHAPS] + ['?v=think&t=' + c for c in ['sys', 'exti', 'dma', 'fsmc']]:
+            await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)
+            n = await pg.evaluate("Array.from(document.querySelectorAll('.rc-c, .rc-cm, .rc-sig')).filter(c => c.getClientRects().length && (c.scrollWidth > c.clientWidth + 1 || c.closest('.rc-code').scrollWidth > c.closest('.rc-code').clientWidth + 1)).length")
+            if n: clipped.append((qs, n))
+        check('手机：代码长行折行，没有被截掉的行', not clipped, clipped)
         await pg.context.close()
 
         # ---------- 11. 编程思维 · I2C 推导链：自主推导模式把 22 环的每一道题都答一遍 ----------

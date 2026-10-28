@@ -92,6 +92,7 @@
   function lineEl(l, prog, app, indent) {
     var row = el('div', 'rc-l' + (l.why ? ' has' : '')), ind = indent + indentOf(l.c);
     var b = el(l.why ? 'button' : 'div', 'rc-lb'); if (l.why) { b.type = 'button'; b.setAttribute('aria-expanded', 'false'); }
+    b.style.setProperty('--i', ind.length);
     if (l.cm) { var cm = el('span', 'rc-cm'); cm.textContent = ind + '// ' + l.cm; b.appendChild(cm); }
     var code = el('code', 'rc-c'); code.appendChild(document.createTextNode(indent)); code.appendChild(ui.hlC(l.c)); b.appendChild(code);
     row.appendChild(b);
@@ -151,6 +152,7 @@
   function lineRow(l) {
     var row = el('div', 'rc-l' + (l.why ? ' has' : '')), b = el(l.why ? 'button' : 'div', 'rc-lb');
     if (l.why) { b.type = 'button'; b.setAttribute('aria-expanded', 'false'); }
+    b.style.setProperty('--i', indentOf(l.c).length);
     if (l.cm) { var cm = el('span', 'rc-cm'); cm.textContent = indentOf(l.c) + '// ' + l.cm; b.appendChild(cm); }
     var code = el('code', 'rc-c'); if (l.c) code.appendChild(ui.hlC(l.c)); else code.textContent = ' '; b.appendChild(code);
     row.appendChild(b);

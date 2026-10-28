@@ -1309,12 +1309,11 @@ button.rc-lb:hover { background: var(--sunk); }
 .dv-codein > svg.ic:first-child { color: var(--h); }
 .dv-codein span { flex: 1; display: flex; flex-direction: column; }
 .dv-codein span span { font-size: 12.5px; color: var(--ink-3); }
-/* 手机：整段代码一起左右滑（缩进保持对齐），展开的理由固定在可视区里 */
+/* 手机：长行折行，续行缩进到代码下面，不用左右滑 */
 @media (max-width: 759px) {
-  .rc-code { overflow-x: auto; overscroll-behavior-x: contain; }
-  .rc-fn { width: max-content; min-width: 100%; }
-  .rc-lb, .rc-sig { overflow-x: visible; padding-left: 10px; padding-right: 14px; }
-  .rc-why { position: sticky; left: 8px; box-sizing: border-box; width: calc(100vw - 2 * var(--pad) - 18px); margin: 0 0 8px 8px; }
+  .rc-lb, .rc-sig { padding-left: 10px; padding-right: 10px; overflow-x: visible; }
+  .rc-cm, .rc-c, .rc-sig { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .rc-cm, .rc-c { padding-left: calc((var(--i, 0) + 4) * 1ch); text-indent: calc((var(--i, 0) + 4) * -1ch); }
 }
 .topic.tabbed > .sec > .sec-h { display: none; }
 .topic.tabbed > .sec { margin-top: 18px; }
