@@ -354,7 +354,7 @@
       var links = el('div', 'qlinks');
       if (q.snippet && M.snipBy(q.snippet.cat, q.snippet.title)) { var sb = ui.btn('linkbtn', '代码：' + q.snippet.title); sb.addEventListener('click', function () { app.navigate({ v: 'topic', snip: String(q.snippet.title) }); }); links.appendChild(sb); }
       if (q.teach && M.figById[q.teach]) { var tb = ui.btn('linkbtn', '教学图：' + M.figById[q.teach].title); tb.addEventListener('click', function () { app.navigate({ fig: String(q.teach) }); }); links.appendChild(tb); }
-      if (q.port && q.pin != null && /^GPIO[A-G]$/.test(q.port)) { var pn = M.pinByName['P' + q.port.charAt(4) + q.pin]; if (pn) { var pb = ui.btn('linkbtn', '引脚：' + pn.name); pb.addEventListener('click', function () { app.navigate({ v: 'chip', pin: String(pn.n) }); }); links.appendChild(pb); } }
+      if (q.port && q.pin != null && /^GPIO[A-G]$/.test(q.port)) { var pn = M.pinByName['P' + q.port.charAt(4) + q.pin]; if (pn) { var pb = ui.btn('linkbtn', '引脚：' + pn.name); pb.addEventListener('click', function () { app.navigate({ v: 'home', pin: String(pn.n) }); }); links.appendChild(pb); } }
       if (links.firstChild) d.appendChild(links);
       if (d.firstChild) box.appendChild(d);
     }
@@ -430,7 +430,7 @@
     if (pg.cn != null) bits.push('中文手册第 ' + pg.cn + ' 页');
     if (!bits.length && pg.pm) bits.push('PM0056 第 ' + pg.pm + ' 节');
     if (bits.length) { var p = el('p', 'sh-pg'); p.appendChild(ui.icon('book')); p.appendChild(el('span', null, '手册：' + bits.join('，') + (pg.adv ? '（高级定时器章节）' : ''))); box.appendChild(p); }
-    (Array.isArray(r.cw) ? r.cw : []).forEach(function (w) {
+    [].forEach(function (w) {   // 课件页码已不再显示
       var pt = w && M.partById[w.part]; if (!pt || !Array.isArray(w.pages)) return;
       var ok = w.pages.filter(function (n) { return n >= 1 && n <= pt.n; }); if (!ok.length) return;
       var row = el('div', 'cwrow'); row.appendChild(el('span', null, '课件' + pt.short));

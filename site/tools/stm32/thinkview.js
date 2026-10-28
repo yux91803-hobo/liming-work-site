@@ -15,7 +15,7 @@
     if (route.t && STM.derive && STM.derive.has(route.t)) return STM.derive.view(root, route, app);
     var wrap = el('div', 'think'); root.appendChild(wrap);
     var head = el('header', 'pg-h tk-hero');
-    head.appendChild(el('h1', null, '编程思维'));
+    head.appendChild(el('h1', null, 'Code'));
     wrap.appendChild(head);
 
     var ol = el('ol', 'tk-flow');
@@ -30,14 +30,13 @@
       var top = el('div', 'tk-ch-h'); top.appendChild(el('b', 'mono', t.code));
       top.appendChild(el('span', null, pg.done ? (pg.done === pg.total ? '推完了' : pg.done + ' / ' + pg.total) : pg.total + ' 问'));
       a.appendChild(top);
-      a.appendChild(el('h3', null, ch.title.replace(/^[^：]+：/, '')));
       if (pg.due) a.appendChild(el('span', 'tk-due', '待复习 ' + pg.due));
       var bar = el('div', 'tk-dots'); for (var k = 0; k < 10; k++) bar.appendChild(el('span', k < Math.round(pg.done / pg.total * 10) ? 'on' : null)); a.appendChild(bar);
       grid.appendChild(a);
     });
     list.appendChild(grid);
     wrap.appendChild(list);
-    return { title: function () { return '编程思维'; } };
+    return { title: function () { return 'Code'; } };
   }
 
   STM.views.think = view;

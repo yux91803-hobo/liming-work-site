@@ -109,7 +109,7 @@
 
   /* ---------- 布局：侧栏（宽屏）/ 顶栏（窄屏） ---------- */
   var side = document.getElementById('side'), bar = document.getElementById('bar'), main = document.getElementById('main');
-  var NAV = [['home', '学习地图', 'map'], ['think', '编程思维', 'idea'], ['chip', '芯片引脚', 'chip'], ['board', '开发板', 'board'], ['course', '课件', 'book']];
+  var NAV = [['home', '首页', 'chip'], ['think', 'Code', 'code'], ['board', '开发板', 'board']];
   function hue(t) { return t ? t.hue[html.getAttribute('data-theme') === 'dark' ? 1 : 0] : ''; }
   function link(route, cls, label) {
     var a = el('a', cls); a.href = urlOf(resolve(route));
@@ -132,13 +132,28 @@
     var tl = el('nav', 'side-topics'); tl.setAttribute('aria-label', '外设');
     M.topics.forEach(function (t) {
       var a = link({ v: 'topic', t: t.id }, 'nav-t'); a.dataset.t = t.id; a.style.setProperty('--h', hue(t));
-      a.appendChild(el('span', 'nav-n', t.order)); a.appendChild(el('span', 'nav-code', t.code)); a.appendChild(el('span', 'nav-name', t.name.replace(t.code, '').trim() || t.name));
+      a.appendChild(el('span', 'nav-code', t.code));
       tl.appendChild(a);
     });
     side.appendChild(tl);
   }
+  /* 手机：侧栏做成从左边滑出的抽屉 */
+  var scrim = el('div', 'scrim'), menuBtn;
+  function drawer(open) {
+    var on = open == null ? !html.classList.contains('drawer') : !!open;
+    if (on === html.classList.contains('drawer')) return;
+    html.classList.toggle('drawer', on);
+    if (menuBtn) menuBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    if (on) { var f = side.querySelector('.nav-i.on, .nav-t.on') || side.querySelector('a'); if (f) try { f.focus({ preventScroll: true }); } catch (e) {} }
+    else if (menuBtn && side.contains(document.activeElement)) try { menuBtn.focus({ preventScroll: true }); } catch (e) {}
+  }
+  scrim.addEventListener('click', function () { drawer(false); });
   var barBack, barTitle;
   function buildBar() {
+    menuBtn = ui.btn('bar-btn bar-menu', null, '目录'); menuBtn.appendChild(ui.icon('menu'));
+    menuBtn.setAttribute('aria-expanded', 'false'); menuBtn.setAttribute('aria-controls', 'side');
+    menuBtn.addEventListener('click', function () { drawer(); });
+    bar.appendChild(menuBtn);
     barBack = ui.btn('bar-btn bar-back', null, '返回'); barBack.appendChild(ui.icon('back'));
     barBack.addEventListener('click', back);
     barTitle = el('div', 'bar-title');
@@ -160,6 +175,7 @@
   function keyOf(r) { return r.v + '|' + (r.t || ''); }
   function render(o) {
     o = o || {};
+    drawer(false);
     var r = cur(), k = keyOf(r), fresh = k !== viewKey;
     if (fresh) {
       if (view && view.destroy) view.destroy();
@@ -179,12 +195,12 @@
   }
 
   /* ---------- 全局搜索 ---------- */
-  var KINDS = [['topic', '外设'], ['reg', '寄存器'], ['pin', '引脚'], ['code', '代码'], ['course', '课件'], ['fig', '架构图'], ['board', '开发板'], ['sch', '原理图']];
+  var KINDS = [['topic', '外设'], ['reg', '寄存器'], ['pin', '引脚'], ['code', '代码'], ['fig', '架构图'], ['board', '开发板'], ['sch', '原理图']];
   var search = (function () {
     var box = el('div', 'search'), panel = el('div', 'search-p'), row = el('div', 'search-row'), input = el('input', 'search-in'), list = el('div', 'search-list');
     var hint = el('p', 'search-hint');
     box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', '搜索');
-    input.type = 'text'; input.placeholder = '引脚、寄存器、外设、课件章节…'; input.setAttribute('aria-label', '搜索');
+    input.type = 'text'; input.placeholder = '引脚、寄存器、外设、模块…'; input.setAttribute('aria-label', '搜索');
     input.setAttribute('autocomplete', 'off'); input.setAttribute('autocapitalize', 'characters'); input.setAttribute('spellcheck', 'false'); input.setAttribute('enterkeyhint', 'search');
     list.id = 'search-list'; list.setAttribute('role', 'listbox'); input.setAttribute('aria-controls', list.id);
     row.appendChild(ui.icon('search')); row.appendChild(input);
@@ -257,6 +273,7 @@
     if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); search.open(); return; }
     if (e.key === '/' && !typing(e.target) && !e.metaKey && !e.ctrlKey) { e.preventDefault(); search.open(); return; }
     if (e.key === 'Escape' && !e.defaultPrevented && !e.isComposing) {
+      if (html.classList.contains('drawer')) { e.preventDefault(); drawer(false); return; }
       if (typing(e.target) && e.target.value) return;   // 输入框里先清空自己的内容
       e.preventDefault(); back();
     }
@@ -265,7 +282,7 @@
   /* ---------- 启动 ---------- */
   var api = { navigate: navigate, update: update, back: back, link: link, route: cur, hue: hue, urlOf: urlOf, embedded: embedded, openSearch: function () { search.open(); } };
   STM.app = api;
-  buildSide(); buildBar();
+  buildSide(); buildBar(); document.getElementById('app').appendChild(scrim);
   STM.regview.init(api); STM.viewer.init(api);
   var first = resolve(core.fromParams(location.search));
   stack = [{ v: 'home' }]; scrolls = [0]; idx = 0;

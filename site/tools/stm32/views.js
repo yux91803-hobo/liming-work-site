@@ -1,4 +1,4 @@
-/* views.js — 五个基础视图：学习地图 / 外设主题 / 芯片引脚 / 开发板 / 课件
+/* views.js — 基础视图：首页（芯片 + 板载模块）/ 外设主题 / 开发板
    每个视图 = function (root, route, app) → { title(route), update(route), destroy() } */
 (function () {
   'use strict';
@@ -40,78 +40,16 @@
     return grid;
   }
 
-  /* ====================== 学习地图 ====================== */
-  function home(root, route, app) {
-    var wrap = el('div', 'home');
-    var chipCol = el('div', 'home-chip'), chip = STM.chip.create({ labels: false });
-    var cap = el('p', 'home-cap');
-    chipCol.appendChild(chip.svg); chipCol.appendChild(cap);
-    var ioCount = M.pins.filter(function (p) { return p.type === 'I'; }).length;
-    function idle() { chip.light(null); cap.textContent = '144 脚 · ' + ioCount + ' 个 I/O'; }
-    idle();
-
-    var col = el('div', 'home-main');
-    var head = el('header', 'home-h');
-    head.appendChild(el('h1', 'home-t', 'STM32F103ZET6'));
-    var spec = el('dl', 'spec');
-    [['内核', 'Cortex-M3'], ['主频', '72 MHz'], ['Flash', '512 KB'], ['SRAM', '64 KB'], ['封装', 'LQFP144']].forEach(function (s) {
-      var d = el('div'); d.appendChild(el('dt', null, s[0])); d.appendChild(el('dd', null, s[1])); spec.appendChild(d);
-    });
-    head.appendChild(spec);
-    var fake = ui.btn('home-search'); fake.appendChild(ui.icon('search')); fake.appendChild(el('span', null, '搜引脚、寄存器、外设或课件章节'));
-    fake.appendChild(el('kbd', null, '/')); fake.addEventListener('click', app.openSearch);
-    head.appendChild(fake);
-    col.appendChild(head);
-
-    var path = el('section', 'path');
-    var ph = el('div', 'path-h'); ph.appendChild(h2('学习路径')); path.appendChild(ph);
-    var ol = el('ol', 'path-list');
-    M.topics.forEach(function (t) {
-      var li = el('li'), a = app.link({ v: 'topic', t: t.id }, 'trow');
-      a.style.setProperty('--h', app.hue(t));
-      a.appendChild(el('span', 'trow-n', t.order));
-      var ic = el('span', 'trow-ic'); ic.appendChild(ui.icon(t.icon)); a.appendChild(ic);
-      var tx = el('span', 'trow-tx');
-      var tt = el('span', 'trow-t'); tt.appendChild(el('b', 'trow-code', t.code)); tt.appendChild(el('span', null, t.name.replace(t.code, '').trim() || t.name)); tx.appendChild(tt);
-      a.appendChild(tx);
-      if (STM.think && STM.think.chapter(t.id)) { var tb = el('span', 'trow-think'); tb.appendChild(ui.icon('idea')); tb.title = '有编程思维章节'; a.appendChild(tb); }
-      var pins = t.pins.map(function (h) { return h.p.n; });
-      function on() { chip.light(pins, app.hue(t)); cap.textContent = t.code + (pins.length ? ' · ' + pins.length + ' 个引脚' : ' · 不占引脚'); }
-      a.addEventListener('mouseenter', on); a.addEventListener('focus', on);
-      a.addEventListener('mouseleave', idle); a.addEventListener('blur', idle);
-      li.appendChild(a); ol.appendChild(li);
-    });
-    path.appendChild(ol);
-    col.appendChild(path);
-
-    var more = el('section', 'more');
-    more.appendChild(h2('资料'));
-    [[{ v: 'think' }, 'idea', '编程思维'], [{ v: 'chip' }, 'chip', '芯片引脚'], [{ v: 'board' }, 'board', '开发板'], [{ v: 'course' }, 'book', '课件']
-    ].forEach(function (x) {
-      var a = app.link(x[0], 'mrow'); a.appendChild(ui.icon(x[1]));
-      var t = el('span'); t.appendChild(el('b', null, x[2])); a.appendChild(t);
-      more.appendChild(a);
-    });
-    col.appendChild(more);
-    wrap.appendChild(chipCol); wrap.appendChild(col);
-    root.appendChild(wrap);
-    return { title: function () { return 'STM32 学习台'; } };
-  }
-
   /* ====================== 外设主题 ====================== */
   function topic(root, route, app) {
     var t = M.topicById[route.t], art = el('article', 'topic');
     art.style.setProperty('--h', app.hue(t));
     var head = el('header', 'th'), tx = el('div', 'th-tx');
-    tx.appendChild(el('p', 'th-step', t.order + ' / ' + M.topics.length));
     var h1 = el('h1', 'th-code', t.code); tx.appendChild(h1);
-    tx.appendChild(el('p', 'th-name', t.name.replace(t.code, '').trim() || t.name));
-    tx.appendChild(el('p', 'th-sum', t.summary));
     head.appendChild(tx);
     var mini = STM.chip.create({ labels: false }), mc = el('div', 'th-chip');
     mini.light(t.pins.map(function (h) { return h.p.n; }), app.hue(t));
     mc.appendChild(mini.svg);
-    mc.appendChild(el('span', null, t.pins.length ? t.pins.length + ' 个引脚' : '不占引脚'));
     head.appendChild(mc);
     art.appendChild(head);
 
@@ -121,7 +59,7 @@
       var nDone = isD ? d.done : d.filter(Boolean).length, nAll = isD ? d.total : 4;
       var en = app.link({ v: 'think', t: t.id }, 'thinkin');
       en.appendChild(ui.icon('idea'));
-      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, '编程思维'));
+      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, 'Code'));
       if (nDone) et.appendChild(el('span', null, nDone + ' / ' + nAll)); en.appendChild(et);
       en.appendChild(el('span', 'thinkin-go', nDone === nAll ? '复习' : nDone ? '继续' : '开始'));
       art.appendChild(en);
@@ -135,28 +73,13 @@
     t.points.forEach(function (p) { ul.appendChild(el('li', null, p)); });
     s1.appendChild(ul); parts.push([s1, '要点']);
 
-    // 课件
-    if (t.chapters.length) {
-      var s2 = sec('course', '课件章节'), cl = el('div', 'chaps');
-      t.chapters.forEach(function (ch) {
-        [ch].concat(ch.kids).forEach(function (x) {
-          var pt = M.partById[x.part], b = ui.btn('chap lv' + x.level);
-          var tt = el('span', 'chap-t', x.title); b.appendChild(tt);
-          b.appendChild(el('span', 'chap-p', pt.short + ' ' + pagesText(x)));
-          var er = erBadge(pt.id, x.start + 1, x.end + 1); if (er) b.appendChild(er);
-          b.addEventListener('click', function () { app.navigate({ cw: pt.id + '-' + (x.start + 1) }); });
-          cl.appendChild(b);
-        });
-      });
-      s2.appendChild(cl); parts.push([s2, '课件']);
-    }
 
     // 引脚
     if (t.pins.length) {
       var s3 = sec('pins', '引脚'), LIMIT = 18;
       var grid = el('div', 'pgrid');
       t.pins.forEach(function (h, k) {
-        var p = h.p, a = app.link({ v: 'chip', pin: String(p.n) }, 'ptile' + (k >= LIMIT ? ' extra' : ''));
+        var p = h.p, a = app.link({ v: 'home', pin: String(p.n) }, 'ptile' + (k >= LIMIT ? ' extra' : ''));
         var top = el('span', 'ptile-h'); top.appendChild(el('b', null, p.name)); top.appendChild(el('span', null, p.n + ' 脚')); a.appendChild(top);
         a.appendChild(el('span', 'ptile-sig', h.why.join('  ')));
         if (p.board.length) a.appendChild(el('span', 'ptile-b', p.board.map(function (r) { return r.name; }).join('、')));
@@ -195,10 +118,28 @@
       parts.push([s4, '寄存器']);
     }
 
-    // 代码
-    var snipEls = {};
-    if (t.snips.length) {
+    // 代码：寄存器写法（逐行注释 + 为什么）在前，HAL 库写法在后，切换着看
+    var snipEls = {}, rprogs = STM.regcode ? STM.regcode.progsOf(t.id) : [];
+    if (t.snips.length || rprogs.length) {
       var s5 = sec('code', '代码');
+      var CODE_KEY = 'lm.stm32.codestyle', style = ui.lsGet(CODE_KEY) === 'hal' && t.snips.length ? 'hal' : rprogs.length ? 'reg' : 'hal';
+      if (route.snip) style = 'hal';
+      var seg = el('div', 'cseg'); seg.setAttribute('role', 'tablist');
+      var regBox = el('div', 'code-reg'), halBox = el('div', 'code-hal');
+      [['reg', '寄存器', rprogs.length], ['hal', 'HAL 库', t.snips.length]].forEach(function (x) {
+        if (!x[2]) return;
+        var b = ui.btn('cseg-b', x[1]); b.dataset.k = x[0]; b.setAttribute('role', 'tab');
+        b.addEventListener('click', function () { style = x[0]; ui.lsSet(CODE_KEY, style); syncSeg(); });
+        seg.appendChild(b);
+      });
+      function syncSeg() {
+        Array.prototype.forEach.call(seg.children, function (b) { var on = b.dataset.k === style; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+        regBox.hidden = style !== 'reg'; halBox.hidden = style !== 'hal';
+      }
+      if (seg.children.length > 1) s5.appendChild(seg);
+      rprogs.forEach(function (pg) { regBox.appendChild(STM.regcode.render(pg, app, { compact: true })); });
+      s5.appendChild(regBox); s5.appendChild(halBox);
+      syncSeg();
       t.snips.forEach(function (s) {
         var card = el('div', 'snip'); card.id = 'snip-' + s.i;
         var hh = el('div', 'snip-h'); hh.appendChild(el('h3', null, s.title)); card.appendChild(hh);
@@ -212,7 +153,7 @@
         }
         card.appendChild(cb);
         snipEls[s.title] = card;
-        s5.appendChild(card);
+        halBox.appendChild(card);
       });
       parts.push([s5, '代码']);
     }
@@ -266,7 +207,7 @@
     }
     focusSnip(route);
     return {
-      title: function () { return t.name; },
+      title: function () { return t.code; },
       update: function (r) { focusSnip(r); },
       destroy: function () { if (io) io.disconnect(); }
     };
@@ -293,42 +234,78 @@
     return box;
   }
 
-  /* ====================== 芯片引脚 ====================== */
+  /* ====================== 首页：芯片 + 板载模块 ====================== */
   function sigTopic(sig) {
     for (var i = 0; i < M.topics.length; i++) if (M.topics[i].sig && M.topics[i].sig.test(sig)) return M.topics[i];
     return null;
   }
-  function chipView(root, route, app) {
-    var wrap = el('div', 'chipv');
-    var head = el('header', 'pg-h'); head.appendChild(el('h1', null, '芯片引脚'));
-    wrap.appendChild(head);
-    var fl = el('label', 'filter'); fl.appendChild(ui.icon('search'));
-    var fin = el('input'); fin.type = 'search'; fin.placeholder = 'PA9、USART1、TIM2_CH1、LED…'; fin.setAttribute('aria-label', '筛选引脚');
-    fin.setAttribute('autocomplete', 'off'); fin.setAttribute('autocapitalize', 'characters'); fin.setAttribute('spellcheck', 'false');
-    fl.appendChild(fin); var fcount = el('span', 'filter-n'); fl.appendChild(fcount);
-    wrap.appendChild(fl);
-
+  // 这个 MCU 引脚接了哪些模块的哪个脚
+  function modsOfPin(name) {
+    var out = [];
+    STM.modules.list.forEach(function (m) { m.pins.forEach(function (p) { if (p.mcu === name) out.push({ m: m, p: p }); }); });
+    return out;
+  }
+  function home(root, route, app) {
+    var MODS = STM.modules;
+    var wrap = el('div', 'boardh');
+    wrap.appendChild(el('h1', 'sr-only', 'STM32F103ZET6 开发板'));
     var grid = el('div', 'chipv-g');
+    var left = el('div', 'chipv-l');
     var stage = el('div', 'chipv-stage zoom-view'), content = el('div', 'zoom-content');
-    var chip = STM.chip.create({ labels: true, interactive: true, onPick: function (n) { app.update({ pin: String(n) }); } });
-    content.appendChild(chip.svg); stage.appendChild(content);
-    var left = el('div', 'chipv-l'); left.appendChild(stage);
+    stage.appendChild(content); left.appendChild(stage);
     var legend = el('div', 'legend');
-    [['t-I', 'I/O'], ['t-P', '电源'], ['t-G', '地'], ['t-S', '系统'], ['used', '开发板上已接']].forEach(function (x) { var s = el('span', 'lg ' + x[0]); s.appendChild(el('i')); s.appendChild(el('span', null, x[1])); legend.appendChild(s); });
+    [['t-I', 'I/O'], ['t-P', '电源'], ['t-G', '地'], ['t-S', '系统'], ['used', '板上已接']].forEach(function (x) { var s = el('span', 'lg ' + x[0]); s.appendChild(el('i')); s.appendChild(el('span', null, x[1])); legend.appendChild(s); });
     left.appendChild(legend);
+
+    // 模块标签：第一个是芯片本身
+    var tags = el('div', 'mtags'); tags.setAttribute('role', 'tablist'); tags.setAttribute('aria-label', '板上的芯片和模块');
+    var tagBtn = {};
+    [{ id: '', tag: 'STM32' }].concat(MODS.list).forEach(function (m) {
+      var b = ui.btn('mtag', m.tag); b.setAttribute('role', 'tab'); tagBtn[m.id] = b;
+      var tp = m.topic && M.topicById[m.topic]; if (tp) b.style.setProperty('--h', app.hue(tp));
+      b.addEventListener('click', function () { app.update({ m: m.id || null, mp: null, pin: null, q: null }); });
+      if (m.id) {
+        var pins = m.pins.filter(function (p) { return p.mcu && M.pinByName[p.mcu]; }).map(function (p) { return M.pinByName[p.mcu].n; });
+        b.addEventListener('mouseenter', function () { if (!curM) chip.light(pins, tp ? app.hue(tp) : null); });
+        b.addEventListener('mouseleave', function () { if (!curM) chip.light(matches(lastQ), null); });
+      }
+      tags.appendChild(b);
+    });
+    left.appendChild(tags);
     var detail = el('div', 'pdetail'); detail.setAttribute('aria-live', 'polite');
     grid.appendChild(left); grid.appendChild(detail);
     wrap.appendChild(grid);
     root.appendChild(wrap);
+
+    var chip = STM.chip.create({ labels: true, interactive: true, onPick: function (n) { app.update({ pin: String(n) }); } });
+    var mod = null, curM = null, S = chip.S, dims = [S, S];
     var zoom = ui.Zoomer(stage, content, {
       max: 8, dbl: 3, wheelNeedsCtrl: true, wheelPans: true, scrollAtFit: true,
-      onTap: function (target) { var g = target && target.closest ? target.closest('[data-pin]') : null; if (!g) return false; app.update({ pin: g.getAttribute('data-pin') }); return true; }
+      onTap: function (target) {
+        if (!target || !target.closest) return false;
+        var g = target.closest('[data-pin]'); if (g) { app.update({ pin: g.getAttribute('data-pin') }); return true; }
+        var mpn = target.closest('[data-mp]'); if (mpn && curM) { app.update({ mp: mpn.getAttribute('data-mp') }); return true; }
+        return false;
+      }
     });
-    var S = chip.S, lastW = 0;
-    function fit() { var w = stage.clientWidth; if (w && w !== lastW) { lastW = w; zoom.fit(S, S); } }
-    var ro = window.ResizeObserver ? new ResizeObserver(fit) : null;
-    if (ro) ro.observe(stage); else window.addEventListener('resize', fit);
-    requestAnimationFrame(fit);
+    var lastW = 0;
+    function fit(force) { var w = stage.clientWidth; if (w && (force || w !== lastW)) { lastW = w; zoom.fit(dims[0], dims[1]); } }
+    var ro = window.ResizeObserver ? new ResizeObserver(function () { fit(); }) : null;
+    if (ro) ro.observe(stage); else window.addEventListener('resize', function () { fit(); });
+
+    function showStage(mid) {
+      ui.clear(content);
+      if (mid) {
+        mod = MODS.draw(mid, { onPick: function (k) { app.update({ mp: k }); } });
+        content.appendChild(mod.svg); dims = [mod.w, mod.h];
+        var tp = M.topicById[MODS.byId[mid].topic]; if (tp) stage.style.setProperty('--h', app.hue(tp));
+      } else { mod = null; content.appendChild(chip.svg); dims = [S, S]; stage.style.removeProperty('--h'); }
+      stage.style.aspectRatio = dims[0] + ' / ' + dims[1];
+      stage.classList.toggle('is-mod', !!mid);
+      legend.hidden = !!mid;
+      Object.keys(tagBtn).forEach(function (k) { var on = k === (mid || ''); tagBtn[k].classList.toggle('on', on); tagBtn[k].setAttribute('aria-selected', on ? 'true' : 'false'); });
+      requestAnimationFrame(function () { fit(true); });
+    }
 
     function matches(q) {
       var Q = String(q || '').toUpperCase().replace(/\s+/g, ''), out = [];
@@ -339,11 +316,36 @@
       });
       return out;
     }
-    function renderDetail(n) {
+    var fin = el('input'), fcount = el('span', 'filter-n');
+    fin.type = 'search'; fin.placeholder = '筛选：PA9、USART1、TIM2_CH1…'; fin.setAttribute('aria-label', '筛选引脚');
+    fin.setAttribute('autocomplete', 'off'); fin.setAttribute('autocapitalize', 'characters'); fin.setAttribute('spellcheck', 'false');
+    fin.addEventListener('input', ui.debounce(function () { app.update({ q: fin.value.trim() || null }); }, 120));
+    fin.addEventListener('keydown', function (e) { if (e.key === 'Escape' && fin.value) { e.preventDefault(); fin.value = ''; app.update({ q: null }); } });
+    var fl = el('label', 'filter'); fl.appendChild(ui.icon('search')); fl.appendChild(fin); fl.appendChild(fcount);
+
+    function miniChip(list, sel, hue) {
+      var c = STM.chip.create({ labels: false }); c.light(list, hue); if (sel) c.select(sel);
+      // 小图上引脚太细，在脚外侧加一个圆点标出来
+      (list || []).forEach(function (n) {
+        var o = c.pos(n), L = STM.chip.PK.LEAD + 7, x = o.x + (o.side === 'L' ? -L : o.side === 'R' ? L : 0), y = o.y + (o.side === 'T' ? -L : o.side === 'B' ? L : 0);
+        c.svg.appendChild(ui.sv('circle', { cx: x, cy: y, r: 7, 'class': 'mk' + (n === sel ? ' sel' : '') }));
+      });
+      var box = el('div', 'pd-mini'); box.appendChild(c.svg); return box;
+    }
+    function pinBtn(name, cls) {
+      var q = M.pinByName[name];
+      var b = ui.btn(cls || 'chipbtn', name); if (!q) return b;
+      b.title = '在芯片图上看 ' + name + '（' + q.n + ' 脚）';
+      b.addEventListener('click', function () { app.update({ m: null, mp: null, pin: String(q.n) }); });
+      return b;
+    }
+
+    function renderChipDetail(n) {
       ui.clear(detail);
       var p = M.pinByN[n];
       if (!p) {
         detail.appendChild(el('h2', 'pd-empty-h', '选一个引脚'));
+        detail.appendChild(fl);
         var quick = el('div', 'pd-quick');
         ['PA9', 'PA0', 'PB10', 'PC13', 'PA13'].forEach(function (nm) { var q = M.pinByName[nm]; if (!q) return; var b = ui.btn('chipbtn', nm); b.addEventListener('click', function () { app.update({ pin: String(q.n) }); }); quick.appendChild(b); });
         detail.appendChild(quick);
@@ -357,39 +359,100 @@
         list.forEach(function (x) {
           var name = fmt ? fmt(x).sig : x, extra = fmt ? fmt(x).extra : '', tp = sigTopic(name);
           var s = tp ? app.link({ v: 'topic', t: tp.id }, 'sig') : el('span', 'sig');
-          if (tp) { s.style.setProperty('--h', app.hue(tp)); s.title = '打开 ' + tp.name; }
+          if (tp) { s.style.setProperty('--h', app.hue(tp)); s.title = tp.code; }
           s.appendChild(el('b', null, name)); if (extra) s.appendChild(el('span', null, extra));
           w.appendChild(s);
         });
         r.appendChild(w); detail.appendChild(r);
       }
-      if (p.main && p.main !== p.name) sigRow('复位后的功能', [p.main]);
+      var mods = modsOfPin(p.name);
+      if (mods.length) {
+        var mr = el('div', 'pd-row'); mr.appendChild(el('h3', null, '接到'));
+        var mw = el('div', 'pd-sigs');
+        mods.forEach(function (x) {
+          var b = ui.btn('mlink'); b.appendChild(el('b', null, x.m.tag)); b.appendChild(el('span', null, x.p.name));
+          var tp = M.topicById[x.m.topic]; if (tp) b.style.setProperty('--h', app.hue(tp));
+          b.addEventListener('click', function () { app.update({ m: x.m.id, mp: x.p.k, pin: null }); });
+          mw.appendChild(b);
+        });
+        mr.appendChild(mw); detail.appendChild(mr);
+      }
+      if (p.main && p.main !== p.name) sigRow('复位后', [p.main]);
       sigRow('复用功能', p.af);
-      sigRow('重映射后可用', p.rm.filter(function (x) { return x.sig !== 'GPIO'; }), function (x) { return { sig: x.sig, extra: x.bit ? '需 ' + x.bit : '' }; });
-      if (p.board.length) {
-        var br = el('div', 'pd-row'); br.appendChild(el('h3', null, '开发板上'));
-        p.board.forEach(function (r) {
+      sigRow('重映射', p.rm.filter(function (x) { return x.sig !== 'GPIO'; }), function (x) { return { sig: x.sig, extra: x.bit ? x.bit : '' }; });
+      var other = p.board.filter(function (r) { return !mods.length; });
+      if (other.length) {
+        var br = el('div', 'pd-row'); br.appendChild(el('h3', null, '板上'));
+        other.forEach(function (r) {
           var b = el('div', 'pd-board'); b.appendChild(el('b', null, r.name));
           if (r.note) b.appendChild(el('span', null, r.note));
-          if (r.page && M.schById[r.page]) { var a = ui.btn('linkbtn', '看原理图：' + M.schById[r.page].title); a.addEventListener('click', function () { app.navigate({ sch: r.page }); }); b.appendChild(a); }
+          if (r.page && M.schById[r.page]) { var a = ui.btn('linkbtn', '原理图'); a.addEventListener('click', function () { app.navigate({ sch: r.page }); }); b.appendChild(a); }
           br.appendChild(b);
         });
         detail.appendChild(br);
       }
-      var tps = M.topicsOfPin(p.n);
-      if (tps.length) {
-        var tr = el('div', 'pd-row'); tr.appendChild(el('h3', null, '相关外设'));
-        var tw = el('div', 'pd-sigs'); tps.forEach(function (t) { tw.appendChild(topicTag(t, app)); }); tr.appendChild(tw); detail.appendChild(tr);
-      }
       if (p.type === 'I' && /^P[A-G]\d+$/.test(p.name)) {
         var y = Number(p.name.slice(2)), port = 'GPIO' + p.name.charAt(1);
-        var rb = ui.btn('linkbtn', '配置这个脚：' + port + (y < 8 ? '_CRL' : '_CRH'));
+        var rb = ui.btn('linkbtn', port + (y < 8 ? '_CRL' : '_CRH'));
+        rb.title = '配置这个脚';
         rb.addEventListener('click', function () { app.navigate({ v: 'topic', t: 'gpio', reg: y < 8 ? 'GPIO_CRL' : 'GPIO_CRH', i: port }); });
         var rr = el('div', 'pd-row'); rr.appendChild(rb); detail.appendChild(rr);
       }
     }
-    var lastPin, lastQ = null;
+
+    function renderModDetail(mid, k) {
+      ui.clear(detail);
+      var m = MODS.byId[mid], tp = M.topicById[m.topic], hue = tp ? app.hue(tp) : null, p = null;
+      m.pins.forEach(function (x) { if (x.k === k) p = x; });
+      var all = m.pins.filter(function (x) { return x.mcu && M.pinByName[x.mcu]; }).map(function (x) { return M.pinByName[x.mcu].n; });
+      var hh = el('div', 'pd-h');
+      if (p) {
+        hh.appendChild(el('h2', 'mono', p.name));
+        hh.appendChild(el('span', null, m.tag + (p.no ? ' · ' + p.no + ' 脚' : '')));
+      } else {
+        hh.appendChild(el('h2', null, m.tag));
+        if (m.part) hh.appendChild(el('span', 'mono', m.part));
+      }
+      detail.appendChild(hh);
+      if (p) {
+        var cr = el('div', 'pd-row pd-conn'); cr.appendChild(el('h3', null, '接到'));
+        if (p.mcu) {
+          var q = M.pinByName[p.mcu];
+          var b = pinBtn(p.mcu, 'mcubtn'); if (q) b.appendChild(el('span', null, q.n + ' 脚'));
+          cr.appendChild(b);
+        } else cr.appendChild(el('b', 'mono pd-net', p.net || '—'));
+        detail.appendChild(cr);
+        if (p.note) detail.appendChild(el('p', 'pd-note', p.note));
+      }
+      var sel = p && p.mcu && M.pinByName[p.mcu] ? M.pinByName[p.mcu].n : null;
+      detail.appendChild(miniChip(sel ? [sel] : all, sel, hue));
+      // 全部脚：一行一个，点了选中
+      var list = el('div', 'pd-mps');
+      m.pins.forEach(function (x) {
+        var b = ui.btn('pd-mp' + (p && x.k === p.k ? ' on' : ''));
+        var to = x.mcu || x.net || ''; b.appendChild(el('span', 'mono', x.name)); b.appendChild(el('span', 'mono ' + (x.mcu ? 'to-mcu' : 'to-net'), to === x.name ? '' : to));
+        b.addEventListener('click', function () { app.update({ mp: x.k }); });
+        list.appendChild(b);
+      });
+      detail.appendChild(list);
+      var links = el('div', 'pd-row pd-links');
+      if (tp) links.appendChild(topicTag(tp, app));
+      if (m.sch && M.schById[m.sch]) { var a = ui.btn('linkbtn', '原理图'); a.addEventListener('click', function () { app.navigate({ sch: m.sch }); }); links.appendChild(a); }
+      detail.appendChild(links);
+    }
+
+    var lastPin, lastQ = null, lastMP;
     function apply(r) {
+      var mid = r.m && MODS.byId[r.m] ? r.m : null;
+      if (mid !== curM || (!content.firstChild)) { curM = mid; lastPin = undefined; lastMP = undefined; lastQ = null; showStage(mid); }
+      if (curM) {
+        var k = r.mp || null;
+        if (k !== lastMP) {
+          lastMP = k; mod.select(k); renderModDetail(curM, k);
+          if (k && mod.pos[k] && zoom.scale() > 1.01) zoom.reveal(mod.pos[k].x, mod.pos[k].y);
+        }
+        return;
+      }
       var q = r.q || '';
       if (q !== lastQ) {
         lastQ = q; if (fin.value.trim() !== q) fin.value = q;
@@ -399,14 +462,12 @@
       }
       var n = r.pin ? Number(r.pin) : null;
       if (n !== lastPin) {
-        lastPin = n; chip.select(n); renderDetail(n);
+        lastPin = n; chip.select(n); renderChipDetail(n);
         if (n) requestAnimationFrame(function () { var pos = chip.pos(n); zoom.focus(pos.x, pos.y, Math.max(2.2, 1)); });
       }
     }
-    fin.addEventListener('input', ui.debounce(function () { app.update({ q: fin.value.trim() || null }); }, 120));
-    fin.addEventListener('keydown', function (e) { if (e.key === 'Escape' && fin.value) { e.preventDefault(); fin.value = ''; app.update({ q: null }); } });
     apply(route);
-    return { title: function () { return '芯片引脚'; }, update: apply, destroy: function () { if (ro) ro.disconnect(); } };
+    return { title: function () { return 'STM32 学习台'; }, update: apply, destroy: function () { if (ro) ro.disconnect(); } };
   }
 
   /* ====================== 开发板 ====================== */
@@ -427,7 +488,7 @@
         var row = el('div', 'brow');
         var nm = el('div', 'brow-n'); nm.appendChild(el('b', null, r.name)); if (r.note) nm.appendChild(el('span', null, r.note)); row.appendChild(nm);
         var pin = el('div', 'brow-p');
-        if (r.pins.length === 1) { var a = app.link({ v: 'chip', pin: String(r.pins[0]) }, 'mono'); a.textContent = r.mcu || String(r.pins[0]); pin.appendChild(a); }
+        if (r.pins.length === 1) { var a = app.link({ v: 'home', pin: String(r.pins[0]) }, 'mono'); a.textContent = r.mcu || String(r.pins[0]); pin.appendChild(a); }
         else pin.appendChild(el('span', 'mono', r.mcu || ''));
         if (ACT[r.active]) pin.appendChild(el('span', 'act a-' + r.active, ACT[r.active]));
         row.appendChild(pin);
@@ -454,45 +515,6 @@
     return { title: function () { return '开发板'; } };
   }
 
-  /* ====================== 课件 ====================== */
-  function courseView(root, route, app) {
-    var wrap = el('div', 'coursev');
-    var head = el('header', 'pg-h'); head.appendChild(el('h1', null, '课件'));
-    wrap.appendChild(head);
-    var conts = [];
-    // 「接着读」按钮：读过的页记在本机；从查看器回来时刷新
-    function syncCont() {
-      var pos = readPos();
-      conts.forEach(function (x) {
-        var p = Number(pos[x.pt.id]), ok = Number.isInteger(p) && p >= 1 && p <= x.pt.n;
-        x.b.hidden = !ok; x.p = p; if (ok) x.b.textContent = '接着读第 ' + p + ' 页';
-      });
-    }
-    M.course.forEach(function (pt) {
-      var s = el('section', 'vol'), vh = el('div', 'vol-h');
-      vh.appendChild(el('h2', null, pt.short)); vh.appendChild(el('span', null, pt.n + ' 页'));
-      var x = { pt: pt, b: ui.btn('cont'), p: 0 };
-      x.b.addEventListener('click', function () { app.navigate({ cw: pt.id + '-' + x.p }); });
-      vh.appendChild(x.b); conts.push(x);
-      s.appendChild(vh);
-      var list = el('div', 'chaps');
-      pt.chs.forEach(function (x) {
-        var row = el('div', 'chap-row lv' + x.level), b = ui.btn('chap lv' + x.level);
-        b.appendChild(el('span', 'chap-t', x.title)); b.appendChild(el('span', 'chap-p', pagesText(x)));
-        var er = erBadge(pt.id, x.start + 1, x.end + 1); if (er) b.appendChild(er);
-        b.addEventListener('click', function () { app.navigate({ cw: pt.id + '-' + (x.start + 1) }); });
-        row.appendChild(b);
-        var tp = x.level === 1 ? M.topicOfChapter(x) : null;
-        if (tp) row.appendChild(topicTag(tp, app));
-        list.appendChild(row);
-      });
-      s.appendChild(list); wrap.appendChild(s);
-    });
-    root.appendChild(wrap);
-    syncCont();
-    return { title: function () { return '课件'; }, update: syncCont };
-  }
-
-  STM.views = { home: home, topic: topic, chip: chipView, board: boardView, course: courseView };
+  STM.views = { home: home, topic: topic, board: boardView };
   STM.viewsUtil = { figGrid: figGrid, thumb: thumb, CW_KEY: CW_KEY };
 })();
