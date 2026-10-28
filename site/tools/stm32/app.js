@@ -47,7 +47,8 @@
     // 寄存器 / 片段没给主题时，补上它所属的主题
     if (t.v === 'topic' && !t.t) { var tp = (t.reg && M.topicOfReg(t.reg)) || (t.snip && M.topicOfSnip(t.snip)); if (tp) t.t = tp.id; else t = strip(t, ['snip']); }
     if (t.v === 'topic' && !M.topicById[t.t]) { t.v = 'home'; delete t.t; delete t.snip; }
-    if (t.v === 'think' && t.t && !(STM.think && STM.think.chapter(t.t))) { delete t.t; delete t.p; }
+    if (t.v === 'think' && t.t && !(STM.think && STM.think.chapter(t.t))) { delete t.t; delete t.p; delete t.s; }
+    if (t.s && !(STM.derive && STM.derive.validStep(t.t, t.s))) delete t.s;
     if (t.reg && !M.R.reg(t.reg)) t = strip(t, LAYER_REG);
     return t;
   }

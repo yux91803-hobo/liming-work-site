@@ -196,7 +196,7 @@ async def main():
         # ---------- 10. 编程思维：把三章每一道题都实际做一遍 ----------
         pg = await page(b)
         await pg.goto(TOOL + '?v=think'); await pg.wait_for_selector('.tk-ch')
-        check('编程思维总览：三章 + 五步骨架', await pg.evaluate("document.querySelectorAll('.tk-ch').length") == 3 and await pg.evaluate("document.querySelectorAll('.tk-skbox .skstrip li').length") == 5)
+        check('编程思维总览：I2C 推导章 + 两个四段式章 + 五步骨架', await pg.evaluate("document.querySelectorAll('.tk-ch').length") == 3 and await pg.evaluate("document.querySelectorAll('.tk-skbox .skstrip li').length") == 5)
         SOLVE = """async (sel) => {
           const sleep = (ms) => new Promise(r => setTimeout(r, ms));
           const box = document.querySelector(sel); const log = [];
@@ -247,7 +247,7 @@ async def main():
             await pg.wait_for_timeout(80)
             solved = await pg.evaluate("(t) => [...document.querySelectorAll('.q.solved .q-q')].some(x => x.textContent === t)", info['text'])
             return info['type'], hint_ok, solved
-        for chap in ['gpio', 'usart', 'i2c']:
+        for chap in ['gpio', 'usart']:
             await pg.goto(TOOL + '?v=think&t=' + chap + '&p=1'); await pg.wait_for_selector('.tk-card')
             ncards = await pg.evaluate("(id) => STM32_THINK.chapters.find(c => c.id === id).why.length", chap)
             why_ok = True
@@ -286,11 +286,122 @@ async def main():
         await pg.context.close()
         pg = await page(b, 390, 844, mobile=True)
         overflow = []
-        for qs in ['?v=think', '?v=think&t=gpio&p=1', '?v=think&t=usart&p=2', '?v=think&t=i2c&p=3']:
+        for qs in ['?v=think', '?v=think&t=gpio&p=1', '?v=think&t=usart&p=2', '?v=think&t=i2c', '?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21', '?v=think&t=i2c&s=review']:
             await pg.goto(TOOL + qs); await pg.wait_for_timeout(700)
             if await pg.evaluate("document.documentElement.scrollWidth > innerWidth"): overflow.append(qs)
         check('手机：编程思维各页没有横向溢出', not overflow, overflow)
         await pg.context.close()
+
+        # ---------- 11. 编程思维 · I2C 推导链：自主推导模式把 22 环的每一道题都答一遍 ----------
+        pg = await page(b)
+        await pg.goto(TOOL + '?v=think&t=i2c'); await pg.wait_for_selector('.dv-map')
+        check('I2C 推导章首页：推导链 22 环、7 条主干结论、两种学法', await pg.evaluate("document.querySelectorAll('.dv-node').length") == 22 and await pg.evaluate("document.querySelectorAll('.dv-factl li').length") == 7 and await pg.evaluate("document.querySelectorAll('.dv-modeb').length") == 2)
+        await pg.click('.dv-modeb >> nth=1'); await pg.wait_for_selector('.dv-modeb.on')
+        check('切到自主推导：结论在推出来之前隐藏', await pg.evaluate("document.querySelectorAll('.dv-node-g').length") == 0 and await pg.evaluate("document.querySelectorAll('.dv-factl li.locked').length") == 7)
+        ANSWER = """async (id) => {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          const ch = STM32_DERIVE.i2c, C = STM32DeriveCore, a = C.allAsks(ch)[id];
+          const box = document.querySelector('.dv-ask[data-ask="' + id + '"]');
+          const fbText = () => (box.querySelector('.dv-fb') || {}).textContent || '';
+          const r = { id, type: a.type, wrongOk: true, solved: false };
+          if (a.type === 'choice') {
+            const btns = [...box.querySelectorAll('.dv-opt')];
+            const find = (t) => btns.find(b => b.textContent.replace(/\\s/g, '') === t.replace(/\\*\\*|`|\\[\\[s\\d+\\]\\]|\\{F\\d\\}/g, (m) => m.startsWith('[[') ? '问题' + (C.stepById(ch)[m.slice(2, -2)]._i + 1) : m.startsWith('{') ? m.slice(1, -1) : '').replace(/\\s/g, ''));
+            const wrong = a.opts.find(o => !o.ok), right = a.opts.find(o => o.ok);
+            if (wrong) { const wb = find(wrong.t); wb.click(); await sleep(30); const t = fbText(); r.wrongOk = t.includes('你默认了') && t.includes(wrong.assume) && t.includes('反例') && !!box.querySelector('.fb-back'); }
+            find(right.t).click();
+          } else if (a.type === 'fill') {
+            const inp = box.querySelector('.dv-fill input'), go = box.querySelector('.dv-fill .pill');
+            inp.value = 'zzz'; go.click(); await sleep(30); r.wrongOk = fbText().includes('提示');
+            inp.value = a.answers[0]; go.click();
+          } else if (a.type === 'explain') {
+            const ta = box.querySelector('textarea'); ta.value = '因为大家都松手了，上拉电阻把线拉到 VCC'; box.querySelector('.dv-row .pill').click(); await sleep(30);
+            r.wrongOk = box.querySelectorAll('.dv-pt input:checked').length >= 1 && !!box.querySelector('.dv-model');
+            [...box.querySelectorAll('.dv-explain .pill')].pop().click();
+          } else if (a.type === 'order') {
+            const it = C.orderItems(ch, a), want = it.texts;
+            const norm = (s) => s.replace(/\\s+/g, '');
+            const pick = (t) => { const c = [...box.querySelectorAll('.dv-opool .dv-chip')].find(b => norm(b.textContent) === norm(t)); c.click(); };
+            [...want].reverse().forEach(pick); box.querySelector('.dv-row .pill').click(); await sleep(30);
+            r.wrongOk = fbText().includes('先后不对') && box.querySelectorAll('.dv-chip.bad').length === 2;
+            if (a.fn) r.wrongOk = r.wrongOk && !!box.querySelector('.dv-osim .dv-wave');
+            [...box.querySelectorAll('.dv-oans .dv-chip')].reverse().forEach(b => b.click());
+            want.forEach(pick); box.querySelector('.dv-row .pill').click();
+          }
+          await sleep(40);
+          r.solved = box.classList.contains('solved');
+          return r;
+        }"""
+        total = {'asks': 0, 'wrongOk': 0, 'solved': 0, 'gated': 0}
+        bad = []
+        for k in range(1, 23):
+            await pg.goto(TOOL + '?v=think&t=i2c&s=s%d' % k); await pg.wait_for_selector('.dv-step')
+            for _ in range(10):
+                cur = await pg.evaluate("(() => { const b = [...document.querySelectorAll('.dv-ask:not(.soft):not(.solved)')]; return b.length ? b[0].dataset.ask : null; })()")
+                if not cur: break
+                gated = await pg.evaluate("!document.querySelector('.dv-gist')")
+                r = await pg.evaluate(ANSWER, cur)
+                total['asks'] += 1; total['wrongOk'] += r['wrongOk']; total['solved'] += r['solved']; total['gated'] += gated
+                if not (r['wrongOk'] and r['solved']): bad.append(r)
+                cont = await pg.query_selector('.dv-cont')
+                if cont: await cont.click(); await pg.wait_for_timeout(60)
+            if not await pg.evaluate("!!document.querySelector('.dv-gist')"): bad.append('s%d 没走到结论' % k)
+        check('自主推导：%d 道题逐一停下（答完才继续），错答都指出「默认了什么 + 反例 + 回看哪一环」，最后都答对' % total['asks'], total['asks'] >= 30 and not bad and total['gated'] == total['asks'], bad[:3] or total)
+        await pg.goto(TOOL + '?v=think&t=i2c'); await pg.wait_for_selector('.dv-map')
+        check('22 环都标记为推完，主干结论全部解锁', await pg.evaluate("document.querySelectorAll('.dv-node.done').length") == 22 and await pg.evaluate("document.querySelectorAll('.dv-factl li.locked').length") == 0)
+        check('首页出现「常卡的地方」入口', await pg.evaluate("!!document.querySelector('.dv-revin')"))
+        await pg.click('.dv-revin'); await pg.wait_for_selector('.dv-rv')
+        nrv = await pg.evaluate("document.querySelectorAll('.dv-rv').length"); roots = await pg.evaluate("document.querySelectorAll('.dv-roots li').length")
+        check('常卡的地方：按推理环节归类，列出最常出岔子的环节和上次的错误想法', nrv >= 10 and roots >= 1 and await pg.evaluate("!!document.querySelector('.dv-rv-w li')"), (nrv, roots))
+        rid = await pg.evaluate("document.querySelector('.dv-rv .dv-ask-choice').dataset.ask")
+        right = await pg.evaluate("(id) => { const a = STM32DeriveCore.allAsks(STM32_DERIVE.i2c)[id.split('~')[0]]; return a.opts.findIndex(o => o.ok); }", rid)
+        await pg.evaluate("""([id, k]) => { const box = document.querySelector('.dv-ask[data-ask="' + id + '"]'); const a = STM32DeriveCore.allAsks(STM32_DERIVE.i2c)[id.split('~')[0]];
+          const norm = s => s.replace(/\\*\\*|`/g, '').replace(/\\s/g, ''); [...box.querySelectorAll('.dv-opt')].find(b => norm(b.textContent) === norm(a.opts[k].t)).click(); }""", [rid, right])
+        await pg.wait_for_timeout(100)
+        st = await pg.evaluate("(id) => { const s = JSON.parse(localStorage.getItem('lm.stm32.derive')).ch.i2c.stuck; return [s.streak[id], s.due[id] > Date.now()]; }", rid.split('~')[0])
+        check('复习答对一次：间隔拉长到明天', st[0] == 1 and st[1], st)
+
+        # 完整推导模式：交换代码行、模拟器、小部件
+        await pg.goto(TOOL + '?v=think&t=i2c'); await pg.click('.dv-modeb >> nth=0')
+        await pg.goto(TOOL + '?v=think&t=i2c&s=s19'); await pg.wait_for_selector('.dv-fn')
+        check('完整推导：整段推理一次展开，题目可选（虚线框）', await pg.evaluate("document.querySelectorAll('.dv-ask.soft').length >= 2 && !!document.querySelector('.dv-gist')"))
+        fn = '.dv-fn >> nth=1'   # i2c_stop
+        await pg.click('.dv-fn >> nth=1 >> .dv-line.has .dv-lb >> nth=0')
+        check('点一行看理由和出处', await pg.evaluate("(() => { const l = document.querySelectorAll('.dv-fn')[1].querySelector('.dv-line.open .dv-lwhy'); return !!l && !l.hidden && !!l.querySelector('.dv-fc, .dv-sl'); })()"))
+        await pg.click(fn + ' >> .dv-fn-tools .pill')
+        await pg.evaluate("""(() => { const f = document.querySelectorAll('.dv-fn')[1]; const ls = [...f.querySelectorAll('.dv-line.has .dv-lb')].filter(b => !b.closest('.pre'));
+          const t = (s) => ls.find(b => b.textContent.replace(/\\s|ⓘ/g, '') === s); t('SDA_L();').click(); t('SCL_H();').click(); })()""")
+        await pg.wait_for_selector('.dv-swap .dv-wave')
+        sw = await pg.inner_text('.dv-fn >> nth=1 >> .dv-swap')
+        check('交换停止函数前两步（课件写法）：说出原因并在模拟里看到「重复起始 + 空报文」', '不能换' in sw and '空报文' in sw, sw[:120])
+        await pg.goto(TOOL + '?v=think&t=i2c&s=s21'); await pg.wait_for_selector('.dv-simctl')
+        p0 = await pg.inner_text('.dv-simctl ~ div .dv-simfacts')
+        await pg.click('.dv-simctl .dv-sw input'); await pg.wait_for_timeout(100)
+        p1 = await pg.inner_text('.dv-simctl ~ div .dv-simfacts')
+        check('写一个字节的模拟：拔掉 EEPROM 后返回 1', '返回 0' in p0 and '0x5A' in p0 and '返回 1' in p1, (p0, p1))
+        await pg.goto(TOOL + '?v=think&t=i2c&s=s3'); await pg.wait_for_selector('.dv-bus')
+        v0 = await pg.inner_text('.dv-busv-t'); await pg.click('.dv-dev >> nth=0'); v1 = await pg.inner_text('.dv-busv-t')
+        check('共线实验：推挽一高一低报短路，改成同电平就没有冲突', '短路' in v0 and '没有冲突' in v1, (v0[:30], v1[:30]))
+        await pg.goto(TOOL + '?v=think&t=i2c&s=s6'); await pg.wait_for_selector('.dv-rc')
+        await pg.evaluate("(() => { const r = document.querySelector('.dv-rcc input'); r.value = 13; r.dispatchEvent(new Event('input')); })()")
+        rc = await pg.inner_text('.dv-rcr')
+        check('上拉实验：100 kΩ 时上升时间超标', '超过标准模式' in rc, rc[:80])
+        await pg.goto(TOOL + '?v=think&t=i2c&s=s12'); await pg.wait_for_selector('.dv-addr')
+        await pg.click('.dv-bit.epin >> nth=2'); ad = await pg.inner_text('.dv-addro')
+        check('地址字节：E0 接 VCC 变成 0xA2，板上 EEPROM 不应答', '0xA2' in ad and '对不上' in ad, ad[:60])
+        await pg.goto(TOOL + '?v=think&t=i2c&s=s14'); await pg.wait_for_selector('.dv-page')
+        check('页回卷：从 0x0E 写 4 个，后两个落回 0x00、0x01', await pg.evaluate("[...document.querySelectorAll('.dv-gc.wrap')].length") == 2)
+        await pg.goto(TOOL + '?v=topic&t=i2c'); await pg.wait_for_selector('.thinkin')
+        th = await pg.inner_text('.thinkin')
+        check('I2C 资料页的入口显示推导进度', '22 / 22' in th or '复习' in th, th)
+        await pg.goto(TOOL + '?v=think&t=i2c&s=s99'); await pg.wait_for_selector('.dv-map')
+        check('不存在的环节回到章节首页', 's=' not in pg.url.split('?')[-1] or 's=s99' not in pg.url)
+        await pg.context.close()
+        for theme in ['dark']:
+            pg = await page(b, theme=theme)
+            await pg.goto(TOOL + '?v=think&t=i2c&s=s10'); await pg.wait_for_selector('.dv-wave')
+            await pg.screenshot(path='/tmp/stm32-derive-%s.png' % theme)
+            await pg.context.close()
         await b.close()
 
     print('\n==== %d/%d 通过 ====' % (sum(1 for r in results if r[1]), len(results)))

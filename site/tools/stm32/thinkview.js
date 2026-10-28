@@ -176,6 +176,7 @@
 
   /* =================== 视图 =================== */
   function view(root, route, app) {
+    if (route.t && STM.derive && STM.derive.has(route.t)) return STM.derive.view(root, route, app);   // 新的推导式章节
     var wrap = el('div', 'think');
     root.appendChild(wrap);
     var c = route.t ? byId[route.t] : null;
@@ -185,7 +186,7 @@
     function renderIndex() {
       var head = el('header', 'pg-h tk-hero');
       head.appendChild(el('h1', null, '编程思维'));
-      head.appendChild(el('p', null, '这里不再讲一遍知识，而是练一件事：拿到一个需求，自己想出代码该怎么写。每章分四步：先弄懂为什么要这样设计，再看清思路骨架，然后自己推一遍，最后换个需求再做一次。'));
+      head.appendChild(el('p', null, '这里不再讲一遍知识，而是练一件事：拿到一个需求，自己想出代码该怎么写。I2C 是新的「推导链」章节：从「两颗芯片想说话」一步步推到每一行代码，每条规则都能说出是被哪个问题逼出来的；GPIO、USART 暂时还是四段式，之后会改成同样的推导方式。'));
       wrap.appendChild(head);
       var sk = el('section', 'sec tk-skbox'); sk.appendChild(el('h2', 'sec-h', '一套骨架，用在所有外设上'));
       sk.appendChild(el('p', 'sec-note', '几乎每个外设的程序都按这五步走。学会在 GPIO 里填满它，USART、I2C 只是往同样的格子里填不同的东西。'));
@@ -193,6 +194,7 @@
       wrap.appendChild(sk);
       var list = el('section', 'sec'); list.appendChild(el('h2', 'sec-h', '章节'));
       var grid = el('div', 'tk-chs');
+      deriveCards(grid);
       T.chapters.forEach(function (ch) {
         var t = M.topicById[ch.topic], p = prog(ch.id), d = partsDone(ch, p), n = d.filter(Boolean).length;
         var a = app.link({ v: 'think', t: ch.id }, 'tk-ch'); a.style.setProperty('--h', app.hue(t));
@@ -203,9 +205,24 @@
         grid.appendChild(a);
       });
       list.appendChild(grid);
-      var rest = M.topics.filter(function (t) { return !T.chapters.some(function (ch) { return ch.topic === t.id; }); }).map(function (t) { return t.code; });
+      var rest = M.topics.filter(function (t) { return !T.chapters.some(function (ch) { return ch.topic === t.id; }) && !(STM.derive && STM.derive.has(t.id)); }).map(function (t) { return t.code; });
       if (rest.length) list.appendChild(el('p', 'sec-note tk-rest', rest.join('、') + ' 用同一套结构，之后陆续加入。'));
       wrap.appendChild(list);
+    }
+
+    // 推导式章节（新格式）的卡片：排在最前，标明「推导链」
+    function deriveCards(grid) {
+      var D = window.STM32_DERIVE || {};
+      Object.keys(D).forEach(function (id) {
+        var ch = D[id], t = M.topicById[ch.topic], pg = STM.derive.progress(id);
+        var a = app.link({ v: 'think', t: id }, 'tk-ch tk-ch-d'); a.style.setProperty('--h', app.hue(t));
+        var top = el('div', 'tk-ch-h'); top.appendChild(el('b', 'mono', t.code)); top.appendChild(el('span', null, pg.done ? (pg.done === pg.total ? '推完了' : '推到第 ' + pg.done + ' / ' + pg.total + ' 个问题') : pg.total + ' 个问题')); a.appendChild(top);
+        a.appendChild(el('h3', null, ch.title));
+        a.appendChild(el('p', null, '从零推导：' + ch.task));
+        var badge = el('span', 'tk-new', '推导链 · 完整推导 / 自主推导'); a.appendChild(badge);
+        var bar = el('div', 'tk-dots'); for (var k = 0; k < 10; k++) { var sp = el('span', k < Math.round(pg.done / pg.total * 10) ? 'on' : null); bar.appendChild(sp); } a.appendChild(bar);
+        grid.appendChild(a);
+      });
     }
 
     // 五步骨架条：hit 是本章用到的骨架格（null = 总览，全亮）
@@ -427,5 +444,9 @@
   }
 
   STM.views.think = view;
-  STM.think = { chapter: function (id) { return byId[id] || null; }, progress: function (id) { var c = byId[id]; return c ? partsDone(c, prog(id)) : null; } };
+  STM.think = {
+    chapter: function (id) { return byId[id] || (STM.derive && STM.derive.chapter(id)) || null; },
+    // 旧四段式：[段1完成, 段2, 段3, 段4]；推导式：{ done, total, due }
+    progress: function (id) { var c = byId[id]; return c ? partsDone(c, prog(id)) : STM.derive ? STM.derive.progress(id) : null; }
+  };
 })();

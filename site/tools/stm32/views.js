@@ -93,7 +93,7 @@
     var more = el('section', 'more');
     more.appendChild(h2('资料'));
     var pos = readPos();
-    [[{ v: 'think' }, 'idea', '编程思维', '拿到需求，自己想出代码：GPIO、USART、I2C 三章，每章从「为什么」推到能运行的程序。'],
+    [[{ v: 'think' }, 'idea', '编程思维', '拿到需求，自己想出代码。I2C 从「两颗芯片想说话」一步步推到每一行代码；GPIO、USART 从「为什么」推到能运行的程序。'],
      [{ v: 'chip' }, 'chip', '芯片引脚', '144 个脚逐个看：复用功能、重映射、开发板上接了什么。'],
      [{ v: 'board' }, 'board', '开发板', M.board.length + ' 个板载资源和对应引脚，' + M.sch.length + ' 页原理图。'],
      [{ v: 'course' }, 'book', '课件', M.course.map(function (p) { return p.short + ' ' + p.n + ' 页' + (pos[p.id] ? '，读到第 ' + pos[p.id] + ' 页' : ''); }).join('；') + '。']
@@ -127,12 +127,13 @@
 
     var ch = STM.think && STM.think.chapter(t.id);
     if (ch) {
-      var d = STM.think.progress(t.id), nDone = d.filter(Boolean).length;
+      var d = STM.think.progress(t.id), isD = !Array.isArray(d);
+      var nDone = isD ? d.done : d.filter(Boolean).length, nAll = isD ? d.total : 4;
       var en = app.link({ v: 'think', t: t.id }, 'thinkin');
       en.appendChild(ui.icon('idea'));
-      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, '编程思维：从需求自己想出代码'));
-      et.appendChild(el('span', null, ch.goal + (nDone ? '　已完成 ' + nDone + ' / 4 步' : ''))); en.appendChild(et);
-      en.appendChild(el('span', 'thinkin-go', nDone === 4 ? '复习' : nDone ? '继续' : '开始'));
+      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, isD ? '编程思维：从零推导到代码' : '编程思维：从需求自己想出代码'));
+      et.appendChild(el('span', null, (isD ? ch.task : ch.goal) + (nDone ? '　已完成 ' + nDone + ' / ' + nAll + (isD ? ' 个问题' : ' 步') : ''))); en.appendChild(et);
+      en.appendChild(el('span', 'thinkin-go', nDone === nAll ? '复习' : nDone ? '继续' : '开始'));
       art.appendChild(en);
     }
     var parts = [];

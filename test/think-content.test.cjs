@@ -28,8 +28,8 @@ function codesOf(ch) {
   return out.filter(Boolean).map((s) => s.replace(/\/\*[\s\S]*?\*\//g, ''));
 }
 
-test('three chapters with all four parts filled in', () => {
-  assert.deepEqual([...T.chapters.map((c) => c.id)], ['gpio', 'usart', 'i2c']);
+test('four-part chapters (GPIO, USART) with all four parts filled in; I2C moved to the derivation format', () => {
+  assert.deepEqual([...T.chapters.map((c) => c.id)], ['gpio', 'usart']);
   const sk = T.SK.map((s) => s.id);
   T.chapters.forEach((c) => {
     assert.ok(c.why.length >= 4, c.id + ' why');
@@ -43,7 +43,7 @@ test('three chapters with all four parts filled in', () => {
 test('every question is well-formed and every wrong answer explains itself', () => {
   const qs = [];
   T.chapters.forEach((c) => { c.why.forEach((w) => { if (w.q) qs.push([c.id, w.q]); }); c.tasks.forEach((t) => t.qs.forEach((q) => qs.push([c.id + '/' + t.id, q]))); });
-  assert.ok(qs.length >= 40, 'question count ' + qs.length);
+  assert.ok(qs.length >= 25, 'question count ' + qs.length);
   qs.forEach(([where, q]) => {
     const tag = where + ': ' + q.q;
     if (q.type === 'choice') {
@@ -111,21 +111,9 @@ test('USART steps give PA9 alternate push-pull, BRR 0x271 and an enabled transmi
   const div = 72e6 / (16 * 115200); assert.equal((Math.floor(div) << 4) | Math.round((div % 1) * 16), 0x271);
 });
 
-test('I2C steps give PB10/PB11 alternate open-drain and 100 kHz timing at 36 MHz', () => {
-  const c = T.chapters.find((x) => x.id === 'i2c'), m = run(machine(), regPart(c, 4));
-  assert.equal(m.GPIOB.CRH >>> 0, 0x4444FF44);
-  assert.equal(m.I2C2.CR2 & 0x3F, 36);
-  assert.equal(m.I2C2.CCR, 36e6 / (2 * 100e3));
-  assert.equal(m.I2C2.TRISE, 37);
-  assert.ok(m.I2C2.CR1 & MAC.I2C_CR1_PE);
-  assert.ok(m.RCC.APB1ENR & MAC.RCC_APB1ENR_I2C2EN);
-});
-
 test('fill-in answers match the computed values', () => {
   const fills = {}; T.chapters.forEach((c) => c.tasks.forEach((t) => t.qs.forEach((q) => { if (q.type === 'fill') fills[c.id + '/' + t.id + '/' + q.answers[0]] = q; })));
-  assert.ok(fills['gpio/blink/0011'] && fills['gpio/key/1000'] && fills['usart/hello/0x271'] && fills['i2c/eeprom/0xa0'] && fills['i2c/eeprom/180'] && fills['i2c/page/4']);
-  assert.equal(0x50 << 1, 0xA0);
-  assert.equal(0x10 - 0x0C, 4);
+  assert.ok(fills['gpio/blink/0011'] && fills['gpio/key/1000'] && fills['usart/hello/0x271']);
 });
 
 test('every link points at something that exists', () => {

@@ -3,7 +3,8 @@
 
    路由（URL 查询参数）：
      v    基础视图 home | topic | chip | board | course | think
-     t    外设主题 id（v=topic / v=think）；p 编程思维的第几段 1~4
+     t    外设主题 id（v=topic / v=think）；p 编程思维（旧四段式）的第几段 1~4
+     s    编程思维推导章节里的某一环 s1~s99，或 review（常卡的地方）
      reg  寄存器 id，i 实例，n 通道 / 序号，val 计算值（0x 8 位）
      pin  芯片引脚号 1~144，q 引脚筛选词（v=chip）
      snip 代码片段标题（v=topic，定位到该片段）
@@ -31,6 +32,7 @@
     if (o.v === 'topic' && !o.t && !x.reg && !x.snip) o.v = 'home';
     if (o.v !== 'topic' && o.v !== 'think') delete o.t;
     if (o.v === 'think' && o.t && /^[1-4]$/.test(String(x.p == null ? '' : x.p))) o.p = String(x.p);   // 编程思维：第几段
+    if (o.v === 'think' && o.t && /^(?:s\d{1,2}|review)$/.test(String(x.s == null ? '' : x.s))) o.s = String(x.s);   // 推导章节：哪一环
     if (/^[A-Za-z][A-Za-z0-9_]{1,31}$/.test(x.reg || '')) {
       o.reg = x.reg;
       if (/^[A-Za-z0-9_]{1,16}$/.test(x.i || '')) o.i = x.i;
