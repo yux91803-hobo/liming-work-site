@@ -14,17 +14,19 @@
   /* ---------- 像素造型 ----------
      身子：x 4..15、y 6..15（外框一圈深色，顶边正中一个芯片缺口）；姿势里的 b 是身子往下蹲几格。
      脚：x = 5 / 8 / 11 / 14，从身子下面一直到地面 y = 19；蹲下时膝盖往外弯。
-     手：从身子两侧 y = 10 伸出来，左手的点列在下面，右手按 x → 19 - x 镜像。 */
+     手：从身子两侧 y = 10 水平伸出来。 */
   var LEG_X = [5, 8, 11, 14];
+  // 手是一根粗引脚（2 格粗、3 格长），不分节：平时水平伸出、垂直于身子侧边，做动作时整根换个朝向。
+  // [x, y, 宽, 高]，左手；右手按 x → 20 - x - 宽 镜像
   var ARM = {
-    down:   [[3, 10], [2, 11], [2, 12], [2, 13]],
-    up:     [[3, 10], [2, 9], [2, 8], [2, 7]],
-    wave:   [[3, 10], [2, 9], [1, 8], [1, 7]],
-    out:    [[3, 10], [2, 9], [1, 8]],
-    swingF: [[3, 10], [2, 11], [1, 12]],
-    swingB: [[3, 10], [3, 11], [3, 12]],
-    hold:   [[3, 10], [3, 11], [4, 12], [5, 13], [6, 13], [7, 13]],
-    back:   [[3, 10]]
+    out:    [[1, 10, 3, 2]],
+    swingF: [[1, 9, 3, 2]],
+    swingB: [[1, 11, 3, 2]],
+    up:     [[2, 7, 2, 3]],
+    wave:   [[3, 9, 1, 2], [2, 8, 1, 2], [1, 7, 1, 2]],
+    hold:   [[2, 10, 2, 2]],
+    back:   [[3, 10, 1, 2]],
+    down:   [[2, 11, 2, 3]]
   };
   // 脸：[x, y, 宽, 高, 颜色]；eyes / blink 会跟着视线挪一格
   var FACE = {
@@ -77,8 +79,8 @@
     // 嘴：只有吃东西时才有（1 合上，2 张开咬下去）
     if (p.mouth) R(9 + sx, 11 + b, 2, p.mouth === 2 ? 2 : 1, 'o');
     // 手（在身子前面）
-    [[p.armL || 'down', false], [p.armR || 'down', true]].forEach(function (a) {
-      (ARM[a[0]] || ARM.down).forEach(function (c) { R((a[1] ? 19 - c[0] : c[0]) + sx, c[1] + b, 1, 1, 'p'); });
+    [[p.armL || 'out', false], [p.armR || 'out', true]].forEach(function (a) {
+      (ARM[a[0]] || ARM.out).forEach(function (c) { R((a[1] ? 20 - c[0] - c[2] : c[0]) + sx, c[1] + b, c[2], c[3], 'p'); });
     });
     if (it && it.k === 'ball') { R(it.x, it.y, 2, 2, 'ball'); R(it.x, it.y, 1, 1, 'bh'); }
     // 灰、饼干渣（绝对位置）
@@ -128,24 +130,24 @@
 
   /* ---------- 姿势：基础姿势（由状态决定）+ 正在播放的那一帧 ---------- */
   function base(t) {
-    var p = { b: 0, sx: 0, legs: 'stand', lp: 0, dir: dir, armL: 'down', armR: 'down', face: 'eyes', lx: look.x, ly: look.y, mouth: 0, item: null, fx: null, dy: 0 };
+    var p = { b: 0, sx: 0, legs: 'stand', lp: 0, dir: dir, armL: 'out', armR: 'out', face: 'eyes', lx: look.x, ly: look.y, mouth: 0, item: null, fx: null, dy: 0 };
     if (mode === 'walk') {
       var q = Math.floor(t / 90) % 4;
       p.legs = 'walk'; p.lp = q; p.b = q % 2;
       p.armL = q < 2 ? 'swingF' : 'swingB'; p.armR = q < 2 ? 'swingB' : 'swingF';
       if (!looking) { p.lx = dir; p.ly = 0; }
     } else if (mode === 'drag') {
-      p.legs = 'dangle'; p.lp = Math.floor(t / 170) % 2; p.armL = p.armR = 'out'; p.face = 'wow';
+      p.legs = 'dangle'; p.lp = Math.floor(t / 170) % 2; p.armL = p.armR = 'wave'; p.face = 'wow';
     } else if (mode === 'fly' || mode === 'plug') {
       p.legs = 'tuck'; p.armL = p.armR = 'up'; p.face = 'wow';
     } else if (mode === 'sleep') {
-      p.b = Math.floor(t / 1700) % 2 ? 2 : 1; p.face = 'shut';   // 坐着，一呼一吸
+      p.b = Math.floor(t / 1700) % 2 ? 2 : 1; p.face = 'shut'; p.armL = p.armR = 'down';   // 坐着，手放下，一呼一吸
     }
     if (mood === 'happy') { var w = Math.floor(t / 170) % 2; p.face = 'hap'; p.armL = w ? 'up' : 'wave'; p.armR = w ? 'wave' : 'up'; }
     else if (mood === 'over') { p.face = 'hap'; p.armL = p.armR = Math.floor(t / 140) % 2 ? 'up' : 'wave'; }
-    else if (mood === 'dizzy') { p.face = 'dz'; p.sx = Math.floor(t / 150) % 2; p.armL = 'out'; p.armR = 'down'; }
-    else if (mood === 'sad') { p.face = 'sad'; p.b = Math.max(p.b, 1); p.lx = 0; p.ly = 0; }
-    else if (mood === 'wow') { p.face = 'wow'; p.armL = p.armR = 'out'; }
+    else if (mood === 'dizzy') { p.face = 'dz'; p.sx = Math.floor(t / 150) % 2; p.armL = 'wave'; p.armR = 'swingB'; }
+    else if (mood === 'sad') { p.face = 'sad'; p.b = Math.max(p.b, 1); p.lx = 0; p.ly = 0; p.armL = p.armR = 'down'; }
+    else if (mood === 'wow') { p.face = 'wow'; p.armL = p.armR = 'wave'; }
     return p;
   }
   function render() {
@@ -187,8 +189,8 @@
   // 跳：先蹲两格蓄力 → 伸腿起跳 → 空中收腿、举手 → 伸腿下落 → 落地屈膝缓冲、扬灰
   function landFrames() {
     return [
-      { b: 2, armL: 'out', armR: 'out', fx: [[3, 19, 'd'], [16, 19, 'd']], t: 90 },
-      { b: 1, armL: 'down', armR: 'down', fx: [[2, 19, 'd'], [1, 18, 'd'], [17, 19, 'd'], [18, 18, 'd']], t: 90 },
+      { b: 2, armL: 'swingB', armR: 'swingB', fx: [[3, 19, 'd'], [16, 19, 'd']], t: 90 },
+      { b: 1, armL: 'out', armR: 'out', fx: [[2, 19, 'd'], [1, 18, 'd'], [17, 19, 'd'], [18, 18, 'd']], t: 90 },
       { b: 0, fx: [[0, 18, 'd'], [19, 18, 'd']], t: 70 }
     ];
   }
@@ -200,7 +202,7 @@
       { legs: 'stand', armL: 'up', armR: 'up', dy: -a, t: 60 },
       { legs: 'tuck', armL: 'up', armR: 'up', dy: -c, t: 70 },
       { legs: 'tuck', armL: 'wave', armR: 'wave', dy: -h, t: 110 },
-      { legs: 'stand', armL: 'out', armR: 'out', dy: -c, t: 70 },
+      { legs: 'stand', armL: 'swingF', armR: 'swingF', dy: -c, t: 70 },
       { legs: 'stand', armL: 'out', armR: 'out', dy: -a, t: 60 }
     ].concat(landFrames());
   }
@@ -220,17 +222,17 @@
         f.push(mix(Hd, { item: { k: 'cookie', n: n }, mouth: 1, face: 'hap', b: 1, fx: [[10 - n % 2, 17, 'ck']], t: 140 }));
         f.push(mix(Hd, { item: { k: 'cookie', n: n }, mouth: 1, face: 'hap', fx: [[9 + n % 2, 19, 'ck']], t: 180 }));
       }
-      f.push({ face: 'hap', armL: 'down', armR: 'down', fx: [[9, 19, 'ck'], [11, 19, 'ck']], t: 260 });
+      f.push({ face: 'hap', fx: [[9, 19, 'ck'], [11, 19, 'ck']], t: 260 });
       return { frames: f, after: function () { setMood('happy', 900); jump(2); } };
     },
     ball: function () {
       var U = { armR: 'up' }, f = reach(), ys = [3, 0, -2, -3, -2, 0, 3, 5], r;
-      f.push(mix(U, { item: { k: 'ball', x: 17, y: 5 }, lx: 1, ly: -1, t: 420 }));
-      function toss(yy, i) { f.push(mix(U, { armR: i === 0 || i === ys.length - 1 ? 'up' : 'wave', item: { k: 'ball', x: 17, y: yy }, lx: 1, ly: -1, t: 70 })); }
+      f.push(mix(U, { item: { k: 'ball', x: 16, y: 5 }, lx: 1, ly: -1, t: 420 }));
+      function toss(yy, i) { f.push(mix(U, { armR: i === 0 || i === ys.length - 1 ? 'up' : 'wave', item: { k: 'ball', x: 16, y: yy }, lx: 1, ly: -1, t: 70 })); }
       for (r = 0; r < 2; r++) ys.forEach(toss);
       // 最后一下抛歪了，正好砸到自己头上
       [[16, 1], [14, -2], [12, -3], [10, -1], [9, 2]].forEach(function (c) { f.push(mix(U, { armR: 'wave', item: { k: 'ball', x: c[0], y: c[1] }, lx: 0, ly: -1, t: 70 })); });
-      f.push({ armL: 'out', armR: 'out', item: { k: 'ball', x: 9, y: 4 }, face: 'dz', b: 1, t: 260 });
+      f.push({ armL: 'wave', armR: 'wave', item: { k: 'ball', x: 9, y: 4 }, face: 'dz', b: 1, t: 260 });
       [[11, 1], [13, 0], [15, 2], [17, 6], [18, 11], [19, 16], [21, 18], [24, 18], [27, 18]].forEach(function (c, i) {
         f.push({ item: { k: 'ball', x: c[0], y: c[1] }, face: i < 3 ? 'dz' : 'eyes', lx: 1, ly: c[1] < 8 ? -1 : 1, b: i < 2 ? 1 : 0, t: 70 });
       });
