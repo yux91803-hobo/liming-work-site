@@ -1354,3 +1354,9 @@ button.rc-lb:hover { background: var(--sunk); }
   .cd-inp { flex-basis: 100%; font-size: 16px; }   /* iOS：小于 16px 会自动放大页面 */
 }
 @media (prefers-reduced-motion: reduce) { .cd-bad .cd-inp { animation: none; } }
+a.linkbtn { text-decoration: none; }
+/* 同一个外设的几个驱动：一排切换 */
+.cd-vars { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.cd-var { min-height: 32px; padding: 4px 12px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--surface); color: var(--ink-2); font-size: 13px; font-weight: 600; cursor: pointer; }
+.cd-var:hover { color: var(--ink); }
+.cd-var.on { border-color: var(--h, var(--mask)); background: color-mix(in srgb, var(--h, var(--mask)) 10%, var(--surface)); color: var(--ink); }

@@ -63,5 +63,7 @@ test('外设页分页 sec 只认五种，和旧版 tab 参数不冲突', () => {
   assert.deepEqual(core.fromParams('v=topic&t=gpio&sec=code'), { v: 'topic', t: 'gpio', sec: 'code' });
   assert.deepEqual(core.fromParams('v=topic&t=spi&cv=cd'), { v: 'topic', t: 'spi', sec: 'code', cv: 'cd' });
   assert.deepEqual(core.fromParams('v=topic&t=spi&sec=code&cv=xx'), { v: 'topic', t: 'spi', sec: 'code' });
+  assert.deepEqual(core.fromParams('v=topic&t=i2c&cf=eeprom.c&cx=i2chw'), { v: 'topic', t: 'i2c', cx: 'i2chw', sec: 'code', cf: 'eeprom.c', cv: 'reg' });
+  assert.deepEqual(core.fromParams('v=topic&t=i2c&cf=../x.c'), { v: 'topic', t: 'i2c' });
   assert.deepEqual(core.fromParams('v=topic&t=gpio&sec=evil'), { v: 'topic', t: 'gpio' });
 });

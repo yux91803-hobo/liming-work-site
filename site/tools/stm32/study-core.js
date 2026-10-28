@@ -8,7 +8,7 @@
      reg  寄存器 id，i 实例，n 通道 / 序号，val 计算值（0x 8 位）
      pin  芯片引脚号 1~144，q 引脚筛选词（v=home）
      m    板载模块 id（v=home，打开这个模块的模拟图），mp 模块上的某个脚
-     snip 代码片段标题（v=topic，定位到该片段）；sec 外设页的分页 points | pins | regs | code | figs；cv 代码页里的 reg | hal | cd
+     snip 代码片段标题（v=topic，定位到该片段）；sec 外设页的分页 points | pins | regs | code | figs；cv 代码页里的 reg | hal | cd；cx 同一外设的另一个驱动；cf 寄存器页打开的文件
      fig  架构图 id；sch 原理图页 id —— 叠在当前页上的查看器（课件 cw 已去掉）
    旧版链接（tab=pins / regs / code / chip / arch / course，page=…）在 fromParams 里换算成新路由。 */
 (function (root, factory) {
@@ -52,6 +52,8 @@
     if (o.v === 'topic' && text(x.snip, 120)) o.snip = text(x.snip, 120);
     if (o.v === 'topic' && /^(?:points|pins|regs|code|figs)$/.test(x.sec || '') && !o.snip) o.sec = x.sec;   // 外设页的分页
     if (o.v === 'topic' && /^(?:reg|hal|cd)$/.test(x.cv || '') && !o.snip) { o.cv = x.cv; o.sec = 'code'; }   // 代码页：寄存器 / HAL 库 / 代码推导
+    if (o.v === 'topic' && !o.snip && /^[a-z][a-z0-9]{1,11}$/.test(x.cx || '')) { o.cx = x.cx; o.sec = 'code'; }   // 同一个外设的第几个驱动（比如硬件 I2C）
+    if (o.v === 'topic' && !o.snip && /^[A-Za-z0-9_]{1,16}\.[ch]$/.test(x.cf || '')) { o.cf = x.cf; o.sec = 'code'; if (!o.cv) o.cv = 'reg'; }   // 寄存器页打开哪个文件
     // 查看器：同一时间只有一个
     if (/^[a-zA-Z0-9_-]{1,80}$/.test(x.fig || '')) o.fig = x.fig;
     else if (/^[a-zA-Z0-9_-]{1,80}$/.test(x.sch || '')) o.sch = x.sch;

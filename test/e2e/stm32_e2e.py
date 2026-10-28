@@ -141,6 +141,14 @@ async def main():
         await pg.fill('.search-in', 'USART_BRR'); await pg.wait_for_timeout(200); await pg.keyboard.press('Enter')
         await pg.wait_for_selector('.sheet.on')
         check('搜索结果回车直接打开寄存器', 'reg=USART_BRR' in pg.url)
+        await pg.keyboard.press('/'); await pg.wait_for_selector('.search.on')
+        await pg.fill('.search-in', 'USART1_IRQHandler'); await pg.wait_for_timeout(250)
+        first = await pg.evaluate("(document.querySelector('.search-it b') || {}).textContent")
+        await pg.keyboard.press('Enter'); await pg.wait_for_timeout(600)
+        check('搜索代码里的函数名：打开对应的寄存器文件', first == 'usart.c' and 'cf=usart.c' in pg.url and await pg.evaluate("document.querySelector('.ftab.on').textContent") == 'usart.c', [first, pg.url])
+        await pg.goto(TOOL + '?m=eeprom'); await pg.wait_for_selector('.pd-links')
+        await pg.click('.pd-links a.linkbtn:has-text("eeprom.c")'); await pg.wait_for_timeout(600)
+        check('模块图：从 M24C02 直接打开 eeprom.c', 't=i2c' in pg.url and await pg.evaluate("[document.querySelector('.cseg-b.on').textContent, document.querySelector('.ftab.on').textContent].join()") == '寄存器,eeprom.c', pg.url)
 
         # ---------- 6. 深链 / 旧链接 ----------
         for qs, test, name in [
@@ -229,18 +237,18 @@ async def main():
         await pg.context.close()
 
         # ---------- 10. 编程思维总览、外设页入口、手机布局 ----------
-        CHAPS = ['gpio', 'usart', 'i2c', 'tim', 'adc', 'spi']
+        CHAPS = ['gpio', 'exti', 'usart', 'i2c', 'tim', 'dma', 'adc', 'spi']
         pg = await page(b)
         await pg.goto(TOOL + '?v=think'); await pg.wait_for_selector('.tk-ch')
         hrefs = await pg.evaluate("[...document.querySelectorAll('.tk-ch')].map(a => new URL(a.href).searchParams.get('t'))")
-        check('设计原理总览：六章推导链', hrefs == CHAPS and await pg.evaluate("document.querySelectorAll('.tk-flow li').length") == 6 and await pg.evaluate("document.querySelector('h1').textContent") == '设计原理', hrefs)
+        check('设计原理总览：八章推导链', hrefs == CHAPS and await pg.evaluate("document.querySelectorAll('.tk-flow li').length") == 6 and await pg.evaluate("document.querySelector('h1').textContent") == '设计原理', hrefs)
         for chap in ['gpio', 'usart', 'tim', 'adc', 'spi']:
             await pg.goto(TOOL + '?v=topic&t=' + chap); await pg.wait_for_selector('.topic')
             ok = await pg.evaluate("(document.querySelector('.thinkin b') || {}).textContent === '设计原理'")
             if not ok: break
         check('五个外设页都有「设计原理」入口', ok)
         bad = []
-        for tid in ['sys', 'exti', 'dma', 'fsmc']:
+        for tid in ['sys', 'fsmc']:
             await pg.goto(TOOL + '?v=topic&t=' + tid); await pg.wait_for_selector('.topic')
             if await pg.evaluate("!!document.querySelector('.thinkin')"): bad.append(tid)
         check('没有推导链的外设不显示「设计原理」入口', not bad, bad)
@@ -281,11 +289,19 @@ async def main():
         check('重来清空进度；切回看推导没有输入框', await pg.evaluate("document.querySelectorAll('.cd-inp').length == 0 && !(JSON.parse(localStorage.getItem('lm.stm32.cdself') || '{}').gpio)"))
         await pg.evaluate("localStorage.removeItem('lm.stm32.codestyle')")
         bad = []
-        for chap in CHAPS + ['sys', 'exti', 'dma', 'fsmc']:
+        for chap in CHAPS + ['sys', 'fsmc']:
             await pg.goto(TOOL + '?v=topic&t=' + chap + '&sec=code&cv=cd'); await pg.wait_for_selector('.code-cd .cd-step')
             n = await pg.evaluate("[document.querySelectorAll('.code-cd .cd-step').length, document.querySelectorAll('.code-reg .ftab').length, document.querySelectorAll('.code-cd .rc-l.has').length, document.querySelector('.code-cd').hidden]")
             if n[0] < 7 or n[1] < 3 or n[2] < 6 or n[3]: bad.append((chap, n))
         check('十个外设的代码页都有完整文件和代码推导', not bad, bad)
+        bad = []
+        for t, want, cx, files in [('i2c', ['软件 I2C', '硬件 I2C'], 'i2chw', 'i2c2.c'), ('tim', ['节拍 + PWM', '输入捕获', 'N 个脉冲'], 'timpulse', 'pulse.c'), ('adc', ['单通道', '多通道 + DMA'], 'adcdma', 'adc_dma.c')]:
+            await pg.goto(TOOL + '?v=topic&t=' + t + '&sec=code&cv=reg'); await pg.wait_for_selector('.cd-vars')
+            got = await pg.evaluate("[...document.querySelectorAll('.cd-var')].map(b => b.textContent)")
+            await pg.click('.cd-var:has-text("%s")' % want[-1]); await pg.wait_for_timeout(500)
+            ft = await pg.evaluate("[...document.querySelectorAll('.ftab')].map(b => b.textContent)")
+            if got != want or ('cx=' + (cx if t != 'tim' else 'timpulse')) not in pg.url or files not in ft: bad.append((t, got, pg.url, ft))
+        check('I2C / TIM / ADC：课件的另外几个案例可以切换（硬件 I2C、输入捕获、N 个脉冲、多通道 + DMA）', not bad, bad)
         cd = await pg.evaluate("STM.codederive.data.CD.gpio.files.map(f => f.name)")
         check('GPIO：led.h / led.c / main.c', cd == ['led.h', 'led.c', 'main.c'], cd)
         bad = []
@@ -307,14 +323,14 @@ async def main():
         await pg.context.close()
         pg = await page(b, 390, 844, mobile=True)
         overflow = []
-        pages = ['?v=topic&t=' + c + '&sec=code&cv=' + k for c in CHAPS + ['sys', 'exti', 'dma', 'fsmc'] for k in ['reg', 'cd']] + ['?v=topic&t=fsmc', '', '?m=lcd', '?m=beep&mp=g', '?m=led', '?m=eeprom&mp=p6', '?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
+        pages = ['?v=topic&t=' + c + '&sec=code&cv=' + k for c in CHAPS + ['sys', 'fsmc'] for k in ['reg', 'cd']] + ['?v=topic&t=fsmc', '', '?m=lcd', '?m=beep&mp=g', '?m=led', '?m=eeprom&mp=p6', '?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
                  '?v=think&t=gpio&s=s13', '?v=think&t=usart&s=s11', '?v=think&t=tim&s=s11', '?v=think&t=adc&s=s11', '?v=think&t=spi&s=s11', '?v=think&t=i2c&s=review']
         for qs in pages:
             await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)
             if await pg.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"): overflow.append(qs)
         check('手机：%d 个页面没有横向溢出' % len(pages), not overflow, overflow)
         clipped = []
-        for qs in ['?v=topic&t=' + c + '&sec=code&cv=' + k for c in CHAPS + ['sys', 'exti', 'dma', 'fsmc'] for k in ['reg', 'hal', 'cd']]:
+        for qs in ['?v=topic&t=' + c + '&sec=code&cv=' + k for c in CHAPS + ['sys', 'fsmc'] for k in ['reg', 'hal', 'cd']]:
             await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)
             n = await pg.evaluate("Array.from(document.querySelectorAll('.rc-c, .rc-cm, .rc-sig')).filter(c => c.getClientRects().length && (c.scrollWidth > c.clientWidth + 1 || c.closest('.rc-code').scrollWidth > c.closest('.rc-code').clientWidth + 1)).length")
             if n: clipped.append((qs, n))

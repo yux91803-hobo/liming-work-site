@@ -4,7 +4,7 @@
    放在一个目录里，用环境变量指过去：
      STM32F10X_INC=/path/to/inc npm run check:c
    没设这个变量就跳过（头文件是 ST / ARM 的，不放进仓库）。
-   检查两件事：每个 .c 编译没有错误和警告；每一章连同它依赖的 led.c / delay.c / usart.c，
+   检查两件事：每个 .c 编译没有错误和警告；每一章连同它依赖的 led.c / delay.c / usart.c / tim.c，
    除了 C 库（memcpy、printf）和 system_stm32f10x.c 里的 SystemCoreClock，没有找不到的函数。 */
 'use strict';
 const fs = require('node:fs');
@@ -22,7 +22,7 @@ if (!clang || !nm) { console.error('需要 clang 和 llvm-nm'); process.exit(1);
 
 const root = path.join(__dirname, '../site/tools/stm32');
 const sb = { window: {} }; sb.window.window = sb.window; vm.createContext(sb);
-['codederive.js', 'codederive-more.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sb, { filename: f }));
+['codederive.js', 'codederive-more.js', 'codederive-extra.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sb, { filename: f }));
 const CD = sb.window.STM32_CODEDERIVE.CD;
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'stm32c-'));
@@ -40,7 +40,7 @@ for (const [id, cd] of Object.entries(CD)) {
 }
 const flags = ['--target=thumbv7m-none-eabi', '-mcpu=cortex-m3', '-ffreestanding', '-std=c99', '-O1', '-DSTM32F10X_HD',
   '-Wall', '-Wextra', '-Wno-unused-parameter', '-Werror', '-I' + stub, '-I' + inc];
-const SHARED = ['gpio/led.c', 'sys/delay.c', 'usart/usart.c'];
+const SHARED = ['gpio/led.c', 'sys/delay.c', 'usart/usart.c', 'tim/tim.c'];
 const LIBC = new Set(['memcpy', 'memset', 'strlen', 'printf', 'SystemCoreClock']);
 let bad = 0, files = 0;
 for (const id of Object.keys(CD)) {
@@ -50,7 +50,7 @@ for (const id of Object.keys(CD)) {
   for (const s of srcs) {
     const o = path.join(tmp, s.replace('/', '_') + '.o');
     try {
-      execFileSync(clang, flags.concat(['-I' + path.join(tmp, id), '-I' + path.join(tmp, 'gpio'), '-I' + path.join(tmp, 'sys'), '-I' + path.join(tmp, 'usart'), '-c', path.join(tmp, s), '-o', o]), { stdio: 'pipe' });
+      execFileSync(clang, flags.concat(['-I' + path.join(tmp, id), '-I' + path.join(tmp, 'gpio'), '-I' + path.join(tmp, 'sys'), '-I' + path.join(tmp, 'usart'), '-I' + path.join(tmp, 'tim'), '-c', path.join(tmp, s), '-o', o]), { stdio: 'pipe' });
     } catch (e) { bad++; console.error('✗ ' + s + '\n' + e.stderr.toString()); continue; }
     if (own.includes(s)) files++;
     objs.push(o);

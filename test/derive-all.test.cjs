@@ -7,13 +7,13 @@ const path = require('node:path');
 const root = path.join(__dirname, '../site/tools/stm32');
 const sb = { window: {} }; sb.window.window = sb.window; sb.globalThis = sb.window;
 vm.createContext(sb);
-const IDS = ['gpio', 'usart', 'i2c', 'tim', 'adc', 'spi'];
+const IDS = ['gpio', 'exti', 'usart', 'i2c', 'tim', 'dma', 'adc', 'spi'];
 ['assets/registers.js', 'pins.js', 'i2csim.js', 'mcusim.js', 'derive-core.js'].concat(IDS.map((id) => 'derive-' + id + '.js'))
   .forEach((f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sb, { filename: f }));
 const W = sb.window, C = W.STM32DeriveCore, S = W.STM32McuSim, D = W.STM32_DERIVE;
 const plain = (x) => JSON.parse(JSON.stringify(x));
 
-test('六章都在，而且顺序和课件一致', () => {
+test('八章都在，而且顺序和课件一致', () => {
   assert.deepEqual(plain(Object.keys(D).sort()), IDS.slice().sort());
 });
 
@@ -132,4 +132,24 @@ test('模拟器：外设没开时钟时写入无效并给出提示；空的 whil
   const r = S.run({ fns: { main: { sig: 'int main(void)', lines: [{ c: 'GPIOA->ODR = 0;' }, { c: 'while (1) {' }, { c: '}' }] } } }, { ms: 10 });
   assert.equal(r.stop.kind, 'end');
   assert.ok(r.log.some((x) => /时钟还没开/.test(x.text)));
+});
+
+test('EXTI：轮询漏掉短按、中断不漏；没开 AFIO 没反应；不清 PR 卡死；消抖后只翻转一次', () => {
+  const ch = D.exti, toggles = (r) => r.leds.LED1.ev.filter((e) => e[0] > 0).length;
+  assert.equal(toggles(C.runScenario(ch, 'poll')), 0);
+  assert.equal(toggles(C.runScenario(ch, 'irq')), 1);
+  const na = C.runScenario(ch, 'noafio'); assert.equal(toggles(na), 0); assert.ok(na.log.some((x) => /AFIO 的时钟还没开/.test(x.text)));
+  assert.equal(C.runScenario(ch, 'noclear').stop.kind, 'irq');
+  assert.ok(toggles(C.runScenario(ch, 'bounce')) >= 3);
+  assert.equal(toggles(C.runScenario(ch, 'debounce')), 1);
+});
+
+test('DMA：电脑收到整串、LED 从一开始就闪；忘了 MINC 收到同一个字符；忘了 DMAT 什么也不发；发完中断接着发 3 段', () => {
+  const ch = D.dma, want = 'hello DMA, CPU is free!\n';
+  const ok = C.runScenario(ch, 'dma'), poll = C.runScenario(ch, 'poll');
+  assert.equal(ok.terminal, want); assert.equal(poll.terminal, want);
+  assert.ok(ok.leds.LED1.ev.find((e) => e[1])[0] < 100 && poll.leds.LED1.ev.find((e) => e[1])[0] > 2000);
+  assert.equal(C.runScenario(ch, 'nominc').terminal, 'h'.repeat(25));
+  assert.equal(C.runScenario(ch, 'nodmat').terminal, '');
+  assert.equal(C.runScenario(ch, 'tc').terminal, want.repeat(3));
 });
