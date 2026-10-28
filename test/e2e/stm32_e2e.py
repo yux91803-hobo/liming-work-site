@@ -233,9 +233,34 @@ async def main():
             if not ok: break
         check('五个外设页都有 Code 入口', ok)
         await pg.context.close()
+        # 寄存器版代码
+        pg = await page(b)
+        await pg.goto(TOOL + '?v=topic&t=exti'); await pg.wait_for_selector('.rc')
+        st = await pg.evaluate("[document.querySelector('.cseg-b.on').textContent, !document.querySelector('.code-reg').hidden, document.querySelector('.code-hal').hidden]")
+        check('外设页代码：默认显示寄存器写法，HAL 在另一页', st == ['寄存器', True, True], st)
+        await pg.click('.rc .rc-l.has .rc-lb >> nth=3'); await pg.wait_for_timeout(100)
+        why = await pg.inner_text('.rc .rc-l.open .rc-why')
+        check('点一行展开「为什么这样写」', '为什么这样写' in why and 'AFIO' in why, why[:60])
+        await pg.click('.cseg-b:has-text("HAL")'); await pg.wait_for_timeout(100)
+        check('切到 HAL 库写法', await pg.evaluate("document.querySelector('.code-reg').hidden && !document.querySelector('.code-hal').hidden && document.querySelectorAll('.code-hal .snip').length > 0"))
+        await pg.evaluate("localStorage.removeItem('lm.stm32.codestyle')")
+        bad = []
+        for chap in CHAPS:
+            await pg.goto(TOOL + '?v=think&t=' + chap); await pg.wait_for_selector('.dv-codein')
+            await pg.click('.dv-codein'); await pg.wait_for_selector('.rc')
+            n = await pg.evaluate("[document.querySelectorAll('.rc').length, document.querySelectorAll('.rc-l.has').length, document.querySelectorAll('.rc-cm').length]")
+            if n[0] < 2 or n[1] < 6 or n[2] < 6: bad.append((chap, n))
+        check('Code 六章都有「完整代码」页：每章 2 段程序，逐行注释、能点开理由', not bad, bad)
+        await pg.goto(TOOL + '?v=think&t=i2c&s=code'); await pg.wait_for_selector('.rc')
+        await pg.click('.rc .rc-l.has .rc-lb >> nth=6'); await pg.wait_for_timeout(100)
+        fr = await pg.evaluate("(() => { const o = document.querySelector('.rc-l.open .rc-from'); return o ? o.querySelectorAll('a').length : 0; })()")
+        check('理由下面列出它来自推导的哪一步（能点过去）', fr >= 1, fr)
+        txt = await pg.evaluate("STM.regcode.textOf(STM.regcode.progsOfChapter('gpio')[0])")
+        check('复制出来的代码带注释', '// 打开 GPIOA 的时钟' in txt and 'GPIOA->ODR ^= GPIO_ODR_ODR0;' in txt, txt[:80])
+        await pg.context.close()
         pg = await page(b, 390, 844, mobile=True)
         overflow = []
-        pages = ['', '?m=lcd', '?m=beep&mp=g', '?m=led', '?m=eeprom&mp=p6', '?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
+        pages = ['?v=think&t=gpio&s=code', '?v=think&t=i2c&s=code', '?v=topic&t=fsmc', '', '?m=lcd', '?m=beep&mp=g', '?m=led', '?m=eeprom&mp=p6', '?v=think'] + ['?v=think&t=' + c for c in CHAPS] + ['?v=think&t=i2c&s=s3', '?v=think&t=i2c&s=s6', '?v=think&t=i2c&s=s12', '?v=think&t=i2c&s=s14', '?v=think&t=i2c&s=s19', '?v=think&t=i2c&s=s21',
                  '?v=think&t=gpio&s=s13', '?v=think&t=usart&s=s11', '?v=think&t=tim&s=s11', '?v=think&t=adc&s=s11', '?v=think&t=spi&s=s11', '?v=think&t=i2c&s=review']
         for qs in pages:
             await pg.goto(TOOL + qs); await pg.wait_for_timeout(600)

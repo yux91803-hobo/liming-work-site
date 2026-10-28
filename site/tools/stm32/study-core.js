@@ -33,7 +33,7 @@
     if (o.v === 'topic' && !o.t && !x.reg && !x.snip) o.v = 'home';
     if (o.v !== 'topic' && o.v !== 'think') delete o.t;
     if (o.v === 'think' && o.t && /^[1-4]$/.test(String(x.p == null ? '' : x.p))) o.p = String(x.p);   // 编程思维：第几段
-    if (o.v === 'think' && o.t && /^(?:s\d{1,2}|review)$/.test(String(x.s == null ? '' : x.s))) o.s = String(x.s);   // 推导章节：哪一环
+    if (o.v === 'think' && o.t && /^(?:s\d{1,2}|review|code)$/.test(String(x.s == null ? '' : x.s))) o.s = String(x.s);   // 推导章节：哪一环
     if (/^[A-Za-z][A-Za-z0-9_]{1,31}$/.test(x.reg || '')) {
       o.reg = x.reg;
       if (/^[A-Za-z0-9_]{1,16}$/.test(x.i || '')) o.i = x.i;

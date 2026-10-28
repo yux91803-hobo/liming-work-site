@@ -118,10 +118,28 @@
       parts.push([s4, '寄存器']);
     }
 
-    // 代码
-    var snipEls = {};
-    if (t.snips.length) {
+    // 代码：寄存器写法（逐行注释 + 为什么）在前，HAL 库写法在后，切换着看
+    var snipEls = {}, rprogs = STM.regcode ? STM.regcode.progsOf(t.id) : [];
+    if (t.snips.length || rprogs.length) {
       var s5 = sec('code', '代码');
+      var CODE_KEY = 'lm.stm32.codestyle', style = ui.lsGet(CODE_KEY) === 'hal' && t.snips.length ? 'hal' : rprogs.length ? 'reg' : 'hal';
+      if (route.snip) style = 'hal';
+      var seg = el('div', 'cseg'); seg.setAttribute('role', 'tablist');
+      var regBox = el('div', 'code-reg'), halBox = el('div', 'code-hal');
+      [['reg', '寄存器', rprogs.length], ['hal', 'HAL 库', t.snips.length]].forEach(function (x) {
+        if (!x[2]) return;
+        var b = ui.btn('cseg-b', x[1]); b.dataset.k = x[0]; b.setAttribute('role', 'tab');
+        b.addEventListener('click', function () { style = x[0]; ui.lsSet(CODE_KEY, style); syncSeg(); });
+        seg.appendChild(b);
+      });
+      function syncSeg() {
+        Array.prototype.forEach.call(seg.children, function (b) { var on = b.dataset.k === style; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+        regBox.hidden = style !== 'reg'; halBox.hidden = style !== 'hal';
+      }
+      if (seg.children.length > 1) s5.appendChild(seg);
+      rprogs.forEach(function (pg) { regBox.appendChild(STM.regcode.render(pg, app, { compact: true })); });
+      s5.appendChild(regBox); s5.appendChild(halBox);
+      syncSeg();
       t.snips.forEach(function (s) {
         var card = el('div', 'snip'); card.id = 'snip-' + s.i;
         var hh = el('div', 'snip-h'); hh.appendChild(el('h3', null, s.title)); card.appendChild(hh);
@@ -135,7 +153,7 @@
         }
         card.appendChild(cb);
         snipEls[s.title] = card;
-        s5.appendChild(card);
+        halBox.appendChild(card);
       });
       parts.push([s5, '代码']);
     }

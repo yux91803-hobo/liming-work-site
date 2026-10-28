@@ -906,6 +906,11 @@
       go.appendChild(el('span', 'dv-go-l', nDone ? '接着推：问题 ' + stepNo(at) : '从第一个问题开始'));
       go.appendChild(el('b', null, S[at].q)); go.appendChild(ui.icon('next'));
       wrap.appendChild(go);
+      if (STM.regcode && STM.regcode.progsOfChapter(ch.id).length) {
+        var cl = app.link({ v: 'think', t: ch.id, s: 'code' }, 'dv-codein'); cl.appendChild(ui.icon('code'));
+        var ct = el('span'); ct.appendChild(el('b', null, '完整代码')); ct.appendChild(el('span', null, '寄存器写法，逐行注释')); cl.appendChild(ct); cl.appendChild(ui.icon('next'));
+        wrap.appendChild(cl);
+      }
 
       var due = C.dueCount(ch, st.stuck || {}), groups = C.stuckList(ch, st.stuck || {});
       if (groups.length) {
@@ -964,6 +969,15 @@
         box.appendChild(b);
       });
       return box;
+    }
+
+    /* =================== 页面：完整代码 =================== */
+    function renderCode() {
+      var head = el('header', 'dv-hero');
+      var crumb = app.link({ v: 'think', t: ch.id }, 'tk-crumb'); crumb.textContent = topic.code + ' · Code'; head.appendChild(crumb);
+      head.appendChild(el('h1', null, '完整代码'));
+      wrap.appendChild(head);
+      STM.regcode.progsOfChapter(ch.id).forEach(function (pg) { wrap.appendChild(STM.regcode.render(pg, app)); });
     }
 
     /* =================== 页面：一环 =================== */
@@ -1126,10 +1140,10 @@
 
     var disposers = [];
     function dispose() { disposers.forEach(function (f) { try { f(); } catch (e) {} }); disposers = []; }
-    function rerender() { dispose(); ui.clear(wrap); var r = app.route(); if (r.s === 'review') renderReview(); else if (r.s && S[r.s]) renderStep(r.s); else renderHome(); }
+    function rerender() { dispose(); ui.clear(wrap); var r = app.route(); if (r.s === 'review') renderReview(); else if (r.s === 'code') renderCode(); else if (r.s && S[r.s]) renderStep(r.s); else renderHome(); }
     rerender();
     return {
-      title: function (r) { return r.s && S[r.s] ? '问题 ' + (S[r.s]._i + 1) + ' · ' + topic.code + ' Code' : r.s === 'review' ? '常卡的地方 · ' + topic.code : topic.code + ' · Code'; },
+      title: function (r) { return r.s && S[r.s] ? '问题 ' + (S[r.s]._i + 1) + ' · ' + topic.code + ' Code' : r.s === 'review' ? '常卡的地方 · ' + topic.code : r.s === 'code' ? topic.code + ' 完整代码' : topic.code + ' · Code'; },
       update: function (r) { if (r.t !== ch.id) return; if ((r.s || '') !== (cur || '') || r.s === 'review') { cur = r.s || ''; rerender(); window.scrollTo(0, 0); } },
       destroy: dispose
     };
@@ -1140,6 +1154,6 @@
     chapter: function (id) { return CH[id] || null; },
     view: view,
     progress: function (id) { var c = CH[id]; if (!c) return null; var st = chState(id); return { done: Object.keys(st.done || {}).filter(function (k) { return c.steps.some(function (s) { return s.id === k; }); }).length, total: c.steps.length, due: C.dueCount(c, st.stuck || {}) }; },
-    validStep: function (id, s) { var c = CH[id]; return !!(c && (s === 'review' || c.steps.some(function (x) { return x.id === s; }))); }
+    validStep: function (id, s) { var c = CH[id]; return !!(c && (s === 'review' || (s === 'code' && STM.regcode && STM.regcode.progsOfChapter(id).length) || c.steps.some(function (x) { return x.id === s; }))); }
   };
 })();
