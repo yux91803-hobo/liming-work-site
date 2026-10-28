@@ -1,0 +1,6 @@
+/* pixel-map.css — 世界地图的像素风（接在 map.css 和 /pixel.css 后面）：浮层按钮换成粗边框 + 硬阴影 */
+#search, #results, .fab, .zoom, .cpop .maplibregl-popup-content { border: 2px solid var(--pb); box-shadow: var(--pd) var(--pd) 0 var(--ps) !important; }
+.zoom .fab { border: 0; box-shadow: none !important; }
+.zoom .fab + .fab { border-top: 2px solid var(--pb); }
+.fab:active { transform: translate(var(--pd), var(--pd)); box-shadow: 0 0 0 var(--ps) !important; }
+.me i { border-radius: 0 !important; }

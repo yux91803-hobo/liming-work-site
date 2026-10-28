@@ -1,6 +1,7 @@
 (function () {
   'use strict';
   var TOOLS = window.TOOLS || [];
+  var home = document.getElementById('home');
   var $ = function (s) { return document.querySelector(s); };
   var html = document.documentElement, body = document.body;
   var SVGNS = 'http://www.w3.org/2000/svg';
@@ -80,41 +81,146 @@
     stage.querySelectorAll('iframe').forEach(function (f) { try { f.contentWindow.postMessage({ type: 'theme' }, location.origin); } catch (e) {} });
   });
 
-  /* ---------- 首页渲染：只有图标 + 工具名 ---------- */
+  /* ---------- 首页：按分类分区，每类第一个（最近打开的）占一整行 ---------- */
+  var CATS = window.TOOL_CATS || [{ id: 'tool', name: '工具' }];
+  function recent() { try { var r = JSON.parse(ls('lm.shell.recent') || '[]'); return Array.isArray(r) ? r : []; } catch (e) { return []; } }
+  function touchRecent(id) { var r = recent().filter(function (x) { return x !== id && byId[x]; }); r.unshift(id); ls('lm.shell.recent', JSON.stringify(r.slice(0, 20))); }
+  function rank(id) { var i = recent().indexOf(id); return i < 0 ? 999 : i; }
+  function sv(tag, at) { var e = document.createElementNS(SVGNS, tag); for (var k in at) if (Object.prototype.hasOwnProperty.call(at, k)) e.setAttribute(k, String(at[k])); return e; }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  /* STM32 学到哪了：学习台每次换页都会发 route 过来，存一份，首页用它写「继续」那一行、点亮对应外设的引脚 */
+  var TOPIC = { gpio: 'GPIO', exti: 'EXTI', usart: 'USART', i2c: 'I2C', tim: 'TIM', dma: 'DMA', adc: 'ADC', spi: 'SPI', sys: 'RCC', fsmc: 'FSMC' };
+  var TOPIC_PINS = { gpio: [34, 35, 100], exti: [20, 21, 22, 49], usart: [101, 102], i2c: [69, 70], tim: [35, 136, 100], dma: [101, 102], adc: [26, 28], spi: [41, 42, 43, 7], sys: [23, 24, 25], fsmc: [118, 119, 127, 56, 85, 86, 114, 115, 58, 59, 60, 63] };
+  var SEC = { points: '要点', pins: '引脚', regs: '寄存器', code: '代码', figs: '图' }, CV = { reg: '寄存器代码', hal: 'HAL 代码', cd: '代码推导' };
+  function stmWhere(route) {
+    var sp; try { sp = new URLSearchParams(route || ''); } catch (e) { return null; }
+    var v = sp.get('v') || 'home', t = sp.get('t'), name = TOPIC[t];
+    if (v === 'topic' && name) { var cv = sp.get('cv'), sec = sp.get('sec'); return { t: t, text: name + ' ' + (cv && CV[cv] ? CV[cv] : sec && SEC[sec] ? SEC[sec] : '') }; }
+    if (v === 'think') {
+      if (!name) return { text: '设计原理' };
+      var st = sp.get('s'), m = /^s(\d+)$/.exec(st || '');
+      return { t: t, text: name + ' 设计原理' + (m ? ' 第 ' + m[1] + ' 环' : st === 'review' ? ' 复习' : '') };
+    }
+    if (v === 'board') return { text: '开发板' };
+    return null;
+  }
+
+  /* 插画 */
+  // LQFP144：每边 36 个脚，1 脚在左上，逆时针编号；on 里的脚号点亮
+  function artChip(on) {
+    var s = sv('svg', { viewBox: '0 0 260 260', 'class': 'art art-chip', 'aria-hidden': 'true' }), g = sv('g', { 'class': 'pins' });
+    var B = 50, W = 160, step = W / 36, L = 15, lit = {};
+    (on || []).forEach(function (n, k) { lit[n] = k + 1; });
+    for (var n = 1; n <= 144; n++) {
+      var side = Math.floor((n - 1) / 36), k = (n - 1) % 36, x, y, w, h, c = B + step * (k + 0.5);
+      if (side === 0) { x = B - L; y = c - 1.1; w = L; h = 2.2; }
+      else if (side === 1) { x = c - 1.1; y = B + W; w = 2.2; h = L; }
+      else if (side === 2) { x = B + W; y = B + W - step * (k + 0.5) - 1.1; w = L; h = 2.2; }
+      else { x = B + W - step * (k + 0.5) - 1.1; y = B - L; w = 2.2; h = L; }
+      var r = sv('rect', { x: x.toFixed(2), y: y.toFixed(2), width: w, height: h, rx: 0.6 });
+      if (lit[n]) { r.setAttribute('class', 'on'); r.style.setProperty('--k', String(lit[n])); }
+      g.appendChild(r);
+    }
+    s.appendChild(g);
+    s.appendChild(sv('rect', { x: B, y: B, width: W, height: W, rx: 7, 'class': 'body' }));
+    s.appendChild(sv('rect', { x: B + 9, y: B + 9, width: W - 18, height: W - 18, rx: 4, 'class': 'bevel' }));
+    s.appendChild(sv('rect', { x: B + 15, y: B + 15, width: 10, height: 10, 'class': 'dimple' }));
+    var t1 = sv('text', { x: B + W / 2, y: B + W / 2 - 2, 'class': 'mark' }); t1.textContent = 'STM32F103';
+    var t2 = sv('text', { x: B + W / 2, y: B + W / 2 + 16, 'class': 'mark sub' }); t2.textContent = 'ZET6';
+    s.appendChild(t1); s.appendChild(t2);
+    return s;
+  }
+  // 点阵世界地图：64 × 28，由 data/countries.json 预先算好（每行 16 位十六进制）
+  var WORLD = ["001343f00020f0c0", "081de3f0080ffff0", "ffff9bc83dffffff", "1ffe21006ffffffe", "00ff38016fffff88", "007ffc017fffff80", "003ff200ffffffc0", "003fe003b9fffe00", "003fe00327bffe00", "001fc003e3fffc00", "000e4003fffff800", "000e4007fdeffc00", "00030007ffc66400", "00008007ff046400", "00007803ff804000", "00003e003f004800", "00003f003e001900", "00003fc03e000070", "00003fc03e000000", "00001f803e800340", "00000f803c8007c0", "00001f001c000fe0", "00001e001c000fe0", "00001c00100000e0", "0000180000000000", "0000100000000002", "0000100000000000", "0000100000000000"];
+  function artWorld() {
+    var s = sv('svg', { viewBox: '0 0 384 168', 'class': 'art art-world', 'aria-hidden': 'true' });
+    WORLD.forEach(function (row, r) {
+      for (var c = 0; c < 64; c++) {
+        if ((parseInt(row[c >> 2], 16) >> (3 - (c & 3))) & 1) s.appendChild(sv('rect', { x: c * 6 + 1, y: r * 6 + 1, width: 4, height: 4 }));
+      }
+    });
+    return s;
+  }
+  function artIcon(t) { var s = svg(t.icon); s.setAttribute('class', 'art art-icon'); return s; }
+
+  function card(t, wide, hero) {
+    var a = el('a', 'card' + (wide ? ' wide' : '') + (hero ? ' hero' : '') + (t.art ? ' art-' + t.art : ''));
+    a.href = t.path; a.dataset.id = t.id; a.setAttribute('aria-label', t.name);
+    var where = t.id === 'stm32' ? stmWhere(ls('lm.shell.stm32')) : null;
+    if (t.art === 'chip') a.appendChild(artChip(where && where.t ? TOPIC_PINS[where.t] : []));
+    else if (t.art === 'world') a.appendChild(artWorld());
+    else a.appendChild(artIcon(t));
+    var tx = el('span', 'tx');
+    tx.appendChild(iconBox(t));
+    tx.appendChild(el('span', 'nm', t.name));
+    if (hero && where && where.text) {
+      var go = el('span', 'go');
+      go.appendChild(svg([['path', { d: 'M9.5 7.5 14 12l-4.5 4.5' }]]));
+      go.appendChild(el('span', null, where.text.trim()));
+      tx.appendChild(go);
+      a.dataset.route = ls('lm.shell.stm32') || '';
+      a.setAttribute('aria-label', t.name + '，继续 ' + where.text.trim());
+    }
+    a.appendChild(tx);
+    return a;
+  }
+
   var grid = $('#grid');
-  TOOLS.forEach(function (t, i) {
-    var a = document.createElement('a');
-    a.className = 'card'; a.href = t.path; a.dataset.id = t.id;
-    a.setAttribute('aria-label', t.name);
-    a.style.setProperty('--i', String(i));
-    a.appendChild(iconBox(t));
-    var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = t.name;
-    a.appendChild(nm);
-    grid.appendChild(a);
-  });
+  function renderHome() {
+    grid.textContent = '';
+    var heroId = recent().filter(function (x) { return byId[x]; })[0];
+    CATS.concat(TOOLS.some(function (t) { return !CATS.some(function (c) { return c.id === t.cat; }); }) ? [{ id: '', name: '其他' }] : []).forEach(function (c) {
+      var list = TOOLS.filter(function (t) { return c.id ? t.cat === c.id : !CATS.some(function (x) { return x.id === t.cat; }); });
+      if (!list.length) return;
+      list.sort(function (x, y) { return rank(x.id) - rank(y.id); });
+      var sec = el('section', 'cat'); sec.dataset.cat = c.id;
+      sec.appendChild(el('h2', 'cat-h', c.name));
+      var g = el('div', 'cat-g');
+      list.forEach(function (t, i) { g.appendChild(card(t, i === 0, t.id === heroId)); });
+      sec.appendChild(g); grid.appendChild(sec);
+    });
+  }
+  renderHome();
+  // 关掉工具回到首页后，按最新的「最近打开」和学习位置重画（只在没有收拢动画进行时）
+  var homeSig = '';
+  function sig() { return recent().join() + '|' + (ls('lm.shell.stm32') || ''); }
+  homeSig = sig();
+  function refreshHome() { var s2 = sig(); if (s2 === homeSig) return; homeSig = s2; renderHome(); html.classList.add('settled'); }
 
   pressable(grid, '.card');
   pressable($('#cmd'));
   document.addEventListener('click', function (e) {
     var a = e.target.closest('a[data-id]'); if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
-    e.preventDefault(); open(a.dataset.id, { from: a, push: true });
+    e.preventDefault(); open(a.dataset.id, { from: a, push: true, route: a.dataset.route });
   });
 
-  /* 搜索 */
-  var q = $('#q');
+  /* 搜索：标题栏的放大镜打开搜索框，找不到的卡片和空了的分类藏起来 */
+  var q = $('#q'), searchBtn = $('#searchBtn');
   function match(t, s) { return (t.name + ' ' + (t.keywords || '') + ' ' + t.id).toLowerCase().indexOf(s) > -1; }
-  q.addEventListener('input', function () {
+  function filter() {
     var s = q.value.trim().toLowerCase(), n = 0;
     grid.querySelectorAll('.card[data-id]').forEach(function (c) { var ok = !s || match(byId[c.dataset.id], s); c.classList.toggle('hide', !ok); if (ok) n++; });
-    $('#empty').hidden = n > 0; $('#allTitle').textContent = s ? '结果' : '全部';
-  });
+    grid.querySelectorAll('.cat').forEach(function (sec) { sec.hidden = !sec.querySelector('.card:not(.hide)'); });
+    $('#empty').hidden = n > 0;
+  }
+  function searching(on) {
+    home.classList.toggle('searching', on);
+    searchBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    if (on) { q.focus(); return; }
+    q.value = ''; filter(); q.blur();
+  }
+  pressable(searchBtn);
+  searchBtn.addEventListener('click', function () { searching(!home.classList.contains('searching')); });
+  q.addEventListener('input', filter);
+  q.addEventListener('blur', function () { if (!q.value.trim()) setTimeout(function () { if (document.activeElement !== q && !q.value.trim()) home.classList.remove('searching'), searchBtn.setAttribute('aria-expanded', 'false'); }, 120); });
   q.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { var c = grid.querySelector('.card[data-id]:not(.hide)'); if (c) { q.blur(); open(c.dataset.id, { from: c, push: true }); } }
-    if (e.key === 'Escape') { q.value = ''; q.dispatchEvent(new Event('input')); q.blur(); }
+    if (e.key === 'Enter') { var c = grid.querySelector('.card[data-id]:not(.hide)'); if (c) { q.blur(); open(c.dataset.id, { from: c, push: true, route: c.dataset.route }); } }
+    if (e.key === 'Escape') searching(false);
   });
   document.addEventListener('keydown', function (e) {
     if (current) { if (e.key === 'Escape') back(); return; }
-    if ((e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) && document.activeElement !== q) { e.preventDefault(); q.focus(); }
+    if ((e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) && document.activeElement !== q) { e.preventDefault(); searching(true); }
   });
 
   /* ---------- 提示 ---------- */
@@ -129,9 +235,9 @@
   }
   function setClip(p, v) { if (lite) v = ''; p.style.clipPath = v; p.style.webkitClipPath = v; }
   /* iframe 地址：embed=1 放最前；当前地址栏就是这个工具的路由时（深链 /stm32?tab=code），把 location.search 透传进去 */
-  function frameSrc(t) {
-    var extra = '';
-    if (location.pathname.replace(/\/+$/, '') === t.path.replace(/\/+$/, '') && location.search.length > 1) {
+  function frameSrc(t, route) {
+    var extra = route || '';
+    if (!extra && location.pathname.replace(/\/+$/, '') === t.path.replace(/\/+$/, '') && location.search.length > 1) {
       try { var sp = new URLSearchParams(location.search); sp.delete('embed'); extra = sp.toString(); } catch (e) { extra = ''; }
     }
     return t.src + (t.src.indexOf('?') > -1 ? '&' : '?') + 'embed=1' + (extra ? '&' + extra : '');
@@ -139,12 +245,12 @@
   function post(p, msg) { try { p._frame.contentWindow.postMessage(msg, location.origin); } catch (e) {} }
   // 工具被关掉时：让 iframe 收起所有子视图（查看器等），下次打开从干净状态开始
   function resetFrame(p) { if (!p) return; p._depth = 0; p._pendingBack = false; clearTimeout(p._pbT); post(p, { type: 'reset' }); }
-  function getPanel(t) {
+  function getPanel(t, route) {
     if (panels[t.id]) return panels[t.id];
     var p = document.createElement('section');
     p.className = 'panel'; p.setAttribute('aria-label', t.name);
     var f = document.createElement('iframe');
-    f.title = t.name; f.allow = 'geolocation; fullscreen; clipboard-write'; f.src = frameSrc(t);
+    f.title = t.name; f.allow = 'geolocation; fullscreen; clipboard-write'; f.src = frameSrc(t, route);
     var splash = document.createElement('div'); splash.className = 'splash';
     splash.appendChild(iconBox(t));
     var bk = document.createElement('button'); bk.className = 'back'; bk.type = 'button'; bk.setAttribute('aria-label', '返回');
@@ -167,6 +273,7 @@
       if (ty === 'ready') p._ready();
       if (ty === 'route' && id === 'stm32' && window.STM32StudyCore && typeof e.data.params === 'string' && e.data.params.length < 1600) {
         p._route = window.STM32StudyCore.params(window.STM32StudyCore.fromParams(e.data.params));
+        ls('lm.shell.stm32', p._route);
         if (current === id) try { history.replaceState(history.state, '', byId[id].path + (p._route ? '?' + p._route : '')); } catch (err) {}   // 浏览器限流时只是地址没更新，不影响后面的消息处理
       }
       if (ty === 'back' && current === id) back();
@@ -220,7 +327,6 @@
 
   /* 卡片的「真实」位置：关闭时首页还处在 scale(.94) 的过渡起点，直接量出来的是缩小后的矩形。
      这里读出 #home 当前的实际变换矩阵，反算出复原后（scale 1）的卡片位置，面板收拢到卡片最终所在处。 */
-  var home = $('#home');
   function unscale(r) {
     var m = getComputedStyle(home).transform;
     if (!m || m === 'none') return r;
@@ -273,6 +379,7 @@
     for (var k in panels) if (k !== current && !panels[k]._closing) park(panels[k]);
     if (!current) {
       resetHome();
+      if (!q.value && !home.classList.contains('searching')) refreshHome();
       // 触屏：所有面板都已收起时，让 #stage 重建一次渲染树，确保 WebKit 丢掉任何旧的合成层
       if (lite && !stage.querySelector('.panel.show')) { stage.style.display = 'none'; void stage.offsetHeight; stage.style.display = ''; }
     }
@@ -291,8 +398,9 @@
     o = o || {};
     if (current === id) return;
     if (current) close({ instant: true });
-    var p = getPanel(t); park(p);                    // 先彻底复位（可能还在上一次收拢动画中）
-    current = id;
+    var fresh = !panels[id], p = getPanel(t, o.route); park(p);   // 先彻底复位（可能还在上一次收拢动画中）
+    if (fresh && o.route) p._route = o.route;          // 从「继续」进来：地址栏直接带上上次的位置
+    current = id; touchRecent(id);
     document.title = t.name + ' · Liming 工具箱';
     var r = o.from ? o.from.getBoundingClientRect() : null;
     freezeHome();

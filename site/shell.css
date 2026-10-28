@@ -30,7 +30,7 @@ svg .a{stroke:var(--clay);transition:stroke .2s var(--ease)}
 .sr{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 
 /* ---------- 首页 ---------- */
-#home{position:relative;z-index:1;max-width:760px;margin:0 auto;
+#home{position:relative;z-index:1;max-width:900px;margin:0 auto;
   padding:calc(14px + var(--st)) calc(16px + var(--sr)) calc(40px + var(--sb)) calc(16px + var(--sl));
   transform-origin:50% 30%;transition:transform .55s var(--out),opacity .55s var(--out)}
 body.tool-open #home{transform:scale(.94);opacity:.55}
@@ -43,7 +43,7 @@ body.covered #home{visibility:hidden}
 body.snap #home,body.snap .panel,body.snap .panel .back{transition:none!important}
 
 .hd{display:flex;align-items:center;justify-content:space-between;min-height:44px;margin:4px 0 14px}
-h1{margin:0;display:flex;align-items:center;font-size:20px;line-height:28px;font-weight:700;letter-spacing:0}
+h1{margin:0;display:flex;align-items:center;font-size:24px;line-height:30px;font-weight:800;letter-spacing:0}
 .spark{display:inline-block;margin-right:10px;color:var(--clay);font-weight:400;animation:spark .9s var(--out) .05s both}
 @keyframes spark{from{opacity:0;transform:rotate(-140deg) scale(.4)}}
 
@@ -72,39 +72,138 @@ h1{margin:0;display:flex;align-items:center;font-size:20px;line-height:28px;font
 .cmd:focus-within kbd{opacity:0}
 @media (hover:none){.cmd kbd{display:none}}
 
-/* ---------- 工具网格 ---------- */
-.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-@media (min-width:560px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@media (min-width:740px){.grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
-.card{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-width:0;aspect-ratio:1/1;
-  padding:14px 8px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);
+/* ---------- 首页：分类 + 卡片 ----------
+   每类一个分区；类里第一个（最近打开的）占一整行，其余两个一行。卡片上的插画来自工具自己的内容：
+   STM32 是 LQFP144 芯片（点亮正在学的外设的引脚），世界地图是点阵地图。 */
+:root{--chip:#262522;--chip-2:#2f2d2a;--chip-edge:#46433d;--chip-pin:#8d887d;--chip-ink:#a19c90;--chip-text:#f1eee6;--chip-sub:#c9c4b8;
+  --sea:#1f3a4a;--sea-2:#27495c;--dot:#c3d0d8;--dot-2:#8fb0c2}
+[data-theme=dark]{--chip:#2a2927;--chip-2:#32302d;--chip-edge:#4c4943;--dot:#3c4a52;--dot-2:#5d7889}
+.grid{display:flex;flex-direction:column;gap:6px}
+.cat[hidden]{display:none}
+.cat-h{margin:18px 2px 10px;font-size:13px;line-height:18px;font-weight:700;color:var(--ink-2);letter-spacing:.02em}
+.cat:first-child .cat-h{margin-top:6px}
+.cat-g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (min-width:720px){.cat-g{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.card{position:relative;isolation:isolate;display:flex;align-items:flex-end;min-width:0;min-height:148px;padding:16px;overflow:hidden;
+  border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--ink);
   user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation;
-  transition:transform .34s var(--out),background-color .22s var(--ease),border-color .22s var(--ease);
-  animation:rise .5s var(--out) backwards;animation-delay:calc(var(--i,0)*50ms + 60ms)}
-.card .ic{width:46px;height:46px;border-radius:11px;display:grid;place-items:center;background:var(--sunk);color:var(--ink);
-  transition:transform .38s var(--out),background-color .22s var(--ease)}
-.card .ic svg{width:26px;height:26px;stroke-width:1.6}
-.card .nm{max-width:100%;font-size:13px;line-height:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* 按下：整卡微缩 + 底色下沉，图标再多压一点，形成层次；松开用较长的 ease-out 平稳回位（不回弹） */
-.card.press{transform:scale(.955);background:var(--sunk);border-color:var(--line-2);
-  transition:transform .12s ease-out,background-color .08s linear,border-color .08s linear}
-.card.press .ic{transform:scale(.92);background:var(--panel);transition:transform .12s ease-out,background-color .08s linear}
+  transition:transform .34s var(--out),border-color .22s var(--ease),background-color .22s var(--ease)}
+.card.wide{grid-column:1/-1;min-height:132px}
+.card .tx{position:relative;z-index:1;display:flex;flex-direction:column;align-items:flex-start;gap:10px;min-width:0}
+.card .ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:var(--sunk);color:var(--ink);transition:transform .38s var(--out),background-color .22s var(--ease)}
+.card .ic svg{width:22px;height:22px;stroke-width:1.7}
+.card .nm{max-width:100%;font-size:17px;line-height:22px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .art{position:absolute;z-index:0;pointer-events:none}
+.card .art-world,.card .art-chip{stroke:none}
+.card .art-chip .bevel,.card .art-chip .dimple,.card .art-chip .body{stroke-linecap:butt}
+.card .art-icon{right:-18px;bottom:-22px;width:132px;height:132px;stroke-width:1.1;opacity:.12}
+.card.wide .art-icon{width:170px;height:170px;bottom:-40px}
+
+/* 世界地图：点阵地图铺在右侧，左边渐隐 */
+.card.art-world .art{right:-6px;top:50%;width:auto;height:118%;transform:translateY(-50%);fill:var(--dot);
+  -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 34%);mask-image:linear-gradient(90deg,transparent 0,#000 34%)}
+.card.art-world:not(.wide) .art{height:92%;right:-60px}
+.card.art-world .ic{background:color-mix(in srgb,var(--dot) 45%,var(--panel))}
+
+/* 芯片卡 */
+.card.art-chip{background:var(--chip);border-color:var(--chip);color:var(--chip-text)}
+.card.art-chip .ic{background:var(--chip-2);color:var(--chip-text)}
+.card.art-chip .art{right:-46px;top:50%;width:250px;height:250px;transform:translateY(-50%) rotate(-9deg)}
+.card.art-chip:not(.wide) .art{width:190px;height:190px;right:-70px}
+.art-chip .pins rect{fill:var(--chip-pin)}
+.art-chip .pins rect.on{fill:var(--clay);filter:drop-shadow(0 0 3px color-mix(in srgb,var(--clay) 70%,transparent));
+  animation:pin .7s var(--out) both;animation-delay:calc(var(--k,1)*110ms + 250ms)}
+@keyframes pin{from{fill:var(--chip-pin);filter:none}}
+.art-chip .body{fill:var(--chip-2);stroke:var(--chip-edge);stroke-width:1.5}
+.art-chip .bevel{fill:none;stroke:color-mix(in srgb,var(--chip-edge) 60%,transparent);stroke-width:1}
+.art-chip .dimple{fill:none;stroke:var(--chip-edge);stroke-width:1.5}
+.art-chip .mark{fill:var(--chip-ink);font:600 14px var(--mono);text-anchor:middle;letter-spacing:.04em}
+.art-chip .mark.sub{font-size:11px;font-weight:500;opacity:.7}
+
+/* 最近打开的那个：更高、标题更大，带「继续」 */
+.card.hero{min-height:212px;border-radius:24px;padding:20px}
+.card.hero .nm{font-size:26px;line-height:32px}
+.card.hero .tx{gap:12px}
+.card .go{display:inline-flex;align-items:center;gap:6px;max-width:100%;margin-top:-4px;font-size:13px;line-height:18px;color:var(--chip-sub)}
+.card .go span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .go svg{flex:none;width:18px;height:18px;padding:2px;border-radius:50%;background:var(--clay);color:#fff;stroke-width:2.4}
+.card:not(.art-chip) .go{color:var(--ink-2)}
+.card.hero.art-chip .art{width:300px;height:300px;right:-64px}
+
+/* 按下：整卡微缩，图标再多压一点；松开用较长的 ease-out 平稳回位 */
+.card.press{transform:scale(.965);transition:transform .12s ease-out,border-color .08s linear}
+.card.press .ic{transform:scale(.92);transition:transform .12s ease-out}
 @media (hover:hover) and (pointer:fine){
   .card:hover{border-color:var(--clay)}
-  .card:hover .ic{background:var(--clay-soft);transform:translateY(-2px)}
+  .card:not(.art-chip):hover .ic{background:var(--clay-soft)}
+  .card:hover .ic{transform:translateY(-2px)}
   .card.press:hover .ic{transform:scale(.92)}
   .round:hover{border-color:var(--clay);color:var(--ink)}
   .cmd:hover:not(:focus-within){border-color:var(--ink-3)}
   .panel .back:hover{border-color:var(--clay)}
 }
 .card.hide{display:none}
-@keyframes rise{from{opacity:0;transform:translateY(8px)}}
-/* 首屏入场动画播完后关掉，之后任何显示切换都不会补播 */
-.settled .card{animation:none!important}
 /* 打开工具前的「定格」帧：首页元素直接到终态，保证系统返回快照与返回后的页面一致 */
 body.freeze #home,body.freeze .card,body.freeze .card .ic,body.freeze .round,body.freeze .cmd,body.freeze .cmd .caret{transition:none!important}
+.settled .art-chip .pins rect.on{animation:none}
+
+/* 搜索框：标题栏放大镜点开才出现 */
+#cmd{display:none}
+#home.searching #cmd{display:flex;animation:fadein .2s var(--ease)}
+.hd-btns{display:flex;gap:8px}
+#searchBtn svg{width:18px;height:18px}
+#home.searching #searchBtn{border-color:var(--clay);color:var(--ink)}
 .empty{margin:0;padding:40px 0;text-align:center;font-size:13px;color:var(--ink-3);animation:fadein .3s var(--ease)}
 @keyframes fadein{from{opacity:0}}
+
+/* ---------- 小芯（标题栏里的像素小芯片，逐帧画在 20×20 格里，见 mascot.js） ---------- */
+.hd{position:relative;z-index:5}
+.hd h1,.hd-btns{flex:none}
+.xin-track{position:relative;flex:1;align-self:stretch;min-width:80px;margin:0 6px}
+.xin{position:absolute;left:0;bottom:-2px;width:80px;height:80px;touch-action:none;cursor:grab;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;will-change:transform;
+  --xo:#141413;--xb:#3b3833;--xp:#aaa497;--xw:#f7f2e8;--xg:#8d887c;--xd:#b8b2a4}
+[data-theme=dark] .xin{--xo:#0d0c0b;--xb:#4a4640;--xp:#bdb7aa;--xw:#f7f2e8;--xg:#9a9488;--xd:#5d5850}
+@media (min-width:720px){.xin{width:100px;height:100px}}
+.xin.is-drag{cursor:grabbing}
+body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none;user-select:none}
+.xin.is-away{opacity:0;pointer-events:none}
+.xin-r,.xin-s{position:absolute;inset:0;transform-origin:50% 100%}
+.xin-r{transform-origin:50% 60%}
+.xin svg{display:block;width:100%;height:100%;stroke:none;overflow:visible;shape-rendering:crispEdges}
+/* 地上的影子：一条方块，跳起来变淡 */
+.xin-sh{position:absolute;left:20%;right:20%;bottom:-4px;height:4px;background:var(--ink);opacity:calc(var(--sh,1) * .14)}
+@media (min-width:720px){.xin-sh{height:5px;bottom:-5px}}
+.xin.is-air .xin-sh{opacity:0}
+.xin .c-o{fill:var(--xo)}
+.xin .c-b{fill:var(--xb)}
+.xin .c-p{fill:var(--xp)}
+.xin .c-w{fill:var(--xw)}
+.xin .c-g{fill:var(--xg)}
+.xin .c-d{fill:var(--xd)}
+.xin .c-ck{fill:#c98d4b}
+.xin .c-cc{fill:#5a3a22}
+.xin .c-ball{fill:var(--clay)}
+.xin .c-bh{fill:#f6c4af}
+.xin .c-led{fill:#b84a35}
+.xin .c-lon{fill:#ff8d6e}
+.xin .c-lb{fill:#7e3324}
+.xin .c-gl{fill:#ffd9a8}
+/* 小粒子 */
+.xin-z,.xin-p{position:absolute;z-index:1;pointer-events:none;font:16px/1 var(--mono);color:var(--ink-3)}
+.xin-z{animation:xz 2.4s steps(6,end) forwards}
+.xin-p{width:6px;height:6px;background:var(--clay);animation:xp .6s steps(5,end) forwards}
+@keyframes xz{0%{opacity:0;transform:translate(0,0)}15%{opacity:1}100%{opacity:0;transform:translate(12px,-27px)}}
+@keyframes xp{0%{opacity:1;transform:translate(0,0)}100%{opacity:0;transform:translate(var(--dx),var(--dy))}}
+/* 拖到卡片上 */
+.card.xin-over{border-color:var(--clay);transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--clay);
+  transition:transform .12s steps(2,end),box-shadow .12s steps(2,end),border-color .1s}
+.card.xin-hit{animation:xhit .3s steps(3,end)}
+@keyframes xhit{50%{transform:translate(2px,2px);box-shadow:0 0 0 var(--clay)}}
+@media (prefers-reduced-motion:reduce){
+  .xin,.xin *{animation:none!important;transition:none!important}
+  .xin-z,.xin-p{display:none}
+}
 
 /* ---------- 工具面板 ---------- */
 #stage{position:fixed;inset:0;z-index:10;pointer-events:none}
@@ -155,3 +254,31 @@ body.freeze #home,body.freeze .card,body.freeze .card .ic,body.freeze .round,bod
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
+/* ---------- 像素风（接在上面的样式后面；字体、方角在 /pixel.css） ---------- */
+h1{font-weight:400;font-size:26px}
+.spark{font-weight:400}
+.round{border:2px solid var(--pb);box-shadow:var(--pd) var(--pd) 0 var(--ps);color:var(--ink)}
+.round.press{transform:translate(var(--pd),var(--pd));box-shadow:0 0 0 var(--ps);background:var(--sunk);transition:transform .06s steps(1,end),box-shadow .06s steps(1,end)}
+.cmd{border:2px solid var(--pb);box-shadow:var(--pd) var(--pd) 0 var(--ps)}
+.cat-h{display:flex;align-items:center;gap:8px;font-weight:400;font-size:14px}
+.cat-h::before{content:"";width:6px;height:6px;background:var(--clay)}
+.card{border:2px solid var(--pb);box-shadow:4px 4px 0 var(--ps);
+  transition:transform .1s steps(2,end),box-shadow .1s steps(2,end),border-color .1s steps(1,end)}
+.card.art-chip{border-color:var(--pb)}
+[data-theme=dark] .card.art-chip{border-color:#5a564e}
+.card.press{transform:translate(4px,4px);box-shadow:0 0 0 var(--ps);transition:transform .05s steps(1,end),box-shadow .05s steps(1,end)}
+.card.press .ic{transform:none}
+.card .nm{font-weight:400}
+.card.hero .nm{font-size:32px;line-height:36px}
+.card .go{font-size:14px}
+.card .go svg{border-radius:0;padding:3px}
+.card .art-chip,.card .art-world{shape-rendering:crispEdges}
+.card.art-chip .art{transform:translateY(-50%)}
+.art-chip .mark{font-family:var(--pxf);font-weight:400}
+.art-chip .pins rect.on{filter:none}
+@media (hover:hover) and (pointer:fine){
+  .card:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--clay);border-color:var(--pb)}
+  .card:hover .ic{transform:none}
+  .round:hover{border-color:var(--pb);background:var(--sunk)}
+}
+.panel .back{border-radius:0}

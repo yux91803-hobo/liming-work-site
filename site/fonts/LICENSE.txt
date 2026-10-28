@@ -1,0 +1,2 @@
+pixel.woff 是 GNU Unifont 的裁剪版（只留站里用到的字），由 scripts/build-font.py 生成。
+GNU Unifont 采用 SIL Open Font License 1.1 与 GPL-2.0-or-later（含字体嵌入例外）双许可：https://unifoundry.com/unifont/

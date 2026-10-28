@@ -1,0 +1,25 @@
+/* pixel.css — 全站像素风（工具箱首页、STM32 学习台、世界地图共用，放在各页自己的样式之后）
+   点阵字体是 Unifont 的裁剪版（scripts/build-font.py），16px 的整数倍最整齐，其他字号也看得清。
+   方角、2px 粗边框、没有模糊和渐变的硬阴影；颜色沿用各页自己的变量。 */
+@font-face { font-family: "Pixel"; src: url(/fonts/pixel.woff?v=px1) format("woff"); font-display: swap; }
+:root {
+  --pxf: "Pixel", ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", "Noto Sans Mono CJK SC", monospace;
+  --sans: var(--pxf); --mono: var(--pxf);
+  --pb: #2b2926;            /* 像素边框 */
+  --ps: #d8d3c4;            /* 硬阴影 */
+  --pd: 3px;                /* 阴影偏移 */
+}
+:root[data-theme="dark"] { --pb: #77726a; --ps: #121110; }
+body, button, input, select, textarea { font-family: var(--pxf); }
+/* 图里的小字（引脚名等）按图纸比例缩放，不用点阵字体 */
+svg { --sans: ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", "Noto Sans Mono CJK SC", monospace; --mono: var(--sans); }
+svg text { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", "Noto Sans Mono CJK SC", monospace; }
+*, *::before, *::after { border-radius: 0 !important; }
+* { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+svg { shape-rendering: crispEdges; }
+svg.ic, svg.icon { stroke-linecap: square; stroke-linejoin: miter; }
+input, textarea { caret-color: var(--clay, currentColor); }
+::selection { background: var(--clay, #d97757); color: #fff; }
+
+/* 像素箭头：用方块拼的 < >，宽 5 格高 9 格 */
+.px-arrow { display: inline-block; flex: none; width: 6px; height: 10px; fill: currentColor; stroke: none; shape-rendering: crispEdges; }

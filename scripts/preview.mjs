@@ -1,4 +1,4 @@
-/* Static preview only. Authenticated Cloudflare APIs require wrangler dev. */
+/* Static preview only. The site has no APIs; /api/* returns 404 like the Worker. */
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +7,7 @@ const site = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../site
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg' };
 const server = http.createServer((req, res) => {
   let p; try { p = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); } catch { res.writeHead(400).end(); return; }
-  if (p.startsWith('/api/')) { res.writeHead(501, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'Static preview: use wrangler dev for authenticated APIs.' })); return; }
+  if (p.startsWith('/api/')) { res.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'not_found' })); return; }
   if (['/map', '/stm32'].includes(p.replace(/\/$/, ''))) p = '/index.html';
   let file = path.resolve(site, '.' + p);
   if (!file.startsWith(site + path.sep) && file !== site) { res.writeHead(403).end(); return; }
