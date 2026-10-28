@@ -156,75 +156,39 @@ body.freeze #home,body.freeze .card,body.freeze .card .ic,body.freeze .round,bod
 .empty{margin:0;padding:40px 0;text-align:center;font-size:13px;color:var(--ink-3);animation:fadein .3s var(--ease)}
 @keyframes fadein{from{opacity:0}}
 
-/* ---------- 小芯（标题栏里的像素小芯片） ---------- */
+/* ---------- 小芯（标题栏里的像素小芯片，逐帧画在 20×20 格里，见 mascot.js） ---------- */
 .hd{position:relative;z-index:5}
 .hd h1,.hd-btns{flex:none}
-.xin-track{position:relative;flex:1;align-self:stretch;min-width:56px;margin:0 8px}
-.xin{position:absolute;left:0;bottom:-2px;width:48px;height:48px;touch-action:none;cursor:grab;
+.xin-track{position:relative;flex:1;align-self:stretch;min-width:80px;margin:0 6px}
+.xin{position:absolute;left:0;bottom:-2px;width:80px;height:80px;touch-action:none;cursor:grab;
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;will-change:transform;
-  --xo:#141413;--xb:#3b3833;--xh:#4d4942;--xp:#bdb7aa;--xw:#f7f2e8;--xk:#1d1c1a}
-[data-theme=dark] .xin{--xo:#0d0c0b;--xb:#4a4640;--xh:#5d5850;--xp:#c9c3b6;--xk:#25231f}
-@media (min-width:720px){.xin{width:64px;height:64px}}
+  --xo:#141413;--xb:#3b3833;--xp:#aaa497;--xw:#f7f2e8;--xg:#8d887c;--xd:#b8b2a4}
+[data-theme=dark] .xin{--xo:#0d0c0b;--xb:#4a4640;--xp:#bdb7aa;--xw:#f7f2e8;--xg:#9a9488;--xd:#5d5850}
+@media (min-width:720px){.xin{width:100px;height:100px}}
 .xin.is-drag{cursor:grabbing}
 body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none;user-select:none}
 .xin.is-away{opacity:0;pointer-events:none}
 .xin-r,.xin-s{position:absolute;inset:0;transform-origin:50% 100%}
-.xin-r{transform-origin:50% 50%}
+.xin-r{transform-origin:50% 60%}
 .xin svg{display:block;width:100%;height:100%;stroke:none;overflow:visible;shape-rendering:crispEdges}
-/* 地上的影子：一条方块 */
-.xin-sh{position:absolute;left:25%;right:25%;bottom:-3px;height:3px;background:var(--ink);opacity:.14}
-@media (min-width:720px){.xin-sh{height:4px;bottom:-4px}}
+/* 地上的影子：一条方块，跳起来变淡 */
+.xin-sh{position:absolute;left:20%;right:20%;bottom:-4px;height:4px;background:var(--ink);opacity:calc(var(--sh,1) * .14)}
+@media (min-width:720px){.xin-sh{height:5px;bottom:-5px}}
 .xin.is-air .xin-sh{opacity:0}
-.xin .x-ol{fill:var(--xo)}
-.xin .x-bd{fill:var(--xb)}
-.xin .x-hi{fill:var(--xh)}
-.xin .x-dm{fill:var(--xk)}
-.xin .x-led{fill:var(--clay)}
-.xin .x-pin{fill:var(--xp)}
-.xin .x-bl{fill:var(--clay);opacity:0}
-.xin .x-f{fill:var(--xw);display:none}
-.xin .x-eyes,.xin .x-blk{transform:translate(var(--px,0),var(--py,0))}
-.xin .x-eyes{display:inline}
-/* 眨眼 */
-.xin.is-blink .x-eyes{display:none}
-.xin.is-blink .x-blk{display:inline}
-/* 走路：底边引脚两两交替抬一格，身子跟着颠一格 */
-.xin.is-walk .xin-s{animation:xbob .34s steps(1,end) infinite}
-.xin.is-walk .x-b .p0{animation:xstep .34s steps(1,end) infinite}
-.xin.is-walk .x-b .p1{animation:xstep .34s steps(1,end) -.17s infinite}
-@keyframes xbob{50%{transform:translateY(-3px)}}
-@keyframes xstep{50%{transform:translateY(-1px)}}
-@media (min-width:720px){@keyframes xbob{50%{transform:translateY(-4px)}}}
-/* 被拎起来：底下的脚乱蹬，两边的引脚往上翘 */
-.xin.is-drag .x-b .p0{animation:xstep .24s steps(1,end) infinite}
-.xin.is-drag .x-b .p1{animation:xstep .24s steps(1,end) -.12s infinite}
-.xin.is-drag .x-l .x-pin{transform:translateX(-1px)}
-.xin.is-drag .x-r .x-pin{transform:translateX(1px)}
-.xin.is-drag .x-eyes{display:none}
-.xin.is-drag .x-wow{display:inline}
-/* 睡觉 */
-.xin.is-sleep .x-eyes{display:none}
-.xin.is-sleep .x-shut{display:inline;fill:var(--xp)}
-.xin.is-sleep .xin-s{animation:xbr 3.2s steps(1,end) infinite}
-.xin.is-sleep .x-led{animation:xled 1.6s steps(1,end) infinite}
-@keyframes xbr{50%{transform:translateY(1px)}}
-@keyframes xled{50%{opacity:.15}}
-/* 开心 / 看到卡片：^ ^ 眼，两边引脚上下挥 */
-.xin.is-happy .x-eyes,.xin.is-over .x-eyes,.xin.is-over .x-wow{display:none}
-.xin.is-happy .x-hap,.xin.is-over .x-hap{display:inline}
-.xin.is-happy .x-bl,.xin.is-over .x-bl{opacity:1}
-.xin.is-happy .x-l .p0,.xin.is-happy .x-l .p1{animation:xoutl .24s steps(1,end) infinite}
-.xin.is-happy .x-r .p0,.xin.is-happy .x-r .p1{animation:xoutr .24s steps(1,end) infinite}
-.xin.is-happy .x-l .p1,.xin.is-happy .x-r .p1{animation-delay:-.12s}
-@keyframes xoutl{50%{transform:translateX(-1px)}}
-@keyframes xoutr{50%{transform:translateX(1px)}}
-/* 晕 / 难过 */
-.xin.is-dizzy .x-eyes{display:none}
-.xin.is-dizzy .x-dz{display:inline}
-.xin.is-dizzy .xin-s{animation:xwob .3s steps(1,end) infinite}
-@keyframes xwob{50%{transform:translateX(3px)}}
-.xin.is-sad .x-eyes{display:none}
-.xin.is-sad .x-sad{display:inline}
+.xin .c-o{fill:var(--xo)}
+.xin .c-b{fill:var(--xb)}
+.xin .c-p{fill:var(--xp)}
+.xin .c-w{fill:var(--xw)}
+.xin .c-g{fill:var(--xg)}
+.xin .c-d{fill:var(--xd)}
+.xin .c-ck{fill:#c98d4b}
+.xin .c-cc{fill:#5a3a22}
+.xin .c-ball{fill:var(--clay)}
+.xin .c-bh{fill:#f6c4af}
+.xin .c-led{fill:#b84a35}
+.xin .c-lon{fill:#ff8d6e}
+.xin .c-lb{fill:#7e3324}
+.xin .c-gl{fill:#ffd9a8}
 /* 小粒子 */
 .xin-z,.xin-p{position:absolute;z-index:1;pointer-events:none;font:16px/1 var(--mono);color:var(--ink-3)}
 .xin-z{animation:xz 2.4s steps(6,end) forwards}
