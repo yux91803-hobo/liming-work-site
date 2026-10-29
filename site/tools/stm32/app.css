@@ -393,13 +393,15 @@ a.sig:hover { background: color-mix(in srgb, var(--h) 22%, transparent); }
 .sh-tt p { font-size: 13px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sh-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; padding: 16px calc(16px + var(--sar)) calc(40px + var(--sab)) calc(16px + var(--sal)); gap: 0; }
 .sh-l, .sh-r, .sh-stick { display: contents; }
-/* 窄屏单列：地址 / 值 / 位段 → 实例选择 → 常用配置 → 字段 → 代码 → 资料 */
-.sh-addr { order: 1; } .sh-val { order: 2; } .bits { order: 3; } .sh-sel { order: 4; } .banner.warn { order: 4; } .sh-quick { order: 5; } .sh-fx { order: 6; } .fields { order: 7; } .sh-warn { order: 8; } .sh-code { order: 9; } .sh-meta { order: 10; }
+/* 窄屏单列：地址 / 值 / 位段 → 代码（点了位马上就能看到）→ 选中的字段 → 提示 → 实例选择 → 常用配置 → 字段 → 作用 → 资料 */
+.sh-addr { order: 1; } .sh-val { order: 2; } .bits { order: 3; } .sh-code { order: 4; } .sh-warn { order: 6; } .sh-sel { order: 7; } .banner.warn { order: 7; } .sh-quick { order: 8; } .sh-fx { order: 9; } .fields { order: 10; } .sh-meta { order: 12; }
 @media (min-width: 900px) {
-  .sh-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 430px); gap: 0 26px; align-items: start; }
-  .sh-l { display: flex; flex-direction: column; min-width: 0; }
-  .sh-r { display: block; min-width: 0; align-self: stretch; }
-  .sh-stick { display: flex; flex-direction: column; position: sticky; top: 0; }
+  /* 宽屏两栏各滑各的：左边字段很长，右边（位格子、代码、作用）也能单独往下滑看全 */
+  .sh-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 430px); grid-template-rows: minmax(0, 1fr); gap: 0 26px; align-items: stretch; overflow: hidden; padding-top: 0; padding-bottom: 0; }
+  .sh-l, .sh-r { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-top: 16px; padding-bottom: calc(40px + var(--sab)); scrollbar-width: thin; }
+  .sh-l { display: flex; flex-direction: column; }
+  .sh-r { display: block; }
+  .sh-stick { display: flex; flex-direction: column; }
 }
 .sh-h3 { font-size: 13px; font-weight: 600; color: var(--ink-3); margin: 22px 0 8px; }
 .sh-sel { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
@@ -476,10 +478,10 @@ button.fv:hover:not(.on) { background: var(--sunk); }
 .bits-n.pick { color: var(--ink); background: color-mix(in srgb, var(--h, var(--copper)) 18%, transparent); }
 .bits-n.touched { color: var(--copper); }
 /* 代码下面：这个寄存器是干啥的 */
-.sh-about { order: 9; margin-top: 18px; }
+.sh-about { order: 11; margin-top: 18px; }
 .sh-about p { margin-top: 6px; font-size: 14px; line-height: 1.7; color: var(--ink-2); }
 /* 手机：位格子下面放选中的字段；底部一直露着寄存器写法 */
-.sh-pick { order: 3; margin-top: 10px; padding: 2px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); }
+.sh-pick { order: 5; margin-top: 10px; padding: 2px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); }
 .sh-pick .frow { border-bottom: 0; }
 .sh-dock { flex: none; display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 10px calc(16px + var(--sar)) calc(10px + var(--sab)) calc(16px + var(--sal)); border: 0; border-top: 1px solid #2c2a26;
   background: #161513; color: #ece7dc; text-align: left; cursor: pointer; }

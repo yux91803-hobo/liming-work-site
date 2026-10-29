@@ -695,15 +695,23 @@ async def main():
         st = await pg.evaluate("""(() => { const row = document.querySelector('.fields .frow.pick'), r = row.getBoundingClientRect(), b = document.querySelector('.sh-body').getBoundingClientRect();
           return [row.querySelector('.frow-h b').textContent, r.top >= b.top && r.bottom <= b.bottom, getComputedStyle(row.querySelector('.frow-h b'), '::after').content, row.querySelector('.fv.on b').textContent]; })()""")
         check('点右边的位：左边滚到那个字段并选中，名字变色、不写「已改」，当前值标在列表里', st[0] == 'BS11' and st[1] and st[2] in ('none', 'normal', '') and st[3] == '1', st)
+        # 宽屏：右边一栏自己能往下滑（代码、作用看得全），左边不跟着动
+        rs = await pg.evaluate("""(() => { const R = document.querySelector('.sh-r'), L = document.querySelector('.sh-l'); const l0 = L.scrollTop;
+          R.scrollTop = 9999; return [R.scrollHeight > R.clientHeight, R.scrollTop > 0, L.scrollTop === l0, getComputedStyle(R).overflowY]; })()""")
+        check('电脑 / 平板：寄存器面板右边一栏能单独往下滑', rs[1] and rs[2] and rs[3] == 'auto', rs)
         await pg.context.close()
         pg = await page(b, 390, 844, mobile=True)
         await pg.goto(TOOL + '?v=topic&t=gpio&reg=GPIO_CRL&i=GPIOA'); await pg.wait_for_selector('.sheet.on'); await pg.wait_for_timeout(400)
         dock0 = await pg.evaluate("document.querySelector('.sh-dock').hidden")
         await pg.tap('.bit[data-f="MODE0"] >> nth=0'); await pg.wait_for_timeout(300)
-        st = await pg.evaluate("[!document.querySelector('.sh-pick').hidden && document.querySelector('.sh-pick .frow-h b').textContent, document.querySelector('.sh-dock').hidden, document.querySelector('.sh-dock').textContent]")
+        st = await pg.evaluate("""(() => { const cb = document.querySelector('.sh-code figure.code').getBoundingClientRect();
+          return [!document.querySelector('.sh-pick').hidden && document.querySelector('.sh-pick .frow-h b').textContent, cb.top < innerHeight - 60, document.querySelector('.sh-code pre').textContent]; })()""")
         await pg.tap('.sh-pick .fv >> nth=3'); await pg.wait_for_timeout(300)
-        st2 = await pg.evaluate("[document.querySelector('.sh-pick .fv.on b').textContent, document.querySelector('.sh-dock').textContent]")
-        check('手机：点位格子，下面直接出现这个字段；底部露着寄存器写法，跟着改', dock0 and st[0] == 'MODE0' and not st[1] and 'CRL' in st[2] and st2[0] == '11' and 'MODE0' in st2[1], (dock0, st, st2))
+        st2 = await pg.evaluate("[document.querySelector('.sh-pick .fv.on b').textContent, document.querySelector('.sh-code pre').textContent]")
+        check('手机：点位格子，代码就在格子下面（不用翻到底），下面跟着这个字段的说明', st[0] == 'MODE0' and st[1] and 'MODE0' in st[2] and st2[0] == '11' and 'MODE0' in st2[1], (st, st2))
+        await pg.evaluate("document.querySelector('.fields').scrollIntoView()"); await pg.wait_for_timeout(500)
+        st3 = await pg.evaluate("[document.querySelector('.sh-dock').hidden, document.querySelector('.sh-dock').textContent]")
+        check('手机：往下翻到字段列表看不到代码时，底部露出代码条', dock0 and not st3[0] and 'MODE0' in st3[1], (dock0, st3))
         await pg.context.close()
 
         # 直接打开学习台（不经过工具箱首页）：没有小芯
