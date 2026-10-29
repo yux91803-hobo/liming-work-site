@@ -755,12 +755,16 @@
   }
 
   /* ---------- 拖：首页拖到卡片上打开工具；别的地方松手就往下掉 ---------- */
+  // 看它的身子落在哪张卡片上：先看身子中间，再看手指 / 鼠标，最后看脚（抓着头拖时身子挂在下面）
   function cardAt(cx, cy) {
     if (!HOME) return null;
     var cs = grid.querySelectorAll('.card[data-id]:not(.hide)');
-    for (var i = 0; i < cs.length; i++) {
-      var r = cs[i].getBoundingClientRect();
-      if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) return cs[i];
+    var bx = x - sX() + W / 2, pts = [[bx, y - sY() + H * 0.6], [cx, cy], [bx, y - sY() + H * 0.92]];
+    for (var k = 0; k < pts.length; k++) {
+      for (var i = 0; i < cs.length; i++) {
+        var r = cs[i].getBoundingClientRect();
+        if (pts[k][0] >= r.left && pts[k][0] <= r.right && pts[k][1] >= r.top && pts[k][1] <= r.bottom) return cs[i];
+      }
     }
     return null;
   }
