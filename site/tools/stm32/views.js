@@ -468,16 +468,9 @@
           cr.appendChild(b);
         } else cr.appendChild(el('b', 'mono pd-net', p.net || '—'));
         detail.appendChild(cr);
-        // 这个脚是干什么的、板上怎么接、程序里怎么用
-        var d = STM.pindoc ? STM.pindoc(m, p) : { role: p.note || '', how: '' };
-        var sec = function (h, t, cls) {
-          if (!t) return;
-          var r = el('div', 'pd-row pd-doc' + (cls ? ' ' + cls : '')); r.appendChild(el('h3', null, h)); r.appendChild(el('p', null, t)); detail.appendChild(r);
-        };
-        sec('作用', d.role);
-        // 板上接法：和「作用」说的是一回事（开头就重了）时不再重复
-        if (p.note && d.role.indexOf(p.note.slice(0, 6)) < 0 && !/^FSMC_\w+$|^FSMC 数据线/.test(p.note)) sec('板上', p.note);
-        sec('程序里', d.how, 'pd-how');
+        // 这个脚是干什么的（pindoc.js，大白话讲清楚，板上的接法也讲在里面）
+        var role = STM.pindoc ? STM.pindoc(m, p).role : (p.note || '');
+        if (role) { var dr = el('div', 'pd-row pd-doc'); dr.appendChild(el('h3', null, '作用')); dr.appendChild(el('p', null, role)); detail.appendChild(dr); }
       }
       // 全部脚：一行一个，点了选中
       var list = el('div', 'pd-mps');

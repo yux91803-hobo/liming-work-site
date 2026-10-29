@@ -320,9 +320,8 @@ figure.code.folded pre { max-height: 22.5em; overflow: hidden; -webkit-mask-imag
 .chipbtn:hover { border-color: var(--mask); color: var(--mask); }
 .pd-row { margin-top: 14px; }
 .pd-row h3 { font-size: 13px; color: var(--ink-3); font-weight: 600; margin-bottom: 6px; }
-/* 模块脚的说明：作用 / 板上 / 程序里 */
-.pd-doc p { font-size: 15px; line-height: 1.7; color: var(--ink); }
-.pd-how p { padding: 10px 12px; border-radius: 10px; background: var(--sunk); font-size: 14px; color: var(--ink-2); }
+/* 模块脚的说明 */
+.pd-doc p { font-size: 15.5px; line-height: 1.8; color: var(--ink); }
 .pd-sigs { display: flex; flex-wrap: wrap; gap: 6px; }
 .sig { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 9px; border-radius: 7px; background: var(--sunk); text-decoration: none; font-size: 13px; }
 .sig b { font: 600 13px var(--mono); }

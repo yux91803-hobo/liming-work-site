@@ -131,9 +131,9 @@ async def main():
         check('%d 个模块图都能打开、点脚选中、右边列出全部脚' % (len(tags) - 1), len(tags) >= 9 and not bad, bad or tags)
         await pg.goto(TOOL + '?m=eeprom&mp=p6'); await pg.wait_for_selector('.pd-conn')
         conn = await pg.inner_text('.pd-conn')
-        docs = await pg.evaluate("[...document.querySelectorAll('.pdetail .pd-doc h3')].map(h => h.textContent)")
-        how = await pg.inner_text('.pdetail .pd-how p')
-        check('M24C02 第 6 脚 SCL 接 PB10（69 脚），下面写作用 / 板上 / 程序里，不再画主芯片小图', 'PB10' in conn and '69' in conn and docs == ['作用', '板上', '程序里'] and 'GPIOB_CRH' in how and not await pg.evaluate("!!document.querySelector('.pd-mini')"), [conn, docs, how[:40]])
+        docs = await pg.evaluate("[...document.querySelectorAll('.pdetail .pd-row h3')].map(h => h.textContent)")
+        role = await pg.inner_text('.pdetail .pd-doc p')
+        check('M24C02 第 6 脚 SCL 接 PB10（69 脚），下面只讲作用，不画主芯片小图', 'PB10' in conn and '69' in conn and docs == ['接到', '作用'] and '时钟' in role and not await pg.evaluate("!!document.querySelector('.pd-mini')"), [conn, docs, role[:30]])
 
         # ---------- 4. 原理图查看器；课件入口已去掉 ----------
         await pg.goto(TOOL + '?v=board'); await pg.wait_for_selector('.boardv')
