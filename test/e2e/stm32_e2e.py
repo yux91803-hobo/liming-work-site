@@ -535,16 +535,37 @@ async def main():
         check('小芯能跳进卡片里，落地后站在里面', await pg.evaluate("[LimingXin.mode, LimingXin.plat && LimingXin.plat.kind]") == ['idle', 'in'])
         await pg.evaluate("LimingXin.hop(0)"); await pg.wait_for_timeout(1500)
         check('再跳回标题栏', await pg.evaluate("[LimingXin.mode, LimingXin.plat && LimingXin.plat.kind]") == ['idle', 'ground'])
+
+        # 正常点开 STM32：学习台里没有小芯；关掉以后首页的小芯还在原地
+        before = await pg.evaluate("LimingXin.el.style.transform")
+        await pg.click('.card[data-id=stm32]', position={'x': 20, 'y': 20}); f = await tool_frame(pg); await pg.wait_for_timeout(1200)
+        check('正常打开学习台：里面没有小芯', await f.evaluate("LimingXin.mode") == 'away')
+        await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(1500)
+        while await pg.evaluate("!!document.querySelector('.panel.show .back')"):
+            await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(1500)
+        check('关掉学习台：首页小芯还在原来的地方', await pg.evaluate("[LimingXin.mode, LimingXin.el.style.transform]") == ['idle', before], before)
+
+        # 把小芯拖到 STM32 卡片上扔进去：学习台里出现小芯；关掉以后它跳回首页
+        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height * 0.55]; })()")
+        c = await pg.evaluate("(() => { const r = document.querySelector('.card[data-id=stm32]').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+        await touch('touchStart', *r)
+        for i in range(1, 13):
+            await touch('touchMove', r[0] + (c[0] - r[0]) * i / 12, r[1] + (c[1] - r[1]) * i / 12); await pg.wait_for_timeout(30)
+        await touch('touchEnd'); f = await tool_frame(pg); await pg.wait_for_timeout(2200)
+        inside = await f.evaluate("[LimingXin.mode, !!LimingXin.plat]")
+        check('扔进 STM32 卡片：小芯出现在学习台里', inside[1] and inside[0] in ('idle', 'walk', 'play'), inside)
+        await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(1500)
+        while await pg.evaluate("!!document.querySelector('.panel.show .back')"):
+            await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(1500)
+        out = await pg.evaluate("[LimingXin.mode, LimingXin.plat && LimingXin.plat.kind, sessionStorage.getItem('lm.xin.in')]")
+        check('关掉学习台：小芯跳回首页标题栏，学习台里的歇着', out == ['idle', 'ground', None] and await f.evaluate("LimingXin.mode") == 'away', out)
+        check('小芯脚下没有影子横线', await pg.evaluate("!document.querySelector('.xin-sh')"))
         await pg.context.close()
 
-        # 学习台里也有小芯：站在方块上沿，页面滚走以后跳回屏幕上
+        # 直接打开学习台（不经过工具箱首页）：没有小芯
         pg = await page(b, 390, 844, mobile=True)
-        await pg.goto(TOOL + '?v=topic&t=i2c&sec=code&cv=cd'); await pg.wait_for_timeout(2500)
-        st = await pg.evaluate("[LimingXin.mode, !!LimingXin.plat, LimingXin.plat && LimingXin.plat.kind]")
-        check('学习台：小芯掉进来，站在某个方块上', st == ['idle', True, 'top'], st)
-        await pg.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)"); await pg.wait_for_timeout(2800)
-        vis = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [LimingXin.mode, r.bottom > 0 && r.top < innerHeight]; })()")
-        check('学习台：滚到底以后小芯跳回屏幕上', vis[1] and vis[0] in ('idle', 'walk', 'play'), vis)
+        await pg.goto(TOOL + '?v=topic&t=i2c&sec=code&cv=cd'); await pg.wait_for_timeout(2000)
+        check('直接打开学习台：没有小芯', await pg.evaluate("LimingXin.mode") == 'away')
         await pg.context.close()
         await b.close()
 
