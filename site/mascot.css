@@ -1,0 +1,45 @@
+/* mascot.css — 小芯（首页和 STM32 学习台共用；逐帧画在 20×20 格里，见 mascot.js）
+   小芯挂在 body 下的一层里，用文档坐标定位，所以能在整个页面上走；只有画出来的像素能点，透明的地方不挡下面的东西。 */
+.xin-layer{position:absolute;left:0;top:0;width:0;height:0;z-index:30;pointer-events:none}
+.xin-layer.in-stm{z-index:15}
+.xin{position:absolute;left:0;top:0;width:80px;height:80px;touch-action:none;cursor:grab;pointer-events:none;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;will-change:transform;
+  --xo:#141413;--xb:#3b3833;--xp:#aaa497;--xw:#f7f2e8;--xg:#8d887c;--xd:#b8b2a4}
+[data-theme=dark] .xin{--xo:#0d0c0b;--xb:#4a4640;--xp:#bdb7aa;--xw:#f7f2e8;--xg:#9a9488;--xd:#5d5850}
+@media (min-width:720px){.xin{width:100px;height:100px}}
+.xin svg rect{pointer-events:visiblePainted}
+.xin.is-drag{cursor:grabbing}
+body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none;user-select:none}
+.xin.is-away{opacity:0}
+.xin.is-away svg rect{pointer-events:none}
+.xin-r,.xin-s{position:absolute;inset:0;transform-origin:50% 100%}
+.xin-r{transform-origin:50% 60%}
+.xin svg{display:block;width:100%;height:100%;stroke:none;fill:none;overflow:visible;shape-rendering:crispEdges}
+/* 脚下的影子：一条方块，跳起来变淡 */
+.xin-sh{position:absolute;left:20%;right:20%;bottom:-4px;height:4px;background:var(--ink);opacity:calc(var(--sh,1) * .14)}
+@media (min-width:720px){.xin-sh{height:5px;bottom:-5px}}
+.xin.is-air .xin-sh{opacity:0}
+.xin .c-o{fill:var(--xo)}
+.xin .c-b{fill:var(--xb)}
+.xin .c-p{fill:var(--xp)}
+.xin .c-w{fill:var(--xw)}
+.xin .c-g{fill:var(--xg)}
+.xin .c-d{fill:var(--xd)}
+.xin .c-ck{fill:#c98d4b}
+.xin .c-cc{fill:#5a3a22}
+.xin .c-ball{fill:var(--clay)}
+.xin .c-bh{fill:#f6c4af}
+.xin .c-led{fill:#b84a35}
+.xin .c-lon{fill:#ff8d6e}
+.xin .c-lb{fill:#7e3324}
+.xin .c-gl{fill:#ffd9a8}
+/* 小粒子 */
+.xin-z,.xin-p{position:absolute;z-index:1;pointer-events:none;font:16px/1 var(--mono);color:var(--ink-3)}
+.xin-z{animation:xz 2.4s steps(6,end) forwards}
+.xin-p{width:6px;height:6px;background:var(--clay);animation:xp .6s steps(5,end) forwards}
+@keyframes xz{0%{opacity:0;transform:translate(0,0)}15%{opacity:1}100%{opacity:0;transform:translate(12px,-27px)}}
+@keyframes xp{0%{opacity:1;transform:translate(0,0)}100%{opacity:0;transform:translate(var(--dx),var(--dy))}}
+@media (prefers-reduced-motion:reduce){
+  .xin,.xin *{animation:none!important;transition:none!important}
+  .xin-z,.xin-p{display:none}
+}

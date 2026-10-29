@@ -528,6 +528,23 @@ async def main():
         check('松手打开世界地图', await pg.evaluate("location.pathname") == '/map' and await pg.evaluate("!!document.querySelector('#stage .panel.show')"))
         await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(1400)
         check('回到首页，小芯掉回标题栏', await pg.evaluate("[location.pathname, LimingXin.mode]") == ['/', 'idle'])
+        kinds = await pg.evaluate("LimingXin.plats().map(p => p.kind)")
+        check('首页能站的地方：标题栏 + 每张卡片的上沿和里面', kinds.count('ground') == 1 and kinds.count('top') == 2 and kinds.count('in') == 2, kinds)
+        i_in = kinds.index('in')
+        await pg.evaluate("LimingXin.hop(%d)" % i_in); await pg.wait_for_timeout(1500)
+        check('小芯能跳进卡片里，落地后站在里面', await pg.evaluate("[LimingXin.mode, LimingXin.plat && LimingXin.plat.kind]") == ['idle', 'in'])
+        await pg.evaluate("LimingXin.hop(0)"); await pg.wait_for_timeout(1500)
+        check('再跳回标题栏', await pg.evaluate("[LimingXin.mode, LimingXin.plat && LimingXin.plat.kind]") == ['idle', 'ground'])
+        await pg.context.close()
+
+        # 学习台里也有小芯：站在方块上沿，页面滚走以后跳回屏幕上
+        pg = await page(b, 390, 844, mobile=True)
+        await pg.goto(TOOL + '?v=topic&t=i2c&sec=code&cv=cd'); await pg.wait_for_timeout(2500)
+        st = await pg.evaluate("[LimingXin.mode, !!LimingXin.plat, LimingXin.plat && LimingXin.plat.kind]")
+        check('学习台：小芯掉进来，站在某个方块上', st == ['idle', True, 'top'], st)
+        await pg.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)"); await pg.wait_for_timeout(2800)
+        vis = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [LimingXin.mode, r.bottom > 0 && r.top < innerHeight]; })()")
+        check('学习台：滚到底以后小芯跳回屏幕上', vis[1] and vis[0] in ('idle', 'walk', 'play'), vis)
         await pg.context.close()
         await b.close()
 
