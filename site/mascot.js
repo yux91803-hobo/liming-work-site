@@ -336,7 +336,7 @@
     } else if (mode === 'fly' || mode === 'plug') {
       p.legs = 'tuck'; p.armL = p.armR = 'up'; p.face = 'wow';
     } else if (mode === 'sleep') {
-      p.b = Math.floor(t / 1700) % 2 ? 2 : 1; p.face = 'shut'; p.armL = p.armR = 'down';   // 坐着，手放下，一呼一吸
+      p.b = Math.floor(t / 1700) % 2 ? 2 : 1; p.face = 'shut'; p.armL = p.armR = 'out';    // 坐着，手平伸（垂直于身子，不往下垂），一呼一吸
     } else if (mode === 'hang' || mode === 'rope' || mode === 'climb') {
       // 吊在线上：右手举着抓线，脚悬空乱晃；往上爬时两只手轮流
       p.legs = mode === 'climb' ? 'tuck' : 'dangle'; p.lp = Math.floor(t / (mode === 'rope' ? 360 : 160)) % 2;
