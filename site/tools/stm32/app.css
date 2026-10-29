@@ -320,9 +320,8 @@ figure.code.folded pre { max-height: 22.5em; overflow: hidden; -webkit-mask-imag
 .chipbtn:hover { border-color: var(--mask); color: var(--mask); }
 .pd-row { margin-top: 14px; }
 .pd-row h3 { font-size: 13px; color: var(--ink-3); font-weight: 600; margin-bottom: 6px; }
-/* 模块脚的说明：作用 / 板上 / 程序里 */
-.pd-doc p { font-size: 15px; line-height: 1.7; color: var(--ink); }
-.pd-how p { padding: 10px 12px; border-radius: 10px; background: var(--sunk); font-size: 14px; color: var(--ink-2); }
+/* 模块脚的说明 */
+.pd-doc p { font-size: 15.5px; line-height: 1.8; color: var(--ink); }
 .pd-sigs { display: flex; flex-wrap: wrap; gap: 6px; }
 .sig { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 9px; border-radius: 7px; background: var(--sunk); text-decoration: none; font-size: 13px; }
 .sig b { font: 600 13px var(--mono); }
@@ -333,7 +332,10 @@ a.sig:hover { background: color-mix(in srgb, var(--h) 22%, transparent); }
 .pd-board { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
 .pd-board:first-of-type { border-top: 0; padding-top: 0; }
 .pd-board span { font-size: 13.5px; color: var(--ink-2); }
-@media (min-width: 900px) { .chipv-g { grid-template-columns: minmax(0, 1.25fr) minmax(280px, .9fr); } .pdetail { position: sticky; top: 24px; } }
+.chipv-r { min-width: 0; align-self: start; }
+.chipv-r > .mtags:first-child { margin-top: 0; }
+.chipv-r > .pdetail { margin-top: 16px; }
+@media (min-width: 900px) { .chipv-g { grid-template-columns: minmax(0, 1.25fr) minmax(300px, .9fr); } .chipv-r { position: sticky; top: 24px; } }
 
 /* ---------- 开发板 ---------- */
 .photo { display: block; width: 100%; max-width: 640px; padding: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--surface); text-align: left; }
@@ -1177,8 +1179,7 @@ button.bit:hover { background: color-mix(in srgb, var(--copper) 20%, var(--surfa
 .msub { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line-2); animation: msub .18s var(--ease); }
 @keyframes msub { from { opacity: 0; transform: translateY(-4px); } }
 @media (prefers-reduced-motion: reduce) { .msub { animation: none; } }
-/* 手机：没选引脚时不放空的详情框 */
-@media (max-width: 899px) { .boardh .pdetail.empty { display: none; } }
+.boardh .pdetail.empty { display: none; }   /* 没选引脚时不放空的详情框 */
 @media (max-width: 440px) { .mtags:not(.msub) { gap: 5px; } .mtags:not(.msub) .mtag { padding: 0 10px; } }
 .boardh .legend { margin-top: 10px; }
 .pd-conn { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
