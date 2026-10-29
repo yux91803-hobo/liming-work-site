@@ -1,15 +1,23 @@
-/* mascot.js — 首页小芯（像素风）
-   标题栏里的一块像素小芯片：两只细引脚手、四只会弯的引脚脚、两个方块眼。
-   会走、眨眼、眼睛跟着指针/手指，没人理就坐下睡觉；闲着会从背后摸出饼干吃、抛小球、玩 LED。
-   点它会蹲一下再跳，连点会晕；按住拖到某张卡片上松手，就打开那个工具。
-   画法：20×20 像素格，每一帧按「姿势」重新拼出所有方块（逐帧动画，不做缩放旋转插值）。 */
+/* mascot.js — 小芯（像素风），首页和 STM32 学习台共用
+   一块像素小芯片：两只引脚手、四只引脚脚、两个方块眼。整个页面都是它的地盘：
+   首页能站在标题栏、每张卡片的上沿，也能跳进卡片里沿着底边走；学习台里在芯片图、标题区、代码框这些方块的上沿走来走去。
+   平台之间先蹲一下再划弧线跳过去；页面滚走了，它会跳回你正在看的地方。
+   会眨眼、眼睛跟着指针/手指，没人理就坐下睡觉；闲着会从背后摸出饼干吃、抛小球、玩 LED。
+   点它会跳，连点会晕；拎起来乱蹬，半空松手就往下掉到最近的方块上；首页拖到卡片上松手就打开那个工具。
+   画法：20×20 像素格，每一帧按「姿势」重新拼出所有方块（逐帧动画，不做缩放旋转插值）。
+   坐标：小芯挂在 body 下的一层（.xin-layer），x / y 是它左上角在整个文档里的位置。 */
 (function () {
   'use strict';
+  if (!window.requestAnimationFrame || !document.body) return;
   var track = document.getElementById('xinTrack'), grid = document.getElementById('grid');
-  if (!track || !grid || !window.requestAnimationFrame) return;
+  var HOME = !!(track && grid), STM = !HOME && !!document.getElementById('main');
+  if (!HOME && !STM) return;
   var body = document.body;
   var reduce = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
   var G = 20, W = 80, H = 80, SLEEP_AFTER = 30000;
+  // 学习台里能站的方块（只站上沿）
+  var STM_SEL = ['.chipv-stage', '.mtags', '.legend', '.pdetail', '.th', '.snav-i.on', '.points', '.dv-mode', 'figure.code', '.tnext-i', '.mrow', '.ptile', '.fcard',
+    '.dv-fn', '.mtable', '.dv-task', '.trow', '.path-list', '.bgroup', '.pg-h', '.dv-hero', '.dv-w', '.dv-row', '.dv-map', '.dv-next', '.cd-step', '.cd-method', '.rgroup', '.chap'];
 
   /* ---------- 像素造型 ----------
      身子：x 4..15、y 7..16（外框一圈深色，顶边正中一个芯片缺口）；姿势里的 b 是身子往下蹲几格。
@@ -89,27 +97,34 @@
     return o.join('');
   }
 
+  var layer = document.createElement('div');
+  layer.className = 'xin-layer' + (STM ? ' in-stm' : '');
   var el = document.createElement('div');
   el.className = 'xin';
   el.setAttribute('aria-hidden', 'true');
   el.innerHTML = '<div class="xin-sh"></div><div class="xin-r"><div class="xin-s"><svg viewBox="0 0 20 20" focusable="false" shape-rendering="crispEdges"></svg></div></div>';
-  track.appendChild(el);
+  layer.appendChild(el); body.appendChild(layer);
   var rEl = el.querySelector('.xin-r'), sEl = el.querySelector('.xin-s'), shEl = el.querySelector('.xin-sh'), svgEl = el.querySelector('svg');
   function dims() { W = el.offsetWidth || 80; H = el.offsetHeight || 80; }
   dims();
 
   /* ---------- 状态 ---------- */
-  var x = 0, y = 0, sc = 1, ang = 0, av = 0, angT = 0;
-  var mode = 'idle';                   // idle walk drag fly plug away sleep play
-  var tx = 0, dir = 1, raf = 0, lastT = 0, tw = null, drag = null, overCard = null;
+  var x = -999, y = -999, sc = 1, ang = 0, av = 0, angT = 0;
+  var mode = 'away';                   // idle walk drag fly plug away sleep play
+  var tx = 0, dir = 1, raf = 0, lastT = 0, tw = null, drag = null, overCard = null, plat = null;
   var mood = '', moodTm = 0, lookTm = 0, look = { x: 0, y: 0 }, looking = false, blinking = false;
   var seq = null, lastSig = '', tick = 0, forced = null;
   var lastInput = Date.now(), idleTm = 0, blinkTm = 0, zTm = 0, taps = [];
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function mix(a, b) { var o = {}, k; for (k in a) o[k] = a[k]; for (k in b) o[k] = b[k]; return o; }
-  function maxX() { return Math.max(0, track.clientWidth - W); }
-  function paused() { return document.hidden || body.classList.contains('tool-open'); }
+  function sX() { return window.pageXOffset || 0; }
+  function sY() { return window.pageYOffset || 0; }
+  // 学习台嵌在工具箱的面板里：面板收起时（不在看）就歇着
+  var panel = null;
+  try { panel = window.frameElement && window.frameElement.closest ? window.frameElement.closest('.panel') : null; } catch (e) { panel = null; }
+  function hiddenFrame() { return !!panel && !panel.classList.contains('show'); }
+  function paused() { return document.hidden || (HOME && body.classList.contains('tool-open')) || hiddenFrame(); }
   function cls(c, on) { el.classList.toggle(c, !!on); }
   function place() {
     el.style.transform = 'translate3d(' + Math.round(x) + 'px,' + Math.round(y) + 'px,0)' + (sc !== 1 ? ' scale(' + sc.toFixed(3) + ')' : '');
@@ -127,6 +142,64 @@
     mood = m || '';
     if (mood && ms) moodTm = setTimeout(function () { setMood(''); }, ms);
     render();
+  }
+
+  /* ---------- 平台：能站的地方 ----------
+     { el, kind, x0, x1, fy }：x0..x1 是小芯左上角 x 的可走范围，fy 是脚踩的那条线（文档坐标）。
+     kind：ground 首页标题栏；top 方块上沿；in 首页卡片里面，沿着底边走。 */
+  function shown(e) { return !!e && document.documentElement.contains(e) && !(e.closest && e.closest('[hidden],.hide')) && e.getClientRects().length > 0; }
+  function platOf(e, kind) {
+    if (!shown(e)) return null;
+    var r = e.getBoundingClientRect(), ox = sX(), oy = sY();
+    if (r.width < 4) return null;
+    if (kind === 'ground') return { el: e, kind: kind, x0: r.left + ox, x1: Math.max(r.left + ox, r.right + ox - W), fy: r.bottom + oy + 2 };
+    if (kind === 'in') {
+      if (r.height < H * 0.8 + 16 || r.width < W + 16) return null;
+      return { el: e, kind: kind, x0: r.left + ox + 6, x1: r.right + ox - W - 6, fy: r.bottom + oy - 5 };
+    }
+    if (r.width < W * 0.8) return null;
+    return { el: e, kind: 'top', x0: r.left + ox - W * 0.2, x1: Math.max(r.left + ox - W * 0.2, r.right + ox - W * 0.8), fy: r.top + oy + 1 };
+  }
+  function plats() {
+    var out = [], add = function (p) { if (p) out.push(p); };
+    if (HOME) {
+      add(platOf(track, 'ground'));
+      grid.querySelectorAll('.card[data-id]').forEach(function (c) { add(platOf(c, 'top')); add(platOf(c, 'in')); });
+    } else {
+      document.querySelectorAll(STM_SEL.join(',')).forEach(function (e) { add(platOf(e, 'top')); });
+    }
+    return out;
+  }
+  function same(a, b) { return !!a && !!b && a.el === b.el && a.kind === b.kind; }
+  // 学习台顶上有一条吸顶的栏（手机上），小芯的身子不能钻到它底下
+  function topPad() {
+    if (HOME) return 0;
+    var b = document.getElementById('bar'), r = b && b.getBoundingClientRect();
+    return r && r.height && r.bottom > 0 ? r.bottom : 0;
+  }
+  function inView(p) {
+    var top = sY() + topPad(), bot = sY() + innerHeight - 8;
+    return p.fy - H * 0.62 > top && p.fy < bot;
+  }
+  function onScreen() { var feet = y + H; return feet > sY() + 20 && y < sY() + innerHeight - 20; }
+  // 页面里最合适落脚的地方：看得见的平台里离屏幕中间最近的（首页优先标题栏）
+  function bestPlat() {
+    var ps = plats().filter(function (p) { return inView(p); });
+    if (HOME) { var g = ps.filter(function (p) { return p.kind === 'ground'; })[0]; if (g) return g; }
+    if (!ps.length) return null;
+    var mid = sY() + innerHeight * 0.45;
+    ps.sort(function (a, b) { return Math.abs(a.fy - mid) - Math.abs(b.fy - mid); });
+    return ps[0];
+  }
+  // 站在平台上：每一拍跟着平台挪（布局变了、卡片按下去了）；平台没了就掉下去
+  function follow() {
+    if (!plat || !(mode === 'idle' || mode === 'walk' || mode === 'sleep' || mode === 'play')) return;
+    var np = platOf(plat.el, plat.kind);
+    if (!np) { plat = null; fall(); return; }
+    plat = np;
+    var nx = clamp(x, np.x0, np.x1), ny = np.fy - H;
+    if (mode === 'walk') tx = clamp(tx, np.x0, np.x1);
+    if (Math.abs(nx - x) > 0.5 || Math.abs(ny - y) > 0.5) { x = nx; y = ny; place(); }
   }
 
   /* ---------- 姿势：基础姿势（由状态决定）+ 正在播放的那一帧 ---------- */
@@ -289,17 +362,18 @@
     }, 2400 + Math.random() * 3600);
   }
 
-  /* ---------- 小粒子：睡觉的 z、开心时蹦出的像素块 ---------- */
+
+  /* ---------- 小粒子：睡觉的 z、开心时蹦出的像素块（都挂在小芯那一层，用文档坐标） ---------- */
   function particle(c, ch, left, top, dx, dy) {
     var s = document.createElement('span');
     s.className = c; s.textContent = ch;
     s.style.left = left.toFixed(1) + 'px'; s.style.top = top.toFixed(1) + 'px';
     if (dx != null) { s.style.setProperty('--dx', dx.toFixed(1) + 'px'); s.style.setProperty('--dy', dy.toFixed(1) + 'px'); }
     s.addEventListener('animationend', function () { s.remove(); });
-    track.appendChild(s);
+    layer.appendChild(s);
     setTimeout(function () { if (s.parentNode) s.remove(); }, 3000);
   }
-  function headY() { return track.clientHeight - H + y + H * (6 + OY) / G; }
+  function headY() { return y + H * (6 + OY) / G; }
   function sparks(n) {
     if (reduce) return;
     for (var i = 0; i < n; i++) {
@@ -315,14 +389,17 @@
   }
 
   /* ---------- 动作 ---------- */
-  function land() {
+  function land(p) {
+    if (p) plat = p;
     setMode('idle');
-    y = 0; sc = 1; angT = 0; place(); kick();
+    if (plat) { x = clamp(x, plat.x0, plat.x1); y = plat.fy - H; }
+    sc = 1; angT = 0; place(); kick();
     playSeq(landFrames());
     schedule();
   }
   function walkTo(target) {
-    tx = clamp(target, 0, maxX());
+    if (!plat) return;
+    tx = clamp(target, plat.x0, plat.x1);
     if (Math.abs(tx - x) < 2) return;
     dir = tx > x ? 1 : -1;
     setMode('walk');
@@ -361,24 +438,80 @@
     setMood('happy', 1100); sparks(3); jump(6);
     schedule();
   }
+  // 跳到另一个平台：先蹲两格蓄力，再划一道弧线过去，落地屈膝
+  function hop(p2, xt) {
+    if (!p2) return;
+    var x2 = clamp(xt == null ? (p2.x0 + p2.x1) / 2 : xt, p2.x0, p2.x1), y2 = p2.fy - H;
+    if (reduce) { x = x2; y = y2; place(); land(p2); return; }
+    stopWalk(); dir = x2 > x ? 1 : -1;
+    setMode('play');
+    playSeq([{ b: 1, lx: dir, t: 80 }, { b: 2, lx: dir, armL: 'swingB', armR: 'swingB', t: 110 }], function () {
+      plat = null; setMode('fly');
+      var dx = Math.abs(x2 - x), up = Math.max(36, Math.min(160, 40 + dx * 0.25 + Math.max(0, y - y2) * 0.4));
+      fly(x2, y2, 1, Math.min(y, y2) - up, clamp(380 + Math.sqrt(dx * dx + (y2 - y) * (y2 - y)) * 0.7, 420, 900), easeInOut, function () { land(p2); });
+    });
+  }
+  // 脚下没东西了：往下掉到下面最近的平台上；下面也没有，就跳到看得见的地方
+  function below(px, py) {
+    var feet = py + H, best = null;
+    plats().forEach(function (p) {
+      if (px + W * 0.5 < p.x0 || px > p.x1 + W * 0.5) return;
+      if (p.fy < feet - 12) return;
+      if (!best || p.fy < best.fy) best = p;
+    });
+    return best;
+  }
+  function fall() {
+    var p = below(x, y) || bestPlat();
+    if (!p) { goAway(); return; }
+    if (reduce) { x = clamp(x, p.x0, p.x1); y = p.fy - H; place(); land(p); return; }
+    setMode('fly'); angT = 0;
+    var x2 = clamp(x, p.x0, p.x1), y2 = p.fy - H, d = Math.abs(y2 - y) + Math.abs(x2 - x);
+    fly(x2, y2, 1, Math.min(y, y2) - (y2 > y ? 16 : 50), clamp(300 + d * 0.6, 320, 900), y2 > y ? easeIn : easeInOut, function () { land(p); });
+  }
+  function goAway() { stopSeq(); tw = null; plat = null; setMode('away'); }
+  // 从屏幕上方掉进来，落到 p（默认挑一个看得见的）
+  function dropIn(delay, p) {
+    p = p || bestPlat();
+    if (!p) { setMode('away'); setTimeout(function () { if (mode === 'away' && !paused()) dropIn(0); }, 700); return; }
+    setMood(''); stopSeq();
+    var x2 = HOME && p.kind === 'ground' ? p.x0 + (p.x1 - p.x0) * 0.4 : p.x0 + (p.x1 - p.x0) * (0.2 + Math.random() * 0.6);
+    x = x2; sc = 1; ang = 0; av = 0; angT = 0;
+    if (reduce) { y = p.fy - H; setMode('idle'); place(); land(p); return; }
+    y = Math.min(sY(), p.fy) - H - 40; setMode('fly'); place();
+    setTimeout(function () {
+      if (mode !== 'fly') return;
+      fly(x2, p.fy - H, 1, y, 460, easeIn, function () { land(p); setMood('happy', 900); });
+    }, delay || 0);
+  }
 
   /* 闲着的时候自己找点事做 */
   var toyOrder = ['cookie', 'ball', 'led'], toyI = Math.floor(Math.random() * 3);
   function schedule(ms) { clearTimeout(idleTm); idleTm = setTimeout(think, ms || 2200 + Math.random() * 3800); }
   function think() {
     if (paused()) return;
+    if (mode === 'away') { dropIn(0); return; }
     if (mode !== 'idle' || mood || seq) { schedule(); return; }
+    if (!onScreen() || !plat) { dropIn(0); return; }      // 页面滚走了：跳回看得见的地方
     if (Date.now() - lastInput > SLEEP_AFTER) { sleep(); return; }
-    var r = Math.random(), m = maxX();
-    if (!reduce && r < 0.42 && m > 30) {
-      var t = Math.random() * m;
-      if (Math.abs(t - x) < 24) t = x < m / 2 ? x + 24 + Math.random() * (m - x - 24) : Math.random() * (x - 24);
+    var r = Math.random(), span = plat.x1 - plat.x0;
+    if (!reduce && r < 0.3 && span > 30) {
+      var t = plat.x0 + Math.random() * span;
+      if (Math.abs(t - x) < 24) t = x - plat.x0 < span / 2 ? Math.min(plat.x1, x + 24 + Math.random() * (plat.x1 - x - 24)) : plat.x0 + Math.random() * Math.max(0, x - plat.x0 - 24);
       walkTo(t);
-    } else if (!reduce && r < 0.62) {
+    } else if (!reduce && r < 0.58) {
+      var cand = plats().filter(function (p) {
+        if (same(p, plat) || !inView(p)) return false;
+        var cx = clamp(x, p.x0, p.x1);
+        return Math.abs(cx - x) + Math.abs(p.fy - plat.fy) < (STM ? 520 : 600);
+      });
+      if (cand.length) { var p2 = cand[Math.floor(Math.random() * cand.length)]; hop(p2, p2.x0 + Math.random() * (p2.x1 - p2.x0)); return; }
+      walkTo(plat.x0 + Math.random() * span);
+    } else if (!reduce && r < 0.74) {
       playToy(toyOrder[toyI++ % toyOrder.length]); return;
-    } else if (r < 0.82) {
+    } else if (r < 0.88) {
       if (!looking) { pupils((Math.random() < 0.5 ? -1 : 1) * 2, (Math.random() - 0.3) * 1.6); setTimeout(function () { if (!looking && mode === 'idle') pupils(0, 0); }, 1300); }
-    } else if (!reduce && r < 0.9) jump(2);
+    } else if (!reduce && r < 0.94) jump(2);
     else blink(true);
     schedule();
   }
@@ -416,25 +549,10 @@
     tw = { t0: performance.now(), dur: ms, x0: x, y0: y, s0: sc, cx: (x + x1) / 2, cy: cy, x1: x1, y1: y1, s1: s1, ease: ease, done: done };
     kick();
   }
-  function flyHome() {
-    var x1 = clamp(x, 0, maxX());
-    if (reduce) { x = x1; land(); return; }
-    setMode('fly'); angT = 0;
-    var dist = Math.sqrt((x1 - x) * (x1 - x) + y * y);
-    fly(x1, 0, 1, Math.min(y, 0) - 40 - Math.min(90, Math.abs(y) * 0.18), clamp(360 + dist * 0.5, 420, 880), easeInOut, land);
-  }
-  function dropIn(delay) {
-    setMode('fly'); setMood('');
-    x = clamp(x, 0, maxX()); sc = 1; ang = 0; av = 0; angT = 0;
-    if (reduce) { y = 0; place(); land(); return; }
-    y = -110; place();
-    setTimeout(function () {
-      fly(x, 0, 1, -110, 460, easeIn, function () { land(); setMood('happy', 900); });
-    }, delay || 0);
-  }
 
-  /* ---------- 拖到卡片上打开工具 ---------- */
+  /* ---------- 拖：首页拖到卡片上打开工具；别的地方松手就往下掉 ---------- */
   function cardAt(cx, cy) {
+    if (!HOME) return null;
     var cs = grid.querySelectorAll('.card[data-id]:not(.hide)');
     for (var i = 0; i < cs.length; i++) {
       var r = cs[i].getBoundingClientRect();
@@ -451,15 +569,14 @@
   }
   function plug(card) {
     setMode('plug'); angT = 0;
-    var r = card.getBoundingClientRect(), tr = track.getBoundingClientRect();
-    var x1 = r.left + r.width / 2 - tr.left - W / 2, y1 = r.top + r.height / 2 - tr.bottom + H / 2;
+    var r = card.getBoundingClientRect();
+    var x1 = r.left + sX() + r.width / 2 - W / 2, y1 = r.top + sY() + r.height / 2 - H / 2;
     var go = function () {
       setMood('');
       card.classList.remove('xin-over');
       card.classList.add('xin-hit');
       setTimeout(function () { card.classList.remove('xin-hit'); }, 600);
-      setMode('away');
-      x = clamp(x, 0, maxX()); y = 0; sc = 1; ang = 0; av = 0; place();
+      goAway(); sc = 1; ang = 0; av = 0; place();
       card.click();
       // 没打开（例如工具不存在），就回来
       setTimeout(function () { if (mode === 'away' && !body.classList.contains('tool-open')) dropIn(0); }, 400);
@@ -482,7 +599,7 @@
     if (!drag || e.pointerId !== drag.id) return;
     if (!drag.on) {
       if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) < 7) return;
-      drag.on = true; tw = null;
+      drag.on = true; tw = null; plat = null;
       if (mode === 'sleep') clearTimeout(zTm);
       drag.x0 = x; drag.y0 = y;
       rEl.style.transformOrigin = drag.gx.toFixed(1) + 'px ' + drag.gy.toFixed(1) + 'px';
@@ -501,7 +618,7 @@
     if (!d.on) { if (e.type === 'pointerup') tap(); return; }
     body.classList.remove('xin-drag');
     var c = overCard; hover(null); look = { x: 0, y: 0 };
-    if (c && e.type === 'pointerup') plug(c); else flyHome();
+    if (c && e.type === 'pointerup') plug(c); else fall();
   }
   el.addEventListener('pointerup', up);
   el.addEventListener('pointercancel', up);
@@ -519,65 +636,75 @@
     poke(); if (e.pointerType !== 'mouse') lookAt(e.clientX, e.clientY, 1800);
   }, { passive: true, capture: true });
   document.addEventListener('keydown', function () { if (!paused()) poke(); });
-  window.addEventListener('scroll', function () { if (!paused()) lastInput = Date.now(); }, { passive: true });
+  var scrollTm = 0;
+  window.addEventListener('scroll', function () {
+    if (paused()) return;
+    lastInput = Date.now();
+    // 滚动停下来以后，如果小芯已经不在屏幕上，就跳回来
+    clearTimeout(scrollTm);
+    scrollTm = setTimeout(function () { if (!onScreen() && (mode === 'idle' || mode === 'walk' || mode === 'sleep' || mode === 'play')) { stopSeq(); clearTimeout(zTm); dropIn(0); } }, 700);
+  }, { passive: true });
 
-  var q = document.getElementById('q'), empty = document.getElementById('empty'), themeBtn = document.getElementById('themeBtn');
-  if (q) {
-    q.addEventListener('input', function () { lookEl(q, 1600); });
-    q.addEventListener('focus', function () { lookEl(q, 1600); });
+  if (HOME) {
+    var q = document.getElementById('q'), empty = document.getElementById('empty'), themeBtn = document.getElementById('themeBtn');
+    if (q) {
+      q.addEventListener('input', function () { lookEl(q, 1600); });
+      q.addEventListener('focus', function () { lookEl(q, 1600); });
+    }
+    if (empty && window.MutationObserver) new MutationObserver(function () {
+      if (!empty.hidden) { if (mode === 'play') setMode('idle'); setMood('sad'); }
+      else if (mood === 'sad') setMood('');
+    }).observe(empty, { attributes: true, attributeFilter: ['hidden'] });
+    if (themeBtn) themeBtn.addEventListener('click', function () { lookEl(themeBtn, 1200); blink(false); });
   }
-  if (empty && window.MutationObserver) new MutationObserver(function () {
-    if (!empty.hidden) { if (mode === 'play') setMode('idle'); setMood('sad'); }
-    else if (mood === 'sad') setMood('');
-  }).observe(empty, { attributes: true, attributeFilter: ['hidden'] });
-  if (themeBtn) themeBtn.addEventListener('click', function () { lookEl(themeBtn, 1200); blink(false); });
 
   window.addEventListener('resize', function () {
     dims(); lastSig = ''; render();
     if (mode === 'drag' || mode === 'fly' || mode === 'plug') return;
-    x = clamp(x, 0, maxX()); if (mode === 'walk') tx = clamp(tx, 0, maxX()); place();
+    follow();
   });
 
-  /* 打开工具时停下；回到首页时从上面掉回来 */
-  var wasOpen = body.classList.contains('tool-open');
-  function onShell() {
-    var open = body.classList.contains('tool-open');
-    if (open === wasOpen) return;
-    wasOpen = open;
-    if (open) {
-      stopWalk(); stopSeq(); clearTimeout(idleTm); clearTimeout(zTm); ticker(false);
-      if (mode === 'sleep' || mode === 'play') setMode('idle');
-      if (mode === 'drag' || mode === 'fly') { tw = null; drag = null; hover(null); body.classList.remove('xin-drag'); }
-      if (mode !== 'away' && mode !== 'plug') setMode('away');
-      return;
-    }
-    lastInput = Date.now(); ticker(true);
-    if (mode === 'away') dropIn(260); else schedule();
+  /* 首页：打开工具时藏起来，回到首页时从上面掉回来。学习台在面板里：面板收起时歇着，打开时掉进来 */
+  function pause() { stopWalk(); stopSeq(); clearTimeout(idleTm); clearTimeout(zTm); ticker(false); if (mode === 'drag' || mode === 'fly' || mode === 'plug') { tw = null; drag = null; hover(null); body.classList.remove('xin-drag'); } goAway(); }
+  function resume(delay) { lastInput = Date.now(); ticker(true); dropIn(delay); }
+  var wasPaused = paused();
+  function onState() {
+    var p = paused();
+    if (p === wasPaused) return;
+    wasPaused = p;
+    if (p) pause(); else resume(HOME ? 260 : 300);
   }
-  if (window.MutationObserver) new MutationObserver(onShell).observe(body, { attributes: true, attributeFilter: ['class'] });
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) { stopWalk(); stopSeq(); if (mode === 'play') setMode('idle'); clearTimeout(idleTm); clearTimeout(zTm); ticker(false); return; }
-    lastInput = Date.now();
-    if (!paused()) ticker(true);
-    if (mode === 'sleep') zz(); else if (!paused()) schedule();
-  });
+  if (window.MutationObserver) {
+    if (HOME) new MutationObserver(onState).observe(body, { attributes: true, attributeFilter: ['class'] });
+    if (panel) new MutationObserver(onState).observe(panel, { attributes: true, attributeFilter: ['class'] });
+  }
+  document.addEventListener('visibilitychange', onState);
+  setInterval(function () { if (!paused()) follow(); }, 120);
 
   /* ---------- 出场 ---------- */
-  x = Math.round(maxX() * 0.4);
   place(); render();
-  if (!wasOpen) ticker(true);
-  if (wasOpen) setMode('away');
-  else if (reduce) schedule();
-  else dropIn(380);
+  if (!wasPaused) {
+    ticker(true);
+    // 学习台的内容是脚本画出来的，等它画好再掉进来
+    var tries = 0, start = function () {
+      if (paused()) return;
+      if (!bestPlat() && tries++ < 20) { setTimeout(start, 300); return; }
+      dropIn(HOME ? 380 : 200);
+    };
+    start();
+  }
   blinkLoop();
 
   window.LimingXin = {
     get mode() { return mode; },
     get mood() { return mood; },
+    get plat() { return plat ? { kind: plat.kind, el: plat.el } : null; },
     el: el,
     sleep: function () { setMode('idle'); setMood(''); sleep(); },
     toy: playToy,
     jump: function () { tap(); },
+    plats: plats,
+    hop: function (i) { var ps = plats(); hop(ps[i]); },
     // 调试 / 截图：固定一个姿势（传 null 恢复）
     pose: function (p) { forced = p; lastSig = ''; render(); },
     frames: function (n) { return n === 'jump' ? jumpFrames(6) : TOYS[n]().frames; }
