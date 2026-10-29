@@ -203,6 +203,15 @@ body.freeze #home,body.freeze .card,body.freeze .card .ic,body.freeze .round,bod
 .panel .back svg{width:18px;height:18px;stroke-width:2}
 .panel.ready .back,.panel.opened .back{opacity:1;transform:none}
 .panel .back.press{transform:scale(.88);background:var(--sunk);transition:transform .1s ease-out,background-color .08s linear}
+/* 回工具箱：只在电脑上、学习台里点进下一层时出现在返回键右边 */
+.panel .home-b{position:absolute;z-index:3;left:calc(58px + var(--sl));top:calc(8px + var(--st));width:40px;height:40px;display:none;place-items:center;
+  background:var(--panel);border:1px solid var(--line-2);border-radius:0;color:var(--ink);touch-action:manipulation;transition:transform .32s var(--out),background-color .2s var(--ease),border-color .2s var(--ease)}
+.panel .home-b svg{width:18px;height:18px;stroke-width:2}
+.panel .home-b.press{transform:scale(.88);background:var(--sunk);transition:transform .1s ease-out,background-color .08s linear}
+@media (min-width:1000px) and (hover:hover) and (pointer:fine){
+  .panel[data-id=stm32].deep.opened .home-b{display:grid}
+  .panel .home-b:hover{border-color:var(--clay)}
+}
 .panel .edge{position:absolute;z-index:4;left:0;top:0;bottom:0;width:18px;display:none;touch-action:none}
 .standalone .panel .edge{display:block}
 .native-back .panel .edge{display:none!important}

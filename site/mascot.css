@@ -36,17 +36,28 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin .c-hk{fill:#5a2c1f}
 .xin .c-bt{fill:#2f3a33}
 .xin .c-bl{fill:#7bd88f}
+.xin .c-tg{fill:#e0675a}
+.xin .c-lt{fill:#8d887c}
+.xin .c-lk{fill:#2f2d29}
+.xin .c-lg{fill:var(--clay)}
+.xin .c-sc{fill:#8ec5ff}
 /* 吊着小芯的线 */
-.xin-thread{position:absolute;left:0;top:0;width:2px;background:var(--ink);opacity:.6;pointer-events:none;display:none}
+.xin-thread{position:absolute;left:0;top:0;width:2px;transform-origin:1px 0;background:var(--ink);opacity:.6;pointer-events:none;display:none}
 /* 小粒子 */
 .xin-z,.xin-p{position:absolute;z-index:1;pointer-events:none;font:16px/1 var(--mono);color:var(--ink-3)}
 .xin-z{animation:xz 2.4s steps(6,end) forwards}
 .xin-p{width:6px;height:6px;background:var(--clay);animation:xp .6s steps(5,end) forwards}
 @keyframes xz{0%{opacity:0;transform:translate(0,0)}15%{opacity:1}100%{opacity:0;transform:translate(12px,-27px)}}
+/* 砸碎的碎片：崩开再往下掉 */
+.xin-k{position:absolute;z-index:1;width:6px;height:6px;pointer-events:none;animation:xk .9s steps(7,end) forwards}
+@keyframes xk{0%{opacity:1;transform:translate(0,0)}40%{opacity:1;transform:translate(calc(var(--dx) * .6),var(--dy))}100%{opacity:0;transform:translate(var(--dx),calc(var(--dy) + 40px))}}
+/* 敲代码时蹦出来的字符 */
+.xin-cd{position:absolute;z-index:1;pointer-events:none;font:700 12px/1 var(--mono);color:var(--clay);animation:xcd 1.3s steps(6,end) forwards}
+@keyframes xcd{0%{opacity:0;transform:translate(0,0)}20%{opacity:1}100%{opacity:0;transform:translate(0,-30px)}}
 @keyframes xp{0%{opacity:1;transform:translate(0,0)}100%{opacity:0;transform:translate(var(--dx),var(--dy))}}
 @media (prefers-reduced-motion:reduce){
   .xin,.xin *{animation:none!important;transition:none!important}
-  .xin-z,.xin-p{display:none}
+  .xin-z,.xin-p,.xin-k,.xin-cd{display:none}
 }
 /* 小背包：像素风小方格，每格一个图标 + 名字 */
 .xin-bag{position:fixed;z-index:60;display:grid;grid-template-columns:repeat(4,64px);gap:6px;padding:8px;

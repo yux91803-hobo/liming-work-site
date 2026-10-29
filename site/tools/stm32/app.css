@@ -85,7 +85,12 @@ kbd { font-size: 11px; line-height: 18px; padding: 0 6px; border: 1px solid var(
 .nav-i { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; text-decoration: none; color: var(--ink-2); }
 .nav-i:hover { background: var(--sunk); color: var(--ink); }
 .nav-i.on { background: var(--mask-soft); color: var(--mask); font-weight: 600; }
-.side-h { margin: 22px 10px 6px; font-size: 12px; font-weight: 600; color: var(--ink-3); letter-spacing: .04em; }
+.side-h { margin: 20px 0 6px; }
+.side-tg { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--ink); font-size: 16px; font-weight: 700; letter-spacing: .02em; text-align: left; cursor: pointer; }
+.side-tg:hover { background: var(--sunk); }
+.side-tg-i { width: 16px; height: 16px; color: var(--ink-3); transform: rotate(90deg); transition: transform .18s var(--ease); }
+.side-h.folded .side-tg-i { transform: none; }
+.side-topics[hidden] { display: none; }
 .nav-t { position: relative; display: flex; align-items: center; height: 34px; padding: 0 12px; border-radius: 8px; text-decoration: none; color: var(--ink-2); }
 .nav-t:hover { background: var(--sunk); color: var(--ink); }
 .nav-t.on { background: color-mix(in srgb, var(--h) 13%, var(--bg)); color: var(--ink); }
@@ -454,7 +459,33 @@ button.bit:hover { background: color-mix(in srgb, var(--copper) 20%, var(--surfa
 .frow-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .frow-h b { font-size: 14.5px; }
 .frow.touched .frow-h b { color: var(--copper); }
-.frow.touched .frow-h b::after { content: "已改"; margin-left: 6px; font: 11px var(--sans); color: var(--copper); }
+/* 选中的字段：左边这一行和右边位格子里那几位一起高亮 */
+.frow { cursor: pointer; margin: 0 -10px; padding-left: 10px; padding-right: 10px; border-radius: 8px; transition: background-color .15s var(--ease); }
+.frow.pick { background: color-mix(in srgb, var(--h, var(--copper)) 9%, transparent); box-shadow: inset 3px 0 0 var(--h, var(--copper)); }
+.sh-pick .frow, .sh-pick .frow.pick { margin: 0; padding-left: 0; padding-right: 0; cursor: default; background: none; box-shadow: none; }
+/* 取值列表：每个数字代表什么，当前值高亮；能写的字段点一条就改成那个值 */
+.fvals { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+.fv { display: flex; align-items: baseline; gap: 12px; width: 100%; padding: 6px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink-2); font-size: 13.5px; line-height: 1.45; text-align: left; }
+.fv b { flex: none; min-width: 2.4em; font-size: 13px; color: var(--ink-3); }
+.fv.on { background: var(--sunk); color: var(--ink); }
+.fv.on b { color: var(--ink); }
+.frow.touched .fv.on { background: var(--copper-soft); border-color: color-mix(in srgb, var(--copper) 35%, transparent); }
+.frow.touched .fv.on b { color: var(--copper); }
+button.fv:hover:not(.on) { background: var(--sunk); }
+.bit.pick { box-shadow: inset 0 0 0 2px var(--h, var(--copper)); }
+.bits-n.pick { color: var(--ink); background: color-mix(in srgb, var(--h, var(--copper)) 18%, transparent); }
+.bits-n.touched { color: var(--copper); }
+/* 代码下面：这个寄存器是干啥的 */
+.sh-about { order: 9; margin-top: 18px; }
+.sh-about p { margin-top: 6px; font-size: 14px; line-height: 1.7; color: var(--ink-2); }
+/* 手机：位格子下面放选中的字段；底部一直露着寄存器写法 */
+.sh-pick { order: 3; margin-top: 10px; padding: 2px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); }
+.sh-pick .frow { border-bottom: 0; }
+.sh-dock { flex: none; display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 10px calc(16px + var(--sar)) calc(10px + var(--sab)) calc(16px + var(--sal)); border: 0; border-top: 1px solid #2c2a26;
+  background: #161513; color: #ece7dc; text-align: left; cursor: pointer; }
+.sh-dock code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; line-height: 1.5; }
+.sh-dock[hidden], .sh-pick[hidden], .sh-about[hidden] { display: none; }
+@media (min-width: 900px) { .sh-dock, .sh-pick { display: none !important; } }
 .frow.na { opacity: .5; }
 .frow-bits { font-size: 12px; color: var(--ink-3); }
 .rw { font-size: 11.5px; padding: 0 6px; border-radius: 5px; background: var(--sunk); color: var(--ink-3); }

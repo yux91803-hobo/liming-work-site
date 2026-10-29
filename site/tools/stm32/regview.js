@@ -7,6 +7,8 @@
   var app = null, root = null, panel = null, body = null, open = false, lastFocus = null;
   var ST = {};                       // 每个 寄存器|实例|通道 的计算状态 { v, touched, quick }
   var c = null, renderedV = null;    // 当前上下文、最后一次画出来的值
+  var picked = null;                 // 选中的字段名：左边那一行和右边那几位一起高亮
+  function wide() { return !!(window.matchMedia && matchMedia('(min-width: 900px)').matches); }
   var RWN = { rw: '读写', r: '只读', w: '只写', rc_w0: '写 0 清除', rc_w1: '写 1 清除', rs: '写 1 置位', rc_w: '读后清除', res: '保留' };
 
   function stKey(r, inst, n) { return r.id + '|' + (inst ? inst.name : '') + '|' + (n == null ? '' : n); }
@@ -41,13 +43,17 @@
     body = el('div', 'sh-body');
     var L = el('div', 'sh-l'), Rr = el('div', 'sh-r');
     nodes = { h: h, sub: sub, tp: tp, sel: el('div', 'sh-sel'), na: el('p', 'banner warn'), addr: el('div', 'sh-addr'), val: el('div', 'sh-val'), bits: el('div', 'bits'),
-      quick: el('div', 'sh-quick'), fx: el('div', 'sh-fx'), fields: el('div', 'fields'), warn: el('div', 'sh-warn'), code: el('div', 'sh-code'), meta: el('div', 'sh-meta') };
+      quick: el('div', 'sh-quick'), fx: el('div', 'sh-fx'), fields: el('div', 'fields'), warn: el('div', 'sh-warn'), code: el('div', 'sh-code'), meta: el('div', 'sh-meta'),
+      about: el('div', 'sh-about'), pick: el('div', 'sh-pick'), dock: el('button', 'sh-dock') };
     [nodes.sel, nodes.na, nodes.quick, nodes.fx, nodes.fields].forEach(function (n) { L.appendChild(n); });
     var sticky = el('div', 'sh-stick');
-    [nodes.addr, nodes.val, nodes.bits, nodes.warn, nodes.code, nodes.meta].forEach(function (n) { sticky.appendChild(n); });
+    [nodes.addr, nodes.val, nodes.bits, nodes.pick, nodes.warn, nodes.code, nodes.about, nodes.meta].forEach(function (n) { sticky.appendChild(n); });
     Rr.appendChild(sticky);
     body.appendChild(L); body.appendChild(Rr);
-    panel.appendChild(head); panel.appendChild(body);
+    panel.appendChild(head); panel.appendChild(body); panel.appendChild(nodes.dock);
+    // 手机：底部一直露着当前的寄存器写法，点一下跳到完整代码
+    nodes.dock.type = 'button'; nodes.dock.setAttribute('aria-label', '看完整代码');
+    nodes.dock.addEventListener('click', function () { try { nodes.code.scrollIntoView({ block: 'start', behavior: ui.reduced() ? 'auto' : 'smooth' }); } catch (e) { nodes.code.scrollIntoView(); } });
     root.appendChild(scrim); root.appendChild(panel);
     root.addEventListener('keydown', function (e) {
       if (e.key !== 'Tab') return;
@@ -118,11 +124,13 @@
       nodes.tp.onclick = function (e) { e.preventDefault(); app.navigate({ v: 'topic', t: t.id }); };
     } else nodes.tp.hidden = true;
     panel.style.setProperty('--h', t ? app.hue(t) : '');
+    picked = null;
     renderSel(g);
     var na = R.naOnly(r.only, c.inst);
     nodes.na.hidden = !na; nodes.na.textContent = na ? (c.inst ? c.inst.name + ' 没有这个寄存器：' : '') + R.naWhy(r.only) : '';
     renderFx();
     renderMeta();
+    renderAbout();
     renderValue({ full: true });
     body.scrollTop = 0;
   }
@@ -187,6 +195,7 @@
     }
     renderBits();
     renderFields(o.full || !nodes.fields.firstChild);
+    renderPick();
     renderQuick();
     renderWarn();
     renderCode();
@@ -208,8 +217,13 @@
         if (can) {
           cell.type = 'button';
           cell.setAttribute('aria-label', '位 ' + b + ' = ' + on + '，' + f.name + '，点一下改成 ' + (on ? 0 : 1));
-          (function (bit, fld) { cell.addEventListener('click', function () { c.st.v = (c.st.v ^ (1 << bit)) >>> 0; c.st.touched[fld.name] = true; c.st.quick = -1; changed({ relayout: !!(r.alt && r.alt.length) }); }); })(b, f);
+          (function (bit, fld) { cell.addEventListener('click', function () {
+            picked = fld.name;
+            c.st.v = (c.st.v ^ (1 << bit)) >>> 0; c.st.touched[fld.name] = true; c.st.quick = -1; changed({ relayout: !!(r.alt && r.alt.length) });
+            showPicked();
+          }); })(b, f);
         } else cell.setAttribute('aria-hidden', 'true');
+        if (f && !f.reserved) { cell.dataset.f = f.name; if (f.name === picked) cell.classList.add('pick'); }
         if (f && b === f.bits[1]) cell.classList.add('f-end');
         if (f && b === f.bits[0]) cell.classList.add('f-start');
         if (b % 4 === 0) cell.classList.add('nib');
@@ -220,7 +234,7 @@
       for (var bb = rr[0]; bb >= rr[1]; bb--) {
         var ff = fieldAt(bb); if (!ff || seen[ff.name]) continue; seen[ff.name] = 1;
         var hi = Math.min(ff.bits[0], rr[0]), lo = Math.max(ff.bits[1], rr[1]);
-        var nm = el('span', 'bits-n' + (ff.reserved ? ' res' : ''), ff.reserved ? '' : ff.name);
+        var nm = el('span', 'bits-n' + (ff.reserved ? ' res' : '') + (!ff.reserved && c.st.touched[ff.name] ? ' touched' : '') + (ff.name === picked ? ' pick' : ''), ff.reserved ? '' : ff.name);
         nm.style.gridColumn = (rr[0] - hi + 1) + ' / span ' + (hi - lo + 1);
         if (!ff.reserved) nm.title = ff.name + ' [' + ff.bits[0] + (ff.bits[0] !== ff.bits[1] ? ':' + ff.bits[1] : '') + ']';
         names.appendChild(nm);
@@ -276,28 +290,39 @@
     var ctl = el('div', 'frow-c'); row.appendChild(ctl); row._ctl = ctl;
     var mean = el('p', 'frow-m'); row.appendChild(mean); row._m = mean;
     if (f.desc) row.appendChild(el('p', 'frow-d', f.desc));
+    // 点这一行：选中它，右边位格子里对应的那几位跟着高亮
+    row.addEventListener('click', function () { if (picked !== f.name) { picked = f.name; markPick(); renderPick(); } });
     updateRow(row);
     return row;
   }
+  function hasText(vals) { return !!vals && vals.some(function (it) { return !!it.t; }); }
   function updateRow(row) {
     var f = row._f, v = c.st.v, x = C.fget(v, f), w = C.fw(f), b = C.bin(x, w), inf = R.info(c, f, v);
     var can = R.writable(f, c.inst) && R.P(c.r).kind !== 'ro';
     row.classList.toggle('touched', !!c.st.touched[f.name]);
     row.classList.toggle('na', R.naOnly(f.only, c.inst));
-    var ctl = row._ctl, key = (inf.vals ? 'v' + inf.vals.length + (inf.basis || '') : 'n') + (can ? 1 : 0);
+    row.classList.toggle('pick', f.name === picked);
+    // 有含义的取值：逐条列出「这个数字代表什么」，当前值高亮（改值点右边的位格子，或者直接点这一条）
+    var list = hasText(inf.vals);
+    var ctl = row._ctl, key = (list ? 'v' + inf.vals.map(function (it) { return it.v; }).join(',') + (inf.basis || '') : 'n') + (can ? 1 : 0);
     if (ctl._key !== key) {
-      ctl._key = key; ui.clear(ctl);
-      if (!can) ctl.appendChild(el('span', 'frow-ro mono', inf.numeric ? String(x) : b));
-      else if (w === 1 && inf.vals && inf.vals.length === 2 && !inf.vals[0].t && !inf.vals[1].t) {
-        var sw = el('button', 'switch'); sw.type = 'button'; sw.setAttribute('role', 'switch'); sw.setAttribute('aria-label', f.name);
-        sw.appendChild(el('i'));
-        sw.addEventListener('click', function () { setField(f, C.fget(c.st.v, f) ? 0 : 1); });
-        ctl.appendChild(sw); ctl._sw = sw;
-      } else if (inf.vals && inf.vals.length) {
-        var sel = el('select', 'selctl'); sel.setAttribute('aria-label', f.name);
-        inf.vals.forEach(function (it) { var o = el('option', null, it.v + (it.t ? '　' + it.t : '')); o.value = it.v; sel.appendChild(o); });
-        sel.addEventListener('change', function () { var y = C.parseSet(sel.value, f); if (y != null) setField(f, y); });
-        ctl.appendChild(sel); ctl._sel = sel; ctl._vals = inf.vals;
+      ctl._key = key; ui.clear(ctl); ctl._list = null; ctl._num = null;
+      if (list) {
+        var ul = el('div', 'fvals'); ul.setAttribute('role', can ? 'radiogroup' : 'list'); ul.setAttribute('aria-label', f.name + ' 的取值');
+        inf.vals.forEach(function (it) {
+          var it2 = el(can ? 'button' : 'div', 'fv');
+          if (can) { it2.type = 'button'; it2.setAttribute('role', 'radio'); it2.addEventListener('click', function () {
+            var y = C.parseSet(it.v, f); picked = f.name;
+            if (y == null || C.wild(it.v, C.bin(C.fget(c.st.v, f), C.fw(f)))) { markPick(); renderPick(); return; }   // 本来就是这个值：只选中
+            setField(f, y);
+          }); }
+          else it2.setAttribute('role', 'listitem');
+          it2.appendChild(el('b', 'mono', String(it.v))); it2.appendChild(el('span', null, String(it.t || '')));
+          ul.appendChild(it2);
+        });
+        ctl.appendChild(ul); ctl._list = ul; ctl._vals = inf.vals;
+      } else if (!can || !inf.numeric) {
+        // 只读的数、没有含义说明的单个位：下面一行「= 值」就够了
       } else {
         var ni = el('input', 'numin mono'); ni.setAttribute('aria-label', f.name + '（十进制、0x 或 0b）'); ni.setAttribute('inputmode', 'numeric'); ni.setAttribute('autocomplete', 'off');
         var ne = el('span', 'numin-e');
@@ -307,15 +332,43 @@
         ctl.appendChild(el('span', 'numin-r', '0~' + (Math.pow(2, w) - 1)));
       }
     }
-    if (ctl._sw) { ctl._sw.setAttribute('aria-checked', String(!!x)); ctl._sw.classList.toggle('on', !!x); }
-    if (ctl._sel) {
+    if (ctl._list) {
       var hit = -1; ctl._vals.forEach(function (it, i) { if (hit < 0 && C.wild(it.v, b)) hit = i; });
-      ctl._sel.selectedIndex = hit;
-      if (hit < 0) { ctl._sel.selectedIndex = -1; }
+      Array.prototype.forEach.call(ctl._list.children, function (n, i) { n.classList.toggle('on', i === hit); if (n.tagName === 'BUTTON') n.setAttribute('aria-checked', String(i === hit)); });
     }
     if (ctl._num && document.activeElement !== ctl._num) ctl._num.value = String(x);
-    var t = R.meaning(inf, b);
-    row._m.textContent = (inf.numeric ? '= ' + x + (w > 4 ? '（0x' + C.hexd(x, Math.ceil(w / 4)) + '）' : '') : '= ' + b) + (t ? '　' + t : '') + (inf.basis ? '　' + inf.basis : '');
+    // 列表里已经标出当前值；其他字段写一行「= 值」
+    var mtxt = ctl._list ? (inf.basis || '') : (inf.numeric ? '= ' + x + (w > 4 ? '（0x' + C.hexd(x, Math.ceil(w / 4)) + '）' : '') : '= ' + b) + (inf.basis ? '　' + inf.basis : '');
+    row._m.textContent = mtxt; row._m.hidden = !mtxt;
+  }
+  // 选中状态画到左边的行和右边的位格子上
+  function markPick() {
+    Array.prototype.forEach.call(nodes.fields.querySelectorAll('.frow'), function (row) { row.classList.toggle('pick', row._f.name === picked); });
+    Array.prototype.forEach.call(nodes.bits.querySelectorAll('.bit[data-f]'), function (n) { n.classList.toggle('pick', n.dataset.f === picked); });
+    Array.prototype.forEach.call(nodes.bits.querySelectorAll('.bits-n'), function (n) { n.classList.toggle('pick', !!picked && n.textContent === picked); });
+  }
+  function rowOf(name) {
+    var rs = nodes.fields.querySelectorAll('.frow');
+    for (var i = 0; i < rs.length; i++) if (rs[i]._f.name === name) return rs[i];
+    return null;
+  }
+  // 点了右边的位：电脑上左边滚到那个字段；手机上位格子下面直接显示这个字段（见 renderPick）
+  function showPicked() {
+    markPick();
+    if (!wide()) return;
+    var row = rowOf(picked); if (!row) return;
+    var br = body.getBoundingClientRect(), rr = row.getBoundingClientRect();
+    if (rr.top < br.top + 8 || rr.bottom > br.bottom - 8) try { row.scrollIntoView({ block: 'center', behavior: ui.reduced() ? 'auto' : 'smooth' }); } catch (e) { row.scrollIntoView(); }
+  }
+  // 手机：位格子下面放一份选中字段的说明（取值列表可以直接点），不用往下翻
+  function renderPick() {
+    var box = nodes.pick, f = null;
+    if (picked) for (var i = 0; i < c.lay.length; i++) if (c.lay[i].name === picked && !c.lay[i].reserved) f = c.lay[i];
+    if (!f) { picked = null; ui.clear(box); box.hidden = true; box._f = null; renderDock(); return; }
+    if (box._f !== f) { ui.clear(box); box._f = f; box.appendChild(fieldRow(f)); }
+    else updateRow(box.firstChild);
+    box.hidden = false;
+    renderDock();
   }
   function setField(f, x, typing) {
     c.st.v = (C.fset(c.st.v, f, x) | R.P(c.r).m1) >>> 0;
@@ -423,6 +476,23 @@
     halBox.hidden = !hal; if (hal) { halBox.querySelector('.code-t').textContent = 'HAL 写法：' + hal.title; halBox.set(hal.code); }
     var wh = R.wholeCode(c);
     wholeBox.hidden = !wh; if (wh) wholeBox._c.set(wh);
+    renderDock();
+  }
+  // 手机底部的代码条：只放真正的语句（注释不放）；还没改任何位时不显示
+  function renderDock() {
+    var d = nodes.dock; if (!c) return;
+    var lines = String(R.genCode(c) || '').split('\n').filter(function (l) { l = l.trim(); return l && !/^(\/\*|\/\/|\*)/.test(l); });
+    ui.clear(d);
+    lines.slice(0, 3).forEach(function (l) { d.appendChild(el('code', 'mono', l)); });
+    d.hidden = !lines.length;
+  }
+  // 这个寄存器是干啥的（写在代码下面）
+  function renderAbout() {
+    var box = nodes.about, t = STM.regdoc ? STM.regdoc(c.r.id) : '';
+    ui.clear(box); box.hidden = !t;
+    if (!t) return;
+    box.appendChild(el('h3', 'sh-h3', '作用'));
+    box.appendChild(el('p', null, t));
   }
   function renderMeta() {
     var box = nodes.meta, r = c.r; ui.clear(box);
