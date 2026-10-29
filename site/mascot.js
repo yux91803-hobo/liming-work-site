@@ -315,7 +315,7 @@
       if (mode === 'idle') {               // 跟着节拍点头、跺脚，头顶冒音符
         var bt = Math.floor(t / 300), kk = Math.floor(t / 200) % 8;
         p.b = bt % 2; p.legs = 'walk'; p.lp = bt % 2 ? 0 : 2; p.armL = p.armR = 'down';
-        p.face = Math.floor(bt / 4) % 2 ? 'hap' : 'eyes'; p.lx = 0; p.ly = 0;
+        p.face = bt % 10 < 8 ? 'hap' : 'eyes'; p.lx = 0; p.ly = 0;   // 大部分时间闭眼陶醉，偶尔睁眼
         var note = function (nx, ny) { return [[nx, ny + 2, 'q'], [nx + 1, ny + 2, 'q'], [nx + 1, ny + 1, 'q'], [nx + 1, ny, 'q'], [nx + 2, ny, 'q']]; };
         p.fx = note(16, 3 - kk % 4).concat(note(1, 4 - (kk + 2) % 4));
       }
@@ -326,7 +326,7 @@
     else if (mood === 'sad') { p.face = 'sad'; p.b = Math.max(p.b, 1); p.lx = 0; p.ly = 0; p.armL = p.armR = 'down'; }
     else if (mood === 'wow') { p.face = 'wow'; p.armL = p.armR = 'wave'; }
     else if (mood === 'scared') {          // 害怕 / 恐高：瞪眼、冒汗、浑身发抖；站着时缩成一团
-      p.face = 'scared'; p.sx = Math.floor(t / 70) % 2;
+      p.face = 'scared'; p.sx = Math.floor(t / 110) % 2;
       if (mode === 'idle' || mode === 'walk' || mode === 'play') { p.b = 1; p.armL = p.armR = 'down'; }
     }
     else if (mood === 'confused') { p.face = 'confused'; p.armR = 'up'; p.fx = QMARK; }   // 疑惑：一只手挠头，头顶冒问号
@@ -404,11 +404,12 @@
   function putAway() { return [{ armR: 'back', lx: 1, t: 240 }, { t: 120 }]; }
   var TOYS = {
     cookie: function (given) {
-      var Hd = { armL: 'hold', armR: 'hold' }, f = given ? [] : reach();
-      f.push(mix(Hd, { item: { k: 'cookie', n: 0 }, lx: 0, ly: 1, t: 650 }));
-      f.push(mix(Hd, { item: { k: 'cookie', n: 0 }, face: 'hap', t: 320 }));
+      // 先低头看一眼饼干，然后从第一口起一直闭着眼享受，吃完才睁眼
+      var Hd = { armL: 'hold', armR: 'hold', lx: 0, ly: 1 }, f = given ? [] : reach();
+      f.push(mix(Hd, { item: { k: 'cookie', n: 0 }, face: 'eyes', t: 700 }));
+      f.push(mix(Hd, { item: { k: 'cookie', n: 0 }, face: 'hap', t: 360 }));
       for (var n = 1; n <= 3; n++) {
-        f.push(mix(Hd, { item: { k: 'cookie', n: n - 1 }, mouth: 2, ly: 1, t: 220 }));
+        f.push(mix(Hd, { item: { k: 'cookie', n: n - 1 }, mouth: 2, face: 'hap', t: 220 }));
         f.push(mix(Hd, { item: { k: 'cookie', n: n }, mouth: 1, face: 'hap', fx: [[9 + n % 2, 16, 'ck']], t: 140 }));
         f.push(mix(Hd, { item: { k: 'cookie', n: n }, mouth: 1, face: 'hap', b: 1, fx: [[10 - n % 2, 17, 'ck']], t: 140 }));
         f.push(mix(Hd, { item: { k: 'cookie', n: n }, mouth: 1, face: 'hap', fx: [[9 + n % 2, 19, 'ck']], t: 180 }));
@@ -432,20 +433,22 @@
     },
     // 电池：抱着「吸」电，电量一格一格变少，身边冒火花，吸完满血蹦一下，接下来一阵子走路飞快
     batt: function (given) {
-      var Hd = { armL: 'hold', armR: 'hold' }, f = given ? [] : reach(), n;
-      f.push(mix(Hd, { item: { k: 'batt', n: 3 }, ly: 1, t: 500 }));
+      var Hd = { armL: 'hold', armR: 'hold', lx: 0, ly: 1 }, f = given ? [] : reach(), n;
+      f.push(mix(Hd, { item: { k: 'batt', n: 3 }, face: 'eyes', t: 600 }));
       for (n = 3; n >= 0; n--) f.push(mix(Hd, { item: { k: 'batt', n: n }, face: 'hap', b: n % 2, fx: [[n % 2 ? 2 : 17, 7 + n, 'gl'], [n % 2 ? 17 : 2, 11 - n, 'gl']], t: 260 }));
       f.push({ face: 'wow', armL: 'up', armR: 'up', t: 300 });
       return { frames: f, after: function () { energy = Date.now() + 12000; sparks(6); setMood('happy', 1200); jump(8); } };
     },
     led: function (given) {
-      var Hd = { armL: 'hold', armR: 'hold' }, f = given ? [] : reach(), i;
-      f.push(mix(Hd, { item: { k: 'led', on: false }, ly: 1, t: 520 }));
+      // 一直盯着灯看（表情不跟着灯一闪一闪地变），看够了才笑一下收起来
+      var Hd = { armL: 'hold', armR: 'hold', face: 'eyes', lx: 0, ly: 1 }, f = given ? [] : reach(), i;
+      f.push(mix(Hd, { item: { k: 'led', on: false }, t: 600 }));
       for (i = 0; i < 4; i++) {
-        f.push(mix(Hd, { item: { k: 'led', on: true }, face: 'hap', t: 260 }));
-        f.push(mix(Hd, { item: { k: 'led', on: false }, ly: 1, t: 230 }));
+        f.push(mix(Hd, { item: { k: 'led', on: true }, t: 300 }));
+        f.push(mix(Hd, { item: { k: 'led', on: false }, t: 300 }));
       }
-      f.push(mix(Hd, { item: { k: 'led', on: true }, face: 'wow', t: 520 }));
+      f.push(mix(Hd, { item: { k: 'led', on: true }, t: 400 }));
+      f.push(mix(Hd, { item: { k: 'led', on: true }, face: 'hap', t: 900 }));
       return { frames: f.concat(putAway()), after: null };
     }
   };
@@ -461,6 +464,7 @@
   // 视线按像素格挪：-1 / 0 / 1
   function pupils(px, py) { look = { x: clamp(Math.round(px / 1.6), -1, 1), y: clamp(Math.round(py / 1.6), -1, 1) }; render(); }
   function lookAt(cx, cy, hold) {
+    if (!(mode === 'idle' || mode === 'walk')) return;
     var r = el.getBoundingClientRect();
     var dx = cx - (r.left + r.width / 2), dy = cy - (r.top + r.height * 0.45);
     var d = Math.sqrt(dx * dx + dy * dy) || 1, k = Math.min(1, d / 90);
@@ -556,13 +560,17 @@
     var nx = atL ? x - W * 0.5 : x + W * 0.5, q = below(nx, y + 4), gap = q && !same(q, plat) ? q.fy - plat.fy : 9999;
     if (gap > 110) { look = { x: atL ? -1 : 1, y: 1 }; setMood('scared', 1400); setTimeout(function () { if (mode === 'idle') look = { x: 0, y: 0 }; }, 1500); }
   }
-  function sleep() {
+  // 睡觉：让它睡的睡 25~40 秒，自己困了睡的睡 45~75 秒，然后自己伸个懒腰醒来。点它、拖它、从背包叫醒会提前醒
+  var sleepTm = 0;
+  function sleep(told) {
     if (mode !== 'idle') return;
     setMood(''); look = { x: 0, y: 0 }; setMode('sleep'); zz();
+    clearTimeout(sleepTm);
+    sleepTm = setTimeout(function () { if (mode === 'sleep') { wake(false); lastInput = Date.now(); } }, told ? 25000 + Math.random() * 15000 : 45000 + Math.random() * 30000);
   }
   function wake(startled) {
     if (mode !== 'sleep') return;
-    clearTimeout(zTm); setMode('idle');
+    clearTimeout(zTm); clearTimeout(sleepTm); setMode('idle'); lastInput = Date.now();
     if (startled) { setMood('wow', 700); jump(3); }
     else playSeq([{ armL: 'up', armR: 'up', face: 'shut', b: 0, t: 450 }, { armL: 'wave', armR: 'wave', face: 'shut', t: 200 }, { face: 'blink', t: 120 }]);   // 伸个懒腰
     schedule();
@@ -747,12 +755,16 @@
   }
 
   /* ---------- 拖：首页拖到卡片上打开工具；别的地方松手就往下掉 ---------- */
+  // 看它的身子落在哪张卡片上：先看身子中间，再看手指 / 鼠标，最后看脚（抓着头拖时身子挂在下面）
   function cardAt(cx, cy) {
     if (!HOME) return null;
     var cs = grid.querySelectorAll('.card[data-id]:not(.hide)');
-    for (var i = 0; i < cs.length; i++) {
-      var r = cs[i].getBoundingClientRect();
-      if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) return cs[i];
+    var bx = x - sX() + W / 2, pts = [[bx, y - sY() + H * 0.6], [cx, cy], [bx, y - sY() + H * 0.92]];
+    for (var k = 0; k < pts.length; k++) {
+      for (var i = 0; i < cs.length; i++) {
+        var r = cs[i].getBoundingClientRect();
+        if (pts[k][0] >= r.left && pts[k][0] <= r.right && pts[k][1] >= r.top && pts[k][1] <= r.bottom) return cs[i];
+      }
     }
     return null;
   }
@@ -860,7 +872,7 @@
       ['ball', '小球', function () { playToy('ball', true); }],
       ['led', 'LED', function () { playToy('led', true); }],
       ['phones', music ? '摘耳机' : '耳机', function () { setMusic(!music); }],
-      mode === 'sleep' ? ['sun', '叫醒', function () { wake(true); }] : ['moon', '睡觉', function () { if (mode === 'play') setMode('idle'); stopWalk(); setMood(''); sleep(); }]
+      mode === 'sleep' ? ['sun', '叫醒', function () { wake(true); }] : ['moon', '睡觉', function () { if (mode === 'play') setMode('idle'); stopWalk(); setMood(''); sleep(true); }]
     ];
     if (HOME) {
       out.push(['home', '回标题栏', function () { var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) hop(g, g.x0 + (g.x1 - g.x0) * 0.4); }]);
@@ -920,14 +932,17 @@
   }
 
   /* ---------- 对外界的反应 ---------- */
-  function poke() { lastInput = Date.now(); if (mode === 'sleep') wake(false); }
+  /* 只有碰它（点、拖、背包）才会把它吵醒。鼠标在附近晃，它只是用眼睛跟着看；离得远就不理，和手机上一样各干各的 */
+  function poke() { lastInput = Date.now(); }
+  function near(cx, cy, d) { var r = el.getBoundingClientRect(); return Math.abs(cx - (r.left + r.width / 2)) < d && Math.abs(cy - (r.top + r.height / 2)) < d; }
+  function canLook() { return mode === 'idle' || mode === 'walk'; }   // 玩东西、睡觉、吊在线上时眼睛有自己要看的
   document.addEventListener('pointermove', function (e) {
-    if (e.pointerType !== 'mouse' || drag || paused()) return;
-    poke(); lookAt(e.clientX, e.clientY, 2600);
+    if (e.pointerType !== 'mouse' || drag || paused() || !near(e.clientX, e.clientY, 260)) return;
+    poke(); if (canLook()) lookAt(e.clientX, e.clientY, 1800);
   }, { passive: true });
   document.addEventListener('pointerdown', function (e) {
     if (paused() || el.contains(e.target)) return;
-    poke(); if (e.pointerType !== 'mouse') lookAt(e.clientX, e.clientY, 1800);
+    poke(); if (canLook() && near(e.clientX, e.clientY, 320)) lookAt(e.clientX, e.clientY, 1600);
   }, { passive: true, capture: true });
   document.addEventListener('keydown', function () { if (!paused()) poke(); });
   var scrollTm = 0;
