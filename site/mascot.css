@@ -29,6 +29,15 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin .c-lon{fill:#ff8d6e}
 .xin .c-lb{fill:#7e3324}
 .xin .c-gl{fill:#ffd9a8}
+.xin .c-sw{fill:#8ec5ff}
+.xin .c-tr{fill:#7fb6e8}
+.xin .c-q{fill:var(--ink-2)}
+.xin .c-hp{fill:var(--clay)}
+.xin .c-hk{fill:#5a2c1f}
+.xin .c-bt{fill:#2f3a33}
+.xin .c-bl{fill:#7bd88f}
+/* 吊着小芯的线 */
+.xin-thread{position:absolute;left:0;top:0;width:2px;background:var(--ink);opacity:.6;pointer-events:none;display:none}
 /* 小粒子 */
 .xin-z,.xin-p{position:absolute;z-index:1;pointer-events:none;font:16px/1 var(--mono);color:var(--ink-3)}
 .xin-z{animation:xz 2.4s steps(6,end) forwards}
@@ -39,3 +48,18 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
   .xin,.xin *{animation:none!important;transition:none!important}
   .xin-z,.xin-p{display:none}
 }
+/* 小背包：像素风小方格，每格一个图标 + 名字 */
+.xin-bag{position:fixed;z-index:60;display:grid;grid-template-columns:repeat(4,64px);gap:6px;padding:8px;
+  background:var(--panel,var(--surface,#fff));border:2px solid var(--ink);border-radius:0;box-shadow:4px 4px 0 rgba(20,20,19,.2);
+  animation:xbag .16s steps(3,end)}
+[data-theme=dark] .xin-bag{box-shadow:4px 4px 0 rgba(0,0,0,.5)}
+@keyframes xbag{from{opacity:0;transform:translateY(6px)}}
+.xin-it{display:flex;flex-direction:column;align-items:center;gap:4px;height:64px;padding:6px 2px 4px;border:2px solid transparent;border-radius:0;
+  background:var(--sunk,rgba(0,0,0,.04));color:var(--ink);font:12px/1.2 var(--mono);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.xin-it svg{width:28px;height:28px;flex:none;image-rendering:pixelated}
+.xin-it:hover,.xin-it:focus-visible{border-color:var(--clay);outline:none}
+.xin-it:active{transform:translate(1px,1px)}
+/* 小芯收起来了：标题栏的 ✻ 可以点，叫它出来 */
+.spark.xin-call{cursor:pointer;animation:xcall 1.6s steps(2,end) infinite}
+@keyframes xcall{50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){.xin-bag,.spark.xin-call{animation:none}}

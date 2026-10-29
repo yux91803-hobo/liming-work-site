@@ -551,7 +551,10 @@ async def main():
         await touch('touchStart', *r)
         for i in range(1, 13):
             await touch('touchMove', r[0] + (c[0] - r[0]) * i / 12, r[1] + (c[1] - r[1]) * i / 12); await pg.wait_for_timeout(30)
-        await touch('touchEnd'); f = await tool_frame(pg); await pg.wait_for_timeout(2200)
+        await touch('touchEnd'); f = await tool_frame(pg); await pg.wait_for_timeout(1200)
+        for _ in range(40):
+            if await f.evaluate("LimingXin.mode") not in ('away', 'rope', 'fly'): break
+            await pg.wait_for_timeout(100)
         inside = await f.evaluate("[LimingXin.mode, !!LimingXin.plat]")
         check('扔进 STM32 卡片：小芯出现在学习台里', inside[1] and inside[0] in ('idle', 'walk', 'play'), inside)
         await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(1500)
@@ -560,6 +563,33 @@ async def main():
         out = await pg.evaluate("[LimingXin.mode, LimingXin.plat && LimingXin.plat.kind, sessionStorage.getItem('lm.xin.in')]")
         check('关掉学习台：小芯跳回首页标题栏，学习台里的歇着', out == ['idle', 'ground', None] and await f.evaluate("LimingXin.mode") == 'away', out)
         check('小芯脚下没有影子横线', await pg.evaluate("!document.querySelector('.xin-sh')"))
+        # 背包：长按打开，喂饼干、戴耳机、收起来再用 ✻ 叫回来
+        await pg.wait_for_timeout(1500)
+        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height * 0.55]; })()")
+        await touch('touchStart', *r); await pg.wait_for_timeout(700); await touch('touchEnd'); await pg.wait_for_timeout(200)
+        items = await pg.evaluate("[...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent)")
+        check('长按小芯打开小背包', items[:5] == ['饼干', '电池', '小球', 'LED', '耳机'] and '收起来' in items, items)
+        await pg.click('.xin-bag .xin-it:has-text("饼干")'); await pg.wait_for_timeout(400)
+        check('从背包喂饼干：小芯抱着饼干吃', await pg.evaluate("LimingXin.mode") == 'play' and not await pg.evaluate("!!document.querySelector('.xin-bag')"))
+        await pg.wait_for_timeout(4500)
+        await pg.evaluate("LimingXin.bag()"); await pg.click('.xin-bag .xin-it:has-text("耳机")'); await pg.wait_for_timeout(300)
+        check('戴上耳机：头上有耳机', await pg.evaluate("!!LimingXin.el.querySelector('rect.c-hp')"))
+        await pg.evaluate("LimingXin.bag()")
+        check('戴着耳机时背包里是「摘耳机」', await pg.evaluate("[...document.querySelectorAll('.xin-bag .xin-it span')].some(s => s.textContent === '摘耳机')"))
+        await pg.click('.xin-bag .xin-it:has-text("收起来")'); await pg.wait_for_timeout(300)
+        check('收起来：小芯不见了，✻ 可以点', await pg.evaluate("[LimingXin.mode, document.querySelector('.hd .spark').classList.contains('xin-call')]") == ['away', True])
+        await pg.click('.hd .spark'); await pg.wait_for_timeout(2200)
+        check('点 ✻：小芯顺着线降下来', await pg.evaluate("[LimingXin.mode, document.querySelector('.hd .spark').classList.contains('xin-call')]") == ['idle', False])
+        # 扔到最下面空白处：下面没有落脚点，射线吊住，再爬上去
+        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height * 0.55]; })()")
+        await touch('touchStart', *r)
+        for i in range(1, 13):
+            await touch('touchMove', r[0], r[1] + (760 - r[1]) * i / 12); await pg.wait_for_timeout(30)
+        await touch('touchEnd'); await pg.wait_for_timeout(500)
+        hang = await pg.evaluate("[LimingXin.mode, LimingXin.mood, getComputedStyle(document.querySelector('.xin-thread')).display]")
+        check('扔到下面没有落脚点：射一根线吊住，吓得发抖', hang == ['hang', 'scared', 'block'], hang)
+        await pg.wait_for_timeout(5000)
+        check('顺着线爬上去，再跳回能站的地方', await pg.evaluate("[LimingXin.mode, !!LimingXin.plat]") == ['idle', True])
         await pg.context.close()
 
         # 直接打开学习台（不经过工具箱首页）：没有小芯
