@@ -44,9 +44,17 @@ async def main():
         # ---------- 1. 独立打开：首页 → 主题 → 寄存器 → 返回 ----------
         pg = await page(b)
         await pg.goto(TOOL); await pg.wait_for_function("document.documentElement.classList.contains('ready')")
-        await pg.hover('.mtag:has-text("M24C02")')
+        top = await pg.evaluate("[...document.querySelectorAll('.mtags:not(.msub) .mtag')].map(b => b.textContent)")
+        check('首页：模块收成分组，首屏只有 STM32 + 5 组', top == ['STM32', '基础', '存储', '通信', '传感', '显示'] and not await pg.is_visible('.msub'), top)
+        check('首页：没有引脚筛选框', await pg.evaluate("!document.querySelector('.boardh .filter') && !document.querySelector('.pd-quick')"))
+        await pg.click('.mgrp:has-text("存储")')
+        sub = await pg.evaluate("[...document.querySelectorAll('.msub .mtag')].map(b => b.textContent)")
+        check('点「存储」展开这组的模块', sub == ['M24C02', 'W25Q32', 'SD 卡', 'SRAM', 'NAND'], sub)
+        await pg.hover('.msub .mtag:has-text("M24C02")')
         lit = await pg.evaluate("[...document.querySelectorAll('.boardh .chip .pin.lit')].map(g => g.dataset.pin).sort()")
         check('首页：指到 M24C02 标签，芯片上点亮 PB10 / PB11', lit == ['69', '70'], lit)
+        await pg.click('.mgrp:has-text("存储")')
+        check('再点「存储」收起', not await pg.is_visible('.msub'))
         side = await pg.evaluate("[...document.querySelectorAll('.nav-t')].map(a => a.textContent)")
         check('侧栏外设只写缩写', side == ['RCC', 'GPIO', 'EXTI', 'USART', 'I2C', 'TIM', 'DMA', 'ADC', 'SPI', 'FSMC'], side)
         await pg.click('.nav-t[data-t="usart"]'); await pg.wait_for_selector('.topic')
@@ -88,15 +96,15 @@ async def main():
         # ---------- 3. 首页：芯片引脚 + 板载模块 ----------
         await pg.goto(TOOL + '?v=chip'); await pg.wait_for_selector('.boardh .chip')
         check('旧地址 v=chip 打开首页', 'v=' not in pg.url)
-        await pg.fill('.filter input', 'USART1'); await pg.wait_for_timeout(500)
+        await pg.goto(TOOL + '?q=USART1'); await pg.wait_for_selector('.boardh .chip'); await pg.wait_for_timeout(300)
         n = await pg.evaluate("document.querySelectorAll('.boardh .chip .pin.lit').length")
-        check('筛选 USART1 点亮对应引脚', n >= 4 and 'q=USART1' in pg.url, n)
+        check('旧链接 q=USART1 仍然点亮对应引脚', n >= 4, n)
         await pg.click('.boardh [data-pin="101"] .hit', force=True); await pg.wait_for_timeout(500)
         det = await pg.inner_text('.pdetail')
         check('点 101 脚：详情列出 USART1_TX，并指出接到 ST-Link 口的 TX', 'PA9' in det and 'USART1_TX' in det and 'ST-Link' in det, det[:80])
         await pg.click('.pdetail .mlink'); await pg.wait_for_selector('svg.mod')
-        st = await pg.evaluate("[document.querySelector('.mod .mp.sel').dataset.mp, document.querySelector('.pdetail h2').textContent, document.querySelector('.mtag.on').textContent]")
-        check('跳到 ST-Link 模块图，选中 TX 脚', st == ['p6', 'TX', 'ST-Link'] and 'm=stlink' in pg.url, st)
+        st = await pg.evaluate("[document.querySelector('.mod .mp.sel').dataset.mp, document.querySelector('.pdetail h2').textContent, document.querySelector('.msub .mtag.on').textContent, document.querySelector('.mgrp.on').textContent]")
+        check('跳到 ST-Link 模块图，选中 TX 脚，「通信」组自动展开', st == ['p6', 'TX', 'ST-Link', '通信'] and 'm=stlink' in pg.url, st)
         await pg.click('.pdetail .mcubtn'); await pg.wait_for_selector('.boardh .chip .pin.sel')
         await pg.wait_for_timeout(500)
         sel = await pg.evaluate("document.querySelector('.boardh .chip .pin.sel').dataset.pin")
@@ -104,14 +112,22 @@ async def main():
         await pg.click('.pdetail a.sig:has-text("USART1_TX")'); await pg.wait_for_selector('.topic')
         check('从信号跳到所属外设', 't=usart' in pg.url)
         await pg.goto(TOOL); await pg.wait_for_selector('.mtags')
-        tags = await pg.evaluate("[...document.querySelectorAll('.mtag')].map(b => b.textContent)")
-        bad = []
-        for tg in tags[1:]:
-            await pg.click('.mtag:has-text("%s")' % tg); await pg.wait_for_selector('svg.mod')
+        groups = await pg.evaluate("[...document.querySelectorAll('.mgrp')].map(b => b.textContent)")
+        tags = ['STM32']; bad = []
+        async def check_mod(tg):
+            await pg.wait_for_selector('svg.mod')
             mp = await pg.evaluate("document.querySelectorAll('svg.mod .mp').length")
             await pg.click('svg.mod .mp >> nth=0', force=True); await pg.wait_for_timeout(200)
             ok = await pg.evaluate("(() => { const s = document.querySelector('svg.mod .mp.sel'); return !!s && document.querySelector('.pdetail .pd-mp.on') && document.querySelector('.pdetail .pd-mini .mk') !== undefined; })()")
             if mp < 3 or not ok: bad.append((tg, mp, ok))
+        for gname in groups:
+            await pg.click('.mgrp:has-text("%s")' % gname); await pg.wait_for_timeout(150)
+            if not await pg.is_visible('.msub'):      # 只有一个模块的组：直接打开
+                tags.append(gname); await check_mod(gname); continue
+            subs = await pg.evaluate("[...document.querySelectorAll('.msub .mtag')].map(b => b.textContent)")
+            for tg in subs:
+                tags.append(tg)
+                await pg.click('.msub .mtag:has-text("%s")' % tg); await check_mod(tg)
         check('%d 个模块图都能打开、点脚选中、右边列出全部脚' % (len(tags) - 1), len(tags) >= 9 and not bad, bad or tags)
         await pg.goto(TOOL + '?m=eeprom&mp=p6'); await pg.wait_for_selector('.pd-conn')
         conn = await pg.inner_text('.pd-conn')
@@ -153,7 +169,7 @@ async def main():
         # ---------- 6. 深链 / 旧链接 ----------
         for qs, test, name in [
             ('?sch=board-05', "document.querySelector('.vw-n') && document.querySelector('.vw-n').textContent.startsWith('5 /')", '原理图第 5 页'),
-            ('?tab=pins&q=PA9', "!location.search.includes('v=') && document.querySelector('.filter input').value === 'PA9'", '旧链接 tab=pins'),
+            ('?tab=pins&q=PA9', "!location.search.includes('v=') && !!document.querySelector('.boardh .chip [data-pin=\"101\"].lit')", '旧链接 tab=pins'),
             ('?tab=regs&reg=GPIO_CRH&i=GPIOB', "!!document.querySelector('.sheet.on') && document.querySelector('.sh-expr').textContent === 'GPIOB->CRH'", '旧链接 tab=regs'),
             ('?tab=chip&page=board-05', "!!document.querySelector('.viewer.on') && location.search.includes('v=board')", '旧链接原理图'),
             ('?tab=code&snip=' + 'USART1 中断收发', "location.search.includes('t=usart')", '旧链接代码片段'),
@@ -211,8 +227,11 @@ async def main():
         # ---------- 9. 手机 ----------
         pg = await page(b, 390, 844, mobile=True)
         await pg.goto(TOOL); await pg.wait_for_function("document.documentElement.classList.contains('ready')")
+        check('手机首页：没选引脚时不显示空的详情框', not await pg.is_visible('.pdetail'))
+        await pg.goto(TOOL + '?pin=101'); await pg.wait_for_selector('.pd-h')
         order = await pg.evaluate("['.chipv-stage','.mtags','.pdetail'].map(s => Math.round(document.querySelector(s).getBoundingClientRect().top))")
         check('手机首页：芯片图 → 模块标签 → 详情', order[0] < order[1] < order[2], order)
+        await pg.goto(TOOL); await pg.wait_for_function("document.documentElement.classList.contains('ready')")
         await pg.click('.bar-menu'); await pg.wait_for_timeout(350)
         dr = await pg.evaluate("(() => { const r = document.querySelector('#side').getBoundingClientRect(); return [document.documentElement.classList.contains('drawer'), Math.round(r.left), Math.round(r.width)]; })()")
         check('手机：点菜单从左边滑出侧栏', dr[0] and dr[1] == 0 and dr[2] > 200, dr)
