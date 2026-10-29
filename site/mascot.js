@@ -16,9 +16,6 @@
   var body = document.body;
   var reduce = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
   var G = 20, W = 80, H = 80, SLEEP_AFTER = 30000;
-  // 学习台里能站的方块（只站上沿）
-  var STM_SEL = ['.chipv-stage', '.mtags', '.legend', '.pdetail', '.th', '.snav-i.on', '.points', '.dv-mode', 'figure.code', '.tnext-i', '.mrow', '.ptile', '.fcard',
-    '.dv-fn', '.mtable', '.dv-task', '.trow', '.path-list', '.bgroup', '.pg-h', '.dv-hero', '.dv-w', '.dv-row', '.dv-map', '.dv-next', '.cd-step', '.cd-method', '.rgroup', '.chap'];
 
   /* ---------- 像素造型 ----------
      身子：x 4..15、y 7..16（外框一圈深色，顶边正中一个芯片缺口）；姿势里的 b 是身子往下蹲几格。
@@ -166,8 +163,42 @@
       if (r.height < H * 0.8 + 16 || r.width < W + 16) return null;
       return { el: e, kind: kind, x0: r.left + ox + 6, x1: r.right + ox - W - 6, fy: r.bottom + oy - 5 };
     }
-    if (r.width < W * 0.8) return null;
-    return { el: e, kind: 'top', x0: r.left + ox - W * 0.2, x1: Math.max(r.left + ox - W * 0.2, r.right + ox - W * 0.8), fy: r.top + oy + 1 };
+    // 脚踩在两条腿之间（格子 5..14），只要这段落在横线上就站得住
+    if (r.width < W * 0.55) return null;
+    var fy = kind === 'bottom' ? r.bottom + oy : r.top + oy + 1;
+    return { el: e, kind: kind === 'bottom' ? 'bottom' : 'top', x0: r.left + ox - W * 0.25, x1: Math.max(r.left + ox - W * 0.25, r.right + ox - W * 0.75), fy: fy };
+  }
+  /* 学习台：页面上凡是画出来的横线都能站——方块（有边框或底色）站上沿，只有下边框的分隔线站在那条线上。
+     吸顶 / 固定的栏会跟着滚动跑，不站；图（svg）里面不找。结果缓存 1.5 秒，只存元素，位置每次现量。 */
+  var lineCache = null, lineAt = 0;
+  function visible(c) { return c && c !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(c); }
+  function pinned(e) {
+    for (var n = e; n && n !== document.body; n = n.parentElement) { var ps = getComputedStyle(n).position; if (ps === 'sticky' || ps === 'fixed') return true; }
+    return false;
+  }
+  function lines() {
+    var now = performance.now();
+    if (lineCache && now - lineAt < 1500) return lineCache;
+    var root = document.getElementById('main') || document.body, out = [], vh = innerHeight;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, { acceptNode: function (n) {
+      if (n.namespaceURI !== 'http://www.w3.org/1999/xhtml' || n === layer || n.hidden) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    } });
+    for (var e = walker.nextNode(); e; e = walker.nextNode()) {
+      var r = e.getBoundingClientRect();
+      if (r.width < W * 0.55 || r.height < 1 || r.bottom < -vh || r.top > vh * 2) continue;
+      var cs = getComputedStyle(e);
+      if (cs.visibility === 'hidden' || +cs.opacity === 0) continue;
+      var bt = parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none' && visible(cs.borderTopColor);
+      var bb = parseFloat(cs.borderBottomWidth) > 0 && cs.borderBottomStyle !== 'none' && visible(cs.borderBottomColor);
+      var bg = r.height >= 20 && visible(cs.backgroundColor) && e !== root;
+      if (!bt && !bb && !bg) continue;
+      if (pinned(e)) continue;
+      if (bt || bg) out.push({ el: e, kind: 'top' });
+      if (bb && !bt && !bg) out.push({ el: e, kind: 'bottom' });   // 只有下边框的分隔线（标题下面那条、列表行之间那条）
+    }
+    lineCache = out; lineAt = now;
+    return out;
   }
   function plats() {
     var out = [], add = function (p) { if (p) out.push(p); };
@@ -175,7 +206,13 @@
       add(platOf(track, 'ground'));
       grid.querySelectorAll('.card[data-id]').forEach(function (c) { add(platOf(c, 'top')); add(platOf(c, 'in')); });
     } else {
-      document.querySelectorAll(STM_SEL.join(',')).forEach(function (e) { add(platOf(e, 'top')); });
+      lines().forEach(function (c) { add(platOf(c.el, c.kind)); });
+      // 同一条线上叠着好几个方块（外框套内框）时只留一个
+      out.sort(function (a, b) { return a.fy - b.fy || (b.x1 - b.x0) - (a.x1 - a.x0); });
+      out = out.filter(function (p, i) {
+        for (var j = 0; j < i; j++) { var q = out[j]; if (Math.abs(q.fy - p.fy) < 3 && p.x0 >= q.x0 - 2 && p.x1 <= q.x1 + 2) return false; }
+        return true;
+      });
     }
     return out;
   }
