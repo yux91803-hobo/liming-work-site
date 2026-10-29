@@ -658,6 +658,24 @@ async def main():
         check('跳舞：有转身（背过去）和笑', 'back' in faces and faces.count('hap') > 10)
         await pg.context.close()
 
+        # 电脑：学习台里点了好几层，返回键旁边的「回工具箱」一下回到首页
+        pg = await page(b)
+        await pg.goto(BASE + '/'); await pg.wait_for_timeout(1200)
+        await pg.click('.card[data-id=stm32]'); f = await tool_frame(pg); await pg.wait_for_timeout(600)
+        hb = "getComputedStyle(document.querySelector('.panel[data-id=stm32] .home-b')).display"
+        h0 = await pg.evaluate(hb)
+        await f.click('.nav-t[data-t="usart"]'); await pg.wait_for_timeout(400)
+        await f.click('.nav-t[data-t="gpio"]'); await pg.wait_for_timeout(400)
+        await f.click('.snav-i:has-text("寄存器")'); await pg.wait_for_timeout(400)
+        h1 = await pg.evaluate(hb)
+        await pg.click('.panel[data-id=stm32] .home-b'); await pg.wait_for_timeout(1200)
+        st = await pg.evaluate("[document.body.classList.contains('tool-open'), location.pathname]")
+        check('电脑：学习台首页不显示「回工具箱」，点进几层后显示，点一下回到工具箱首页', h0 == 'none' and h1 == 'grid' and st == [False, '/'], (h0, h1, st))
+        await pg.click('.card[data-id=stm32]'); await pg.wait_for_timeout(1500)
+        await pg.click('.panel[data-id=stm32] .back'); await pg.wait_for_timeout(1200)
+        check('回工具箱以后再打开学习台：返回键一下关掉', await pg.evaluate("[document.body.classList.contains('tool-open'), location.pathname]") == [False, '/'])
+        await pg.context.close()
+
         # 直接打开学习台（不经过工具箱首页）：没有小芯
         pg = await page(b, 390, 844, mobile=True)
         await pg.goto(TOOL + '?v=topic&t=i2c&sec=code&cv=cd'); await pg.wait_for_timeout(2000)

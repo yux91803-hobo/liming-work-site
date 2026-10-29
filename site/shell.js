@@ -34,6 +34,7 @@
     return s;
   }
   var BACK = [['path', { d: 'M14.5 5.5 8 12l6.5 6.5' }]];
+  var HOUSE = [['path', { d: 'M4.5 11.5 12 5l7.5 6.5' }], ['path', { d: 'M6.5 10v9h11v-9' }], ['path', { d: 'M10.5 19v-5h3v5' }]];
   function iconBox(t, cls) {
     var b = document.createElement('span'); b.className = cls || 'ic';
     b.appendChild(svg(t.icon)); return b;
@@ -244,23 +245,27 @@
   }
   function post(p, msg) { try { p._frame.contentWindow.postMessage(msg, location.origin); } catch (e) {} }
   // 工具被关掉时：让 iframe 收起所有子视图（查看器等），下次打开从干净状态开始
-  function resetFrame(p) { if (!p) return; p._depth = 0; p._pendingBack = false; clearTimeout(p._pbT); post(p, { type: 'reset' }); }
+  function resetFrame(p) { if (!p) return; p._depth = 0; p.classList.remove('deep'); p._pendingBack = false; clearTimeout(p._pbT); post(p, { type: 'reset' }); }
   function getPanel(t, route) {
     if (panels[t.id]) return panels[t.id];
     var p = document.createElement('section');
-    p.className = 'panel'; p.setAttribute('aria-label', t.name);
+    p.className = 'panel'; p.setAttribute('aria-label', t.name); p.dataset.id = t.id;
     var f = document.createElement('iframe');
     f.title = t.name; f.allow = 'geolocation; fullscreen; clipboard-write'; f.src = frameSrc(t, route);
     var splash = document.createElement('div'); splash.className = 'splash';
     splash.appendChild(iconBox(t));
     var bk = document.createElement('button'); bk.className = 'back'; bk.type = 'button'; bk.setAttribute('aria-label', '返回');
     bk.appendChild(svg(BACK));
+    // 回工具箱：工具里点进了好几层时，不用一层层退，一下回到首页（电脑上显示在返回键旁边）
+    var hb = document.createElement('button'); hb.className = 'home-b'; hb.type = 'button'; hb.setAttribute('aria-label', '回到工具箱'); hb.title = '回到工具箱';
+    hb.appendChild(svg(HOUSE));
     var edge = document.createElement('div'); edge.className = 'edge';
-    p.appendChild(f); p.appendChild(splash); p.appendChild(bk); p.appendChild(edge);
-    pressable(bk);
+    p.appendChild(f); p.appendChild(splash); p.appendChild(bk); p.appendChild(hb); p.appendChild(edge);
+    pressable(bk); pressable(hb);
     bk.addEventListener('click', back);
+    hb.addEventListener('click', goHome);
     var readyTimer = setTimeout(function () { p.classList.add('ready'); }, 6000);
-    f.addEventListener('load', function () { p._depth = 0; setTimeout(function () { p.classList.add('ready'); clearTimeout(readyTimer); }, 2500); });
+    f.addEventListener('load', function () { p._depth = 0; p.classList.remove('deep'); setTimeout(function () { p.classList.add('ready'); clearTimeout(readyTimer); }, 2500); });
     p._frame = f; p._ready = function () { clearTimeout(readyTimer); p.classList.add('ready'); };
     edgeSwipe(p);
     stage.appendChild(p); panels[t.id] = p;
@@ -314,7 +319,7 @@
     } catch (e) {}
   }
   function onDepth(id, p, d) {
-    var prev = p._depth || 0; p._depth = d;
+    var prev = p._depth || 0; p._depth = d; p.classList.toggle('deep', d > 0);
     if (current !== id) return;
     var st = history.state || {};
     if (p._pendingBack) return;                       // 返回进行中：等 popstate 落地后统一处理
@@ -508,6 +513,16 @@
     var viaHistory = st.tool === current;
     var steps = st.sub && !(cp && cp._pendingBack) ? -2 : -1;   // 已在退 sub 时只再退一步
     if (cp) clearPending(cp);
+    close();
+    if (viaHistory) history.go(steps); else history.replaceState({}, '', '/');
+  }
+
+  // 直接关掉工具回首页：不管工具里点进了几层，历史退回到打开工具之前
+  function goHome() {
+    if (!current) return;
+    var cp = panels[current], st = history.state || {};
+    var viaHistory = st.tool === current, steps = st.sub && !(cp && cp._pendingBack) ? -2 : -1;
+    if (cp) { clearPending(cp); cp._depth = 0; }
     close();
     if (viaHistory) history.go(steps); else history.replaceState({}, '', '/');
   }
