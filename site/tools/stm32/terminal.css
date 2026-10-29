@@ -1,6 +1,6 @@
 /* terminal.css — 学习台的代码框做成终端（接在 app.css 后面）
-   不管浅色深色，代码框都是一块深色终端：顶上一条标题栏（✻ + 文件名标签，当前文件高亮），
-   底下一行 ❯ 提示符和闪烁的方块光标。框里用到的颜色变量就地换成深色那一套。 */
+   不管浅色深色，代码框都是一块深色终端：顶上一条标题栏（✻ + 文件名标签，当前文件高亮）。
+   框里用到的颜色变量就地换成深色那一套。代码字号：手机 14px、电脑 15px。 */
 figure.code, .dv-fn, .dv-term {
   --bg: #161513; --surface: #1d1c1a; --sunk: #262422; --ink: #ece7dc; --ink-2: #bdb8ad; --ink-3: #7f7a70;
   --line: #34322d; --line-2: #4a4740;
@@ -19,13 +19,13 @@ figure.code .code-t { color: var(--ink); }
 .ftab.on { background: var(--mask); color: var(--mask-ink); box-shadow: none; }
 .copy { color: var(--ink-3); }
 .copy:hover { background: var(--line); color: var(--ink); }
-figure.code::after { content: "❯ "; display: block; padding: 4px 14px 10px; color: var(--mask); font: 13px/1.6 var(--mono);
-  background: linear-gradient(var(--ink), var(--ink)) no-repeat calc(14px + 2ch) 6px / 1ch 1.25em; animation: tm-blink 1.06s steps(1, end) infinite; }
-figure.code.folded::after { display: none; }
-@keyframes tm-blink { 50% { background-size: 0 0; } }
 .rc-why, .dv-lwhy { background: var(--sunk); color: var(--ink); }
 .dv-term pre { background: transparent; color: #b9e8a0; }
-@media (prefers-reduced-motion: reduce) { figure.code::after { animation: none; } }
+
+/* 代码字号 */
+figure.code pre, .rc-lb, .rc-sig, .dv-lc { font-size: 14px; line-height: 1.65; }
+.cd-gap { font-size: 14px; }
+@media (min-width: 760px) { figure.code pre, .rc-lb, .rc-sig, .dv-lc, .cd-gap { font-size: 15px; } }
 
 /* 上一个 / 下一个：箭头 + 外设缩写 */
 .tnext-i { flex-direction: row; align-items: center; gap: 10px; }

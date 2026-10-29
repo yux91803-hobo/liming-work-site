@@ -282,21 +282,61 @@
     [['t-I', 'I/O'], ['t-P', '电源'], ['t-G', '地'], ['t-S', '系统'], ['used', '板上已接']].forEach(function (x) { var s = el('span', 'lg ' + x[0]); s.appendChild(el('i')); s.appendChild(el('span', null, x[1])); legend.appendChild(s); });
     left.appendChild(legend);
 
-    // 模块标签：第一个是芯片本身
-    var tags = el('div', 'mtags'); tags.setAttribute('role', 'tablist'); tags.setAttribute('aria-label', '板上的芯片和模块');
-    var tagBtn = {};
-    [{ id: '', tag: 'STM32' }].concat(MODS.list).forEach(function (m) {
-      var b = ui.btn('mtag', m.tag); b.setAttribute('role', 'tab'); tagBtn[m.id] = b;
-      var tp = m.topic && M.topicById[m.topic]; if (tp) b.style.setProperty('--h', app.hue(tp));
-      b.addEventListener('click', function () { app.update({ m: m.id || null, mp: null, pin: null, q: null }); });
-      if (m.id) {
-        var pins = m.pins.filter(function (p) { return p.mcu && M.pinByName[p.mcu]; }).map(function (p) { return M.pinByName[p.mcu].n; });
-        b.addEventListener('mouseenter', function () { if (!curM) chip.light(pins, tp ? app.hue(tp) : null); });
-        b.addEventListener('mouseleave', function () { if (!curM) chip.light(matches(lastQ), null); });
-      }
+    // 模块标签：第一个是芯片本身，其余按类收成几组；点一组才展开这组的模块（只有一个模块的组直接打开）
+    var GROUPS = [
+      { id: 'base', name: '基础', ids: ['xtal', 'boot', 'usb', 'led', 'key', 'beep'] },
+      { id: 'mem', name: '存储', ids: ['eeprom', 'flash', 'sd', 'sram', 'nand'] },
+      { id: 'com', name: '通信', ids: ['stlink', 'rs232', 'rs485', 'can', 'w5500', 'esp32', 'lora'] },
+      { id: 'sense', name: '传感', ids: ['ma420', 'ds18b20', 'pot'] },
+      { id: 'disp', name: '显示', ids: ['lcd'] }
+    ];
+    var grouped = {};
+    GROUPS.forEach(function (g) { g.ids = g.ids.filter(function (id) { return MODS.byId[id]; }); g.ids.forEach(function (id) { grouped[id] = g.id; }); });
+    var rest = MODS.list.filter(function (m) { return !grouped[m.id]; }).map(function (m) { return m.id; });
+    if (rest.length) { GROUPS.push({ id: 'etc', name: '其他', ids: rest }); rest.forEach(function (id) { grouped[id] = 'etc'; }); }
+    GROUPS = GROUPS.filter(function (g) { return g.ids.length; });
+
+    var tags = el('div', 'mtags'), sub = el('div', 'mtags msub');
+    tags.setAttribute('aria-label', '板上的芯片和模块');
+    var chipBtn = ui.btn('mtag', 'STM32'), grpBtn = {}, modBtn = {}, openG = null;
+    chipBtn.addEventListener('click', function () { openG = null; app.update({ m: null, mp: null, pin: null, q: null }); renderSub(); mark(); });
+    tags.appendChild(chipBtn);
+    GROUPS.forEach(function (g) {
+      var b = ui.btn('mtag mgrp', g.name); grpBtn[g.id] = b;
+      if (g.ids.length > 1) b.setAttribute('aria-expanded', 'false');
+      b.addEventListener('click', function () {
+        if (g.ids.length === 1) { app.update({ m: g.ids[0], mp: null, pin: null, q: null }); return; }
+        openG = openG === g.id ? null : g.id; renderSub(); mark();
+      });
       tags.appendChild(b);
     });
-    left.appendChild(tags);
+    function modButton(m) {
+      var b = ui.btn('mtag', m.tag); modBtn[m.id] = b;
+      var tp = m.topic && M.topicById[m.topic]; if (tp) b.style.setProperty('--h', app.hue(tp));
+      b.addEventListener('click', function () { app.update({ m: m.id, mp: null, pin: null, q: null }); });
+      var pins = m.pins.filter(function (p) { return p.mcu && M.pinByName[p.mcu]; }).map(function (p) { return M.pinByName[p.mcu].n; });
+      b.addEventListener('mouseenter', function () { if (!curM) chip.light(pins, tp ? app.hue(tp) : null); });
+      b.addEventListener('mouseleave', function () { if (!curM) chip.light(matches(lastQ), null); });
+      return b;
+    }
+    function renderSub() {
+      ui.clear(sub); modBtn = {};
+      var g = null; GROUPS.forEach(function (x) { if (x.id === openG && x.ids.length > 1) g = x; });
+      sub.hidden = !g;
+      if (g) g.ids.forEach(function (id) { sub.appendChild(modButton(MODS.byId[id])); });
+    }
+    function mark() {
+      chipBtn.classList.toggle('on', !curM); chipBtn.setAttribute('aria-pressed', !curM ? 'true' : 'false');
+      GROUPS.forEach(function (g) {
+        var b = grpBtn[g.id], has = !!curM && grouped[curM] === g.id;
+        b.classList.toggle('on', has); b.classList.toggle('open', openG === g.id && g.ids.length > 1);
+        if (g.ids.length > 1) b.setAttribute('aria-expanded', openG === g.id ? 'true' : 'false');
+        if (g.ids.length === 1) b.setAttribute('aria-pressed', has ? 'true' : 'false');
+      });
+      Object.keys(modBtn).forEach(function (k) { var on = k === curM; modBtn[k].classList.toggle('on', on); modBtn[k].setAttribute('aria-pressed', on ? 'true' : 'false'); });
+    }
+    renderSub();
+    left.appendChild(tags); left.appendChild(sub);
     var detail = el('div', 'pdetail'); detail.setAttribute('aria-live', 'polite');
     grid.appendChild(left); grid.appendChild(detail);
     wrap.appendChild(grid);
@@ -328,7 +368,8 @@
       stage.style.aspectRatio = dims[0] + ' / ' + dims[1];
       stage.classList.toggle('is-mod', !!mid);
       legend.hidden = !!mid;
-      Object.keys(tagBtn).forEach(function (k) { var on = k === (mid || ''); tagBtn[k].classList.toggle('on', on); tagBtn[k].setAttribute('aria-selected', on ? 'true' : 'false'); });
+      if (mid) openG = grouped[mid] || null;
+      renderSub(); mark();
       requestAnimationFrame(function () { fit(true); });
     }
 
@@ -341,13 +382,6 @@
       });
       return out;
     }
-    var fin = el('input'), fcount = el('span', 'filter-n');
-    fin.type = 'search'; fin.placeholder = '筛选：PA9、USART1、TIM2_CH1…'; fin.setAttribute('aria-label', '筛选引脚');
-    fin.setAttribute('autocomplete', 'off'); fin.setAttribute('autocapitalize', 'characters'); fin.setAttribute('spellcheck', 'false');
-    fin.addEventListener('input', ui.debounce(function () { app.update({ q: fin.value.trim() || null }); }, 120));
-    fin.addEventListener('keydown', function (e) { if (e.key === 'Escape' && fin.value) { e.preventDefault(); fin.value = ''; app.update({ q: null }); } });
-    var fl = el('label', 'filter'); fl.appendChild(ui.icon('search')); fl.appendChild(fin); fl.appendChild(fcount);
-
     function miniChip(list, sel, hue) {
       var c = STM.chip.create({ labels: false }); c.light(list, hue); if (sel) c.select(sel);
       // 小图上引脚太细，在脚外侧加一个圆点标出来
@@ -368,14 +402,8 @@
     function renderChipDetail(n) {
       ui.clear(detail);
       var p = M.pinByN[n];
-      if (!p) {
-        detail.appendChild(el('h2', 'pd-empty-h', '选一个引脚'));
-        detail.appendChild(fl);
-        var quick = el('div', 'pd-quick');
-        ['PA9', 'PA0', 'PB10', 'PC13', 'PA13'].forEach(function (nm) { var q = M.pinByName[nm]; if (!q) return; var b = ui.btn('chipbtn', nm); b.addEventListener('click', function () { app.update({ pin: String(q.n) }); }); quick.appendChild(b); });
-        detail.appendChild(quick);
-        return;
-      }
+      detail.classList.toggle('empty', !p);
+      if (!p) { detail.appendChild(el('h2', 'pd-empty-h', '选一个引脚')); return; }
       var hh = el('div', 'pd-h'); hh.appendChild(el('h2', 'mono', p.name)); hh.appendChild(el('span', null, p.n + ' 脚，' + M.TYPE_NAME[p.type])); detail.appendChild(hh);
       function sigRow(label, list, fmt) {
         if (!list.length) return;
@@ -426,7 +454,7 @@
     }
 
     function renderModDetail(mid, k) {
-      ui.clear(detail);
+      ui.clear(detail); detail.classList.remove('empty');
       var m = MODS.byId[mid], tp = M.topicById[m.topic], hue = tp ? app.hue(tp) : null, p = null;
       m.pins.forEach(function (x) { if (x.k === k) p = x; });
       var all = m.pins.filter(function (x) { return x.mcu && M.pinByName[x.mcu]; }).map(function (x) { return M.pinByName[x.mcu].n; });
@@ -485,10 +513,8 @@
       }
       var q = r.q || '';
       if (q !== lastQ) {
-        lastQ = q; if (fin.value.trim() !== q) fin.value = q;
-        var hits = matches(q);
-        chip.light(hits, null);
-        fcount.textContent = q ? hits.length + ' 个' : '';
+        lastQ = q;
+        chip.light(matches(q), null);      // 旧链接里的 q=… 只用来点亮引脚
       }
       var n = r.pin ? Number(r.pin) : null;
       if (n !== lastPin) {
