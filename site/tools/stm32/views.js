@@ -382,15 +382,6 @@
       });
       return out;
     }
-    function miniChip(list, sel, hue) {
-      var c = STM.chip.create({ labels: false }); c.light(list, hue); if (sel) c.select(sel);
-      // 小图上引脚太细，在脚外侧加一个圆点标出来
-      (list || []).forEach(function (n) {
-        var o = c.pos(n), L = STM.chip.PK.LEAD + 7, x = o.x + (o.side === 'L' ? -L : o.side === 'R' ? L : 0), y = o.y + (o.side === 'T' ? -L : o.side === 'B' ? L : 0);
-        c.svg.appendChild(ui.sv('circle', { cx: x, cy: y, r: 7, 'class': 'mk' + (n === sel ? ' sel' : '') }));
-      });
-      var box = el('div', 'pd-mini'); box.appendChild(c.svg); return box;
-    }
     function pinBtn(name, cls) {
       var q = M.pinByName[name];
       var b = ui.btn(cls || 'chipbtn', name); if (!q) return b;
@@ -455,9 +446,8 @@
 
     function renderModDetail(mid, k) {
       ui.clear(detail); detail.classList.remove('empty');
-      var m = MODS.byId[mid], tp = M.topicById[m.topic], hue = tp ? app.hue(tp) : null, p = null;
+      var m = MODS.byId[mid], tp = M.topicById[m.topic], p = null;
       m.pins.forEach(function (x) { if (x.k === k) p = x; });
-      var all = m.pins.filter(function (x) { return x.mcu && M.pinByName[x.mcu]; }).map(function (x) { return M.pinByName[x.mcu].n; });
       var hh = el('div', 'pd-h');
       if (p) {
         hh.appendChild(el('h2', 'mono', p.name));
@@ -475,10 +465,17 @@
           cr.appendChild(b);
         } else cr.appendChild(el('b', 'mono pd-net', p.net || '—'));
         detail.appendChild(cr);
-        if (p.note) detail.appendChild(el('p', 'pd-note', p.note));
+        // 这个脚是干什么的、板上怎么接、程序里怎么用
+        var d = STM.pindoc ? STM.pindoc(m, p) : { role: p.note || '', how: '' };
+        var sec = function (h, t, cls) {
+          if (!t) return;
+          var r = el('div', 'pd-row pd-doc' + (cls ? ' ' + cls : '')); r.appendChild(el('h3', null, h)); r.appendChild(el('p', null, t)); detail.appendChild(r);
+        };
+        sec('作用', d.role);
+        // 板上接法：和「作用」说的是一回事（开头就重了）时不再重复
+        if (p.note && d.role.indexOf(p.note.slice(0, 6)) < 0 && !/^FSMC_\w+$|^FSMC 数据线/.test(p.note)) sec('板上', p.note);
+        sec('程序里', d.how, 'pd-how');
       }
-      var sel = p && p.mcu && M.pinByName[p.mcu] ? M.pinByName[p.mcu].n : null;
-      detail.appendChild(miniChip(sel ? [sel] : all, sel, hue));
       // 全部脚：一行一个，点了选中
       var list = el('div', 'pd-mps');
       m.pins.forEach(function (x) {
@@ -490,10 +487,14 @@
       detail.appendChild(list);
       var links = el('div', 'pd-row pd-links');
       if (tp) links.appendChild(topicTag(tp, app));
-      if (STM.codederive) STM.codederive.forBoard(m.id).forEach(function (d) {
+      var drv = STM.codederive ? STM.codederive.forBoard(m.id) : [], seen = {};
+      drv.forEach(function (d) { seen[d.file] = (seen[d.file] || 0) + 1; });
+      drv.forEach(function (d) {
         var tt = M.topicById[d.topic]; if (!tt) return;
         var r = { v: 'topic', t: d.topic, sec: 'code', cv: 'reg', cf: d.file }; if (d.id !== d.topic) r.cx = d.id;
-        var cb = app.link(r, 'linkbtn mono'); cb.textContent = d.file; cb.title = d.title + '：' + d.file; links.appendChild(cb);
+        // 同名文件（比如软件 / 硬件 I2C 都叫 eeprom.c）：另一个版本在后面注明
+        var tag = seen[d.file] > 1 && d.id !== d.topic ? STM.codederive.tag(d.id) : '';
+        var cb = app.link(r, 'linkbtn mono'); cb.textContent = d.file + (tag ? '（' + tag + '）' : ''); cb.title = d.title + '：' + d.file; links.appendChild(cb);
       });
       if (m.sch && M.schById[m.sch]) { var a = ui.btn('linkbtn', '原理图'); a.addEventListener('click', function () { app.navigate({ sch: m.sch }); }); links.appendChild(a); }
       detail.appendChild(links);

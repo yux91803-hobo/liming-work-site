@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const root = path.join(__dirname, '../site/tools/stm32');
 const sb = { window: {} }; sb.window.window = sb.window; vm.createContext(sb);
-['pins.js', 'assets/board.js', 'modules.js', 'topics.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sb, { filename: f }));
+['pins.js', 'assets/board.js', 'modules.js', 'pindoc.js', 'topics.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sb, { filename: f }));
 const W = sb.window, MODS = W.STM32_MODULES, PINS = {};
 W.STM32_PINS.forEach((p) => { PINS[p[1]] = p; });
 const BOARD = (W.STM32_BOARD || {}).resources.filter((r) => r && r.mcu);
@@ -84,4 +84,22 @@ test('串口外设：RS485 / RS232 经跳线复用 USART1，ESP32 接 USART2，C
   assert.equal(g('esp32', 'GPIO6'), 'PA2'); assert.equal(g('esp32', 'GPIO7'), 'PA3'); assert.equal(g('esp32', 'CHIP_EN'), 'PE4');
   assert.equal(g('can', 'TXD'), 'PB9'); assert.equal(g('can', 'RXD'), 'PB8');
   assert.equal(g('w5500', 'SCSn'), 'PD3'); assert.equal(g('lora', 'NSS'), 'PG14'); assert.equal(g('sd', 'CMD'), 'PD2');
+});
+
+test('每个模块的每个脚都有「作用」说明，接到 MCU 的脚都有「程序里」怎么配', () => {
+  const doc = W.STM32_PINDOC.doc, table = W.STM32_PINDOC.table, keys = new Set();
+  MODS.forEach((m) => m.pins.forEach((p) => {
+    keys.add(m.id + '.' + p.k); keys.add(m.id + '.' + p.name);
+    const d = doc(m, p);
+    assert.ok(d.role && d.role.length >= 6, m.id + '.' + p.name + ' 缺作用');
+    if (p.mcu) assert.ok(d.how, m.id + '.' + p.name + ' 缺程序里');
+    // 「程序里」提到的 GPIO 寄存器要和这个脚对得上（PB10 → GPIOB_CRH 里 MODE10）
+    const g = /GPIO([A-G])_(CRL|CRH) 里 MODE(\d+)/.exec(d.how || '');
+    if (g && /^P[A-G]\d+$/.test(p.mcu || '')) {
+      const port = p.mcu.charAt(1), n = +p.mcu.slice(2);
+      if (g[1] === port) assert.equal(+g[3], n, m.id + '.' + p.name);
+      if (g[1] === port) assert.equal(g[2], n < 8 ? 'CRL' : 'CRH', m.id + '.' + p.name);
+    }
+  }));
+  Object.keys(table).forEach((k) => assert.ok(keys.has(k), '多余的说明：' + k));
 });
