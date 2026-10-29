@@ -17,7 +17,7 @@
   else root.STM32StudyCore = api;
 })(typeof window === 'object' ? window : this, function () {
   'use strict';
-  var VIEWS = ['home', 'topic', 'board', 'think'];
+  var VIEWS = ['home', 'topic', 'board', 'think', 'lab'];
   function text(v, n) { return typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, '').trim().slice(0, n).trim() : ''; }
   function hex8(v) {
     var s = String(v == null ? '' : v).trim();
@@ -31,7 +31,9 @@
     o.v = x.v === 'chip' ? 'home' : VIEWS.indexOf(x.v) >= 0 ? x.v : 'home';
     if (/^[a-z][a-z0-9]{1,7}$/.test(x.t || '')) o.t = x.t;
     if (o.v === 'topic' && !o.t && !x.reg && !x.snip) o.v = 'home';
-    if (o.v !== 'topic' && o.v !== 'think') delete o.t;
+    if (o.v !== 'topic' && o.v !== 'think' && o.v !== 'lab') delete o.t;
+    if (o.v === 'lab' && o.t && /^(?:need|hw|fn|h|c|self)$/.test(String(x.st == null ? '' : x.st))) o.st = String(x.st);   // 编程思维：哪一步
+    if (o.v === 'lab' && o.t && /^[a-z][a-z0-9]{1,11}$/.test(String(x.fn == null ? '' : x.fn))) o.fn = String(x.fn);      // .c / 自己写：哪个函数
     if (o.v === 'think' && o.t && /^[1-4]$/.test(String(x.p == null ? '' : x.p))) o.p = String(x.p);   // 编程思维：第几段
     if (o.v === 'think' && o.t && /^(?:s\d{1,2}|review|code)$/.test(String(x.s == null ? '' : x.s))) o.s = String(x.s);   // 推导章节：哪一环
     if (/^[A-Za-z][A-Za-z0-9_]{1,31}$/.test(x.reg || '')) {
