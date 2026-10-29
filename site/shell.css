@@ -151,7 +151,8 @@ body.freeze #home,body.freeze .card,body.freeze .card .ic,body.freeze .round,bod
 #cmd{display:none}
 #home.searching #cmd{display:flex;animation:fadein .2s var(--ease)}
 .hd-btns{display:flex;gap:8px}
-#searchBtn svg{width:18px;height:18px}
+#searchBtn{display:grid;place-items:center}
+#searchBtn svg{display:block;width:18px;height:18px}
 #home.searching #searchBtn{border-color:var(--clay);color:var(--ink)}
 .empty{margin:0;padding:40px 0;text-align:center;font-size:13px;color:var(--ink-3);animation:fadein .3s var(--ease)}
 @keyframes fadein{from{opacity:0}}
