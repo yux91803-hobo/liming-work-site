@@ -118,7 +118,7 @@ async def main():
             await pg.wait_for_selector('svg.mod')
             mp = await pg.evaluate("document.querySelectorAll('svg.mod .mp').length")
             await pg.click('svg.mod .mp >> nth=0', force=True); await pg.wait_for_timeout(200)
-            ok = await pg.evaluate("(() => { const s = document.querySelector('svg.mod .mp.sel'); return !!s && document.querySelector('.pdetail .pd-mp.on') && document.querySelector('.pdetail .pd-mini .mk') !== undefined; })()")
+            ok = await pg.evaluate("(() => { const s = document.querySelector('svg.mod .mp.sel'); return !!s && !!document.querySelector('.pdetail .pd-mp.on') && !!document.querySelector('.pdetail .pd-doc p'); })()")
             if mp < 3 or not ok: bad.append((tg, mp, ok))
         for gname in groups:
             await pg.click('.mgrp:has-text("%s")' % gname); await pg.wait_for_timeout(150)
@@ -131,7 +131,9 @@ async def main():
         check('%d 个模块图都能打开、点脚选中、右边列出全部脚' % (len(tags) - 1), len(tags) >= 9 and not bad, bad or tags)
         await pg.goto(TOOL + '?m=eeprom&mp=p6'); await pg.wait_for_selector('.pd-conn')
         conn = await pg.inner_text('.pd-conn')
-        check('M24C02 第 6 脚 SCL 接 PB10（69 脚），小芯片图上标出这个脚', 'PB10' in conn and '69' in conn and await pg.evaluate("document.querySelectorAll('.pd-mini .mk.sel').length") == 1, conn)
+        docs = await pg.evaluate("[...document.querySelectorAll('.pdetail .pd-doc h3')].map(h => h.textContent)")
+        how = await pg.inner_text('.pdetail .pd-how p')
+        check('M24C02 第 6 脚 SCL 接 PB10（69 脚），下面写作用 / 板上 / 程序里，不再画主芯片小图', 'PB10' in conn and '69' in conn and docs == ['作用', '板上', '程序里'] and 'GPIOB_CRH' in how and not await pg.evaluate("!!document.querySelector('.pd-mini')"), [conn, docs, how[:40]])
 
         # ---------- 4. 原理图查看器；课件入口已去掉 ----------
         await pg.goto(TOOL + '?v=board'); await pg.wait_for_selector('.boardv')
