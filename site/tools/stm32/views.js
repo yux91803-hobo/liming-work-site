@@ -336,9 +336,12 @@
       Object.keys(modBtn).forEach(function (k) { var on = k === curM; modBtn[k].classList.toggle('on', on); modBtn[k].setAttribute('aria-pressed', on ? 'true' : 'false'); });
     }
     renderSub();
-    left.appendChild(tags); left.appendChild(sub);
+    // 右栏：模块分组 + 详情（手机上接在芯片图下面，电脑上在右边）
+    var right = el('div', 'chipv-r');
+    right.appendChild(tags); right.appendChild(sub);
     var detail = el('div', 'pdetail'); detail.setAttribute('aria-live', 'polite');
-    grid.appendChild(left); grid.appendChild(detail);
+    right.appendChild(detail);
+    grid.appendChild(left); grid.appendChild(right);
     wrap.appendChild(grid);
     root.appendChild(wrap);
 
