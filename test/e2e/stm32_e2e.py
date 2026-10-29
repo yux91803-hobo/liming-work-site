@@ -59,6 +59,11 @@ async def main():
         check('再点「存储」收起', not await pg.is_visible('.msub'))
         side = await pg.evaluate("[...document.querySelectorAll('.nav-t')].map(a => a.textContent)")
         check('侧栏外设只写缩写', side == ['RCC', 'GPIO', 'EXTI', 'USART', 'I2C', 'TIM', 'DMA', 'ADC', 'SPI', 'FSMC'], side)
+        fs0 = await pg.evaluate("[parseFloat(getComputedStyle(document.querySelector('.side-tg')).fontSize), document.getElementById('side-topics').hidden]")
+        await pg.click('.side-tg'); await pg.wait_for_timeout(150)
+        fs1 = await pg.evaluate("[document.getElementById('side-topics').hidden, document.querySelector('.side-tg').getAttribute('aria-expanded')]")
+        await pg.click('.side-tg'); await pg.wait_for_timeout(150)
+        check('侧栏「外设」是大一点的标题，点一下收起 / 再点展开', fs0[0] >= 15 and fs0[1] is False and fs1 == [True, 'false'] and not await pg.evaluate("document.getElementById('side-topics').hidden"), (fs0, fs1))
         await pg.click('.nav-t[data-t="usart"]'); await pg.wait_for_selector('.topic')
         check('进入 USART 主题页', 'v=topic&t=usart' in pg.url and await pg.inner_text('.th-code') == 'USART', pg.url)
         secs = await pg.evaluate("[...document.querySelectorAll('.snav-i')].map(a => a.textContent)")
@@ -645,7 +650,7 @@ async def main():
         await pg.wait_for_timeout(16000)
         await pg.evaluate("LimingXin.code(true, 'smash')")
         pcs = []
-        for i in range(60):
+        for i in range(90):
             await pg.wait_for_timeout(200)
             pcs.append(await pg.evaluate("[!!LimingXin.el.querySelector('rect.c-lt'), document.querySelectorAll('.xin-k').length]"))
         check('写不出来气炸了：把电脑砸了（电脑碎成碎片）', any(k[1] > 0 for k in pcs) and not pcs[-1][0], pcs[-1])

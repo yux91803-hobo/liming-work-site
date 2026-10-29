@@ -130,8 +130,14 @@
     var nav = el('nav', 'side-nav'); nav.setAttribute('aria-label', '资料');
     NAV.forEach(function (n) { var a = link({ v: n[0] }, 'nav-i'); a.dataset.v = n[0]; a.appendChild(ui.icon(n[2])); a.appendChild(el('span', null, n[1])); nav.appendChild(a); });
     side.appendChild(nav);
-    side.appendChild(el('h2', 'side-h', '外设'));
-    var tl = el('nav', 'side-topics'); tl.setAttribute('aria-label', '外设');
+    // 「外设」标题：点一下把下面的外设列表收起来 / 展开，记住上次的状态
+    var hh = el('h2', 'side-h'), tg = ui.btn('side-tg', null);
+    tg.appendChild(el('span', null, '外设')); tg.appendChild(ui.icon('next', 'ic side-tg-i'));
+    tg.setAttribute('aria-controls', 'side-topics'); hh.appendChild(tg); side.appendChild(hh);
+    var tl = el('nav', 'side-topics'); tl.id = 'side-topics'; tl.setAttribute('aria-label', '外设');
+    var fold = function (on) { tl.hidden = on; tg.setAttribute('aria-expanded', String(!on)); hh.classList.toggle('folded', on); };
+    fold(ui.lsGet('lm.stm.topicsFold') === '1');
+    tg.addEventListener('click', function () { var on = !tl.hidden; fold(on); ui.lsSet('lm.stm.topicsFold', on ? '1' : '0'); });
     M.topics.forEach(function (t) {
       var a = link({ v: 'topic', t: t.id }, 'nav-t'); a.dataset.t = t.id; a.style.setProperty('--h', hue(t));
       a.appendChild(el('span', 'nav-code', t.code));

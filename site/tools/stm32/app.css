@@ -85,7 +85,12 @@ kbd { font-size: 11px; line-height: 18px; padding: 0 6px; border: 1px solid var(
 .nav-i { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; text-decoration: none; color: var(--ink-2); }
 .nav-i:hover { background: var(--sunk); color: var(--ink); }
 .nav-i.on { background: var(--mask-soft); color: var(--mask); font-weight: 600; }
-.side-h { margin: 22px 10px 6px; font-size: 12px; font-weight: 600; color: var(--ink-3); letter-spacing: .04em; }
+.side-h { margin: 20px 0 6px; }
+.side-tg { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--ink); font-size: 16px; font-weight: 700; letter-spacing: .02em; text-align: left; cursor: pointer; }
+.side-tg:hover { background: var(--sunk); }
+.side-tg-i { width: 16px; height: 16px; color: var(--ink-3); transform: rotate(90deg); transition: transform .18s var(--ease); }
+.side-h.folded .side-tg-i { transform: none; }
+.side-topics[hidden] { display: none; }
 .nav-t { position: relative; display: flex; align-items: center; height: 34px; padding: 0 12px; border-radius: 8px; text-decoration: none; color: var(--ink-2); }
 .nav-t:hover { background: var(--sunk); color: var(--ink); }
 .nav-t.on { background: color-mix(in srgb, var(--h) 13%, var(--bg)); color: var(--ink); }
