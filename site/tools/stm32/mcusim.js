@@ -59,6 +59,7 @@
     s = s.replace(new RegExp('\\(\\s*(?:const\\s+)?(?:volatile\\s+)?' + TYPES + '\\s*\\*?\\s*\\)', 'g'), '');
     s = s.replace(new RegExp('\\b(?:static\\s+)?(?:volatile\\s+)?(?:const\\s+)?' + TYPES + '\\s+(?=[A-Za-z_])', 'g'), 'var ');
     s = s.replace(/\b(0x[0-9A-Fa-f]+|\d+)[uUlL]+\b/g, '$1');
+    s = s.replace(/\bvar\s+([A-Za-z_]\w*)\s*\[\s*\]\s*=\s*\{([^}]*)\}/g, 'var $1 = [$2]');                  // const uint16_t t[] = { 0, A, B };
     s = s.replace(/\bvar\s+([A-Za-z_]\w*)\s*\[\s*\]\s*=/g, 'var $1 =');                                   // uint8_t a[] = "…";
     s = s.replace(/\bvar\s+([A-Za-z_]\w*)\s*\[([^\]]+)\](\s*=\s*\{[^}]*\})?/g, 'var $1 = __arr($2)');     // uint8_t a[16] = {0};
     s = s.replace(/\bsizeof\s*\(\s*([A-Za-z_]\w*)\s*\)/g, '__sizeof($1)');
@@ -843,7 +844,7 @@
     env.__s = function (s) { var a = []; for (var i = 0; i < s.length; i++) a.push(s.charCodeAt(i)); a.push(0); a.isStr = true; return a; };
     env.__tw = function (id) { return M.tickWhile(id); };
     env.__tf = function () { return M.tickFor(); };
-    env.__ln = function (f, i) { M.line = [f, i]; };
+    env.__ln = function (f, i) { M.line = [f, i]; if (opt.onLine) opt.onLine(f, i, M); };   // 编程思维：每执行一行之前记一下状态
     env.Delay_us = function (n) { M.delays++; M.spend(Number(n)); };
     env.Delay_ms = function (n) { M.delays++; M.spend(Number(n) * 1000); };
     env.Delay_s = function (n) { M.delays++; M.spend(Number(n) * 1e6); };
@@ -927,7 +928,7 @@
     var warns = M.log.filter(function (x) { return x.k === 'warn'; }).map(function (x) { return x.text; });
     warns.forEach(function (w) { if (desc.indexOf('⚠ ' + w) < 0) desc.push('⚠ ' + w); });
     return {
-      engine: 'mcu', t: T, stop: stop, where: where, trace: M.trace, leds: leds, uart: rx, terminal: text, printf: M.printf, prints: M.prints || [],
+      machine: M, engine: 'mcu', t: T, stop: stop, where: where, trace: M.trace, leds: leds, uart: rx, terminal: text, printf: M.printf, prints: M.prints || [],
       log: M.log, desc: desc, flash: M.flash, adc: { n: M.adc1.nconv, dr: M.adc1.DR }, exti: { hits: M.exti.hits }, dma: { moved: M.dma.moved }, results: [], watch: [], timing: [], device: true
     };
   }
