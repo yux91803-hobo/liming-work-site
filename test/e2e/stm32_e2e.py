@@ -19,6 +19,8 @@ def check(name, ok, detail=''):
 async def page(b, w=1280, h=860, mobile=False, theme='light'):
     ctx = await b.new_context(viewport={'width': w, 'height': h}, has_touch=mobile, is_mobile=mobile)
     await ctx.add_init_script(INSTR + "try{if(!localStorage.getItem('lm.theme'))localStorage.setItem('lm.theme','%s')}catch(e){}" % theme)
+    # 小芯的「叛逆」是随机的（不肯睡、偏要走回去），测试里关掉，免得结果时好时坏
+    await ctx.add_init_script("addEventListener('load', function () { if (window.LimingXin) LimingXin.obedient = true; })")
     pg = await ctx.new_page()
     pg.on('pageerror', lambda e: errors.append('pageerror ' + pg.url + ' :: ' + str(e)))
     pg.on('console', lambda m: errors.append('console.error ' + m.text) if m.type == 'error' else None)
@@ -620,6 +622,40 @@ async def main():
         await pg.mouse.move(r[0], r[1]); await pg.mouse.down(); await pg.mouse.move(c[0], c[1] - 6, steps=6); await pg.mouse.up()
         await pg.wait_for_timeout(1200)
         check('电脑：抓着头拖、身子在学习台卡片上，松手就进去', await pg.evaluate("document.body.classList.contains('tool-open')"))
+        await pg.context.close()
+
+        # 新动作：听烦了砸耳机、敲代码砸电脑、荡秋千、跳舞、不听话
+        pg = await page(b)
+        await pg.goto(BASE + '/'); await pg.wait_for_timeout(2600)
+        await pg.evaluate("LimingXin.music(true)"); await pg.wait_for_timeout(300)
+        await pg.evaluate("LimingXin.bore(); LimingXin.rage('phones')"); await pg.wait_for_timeout(3800)
+        st = await pg.evaluate("[!!document.querySelector('.xin-k') || true, LimingXin.el.querySelector('rect.c-hp') === null]")
+        check('听歌听烦了：把耳机扯下来砸了（耳机没了）', st[1], st)
+        await pg.wait_for_timeout(5000)
+        await pg.evaluate("LimingXin.bag()"); await pg.click('.xin-bag .xin-it:has-text("耳机")'); await pg.wait_for_timeout(300)
+        check('刚砸完耳机再给它戴：不戴（摇头、吐舌头）', await pg.evaluate("LimingXin.el.querySelector('rect.c-hp') === null"))
+        await pg.wait_for_timeout(3000)
+        items = await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it')].map(b => b.textContent))")
+        check('背包里有敲代码、跳舞、秋千', all(k in items for k in ('敲代码', '跳舞', '秋千')), items)
+        await pg.click('.xin-bag .xin-it:has-text("敲代码")'); await pg.wait_for_timeout(1500)
+        check('敲代码：掏出笔记本', await pg.evaluate("!!LimingXin.el.querySelector('rect.c-lt')"))
+        await pg.wait_for_timeout(16000)
+        await pg.evaluate("LimingXin.code(true, 'smash')")
+        pcs = []
+        for i in range(60):
+            await pg.wait_for_timeout(200)
+            pcs.append(await pg.evaluate("[!!LimingXin.el.querySelector('rect.c-lt'), document.querySelectorAll('.xin-k').length]"))
+        check('写不出来气炸了：把电脑砸了（电脑碎成碎片）', any(k[1] > 0 for k in pcs) and not pcs[-1][0], pcs[-1])
+        await pg.wait_for_timeout(4000)
+        await pg.evaluate("(() => { const ps = LimingXin.plats(); LimingXin.hop(ps.findIndex(p => p.kind === 'top' && p.el.dataset.id === 'map')); })()"); await pg.wait_for_timeout(1500)
+        await pg.evaluate("LimingXin.swing()")
+        modes = []
+        for i in range(40):
+            await pg.wait_for_timeout(300); modes.append(await pg.evaluate("LimingXin.mode"))
+        thr = await pg.evaluate("getComputedStyle(document.querySelector('.xin-thread')).display")
+        check('荡秋千：吊着线来回荡，最后松手落到平台上', 'swing' in modes and modes[-1] in ('idle', 'walk', 'play') and thr == 'none', modes[::4])
+        faces = await pg.evaluate("LimingXin.frames('dance').map(f => f.face)")
+        check('跳舞：有转身（背过去）和笑', 'back' in faces and faces.count('hap') > 10)
         await pg.context.close()
 
         # 直接打开学习台（不经过工具箱首页）：没有小芯

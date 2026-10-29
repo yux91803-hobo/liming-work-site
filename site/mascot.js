@@ -5,6 +5,9 @@
    学习台里只有被你从首页拖着扔进 STM32 卡片时才有小芯；关掉学习台，它跳回首页。
    会眨眼、眼睛跟着指针/手指，没人理就坐下睡觉；闲着会从背后摸出饼干吃、抛小球、玩 LED。
    点它会跳，连点会晕；拎起来乱蹬，半空松手就往下掉到最近的方块上；首页拖到卡片上松手就打开那个工具。
+   有脾气：连戳、被扔、被拎太久、被吵醒会攒火气，攒够了砸东西（耳机、LED），跺脚，抱着胳膊哼一声背过身去；听歌听久了会烦，把耳机砸了。
+   会荡秋千、跳舞、坐在边上晃腿、走着走着绊一跤；有点叛逆：让它睡、叫它过来有时候偏不，吃饱了不吃，被拎走了偏要走回去，冲你吐舌头。
+   学习台里你在看代码区时，它跳到代码框上掏出笔记本敲代码，停下来想；想通了开心，想不出来会烦躁、伤心、生气，甚至把电脑砸了。
    画法：20×20 像素格，每一帧按「姿势」重新拼出所有方块（逐帧动画，不做缩放旋转插值）。
    坐标：小芯挂在 body 下的一层（.xin-layer），x / y 是它左上角在整个文档里的位置。 */
 (function () {
@@ -33,7 +36,9 @@
     wave:   [[3, 9, 1, 2], [2, 8, 1, 2], [1, 7, 1, 2]],
     hold:   [[2, 10, 2, 2]],
     back:   [[3, 10, 1, 2]],
-    down:   [[2, 11, 2, 3]]
+    down:   [[2, 11, 2, 3]],
+    crossA: [[3, 11, 8, 1]],      // 抱着胳膊：左手横在前面一行
+    crossB: [[3, 12, 8, 1]]       // 右手（镜像后）横在下一行，两只手交叉
   };
   // 脸：[x, y, 宽, 高, 颜色]；eyes / blink 会跟着视线挪一格
   var FACE = {
@@ -47,8 +52,13 @@
     scared:   [[6, 7, 2, 3], [12, 7, 2, 3], [16, 5, 1, 1, 'sw'], [16, 6, 1, 1, 'sw'], [17, 7, 1, 1, 'sw']],   // 眼睛瞪圆 + 一滴汗
     confused: [[6, 8, 2, 2], [12, 9, 2, 1]],                                                          // 一只眼眯起来
     angry:    [[5, 7], [6, 7], [7, 8], [12, 8], [13, 7], [14, 7], [6, 9, 2, 1], [12, 9, 2, 1]],      // 眉毛往中间压
-    cry:      [[6, 9, 2, 1], [12, 9, 2, 1], [5, 10], [14, 10]]                                           // 眼睛闭成两条线
+    cry:      [[6, 9, 2, 1], [12, 9, 2, 1], [5, 10], [14, 10]],                                          // 眼睛闭成两条线
+    pout:     [[5, 7], [6, 7], [7, 8], [12, 8], [13, 7], [14, 7], [6, 10, 2, 1], [12, 10, 2, 1]],        // 哼：眉毛压着、眼睛闭上
+    tongue:   [[6, 8, 2, 2], [12, 9, 2, 1], [8, 11, 4, 1, 'o'], [10, 12, 2, 2, 'tg']],                   // 挤一只眼、吐舌头
+    back:     []                                                                                     // 背过身去：只看得到芯片背面
   };
+  // 音符（绝对格子坐标）
+  function noteFx(nx, ny) { return [[nx, ny + 2, 'q'], [nx + 1, ny + 2, 'q'], [nx + 1, ny + 1, 'q'], [nx + 1, ny, 'q'], [nx + 2, ny, 'q']]; }
   var QMARK = [[16, 1, 'q'], [17, 1, 'q'], [18, 2, 'q'], [17, 3, 'q'], [17, 5, 'q']];   // 头顶上的「？」
   // 圆饼干 4×4（ck 饼干色、cc 巧克力豆），从上往下一口一口咬
   var COOKIE = [[1, 0, 'ck'], [2, 0, 'ck'], [0, 1, 'ck'], [1, 1, 'cc'], [2, 1, 'ck'], [3, 1, 'ck'], [0, 2, 'ck'], [1, 2, 'ck'], [2, 2, 'ck'], [3, 2, 'cc'], [1, 3, 'ck'], [2, 3, 'ck']];
@@ -84,7 +94,7 @@
       COOKIE.forEach(function (c) { if (c[1] > gone) R(8 + c[0] + sx, 12 + c[1] + b, 1, 1, c[2]); });
     }
     if (it && it.k === 'led') {
-      var LX = 8 + sx, LY = 12 + b;
+      var LX = it.x != null ? it.x : 8 + sx, LY = it.y != null ? it.y : 12 + b;
       R(LX + 1, LY, 2, 2, it.on ? 'lon' : 'led'); R(LX, LY + 2, 4, 1, 'lb'); R(LX + 1, LY + 3, 1, 1, 'p'); R(LX + 2, LY + 3, 1, 1, 'p');
       if (it.on) { R(LX, LY - 1, 1, 1, 'gl'); R(LX + 3, LY - 1, 1, 1, 'gl'); R(LX - 1, LY + 1, 1, 1, 'gl'); R(LX + 4, LY + 1, 1, 1, 'gl'); }
     }
@@ -98,6 +108,15 @@
     if (it && it.k === 'batt') {             // 电池：4×4，绿色格子是电量
       R(9 + sx, 11 + b, 2, 1, 'bt'); R(8 + sx, 12 + b, 4, 4, 'bt');
       for (var bi = 0; bi < (it.n | 0); bi++) R(9 + sx, 14 + b - bi, 2, 1, 'bl');
+    }
+    if (it && it.k === 'pc') {               // 笔记本：平时搁在腿上（我们看到的是屏幕背面），举起来 / 砸到地上时用绝对坐标
+      // 屏幕背面：深色边框 + 浅灰壳 + 中间一个小标；下面一条更宽的键盘底座
+      if (it.y == null) { R(5 + sx, 11 + b, 10, 6, 'lk'); R(6 + sx, 12 + b, 8, 4, 'lt'); R(9 + sx, 13 + b, 2, 2, 'lg'); R(3 + sx, 17 + b, 14, 1, 'lk'); }
+      else { R(3, it.y, 14, 6, 'lk'); R(4, it.y + 1, 12, 4, 'lt'); R(9, it.y + 2, 2, 2, 'lg'); R(2, it.y + 6, 16, 1, 'lk'); }
+    }
+    if (it && it.k === 'phones') {           // 摘下来拿在手里的耳机（绝对格子坐标，y 是头箍那一行）
+      var py = it.y;
+      R(4, py, 12, 1, 'hp'); R(3, py + 1, 1, 1, 'hp'); R(16, py + 1, 1, 1, 'hp'); R(2, py + 2, 2, 2, 'hk'); R(16, py + 2, 2, 2, 'hk');
     }
     if (p.phones) {                          // 耳机：头顶一道箍，两边耳罩
       R(5 + sx, 5 + b, 10, 1, 'hp'); R(4 + sx, 6 + b, 1, 2, 'hp'); R(15 + sx, 6 + b, 1, 2, 'hp');
@@ -128,6 +147,10 @@
   var seq = null, lastSig = '', tick = 0, forced = null;
   var lastInput = Date.now(), idleTm = 0, blinkTm = 0, zTm = 0, taps = [];
   var music = false, energy = 0;   // 戴着耳机听歌；吃了电池以后一段时间跑得飞快
+  var grr = 0, grrT = 0, ragePending = false;   // 脾气：被惹多了就发火砸东西
+  var musicAt = 0, boreAt = 0, phonesBroke = 0, ate = [];
+  var REBEL = 0.3;                 // 叛逆的概率：不听话、背过身、偏要回去
+  var sw = null, backTo = null, tripAt = null;
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function mix(a, b) { var o = {}, k; for (k in a) o[k] = a[k]; for (k in b) o[k] = b[k]; return o; }
@@ -158,11 +181,13 @@
   function handX() { return x + W * 17 / G; }
   function handY() { return y + H * (7 + OY) / G; }
   function drawThread() {
-    var hy = handY();
+    var hx = handX(), hy = handY();
     if (!thread || hy <= thread.top) { thr.style.display = 'none'; return; }
+    // 荡秋千时线的上端（thread.ax）固定，下端跟着手走，线是斜的
+    var ax = thread.ax != null ? thread.ax : hx, dx = hx - ax, dy = hy - thread.top;
     thr.style.display = 'block';
-    thr.style.transform = 'translate3d(' + Math.round(handX() - 1) + 'px,' + Math.round(thread.top) + 'px,0)';
-    thr.style.height = Math.round(hy - thread.top) + 'px';
+    thr.style.transform = 'translate3d(' + Math.round(ax - 1) + 'px,' + Math.round(thread.top) + 'px,0)' + (Math.abs(dx) > 0.5 ? ' rotate(' + (Math.atan2(-dx, dy) * 180 / Math.PI).toFixed(2) + 'deg)' : '');
+    thr.style.height = Math.round(Math.sqrt(dx * dx + dy * dy)) + 'px';
   }
   function animThread(from, to, ms, done) {
     if (!thread) thread = { top: from };
@@ -182,7 +207,7 @@
   function setMode(m) {
     if (mode === 'play' && m !== 'play') stopSeq();
     mode = m;
-    cls('is-drag', m === 'drag'); cls('is-air', /^(drag|fly|plug|hang|rope|climb)$/.test(m)); cls('is-away', m === 'away');
+    cls('is-drag', m === 'drag'); cls('is-air', /^(drag|fly|plug|hang|rope|climb|swing)$/.test(m)); cls('is-away', m === 'away');
     render();
   }
   function setMood(m, ms) {
@@ -299,7 +324,15 @@
       p.armL = q < 2 ? 'swingF' : 'swingB'; p.armR = q < 2 ? 'swingB' : 'swingF';
       if (!looking) { p.lx = dir; p.ly = 0; }
     } else if (mode === 'drag') {
-      p.legs = 'dangle'; p.lp = Math.floor(t / 170) % 2; p.armL = p.armR = 'wave'; p.face = 'wow';
+      var held = drag && drag.t0 ? t - drag.t0 : 0;
+      if (held > 1400) {                   // 拎太久了：手脚乱蹬、拼命挣扎，脸也拉下来了
+        var q2 = Math.floor(t / 90) % 2;
+        p.legs = 'dangle'; p.lp = q2; p.armL = q2 ? 'up' : 'wave'; p.armR = q2 ? 'wave' : 'up'; p.face = 'angry'; p.sx = q2;
+      } else { p.legs = 'dangle'; p.lp = Math.floor(t / 170) % 2; p.armL = p.armR = 'wave'; p.face = 'wow'; }
+    } else if (mode === 'swing') {
+      // 荡秋千：往外荡时收腿，往回荡时伸腿（像小孩荡秋千那样蹬），一直笑着
+      var outw = !!sw && sw.th * sw.thd > 0;
+      p.legs = outw ? 'tuck' : 'stand'; p.armR = 'up'; p.armL = 'wave'; p.face = 'hap'; p.lx = 0; p.ly = 0;
     } else if (mode === 'fly' || mode === 'plug') {
       p.legs = 'tuck'; p.armL = p.armR = 'up'; p.face = 'wow';
     } else if (mode === 'sleep') {
@@ -316,8 +349,7 @@
         var bt = Math.floor(t / 300), kk = Math.floor(t / 200) % 8;
         p.b = bt % 2; p.legs = 'walk'; p.lp = bt % 2 ? 0 : 2; p.armL = p.armR = 'down';
         p.face = bt % 10 < 8 ? 'hap' : 'eyes'; p.lx = 0; p.ly = 0;   // 大部分时间闭眼陶醉，偶尔睁眼
-        var note = function (nx, ny) { return [[nx, ny + 2, 'q'], [nx + 1, ny + 2, 'q'], [nx + 1, ny + 1, 'q'], [nx + 1, ny, 'q'], [nx + 2, ny, 'q']]; };
-        p.fx = note(16, 3 - kk % 4).concat(note(1, 4 - (kk + 2) % 4));
+        p.fx = noteFx(16, 3 - kk % 4).concat(noteFx(1, 4 - (kk + 2) % 4));
       }
     }
     if (mood === 'happy') { var w = Math.floor(t / 170) % 2; p.face = 'hap'; p.armL = w ? 'up' : 'wave'; p.armR = w ? 'wave' : 'up'; }
@@ -460,6 +492,292 @@
     playSeq(toy.frames, function () { if (mode === 'play') { mode = 'idle'; render(); } if (toy.after) toy.after(); schedule(); });
   }
 
+
+  /* ---------- 脾气：被惹多了就发火 ----------
+     连戳、晕着还戳、被扔、被拎太久、被吵醒、写代码写不出来都会攒火气，一分钟慢慢消下去；攒够了就砸东西 */
+  function annoy(n) {
+    var now = Date.now();
+    grr = grr * Math.exp(-(now - grrT) / 60000) + n; grrT = now;
+    return grr >= 3;
+  }
+  // 碎片：从格子 (gx, gy) 那里崩开，带重力往下掉
+  function shatter(gx, gy, colors, n) {
+    if (reduce) return;
+    var cx = x + gx * W / G, cy = y + gy * H / G;
+    for (var i = 0; i < n; i++) {
+      var a = -Math.PI * (0.1 + 0.8 * i / Math.max(1, n - 1)), v = 18 + Math.random() * 26;
+      var s = document.createElement('span');
+      s.className = 'xin-k';
+      s.style.left = Math.round(cx - 3) + 'px'; s.style.top = Math.round(cy - 3) + 'px'; s.style.background = colors[i % colors.length];
+      s.style.setProperty('--dx', Math.round(Math.cos(a) * v * 1.6) + 'px'); s.style.setProperty('--dy', Math.round(Math.sin(a) * v) + 'px');
+      s.addEventListener('animationend', function () { this.remove(); });
+      layer.appendChild(s);
+      (function (n2) { setTimeout(function () { if (n2.parentNode) n2.remove(); }, 1500); })(s);
+    }
+  }
+  // 脚下那块（卡片 / 方块）被跺得抖一下
+  function shakePlat(k) {
+    var e = plat && plat.kind !== 'ground' ? plat.el : null;
+    if (!e || !e.animate || reduce) return;
+    e.animate([{ transform: 'none' }, { transform: 'translate(' + -k + 'px,' + k + 'px)' }, { transform: 'translate(' + k + 'px,0)' }, { transform: 'translate(' + Math.round(-k / 2) + 'px,1px)' }, { transform: 'none' }],
+      { duration: 240, easing: 'steps(4, end)', composite: 'add' });
+  }
+  var DEB = [[3, 19, 'hp'], [6, 19, 'hk'], [14, 19, 'hp'], [17, 19, 'hk']];
+  function steam(k) { return [[3, 5 - k % 3, 'd'], [16, 4 - (k + 1) % 3, 'd']]; }
+  function stomps(n, fx) {
+    var f = [];
+    for (var i = 0; i < n; i++) {
+      f.push({ face: 'angry', legs: 'walk', lp: i % 2 ? 2 : 0, b: 0, armL: 'up', armR: 'up', fx: (fx || []).concat(steam(i)), t: 130 });
+      f.push({ face: 'angry', b: 1, armL: 'down', armR: 'down', fx: (fx || []).concat([[2, 19, 'd'], [17, 19, 'd']]), t: 150, fn: function () { shakePlat(2); } });
+    }
+    return f;
+  }
+  // 发完火：抱着胳膊「哼」，再背过身去不理你
+  function huff() {
+    return [
+      { face: 'pout', armL: 'crossA', armR: 'crossB', fx: steam(0), t: 420 },
+      { face: 'pout', armL: 'crossA', armR: 'crossB', fx: steam(1), t: 420 },
+      { face: 'pout', armL: 'crossA', armR: 'crossB', fx: steam(2), t: 420 },
+      { face: 'back', armL: 'down', armR: 'down', t: 1700 },
+      { face: 'pout', armL: 'crossA', armR: 'crossB', t: 700 }
+    ];
+  }
+  // 听歌听烦了：摇摇头，一把扯下耳机举过头顶，狠狠砸到地上，再跺几脚
+  function phonesFrames() {
+    var A = { face: 'angry', lx: 0, ly: 0 };
+    return [
+      mix(A, { armL: 'down', armR: 'down', t: 800 }),
+      mix(A, { sx: 1, t: 110 }), mix(A, { sx: -1, t: 110 }), mix(A, { sx: 1, t: 110 }), mix(A, { t: 160 }),
+      mix(A, { armL: 'up', armR: 'up', item: { k: 'phones', y: 4 }, dy: -1, t: 520, fn: function () { music = false; } }),
+      mix(A, { armL: 'up', armR: 'up', item: { k: 'phones', y: 3 }, dy: -2, t: 160 }),
+      mix(A, { armL: 'down', armR: 'down', b: 1, item: { k: 'phones', y: 16 }, t: 70, fn: function () { shatter(10, 18, ['var(--clay)', '#5a2c1f', '#9a948a'], 10); shakePlat(3); phonesBroke = Date.now(); } }),
+      mix(A, { armL: 'down', armR: 'down', b: 1, fx: DEB, t: 420 })
+    ].concat(stomps(3, DEB));
+  }
+  // 没东西可砸：从背后摸出 LED 举起来摔，或者直接跺脚把脚下的卡片跺得直抖
+  function smashLed() {
+    var A = { face: 'angry', lx: 0, ly: 0 }, d = [[12, 19, 'led'], [15, 19, 'lb'], [17, 18, 'd']];
+    return reach().concat([
+      mix(A, { armR: 'up', item: { k: 'led', x: 15, y: 4 }, t: 600 }),
+      mix(A, { armR: 'up', item: { k: 'led', x: 15, y: 3 }, dy: -1, t: 200 }),
+      mix(A, { armR: 'down', b: 1, item: { k: 'led', x: 14, y: 16 }, t: 70, fn: function () { shatter(16, 18, ['#b84a35', '#ff8d6e', '#9a948a'], 9); shakePlat(3); } }),
+      mix(A, { armR: 'down', b: 1, fx: d, t: 420 })
+    ]).concat(stomps(3, d));
+  }
+  function rage(what) {
+    if (reduce || paused()) return;
+    if (!(mode === 'idle' || mode === 'play' || mode === 'walk')) { ragePending = true; return; }
+    ragePending = false; grr = 0;
+    stopWalk(); stopSeq(); setMood(''); setMode('play');
+    var f = what === 'phones' || music ? phonesFrames() : what === 'stomp' || Math.random() < 0.4 ? stomps(5) : smashLed();
+    playSeq(f.concat(huff()), done);
+  }
+  function done() { if (mode === 'play') { mode = 'idle'; render(); } schedule(); }
+
+  /* ---------- 叛逆 ----------
+     让它睡、叫它过来，有时候偏不：摇头、吐舌头、背过身去；刚吃饱再喂也不吃；被拎到别处，有时候偏要走回去 */
+  function refuse(after) {
+    if (reduce) { if (after) after(); return; }
+    if (mode === 'sleep') { clearTimeout(zTm); clearTimeout(sleepTm); }
+    stopWalk(); stopSeq(); setMood(''); setMode('play');
+    var f = [], i;
+    for (i = 0; i < 4; i++) f.push({ face: 'pout', sx: i % 2 ? 1 : -1, armL: 'down', armR: 'down', t: 140 });   // 摇头：不要不要
+    f.push({ face: 'tongue', armL: 'wave', t: 900 });                                                         // 略略略
+    f.push({ face: 'back', armL: 'down', armR: 'down', t: 1400 });                                            // 背过身去
+    playSeq(f, function () { if (mode === 'play') { mode = 'idle'; render(); } if (after) after(); else schedule(); });
+  }
+  function rebel() { return !reduce && Math.random() < REBEL; }
+  // 冲你吐舌头（鼠标在它旁边晃太久了）
+  function tease(cx) {
+    var r = el.getBoundingClientRect();
+    setMode('play');
+    playSeq([{ face: 'tongue', lx: cx < r.left + r.width / 2 ? -1 : 1, armL: 'wave', t: 1000 }, { t: 200 }], done);
+  }
+  // 调皮：踢一脚脚下的卡片，然后冲你吐舌头
+  function mischief() {
+    setMode('play');
+    playSeq([
+      { lx: dir, legs: 'walk', lp: 0, t: 260 },
+      { lx: dir, b: 1, legs: 'walk', lp: 2, armL: 'swingB', armR: 'swingF', t: 160, fn: function () { shakePlat(4); } },
+      { lx: dir, t: 300 },
+      { face: 'tongue', armL: 'wave', t: 900 }
+    ], done);
+  }
+
+  /* ---------- 跳舞：扭胯 → 转一圈 → 迪斯科指天 → 机械舞 → 跳起来定格，一直冒音符 ---------- */
+  function danceFrames() {
+    var f = [], i, H2 = { face: 'hap', lx: 0, ly: 0 };
+    for (i = 0; i < 6; i++) f.push(mix(H2, { sx: i % 2 ? 1 : -1, b: i % 2, legs: 'walk', lp: i % 2 ? 0 : 2, armL: i % 2 ? 'down' : 'up', armR: i % 2 ? 'up' : 'down', t: 260 }));
+    f.push({ face: 'eyes', lx: 1, ly: 0, t: 110 }, { face: 'back', t: 160 }, { face: 'eyes', lx: -1, ly: 0, t: 110 },
+      mix(H2, { armL: 'up', armR: 'up', legs: 'tuck', dy: -2, t: 220 }), mix(H2, { armL: 'up', armR: 'up', b: 1, t: 200 }));
+    for (i = 0; i < 4; i++) f.push(mix(H2, { armL: 'down', armR: i % 2 ? 'up' : 'wave', b: i % 2, t: 240 }));
+    for (i = 0; i < 4; i++) f.push(mix(H2, { armR: 'down', armL: i % 2 ? 'up' : 'wave', b: i % 2, t: 240 }));
+    ['out', 'up', 'down', 'up', 'out'].forEach(function (a, j) {
+      f.push({ face: 'eyes', lx: 0, ly: 0, armL: a, armR: a === 'up' ? 'down' : a === 'down' ? 'up' : 'out', sx: j % 2, t: 230 });
+    });
+    f.push(mix(H2, { b: 2, armL: 'swingB', armR: 'swingB', t: 120 }), mix(H2, { dy: -4, legs: 'tuck', armL: 'up', armR: 'up', t: 170 }), mix(H2, { dy: -2, armL: 'up', armR: 'up', t: 100 }));
+    f = f.concat(landFrames(0));
+    f.push(mix(H2, { armL: 'up', armR: 'wave', t: 700 }));
+    f.forEach(function (fr, k) { if (!fr.fx) fr.fx = noteFx(16, 3 - k % 4).concat(noteFx(1, 4 - (k + 2) % 4)); });
+    return f;
+  }
+  function dance() {
+    if (reduce || paused()) return;
+    if (mode === 'sleep') { clearTimeout(zTm); clearTimeout(sleepTm); }
+    stopWalk(); setMood(''); setMode('play');
+    playSeq(danceFrames(), function () { if (mode === 'play') { mode = 'idle'; render(); } sparks(4); schedule(); });
+  }
+
+  /* ---------- 坐在边上晃腿（像 Shimeji 那样）---------- */
+  function sitDown() {
+    if (reduce || !plat || plat.kind === 'in') return false;
+    setMode('play');
+    var f = [{ b: 1, t: 120 }, { b: 2, armL: 'down', armR: 'down', t: 140 }], n = 12 + Math.floor(Math.random() * 8), i;
+    for (i = 0; i < n; i++) {
+      var lx = i > n * 0.4 && i < n * 0.6 ? 1 : i >= n * 0.6 && i < n * 0.8 ? -1 : 0;   // 慢慢左右看看
+      f.push({ dy: 3, legs: 'dangle', lp: i % 2, armL: 'down', armR: 'down', lx: lx, ly: 0, t: 420 });
+    }
+    f.push({ b: 1, t: 140 });
+    playSeq(f, done);
+    return true;
+  }
+
+  /* ---------- 走着走着绊一跤：往前扑倒、晕一下、爬起来一脸懵（偶尔哭） ---------- */
+  function trip() {
+    var d = dir;
+    setMode('play');
+    rEl.style.transformOrigin = '50% 96%';
+    playSeq([
+      { legs: 'walk', lp: 0, face: 'wow', armL: 'up', armR: 'up', t: 90, fn: function () { angT = d * 36; kick(); } },
+      { legs: 'tuck', face: 'wow', armL: 'up', armR: 'up', t: 140, fn: function () { angT = d * 84; kick(); } },
+      { face: 'dz', armL: 'out', armR: 'out', t: 900, fn: function () { shakePlat(1); } },
+      { face: 'dz', t: 480, fn: function () { angT = 0; kick(); } }
+    ], function () {
+      rEl.style.transformOrigin = '50% 60%'; ang = angT = 0; av = 0; place();
+      if (mode === 'play') { mode = 'idle'; render(); }
+      if (Math.random() < 0.25) { annoy(0.5); setMood('cry', 1800); } else setMood('confused', 1500);
+      schedule();
+    });
+  }
+
+  /* ---------- 荡秋千：朝头顶射一根线，蹦上去抓住，越荡越高，最后松手飞出去落到平台上 ---------- */
+  var swingNext = false;
+  function room(p) { return p.fy - H + H * (7 + OY) / G - 18 - (sY() + topPad() + 2); }   // 站在 p 上时头顶能放多长的线
+  function swing() {
+    if (reduce || !plat || paused()) return false;
+    var top = sY() + topPad() + 2, L = Math.min(700, handY() - 18 - top);
+    if (L < 110) {               // 头顶太矮：先跳到上面空得多的地方再荡
+      var c = plats().filter(function (q) { return !same(q, plat) && inView(q) && room(q) >= 130; });
+      if (!c.length) return false;
+      swingNext = true; hop(c[Math.floor(Math.random() * c.length)]);
+      return true;
+    }
+    var from = plat;
+    stopWalk(); stopSeq(); setMood(''); setMode('play');
+    playSeq([{ b: 1, armR: 'up', t: 90 }, { b: 2, armL: 'swingB', armR: 'up', t: 110 }], function () {
+      if (mode !== 'play') return;
+      plat = null; setMode('swing');
+      var ax = handX(), hy = top + L;
+      thread = { top: handY(), ax: ax };
+      animThread(handY(), top, 160);
+      fly(x, hy - H * (7 + OY) / G, 1, hy - H * (7 + OY) / G - 10, 240, easeOut, function () {
+        if (mode !== 'swing') return;
+        rEl.style.transformOrigin = (W * 17 / G).toFixed(1) + 'px ' + (H * (7 + OY) / G).toFixed(1) + 'px';
+        sw = { t0: performance.now(), ax: ax, top: top, L: L, w: Math.sqrt(2400 / L), dur: 6500 + Math.random() * 2500, from: from, th: 0, thd: 0 };
+        requestAnimationFrame(swingStep);
+      });
+    });
+    return true;
+  }
+  function swingStep(now) {
+    if (!sw || mode !== 'swing') { sw = null; return; }
+    var s = sw, t = (now - s.t0) / 1000, k = Math.min(1, t / 3.2), A = 0.1 + 0.52 * k * k * (3 - 2 * k);
+    s.th = A * Math.sin(s.w * t); s.thd = A * s.w * Math.cos(s.w * t);
+    x = s.ax + s.L * Math.sin(s.th) - W * 17 / G; y = s.top + s.L * Math.cos(s.th) - H * (7 + OY) / G;
+    ang = angT = -s.th * 180 / Math.PI; av = 0;
+    place(); render();
+    if ((now - s.t0 > s.dur && Math.abs(s.th) < 0.09) || now - s.t0 > s.dur + 4000) { letGo(); return; }
+    requestAnimationFrame(swingStep);
+  }
+  function letGo() {
+    var s = sw; sw = null;
+    var vx = s.L * s.thd;
+    thread = null; drawThread();
+    ang = angT = 0; av = 0; rEl.style.transformOrigin = '50% 60%';
+    var tx2 = x + vx * 0.35, p = below(tx2, y) || below(x, y);
+    if (!p) { var q = platOf(s.from.el, s.from.kind); p = q || bestPlat(); }
+    if (!p) { goAway(); return; }
+    setMode('fly');
+    var x2 = clamp(tx2, p.x0, p.x1), y2 = p.fy - H;
+    fly(x2, y2, 1, Math.min(y, y2) - 50, clamp(460 + Math.abs(x2 - x) * 0.6, 460, 900), easeInOut, function () { land(p); setMood('happy', 900); });
+  }
+
+  /* ---------- 敲代码：看代码区的时候掏出笔记本敲；敲着敲着停下来想。
+     想出来了就开心；想不出来会烦躁地狂敲、伤心地叹气、生气冒烟，甚至把电脑举起来砸了 ---------- */
+  var CODE_SEL = 'figure.code, .dv-fn, .dv-term';
+  var GLYPHS = ['{', '}', ';', '=', '0x', '()', '//', '|=', '<<', '&', '++', 'if'];
+  function glyph() {
+    if (reduce) return;
+    var s = document.createElement('span');
+    s.className = 'xin-cd'; s.textContent = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+    s.style.left = Math.round(x + W * (0.3 + Math.random() * 0.4)) + 'px'; s.style.top = Math.round(y + H * 0.42) + 'px';
+    s.addEventListener('animationend', function () { s.remove(); });
+    layer.appendChild(s);
+    setTimeout(function () { if (s.parentNode) s.remove(); }, 2000);
+  }
+  function pc(o) { return mix({ item: { k: 'pc' }, b: 1, lx: 0, ly: 1, face: 'eyes', armL: 'hold', armR: 'hold' }, o || {}); }
+  function typing(n, fast, face) {
+    var f = [];
+    for (var i = 0; i < n; i++) f.push(pc({ armL: i % 2 ? 'hold' : 'back', armR: i % 2 ? 'back' : 'hold', face: face || 'eyes', sx: fast ? i % 2 : 0, t: fast ? 90 : 160, fn: i % (fast ? 2 : 3) === 0 ? glyph : null }));
+    return f;
+  }
+  function thinking(ms) {     // 停下来想：一只手挠头，眼睛往上看，头顶冒「…」
+    var f = [], n = Math.max(1, Math.round(ms / 320));
+    for (var i = 0; i < n; i++) f.push(pc({ armR: 'up', face: 'eyes', lx: 1, ly: -1, fx: [[14, 3, 'q'], [16, 3, 'q'], [18, 3, 'q']].slice(0, i % 4), t: 320 }));
+    return f;
+  }
+  function code(given, how) {
+    if (reduce || paused() || mode === 'drag' || mode === 'away') return;
+    if (mode === 'sleep') { clearTimeout(zTm); clearTimeout(sleepTm); }
+    stopWalk(); stopSeq(); setMood(''); setMode('play');
+    var f = (given ? [] : reach()).concat([pc({ t: 500 })], typing(14), thinking(1600), typing(10));
+    var r = Math.random();
+    how = how || (r < 0.42 ? 'ok' : r < 0.64 ? 'sad' : r < 0.86 ? 'mad' : 'smash');
+    var tail = putAway();
+    if (how === 'ok') {          // 想通了：眼睛一亮，举手欢呼
+      f = f.concat(thinking(900), [pc({ face: 'wow', ly: 0, t: 520 }), pc({ face: 'hap', ly: 0, armL: 'up', armR: 'up', t: 800, fn: function () { sparks(4); } })], typing(8));
+    } else if (how === 'sad') {  // 想不出来：低下头叹气，蔫蔫地接着敲
+      f = f.concat(thinking(2200), [pc({ face: 'sad', ly: 0, armL: 'down', armR: 'down', t: 1800 })], typing(6, false, 'sad'));
+    } else if (how === 'mad') {  // 烦躁：皱着眉狂敲键盘，越敲越气，冒烟
+      f = f.concat(thinking(1600), typing(18, true, 'pout'), [pc({ face: 'angry', ly: 0, armL: 'up', armR: 'up', fx: steam(0), t: 450 }), pc({ face: 'angry', ly: 0, armL: 'up', armR: 'up', fx: steam(1), t: 450 })], typing(6, true, 'pout'));
+    } else {                     // 气炸了：把电脑举过头顶砸了
+      f = f.concat(thinking(1600), typing(18, true, 'pout'), [
+        pc({ face: 'angry', ly: 0, armL: 'down', armR: 'down', t: 700 }),
+        { face: 'angry', armL: 'up', armR: 'up', item: { k: 'pc', y: 2 }, dy: -1, t: 560 },
+        { face: 'angry', armL: 'up', armR: 'up', item: { k: 'pc', y: 1 }, dy: -2, t: 160 },
+        { face: 'angry', armL: 'down', armR: 'down', b: 1, item: { k: 'pc', y: 13 }, t: 70, fn: function () { shatter(10, 17, ['#8d887c', '#3b3833', '#8ec5ff', 'var(--clay)'], 12); shakePlat(4); } },
+        { face: 'angry', armL: 'down', armR: 'down', b: 1, fx: [[3, 19, 'lt'], [7, 19, 'lk'], [13, 19, 'lt'], [16, 19, 'sw']], t: 420 }
+      ], stomps(3, [[3, 19, 'lt'], [7, 19, 'lk'], [13, 19, 'lt'], [16, 19, 'sw']]));
+      tail = huff();
+    }
+    playSeq(f.concat(tail), function () {
+      if (mode === 'play') { mode = 'idle'; render(); }
+      if (how === 'sad') setMood('sad', 1400);
+      else if (how === 'mad') annoy(1);
+      schedule();
+    });
+  }
+  // 代码区在屏幕上吗（学习台）
+  function codeInView() {
+    if (!STM) return null;
+    var cs = document.querySelectorAll(CODE_SEL), top = topPad();
+    for (var i = 0; i < cs.length; i++) {
+      var r = cs[i].getBoundingClientRect();
+      if (r.width > 0 && r.bottom > top + innerHeight * 0.15 && r.top < innerHeight * 0.85) return cs[i];
+    }
+    return null;
+  }
+
   /* ---------- 眼睛 ---------- */
   // 视线按像素格挪：-1 / 0 / 1
   function pupils(px, py) { look = { x: clamp(Math.round(px / 1.6), -1, 1), y: clamp(Math.round(py / 1.6), -1, 1) }; render(); }
@@ -527,6 +845,17 @@
     sc = 1; angT = 0; place(); kick();
     playSeq(landFrames(drop));
     schedule();
+    if (swingNext) { swingNext = false; setTimeout(function () { if (mode === 'idle' && !mood) swing(); }, 450); }
+    // 叛逆：被你拎到这儿来的，偏要回原来那儿去（先「哼」一下）
+    if (backTo) {
+      var bt = backTo; backTo = null;
+      var q = platOf(bt.plat.el, bt.plat.kind);
+      if (q && !same(q, plat) && inView(q)) setTimeout(function () {
+        if (mode !== 'idle' || seq || mood === 'cry') return;
+        setMode('play');
+        playSeq([{ face: 'pout', armL: 'crossA', armR: 'crossB', t: 800 }, { face: 'back', t: 700 }], function () { if (mode === 'play') hop(q, bt.x); });
+      }, 600);
+    }
   }
   /* 重力挤压：落到卡片 / 方块上时，被踩的那块往下沉一下再弹回来；落得越高压得越深。小芯跟着一起沉 */
   var pressing = 0;
@@ -545,6 +874,7 @@
     tx = clamp(target, plat.x0, plat.x1);
     if (Math.abs(tx - x) < 2) return;
     dir = tx > x ? 1 : -1;
+    tripAt = !reduce && Math.abs(tx - x) > 70 && Math.random() < 0.1 ? x + (tx - x) * (0.4 + Math.random() * 0.3) : null;
     setMode('walk');
     kick();
   }
@@ -571,7 +901,7 @@
   function wake(startled) {
     if (mode !== 'sleep') return;
     clearTimeout(zTm); clearTimeout(sleepTm); setMode('idle'); lastInput = Date.now();
-    if (startled) { setMood('wow', 700); jump(3); }
+    if (startled) { annoy(1); setMood('wow', 700); jump(3); }
     else playSeq([{ armL: 'up', armR: 'up', face: 'shut', b: 0, t: 450 }, { armL: 'wave', armR: 'wave', face: 'shut', t: 200 }, { face: 'blink', t: 120 }]);   // 伸个懒腰
     schedule();
   }
@@ -583,7 +913,11 @@
     if (mode === 'play') setMode('idle');
     if (mode !== 'idle' && mode !== 'walk') return;
     stopWalk();
-    if (mood === 'dizzy' || mood === 'angry') { taps = []; stopSeq(); setMood('angry', 1900); return; }   // 晕着还戳它：生气了
+    if (mood === 'dizzy' || mood === 'angry') {   // 晕着还戳它：生气了；再戳就发火砸东西
+      taps = []; stopSeq();
+      if (annoy(1.5)) { setMood(''); rage(); return; }
+      setMood('angry', 1900); return;
+    }
     if (taps.length >= 5) {
       taps = [];
       stopSeq();
@@ -631,7 +965,7 @@
     if (drop > 150) setMood('scared');
     fly(x2, y2, 1, Math.min(y, y2) - (y2 > y ? 16 : 50), clamp(300 + d * 0.6, 320, 900), y2 > y ? easeIn : easeInOut, function () {
       land(p);
-      if (drop > 260 && why === 'drop') setMood('cry', 2200);
+      if (drop > 260 && why === 'drop') { annoy(1); setMood('cry', 2200); }
       else if (why === 'lost') setMood('confused', 1600);
       else if (mood === 'scared') setMood('');
     });
@@ -666,14 +1000,18 @@
     var x2 = clamp(x, p.x0, p.x1), y2 = p.fy - H;
     fly(x2, y2, 1, Math.min(y, y2) - 40, clamp(420 + Math.abs(y2 - y) * 0.5, 420, 900), easeInOut, function () { land(p); setMood('happy', 900); });
   }
-  function goAway() { stopSeq(); tw = null; plat = null; thread = null; drawThread(); setMode('away'); }
+  function goAway() {
+    stopSeq(); tw = null; plat = null; thread = null; drawThread();
+    if (sw) { sw = null; ang = angT = 0; av = 0; rEl.style.transformOrigin = '50% 60%'; }
+    setMode('away');
+  }
   // 出场：顺着一根线从屏幕顶上慢慢放下来，落到 p（默认挑一个看得见的），落地后线收回去
   function dropIn(delay, p) {
     p = p || bestPlat();
     if (!p) { setMode('away'); setTimeout(function () { if (mode === 'away' && !paused()) dropIn(0); }, 700); return; }
     setMood(''); stopSeq(); tw = null;
     var x2 = HOME && p.kind === 'ground' ? p.x0 + (p.x1 - p.x0) * 0.4 : p.x0 + (p.x1 - p.x0) * (0.2 + Math.random() * 0.6);
-    x = x2; sc = 1; ang = 0; av = 0; angT = 0;
+    x = x2; sc = 1; ang = 0; av = 0; angT = 0; rEl.style.transformOrigin = '50% 60%';
     if (reduce) { thread = null; y = p.fy - H; setMode('idle'); place(); land(p); return; }
     var top = sY() + topPad(), y2 = p.fy - H;
     y = Math.min(y2 - 20, top - H * 0.9);
@@ -690,16 +1028,29 @@
   function think() {
     if (paused()) return;
     if (mode === 'away') { dropIn(0); return; }
+    if (ragePending && mode === 'idle' && !seq) { rage(); return; }
     if (mode !== 'idle' || mood || seq) { schedule(); return; }
     if (!onScreen() || !plat) { dropIn(0); return; }      // 页面滚走了：跳回看得见的地方
-    if (music) { lastInput = Date.now(); schedule(); return; }   // 听歌的时候就待着听
+    if (music) {                 // 听歌：待着听，时不时跳段舞；听久了会烦，把耳机砸了
+      lastInput = Date.now();
+      if (!reduce && Date.now() > boreAt) { rage('phones'); return; }
+      if (!reduce && Math.random() < 0.35) { dance(); return; }
+      schedule(); return;
+    }
+    // 学习台里你在看代码区：它也掏出电脑敲代码（先跳到代码框上面去）
+    var box = !reduce && codeInView();
+    if (box && Math.random() < 0.6) {
+      var cp = plats().filter(function (q) { return q.kind === 'top' && inView(q) && (q.el === box || box.contains(q.el)); })[0];
+      if (cp && !same(cp, plat) && Math.random() < 0.7) { hop(cp, cp.x0 + Math.random() * (cp.x1 - cp.x0)); return; }
+      code(); return;
+    }
     if (Date.now() - lastInput > SLEEP_AFTER) { sleep(); return; }
     var r = Math.random(), span = plat.x1 - plat.x0;
-    if (!reduce && r < 0.3 && span > 30) {
+    if (!reduce && r < 0.26 && span > 30) {
       var t = Math.random() < 0.3 ? (Math.random() < 0.5 ? plat.x0 : plat.x1) : plat.x0 + Math.random() * span;   // 有时候走到边上往下看
       if (Math.abs(t - x) < 24) t = x - plat.x0 < span / 2 ? Math.min(plat.x1, x + 24 + Math.random() * (plat.x1 - x - 24)) : plat.x0 + Math.random() * Math.max(0, x - plat.x0 - 24);
       walkTo(t);
-    } else if (!reduce && r < 0.58) {
+    } else if (!reduce && r < 0.48) {
       var cand = plats().filter(function (p) {
         if (same(p, plat) || !inView(p)) return false;
         var cx = clamp(x, p.x0, p.x1);
@@ -707,8 +1058,16 @@
       });
       if (cand.length) { var p2 = cand[Math.floor(Math.random() * cand.length)]; hop(p2, p2.x0 + Math.random() * (p2.x1 - p2.x0)); return; }
       walkTo(plat.x0 + Math.random() * span);
-    } else if (!reduce && r < 0.74) {
+    } else if (!reduce && r < 0.6) {
       playToy(toyOrder[toyI++ % toyOrder.length]); return;
+    } else if (!reduce && r < 0.66) {
+      if (sitDown()) return;
+    } else if (!reduce && r < 0.7) {
+      if (swing()) return;
+    } else if (!reduce && r < 0.73) {
+      dance(); return;
+    } else if (!reduce && r < 0.75 && REBEL > 0 && plat.kind !== 'ground') {
+      mischief(); return;
     } else if (r < 0.8) {
       setMood('confused', 1700);           // 想起什么又想不起来
     } else if (r < 0.9) {
@@ -728,6 +1087,7 @@
     if (mode === 'walk') {
       var d = tx - x, st = (Date.now() < energy ? 80 : 30) * dt;
       if (Math.abs(d) <= st) { x = tx; stopWalk(); edgeFear(); } else { x += d > 0 ? st : -st; busy = true; }
+      if (mode === 'walk' && tripAt != null && (dir > 0 ? x >= tripAt : x <= tripAt)) { tripAt = null; trip(); }
     }
     if (mode === 'drag' && drag) {
       drag.vx *= Math.pow(0.02, dt);
@@ -811,6 +1171,8 @@
     if (!drag.on) {
       if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) < 7 || drag.bag) return;
       clearTimeout(drag.lp); closeBag();
+      drag.from = plat; drag.fx = x; drag.t0 = performance.now();
+      if (sw) { sw = null; ang = angT = 0; av = 0; }
       drag.on = true; tw = null; plat = null; thread = null; drawThread();
       if (mode === 'sleep') clearTimeout(zTm);
       drag.x0 = x; drag.y0 = y;
@@ -830,7 +1192,11 @@
     if (!d.on) { if (e.type === 'pointerup' && !d.bag) tap(); return; }
     body.classList.remove('xin-drag');
     var c = overCard; hover(null); look = { x: 0, y: 0 };
-    if (c && e.type === 'pointerup') plug(c); else fall('drop');
+    if (c && e.type === 'pointerup') { plug(c); return; }
+    // 被扔：攒点火气（拎太久了更气）；有时候偏要走回原来那儿
+    annoy(performance.now() - (d.t0 || 0) > 3000 ? 1.2 : 0.5);
+    backTo = d.from && rebel() ? { plat: d.from, x: d.fx } : null;
+    fall('drop');
   }
   el.addEventListener('pointerup', up);
   el.addEventListener('pointercancel', up);
@@ -845,6 +1211,9 @@
     batt:   ['...oo...', '..oooo..', '..oggo..', '..oggo..', '..oggo..', '..oggo..', '..oggo..', '..oooo..'],
     ball:   ['..####..', '.#hh###.', '##h#####', '########', '########', '########', '.######.', '..####..'],
     led:    ['..rrrr..', '.rrhrrr.', '.rrhrrr.', '.rrrrrr.', 'oooooooo', '..m..m..', '..m..m..', '..m..m..'],
+    pc:     ['########', '#oooooo#', '#og.ooo#', '#oogg.o#', '#oooooo#', '########', '.#....#.', '########'],
+    dance:  ['....##..', '....#.#.', '....#..#', '....#...', '..###...', '.####...', '.###....', '........'],
+    swing:  ['########', '.o....o.', '.o....o.', '.o....o.', '.o....o.', '.o....o.', '.kkkkkk.', '........'],
     phones: ['..####..', '.#....#.', '#......#', '#......#', '#......#', 'kk....kk', 'kk....kk', 'kk....kk'],
     moon:   ['...###..', '..##....', '.##.....', '.##.....', '.##.....', '.##.....', '..##....', '...###..'],
     sun:    ['...#....', '#..#..#.', '.#####..', '##ooo##.', '.#ooo#..', '.#####..', '#..#..#.', '...#....'],
@@ -852,7 +1221,7 @@
     hide:   ['...##...', '...##...', '...##...', '#..##..#', '.#.##.#.', '..####..', '...##...', '########']
   };
   var PAL = { '#': 'var(--ink)', c: '#5a3a22', o: 'var(--ink-3, #888)', g: '#7bd88f', h: '#ffffff', r: '#d9573f', m: '#9a948a', k: 'var(--clay)' };
-  var ICON_C = { cookie: { '#': '#c98d4b' }, ball: { '#': 'var(--clay)' }, phones: { '#': 'var(--ink)' }, moon: { '#': '#e5b84f' }, sun: { '#': '#e5b84f', o: '#f2d27a' }, home: { '#': 'var(--ink-2, var(--ink))' }, hide: { '#': 'var(--ink-2, var(--ink))' } };
+  var ICON_C = { cookie: { '#': '#c98d4b' }, ball: { '#': 'var(--clay)' }, phones: { '#': 'var(--ink)' }, moon: { '#': '#e5b84f' }, dance: { '#': 'var(--clay)' }, sun: { '#': '#e5b84f', o: '#f2d27a' }, home: { '#': 'var(--ink-2, var(--ink))' }, hide: { '#': 'var(--ink-2, var(--ink))' } };
   function pixIcon(name) {
     var rows = ICONS[name], o = ['<svg viewBox="0 0 8 8" width="28" height="28" aria-hidden="true" shape-rendering="crispEdges" style="stroke:none">'];
     rows.forEach(function (row, yy) {
@@ -867,21 +1236,37 @@
   var bagEl = null;
   function bagItems() {
     var out = [
-      ['cookie', '饼干', function () { playToy('cookie', true); }],
-      ['batt', '电池', function () { playToy('batt', true); }],
+      ['cookie', '饼干', function () { feed('cookie'); }],
+      ['batt', '电池', function () { feed('batt'); }],
       ['ball', '小球', function () { playToy('ball', true); }],
       ['led', 'LED', function () { playToy('led', true); }],
-      ['phones', music ? '摘耳机' : '耳机', function () { setMusic(!music); }],
-      mode === 'sleep' ? ['sun', '叫醒', function () { wake(true); }] : ['moon', '睡觉', function () { if (mode === 'play') setMode('idle'); stopWalk(); setMood(''); sleep(true); }]
+      ['phones', music ? '摘耳机' : '耳机', function () { if (!music && Date.now() - phonesBroke < 30000) refuse(); else setMusic(!music); }],   // 刚砸完：不戴
+      ['pc', '敲代码', function () { code(true); }],
+      ['dance', '跳舞', function () { dance(); }],
+      ['swing', '秋千', function () { if (mode === 'play') setMode('idle'); stopWalk(); if (!swing()) jump(4); }],
+      mode === 'sleep' ? ['sun', '叫醒', function () { wake(true); }] : ['moon', '睡觉', function () {
+        if (mode === 'play') setMode('idle'); stopWalk(); setMood('');
+        // 叛逆：刚吃了电池精神得很、或者就是不想睡——摇头、吐舌头、背过身；嘴上说不要，过一会儿自己就睡着了
+        if (Date.now() < energy || rebel()) { refuse(function () { schedule(); setTimeout(function () { if (mode === 'idle' && !seq && !mood) sleep(true); }, 6000); }); return; }
+        sleep(true);
+      }]
     ];
     if (HOME) {
-      out.push(['home', '回标题栏', function () { var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) hop(g, g.x0 + (g.x1 - g.x0) * 0.4); }]);
+      out.push(['home', '回标题栏', function () { var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) come(function () { hop(g, g.x0 + (g.x1 - g.x0) * 0.4); }); }]);
       out.push(['hide', '收起来', function () { setOff(true); }]);
     } else {
-      out.push(['home', '过来', function () { var q = bestPlat(); if (q && !same(q, plat)) hop(q); }]);
+      out.push(['home', '过来', function () { var q = bestPlat(); if (q && !same(q, plat)) come(function () { hop(q); }); }]);
     }
     return out;
   }
+  // 喂东西：40 秒里已经吃了两样，饱了，不吃
+  function feed(name) {
+    var t = Date.now(); ate = ate.filter(function (v) { return t - v < 40000; });
+    if (ate.length >= 2) { refuse(); return; }
+    ate.push(t); playToy(name, true);
+  }
+  // 叫它过来：有时候先背过身不理你，磨蹭一会儿才过来
+  function come(go) { if (rebel()) refuse(go); else go(); }
   function openBag() {
     closeBag();
     if (paused() || mode === 'away') return;
@@ -912,6 +1297,7 @@
   // 戴上耳机：坐着跟节拍点头跺脚冒音符，不乱跑也不睡觉，直到你从背包里摘下来
   function setMusic(on) {
     music = !!on;
+    if (music) { musicAt = Date.now(); boreAt = musicAt + 45000 + Math.random() * 40000; }
     if (music) { if (mode === 'sleep') { clearTimeout(zTm); setMode('idle'); } if (mode === 'walk') stopWalk(); setMood('happy', 700); }
     else blink(false);
     render();
@@ -936,9 +1322,15 @@
   function poke() { lastInput = Date.now(); }
   function near(cx, cy, d) { var r = el.getBoundingClientRect(); return Math.abs(cx - (r.left + r.width / 2)) < d && Math.abs(cy - (r.top + r.height / 2)) < d; }
   function canLook() { return mode === 'idle' || mode === 'walk'; }   // 玩东西、睡觉、吊在线上时眼睛有自己要看的
+  // 鼠标在它身边晃太久，偶尔冲你吐舌头
+  var nearSince = 0, teasedAt = 0;
   document.addEventListener('pointermove', function (e) {
-    if (e.pointerType !== 'mouse' || drag || paused() || !near(e.clientX, e.clientY, 260)) return;
+    if (e.pointerType !== 'mouse' || drag || paused() || !near(e.clientX, e.clientY, 260)) { nearSince = 0; return; }
     poke(); if (canLook()) lookAt(e.clientX, e.clientY, 1800);
+    var now = Date.now();
+    if (!near(e.clientX, e.clientY, 150)) { nearSince = 0; return; }
+    if (!nearSince) nearSince = now;
+    else if (now - nearSince > 2600 && now - teasedAt > 20000 && mode === 'idle' && !mood && !seq && rebel()) { teasedAt = now; nearSince = 0; tease(e.clientX); }
   }, { passive: true });
   document.addEventListener('pointerdown', function (e) {
     if (paused() || el.contains(e.target)) return;
@@ -969,7 +1361,7 @@
 
   window.addEventListener('resize', function () {
     dims(); lastSig = ''; render();
-    if (mode === 'drag' || mode === 'fly' || mode === 'plug') return;
+    if (mode === 'drag' || mode === 'fly' || mode === 'plug' || mode === 'swing') return;
     follow();
   });
 
@@ -979,7 +1371,7 @@
   var saved = null;
   function pause() {
     closeBag(); stopWalk(); stopSeq(); clearTimeout(idleTm); clearTimeout(zTm); ticker(false);
-    if (mode === 'drag' || mode === 'fly' || mode === 'plug') { tw = null; drag = null; hover(null); body.classList.remove('xin-drag'); }
+    if (mode === 'drag' || mode === 'fly' || mode === 'plug' || mode === 'swing') { tw = null; drag = null; hover(null); body.classList.remove('xin-drag'); }
     saved = mode !== 'away' && plat ? { plat: plat, x: x } : null;
     goAway();   // goAway 会把线也收掉
   }
@@ -1034,6 +1426,10 @@
     hop: function (i) { var ps = plats(); hop(ps[i]); },
     // 调试 / 截图：固定一个姿势（传 null 恢复）
     pose: function (p) { forced = p; lastSig = ''; render(); },
-    frames: function (n) { return n === 'jump' ? jumpFrames(6) : TOYS[n]().frames; }
+    frames: function (n) { return n === 'jump' ? jumpFrames(6) : n === 'dance' ? danceFrames() : TOYS[n]().frames; },
+    get grr() { return grr; },
+    set obedient(v) { REBEL = v ? 0 : 0.3; },   // 测试用：不叛逆
+    dance: dance, swing: swing, rage: rage, refuse: refuse, sit: sitDown, trip: trip, code: code, tease: tease, mischief: mischief,
+    bore: function () { boreAt = 0; }
   };
 })();
