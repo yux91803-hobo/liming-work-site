@@ -592,6 +592,24 @@ async def main():
         check('顺着线爬上去，再跳回能站的地方', await pg.evaluate("[LimingXin.mode, !!LimingXin.plat]") == ['idle', True])
         await pg.context.close()
 
+        # 电脑：右键打开背包；让它睡以后鼠标在旁边晃、点别处都不吵醒它，点它才醒；玩灯时表情不跟着灯来回变
+        pg = await page(b)
+        await pg.goto(BASE + '/'); await pg.wait_for_timeout(2500)
+        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height * 0.55]; })()")
+        await pg.mouse.click(r[0], r[1], button='right'); await pg.wait_for_timeout(200)
+        check('电脑：右键小芯打开小背包', await pg.evaluate("!!document.querySelector('.xin-bag')"))
+        await pg.click('.xin-bag .xin-it:has-text("睡觉")'); await pg.wait_for_timeout(200)
+        for i in range(15):
+            await pg.mouse.move(r[0] + 120 * ((i % 5) - 2), r[1] + 50 * ((i % 3) - 1)); await pg.wait_for_timeout(50)
+        await pg.mouse.click(1100, 700); await pg.wait_for_timeout(300)
+        check('电脑：睡着以后鼠标在旁边晃、点别处都不会吵醒它', await pg.evaluate("LimingXin.mode") == 'sleep')
+        await pg.mouse.click(r[0], r[1]); await pg.wait_for_timeout(200)
+        check('电脑：点它才醒', await pg.evaluate("LimingXin.mode") != 'sleep')
+        faces = await pg.evaluate("LimingXin.frames('led').map(f => f.face || '')")
+        hap = [i for i, f in enumerate(faces) if f == 'hap']
+        check('玩灯：一直盯着灯看，最后才笑一下（表情不来回切）', len(hap) == 1 and all(f in ('', 'eyes') for f in faces[:hap[0]]), faces)
+        await pg.context.close()
+
         # 直接打开学习台（不经过工具箱首页）：没有小芯
         pg = await page(b, 390, 844, mobile=True)
         await pg.goto(TOOL + '?v=topic&t=i2c&sec=code&cv=cd'); await pg.wait_for_timeout(2000)
