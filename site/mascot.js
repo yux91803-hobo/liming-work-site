@@ -38,7 +38,10 @@
     back:   [[3, 10, 1, 2]],
     down:   [[2, 11, 2, 3]],
     crossA: [[3, 11, 8, 1]],      // 抱着胳膊：左手横在前面一行
-    crossB: [[3, 12, 8, 1]]       // 右手（镜像后）横在下一行，两只手交叉
+    crossB: [[3, 12, 8, 1]],      // 右手（镜像后）横在下一行，两只手交叉
+    typeUp: [[2, 13, 2, 2]],      // 侧身敲键盘：手抬起来
+    typeDn: [[2, 14, 2, 2]],      //             手按下去（正好碰到键盘）
+    none:   []                    // 侧身时另一只手在身子后面看不见
   };
   // 脸：[x, y, 宽, 高, 颜色]；eyes / blink 会跟着视线挪一格
   var FACE = {
@@ -55,7 +58,11 @@
     cry:      [[6, 9, 2, 1], [12, 9, 2, 1], [5, 10], [14, 10]],                                          // 眼睛闭成两条线
     pout:     [[5, 7], [6, 7], [7, 8], [12, 8], [13, 7], [14, 7], [6, 10, 2, 1], [12, 10, 2, 1]],        // 哼：眉毛压着、眼睛闭上
     tongue:   [[6, 8, 2, 2], [12, 9, 2, 1], [8, 11, 4, 1, 'o'], [10, 12, 2, 2, 'tg']],                   // 挤一只眼、吐舌头
-    back:     []                                                                                     // 背过身去：只看得到芯片背面
+    back:     [],                                                                                    // 背过身去：只看得到芯片背面
+    // 侧身朝右（敲代码）：只看得到靠前的一只眼睛
+    side:     function (lx, ly) { return [[12, 8 + ly, 2, 2]]; },
+    sidePout: [[11, 7], [12, 7], [13, 8], [12, 10, 2, 1]],                                                // 侧脸皱眉、眯眼
+    sideSad:  [[11, 9], [12, 10, 2, 1]]                                                                   // 侧脸耷拉着眼
   };
   // 音符（绝对格子坐标）
   function noteFx(nx, ny) { return [[nx, ny + 2, 'q'], [nx + 1, ny + 2, 'q'], [nx + 1, ny + 1, 'q'], [nx + 1, ny, 'q'], [nx + 2, ny, 'q']]; }
@@ -108,6 +115,10 @@
     if (it && it.k === 'batt') {             // 电池：4×4，绿色格子是电量
       R(9 + sx, 11 + b, 2, 1, 'bt'); R(8 + sx, 12 + b, 4, 4, 'bt');
       for (var bi = 0; bi < (it.n | 0); bi++) R(9 + sx, 14 + b - bi, 2, 1, 'bl');
+    }
+    if (it && it.k === 'pcs') {              // 侧面看的笔记本：放在它右前方的地上，键盘一条，屏幕竖起来往后仰一点，屏幕的光朝着它
+      R(16, 18, 7, 1, 'lt'); R(16, 19, 7, 1, 'lk');
+      R(23, 12, 1, 7, 'lk'); R(24, 9, 1, 3, 'lk'); R(22, 12, 1, 6, 'sc'); R(23, 9, 1, 3, 'sc');
     }
     if (it && it.k === 'pc') {               // 笔记本：平时搁在腿上（我们看到的是屏幕背面），举起来 / 砸到地上时用绝对坐标
       // 屏幕背面：深色边框 + 浅灰壳 + 中间一个小标；下面一条更宽的键盘底座
@@ -720,18 +731,21 @@
     if (reduce) return;
     var s = document.createElement('span');
     s.className = 'xin-cd'; s.textContent = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
-    s.style.left = Math.round(x + W * (0.3 + Math.random() * 0.4)) + 'px'; s.style.top = Math.round(y + H * 0.42) + 'px';
+    s.style.left = Math.round(x + W * (0.95 + Math.random() * 0.2)) + 'px'; s.style.top = Math.round(y + H * 0.5) + 'px';   // 从屏幕那儿冒出来
     s.addEventListener('animationend', function () { s.remove(); });
     layer.appendChild(s);
     setTimeout(function () { if (s.parentNode) s.remove(); }, 2000);
   }
-  function pc(o) { return mix({ item: { k: 'pc' }, b: 1, lx: 0, ly: 1, face: 'eyes', armL: 'hold', armR: 'hold' }, o || {}); }
+  // 电脑放在右前方地上。敲的时候侧身朝着屏幕（pcS）；停下来想、有情绪的时候转过来正对着你（pc）
+  function pc(o) { return mix({ item: { k: 'pcs' }, b: 1, lx: 1, ly: 1, face: 'eyes', armL: 'out', armR: 'out' }, o || {}); }
+  var SIDE = { pout: 'sidePout', sad: 'sideSad' };
+  function pcS(o) { return mix({ item: { k: 'pcs' }, b: 1, lx: 0, ly: 1, face: 'side', armL: 'none', armR: 'typeDn' }, o || {}); }
   function typing(n, fast, face) {
     var f = [];
-    for (var i = 0; i < n; i++) f.push(pc({ armL: i % 2 ? 'hold' : 'back', armR: i % 2 ? 'back' : 'hold', face: face || 'eyes', sx: fast ? i % 2 : 0, t: fast ? 90 : 160, fn: i % (fast ? 2 : 3) === 0 ? glyph : null }));
+    for (var i = 0; i < n; i++) f.push(pcS({ armR: i % 2 ? 'typeUp' : 'typeDn', face: SIDE[face] || 'side', sx: fast ? i % 2 : 0, t: fast ? 90 : 160, fn: i % (fast ? 2 : 3) === 0 ? glyph : null }));
     return f;
   }
-  function thinking(ms) {     // 停下来想：一只手挠头，眼睛往上看，头顶冒「…」
+  function thinking(ms) {     // 停下来想：转过来，一只手挠头，眼睛往上看，头顶冒「…」
     var f = [], n = Math.max(1, Math.round(ms / 320));
     for (var i = 0; i < n; i++) f.push(pc({ armR: 'up', face: 'eyes', lx: 1, ly: -1, fx: [[14, 3, 'q'], [16, 3, 'q'], [18, 3, 'q']].slice(0, i % 4), t: 320 }));
     return f;
@@ -740,7 +754,7 @@
     if (reduce || paused() || mode === 'drag' || mode === 'away') return;
     if (mode === 'sleep') { clearTimeout(zTm); clearTimeout(sleepTm); }
     stopWalk(); stopSeq(); setMood(''); setMode('play');
-    var f = (given ? [] : reach()).concat([pc({ t: 500 })], typing(14), thinking(1600), typing(10));
+    var f = (given ? [] : reach()).concat([pc({ t: 500 }), pcS({ armR: 'typeUp', t: 220 })], typing(14), thinking(1600), [pcS({ armR: 'typeUp', t: 200 })], typing(10));
     var r = Math.random();
     how = how || (r < 0.42 ? 'ok' : r < 0.64 ? 'sad' : r < 0.86 ? 'mad' : 'smash');
     var tail = putAway();

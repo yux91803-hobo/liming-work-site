@@ -40,6 +40,7 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin .c-lt{fill:#8d887c}
 .xin .c-lk{fill:#2f2d29}
 .xin .c-lg{fill:var(--clay)}
+.xin .c-sc{fill:#8ec5ff}
 /* 吊着小芯的线 */
 .xin-thread{position:absolute;left:0;top:0;width:2px;transform-origin:1px 0;background:var(--ink);opacity:.6;pointer-events:none;display:none}
 /* 小粒子 */
