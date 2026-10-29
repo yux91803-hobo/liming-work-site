@@ -845,6 +845,7 @@
     sc = 1; angT = 0; place(); kick();
     playSeq(landFrames(drop));
     schedule();
+    if (pendingAct) { var pa = pendingAct; pendingAct = null; setTimeout(function () { if (mode === 'idle') pa(); }, 300); }
     if (swingNext) { swingNext = false; setTimeout(function () { if (mode === 'idle' && !mood) swing(); }, 450); }
     // 叛逆：被你拎到这儿来的，偏要回原来那儿去（先「哼」一下）
     if (backTo) {
@@ -1277,7 +1278,7 @@
       var b = document.createElement('button');
       b.type = 'button'; b.className = 'xin-it'; b.setAttribute('role', 'menuitem');
       b.innerHTML = pixIcon(it[0]) + '<span></span>'; b.lastChild.textContent = it[1];
-      b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); closeBag(); it[2](); });
+      b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); closeBag(); act(it[2]); });
       bagEl.appendChild(b);
     });
     body.appendChild(bagEl);
@@ -1288,6 +1289,9 @@
     look = { x: 0, y: r.top > top ? -1 : 1 }; render();
     var first = bagEl.querySelector('button'); if (first) try { first.focus({ preventScroll: true }); } catch (e2) {}
   }
+  // 背包里选的事：它正在半空（跳、掉、吊在线上、荡秋千）就等落地再做，不然一落地就被打断了
+  var pendingAct = null;
+  function act(fn) { if (/^(fly|hang|rope|climb|swing|plug)$/.test(mode)) { pendingAct = fn; return; } pendingAct = null; fn(); }
   function closeBag() { if (bagEl) { bagEl.remove(); bagEl = null; } }
   document.addEventListener('pointerdown', function (e) { if (bagEl && !bagEl.contains(e.target) && !el.contains(e.target)) closeBag(); }, true);
   document.addEventListener('keydown', function (e) { if (bagEl && e.key === 'Escape') closeBag(); });

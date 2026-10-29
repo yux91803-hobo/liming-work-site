@@ -572,6 +572,9 @@ async def main():
         items = await pg.evaluate("[...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent)")
         check('长按小芯打开小背包', items[:5] == ['饼干', '电池', '小球', 'LED', '耳机'] and '收起来' in items, items)
         await pg.click('.xin-bag .xin-it:has-text("饼干")'); await pg.wait_for_timeout(400)
+        for _ in range(20):   # 正在半空时会等落地再吃
+            if await pg.evaluate("LimingXin.mode") == 'play': break
+            await pg.wait_for_timeout(100)
         check('从背包喂饼干：小芯抱着饼干吃', await pg.evaluate("LimingXin.mode") == 'play' and not await pg.evaluate("!!document.querySelector('.xin-bag')"))
         await pg.wait_for_timeout(4500)
         await pg.evaluate("LimingXin.bag()"); await pg.click('.xin-bag .xin-it:has-text("耳机")'); await pg.wait_for_timeout(300)
@@ -653,7 +656,7 @@ async def main():
         for i in range(40):
             await pg.wait_for_timeout(300); modes.append(await pg.evaluate("LimingXin.mode"))
         thr = await pg.evaluate("getComputedStyle(document.querySelector('.xin-thread')).display")
-        check('荡秋千：吊着线来回荡，最后松手落到平台上', 'swing' in modes and modes[-1] in ('idle', 'walk', 'play') and thr == 'none', modes[::4])
+        check('荡秋千：吊着线来回荡，最后松手落到平台上', 'swing' in modes and modes[-1] in ('idle', 'walk', 'play', 'sleep') and thr == 'none', modes[::4])
         faces = await pg.evaluate("LimingXin.frames('dance').map(f => f.face)")
         check('跳舞：有转身（背过去）和笑', 'back' in faces and faces.count('hap') > 10)
         await pg.context.close()
@@ -674,6 +677,28 @@ async def main():
         await pg.click('.card[data-id=stm32]'); await pg.wait_for_timeout(1500)
         await pg.click('.panel[data-id=stm32] .back'); await pg.wait_for_timeout(1200)
         check('回工具箱以后再打开学习台：返回键一下关掉', await pg.evaluate("[document.body.classList.contains('tool-open'), location.pathname]") == [False, '/'])
+        await pg.context.close()
+
+        # 寄存器面板：左右联动、取值列表代替下拉框、没有「已改」字样、代码下面讲寄存器是干啥的；手机上位格子下面直接显示选中字段，底部露着代码
+        pg = await page(b)
+        await pg.goto(TOOL + '?v=topic&t=gpio&reg=GPIO_BSRR&i=GPIOA'); await pg.wait_for_selector('.sheet.on'); await pg.wait_for_timeout(400)
+        st = await pg.evaluate("[document.querySelectorAll('.sheet .selctl, .sheet .switch').length, document.querySelectorAll('.fields .fvals').length > 10, !!document.querySelector('.sh-about p') && document.querySelector('.sh-about p').textContent.includes('BS')]")
+        check('寄存器面板：字段下面没有下拉框 / 开关，改成取值列表；代码下面有「作用」', st[0] == 0 and st[1] and st[2], st)
+        await pg.click('.fields .frow-h:has(b:text-is("BS1"))'); await pg.wait_for_timeout(200)
+        check('点左边的字段：右边位格子里对应的位高亮', await pg.evaluate("[...document.querySelectorAll('.bit.pick')].map(n => n.dataset.f)") == ['BS1'])
+        await pg.click('.bit[data-f="BS11"]'); await pg.wait_for_timeout(800)
+        st = await pg.evaluate("""(() => { const row = document.querySelector('.fields .frow.pick'), r = row.getBoundingClientRect(), b = document.querySelector('.sh-body').getBoundingClientRect();
+          return [row.querySelector('.frow-h b').textContent, r.top >= b.top && r.bottom <= b.bottom, getComputedStyle(row.querySelector('.frow-h b'), '::after').content, row.querySelector('.fv.on b').textContent]; })()""")
+        check('点右边的位：左边滚到那个字段并选中，名字变色、不写「已改」，当前值标在列表里', st[0] == 'BS11' and st[1] and st[2] in ('none', 'normal', '') and st[3] == '1', st)
+        await pg.context.close()
+        pg = await page(b, 390, 844, mobile=True)
+        await pg.goto(TOOL + '?v=topic&t=gpio&reg=GPIO_CRL&i=GPIOA'); await pg.wait_for_selector('.sheet.on'); await pg.wait_for_timeout(400)
+        dock0 = await pg.evaluate("document.querySelector('.sh-dock').hidden")
+        await pg.tap('.bit[data-f="MODE0"] >> nth=0'); await pg.wait_for_timeout(300)
+        st = await pg.evaluate("[!document.querySelector('.sh-pick').hidden && document.querySelector('.sh-pick .frow-h b').textContent, document.querySelector('.sh-dock').hidden, document.querySelector('.sh-dock').textContent]")
+        await pg.tap('.sh-pick .fv >> nth=3'); await pg.wait_for_timeout(300)
+        st2 = await pg.evaluate("[document.querySelector('.sh-pick .fv.on b').textContent, document.querySelector('.sh-dock').textContent]")
+        check('手机：点位格子，下面直接出现这个字段；底部露着寄存器写法，跟着改', dock0 and st[0] == 'MODE0' and not st[1] and 'CRL' in st[2] and st2[0] == '11' and 'MODE0' in st2[1], (dock0, st, st2))
         await pg.context.close()
 
         # 直接打开学习台（不经过工具箱首页）：没有小芯
