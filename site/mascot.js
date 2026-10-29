@@ -1,7 +1,8 @@
 /* mascot.js — 小芯（像素风），首页和 STM32 学习台共用
    一块像素小芯片：两只引脚手、四只引脚脚、两个方块眼。整个页面都是它的地盘：
    首页能站在标题栏、每张卡片的上沿，也能跳进卡片里沿着底边走；学习台里在芯片图、标题区、代码框这些方块的上沿走来走去。
-   平台之间先蹲一下再划弧线跳过去；页面滚走了，它会跳回你正在看的地方。
+   平台之间先蹲一下再划弧线跳过去，落到方块上时那块被压得往下沉一下；页面滚走了，它会跳回你正在看的地方。
+   学习台里只有被你从首页拖着扔进 STM32 卡片时才有小芯；关掉学习台，它跳回首页。
    会眨眼、眼睛跟着指针/手指，没人理就坐下睡觉；闲着会从背后摸出饼干吃、抛小球、玩 LED。
    点它会跳，连点会晕；拎起来乱蹬，半空松手就往下掉到最近的方块上；首页拖到卡片上松手就打开那个工具。
    画法：20×20 像素格，每一帧按「姿势」重新拼出所有方块（逐帧动画，不做缩放旋转插值）。
@@ -102,9 +103,9 @@
   var el = document.createElement('div');
   el.className = 'xin';
   el.setAttribute('aria-hidden', 'true');
-  el.innerHTML = '<div class="xin-sh"></div><div class="xin-r"><div class="xin-s"><svg viewBox="0 0 20 20" focusable="false" shape-rendering="crispEdges"></svg></div></div>';
+  el.innerHTML = '<div class="xin-r"><div class="xin-s"><svg viewBox="0 0 20 20" focusable="false" shape-rendering="crispEdges"></svg></div></div>';
   layer.appendChild(el); body.appendChild(layer);
-  var rEl = el.querySelector('.xin-r'), sEl = el.querySelector('.xin-s'), shEl = el.querySelector('.xin-sh'), svgEl = el.querySelector('svg');
+  var rEl = el.querySelector('.xin-r'), sEl = el.querySelector('.xin-s'), svgEl = el.querySelector('svg');
   function dims() { W = el.offsetWidth || 80; H = el.offsetHeight || 80; }
   dims();
 
@@ -124,7 +125,15 @@
   var panel = null;
   try { panel = window.frameElement && window.frameElement.closest ? window.frameElement.closest('.panel') : null; } catch (e) { panel = null; }
   function hiddenFrame() { return !!panel && !panel.classList.contains('show'); }
-  function paused() { return document.hidden || (HOME && body.classList.contains('tool-open')) || hiddenFrame(); }
+  // 「小芯被扔进了哪个工具」：首页把它拖到卡片上松手时记下，学习台里的小芯只有看到这个才出来；回到首页时清掉
+  var CARRY = 'lm.xin.in';
+  function carried() { try { return sessionStorage.getItem(CARRY) || ''; } catch (e) { return ''; } }
+  function carry(v) { try { if (v) sessionStorage.setItem(CARRY, v); else sessionStorage.removeItem(CARRY); } catch (e) {} }
+  function paused() {
+    if (document.hidden) return true;
+    if (HOME) return body.classList.contains('tool-open');
+    return !panel || hiddenFrame() || carried() !== 'stm32';   // 学习台：只有被扔进来才出来
+  }
   function cls(c, on) { el.classList.toggle(c, !!on); }
   function place() {
     el.style.transform = 'translate3d(' + Math.round(x) + 'px,' + Math.round(y) + 'px,0)' + (sc !== 1 ? ' scale(' + sc.toFixed(3) + ')' : '');
@@ -226,7 +235,7 @@
   }
   function render() {
     var p = base(performance.now()), k;
-    if (seq && seq.cur) for (k in seq.cur) if (k !== 't') p[k] = seq.cur[k];
+    if (seq && seq.cur) for (k in seq.cur) if (k !== 't' && k !== 'fn') p[k] = seq.cur[k];
     if (forced) for (k in forced) p[k] = forced[k];
     if (blinking && p.face === 'eyes') p.face = 'blink';
     var sig = JSON.stringify(p);
@@ -235,7 +244,6 @@
     svgEl.innerHTML = draw(p);
     var S = W / G;
     sEl.style.transform = p.dy ? 'translateY(' + Math.round(p.dy * S) + 'px)' : '';
-    shEl.style.setProperty('--sh', p.dy ? Math.max(0.25, 1 + p.dy / 8).toFixed(2) : '1');
   }
   function ticker(on) {
     clearInterval(tick); tick = 0;
@@ -254,6 +262,7 @@
     seq.i++;
     if (seq.i >= seq.frames.length) { var d = seq.done; seq = null; render(); if (d) d(); return; }
     seq.cur = seq.frames[seq.i];
+    if (seq.cur.fn) seq.cur.fn();
     render();
     var s = seq;
     s.tm = setTimeout(function () { if (seq === s) nextFrame(); }, seq.cur.t || 100);
@@ -261,9 +270,9 @@
   function stopSeq() { if (seq) { clearTimeout(seq.tm); seq = null; render(); } }
 
   // 跳：先蹲两格蓄力 → 伸腿起跳 → 空中收腿、举手 → 伸腿下落 → 落地屈膝缓冲、扬灰
-  function landFrames() {
+  function landFrames(drop) {
     return [
-      { b: 2, armL: 'swingB', armR: 'swingB', fx: [[3, 19, 'd'], [16, 19, 'd']], t: 90 },
+      { b: 2, armL: 'swingB', armR: 'swingB', fx: [[3, 19, 'd'], [16, 19, 'd']], t: 90, fn: function () { press(drop); } },
       { b: 1, armL: 'out', armR: 'out', fx: [[2, 19, 'd'], [1, 18, 'd'], [17, 19, 'd'], [18, 18, 'd']], t: 90 },
       { b: 0, fx: [[0, 18, 'd'], [19, 18, 'd']], t: 70 }
     ];
@@ -278,7 +287,7 @@
       { legs: 'tuck', armL: 'wave', armR: 'wave', dy: -h, t: 110 },
       { legs: 'stand', armL: 'swingF', armR: 'swingF', dy: -c, t: 70 },
       { legs: 'stand', armL: 'out', armR: 'out', dy: -a, t: 60 }
-    ].concat(landFrames());
+    ].concat(landFrames(h * W / G));
   }
   function jump(h, done) { playSeq(jumpFrames(h), done); }
 
@@ -392,10 +401,23 @@
   function land(p) {
     if (p) plat = p;
     setMode('idle');
-    if (plat) { x = clamp(x, plat.x0, plat.x1); y = plat.fy - H; }
+    var drop = 0;
+    if (plat) { x = clamp(x, plat.x0, plat.x1); y = plat.fy - H; drop = y - airFrom; }
     sc = 1; angT = 0; place(); kick();
-    playSeq(landFrames());
+    playSeq(landFrames(drop));
     schedule();
+  }
+  /* 重力挤压：落到卡片 / 方块上时，被踩的那块往下沉一下再弹回来；落得越高压得越深。小芯跟着一起沉 */
+  var pressing = 0;
+  function press(drop) {
+    var e = plat && plat.kind !== 'ground' ? plat.el : null;
+    if (!e || !e.animate || reduce || !(drop > 6)) return;
+    var d = Math.round(clamp(drop / 45, 2, 7));
+    e.animate([{ transform: 'none' }, { transform: 'translateY(' + d + 'px)', offset: 0.25 }, { transform: 'translateY(' + Math.round(d / 2) + 'px)', offset: 0.5 },
+      { transform: 'translateY(-1px)', offset: 0.75 }, { transform: 'none' }], { duration: 300, easing: 'steps(4, end)', composite: 'add' });
+    pressing = performance.now() + 340;
+    var step = function () { follow(); if (performance.now() < pressing) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
   }
   function walkTo(target) {
     if (!plat) return;
@@ -545,7 +567,9 @@
   function easeIn(p) { return p * p; }
   function easeInOut(p) { return p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2; }
   function easeOut(p) { return 1 - (1 - p) * (1 - p); }
+  var airFrom = 0;   // 这次腾空是从多高开始的（算落地压多深）
   function fly(x1, y1, s1, cy, ms, ease, done) {
+    airFrom = Math.min(y, cy);
     tw = { t0: performance.now(), dur: ms, x0: x, y0: y, s0: sc, cx: (x + x1) / 2, cy: cy, x1: x1, y1: y1, s1: s1, ease: ease, done: done };
     kick();
   }
@@ -577,9 +601,10 @@
       card.classList.add('xin-hit');
       setTimeout(function () { card.classList.remove('xin-hit'); }, 600);
       goAway(); sc = 1; ang = 0; av = 0; place();
+      carry(card.dataset.id || 'tool');     // 小芯被扔进了这个工具
       card.click();
       // 没打开（例如工具不存在），就回来
-      setTimeout(function () { if (mode === 'away' && !body.classList.contains('tool-open')) dropIn(0); }, 400);
+      setTimeout(function () { if (mode === 'away' && !body.classList.contains('tool-open')) { carry(''); dropIn(0); } }, 400);
     };
     if (reduce) { go(); return; }
     fly(x1, y1, 0.3, Math.min(y, y1) - 24, 300, easeOut, go);
@@ -664,9 +689,23 @@
     follow();
   });
 
-  /* 首页：打开工具时藏起来，回到首页时从上面掉回来。学习台在面板里：面板收起时歇着，打开时掉进来 */
-  function pause() { stopWalk(); stopSeq(); clearTimeout(idleTm); clearTimeout(zTm); ticker(false); if (mode === 'drag' || mode === 'fly' || mode === 'plug') { tw = null; drag = null; hover(null); body.classList.remove('xin-drag'); } goAway(); }
-  function resume(delay) { lastInput = Date.now(); ticker(true); dropIn(delay); }
+  /* 首页：打开工具时小芯在面板后面歇着。正常点开工具再关掉，它还在原来的地方；
+     要是它被扔进了工具（carried），关掉工具时它从工具里出来，掉回首页。
+     学习台在面板里：被扔进来时掉进来，面板收起时歇着。 */
+  var saved = null;
+  function pause() {
+    stopWalk(); stopSeq(); clearTimeout(idleTm); clearTimeout(zTm); ticker(false);
+    if (mode === 'drag' || mode === 'fly' || mode === 'plug') { tw = null; drag = null; hover(null); body.classList.remove('xin-drag'); }
+    saved = mode !== 'away' && plat ? { plat: plat, x: x } : null;
+    goAway();
+  }
+  function resume(delay) {
+    lastInput = Date.now(); ticker(true);
+    if (HOME && carried()) { carry(''); saved = null; dropIn(delay); return; }
+    var sv = saved, p = sv && platOf(sv.plat.el, sv.plat.kind); saved = null;
+    if (p) { plat = p; x = clamp(sv.x, p.x0, p.x1); y = p.fy - H; setMode('idle'); place(); schedule(); return; }
+    dropIn(delay);
+  }
   var wasPaused = paused();
   function onState() {
     var p = paused();
