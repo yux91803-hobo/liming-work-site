@@ -49,10 +49,13 @@
     var sticky = el('div', 'sh-stick');
     [nodes.addr, nodes.val, nodes.bits, nodes.pick, nodes.warn, nodes.code, nodes.about, nodes.meta].forEach(function (n) { sticky.appendChild(n); });
     Rr.appendChild(sticky);
-    body.appendChild(L); body.appendChild(Rr);
+    body.appendChild(L); body.appendChild(Rr); nodes.L = L; nodes.R = Rr;
     panel.appendChild(head); panel.appendChild(body); panel.appendChild(nodes.dock);
     // 手机：底部一直露着当前的寄存器写法，点一下跳到完整代码
     nodes.dock.type = 'button'; nodes.dock.setAttribute('aria-label', '看完整代码');
+    // 代码块在屏幕上时不需要底部代码条：只有往下翻到字段列表、看不到代码了才露出来
+    nodes.codeSeen = false;
+    if (window.IntersectionObserver) new IntersectionObserver(function (es) { nodes.codeSeen = es[es.length - 1].isIntersecting; renderDock(); }, { root: body, threshold: 0.15 }).observe(nodes.code);
     nodes.dock.addEventListener('click', function () { try { nodes.code.scrollIntoView({ block: 'start', behavior: ui.reduced() ? 'auto' : 'smooth' }); } catch (e) { nodes.code.scrollIntoView(); } });
     root.appendChild(scrim); root.appendChild(panel);
     root.addEventListener('keydown', function (e) {
@@ -132,7 +135,7 @@
     renderMeta();
     renderAbout();
     renderValue({ full: true });
-    body.scrollTop = 0;
+    body.scrollTop = 0; nodes.L.scrollTop = 0; nodes.R.scrollTop = 0;
   }
   function seg(label, items, cur, onPick) {
     var w = el('div', 'segctl'), l = el('span', 'segctl-l', label), box = el('div', 'segctl-b');
@@ -357,7 +360,7 @@
     markPick();
     if (!wide()) return;
     var row = rowOf(picked); if (!row) return;
-    var br = body.getBoundingClientRect(), rr = row.getBoundingClientRect();
+    var br = nodes.L.getBoundingClientRect(), rr = row.getBoundingClientRect();
     if (rr.top < br.top + 8 || rr.bottom > br.bottom - 8) try { row.scrollIntoView({ block: 'center', behavior: ui.reduced() ? 'auto' : 'smooth' }); } catch (e) { row.scrollIntoView(); }
   }
   // 手机：位格子下面放一份选中字段的说明（取值列表可以直接点），不用往下翻
@@ -484,7 +487,7 @@
     var lines = String(R.genCode(c) || '').split('\n').filter(function (l) { l = l.trim(); return l && !/^(\/\*|\/\/|\*)/.test(l); });
     ui.clear(d);
     lines.slice(0, 3).forEach(function (l) { d.appendChild(el('code', 'mono', l)); });
-    d.hidden = !lines.length;
+    d.hidden = !lines.length || nodes.codeSeen;
   }
   // 这个寄存器是干啥的（写在代码下面）
   function renderAbout() {
