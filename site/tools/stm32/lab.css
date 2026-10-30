@@ -246,3 +246,133 @@
   .lb-b { padding: 7px 10px; }
   .lb-seg button { padding: 6px 9px; }
 }
+
+/* =====================================================================
+   编程思维（新版）：左边思路和代码，右边一份资料
+   ===================================================================== */
+.main > .lp { max-width: 1320px; }
+.lp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, .82fr); gap: 28px; align-items: start; }
+.lp-main { min-width: 0; }
+.lp-side { position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.embed .lp-side { top: 16px; max-height: calc(100vh - 32px); }
+.lp-mt { display: none; }
+.lp-lead { color: var(--ink-2); font-size: 15px; margin: 12px 0 14px; }
+.lp-h3 { font-size: 15px; margin: 18px 0 8px; }
+
+/* 资料面板 */
+.lp-doc { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
+.lp-doc-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.lp-doc-h b { font-size: 15px; }
+.lp-doc-h:empty { display: none; }
+.lp-kind { font-size: 12.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--sunk); color: var(--ink-2); }
+.lp-doc[data-kind="sch"] .lp-kind { background: #e5efe1; color: #2f6b2c; }
+.lp-doc[data-kind="fig"] .lp-kind, .lp-doc[data-kind="reg"] .lp-kind { background: #e3ebf6; color: #2b5b9e; }
+:root[data-theme="dark"] .lp-doc[data-kind="sch"] .lp-kind { background: #233322; color: #a7d48a; }
+:root[data-theme="dark"] .lp-doc[data-kind="fig"] .lp-kind, :root[data-theme="dark"] .lp-doc[data-kind="reg"] .lp-kind { background: #1f2a3a; color: #8fb5ec; }
+.lp-back { display: inline-flex; align-items: center; gap: 2px; padding: 3px 8px 3px 4px; border: 1px solid var(--line-2); border-radius: 8px; background: none; font-size: 13px; color: var(--ink-2); }
+.lp-back .ic { width: 16px; height: 16px; }
+.lp-doc-b { padding: 12px 14px; }
+.lp-src { padding: 0 14px 10px; font-size: 12.5px; line-height: 1.6; color: var(--ink-3); }
+.lp-src:empty { display: none; }
+.lp-acts { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 14px; }
+.lp-acts:empty { display: none; }
+.lp-pic { position: relative; width: 100%; overflow: hidden; border-radius: 8px; background: #fff; border: 1px solid var(--line); }
+.lp-pic-i { position: absolute; }
+.lp-pic-i img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+:root[data-theme="dark"] .lp-pic-i img { filter: invert(.9) hue-rotate(180deg); }
+:root[data-theme="dark"] .lp-pic { background: #1a1918; }
+.lp-hl { position: absolute; border: 2.5px solid #e8814f; border-radius: 6px; background: rgba(232, 129, 79, .12); box-shadow: 0 0 0 3px rgba(232, 129, 79, .18); }
+
+/* 寄存器位图（只读） */
+.lp-reg-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 10px; font-size: 14px; color: var(--ink-2); }
+.lp-reg-h b { color: var(--ink); font-size: 15px; }
+.lp-reg-v { margin-left: auto; color: var(--copper); font-weight: 700; }
+.lp-bits { margin-bottom: 8px; }
+.lp-bn, .lp-bc, .lp-bi { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); }
+.lp-fn { font: 600 10.5px/1.3 var(--mono); color: var(--ink-3); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: clip; padding: 0 1px 2px; border-bottom: 1px solid var(--line); margin: 0 1px; }
+.lp-fn.on { color: var(--copper); border-bottom: 2px solid var(--copper); font-weight: 800; }
+.lp-fn.res { border-bottom-color: transparent; }
+.lp-bit { height: 26px; display: grid; place-items: center; font: 600 13px var(--mono); color: var(--ink-2); border: 1px solid var(--line-2); border-left-width: 0; background: var(--bg); }
+.lp-bc .lp-bit:first-child { border-left-width: 1px; }
+.lp-bit.res { color: var(--ink-3); background: var(--sunk); }
+.lp-bit.on { background: var(--copper-soft); color: var(--copper); font-weight: 800; border-color: var(--copper); }
+.lp-bit.fe { border-right-color: var(--ink-3); }
+.lp-bi span { font: 10.5px var(--mono); color: var(--ink-3); text-align: center; padding-top: 1px; }
+.lp-fl { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
+.lp-fl li { display: flex; flex-wrap: wrap; gap: 2px 8px; padding: 6px 10px; border-radius: 8px; background: var(--sunk); color: var(--ink-2); }
+.lp-fl b { color: var(--copper); }
+.lp-fb { color: var(--ink); }
+.lp-reg-n { margin-top: 8px; font-size: 13px; color: var(--ink-3); }
+
+/* 资料卡 */
+.lp-cards-h { font-size: 15px; margin-bottom: 8px; }
+.lp-cards ol { margin: 0; padding: 0 0 0 20px; display: flex; flex-direction: column; gap: 6px; }
+.lp-card { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); font-size: 14px; line-height: 1.6; color: var(--ink-2); }
+.lp-card:hover { border-color: var(--mask); color: var(--ink); }
+.lp-card b { color: var(--ink); }
+.lp-recall p { color: var(--ink-2); margin-bottom: 10px; }
+
+/* 查资料：一问一份资料 */
+.lp-looks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.lp-look { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 4px 4px 4px; }
+.lp-look.on { border-color: var(--h); box-shadow: 0 0 0 1px var(--h) inset; padding-bottom: 12px; }
+.lp-look-q { display: flex; width: 100%; align-items: center; gap: 10px; padding: 10px 12px; border: 0; background: none; text-align: left; font-size: 15.5px; font-weight: 600; }
+.lp-look-n { flex: none; display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--sunk); font-size: 13px; }
+.lp-look.done .lp-look-n { background: var(--h); color: #fff; }
+.lp-look .lab-q { margin: 0 12px 10px; }
+.lp-look > .lab-b { margin-left: 12px; }
+.lp-look-c { padding: 0 12px 10px 46px; font-size: 14px; color: var(--ink-2); }
+.lp-find .lab-q-h { font-size: 14.5px; padding: 10px 14px; }
+
+/* 规划：框架表 */
+.lp-frame-t { display: flex; flex-direction: column; gap: 8px; }
+.lp-fr { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: start; }
+.lp-fr-k { padding-top: 13px; font-size: 15px; color: var(--copper); }
+.lp-fr-q .lab-q-h { font-size: 14.5px; font-weight: 500; }
+
+/* 编写：子目标小标题、选中的行、看硬件 */
+.lp-file { margin-top: 14px; }
+.lp-goal { padding: 6px 14px 2px; font: 700 12.5px var(--sans); color: #e8906f; letter-spacing: .02em; }
+.lp-goal:not(:first-child) { margin-top: 6px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.lp-picked > .rc-lb { background: rgba(232, 144, 111, .16); box-shadow: inset 3px 0 0 #e8906f; }
+.lp-hwl { margin-left: auto; flex: none; align-self: center; padding: 1px 8px; border: 1px solid var(--line-2); border-radius: 999px; font-size: 12px; color: var(--ink-3); text-decoration: none; white-space: nowrap; }
+.lp-hwl:hover { color: var(--mask); border-color: var(--mask); }
+.lp-file .rc-lb { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; }
+.lp-file .rc-lb .rc-cm, .lp-file .rc-lb .rc-c { flex: 1 1 100%; }
+.lp-file .rc-lb .rc-c { flex: 1 1 auto; }
+.lp-fill .lp-goal { color: #e8906f; }
+.lp-mine { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* 硬件原理 */
+.main > .hwp { max-width: 1480px; }
+.main > .hwp:not(.lab-wide) { max-width: 980px; }
+.hw-prog { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; font-size: 13.5px; color: var(--ink-2); text-decoration: none; }
+.hw-prog:hover { color: var(--mask); }
+.hw-prog .ic { width: 16px; height: 16px; }
+.hw-chain { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0 0 12px; padding: 0; counter-reset: hc; }
+.hw-chain li { position: relative; padding: 4px 12px; border: 1px solid var(--line-2); border-radius: 999px; font-size: 13px; color: var(--ink-3); background: var(--surface); transition: background .2s, color .2s, border-color .2s; }
+.hw-chain li + li::before { content: "→"; position: absolute; left: -11px; color: var(--ink-3); font-size: 12px; }
+.hw-chain li + li { margin-left: 8px; }
+.hw-chain li.on { background: #e8814f; border-color: #e8814f; color: #1d1c1a; font-weight: 700; }
+.hw-note { font-size: 12.5px; color: var(--ink-3); text-align: center; }
+.lb-chip.mine { border-style: dashed; }
+.hwp .tk-crumb, .hwp .dv-hero > h1 { display: none; }
+
+@media (max-width: 899px) {
+  .lp-mt { display: flex; position: sticky; top: calc(var(--bar-h) + var(--sat)); z-index: 6; margin: 0 0 14px; background: var(--bg); width: fit-content; }
+  .embed .lp-mt { top: calc(var(--bar-h) + var(--sat)); }
+  .lp-mt button { padding: 7px 18px; font-size: 14px; position: relative; }
+  .lp-mt button[aria-selected="true"] { background: var(--sunk); color: var(--ink); font-weight: 700; }
+  .lp-dot { display: none; position: absolute; top: 6px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--mask); }
+  .lp-mt button.new .lp-dot { display: block; }
+  .lp-grid { display: block; }
+  .lp-side { display: none; position: static; max-height: none; overflow: visible; }
+  .lp-show-doc .lp-side { display: block; }
+  .lp-show-doc .lp-main { display: none; }
+  .lp-fr { grid-template-columns: 1fr; gap: 2px; }
+  .lp-fr-k { padding-top: 0; }
+}
+@media (min-width: 1000px) and (max-width: 1359px) {
+  .lp-grid { grid-template-columns: minmax(0, 1fr) minmax(300px, .8fr); gap: 20px; }
+  .main:has(> .lp) { padding-left: 24px; padding-right: 24px; }
+}

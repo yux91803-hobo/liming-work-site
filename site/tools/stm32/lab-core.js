@@ -1,5 +1,6 @@
-/* lab-core.js — 「编程思维」模块的数据和逻辑（不碰 DOM，可在 Node 里测试）
-   一章 = 一道编程题，按「需求 → 硬件 → 拆函数 → .h → .c → 自己写」走完。
+/* lab-core.js — 「编程思维」「硬件原理」两个模块共用的数据和逻辑（不碰 DOM，可在 Node 里测试）
+   编程思维：一章 = 一道编程题，按「明确任务 → 查资料 → 规划 → 编写 → 验证」走完；右边一次只放一份资料。
+   硬件原理：同一份代码交给模拟器跑，把每一行在芯片里引起的变化演成动画。
    · 代码：直接用「代码推导」里课件同款的文件（STM32_CODEDERIVE），保证和课件一个写法。
    · .c 那一步：把代码交给 mcusim.js 真的跑一遍，每执行一行记一次芯片状态（时钟、CRL/CRH、ODR、引脚电平），
      前后两次的差别就是这一行在硬件上造成的变化（开时钟 / 改模式 / 改输出）。界面按这些变化播动画——
@@ -26,6 +27,11 @@
     ],
     board: 'leds',
     task: '让板子上的三个 LED（LED1 黄、LED2 蓝、LED3 绿）轮流亮，做一个流水灯。main.c 里只写 LED_On(LED1) 这样的话，看不到任何寄存器。',
+    ask: [   // 明确任务：先把要求拆开
+      { q: '最后要实现什么？', a: '三个灯轮流亮 0.5 秒。拆开看是三件小事：开机先把引脚准备好、能点亮某个灯、能把它熄灭。' },
+      { q: '要查哪些资料？', a: '三样：<b>开发板原理图</b>（灯接在哪个脚、什么电平亮），<b>参考手册的框图</b>（GPIO 挂在哪条总线、引脚内部怎么输出），<b>寄存器说明</b>（具体写哪一位）。下一步一样一样查，右边一次放一份。' },
+      { q: '用到的东西里，哪些是程序要管的？', a: '时钟（RCC 里开 GPIOA）、引脚模式（推挽输出）、输出的值（0 亮 1 灭）。延时不归 LED 管，交给 delay 模块。' }
+    ],
     need: [
       { q: '最后要实现什么？', a: '三个灯轮流亮 0.5 秒。拆开看是三件小事：开机先把引脚准备好、能点亮某个灯、能把它熄灭。' },
       { q: '要用到哪些硬件？', a: '看原理图：灯接在 PA0、PA1、PA8，接法是 3V3 → 2kΩ → LED → 引脚，所以<b>引脚输出 0 灯亮</b>。要用 GPIOA 的这三个脚，配成推挽输出；GPIOA 挂在 APB2 上，用之前要在 RCC 里开它的时钟。' },
@@ -77,7 +83,9 @@
       { id: 'toggle', name: 'LED_Toggle(LED2)', file: 'led.c', fn: 'LED_Toggle', main: ['LED_Init();', 'LED_Toggle(2);'],
         intro: '翻转用 ODR ^=：先把 ODR <b>读回</b> Cortex-M3，改一位再写回去。看蓝色的点走一趟回程。' },
       { id: 'main', name: 'main.c 流水灯', file: 'main.c', fn: 'main', ms: 1700, max: 12,
-        intro: 'main 里只有 LED_ 开头的函数。走一圈：三个灯轮流亮 0.5 秒。' }
+        intro: 'main 里只有 LED_ 开头的函数。走一圈：三个灯轮流亮 0.5 秒。' },
+      { id: 'single', name: '单文件版 main.c', file: 'single', fn: 'main', ms: 1200, max: 9,
+        intro: '编程思维「编写」第一版：只有一个灯，全写在 main 里。走一遍：开时钟、先写 1、切推挽，然后亮、灭。' }
     ],
     // 动画时代码下面那句「硬件上发生了什么」（按代码文本找）
     hw: {
@@ -101,12 +109,97 @@
         check: 'checkInit', ref: 'LED_Init' },
       { id: 'onoff', fn: ['LED_On', 'LED_Off'], title: '写 LED_On 和 LED_Off', ask: '用 LED_PORT 和 led_pin[n] 写出点亮、熄灭第 n 个灯，只动这一个脚；编号不对就什么都不做。',
         check: 'checkOnOff', ref: ['LED_On', 'LED_Off'] }
-    ]
+    ],
+
+    /* ---------- 编程思维（新版）：明确任务 → 查资料 → 规划 → 编写 → 验证 ---------- */
+    // 查资料：每一问对应右边一份资料；查到的结论收进「资料卡」，规划时直接用
+    look: [
+      { q: 'LED 接在哪个脚？什么电平亮？', doc: 'sch-led',
+        find: '原理图第 8 页右上角：3V3 → 排阻 RN2（2kΩ）→ LED → LED-1 / LED-2 / LED-3。这三根线在核心板上接 PA0、PA1、PA8。引脚输出 0 时 LED 两端有压差，<b>亮</b>；输出 1 时两端都是 3.3 V，灭。',
+        card: 'LED1 / LED2 / LED3 = PA0 / PA1 / PA8，<b>输出 0 亮</b>' },
+      { q: 'GPIOA 挂在哪条总线上？时钟归谁管？', doc: 'fig-sys',
+        find: '系统结构图：GPIOA 在 <b>APB2</b> 那一列，经桥接 1 接到 AHB；外设时钟统一由 <b>RCC</b>（复位和时钟控制）开关。所以第一步要在 RCC 里找 APB2 的时钟使能寄存器。',
+        card: 'GPIOA 在 APB2 上，时钟开关在 RCC' },
+      { q: 'RCC_APB2ENR 里哪一位是 GPIOA？', doc: 'reg-apb2',
+        find: '第 2 位 <b>IOPAEN</b>：写 1 开 GPIOA 的时钟。头文件里的宏叫 RCC_APB2ENR_IOPAEN。用 |= 只开这一位，别的外设的时钟不动。',
+        card: 'RCC_APB2ENR 的 IOPAEN（位 2）写 1' },
+      { q: '要让引脚输出，芯片里是什么结构？', doc: 'fig-out',
+        find: '输出配置图：输出数据寄存器 → 输出控制 → <b>P-MOS / N-MOS</b>。推挽模式下写 1，P-MOS 导通，引脚接 VDD；写 0，N-MOS 导通，引脚接地。LED 只需要能被拉到 0，推挽就行（课件用推挽）。',
+        card: '用<b>推挽输出</b>' },
+      { q: 'CRL 里怎么把 PA0 配成推挽输出？', doc: 'reg-crl',
+        find: '每个脚在 CRL / CRH 里占 4 位：<b>MODE = 11</b> 是输出、最大 50 MHz；<b>CNF = 00</b> 是通用推挽。复位值 0100 是浮空输入，所以要先把 4 位清掉再置。PA0~7 在 CRL，<b>PA8 在 CRH</b>。',
+        card: 'MODE = 11、CNF = 00（先清后置）；PA8 在 CRH' },
+      { q: '怎么让它输出 0 或 1？', doc: 'reg-bsrr',
+        find: 'ODR 的每一位就是输出值。更方便的是 <b>BSRR</b>：低 16 位 BSy 写 1 → 这一位置 1；高 16 位 BRy 写 1 → 清 0。只动写 1 的位，不用先读出来。复位后 ODR 是 0——配成输出那一刻灯会亮，所以要<b>先写 1 再切输出</b>。',
+        card: '亮：BR 写 1；灭：BS 写 1；先写 1 再切输出' }
+    ],
+    // 每一章都一样的初始化框架；这一章每一格填什么
+    frame: [
+      { k: '① 开时钟', q: '这个外设挂在哪条总线？时钟在 RCC 哪一位？', a: 'RCC->APB2ENR 的 IOPAEN（GPIOA 在 APB2 上）' },
+      { k: '② 配引脚', q: '用哪几个脚？输入还是输出？推挽还是开漏？', a: 'PA0、PA1、PA8 推挽输出 50 MHz；先把输出写成 1，上电不闪' },
+      { k: '③ 配外设', q: '外设自己还有要配的吗？（波特率、分频……）', a: 'GPIO 没有：它本身就是引脚' },
+      { k: '④ 使能', q: '要不要打开外设的总开关？', a: 'GPIO 没有' },
+      { k: '用', q: '平时怎么用：读、写，还是等标志？', a: '写输出：亮 = BR 写 1（输出 0），灭 = BS 写 1（输出 1）' }
+    ],
+    split: { q: '先写成一个 main.c 行不行？什么时候要拆成 led.h / led.c？',
+      a: '<b>行</b>。只点一个灯、只用这一次，全写在 main 里最省事，编写那一步的第一版就是这样。<br>要拆的时候：灯一多（三个灯）、别的章节也要点灯（按键、串口都会用到）、换板子只想改一处——这时把「怎么点灯」收进 led.c，main 里只说「点哪个灯」。<b>.h 是给别人看的说明书</b>（有哪些函数、编号），<b>.c 是只有自己知道的做法</b>（哪个端口、哪一位、寄存器）。' },
+    // 第一版：一个灯，全写在 main.c 里（[代码, 注释, 为什么]）
+    single: [
+      ['#include "stm32f10x.h"', '芯片头文件：寄存器名、宏都在里面', ''],
+      ['#include "delay.h"', 'Delay_ms 来自延时模块', ''],
+      ['', '', ''],
+      ['int main(void)', '', ''],
+      ['{', '', ''],
+      ['    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;', '开 GPIOA 的时钟', '时钟没开，后面写 GPIOA 的寄存器都没反应。|= 只开这一位。'],
+      ['    GPIOA->BSRR = GPIO_BSRR_BS0;', '先把输出写成 1（灭）', '这时 PA0 还是输入，写 ODR 不影响引脚；等一会儿切成输出，输出的就是 1，上电不闪。'],
+      ['    GPIOA->CRL &= ~(GPIO_CRL_CNF0 | GPIO_CRL_MODE0);', '清掉 PA0 的 4 个配置位', '复位值 0100（浮空输入）里的 CNF0 = 01 要先清掉，否则 |= 以后变成开漏。'],
+      ['    GPIOA->CRL |= GPIO_CRL_MODE0;', 'PA0：推挽输出 50 MHz', 'MODE0 = 11 输出 50 MHz；CNF0 清零后就是 00 推挽。'],
+      ['    while (1) {', '一直循环', ''],
+      ['        GPIOA->BSRR = GPIO_BSRR_BR0;', '输出 0：亮', 'BR0 在 BSRR 的第 16 位，写 1 把 ODR0 清 0。'],
+      ['        Delay_ms(500);', '', ''],
+      ['        GPIOA->BSRR = GPIO_BSRR_BS0;', '输出 1：灭', ''],
+      ['        Delay_ms(500);', '', ''],
+      ['    }', '', ''],
+      ['}', '', '']
+    ],
+    // 代码上方的小标题（子目标）：同一套标签，每一章都一样
+    groups: {
+      'single': { 5: '① 开时钟', 6: '② 配引脚', 9: '用：亮 → 等 → 灭 → 等' },
+      'led.c': { 7: '① 开时钟', 8: '② 配引脚（先写 1，再切输出）', 15: '用：亮', 21: '用：灭', 27: '用：翻转' },
+      'led.h': { 0: '头文件保护', 5: '对外的编号', 9: '对外的函数' },
+      'main.c': { 5: '先初始化', 6: '主循环：只说「点哪个灯」' }
+    },
+    // 资料：sch 开发板原理图 / fig 参考手册框图 / reg 寄存器位图。框是相对整张图的比例 [x, y, w, h]
+    docs: {
+      'sch-led': { kind: 'sch', page: 'board-08', title: 'LED 电路', crop: [0.69, 0.05, 0.25, 0.24], hl: [[0.715, 0.08, 0.17, 0.19]] },
+      'sch-key': { kind: 'sch', page: 'board-08', title: '按键电路', crop: [0.11, 0.33, 0.33, 0.33], hl: [[0.13, 0.355, 0.15, 0.1]] },
+      'fig-sys': { kind: 'fig', fig: 'sys-arch', crop: [0, 0, 0.82, 0.74], hl: [[0.398, 0.428, 0.146, 0.092], [0.628, 0.655, 0.085, 0.042]] },
+      'fig-out': { kind: 'fig', fig: 'gpio-out', hl: [[0.3, 0.5, 0.52, 0.42]] },
+      'fig-in': { kind: 'fig', fig: 'gpio-in' },
+      'reg-apb2': { kind: 'reg', id: 'RCC_APB2ENR', f: ['IOPAEN'], val: 0x4 },
+      'reg-apb2-f': { kind: 'reg', id: 'RCC_APB2ENR', f: ['IOPFEN'], val: 0x80 },
+      'reg-crl': { kind: 'reg', id: 'GPIO_CRL', f: ['MODE0', 'CNF0', 'MODE1', 'CNF1'], val: 0x44444433 },
+      'reg-crh': { kind: 'reg', id: 'GPIO_CRH', f: ['MODE8', 'CNF8'], val: 0x44444443 },
+      'reg-crh-key': { kind: 'reg', id: 'GPIO_CRH', f: ['MODE8', 'CNF8'], val: 0x44444448 },
+      'reg-bsrr': { kind: 'reg', id: 'GPIO_BSRR', f: ['BR0', 'BS0'] },
+      'reg-odr': { kind: 'reg', id: 'GPIO_ODR', f: ['ODR0', 'ODR1', 'ODR8'] },
+      'reg-idr': { kind: 'reg', id: 'GPIO_IDR', f: ['IDR8'] }
+    },
+    // 换题：同一套框架，换一个需求
+    transfer: {
+      title: '换题：按键控制 LED',
+      ask: '按住 KEY1，LED1 亮；松开，LED1 灭。LED 模块已经写好，可以直接用 LED_Init / LED_On / LED_Off。你来写 KEY_Init，和主循环里判断按键的那几行。',
+      look: [
+        { q: 'KEY1 接在哪个脚？按下是什么电平？', doc: 'sch-key', a: 'PF8。按下接 GND（低电平），原理图上<b>没有上拉电阻</b>——松开时要靠芯片内部上拉。' },
+        { q: '输入要怎么配？', doc: 'fig-in', a: '上拉输入：MODE8 = 00（输入），CNF8 = 10（上拉/下拉），再把 ODR8 写成 1 选「上拉」。' },
+        { q: '怎么读这个脚？', doc: 'reg-idr', a: '读 IDR 的第 8 位：(GPIOF->IDR & GPIO_IDR_IDR8) == 0 就是按下。' }
+      ]
+    }
   };
   var ORDER = ['gpio'];
 
   /* ===================== 代码 → 模拟器的程序 ===================== */
-  function file(ch, name) { var c = CD()[ch.cd], f = c && c.files.filter(function (x) { return x.name === name; })[0]; return f ? f.lines : []; }
+  function file(ch, name) { if (name === 'single') return ch.single; var c = CD()[ch.cd], f = c && c.files.filter(function (x) { return x.name === name; })[0]; return f ? f.lines : []; }
   // 把一个 .c 文件拆成全局行和函数（记下每一行在文件里的行号）
   function parseFile(lines) {
     var fns = {}, globals = [], cur = null, depth = 0;
@@ -126,11 +219,13 @@
     });
     return { fns: fns, globals: globals };
   }
+  // 「else」单独起一行时接到上一行后面（模拟器按行插桩，else 不能和 if 分开）
+  function joinElse(lines) { var out = []; lines.forEach(function (x) { if (/^\s*else\b/.test(x) && out.length) out[out.length - 1] += ' ' + x.trim(); else out.push(x); }); return out; }
   function program(ch, override) {
     var c = parseFile(file(ch, 'led.c')), m = parseFile(file(ch, 'main.c'));
     var fns = c.fns, hdr = file(ch, 'led.h').map(function (l) { return l[0]; }).filter(function (x) { return /^#define\s+\w+\s+\S/.test(x.trim()); });
     Object.keys(override || {}).forEach(function (k) {
-      var body = String(override[k]).split('\n').map(function (x) { return { c: x }; }).filter(function (x) { return x.c.trim(); });
+      var body = joinElse(String(override[k]).split('\n').filter(function (x) { return x.trim(); })).map(function (x) { return { c: x }; });
       fns[k] = { sig: fns[k] ? fns[k].sig : 'void ' + k + '(void)', lines: body, src: body.map(function (_, i) { return i; }), mine: true };
     });
     if (m.fns.main) fns.main = m.fns.main;
@@ -140,7 +235,7 @@
   /* ===================== 跑一遍，记下每一行之前的状态 ===================== */
   function mode(c) { if (c.mode === 0) return c.cnf === 0 ? 'an' : 'in'; return ['pp', 'od', 'afpp', 'afod'][c.cnf]; }
   function snap(ch, M) {
-    var g = M.gpio[ch.port], o = { t: M.t, clk: !!(M.rcc[ch.clk.reg] & (1 << ch.clk.bit)), crl: g.CRLv >>> 0, crh: g.CRHv >>> 0, odr: g.ODRv >>> 0, pins: {} };
+    var g = M.gpio[ch.port], o = { t: M.t, apb2: M.rcc.APB2ENR >>> 0, clk: !!(M.rcc[ch.clk.reg] & (1 << ch.clk.bit)), crl: g.CRLv >>> 0, crh: g.CRHv >>> 0, odr: g.ODRv >>> 0, pins: {} };
     ch.pins.forEach(function (p) { var c = M.pinCfg(p.key), lv = M.level(p.key); o.pins[p.key] = { mode: mode(c), odr: c.odr, level: lv === 'Z' ? 'z' : lv }; });
     return o;
   }
@@ -149,6 +244,7 @@
     var S = Sim(), prog = program(ch, override), snaps = [], err = null;
     if (chip.patch) prog.globals = chip.patch(prog.globals);
     if (chip.main) prog.fns.main = { sig: 'int main(void)', lines: chip.main.map(function (c) { return { c: c }; }), src: chip.main.map(function (_, i) { return i; }) };
+    if (chip.file === 'single') prog.fns.main = parseFile(ch.single).fns.main;
     var r = S.run({ fns: prog.fns, globals: prog.globals }, { ms: chip.ms || 30, onLine: function (f, i, M) { snaps.push({ f: f, i: i, s: snap(ch, M) }); } });
     if (r.stop.kind === 'error') err = r.stop.text;
     snaps.push({ f: '__end', i: -1, s: snap(ch, r.machine) });
@@ -246,9 +342,74 @@
     return out;
   }
 
+  /* ===================== 一行代码 → 右边该放哪份资料 =====================
+     认寄存器名和宏名：RCC->APB2ENR / ->CRL / ->CRH / ->BSRR / ->ODR / ->IDR；字段从宏名里取（GPIO_CRL_MODE0 → MODE0）。
+     state 是这一行执行完以后的芯片状态（有就把寄存器的值也画出来）。 */
+  function docFor(ch, code, state) {
+    var t = String(code || '').replace(/\/\/.*$/, ''), f = [], m, rx;
+    function grab(re) { var out = []; re.lastIndex = 0; while ((m = re.exec(t))) { var n = m[2] ? m[1] + m[2] : m[1]; if (out.indexOf(n) < 0) out.push(n); } return out; }
+    if (/APB2ENR/.test(t)) { f = grab(/RCC_APB2ENR_(\w+)()/g); return { kind: 'reg', id: 'RCC_APB2ENR', f: f, val: state ? state.apb2 : null }; }
+    if ((rx = /->\s*(CRL|CRH)\b/.exec(t))) {
+      f = []; grab(/GPIO_CR[LH]_(?:CNF|MODE)(\d+)(?:_\d)?()/g).forEach(function (n) { f.push('MODE' + n, 'CNF' + n); });
+      return { kind: 'reg', id: 'GPIO_' + rx[1], f: f, val: state && /LED_PORT|GPIOA/.test(t) ? state[rx[1].toLowerCase()] : null };
+    }
+    if (/->\s*BSRR\b/.test(t)) {
+      f = grab(/GPIO_BSRR_(B[SR]\d+)()/g);
+      if (/led_pin\s*\[\s*n\s*\]\s*<<\s*16/.test(t)) f = ['BR0', 'BR1', 'BR8'];
+      else if (/led_pin\s*\[\s*n\s*\]/.test(t)) f = ['BS0', 'BS1', 'BS8'];
+      var v = 0; f.forEach(function (n) { var k = Number(n.slice(2)); v |= (n[1] === 'R' ? 1 << (k + 16) : 1 << k); });
+      return { kind: 'reg', id: 'GPIO_BSRR', f: f, val: /led_pin/.test(t) ? null : v >>> 0, write: true };
+    }
+    if (/->\s*BRR\b/.test(t)) return { kind: 'reg', id: 'GPIO_BRR', f: grab(/GPIO_BRR_(BR\d+)()/g) };
+    if (/->\s*ODR\b|GPIO_ODR_ODR/.test(t)) {
+      f = grab(/GPIO_ODR_(ODR\d+)()/g); if (/led_pin/.test(t)) f = ['ODR0', 'ODR1', 'ODR8'];
+      return { kind: 'reg', id: 'GPIO_ODR', f: f, val: state && /LED_PORT|GPIOA|led_pin/.test(t) ? state.odr : null };
+    }
+    if (/->\s*IDR\b/.test(t)) return { kind: 'reg', id: 'GPIO_IDR', f: grab(/GPIO_IDR_(IDR\d+)()/g) };
+    if (/#define\s+LED_PORT|LED1|LED2|LED3/.test(t)) return ch.docs['sch-led'];
+    return null;
+  }
+
+  /* ===================== 换题：按键控制 LED ===================== */
+  function levelAt(tr, us) { var v = null; (tr || []).forEach(function (e) { if (e[0] <= us) v = e[1]; }); return v; }
+  function checkKey(ch, initSrc, loopSrc) {
+    var S = Sim(), prog = program(ch, { KEY_Init: initSrc }), out = [];
+    var loop = joinElse(String(loopSrc || '').split('\n').filter(function (x) { return x.trim(); }));
+    prog.fns.main = { sig: 'int main(void)', lines: ['LED_Init();', 'KEY_Init();', 'while (1) {'].concat(loop, ['Delay_ms(1);', '}']).map(function (c) { return { c: c }; }) };
+    var press = [[150, 350], [600, 800]];   // 主循环末尾悄悄加了 1 ms 延时：模拟器不用空转上千万圈，效果和一直查一样
+    var r = S.run({ fns: prog.fns, globals: prog.globals }, { ms: 950, board: { keys: [{ pin: 'PF8', down: press }] } });
+    if (r.stop.kind === 'error') return [{ k: 'err', id: 'syntax', msg: '这段代码模拟器看不懂：' + r.stop.text + '。检查一下括号、分号和宏名的拼写。' }];
+    var M = r.machine, c = M.pinCfg('PF8');
+    if (!(M.rcc.APB2ENR & (1 << 7))) return [{ k: 'err', id: 'clk', doc: 'reg-apb2-f', msg: 'GPIOF 没有开时钟，PF8 的配置都没生效。',
+      hints: ['KEY1 在哪个端口？那个端口的时钟开了吗？', 'GPIOF 也在 APB2 上：RCC_APB2ENR 的 IOPFEN（位 7）。', 'RCC->APB2ENR |= RCC_APB2ENR_IOPFEN;'] }];
+    if (c.mode !== 0) out.push({ k: 'err', id: 'out', doc: 'reg-crh-key', msg: 'PF8 被配成了输出。按键要配成输入。',
+      hints: ['按键是「读」，引脚应该是输入还是输出？', 'MODE8 = 00 是输入。', 'GPIOF->CRH &= ~(GPIO_CRH_CNF8 | GPIO_CRH_MODE8);\nGPIOF->CRH |= GPIO_CRH_CNF8_1;\nGPIOF->BSRR = GPIO_BSRR_BS8;'] });
+    else if (c.cnf === 1) out.push({ k: 'err', id: 'float', doc: 'fig-in', msg: 'PF8 是浮空输入：松开的时候没有任何东西决定它的电平，读到的值不可靠。',
+      hints: ['看原理图：KEY1 松开时，PF8 接到哪了？', '板子上没有上拉电阻，要用芯片内部的：CNF8 = 10（上拉/下拉），ODR8 = 1 选上拉。', 'GPIOF->CRH &= ~(GPIO_CRH_CNF8 | GPIO_CRH_MODE8);\nGPIOF->CRH |= GPIO_CRH_CNF8_1;\nGPIOF->BSRR = GPIO_BSRR_BS8;'] });
+    else if (c.cnf === 2 && !c.odr) out.push({ k: 'err', id: 'pulldown', doc: 'reg-odr', msg: 'PF8 选成了下拉：松开是 0，按下也是 0，分不出来。',
+      hints: ['上拉还是下拉，由哪个寄存器决定？', 'CNF8 = 10 时，ODR8 = 1 是上拉，0 是下拉。复位后 ODR 是 0。', 'GPIOF->BSRR = GPIO_BSRR_BS8;'] });
+    else if (c.cnf === 0) out.push({ k: 'err', id: 'analog', doc: 'reg-crh-key', msg: 'PF8 是模拟输入：数字部分断开了，读出来永远是 0。',
+      hints: ['CNF8 = 00、MODE8 = 00 是哪种模式？', '上拉输入要 CNF8 = 10。', 'GPIOF->CRH |= GPIO_CRH_CNF8_1;'] });
+    if (out.length) return out;
+    // 行为：松开时灭、按住时亮
+    var at = [[100, 1], [250, 0], [480, 1], [700, 0], [900, 1]], got = at.map(function (x) { return levelAt(r.trace.PA0, x[0] * 1000); });
+    var ok = at.every(function (x, i) { return got[i] === x[1]; });
+    if (!ok) {
+      var inv = at.every(function (x, i) { return got[i] === 1 - x[1]; }), stuck = got.every(function (g) { return g === got[0]; });
+      if (inv) out.push({ k: 'err', id: 'inverted', doc: 'sch-key', msg: '反了：松开时 LED1 亮，按住时灭。',
+        hints: ['按下的时候，PF8 读到的是 0 还是 1？', '上拉 + 按键接地：按下读到 0。判断条件要写成 == 0。', 'if ((GPIOF->IDR & GPIO_IDR_IDR8) == 0) LED_On(LED1);\nelse LED_Off(LED1);'] });
+      else if (stuck) out.push({ k: 'err', id: 'stuck', doc: 'reg-idr', msg: 'LED1 一直' + (got[0] === 0 ? '亮' : '灭') + '，没有跟着按键变。',
+        hints: ['主循环里有没有每一圈都读一次 PF8？', '读 IDR 的第 8 位：GPIOF->IDR & GPIO_IDR_IDR8。按下和松开要分别点亮、熄灭。', 'if ((GPIOF->IDR & GPIO_IDR_IDR8) == 0) LED_On(LED1);\nelse LED_Off(LED1);'] });
+      else out.push({ k: 'err', id: 'follow', doc: 'reg-idr', msg: 'LED1 没有完全跟着按键：按住时应该一直亮，松开就灭。',
+        hints: ['松开的时候有没有把灯熄掉？', '两种情况都要处理：if … LED_On … else LED_Off。', 'if ((GPIOF->IDR & GPIO_IDR_IDR8) == 0) LED_On(LED1);\nelse LED_Off(LED1);'] });
+      return out;
+    }
+    return [{ k: 'ok', msg: '全对：GPIOF 开了时钟，PF8 上拉输入，按住亮、松开灭。同一套框架：① 开时钟 → ② 配引脚 → 用（这次是读）。' }];
+  }
+
   return {
     CH: CH, ORDER: ORDER, chapter: function (id) { return CH[id] || null; },
-    file: file, parseFile: parseFile, program: program, trace: trace, diff: diff, body: body,
-    checkInit: checkInit, checkOnOff: checkOnOff
+    file: file, parseFile: parseFile, joinElse: joinElse, program: program, trace: trace, diff: diff, body: body,
+    checkInit: checkInit, checkOnOff: checkOnOff, checkKey: checkKey, docFor: docFor, levelAt: levelAt
   };
 });
