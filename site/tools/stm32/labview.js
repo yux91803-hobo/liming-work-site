@@ -22,10 +22,15 @@
   function Lab(host, ch, opt) {
     opt = opt || {};
     var reduce = ui.reduced(), phase = opt.phase || function () {};
-    var N = ch.pins.length, OY0 = 640, STEP = 288, H = OY0 + N * STEP - 8;
+    var TIMS = ch.tims || [], TB = {}, yb = 640;
+    TIMS.forEach(function (d) { var h = d.basic ? 150 : 236; TB[d.n] = { ox: 15, oy: yb, h: h, d: d }; yb += h + 12; });
+    var N = ch.pins.length, OY0 = TIMS.length ? yb + 8 : 640, STEP = 288, H = OY0 + N * STEP - 8;
     var PORT = {}; ch.pins.forEach(function (p, i) { PORT[p.key] = { ox: 15, oy: OY0 + i * STEP, label: p.label, color: p.color }; });
     var keys = ch.pins.map(function (p) { return p.key; });
     var GY = 544;   // APB2 列表里 GPIOA 那一行
+    var A1R = ['SPI3/I2S', 'SPI2/I2S', 'IWDG', 'WWDG', 'RTC', 'TIM7', 'TIM6', 'TIM5', 'TIM4', 'TIM3', 'TIM2'];   // APB1 右边一列（照手册图 1）
+    function A1Y(i) { return 410 + i * 16.6; }
+    function TY(n) { return A1Y(A1R.indexOf('TIM' + n)) - 5; }   // APB1 列表里 TIMn 那一行的中线
 
     var root = el('div', 'lb'), chipsBox = el('div', 'lb-chips'), grid = el('div', 'lb-grid');
     var codep = el('section', 'lb-codep'), hwp = el('section', 'lb-hwp');
@@ -34,18 +39,18 @@
     codep.setAttribute('aria-label', '代码'); hwp.setAttribute('aria-label', '硬件');
     codep.appendChild(ctxBox); codep.appendChild(codeBox); codep.appendChild(exp);
     var hwh = el('div', 'lb-hwh'), views = el('div', 'lb-seg'); views.setAttribute('role', 'group'); views.setAttribute('aria-label', '看哪里');
-    var vFollow = ui.btn('', '跟着信号'), vAll = ui.btn('', '全图');
+    var vFollow = ui.btn('', '跟随信号'), vAll = ui.btn('', '全图');
     views.appendChild(vFollow); views.appendChild(vAll); hwh.appendChild(views);
     var stage = el('div', 'lb-stage'), svg = sv('svg', { class: 'lb-fig', viewBox: '0 0 1000 620', preserveAspectRatio: 'xMidYMid meet', role: 'img', 'aria-label': 'Cortex-M3 经总线到 GPIOA、引脚、LED 的信号路线' });
     stage.appendChild(svg);
-    var wave = sv('svg', { class: 'lb-wave', viewBox: '0 0 1000 ' + (24 + N * 30), role: 'img', 'aria-label': '引脚电平随时间的变化' });
+    var wave = sv('svg', { class: 'lb-wave', viewBox: '0 0 1000 ' + (TIMS.length ? 36 + TIMS.length * 46 + (TIMS.some(function (d) { return d.pin; }) ? 34 : 0) : 24 + N * 30), role: 'img', 'aria-label': '引脚电平随时间的变化' });
     hwp.appendChild(hwh); hwp.appendChild(stage); hwp.appendChild(wave);
     grid.appendChild(codep); grid.appendChild(hwp);
     var ctl = el('div', 'lb-ctl');
-    var bReset = ui.btn('lb-b', '重置'), bPrev = ui.btn('lb-b', '‹ 上一行'), cnt = el('span', 'lb-cnt', '0 / 0'), bNext = ui.btn('lb-b lb-p', '下一行 ›'), bPlay = ui.btn('lb-b', '▶ 连着放');
+    var bReset = ui.btn('lb-b', '重置'), bPrev = ui.btn('lb-b', '‹ 上一行'), cnt = el('span', 'lb-cnt', '0 / 0'), bNext = ui.btn('lb-b lb-p', '下一行 ›'), bPlay = ui.btn('lb-b', '▶ 连续播放');
     var spd = el('div', 'lb-seg'); spd.setAttribute('role', 'group'); spd.setAttribute('aria-label', '速度');
-    [['慢', 1.8], ['正常', 1], ['快', 0.45]].forEach(function (s) { var b = ui.btn('', s[0]); b.dataset.k = s[1]; b.setAttribute('aria-pressed', String(s[1] === 1)); spd.appendChild(b); });
-    var busSeg = el('div', 'lb-seg'), bBus = ui.btn('', '跳过总线那段'); bBus.setAttribute('aria-pressed', 'false'); busSeg.appendChild(bBus);
+    [['慢', 3.2], ['正常', 1], ['快', 0.45]].forEach(function (s) { var b = ui.btn('', s[0]); b.dataset.k = s[1]; b.setAttribute('aria-pressed', String(s[1] === 1)); spd.appendChild(b); });
+    var busSeg = el('div', 'lb-seg'), bBus = ui.btn('', '跳过总线'); bBus.setAttribute('aria-pressed', 'false'); busSeg.appendChild(bBus);
     [bReset, bPrev, cnt, bNext, bPlay, spd, busSeg].forEach(function (x) { ctl.appendChild(x); });
     root.appendChild(chipsBox); root.appendChild(grid); root.appendChild(ctl);
     host.appendChild(root);
@@ -94,15 +99,15 @@
       sv('rect', { x: 575, y: 282, width: 104, height: 30, class: 'fb' }, g); tx(g, 627, 303, '桥接2', 't14', 'middle');
       sv('rect', { x: 575, y: 312, width: 104, height: 30, class: 'fb' }, g); tx(g, 627, 333, '桥接1', 't14', 'middle');
       apb(g, 679, 320, 334, 718, 392); tx(g, 742, 370, 'APB2', 't14');
-      var a1 = sv('g', { class: 'fade' }, g); apb(a1, 679, 290, 304, 878, 392); tx(a1, 902, 360, 'APB1', 't14');
+      var a1 = sv('g', { class: TIMS.length ? '' : 'fade' }, g); apb(a1, 679, 290, 304, 878, 392); tx(a1, 902, 360, 'APB1', 't14');
       sv('rect', { x: 640, y: 392, width: 156, height: 192, class: 'fb' }, g);
       var me = 'GPIO' + ch.port;
       ['ADC1', 'ADC2', 'ADC3', 'USART1', 'SPI1', 'TIM1', 'TIM8', 'GPIOA', 'GPIOB'].forEach(function (s, i) { var t = tx(g, 650, 412 + i * 19.6, s, 't13'); if (s === me) t.setAttribute('class', 't14 bold'); else t.setAttribute('fill', 'var(--fig-2)'); });
       ['GPIOC', 'GPIOD', 'GPIOE', 'GPIOF', 'GPIOG', 'EXTI', 'AFIO'].forEach(function (s, i) { tx(g, 786, 412 + i * 19.6, s, 't13', 'end').setAttribute('fill', 'var(--fig-2)'); });
-      var a2 = sv('g', { class: 'fade' }, g);
+      var a2 = sv('g', { class: TIMS.length ? '' : 'fade' }, g), mine = TIMS.map(function (d) { return 'TIM' + d.n; });
       sv('rect', { x: 810, y: 392, width: 176, height: 192, class: 'fb' }, a2);
-      ['DAC', 'PWR', 'BKP', 'bxCAN', 'USB', 'I2C2', 'I2C1', 'UART5', 'UART4'].forEach(function (s, i) { tx(a2, 818, 412 + i * 19.6, s, 't13'); });
-      ['SPI3/I2S', 'SPI2/I2S', 'IWDG', 'WWDG', 'RTC', 'TIM7', 'TIM6', 'TIM5', 'TIM4'].forEach(function (s, i) { tx(a2, 978, 412 + i * 19.6, s, 't13', 'end'); });
+      ['DAC', 'PWR', 'BKP', 'bxCAN', 'USB', 'I2C2', 'I2C1', 'UART5', 'UART4', 'USART3', 'USART2'].forEach(function (s, i) { var t = tx(a2, 818, A1Y(i), s, 't13'); if (TIMS.length) t.setAttribute('fill', 'var(--fig-2)'); });
+      A1R.forEach(function (s, i) { var t = tx(a2, 978, A1Y(i), s, 't13', 'end'); if (mine.indexOf(s) >= 0) t.setAttribute('class', 't14 bold'); else if (TIMS.length) t.setAttribute('fill', 'var(--fig-2)'); });
     })();
 
     // 端口位：照「输出配置」画（局部 700 × 280，每个引脚一张）
@@ -152,7 +157,84 @@
     }
     keys.forEach(drawPort);
     sv('rect', { x: 8, y: 608, width: 984, height: H - 614, class: 'fl', 'stroke-width': 1 }, gFig);
-    tx(gFig, 22, 630, '端口位 · 输出配置', 'cap');
+    tx(gFig, 22, 630, TIMS.length ? '定时器 · 端口位' : '端口位 · 输出配置', 'cap');
+
+    /* ---------- 定时器：照参考手册「通用定时器框图」简化（局部 700 宽） ----------
+       寄存器框：PSC → CNT（数到 ARR 产生 UEV）→ UIF → UIE → 中断；通道：CNT 与 CCRx 比较 → 输出控制 → CCxE → 引脚 */
+    var TE = {}, TBOX = { PSC: [40, 66, 100, 52], CNT: [186, 66, 120, 52], ARR: [352, 66, 100, 52], CCR: [186, 156, 120, 52] };
+    function TT(n, d) { var o = TB[n]; return d.replace(/([MLHV])\s*(-?[\d.]+)(?:\s+(-?[\d.]+))?/g, function (m, c, a, b) {
+      if (c === 'H') return 'H' + (+a + o.ox); if (c === 'V') return 'V' + (+a + o.oy);
+      return c + (+a + o.ox) + ' ' + (+b + o.oy); }); }
+    function drawTim(d) {
+      var o = TB[d.n], g = sv('g', { transform: 'translate(' + o.ox + ' ' + o.oy + ')' }, gFig), e = TE[d.n] = { box: {} };
+      sv('rect', { x: 5, y: 4, width: 690, height: o.h - 8, class: 'fl', 'stroke-width': 1 }, g);
+      tx(g, 16, 28, 'TIM' + d.n, 't15 bold');
+      sv('path', { class: 'fl', d: 'M88 44 H700 M90 44 V66 M246 44 V66 M402 44 V66' + (d.basic ? '' : ' M322 44 V146 H290 V156'), 'stroke-width': 1, opacity: 0.55 }, g);
+      // 时钟输入
+      sv('path', { class: 'fl', d: 'M8 92 H32' }, g); sv('polygon', { class: 'ff', points: '40,92 30,87 30,97' }, g); tx(g, 8, 60, 'CK_INT', 't11');
+      function box(k, x, y, w, h, lab) {
+        sv('rect', { x: x, y: y, width: w, height: h, class: 'fb' }, g); tx(g, x + 8, y + 16, lab, 't12 bold');
+        e.box[k] = { x: x, y: y, w: w, h: h, val: tx(g, x + w / 2, y + h - 12, '0', 'tv', 'middle') };
+      }
+      box('PSC', 40, 66, 100, 52, 'PSC');
+      sv('path', { class: 'fl', d: 'M140 92 H178' }, g); sv('polygon', { class: 'ff', points: '186,92 176,87 176,97' }, g); tx(g, 163, 84, 'CK_CNT', 't11', 'middle');
+      box('CNT', 186, 66, 120, 52, 'CNT');
+      e.bar = sv('rect', { x: 190, y: 110, width: 0, height: 4, class: 'tbar' }, g);
+      sv('path', { class: 'fl', d: 'M306 92 H344' }, g); sv('polygon', { class: 'ff', points: '352,92 342,87 342,97' }, g);
+      box('ARR', 352, 66, 100, 52, 'ARR');
+      // 更新事件 → UIF →（UIE）→ 中断
+      var ig = sv('g', { class: d.basic ? '' : 'fade' }, g);
+      sv('path', { class: 'fl', d: 'M452 92 H482' }, ig); sv('polygon', { class: 'ff', points: '490,92 480,87 480,97' }, ig); tx(ig, 470, 84, 'UEV', 't12', 'middle');
+      sv('rect', { x: 490, y: 72, width: 54, height: 40, class: 'fb' }, ig); tx(ig, 517, 97, 'UIF', 't13 bold', 'middle');
+      sv('path', { class: 'fl', d: 'M544 92 H576' }, ig);
+      sv('path', { class: 'fb', d: 'M576 72 H596 A20 20 0 0 1 596 112 H576 Z' }, ig); tx(ig, 594, 97, 'UIE', 't12', 'middle');
+      sv('path', { class: 'fl', d: 'M616 92 H700' }, ig); tx(ig, 640, 84, '中断', 't12');
+      e.uif = sv('rect', { x: 492, y: 74, width: 50, height: 36, class: 'tflag off' }, g);
+      e.gate = sv('path', { d: 'M577 73 H596 A19 19 0 0 1 596 111 H577 Z', class: 'tflag off' }, g);
+      e.irq = sv('path', { d: 'M616 92 H700', class: 'lv none' }, g);
+      if (!d.basic) {
+        box('CCR', 186, 156, 120, 52, 'CCR' + d.ch);
+        sv('path', { class: 'fl', d: 'M306 182 H340' }, g);
+        sv('path', { class: 'fl', d: 'M246 118 V136 H360 V160' }, g);
+        sv('rect', { x: 340, y: 160, width: 44, height: 44, class: 'fb' }, g); tx(g, 362, 189, '<', 't17', 'middle');
+        sv('path', { class: 'fl', d: 'M384 182 H420' }, g); sv('polygon', { class: 'ff', points: '428,182 418,177 418,187' }, g); tx(g, 404, 174, 'OC' + d.ch + 'REF', 't12', 'middle');
+        sv('rect', { x: 428, y: 156, width: 100, height: 52, class: 'fb' }, g); tx(g, 436, 172, '输出控制', 't12 bold');
+        e.ocm = tx(g, 478, 197, '', 'tv', 'middle');
+        e.pol = sv('circle', { cx: 533, cy: 182, r: 5, class: 'fb' }, g);
+        sv('path', { class: 'fl', d: 'M538 182 H566 M590 182 H700' }, g);
+        e.sw = sv('path', { class: 'fl', d: 'M566 182 L588 170' }, g);
+        tx(g, 578, 160, 'CC' + d.ch + 'E', 't12', 'middle');
+        tx(g, 640, 174, 'TIM' + d.n + '_CH' + d.ch, 't12 bold', 'middle');
+        e.ocLv = sv('path', { d: 'M384 182 H428', class: 'lv none' }, g);
+        e.outLv = sv('path', { d: 'M538 182 H566 M590 182 H700', class: 'lv none' }, g);
+      }
+      e.dim = sv('rect', { x: 0, y: 0, width: 700, height: o.h - 4, class: 'veil off' }, g);
+      e.clkIn = sv('path', { d: 'M8 92 H32', class: 'clkline off' }, g);
+      e.hl = {}; ['PSC', 'CNT', 'ARR', 'CCR'].forEach(function (k) { var b = TBOX[k]; e.hl[k] = sv('rect', { x: b[0] - 4, y: b[1] - 4, width: b[2] + 8, height: b[3] + 8, rx: 6, class: 'hlbox off' }, g); });
+      e.hl.UIF = sv('rect', { x: 486, y: 68, width: 62, height: 48, rx: 6, class: 'hlbox off' }, g);
+      e.hl.UIE = sv('rect', { x: 572, y: 68, width: 50, height: 48, rx: 6, class: 'hlbox off' }, g);
+      e.hl.OCTL = sv('rect', { x: 424, y: 152, width: 108, height: 60, rx: 6, class: 'hlbox off' }, g);
+      e.hl.CCE = sv('rect', { x: 558, y: 158, width: 40, height: 34, rx: 6, class: 'hlbox off' }, g);
+    }
+    TIMS.forEach(drawTim);
+    // APB1 到各个定时器的连线；TIM5 通道 → PA1 的复用功能输入
+    if (TIMS.length) {
+      var lastT = TB[TIMS[TIMS.length - 1].n], tl = 'M892 584 V' + (lastT.oy + 44);
+      TIMS.forEach(function (d) { tl += ' M892 ' + (TB[d.n].oy + 44) + ' H' + (TB[d.n].ox + 700); });
+      sv('path', { class: 'conn', d: tl }, gFig);
+    }
+    function afPath(d) { var o = TB[d.n], po = PORT[d.pin]; return 'M' + (o.ox + 700) + ' ' + (o.oy + 182) + ' H744 V' + (po.oy + 266) + ' H' + (po.ox + 360) + ' V' + (po.oy + 230); }
+    TIMS.forEach(function (d) { if (d.pin && PORT[d.pin]) sv('path', { class: 'fl', d: afPath(d), 'stroke-width': 1.3 }, gFig); });
+    // NVIC：画在 Cortex-M3 里面（手册的系统结构图里没有，教学简化）；中断请求线从定时器绕回来
+    var nvicBox = null, msTx = null, irqLine = '';
+    if (TIMS.some(function (d) { return d.irq; })) {
+      sv('rect', { x: 150, y: 140, width: 70, height: 32, class: 'fb' }, gFig); tx(gFig, 185, 161, 'NVIC', 't13 bold', 'middle');
+      var dI = TIMS.filter(function (d) { return d.irq; })[0], oI = TB[dI.n];
+      irqLine = 'M' + (oI.ox + 700) + ' ' + (oI.oy + 92) + ' H996 V20 H185 V140';
+      sv('path', { class: 'fl', d: irqLine, 'stroke-dasharray': '6 5', 'stroke-width': 1.2, opacity: 0.6 }, gFig);
+      nvicBox = sv('rect', { x: 150, y: 140, width: 70, height: 32, class: 'tflag off' }, gTop);
+      msTx = tx(gTop, 130, 128, '', 'tms', 'middle');
+    }
     var last = PORT[keys[N - 1]];
     var trunk = 'M724 584 V603 H16 V' + (last.oy + 219);
     keys.forEach(function (p) { var o = PORT[p]; trunk += ' M16 ' + (o.oy + 127) + ' H' + (o.ox + 10) + ' M16 ' + (o.oy + 56) + ' H' + (o.ox + 12) + ' M16 ' + (o.oy + 219) + ' H' + (o.ox + 14); });
@@ -198,18 +280,53 @@
       e.glow = sv('circle', { cx: LX, cy: Y.top + 9, r: 22, class: 'ledglow off c-' + o.color }, gTop);
       e.led = sv('polygon', { points: (LX - 11) + ',' + Y.top + ' ' + (LX + 11) + ',' + Y.top + ' ' + LX + ',' + (Y.bot - 2), class: 'ledbody c-' + o.color }, gTop);
     });
+    TIMS.forEach(function (d) { if (d.pin && E[d.pin]) E[d.pin].af = sv('path', { d: afPath(d), class: 'lv none' }, gLv); });
     var hCpu = hlRect(26, 36, 208, 148), hRcc = hlRect(406, 341, 144, 60), hGp = hlRect(644, GY - 11, 60, 24);
     var clk = sv('path', { d: 'M546 371 H614 V' + GY + ' H645', class: 'clkline off' }, gTop);
+    var tclk = {}, hT = {};
+    TIMS.forEach(function (d, k) {
+      tclk[d.n] = sv('path', { d: 'M546 ' + (380 + k * 6) + ' H' + (906 - k * 5) + ' V' + TY(d.n) + ' H930', class: 'clkline off' }, gTop);
+      hT[d.n] = hlRect(928, TY(d.n) - 11, 56, 22);
+    });
+    var hNvic = nvicBox ? hlRect(146, 136, 78, 40) : null;
 
     function cls(e, c) { e.setAttribute('class', c); }
     function off(e, on) { e.classList.toggle('off', !on); }
     function setLv(e, v, show) { cls(e, 'lv ' + (show === false || v === 'z' || v == null ? 'none' : v ? 'hi' : 'lo')); }
     function setBadge(g, v, show) { g.setAttribute('class', 'badge ' + (v ? 'one' : 'zero')); g.style.opacity = show === false ? 0 : 1; g.querySelector('text').textContent = v; }
     function lit(pp) { return isOut(pp.mode) && pp.level === 0; }
+    function fmtV(v) { return v == null ? '' : String(v); }
+    function ocMode(t, k) { var m = ((k <= 2 ? t.CCMR1 : t.CCMR2) >> (((k - 1) & 1) * 8 + 4)) & 7; return m === 6 ? 'PWM1' : m === 7 ? 'PWM2' : m ? 'OCM ' + m.toString(2) : ''; }
+    var shown = null;
+    function renderTim(s) {
+      shown = s;
+      TIMS.forEach(function (d) {
+        var e = TE[d.n], t = s.tim[d.n];
+        off(tclk[d.n], t.clk); off(e.clkIn, t.clk); off(e.dim, !t.clk);
+        e.box.PSC.val.textContent = fmtV(t.PSC); e.box.ARR.val.textContent = fmtV(t.ARR);
+        if (!live[d.n] || !(t.CR1 & 1)) { e.box.CNT.val.textContent = '0'; e.bar.setAttribute('width', 0); }
+        off(e.uif, !!(t.SR & 1)); off(e.gate, !!(t.DIER & 1));
+        setLv(e.irq, 1, !!(t.DIER & 1) && !!(t.SR & 1));
+        if (!d.basic) {
+          e.box.CCR.val.textContent = fmtV(t.CCR[d.ch]);
+          e.ocm.textContent = ocMode(t, d.ch);
+          var pol = (t.CCER >> ((d.ch - 1) * 4 + 1)) & 1, en = (t.CCER >> ((d.ch - 1) * 4)) & 1;
+          e.pol.style.opacity = pol ? 1 : 0;
+          e.sw.setAttribute('d', en ? 'M566 182 H590' : 'M566 182 L588 170');
+        }
+      });
+      if (nvicBox) { var on = TIMS.some(function (d) { return d.irq && s.nvic[d.irq]; }); off(nvicBox, on); }
+      if (msTx) msTx.textContent = irqN ? 'ms ' + irqN : '';
+      drawScope(s);
+      liveFrame(performance.now(), true);
+    }
     function render(s) {
       off(clk, !!s.clk);
-      keys.forEach(function (p) {
-        var e = E[p], q = s.pins[p], m = q.mode, out = isOut(m), lvl = q.level;
+      keys.forEach(function (p) { pinVisual(p, s.pins[p], s.clk); });
+      if (TIMS.length) renderTim(s);
+    }
+    function pinVisual(p, q, sclk) {
+        var e = E[p], m = q.mode, out = isOut(m), lvl = q.level, af = m === 'afpp' || m === 'afod', s = { clk: sclk };
         off(e.dim, !s.clk);
         off(e.oveil, !out); off(e.pveil, m === 'od' || m === 'afod'); off(e.iveil, m === 'an');
         off(e.hP, m === 'pp' && q.odr === 1); off(e.hN, out && q.odr === 0);
@@ -218,17 +335,104 @@
         setBadge(e.idrB, iv === 'z' ? 1 : iv, !!s.clk && iv !== 'z');
         setLv(e.net, lvl);
         setLv(e.in, iv, !!s.clk && m !== 'an');
-        setLv(e.o, q.odr, out);
-        setLv(e.gp, 1, m === 'pp' && q.odr === 1);
-        setLv(e.gn, 1, out && q.odr === 0);
+        setLv(e.o, q.odr, out && !af);
+        var drv = af ? lvl : q.odr;   // 复用输出：驱动 MOS 管的是外设的输出，不是 ODR
+        if (af) { off(e.hP, m === 'afpp' && lvl === 1); off(e.hN, lvl === 0); if (e.af) setLv(e.af, lvl, lvl !== 'z'); }
+        setLv(e.gp, 1, (m === 'pp' || m === 'afpp') && drv === 1);
+        setLv(e.gn, 1, out && drv === 0);
         var on = lit(q);
         off(e.glow, on); e.led.classList.toggle('on', on); off(e.cur, on);
+    }
+
+    /* ---------- 定时器在跑：慢动作计数（一圈约 2.6 秒 × 速度），溢出、比较、中断都按这个节奏演 ---------- */
+    var live = {}, irqN = 0, liveRaf = 0, lastT = 0, PERIOD = 2600, quiet = false;
+    function timLevel(d, t, cnt) {
+      var m = ocMode(t, d.ch), ccr = t.CCR[d.ch], pol = (t.CCER >> ((d.ch - 1) * 4 + 1)) & 1, en = (t.CCER >> ((d.ch - 1) * 4)) & 1;
+      var act = m === 'PWM1' ? cnt < ccr : m === 'PWM2' ? cnt >= ccr : false;
+      return { act: act ? 1 : 0, level: en ? ((act ? 1 : 0) ^ pol) : 'z', en: en };
+    }
+    function overflow(d, t, L0) {
+      var e = TE[d.n];
+      if (d.basic) {
+        off(e.uif, true); flash(e.hl.UIF, 300);
+        if ((t.DIER & 1) && shown.nvic[d.irq] && !quiet && irqLine) {
+          setLv(e.irq, 1, true);
+          var tk = token;
+          fly(irqLine, COL.r, '', 900).then(function () {
+            if (tk !== token && !playing) return;
+            irqN++; if (msTx) msTx.textContent = 'ms ' + irqN; flash(hNvic, 300); ring(130, 110, 'var(--read)');
+            off(e.uif, false); setLv(e.irq, 1, false);
+          });
+        }
+      }
+      void L0;
+    }
+    function liveFrame(now, once) {
+      var s = shown; if (!s || !s.tim) return;
+      var dt = once || !lastT ? 0 : Math.max(0, Math.min(120, now - lastT)); if (!once || !lastT) lastT = now;
+      TIMS.forEach(function (d) {
+        var t = s.tim[d.n], e = TE[d.n], L0 = live[d.n] || (live[d.n] = { cnt: 0, k: 0, lv: null });
+        var run = t.clk && (t.CR1 & 1) && !quiet, top = (t.ARR || 0) + 1;
+        if (run && !reduce) {
+          L0.cnt += dt * top / (PERIOD * speed);
+          if (L0.cnt >= top) { L0.k += Math.floor(L0.cnt / top); L0.cnt = L0.cnt % top; overflow(d, t, L0); }
+        } else if (!run) { L0.cnt = 0; L0.k = 0; }
+        if (run) { e.box.CNT.val.textContent = String(Math.floor(L0.cnt)); e.bar.setAttribute('width', (112 * L0.cnt / top).toFixed(1)); }
+        if (!d.basic) {
+          var r = run ? timLevel(d, t, L0.cnt) : { act: 0, level: s.pins[d.pin] ? s.pins[d.pin].level : 'z', en: 0 };
+          setLv(e.ocLv, r.act, run); setLv(e.outLv, r.level, run && r.en);
+          var key = String(r.level) + (run ? 'r' : 's');
+          if (L0.lv !== key || once) {
+            L0.lv = key;
+            if (d.pin && s.pins[d.pin]) { var q = clone(s.pins[d.pin]); if ((q.mode === 'afpp' || q.mode === 'afod') && run) q.level = r.level; pinVisual(d.pin, q, s.clk); }
+          }
+        }
       });
+      scopeCursor();
+    }
+    function loop(now) { liveFrame(now); liveRaf = requestAnimationFrame(loop); }
+    if (TIMS.length) liveRaf = requestAnimationFrame(loop);
+    // 示波器：每个定时器一行（CNT 锯齿 + CCR 那条线），有通道的再加一行引脚波形；光标跟着慢动作走
+    var scopeCur = null;
+    function drawScope(s) {
+      while (wave.firstChild) wave.removeChild(wave.firstChild);
+      var x0 = 86, W = 880, y = 10;
+      TIMS.forEach(function (d) {
+        var t = s.tim[d.n], run = t.clk && (t.CR1 & 1), top = (t.ARR || 0) + 1, h = 34;
+        sv('text', { x: 8, y: y + 22, class: 'wl' }, wave).textContent = 'TIM' + d.n;
+        var dp = 'M' + x0 + ' ' + (y + h);
+        if (run) for (var k = 0; k < 2; k++) dp += ' L' + (x0 + W * (k + 1) / 2) + ' ' + y + ' V' + (y + h);
+        else dp += ' H' + (x0 + W);
+        sv('path', { d: dp, class: 'wp' }, wave);
+        if (!d.basic && run) {
+          var cy = y + h - h * Math.min(1, t.CCR[d.ch] / top);
+          sv('path', { d: 'M' + x0 + ' ' + cy + ' H' + (x0 + W), class: 'wccr' }, wave);
+          y += h + 12;
+          sv('text', { x: 8, y: y + 16, class: 'wl' }, wave).textContent = d.pin;
+          var op = '', lv0 = null;
+          for (var i = 0; i <= 400; i++) {
+            var f = i / 400, cnt = (f * 2 % 1) * top, r = timLevel(d, t, cnt), yy = r.level === 'z' ? y + 10 : r.level ? y : y + 20, xx = x0 + W * f;
+            op += (i ? (yy !== lv0 ? ' V' + yy : '') + ' H' + xx.toFixed(1) : 'M' + xx + ' ' + yy); lv0 = yy;
+          }
+          sv('path', { d: op, class: 'wp' }, wave);
+          y += 24;
+        } else y += h + 12;
+      });
+      scopeCur = sv('line', { x1: x0, y1: 4, x2: x0, y2: y, class: 'wcur' }, wave);
+    }
+    function scopeCursor() {
+      if (!scopeCur || !shown) return;
+      var run = function (x) { var t0 = shown.tim[x.n]; return t0 && t0.clk && (t0.CR1 & 1); };
+      var d = TIMS.filter(function (x) { return !x.basic && run(x); })[0] || TIMS.filter(run)[0] || TIMS[0], L0 = live[d.n], t = shown.tim[d.n];
+      if (!L0 || !t) { scopeCur.setAttribute('x1', 86); scopeCur.setAttribute('x2', 86); return; }
+      var x = 86 + 880 * (((L0.k % 2) + L0.cnt / ((t.ARR || 0) + 1)) / 2);
+      scopeCur.setAttribute('x1', x.toFixed(1)); scopeCur.setAttribute('x2', x.toFixed(1));
     }
 
     /* ---------- 波形：每个引脚一行，过去实线、将来虚线 ---------- */
     function wgt(ev) { var t = ev && ev.parts[0].t; return t === 'delay' ? 3 : t === 'cpu' ? 0.6 : 1; }
     function drawWave() {
+      if (TIMS.length) { drawScope(st[c] || st[0]); return; }
       while (wave.firstChild) wave.removeChild(wave.firstChild);
       var tot = 0; evs.forEach(function (e) { tot += wgt(e); });
       var x0 = 64, k = tot ? Math.min(130, 916 / tot) : 0;
@@ -256,7 +460,8 @@
     function stacked() { return window.matchMedia('(max-width: 899px)').matches; }
     function rectOf(where) {
       if (view === 'all' || where === 'all') return { x: 0, w: 1000, y: 0, h: H };
-      if (where === 'A') return { x: 0, w: 836, y: 0, h: 604 };   // 跟着信号时，淡掉的 APB1 那一列不用看全
+      if (where === 'A') return { x: 0, w: TIMS.length ? 1000 : 836, y: 0, h: 604 };   // GPIO 那几章：淡掉的 APB1 那一列不用看全
+      if (/^T\d+$/.test(where) && TB[where.slice(1)]) { var tb = TB[where.slice(1)]; return { x: 0, w: 1000, y: tb.oy - 8, h: tb.h + 4 }; }
       if (where === 'B') return { x: 0, w: 1000, y: 604, h: H - 604 };
       var o = PORT[where]; return o ? { x: 0, w: 1000, y: o.oy - 8, h: 292 } : rectOf('A');
     }
@@ -273,7 +478,7 @@
     function camTo(where, now) {
       camAt = where; var t = fit(where), a = clone(cam); cancelAnimationFrame(camAnim);
       if (now || reduce || (Math.abs(t.y - a.y) < 1 && Math.abs(t.h - a.h) < 1 && Math.abs(t.w - a.w) < 1)) { cam = t; setVB(); return Promise.resolve(); }
-      var t0 = performance.now(), dur = 420 * Math.min(speed, 1.2);
+      var t0 = performance.now(), dur = 420 * Math.min(speed, 2.4);
       return new Promise(function (res) {
         (function f(n) { var k = Math.min(1, (n - t0) / dur), e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; cam = lerp(a, t, e); setVB(); if (k < 1) camAnim = requestAnimationFrame(f); else res(); })(t0);
       });
@@ -371,7 +576,10 @@
       clk: async function (part, a, b) {
         phase('cpu'); await camTo('A'); flash(hCpu, 400); phase('bus');
         if (!(await fly(A_RCC, COL.w, '', 760))) return false;
-        phase('reg'); flash(hRcc, 700); render(b); ring(614, GY, 'var(--clk)'); return wait(600);
+        phase('reg'); flash(hRcc, 700); render(b);
+        var tn = /^TIM(\d+)$/.exec(part.what || '');
+        if (tn && hT[tn[1]]) { ring(940, TY(tn[1]), 'var(--clk)'); flash(hT[tn[1]], 600); } else ring(614, GY, 'var(--clk)');
+        return wait(600);
       },
       w: async function (part, a, b) {
         var pins = part.pins, focus = focusOf(pins), dg = pins.map(function (p) { return String(b.pins[p].odr); });
@@ -424,6 +632,45 @@
         if (!(await fly(A_OUT, COL.w, '', 760))) return false;
         flash(hGp, 500); render(b); return wait(300);
       },
+      treg: async function (part, a, b) {
+        var n = part.tim, o = TB[n], e = TE[n], R = part.reg, t = b.tim[n], v = '';
+        if (!o) { render(b); return wait(200); }
+        if (R === 'PSC' || R === 'ARR') v = String(t[R]); else if (/^CCR\d$/.test(R)) v = String(t.CCR[+R.slice(3)]);
+        var tgt = R === 'PSC' ? [90, 66] : R === 'ARR' ? [402, 66] : /^CCR/.test(R) ? null : R === 'SR' ? [517, 72] : R === 'DIER' ? [596, 72] : /^CC(MR|ER)/.test(R) ? [470, 156] : [246, 66];
+        phase('cpu');
+        if (!skipBus) {
+          await camTo('A'); flash(hCpu, 360); phase('bus');
+          if (!(await fly('M216 160 H376 V297 H884 V400 H892 V' + TY(n) + ' H926', COL.w, v, 760))) return false;
+          flash(hT[n], 400);
+          if (part.lost) { ring(950, TY(n), 'var(--err)'); ring(950, TY(n), 'var(--err)'); render(b); return wait(600); }
+        } else await camTo('T' + n);
+        phase('reg');
+        var tail = tgt ? ' H' + (o.ox + tgt[0]) + ' V' + (o.oy + tgt[1]) : ' H' + (o.ox + 322) + ' V' + (o.oy + 146) + ' H' + (o.ox + 290) + ' V' + (o.oy + 156);
+        if (!(await fly('M926 ' + TY(n) + ' H892 V' + (o.oy + 44) + ' H' + (o.ox + 700) + tail, COL.w, v, 760, null, skipBus ? null : 'T' + n))) return false;
+        var hk = R === 'PSC' || R === 'ARR' ? R : /^CCR/.test(R) ? 'CCR' : R === 'SR' ? 'UIF' : R === 'DIER' ? 'UIE' : /^CCMR/.test(R) ? 'OCTL' : R === 'CCER' ? 'CCE' : 'CNT';
+        flash(e.hl[hk], 600);
+        if (R === 'EGR') { ['PSC', 'ARR', 'CCR', 'CNT'].forEach(function (k) { if (e.box[k]) { flash(e.hl[k], 600); pulse(e.box[k].val); } }); live[n] = { cnt: 0, k: 0, lv: null }; }
+        if (R === 'CCER' && e.hl.OCTL) flash(e.hl.OCTL, 600);
+        render(b);
+        if (e.box[hk]) pulse(e.box[hk].val);
+        if (R === 'CR1' && (t.CR1 & 1) && !(a.tim[n].CR1 & 1)) { ring(o.ox + 246, o.oy + 92, 'var(--hi)'); phase(TIMS.filter(function (d) { return d.n === n; })[0].pin ? 'pin' : 'reg'); }
+        return wait(380);
+      },
+      tread: async function (part, a, b) {
+        var n = part.tim, o = TB[n], e = TE[n], v = String(a.tim[n].SR & 1);
+        phase('cpu');
+        if (!skipBus) { await camTo('A'); flash(hCpu, 360); phase('bus'); if (!(await fly('M216 160 H376 V297 H884 V400 H892 V' + TY(n) + ' H926', COL.w, '', 700))) return false; }
+        var go = 'M926 ' + TY(n) + ' H892 V' + (o.oy + 44) + ' H' + (o.ox + 700) + ' H' + (o.ox + 517) + ' V' + (o.oy + 72);
+        if (!(await fly(go, COL.w, '', 640, null, skipBus ? null : 'T' + n))) return false;
+        phase('reg'); flash(e.hl.UIF, 500);
+        var back = 'M' + (o.ox + 517) + ' ' + (o.oy + 72) + ' V' + (o.oy + 44) + ' H' + (o.ox + 700) + ' H892 V' + TY(n) + ' H926';
+        if (!(await fly(back, COL.r, v, 640, null, skipBus ? null : 'A'))) return false;
+        if (!skipBus && !(await fly('M926 ' + TY(n) + ' H892 V400 H884 V297 H376 V160 H216', COL.r, v, 700))) return false;
+        flash(hCpu, 400); render(b); return wait(200);
+      },
+      nvic: async function (part, a, b) {
+        phase('cpu'); await camTo('A'); flash(hCpu, 360); flash(hNvic, 700); render(b); if (nvicBox) pulse(nvicBox); return wait(600);
+      },
       lost: async function (part, a, b) {
         await camTo('A'); flash(hCpu, 400);
         if (!(await fly(A_OUT, COL.w, '', 760))) return false;
@@ -436,7 +683,8 @@
       render(a);
       for (var k = 0; k < ev.parts.length; k++) {
         var part = ev.parts[k], n = clone(s);
-        if (part.t === 'clk') n.clk = b.clk;
+        if (part.t === 'clk') { if (part.bus === 'APB1') { n.apb1 = b.apb1; n.tim[part.what.slice(3)].clk = true; } else { n.clk = b.clk; n.apb2 = b.apb2; } }
+        if (part.t === 'treg' || part.t === 'tread' || part.t === 'nvic') { n.tim = clone(b.tim); n.nvic = clone(b.nvic); }
         if (part.t === 'w') part.pins.forEach(function (p) { n.pins[p].odr = b.pins[p].odr; derive(n.pins[p]); });
         if (part.t === 'mode') part.pins.forEach(function (p) { n.pins[p].mode = b.pins[p].mode; derive(n.pins[p]); });
         if (k === ev.parts.length - 1) n = b;
@@ -467,6 +715,7 @@
       ui.clear(codeBox);
       var runs = {}; evs.forEach(function (e) { runs[e.ln] = 1; });
       sp.lines.forEach(function (l) { codeBox.appendChild(line(l.n, l.t, !!runs[l.n], l.d)); });
+      quiet = !!sp.quiet; live = {}; irqN = 0; if (msTx) msTx.textContent = '';
       show(); cam = fit('A'); camAt = 'A'; setVB(); render(st[0]);
     }
     function show(animating) {
@@ -480,7 +729,7 @@
       exp.innerHTML = e ? spec.explain(c - 1, e, st[c - 1], st[c]) : spec.intro || '';
       cnt.textContent = c + ' / ' + evs.length;
       bPrev.disabled = c === 0; bNext.disabled = c >= evs.length;
-      bPlay.textContent = playing ? '❚❚ 暂停' : '▶ 连着放';
+      bPlay.textContent = playing ? '❚❚ 暂停' : '▶ 连续播放';
       if (!animating) render(st[c]);
       drawWave();
       var cl = codeBox.querySelector('.lb-cl.cur');
@@ -539,7 +788,7 @@
 
     return {
       root: root, chips: chipsBox, load: load, go: function (ln) { if (evs.some(function (e) { return e.ln === ln; })) { try { root.scrollIntoView({ block: 'start' }); } catch (e) {} goLine(ln); } },
-      destroy: function () { token++; playing = false; cancelAnimationFrame(camAnim); window.removeEventListener('resize', onResize); document.removeEventListener('keydown', onKey); root.remove(); }
+      destroy: function () { token++; playing = false; cancelAnimationFrame(camAnim); cancelAnimationFrame(liveRaf); window.removeEventListener('resize', onResize); document.removeEventListener('keydown', onKey); root.remove(); }
     };
   }
 
@@ -549,7 +798,10 @@
   function autoText(ev, a, b) {
     var o = [];
     ev.parts.forEach(function (pt) {
-      if (pt.t === 'clk') o.push('经 AHB 到 <b>RCC</b>，GPIOA 的时钟打开。');
+      if (pt.t === 'clk') o.push('经 AHB 到 <b>RCC</b>，' + (pt.what || 'GPIOA') + ' 的时钟打开。');
+      if (pt.t === 'treg') o.push(pt.lost ? '<b>TIM' + pt.tim + ' 还没开时钟</b>：这一行写了也没用。' : '经 APB1 写 TIM' + pt.tim + ' 的 <b>' + pt.reg + '</b>。');
+      if (pt.t === 'tread') o.push('经 APB1 把 TIM' + pt.tim + ' 的 <b>' + pt.reg + '</b> 读回 Cortex-M3。');
+      if (pt.t === 'nvic') o.push('<b>NVIC</b> 打开这一路中断。');
       if (pt.t === 'w') pt.pins.forEach(function (p) {
         var q = b.pins[p], out = isOut(q.mode);
         o.push(p + ' 的输出数据寄存器 = ' + q.odr + (out ? (q.odr ? '：<b>P-MOS 导通</b>，引脚 3.3 V，灯灭。' : '：<b>N-MOS 导通</b>，电流流过 LED，灯亮。') : '。还不是输出，引脚不动。'));
@@ -568,6 +820,8 @@
   function tagOf(ev, b) {
     var w = ev.parts.filter(function (p) { return p.t === 'w'; })[0];
     if (w && ev.parts.length === 1) return w.pins.map(function (p) { return p + ' = ' + b.pins[p].odr; }).join('  ');
+    var tr = ev.parts.filter(function (p) { return p.t === 'treg'; })[0];
+    if (tr && b.tim && b.tim[tr.tim]) { var tv = b.tim[tr.tim], R = tr.reg; if (R === 'PSC' || R === 'ARR') return R + ' = ' + tv[R]; if (/^CCR\d$/.test(R)) return R + ' = ' + tv.CCR[+R.slice(3)]; }
     var d = ev.parts[0].t === 'delay' ? ev.parts[0].ms + ' ms' : '';
     return d;
   }
@@ -590,8 +844,10 @@
     var t = L.trace(ch, chip), F = t.fn, src = L.file(ch, chip.file), lines = [], comment = {}, why = {};
     var from = chip.fn === 'main' ? F.head : F.head, to = F.close != null ? F.close : src.length - 1;
     for (var i = from; i <= to; i++) { lines.push({ n: i, t: src[i][0] }); if (src[i][1]) comment[i] = src[i][1]; if (src[i][2]) why[i] = src[i][2]; }
-    var ctx = chip.file === 'led.c' ? src.slice(2, 4).map(function (l) { return l[0]; }) : [];
-    return specFromTrace(ch, t, { lines: lines, ctx: ctx, comment: comment, why: why, intro: chip.intro });
+    var ctx = chip.file === ch.cfile && ch.ctx ? src.slice(ch.ctx[0], ch.ctx[1] + 1).map(function (l) { return l[0]; }).filter(function (x) { return x.trim() && !/^#include/.test(x.trim()); }) : [];
+    var sp = specFromTrace(ch, t, { lines: lines, ctx: ctx, comment: comment, why: why, intro: chip.intro });
+    sp.quiet = chip.id === 'isr';   // 一行行看中断函数的时候，慢动作里的定时器先停住
+    return sp;
   }
   function tourSpec(ch) {
     var t = L.trace(ch, { fn: 'main', main: ch.tour.map(function (x) { return x[0]; }) });
@@ -606,34 +862,34 @@
      硬件原理：怎么工作（动画）/ 为什么这样设计（原来的「设计原理」推导链）
      路由：v=think&t=gpio&hv=run|why&fn=芯片函数&ln=行号（从编程思维的「看硬件」跳过来）
      ===================================================================== */
-  var CHAIN = [['cpu', 'CPU 访问寄存器'], ['bus', '总线'], ['reg', 'GPIO 寄存器'], ['drv', '输出驱动'], ['pin', '引脚电平'], ['led', 'LED']];
+  function chainOf(ch) { return [['cpu', 'CPU 访问寄存器'], ['bus', '总线'], ['reg', ch.tims ? '定时器寄存器' : 'GPIO 寄存器'], ['drv', '输出驱动'], ['pin', '引脚电平'], ['led', 'LED']]; }
   function mineSpec(ch, which) {
-    var names = { 'mine-init': ['LED_Init', ['LED_Init();']], 'mine-on': ['LED_On', ['LED_Init();', 'LED_On(1);']], 'mine-off': ['LED_Off', ['LED_Init();', 'LED_On(1);', 'LED_Off(1);']] }[which];
+    var names = (ch.mine || {})[which];
     if (!names) return null;
     var srcOf = function (n) { return ui.lsGet(SKEY + ch.id + '.' + n); }, over = {};
-    ['LED_Init', 'LED_On', 'LED_Off'].forEach(function (n) { var v = srcOf(n); if (v && v.trim()) over[n] = v; });
+    Object.keys(ch.mine).forEach(function (k) { var n = ch.mine[k][0], v = srcOf(n); if (v && v.trim()) over[n] = v; });
     if (!over[names[0]]) return null;
     var t = L.trace(ch, { fn: names[0], main: names[1] }, over);
     var bl = L.joinElse(String(over[names[0]]).split('\n').filter(function (x) { return x.trim(); }));
-    var sig = L.parseFile(L.file(ch, 'led.c')).fns[names[0]].sig;
+    var sig = L.parseFile(L.file(ch, ch.cfile)).fns[names[0]].sig;
     var lines = [{ n: -2, t: sig, d: 1 }, { n: -1, t: '{', d: 2 }].concat(bl.map(function (x, i) { return { n: i, t: x, d: i + 3 }; })).concat([{ n: 999, t: '}', d: bl.length + 3 }]);
-    return specFromTrace(ch, t, { lines: lines, intro: '这是你在「编程思维 · 验证」里自己写的 ' + names[0] + '。点「下一行」，看每一行在芯片里做了什么。' });
+    return specFromTrace(ch, t, { lines: lines, intro: '这是你在「编程思维 · 验证」里检查过的 ' + names[0] + '。点「下一行」，看每一行在芯片里做了什么。' });
   }
   function hwChapter(root, route, app) {
     var ch = L.chapter(route.t), t = STM.model.topicById[ch.topic], wrap = el('div', 'labp hwp lab-wide'), mode = null, inner = null, lab = null;
     root.appendChild(wrap);
     var head = el('header', 'lab-head'), h1 = el('h1', null, (t ? t.code : ch.id.toUpperCase()) + '：硬件原理');
     var tabs = el('nav', 'lab-tabs'); tabs.setAttribute('aria-label', '看哪一部分');
-    [['run', '怎么工作'], ['why', '为什么这样设计']].forEach(function (x) {
+    [['run', '工作过程'], ['why', '设计原理']].forEach(function (x) {
       var a = app.link({ v: 'think', t: ch.id, hv: x[0] }, 'lab-tab'); a.dataset.hv = x[0]; a.appendChild(el('span', null, x[1])); tabs.appendChild(a);
     });
-    var toProg = app.link({ v: 'lab', t: ch.id, st: 'code' }, 'hw-prog'); toProg.appendChild(el('span', null, '编程思维：怎么写出来')); toProg.appendChild(ui.icon('next'));
+    var toProg = app.link({ v: 'lab', t: ch.id, st: 'code' }, 'hw-prog'); toProg.appendChild(el('span', null, '编程思维')); toProg.appendChild(ui.icon('next'));
     head.appendChild(h1); head.appendChild(tabs); head.appendChild(toProg); wrap.appendChild(head);
     var body = el('div', 'hw-body'); wrap.appendChild(body);
     function modeOf(r) { return r.hv === 'why' || r.hv === 'run' ? r.hv : r.s ? 'why' : 'run'; }
     function pickChip(r) {
       var mine = /^mine-/.test(r.fn || '') ? mineSpec(ch, r.fn) : null;
-      var chip = ch.chips.filter(function (x) { return x.id === r.fn; })[0];
+      var chip = ch.chips.filter(function (x) { return x.id === r.fn; })[0] || (ch.tour ? null : ch.chips[0]);
       var id = mine ? r.fn : chip ? chip.id : 'tour';
       Array.prototype.forEach.call(lab.chips.children, function (b) { b.setAttribute('aria-pressed', String(b.dataset.k === id)); });
       lab.load(mine || (chip ? chipSpec(ch, chip) : tourSpec(ch)));
@@ -648,23 +904,23 @@
       wrap.classList.toggle('lab-wide', m === 'run');
       if (m === 'why') { inner = STM.derive.view(body, r, app); return; }
       var chain = el('ol', 'hw-chain'); chain.setAttribute('aria-label', '一次访问经过哪些地方');
-      CHAIN.forEach(function (c) { var li = el('li', null, c[1]); li.dataset.k = c[0]; chain.appendChild(li); });
+      chainOf(ch).forEach(function (c) { var li = el('li', null, c[1]); li.dataset.k = c[0]; chain.appendChild(li); });
       body.appendChild(chain);
       lab = Lab(body, ch, { phase: function (k) { Array.prototype.forEach.call(chain.children, function (li) { li.classList.toggle('on', li.dataset.k === k); }); } });
-      var list = [['tour', '先走一遍']].concat(ch.chips.map(function (c) { return [c.id, c.name]; }));
-      ['mine-init', 'mine-on', 'mine-off'].forEach(function (k) { if (mineSpec(ch, k)) list.push([k, { 'mine-init': '我写的 LED_Init', 'mine-on': '我写的 LED_On', 'mine-off': '我写的 LED_Off' }[k]]); });
+      var list = (ch.tour ? [['tour', '路径总览']] : []).concat(ch.chips.map(function (c) { return [c.id, c.name]; }));
+      Object.keys(ch.mine || {}).forEach(function (k) { if (mineSpec(ch, k)) list.push([k, ch.mine[k][2]]); });
       list.forEach(function (c) {
         var b = ui.btn('lb-chip' + (/^mine-/.test(c[0]) ? ' mine' : ''), c[1]); b.dataset.k = c[0];
         b.addEventListener('click', function () { app.navigate({ fn: c[0], ln: null }, { replace: true }); });
         lab.chips.appendChild(b);
       });
-      lab.root.appendChild(el('p', 'hw-note', '图按参考手册 RM0008 图1「系统结构」、图16「输出配置」重画，只留下这一章用到的连线，是教学简化，不是芯片内部的完整电路。右边的 LED 电路按开发板原理图第 8 页画。'));
+      lab.root.appendChild(el('p', 'hw-note', ch.tims ? '图按参考手册 RM0008 图1「系统结构」、图98「通用定时器框图」、图16「输出配置」重画，只留下这一章用到的部分；Cortex-M3 里的 NVIC 和中断请求线是补画的。教学简化，不是芯片内部的完整电路。计数是慢动作。' : '图按参考手册 RM0008 图1「系统结构」、图16「输出配置」重画，只留下这一章用到的连线，是教学简化，不是芯片内部的完整电路。右边的 LED 电路按开发板原理图第 8 页画。'));
       var f = el('section', 'lab-facts'); ch.facts.forEach(function (x) { f.appendChild(html('p', null, x)); }); body.appendChild(f);
       pickChip(r);
     }
     paint(route);
     return {
-      title: function (r) { return (t ? t.code : '') + ' · 硬件原理' + (modeOf(r) === 'why' ? ' · 为什么这样设计' : ''); },
+      title: function (r) { return (t ? t.code : '') + ' · 硬件原理' + (modeOf(r) === 'why' ? ' · 设计原理' : ''); },
       update: function (r) { var was = mode; paint(r); if (was !== mode) window.scrollTo(0, 0); },
       destroy: function () { if (inner && inner.destroy) inner.destroy(); if (lab) lab.destroy(); }
     };
