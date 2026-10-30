@@ -51,6 +51,7 @@
     if (t.v === 'think' && t.t && (t.s === 'code' || !(STM.think && STM.think.chapter(t.t))) && STM.codederive && STM.codederive.has(t.t) && M.topicById[t.t]) t = { v: 'topic', t: t.t, sec: 'code', cv: 'cd' };
     if (t.v === 'think' && t.t && !(STM.think && STM.think.chapter(t.t))) { delete t.t; delete t.p; delete t.s; }
     if (t.v === 'lab' && t.t && !(window.STM32Lab && STM32Lab.chapter(t.t))) { delete t.t; delete t.st; delete t.fn; }
+    if (t.v === 'lab' && t.st && STM.labprog && STM.labprog.OLD[t.st]) t.st = STM.labprog.OLD[t.st];   // 旧地址：需求 / 硬件 / .c … → 新的五步
     if (t.s && !(STM.derive && STM.derive.validStep(t.t, t.s))) delete t.s;
     if (t.reg && !M.R.reg(t.reg)) t = strip(t, LAYER_REG);
     return t;
@@ -112,7 +113,7 @@
 
   /* ---------- 布局：侧栏（宽屏）/ 顶栏（窄屏） ---------- */
   var side = document.getElementById('side'), bar = document.getElementById('bar'), main = document.getElementById('main');
-  var NAV = [['home', '首页', 'chip'], ['board', '开发板', 'board'], ['lab', '编程思维', 'idea']];
+  var NAV = [['home', '首页', 'chip'], ['board', '开发板', 'board'], ['lab', '编程思维', 'idea'], ['think', '硬件原理', 'bolt']];
   function hue(t) { return t ? t.hue[html.getAttribute('data-theme') === 'dark' ? 1 : 0] : ''; }
   function link(route, cls, label) {
     var a = el('a', cls); a.href = urlOf(resolve(route));

@@ -184,5 +184,7 @@
         return { id: k, topic: cd.topic || k, file: f.name, title: cd.title };
       });
     },
-    topicOf: function (id) { return DATA.CD[id] ? DATA.CD[id].topic || id : null; }, render: render, files: files, fileText: fileText, data: DATA };
+    topicOf: function (id) { return DATA.CD[id] ? DATA.CD[id].topic || id : null; }, render: render, files: files, fileText: fileText, data: DATA,
+    // 编程思维也用这几样：一行代码（注释 + 代码 + 点开看原因）、挖空的一行、挖空进度（和这里的「自己写」共用一份）
+    rows: { line: lineRow, blank: selfRow, norm: norm, loadSelf: loadSelf, saveSelf: saveSelf } };
 })();

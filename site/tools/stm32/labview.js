@@ -1,28 +1,27 @@
-/* labview.js — 侧栏「编程思维」模块
-   路由：v=lab（章节列表）；v=lab&t=gpio&st=need|hw|fn|h|c|self（某一章的某一步）；fn=…（.c / 自己写 里选哪个函数）
-   .c 那一步的图：上半张按参考手册「系统结构」画，下半张每个引脚一张「端口位·输出配置」，右边是板子上的 LED。
+/* labview.js — 侧栏「硬件原理」：一个外设在芯片里怎么工作（动画），以及为什么这样设计（原来的「设计原理」推导链）
+   路由：v=think&t=gpio&hv=run|why&fn=…&ln=…（编程思维里每行寄存器代码的「看硬件」跳到这里的同一行）
+   图：上半张按参考手册「系统结构」重画，下半张每个引脚一张「端口位·输出配置」，右边是板子上的 LED（教学简化，图下注明）。
    点一行代码 → 信号点从 Cortex-M3 出发，沿总线走到 GPIOA、走进端口位、走到引脚和 LED；读回来的时候反着走（蓝色）。
    动画只是把 lab-core.js 算好的「这一行前后的芯片状态」演出来。 */
 (function () {
   'use strict';
   var STM = window.STM, ui = STM.ui, el = ui.el, L = window.STM32Lab;
   var NS = 'http://www.w3.org/2000/svg';
-  var STAGES = [['need', '需求'], ['hw', '硬件'], ['fn', '拆函数'], ['h', '.h'], ['c', '.c'], ['self', '自己写']];
   var SKEY = 'lm.stm.lab.';
   function sv(tag, attrs, parent) { var e = document.createElementNS(NS, tag); for (var k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
   function tx(g, x, y, s, cls, anchor, rot) { var t = sv('text', { x: x, y: y, class: cls || 't15', 'text-anchor': anchor || 'start', transform: rot ? 'rotate(' + rot + ' ' + x + ' ' + y + ')' : null }, g); t.textContent = s; return t; }
   function html(tag, cls, h) { var e = el(tag, cls); e.innerHTML = h; return e; }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function isOut(m) { return m === 'pp' || m === 'od' || m === 'afpp' || m === 'afod'; }
+  function litOf(q) { return isOut(q.mode) && q.level === 0; }   // 低电平点亮
   function derive(p) { p.level = p.mode === 'pp' ? p.odr : p.mode === 'od' ? (p.odr ? 'z' : 0) : 'z'; return p; }
-  function seen(ch) { var o = {}; try { o = JSON.parse(ui.lsGet(SKEY + ch + '.seen') || '{}') || {}; } catch (e) {} return o; }
-  function markSeen(ch, st) { var o = seen(ch); if (o[st]) return; o[st] = 1; ui.lsSet(SKEY + ch + '.seen', JSON.stringify(o)); }
 
   /* =====================================================================
      图 + 动画
      ===================================================================== */
-  function Lab(host, ch) {
-    var reduce = ui.reduced();
+  function Lab(host, ch, opt) {
+    opt = opt || {};
+    var reduce = ui.reduced(), phase = opt.phase || function () {};
     var N = ch.pins.length, OY0 = 640, STEP = 288, H = OY0 + N * STEP - 8;
     var PORT = {}; ch.pins.forEach(function (p, i) { PORT[p.key] = { ox: 15, oy: OY0 + i * STEP, label: p.label, color: p.color }; });
     var keys = ch.pins.map(function (p) { return p.key; });
@@ -336,8 +335,9 @@
     function focusOf(pins) { return pins.length === 1 ? pins[0] : 'B'; }
     // Cortex-M3 经总线到 GPIOA，再分到各个引脚的端口位（镜头一路跟下去）
     async function busTo(paths, color, digits, focus) {
+      phase('cpu');
       if (!skipBus) {
-        await camTo('A'); flash(hCpu, 420);
+        await camTo('A'); flash(hCpu, 420); phase('bus');
         if (!(await fly(A_OUT, color, digits.length === 1 ? digits[0] : '', 760))) return false;
         flash(hGp, 500);
         return all(paths.map(function (d, i) { return fly(d, color, digits[i] != null ? digits[i] : '', 620, null, i === 0 ? focus : null); }));
@@ -355,6 +355,7 @@
     async function pinMove(pins, a, b) {
       var ch_ = pins.filter(function (p) { return a.pins[p].level !== b.pins[p].level || lit(a.pins[p]) !== lit(b.pins[p]); });
       if (!ch_.length) return true;
+      phase('pin');
       var ok = await all(ch_.map(function (p) {
         var q = b.pins[p];
         if (lit(q)) return fly(R.ledToVss(p), COL.w, '', 900);
@@ -362,20 +363,22 @@
         return wait(300);
       }));
       ch_.forEach(function (p) { var Y = ledY(p); ring(LX, Y.top + 9, lit(b.pins[p]) ? 'var(--hi)' : 'var(--lo)'); });
+      phase('led');
       return ok;
     }
     function mixLv(b, a) { var s = clone(b); keys.forEach(function (p) { s.pins[p].level = a.pins[p].level; }); return s; }
     var P = {
       clk: async function (part, a, b) {
-        await camTo('A'); flash(hCpu, 400);
+        phase('cpu'); await camTo('A'); flash(hCpu, 400); phase('bus');
         if (!(await fly(A_RCC, COL.w, '', 760))) return false;
-        flash(hRcc, 700); render(b); ring(614, GY, 'var(--clk)'); return wait(600);
+        phase('reg'); flash(hRcc, 700); render(b); ring(614, GY, 'var(--clk)'); return wait(600);
       },
       w: async function (part, a, b) {
         var pins = part.pins, focus = focusOf(pins), dg = pins.map(function (p) { return String(b.pins[p].odr); });
         if (part.rmw) {
           // 先把 ODR 读回来
           if (!(await busTo(pins.map(function (p) { return CONN(p, 219, 14); }), COL.w, pins.map(function () { return ''; }), focus))) return false;
+          phase('reg');
           if (!(await all(pins.map(function (p) { return fly(R.rwIn(p), COL.w, '', 320); })))) return false;
           pins.forEach(function (p) { flash(E[p].hOdr, 400); });
           var old = pins.map(function (p) { return String(a.pins[p].odr); });
@@ -388,12 +391,14 @@
           pins.forEach(function (p) { flash(E[p].hOdr, 500); });
         } else {
           if (!(await busTo(pins.map(function (p) { return CONN(p, 127, 11); }), COL.w, dg, focus))) return false;
+          phase('reg');
           if (!(await all(pins.map(function (p, i) { return fly(R.toOdr(p), COL.w, dg[i], 520); })))) return false;
           pins.forEach(function (p) { flash(E[p].hBsrr, 400); });
         }
         render(mixLv(b, a)); pins.forEach(function (p) { pulse(E[p].odrB); });
         var outs = pins.filter(function (p) { return isOut(b.pins[p].mode); });
         if (!outs.length) { pins.forEach(function (p) { flash(E[p].hOdr, 500); }); var w0 = await wait(450); render(b); return w0; }
+        phase('drv');
         if (!(await all(outs.map(function (p, i) { return fly(b.pins[p].odr ? R.gateP(p) : R.gateN(p), COL.w, String(b.pins[p].odr), 480); })))) return false;
         outs.forEach(function (p) { flash(E[p].hOctl, 400); });
         if (!(await pinMove(outs, a, b))) return false;
@@ -402,18 +407,18 @@
       mode: async function (part, a, b) {
         var pins = part.pins, focus = focusOf(pins);
         if (!(await busTo(pins.map(CONN_C), COL.w, pins.map(function () { return ''; }), focus))) return false;
-        pins.forEach(function (p) { flash(E[p].hOctl, 600); });
+        phase('drv'); pins.forEach(function (p) { flash(E[p].hOctl, 600); });
         render(mixLv(b, a)); if (!(await wait(260))) return false;
         if (!(await pinMove(pins, a, b))) return false;
         render(b); return wait(300);
       },
       delay: async function (part, a, b) {
-        var on = keys.filter(function (p) { return lit(b.pins[p]); });
+        var on = keys.filter(function (p) { return lit(b.pins[p]); }); phase(on.length ? 'led' : 'cpu');
         if (on.length) on.forEach(function (p) { var Y = ledY(p); waitArc(LX, Y.top + 9, 800); });
         else waitArc(130, 110, 800);
         var ok = await wait(800); render(b); return ok;
       },
-      cpu: async function (part, a, b) { if (!skipBus) await camTo('A'); render(b); flash(hCpu, 420); return wait(420); },
+      cpu: async function (part, a, b) { phase('cpu'); if (!skipBus) await camTo('A'); render(b); flash(hCpu, 420); return wait(420); },
       same: async function (part, a, b) {
         await camTo('A'); flash(hCpu, 400);
         if (!(await fly(A_OUT, COL.w, '', 760))) return false;
@@ -483,6 +488,7 @@
     }
     async function next() {
       if (c >= evs.length) return false;
+      phase(null);
       token++; var i = c; c++; show(true);
       await animate(i);
       return true;
@@ -532,7 +538,7 @@
     document.addEventListener('keydown', onKey);
 
     return {
-      root: root, chips: chipsBox, load: load,
+      root: root, chips: chipsBox, load: load, go: function (ln) { if (evs.some(function (e) { return e.ln === ln; })) { try { root.scrollIntoView({ block: 'start' }); } catch (e) {} goLine(ln); } },
       destroy: function () { token++; playing = false; cancelAnimationFrame(camAnim); window.removeEventListener('resize', onResize); document.removeEventListener('keydown', onKey); root.remove(); }
     };
   }
@@ -550,7 +556,7 @@
       });
       if (pt.t === 'mode') pt.pins.forEach(function (p) {
         var q = b.pins[p], m = q.mode;
-        o.push(p + ' 变成' + ({ pp: '<b>推挽输出</b>', od: '<b>开漏输出</b>', an: '模拟输入', in: '输入', afpp: '复用推挽输出', afod: '复用开漏输出' }[m] || m) + (lit(q) ? '：ODR 是 0，<b>灯一下就亮了</b>。' : '。'));
+        o.push(p + ' 变成' + ({ pp: '<b>推挽输出</b>', od: '<b>开漏输出</b>', an: '模拟输入', in: '输入', afpp: '复用推挽输出', afod: '复用开漏输出' }[m] || m) + (litOf(q) ? '：ODR 是 0，<b>灯一下就亮了</b>。' : '。'));
       });
       if (pt.t === 'delay') o.push('CPU 原地等 ' + pt.ms + ' ms，引脚保持不变。');
       if (pt.t === 'cpu') o.push('只在 Cortex-M3 里算，<b>不碰总线和引脚</b>。');
@@ -597,269 +603,72 @@
   }
 
   /* =====================================================================
-     页面
+     硬件原理：怎么工作（动画）/ 为什么这样设计（原来的「设计原理」推导链）
+     路由：v=think&t=gpio&hv=run|why&fn=芯片函数&ln=行号（从编程思维的「看硬件」跳过来）
      ===================================================================== */
-  function home(root, app) {
-    var wrap = el('div', 'labp'); root.appendChild(wrap);
-    var head = el('header', 'pg-h lab-hero');
-    head.appendChild(el('h1', null, '编程思维'));
-    var ol = el('ol', 'lab-flow'); STAGES.forEach(function (s) { ol.appendChild(el('li', null, s[1])); }); head.appendChild(ol);
-    wrap.appendChild(head);
-    var grid = el('div', 'lab-chs');
-    L.ORDER.forEach(function (id) {
-      var ch = L.chapter(id), t = STM.model.topicById[ch.topic], sn = seen(id), n = STAGES.filter(function (s) { return sn[s[0]]; }).length;
-      var a = app.link({ v: 'lab', t: id }, 'lab-ch'); a.style.setProperty('--h', app.hue(t));
-      var top = el('div', 'lab-ch-h'); top.appendChild(el('b', 'mono', t ? t.code : id.toUpperCase())); top.appendChild(el('span', 'lab-ch-n', n + ' / ' + STAGES.length)); a.appendChild(top);
-      a.appendChild(el('h2', null, ch.title));
-      a.appendChild(el('p', null, ch.task));
-      var bar = el('span', 'lab-ch-bar'); bar.style.setProperty('--k', String(n / STAGES.length)); a.appendChild(bar);
-      grid.appendChild(a);
-    });
-    wrap.appendChild(grid);
-    return { title: function () { return '编程思维'; } };
+  var CHAIN = [['cpu', 'CPU 访问寄存器'], ['bus', '总线'], ['reg', 'GPIO 寄存器'], ['drv', '输出驱动'], ['pin', '引脚电平'], ['led', 'LED']];
+  function mineSpec(ch, which) {
+    var names = { 'mine-init': ['LED_Init', ['LED_Init();']], 'mine-on': ['LED_On', ['LED_Init();', 'LED_On(1);']], 'mine-off': ['LED_Off', ['LED_Init();', 'LED_On(1);', 'LED_Off(1);']] }[which];
+    if (!names) return null;
+    var srcOf = function (n) { return ui.lsGet(SKEY + ch.id + '.' + n); }, over = {};
+    ['LED_Init', 'LED_On', 'LED_Off'].forEach(function (n) { var v = srcOf(n); if (v && v.trim()) over[n] = v; });
+    if (!over[names[0]]) return null;
+    var t = L.trace(ch, { fn: names[0], main: names[1] }, over);
+    var bl = L.joinElse(String(over[names[0]]).split('\n').filter(function (x) { return x.trim(); }));
+    var sig = L.parseFile(L.file(ch, 'led.c')).fns[names[0]].sig;
+    var lines = [{ n: -2, t: sig, d: 1 }, { n: -1, t: '{', d: 2 }].concat(bl.map(function (x, i) { return { n: i, t: x, d: i + 3 }; })).concat([{ n: 999, t: '}', d: bl.length + 3 }]);
+    return specFromTrace(ch, t, { lines: lines, intro: '这是你在「编程思维 · 验证」里自己写的 ' + names[0] + '。点「下一行」，看每一行在芯片里做了什么。' });
   }
-
-  function chapterView(root, route, app) {
-    var ch = L.chapter(route.t), wrap = el('div', 'labp lab-chp'), cur = null, lab = null;
+  function hwChapter(root, route, app) {
+    var ch = L.chapter(route.t), t = STM.model.topicById[ch.topic], wrap = el('div', 'labp hwp lab-wide'), mode = null, inner = null, lab = null;
     root.appendChild(wrap);
-    var head = el('header', 'lab-head'), h1 = el('h1', null, ch.title);
-    var tabs = el('nav', 'lab-tabs'); tabs.setAttribute('aria-label', '步骤');
-    STAGES.forEach(function (s, i) {
-      var a = app.link({ v: 'lab', t: ch.id, st: s[0] }, 'lab-tab'); a.dataset.st = s[0];
-      a.appendChild(el('span', 'lab-tab-i', String(i + 1))); a.appendChild(el('span', null, s[1]));
-      tabs.appendChild(a);
+    var head = el('header', 'lab-head'), h1 = el('h1', null, (t ? t.code : ch.id.toUpperCase()) + '：硬件原理');
+    var tabs = el('nav', 'lab-tabs'); tabs.setAttribute('aria-label', '看哪一部分');
+    [['run', '怎么工作'], ['why', '为什么这样设计']].forEach(function (x) {
+      var a = app.link({ v: 'think', t: ch.id, hv: x[0] }, 'lab-tab'); a.dataset.hv = x[0]; a.appendChild(el('span', null, x[1])); tabs.appendChild(a);
     });
-    head.appendChild(h1); head.appendChild(tabs); wrap.appendChild(head);
-    var body = el('div', 'lab-body'); wrap.appendChild(body);
-    var foot = el('nav', 'lab-foot'); foot.setAttribute('aria-label', '上一步 / 下一步'); wrap.appendChild(foot);
-
-    function stageOf(r) { return r.st || 'need'; }
+    var toProg = app.link({ v: 'lab', t: ch.id, st: 'code' }, 'hw-prog'); toProg.appendChild(el('span', null, '编程思维：怎么写出来')); toProg.appendChild(ui.icon('next'));
+    head.appendChild(h1); head.appendChild(tabs); head.appendChild(toProg); wrap.appendChild(head);
+    var body = el('div', 'hw-body'); wrap.appendChild(body);
+    function modeOf(r) { return r.hv === 'why' || r.hv === 'run' ? r.hv : r.s ? 'why' : 'run'; }
+    function pickChip(r) {
+      var mine = /^mine-/.test(r.fn || '') ? mineSpec(ch, r.fn) : null;
+      var chip = ch.chips.filter(function (x) { return x.id === r.fn; })[0];
+      var id = mine ? r.fn : chip ? chip.id : 'tour';
+      Array.prototype.forEach.call(lab.chips.children, function (b) { b.setAttribute('aria-pressed', String(b.dataset.k === id)); });
+      lab.load(mine || (chip ? chipSpec(ch, chip) : tourSpec(ch)));
+      if (r.ln != null && r.ln !== '') lab.go(Number(r.ln));
+    }
     function paint(r) {
-      var s = stageOf(r);
-      if (s === cur && lab && lab.update) { lab.update(r); return; }
-      if (lab && lab.destroy) lab.destroy();
-      lab = null; ui.clear(body); cur = s;
-      Array.prototype.forEach.call(tabs.children, function (a) { var on = a.dataset.st === s; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'step'); else a.removeAttribute('aria-current'); });
-      wrap.classList.toggle('lab-wide', s === 'c' || s === 'hw' || s === 'self');
-      lab = (STAGE[s] || STAGE.need)(body, ch, r, app) || {};
-      markSeen(ch.id, s);
-      ui.clear(foot);
-      var i = STAGES.map(function (x) { return x[0]; }).indexOf(s);
-      if (i > 0) { var p = app.link({ v: 'lab', t: ch.id, st: STAGES[i - 1][0] }, 'lab-nav lab-prev'); p.appendChild(ui.icon('back')); p.appendChild(el('span', null, STAGES[i - 1][1])); foot.appendChild(p); }
-      else foot.appendChild(el('span'));
-      if (i < STAGES.length - 1) { var nx = app.link({ v: 'lab', t: ch.id, st: STAGES[i + 1][0] }, 'lab-nav lab-next'); nx.appendChild(el('span', null, '下一步：' + STAGES[i + 1][1])); nx.appendChild(ui.icon('next')); foot.appendChild(nx); }
+      var m = modeOf(r);
+      Array.prototype.forEach.call(tabs.children, function (a) { var on = a.dataset.hv === m; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+      if (m === mode) { if (m === 'why' && inner && inner.update) inner.update(r); if (m === 'run' && lab) pickChip(r); return; }
+      if (inner && inner.destroy) inner.destroy(); if (lab) lab.destroy();
+      inner = null; lab = null; ui.clear(body); mode = m;
+      wrap.classList.toggle('lab-wide', m === 'run');
+      if (m === 'why') { inner = STM.derive.view(body, r, app); return; }
+      var chain = el('ol', 'hw-chain'); chain.setAttribute('aria-label', '一次访问经过哪些地方');
+      CHAIN.forEach(function (c) { var li = el('li', null, c[1]); li.dataset.k = c[0]; chain.appendChild(li); });
+      body.appendChild(chain);
+      lab = Lab(body, ch, { phase: function (k) { Array.prototype.forEach.call(chain.children, function (li) { li.classList.toggle('on', li.dataset.k === k); }); } });
+      var list = [['tour', '先走一遍']].concat(ch.chips.map(function (c) { return [c.id, c.name]; }));
+      ['mine-init', 'mine-on', 'mine-off'].forEach(function (k) { if (mineSpec(ch, k)) list.push([k, { 'mine-init': '我写的 LED_Init', 'mine-on': '我写的 LED_On', 'mine-off': '我写的 LED_Off' }[k]]); });
+      list.forEach(function (c) {
+        var b = ui.btn('lb-chip' + (/^mine-/.test(c[0]) ? ' mine' : ''), c[1]); b.dataset.k = c[0];
+        b.addEventListener('click', function () { app.navigate({ fn: c[0], ln: null }, { replace: true }); });
+        lab.chips.appendChild(b);
+      });
+      lab.root.appendChild(el('p', 'hw-note', '图按参考手册 RM0008 图1「系统结构」、图16「输出配置」重画，只留下这一章用到的连线，是教学简化，不是芯片内部的完整电路。右边的 LED 电路按开发板原理图第 8 页画。'));
+      var f = el('section', 'lab-facts'); ch.facts.forEach(function (x) { f.appendChild(html('p', null, x)); }); body.appendChild(f);
+      pickChip(r);
     }
     paint(route);
     return {
-      title: function (r) { var s = STAGES.filter(function (x) { return x[0] === stageOf(r); })[0]; return ch.title + (s ? ' · ' + s[1] : ''); },
-      update: function (r) { var was = cur; paint(r); if (was !== cur) window.scrollTo(0, 0); },
-      destroy: function () { if (lab && lab.destroy) lab.destroy(); }
+      title: function (r) { return (t ? t.code : '') + ' · 硬件原理' + (modeOf(r) === 'why' ? ' · 为什么这样设计' : ''); },
+      update: function (r) { var was = mode; paint(r); if (was !== mode) window.scrollTo(0, 0); },
+      destroy: function () { if (inner && inner.destroy) inner.destroy(); if (lab) lab.destroy(); }
     };
   }
 
-  /* ---------- 每一步 ---------- */
-  function reveal(q, a) {
-    var box = el('div', 'lab-q'), b = ui.btn('lab-q-h'), ans = html('div', 'lab-q-a', a);
-    b.appendChild(el('span', 'lab-q-t', q)); b.appendChild(ui.icon('next', 'ic lab-q-i'));
-    b.setAttribute('aria-expanded', 'false'); ans.hidden = true;
-    b.addEventListener('click', function () { var on = ans.hidden; ans.hidden = !on; b.setAttribute('aria-expanded', String(on)); box.classList.toggle('open', on); });
-    box.appendChild(b); box.appendChild(ans); return box;
-  }
-  var STAGE = {};
-  STAGE.need = function (body, ch) {
-    body.appendChild(html('p', 'lab-task', ch.task));
-    var list = el('div', 'lab-qs'); ch.need.forEach(function (n) { list.appendChild(reveal(n.q, n.a)); }); body.appendChild(list);
-  };
-  STAGE.hw = function (body, ch) {
-    var lab = Lab(body, ch); lab.chips.hidden = true;
-    lab.load(tourSpec(ch));
-    var f = el('section', 'lab-facts'); ch.facts.forEach(function (x) { f.appendChild(html('p', null, x)); }); body.appendChild(f);
-    return { destroy: lab.destroy };
-  };
-  STAGE.fn = function (body, ch) {
-    var g = el('div', 'lab-fns');
-    ch.fns.forEach(function (f) {
-      var c = el('article', 'lab-fn');
-      var sig = el('code', 'lab-fn-sig'); sig.appendChild(ui.hlC(f.sig)); c.appendChild(sig);
-      c.appendChild(el('p', 'lab-fn-job', f.job));
-      var dl = el('dl', 'lab-fn-io');
-      dl.appendChild(el('dt', null, '参数')); dl.appendChild(el('dd', null, f.args));
-      dl.appendChild(el('dt', null, '返回')); dl.appendChild(el('dd', null, f.ret));
-      c.appendChild(dl); g.appendChild(c);
-    });
-    body.appendChild(g);
-    // 谁调用谁
-    var tree = el('section', 'lab-sec'); tree.appendChild(el('h2', 'sec-h', '谁先谁后'));
-    function tr(n) { var ul = el('ul', 'lab-tree'); n.forEach(function (x, i) { if (Array.isArray(x)) return; var li = el('li'); var cd = el('code'); cd.appendChild(ui.hlC(x)); li.appendChild(cd); if (Array.isArray(n[i + 1])) li.appendChild(tr(n[i + 1])); ul.appendChild(li); }); return ul; }
-    tree.appendChild(tr(ch.calls)); body.appendChild(tree);
-    // 放 .h 还是只在 .c 里
-    var pl = el('section', 'lab-sec'); pl.appendChild(el('h2', 'sec-h', '放进 .h，还是只留在 .c？'));
-    ch.place.forEach(function (it) {
-      var row = el('div', 'lab-pl'), t = el('span', 'lab-pl-t'), bs = el('span', 'lab-pl-b'), fb = html('p', 'lab-pl-f', '');
-      t.appendChild(ui.hlC(it.t)); fb.hidden = true;
-      [['.h', true], ['只在 .c', false]].forEach(function (o) {
-        var b = ui.btn('lab-pill', o[0]);
-        b.addEventListener('click', function () {
-          var ok = o[1] === it.h;
-          Array.prototype.forEach.call(bs.children, function (x) { x.classList.remove('ok', 'no'); x.setAttribute('aria-pressed', 'false'); });
-          b.classList.add(ok ? 'ok' : 'no'); b.setAttribute('aria-pressed', 'true');
-          fb.hidden = false; fb.innerHTML = (ok ? '<b>对。</b>' : '<b>应该' + (it.h ? '放进 .h' : '只留在 .c') + '。</b>') + it.why;
-        });
-        bs.appendChild(b);
-      });
-      row.appendChild(t); row.appendChild(bs); row.appendChild(fb); pl.appendChild(row);
-    });
-    body.appendChild(pl);
-  };
-  STAGE.h = function (body, ch) {
-    var src = L.file(ch, 'led.h'), k = 0, shown = {};
-    var steps = el('ol', 'lab-hsteps'), code = el('figure', 'code lab-hcode'), hd = el('div', 'code-h'), pre = el('pre');
-    hd.appendChild(el('span', 'code-t', 'led.h')); code.appendChild(hd); code.appendChild(pre);
-    var grid = el('div', 'lab-hgrid'); grid.appendChild(steps); grid.appendChild(code); body.appendChild(grid);
-    function drawCode(hot) {
-      ui.clear(pre);
-      src.forEach(function (l, i) {
-        var row = el('span', 'lab-hl' + (shown[i] ? '' : ' ghost') + (hot && hot.indexOf(i) >= 0 ? ' hot' : ''));
-        row.appendChild(ui.hlC(shown[i] ? l[0] : l[0].replace(/\S/g, ' '))); row.appendChild(document.createTextNode('\n'));
-        pre.appendChild(row);
-      });
-    }
-    function drawSteps() {
-      ui.clear(steps);
-      ch.hsteps.forEach(function (s, i) {
-        var li = el('li', 'lab-hs' + (i < k ? ' done' : i === k ? ' on' : ''));
-        li.appendChild(el('b', null, s.q));
-        if (i < k) s.lines.forEach(function (n) { if (src[n][1]) { var p = el('p'); var cd = el('code'); cd.appendChild(ui.hlC(src[n][0])); p.appendChild(cd); p.appendChild(el('span', null, src[n][2] || src[n][1])); li.appendChild(p); } });
-        if (i === k) { var b = ui.btn('lab-b lab-p', '写出这几行'); b.addEventListener('click', function () { s.lines.forEach(function (n) { shown[n] = 1; }); k++; if (k >= ch.hsteps.length) src.forEach(function (_, j) { shown[j] = 1; }); drawSteps(); drawCode(s.lines); }); li.appendChild(b); }
-        steps.appendChild(li);
-      });
-      if (k >= ch.hsteps.length) {
-        var li = el('li', 'lab-hs done end'); li.appendChild(el('b', null, '写完了'));
-        var again = ui.btn('lab-b', '从头再来'); again.addEventListener('click', function () { k = 0; shown = {}; drawSteps(); drawCode(); }); li.appendChild(again);
-        steps.appendChild(li);
-      }
-    }
-    drawSteps(); drawCode();
-  };
-  STAGE.c = function (body, ch, route, app) {
-    var lab = Lab(body, ch);
-    function pick(id) {
-      var chip = ch.chips.filter(function (x) { return x.id === id; })[0] || ch.chips[0];
-      Array.prototype.forEach.call(lab.chips.children, function (b) { b.setAttribute('aria-pressed', String(b.dataset.k === chip.id)); });
-      lab.load(chipSpec(ch, chip));
-    }
-    ch.chips.forEach(function (chip) {
-      var b = ui.btn('lb-chip', chip.name); b.dataset.k = chip.id;
-      b.addEventListener('click', function () { app.navigate({ fn: chip.id }, { replace: true }); });
-      lab.chips.appendChild(b);
-    });
-    pick(route.fn);
-    return { destroy: lab.destroy, update: function (r) { pick(r.fn); } };
-  };
-
-  /* ---------- 自己写 ---------- */
-  var TOKENS = {
-    init: ['RCC->APB2ENR', 'RCC_APB2ENR_IOPAEN', 'LED_PORT->', 'BSRR', 'CRL', 'CRH', '|=', '&= ~(', ' | ', ');', ';', 'GPIO_BSRR_BS', 'GPIO_CRL_CNF', 'GPIO_CRL_MODE', 'GPIO_CRH_CNF', 'GPIO_CRH_MODE'],
-    onoff: ['LED_PORT->', 'BSRR', 'ODR', '=', 'led_pin[n]', '(uint32_t)', '<< 16', ';', 'if (', ')', 'return;', '||', '<', '>']
-  };
-  STAGE.self = function (body, ch, route, app) {
-    var ex = ch.exercises.filter(function (x) { return x.id === route.fn; })[0] || ch.exercises[0], lab = null;
-    var pick = el('div', 'lb-chips');
-    ch.exercises.forEach(function (x) {
-      var b = ui.btn('lb-chip', x.title); b.setAttribute('aria-pressed', String(x === ex));
-      b.addEventListener('click', function () { app.navigate({ fn: x.id }, { replace: true }); });
-      pick.appendChild(b);
-    });
-    body.appendChild(pick);
-    body.appendChild(html('p', 'lab-task', ex.ask));
-    var fnames = [].concat(ex.fn), ed = {}, src = L.file(ch, 'led.c'), parsed = L.parseFile(src).fns;
-    var ctx = el('figure', 'code lab-ctx'), ch_ = el('div', 'code-h'); ch_.appendChild(el('span', 'code-t', 'led.c 里已经有的')); ctx.appendChild(ch_);
-    var pre = el('pre'); pre.appendChild(ui.hlC(src.slice(0, 4).map(function (l) { return l[0]; }).join('\n'))); ctx.appendChild(pre); body.appendChild(ctx);
-    var eds = el('div', 'lab-eds'); body.appendChild(eds);
-    var lastFocus = null;
-    fnames.forEach(function (name) {
-      var box = el('figure', 'code lab-ed'), hh = el('div', 'code-h'); hh.appendChild(el('span', 'code-t', 'led.c')); box.appendChild(hh);
-      var sig = el('pre', 'lab-ed-sig'); sig.appendChild(ui.hlC(parsed[name].sig + '\n{')); box.appendChild(sig);
-      var ta = el('textarea', 'lab-ta'); ta.spellcheck = false; ta.setAttribute('autocapitalize', 'off'); ta.setAttribute('autocomplete', 'off'); ta.setAttribute('autocorrect', 'off');
-      ta.setAttribute('aria-label', name + ' 的函数体'); ta.rows = name === 'LED_Init' ? 8 : 3;
-      ta.value = ui.lsGet(SKEY + ch.id + '.' + name) || '    ';
-      ta.addEventListener('input', function () { ui.lsSet(SKEY + ch.id + '.' + name, ta.value); });
-      ta.addEventListener('focus', function () { lastFocus = ta; });
-      ta.addEventListener('keydown', function (e) {
-        if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); ins(ta, '    '); }
-        if (e.key === 'Enter') { var s = ta.value.slice(0, ta.selectionStart), ind = /(^|\n)([ \t]*)[^\n]*$/.exec(s)[2]; e.preventDefault(); ins(ta, '\n' + ind); }
-      });
-      box.appendChild(ta);
-      var end = el('pre', 'lab-ed-sig'); end.appendChild(ui.hlC('}')); box.appendChild(end);
-      ed[name] = ta; eds.appendChild(box);
-    });
-    function ins(ta, s) { var a = ta.selectionStart, b = ta.selectionEnd; ta.setRangeText ? ta.setRangeText(s, a, b, 'end') : (ta.value = ta.value.slice(0, a) + s + ta.value.slice(b)); ta.dispatchEvent(new Event('input')); }
-    var tk = el('div', 'lab-tokens'); tk.setAttribute('aria-label', '常用写法');
-    (TOKENS[ex.id] || []).forEach(function (t) {
-      var b = ui.btn('lab-tk', t.trim() || t); b.addEventListener('mousedown', function (e) { e.preventDefault(); });
-      b.addEventListener('click', function () { var ta = lastFocus || ed[fnames[0]]; ta.focus(); ins(ta, t); });
-      tk.appendChild(b);
-    });
-    body.appendChild(tk);
-    var acts = el('div', 'lab-acts'), bCheck = ui.btn('lab-b lab-p', '检查'), bRef = ui.btn('lab-b', '课件写法'), bClear = ui.btn('lab-b', '清空');
-    acts.appendChild(bCheck); acts.appendChild(bRef); acts.appendChild(bClear); body.appendChild(acts);
-    var out = el('div', 'lab-res'); out.setAttribute('aria-live', 'polite'); body.appendChild(out);
-    var refBox = el('div', 'lab-ref'); refBox.hidden = true; body.appendChild(refBox);
-    var labHost = el('div', 'lab-mine'); body.appendChild(labHost);
-    bRef.addEventListener('click', function () {
-      refBox.hidden = !refBox.hidden; ui.clear(refBox);
-      if (!refBox.hidden) fnames.forEach(function (n) { refBox.appendChild(ui.codeBlock(parsed[n].sig + '\n{\n' + L.body(ch, n) + '\n}', { title: 'led.c' })); });
-    });
-    bClear.addEventListener('click', function () { fnames.forEach(function (n) { ed[n].value = '    '; ui.lsSet(SKEY + ch.id + '.' + n, ed[n].value); }); ui.clear(out); if (lab) { lab.destroy(); lab = null; } });
-    function bodyOf(n) { return ed[n].value; }
-    bCheck.addEventListener('click', function () {
-      var res = ex.id === 'init' ? L.checkInit(ch, bodyOf('LED_Init')) : L.checkOnOff(ch, bodyOf('LED_On'), bodyOf('LED_Off'));
-      ui.clear(out);
-      res.forEach(function (r) {
-        var it = el('div', 'lab-r lab-r-' + r.k);
-        it.appendChild(html('p', 'lab-r-m', r.msg));
-        if (r.hints) {
-          var lv = 0, hs = el('div', 'lab-hints'), hb = ui.btn('lab-b', '提示');
-          hb.addEventListener('click', function () {
-            var h = r.hints[lv];
-            if (lv === r.hints.length - 1) hs.appendChild(ui.codeBlock(h, { title: '写法' }));
-            else hs.appendChild(html('p', null, h));
-            lv++; if (lv >= r.hints.length) hb.remove(); else hb.textContent = lv === r.hints.length - 1 ? '直接看写法' : '再提示一点';
-          });
-          it.appendChild(hs); it.appendChild(hb);
-        }
-        out.appendChild(it);
-      });
-      if (res[0] && res[0].id === 'syntax') return;
-      showMine();
-    });
-    // 放进动画看：用自己写的代码跑一遍
-    function showMine(which) {
-      if (lab) lab.destroy();
-      lab = Lab(labHost, ch);
-      var opts = ex.id === 'init' ? [['LED_Init', ['LED_Init();']]] : [['LED_On', ['LED_Init();', 'LED_On(1);']], ['LED_Off', ['LED_Init();', 'LED_On(1);', 'LED_Off(1);']]];
-      var sel = which || opts[0][0];
-      opts.forEach(function (o) {
-        var b = ui.btn('lb-chip', o[0] + '(' + (o[0] === 'LED_Init' ? '' : 'LED1') + ')'); b.setAttribute('aria-pressed', String(o[0] === sel));
-        b.addEventListener('click', function () { showMine(o[0]); });
-        lab.chips.appendChild(b);
-      });
-      var o = opts.filter(function (x) { return x[0] === sel; })[0], over = {};
-      fnames.forEach(function (n) { over[n] = bodyOf(n); });
-      var t = L.trace(ch, { fn: sel, main: o[1] }, over);
-      var bl = String(over[sel]).split('\n').filter(function (x) { return x.trim(); });
-      var lines = [{ n: -2, t: parsed[sel].sig, d: 1 }, { n: -1, t: '{', d: 2 }].concat(bl.map(function (x, i) { return { n: i, t: x, d: i + 3 }; })).concat([{ n: 999, t: '}', d: bl.length + 3 }]);
-      lab.load(specFromTrace(ch, t, { lines: lines, intro: '这是你写的代码。点「下一行」，看每一行在硬件上做了什么。' }));
-      if (which) return;
-      try { lab.root.scrollIntoView({ behavior: ui.reduced() ? 'auto' : 'smooth', block: 'start' }); } catch (e) {}
-    }
-    return { destroy: function () { if (lab) lab.destroy(); } };
-  };
-
-  /* ---------- 入口 ---------- */
-  STM.views.lab = function (root, route, app) {
-    if (route.t && L.chapter(route.t)) return chapterView(root, route, app);
-    return home(root, app);
-  };
-  STM.lab = { STAGES: STAGES, Lab: Lab };
+  STM.lab = { Lab: Lab, hasHw: function (id) { return !!L.chapter(id); }, hwView: hwChapter };
 })();

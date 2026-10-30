@@ -88,3 +88,52 @@ test('路由：v=lab 带章节、步骤、函数；乱写的值丢掉', () => {
   assert.deepEqual(core.fromParams('v=lab&st=c'), { v: 'lab' });
   assert.equal(core.params({ v: 'lab', t: 'gpio', st: 'c', fn: 'main' }), 'v=lab&t=gpio&st=c&fn=main');
 });
+
+test('路由：编程思维的新五步、硬件原理的 hv / fn / ln', () => {
+  assert.deepEqual(core.fromParams('v=lab&t=gpio&st=look'), { v: 'lab', t: 'gpio', st: 'look' });
+  assert.deepEqual(core.fromParams('v=think&t=gpio&hv=run&fn=mine-init&ln=010'), { v: 'think', t: 'gpio', fn: 'mine-init', hv: 'run', ln: '10' });
+  assert.deepEqual(core.fromParams('v=think&t=gpio&hv=x&ln=abc'), { v: 'think', t: 'gpio' });
+  assert.deepEqual(core.fromParams('v=home&hv=run&ln=3'), { v: 'home' });
+});
+
+test('第一版（单文件 main.c）能跑：开时钟 → 先写 1 → 切推挽 → 亮 → 等 → 灭', () => {
+  const t = L.trace(ch, ch.chips.find((c) => c.id === 'single'));
+  assert.equal(t.err, null);
+  eq(t.evs.map(kinds), ['clk', 'w', 'mode', 'mode', 'cpu', 'w', 'delay', 'w', 'delay']);
+  assert.equal(t.states[6].pins.PA0.level, 0);
+  assert.equal(t.states[8].pins.PA0.level, 1);
+  Object.keys(ch.groups.single).forEach((k) => assert.ok(ch.single[k], '小标题对着有代码的行'));
+});
+
+test('一行代码 → 右边的资料：寄存器、字段、执行完的值', () => {
+  eq(L.docFor(ch, 'RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;', { apb2: 4 }), { kind: 'reg', id: 'RCC_APB2ENR', f: ['IOPAEN'], val: 4 });
+  const crl = L.docFor(ch, 'LED_PORT->CRL |= (GPIO_CRL_MODE0 | GPIO_CRL_MODE1);', { crl: 0x44444433 });
+  eq([crl.id, crl.f, crl.val], ['GPIO_CRL', ['MODE0', 'CNF0', 'MODE1', 'CNF1'], 0x44444433]);
+  eq(L.docFor(ch, 'GPIOF->CRH |= GPIO_CRH_CNF8_1;').f, ['MODE8', 'CNF8']);
+  const b = L.docFor(ch, 'GPIOA->BSRR = GPIO_BSRR_BR0;');
+  eq([b.id, b.f, b.val], ['GPIO_BSRR', ['BR0'], 0x10000]);
+  eq(L.docFor(ch, 'LED_PORT->BSRR = (uint32_t)led_pin[n] << 16;').f, ['BR0', 'BR1', 'BR8']);
+  assert.equal(L.docFor(ch, 'Delay_ms(500);'), null);
+  // 每个资料都指向真有的东西
+  const figs = fs.readFileSync(path.join(root, 'assets/manual.js'), 'utf8');
+  Object.values(ch.docs).forEach((d) => {
+    if (d.kind === 'fig') assert.ok(figs.includes('"id": "' + d.fig + '"'), d.fig);
+    if (d.kind === 'sch') assert.ok(fs.existsSync(path.join(root, 'assets', d.page + '.svg')), d.page);
+  });
+  ch.look.forEach((x) => assert.ok(ch.docs[x.doc], x.q));
+  ch.transfer.look.forEach((x) => assert.ok(ch.docs[x.doc], x.q));
+});
+
+test('换题（按键控制 LED）：参考写法全对；常见错误都能指出来，else 换行也能跑', () => {
+  const init = 'RCC->APB2ENR |= RCC_APB2ENR_IOPFEN;\nGPIOF->CRH &= ~(GPIO_CRH_CNF8 | GPIO_CRH_MODE8);\nGPIOF->CRH |= GPIO_CRH_CNF8_1;\nGPIOF->BSRR = GPIO_BSRR_BS8;';
+  const loop = 'if ((GPIOF->IDR & GPIO_IDR_IDR8) == 0) LED_On(LED1);\nelse LED_Off(LED1);';
+  assert.equal(L.checkKey(ch, init, loop)[0].k, 'ok');
+  const ids = (a, b) => L.checkKey(ch, a, b).map((r) => r.id);
+  eq(ids(init.replace('IOPFEN', 'IOPAEN'), loop), ['clk']);
+  eq(ids(init.replace(/\nGPIOF->BSRR.*$/, ''), loop), ['pulldown']);
+  eq(ids(init.replace('GPIO_CRH_CNF8_1', 'GPIO_CRH_CNF8_0').replace(/\nGPIOF->BSRR.*$/, ''), loop), ['float']);
+  eq(ids(init, loop.replace('== 0', '!= 0')), ['inverted']);
+  eq(ids(init, 'if ((GPIOF->IDR & GPIO_IDR_IDR8) == 0) LED_On(LED1);'), ['follow']);
+  eq(ids(init, ''), ['stuck']);
+  L.checkKey(ch, init, '').forEach((r) => assert.equal(r.hints.length, 3));
+});

@@ -59,7 +59,7 @@
       var nDone = isD ? d.done : d.filter(Boolean).length, nAll = isD ? d.total : 4;
       var en = app.link({ v: 'think', t: t.id }, 'thinkin');
       en.appendChild(ui.icon('idea'));
-      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, '设计原理'));
+      var et = el('span', 'thinkin-t'); et.appendChild(el('b', null, '硬件原理'));
       if (nDone) et.appendChild(el('span', null, nDone + ' / ' + nAll)); en.appendChild(et);
       en.appendChild(el('span', 'thinkin-go', nDone === nAll ? '复习' : nDone ? '继续' : '开始'));
       art.appendChild(en);
@@ -151,7 +151,12 @@
         var want = r.cx && vs.indexOf(r.cx) > 0 ? r.cx : vs[0];
         if (want !== cx) {
           cx = want; ui.clear(regBox); ui.clear(cdBox);
-          filesFig = CD.files(cx, { file: r.cf }); regBox.appendChild(filesFig); CD.render(cdBox, cx);
+          filesFig = CD.files(cx, { file: r.cf }); regBox.appendChild(filesFig);
+          if (window.STM32Lab && STM32Lab.chapter(cx)) {   // 这一章的代码推导已经并进「编程思维」，这里只留个入口
+            var go = app.link({ v: 'lab', t: cx }, 'thinkin'); go.appendChild(ui.icon('idea'));
+            var gt = el('span', 'thinkin-t'); gt.appendChild(el('b', null, '编程思维')); gt.appendChild(el('span', null, '从需求、查资料到写代码，一步步推出这些文件')); go.appendChild(gt);
+            go.appendChild(el('span', 'thinkin-go', '去看')); cdBox.appendChild(go);
+          } else CD.render(cdBox, cx);
           Array.prototype.forEach.call(varBar.children, function (b) { b.classList.toggle('on', b.dataset.k === cx); });
         } else if (r.cf && filesFig) filesFig.pick(r.cf);
       };

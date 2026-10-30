@@ -891,7 +891,7 @@
     function renderHome() {
       var st = chState(ch.id), m = mode();
       var head = el('header', 'dv-hero');
-      var crumb = app.link({ v: 'think' }, 'tk-crumb'); crumb.textContent = '设计原理'; head.appendChild(crumb);
+      var crumb = app.link({ v: 'think' }, 'tk-crumb'); crumb.textContent = '硬件原理'; head.appendChild(crumb);
       head.appendChild(el('h1', null, topic.code));
       var task = el('div', 'dv-task'); task.appendChild(ui.icon('flag'));
       var tt = el('div'); tt.appendChild(el('span', 'dv-task-l', '任务')); tt.appendChild(el('b', null, ch.task)); task.appendChild(tt); head.appendChild(task);
@@ -971,7 +971,7 @@
       cur = id;
       // 顶条
       bar = el('div', 'dv-bar');
-      var back = app.link({ v: 'think', t: ch.id }, 'dv-bar-map'); back.appendChild(ui.icon('map')); back.appendChild(el('span', null, '推导链')); bar.appendChild(back);
+      var back = app.link({ v: 'think', t: ch.id, hv: 'why' }, 'dv-bar-map'); back.appendChild(ui.icon('map')); back.appendChild(el('span', null, '推导链')); bar.appendChild(back);
       var pr = el('div', 'dv-prog'); pr.setAttribute('aria-label', '第 ' + (idx + 1) + ' / ' + n + ' 个问题');
       ch.steps.forEach(function (x, k) { var d = el('i', (st.done && st.done[x.id] ? 'done' : '') + (k === idx ? ' cur' : '')); pr.appendChild(d); });
       bar.appendChild(pr);
@@ -1127,7 +1127,7 @@
     function rerender() { dispose(); ui.clear(wrap); var r = app.route(); if (r.s === 'review') renderReview(); else if (r.s && S[r.s]) renderStep(r.s); else renderHome(); }
     rerender();
     return {
-      title: function (r) { return r.s && S[r.s] ? '问题 ' + (S[r.s]._i + 1) + ' · ' + topic.code : r.s === 'review' ? '常卡的地方 · ' + topic.code : topic.code + ' · 设计原理'; },
+      title: function (r) { return r.s && S[r.s] ? '问题 ' + (S[r.s]._i + 1) + ' · ' + topic.code : r.s === 'review' ? '常卡的地方 · ' + topic.code : topic.code + ' · 硬件原理'; },
       update: function (r) { if (r.t !== ch.id) return; if ((r.s || '') !== (cur || '') || r.s === 'review') { cur = r.s || ''; rerender(); window.scrollTo(0, 0); } },
       destroy: dispose
     };

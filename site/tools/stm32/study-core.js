@@ -32,8 +32,10 @@
     if (/^[a-z][a-z0-9]{1,7}$/.test(x.t || '')) o.t = x.t;
     if (o.v === 'topic' && !o.t && !x.reg && !x.snip) o.v = 'home';
     if (o.v !== 'topic' && o.v !== 'think' && o.v !== 'lab') delete o.t;
-    if (o.v === 'lab' && o.t && /^(?:need|hw|fn|h|c|self)$/.test(String(x.st == null ? '' : x.st))) o.st = String(x.st);   // 编程思维：哪一步
-    if (o.v === 'lab' && o.t && /^[a-z][a-z0-9]{1,11}$/.test(String(x.fn == null ? '' : x.fn))) o.fn = String(x.fn);      // .c / 自己写：哪个函数
+    if (o.v === 'lab' && o.t && /^(?:task|look|plan|code|check|need|hw|fn|h|c|self)$/.test(String(x.st == null ? '' : x.st))) o.st = String(x.st);   // 编程思维：哪一步
+    if ((o.v === 'lab' || o.v === 'think') && o.t && /^[a-z][a-z0-9-]{1,11}$/.test(String(x.fn == null ? '' : x.fn))) o.fn = String(x.fn);   // 哪个函数 / 第几版 / 哪一级练习
+    if (o.v === 'think' && o.t && /^(?:run|why)$/.test(String(x.hv == null ? '' : x.hv))) o.hv = String(x.hv);   // 硬件原理：怎么工作 / 为什么这样设计
+    if (o.v === 'think' && o.t && /^\d{1,3}$/.test(String(x.ln == null ? '' : x.ln))) o.ln = String(Number(x.ln));   // 从编程思维跳过来：动画停在哪一行
     if (o.v === 'think' && o.t && /^[1-4]$/.test(String(x.p == null ? '' : x.p))) o.p = String(x.p);   // 编程思维：第几段
     if (o.v === 'think' && o.t && /^(?:s\d{1,2}|review|code)$/.test(String(x.s == null ? '' : x.s))) o.s = String(x.s);   // 推导章节：哪一环
     if (/^[A-Za-z][A-Za-z0-9_]{1,31}$/.test(x.reg || '')) {
