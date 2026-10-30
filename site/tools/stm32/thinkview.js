@@ -12,7 +12,7 @@
   }
 
   function view(root, route, app) {
-    if (route.t && STM.lab && STM.lab.hasHw(route.t)) return STM.lab.hwView(root, route, app);   // 有动画的章节：怎么工作 + 为什么这样设计
+    if (route.t && STM.lab && STM.lab.hasHw(route.t)) return STM.lab.hwView(root, route, app);   // 有结构图的章节：结构图 + 设计原理
     if (route.t && STM.derive && STM.derive.has(route.t)) return STM.derive.view(root, route, app);
     var wrap = el('div', 'think'); root.appendChild(wrap);
     var head = el('header', 'pg-h tk-hero');

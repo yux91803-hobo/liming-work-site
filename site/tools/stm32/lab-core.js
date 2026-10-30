@@ -1,11 +1,9 @@
 /* lab-core.js — 「编程思维」「硬件原理」两个模块共用的数据和逻辑（不碰 DOM，可在 Node 里测试）
    编程思维：一章 = 一道编程题，按「明确任务 → 查资料 → 规划 → 编写 → 验证」走完；右边一次只放一份资料。
-   硬件原理：同一份代码交给模拟器跑，把每一行在芯片里引起的变化演成动画。
+   硬件原理：一张自绘的结构图（map），把外设拆成几块，一块讲一个知识点，并标出每块要初始化的寄存器。
    · 代码：直接用「代码推导」里课件同款的文件（STM32_CODEDERIVE），保证和课件一个写法。
-   · .c 那一步：把代码交给 mcusim.js 真的跑一遍，每执行一行记一次芯片状态（时钟、CRL/CRH、ODR、引脚电平），
-     前后两次的差别就是这一行在硬件上造成的变化（开时钟 / 改模式 / 改输出）。界面按这些变化播动画——
-     所以自己写的代码也能放进去看，图永远和代码对得上。
-   · 自己写：同样跑模拟器，按结果找出缺了哪一环，分三级提示（先问一句 → 指出哪一步 → 给出写法）。 */
+   · 编写：点一行代码，右边显示这一行用到的寄存器；寄存器的值来自模拟器（mcusim.js）真的跑到这一行后的状态。
+   · 验证：同样跑模拟器，按结果找出缺了哪一环，分三级提示（先问一句 → 指出哪一步 → 给出写法）。 */
 (function (root, factory) {
   var api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -34,19 +32,6 @@
       { q: '实现效果', a: '三个灯轮流亮 0.5 秒。拆开看是三件小事：开机先把引脚准备好、点亮某个灯、熄灭某个灯。' },
       { q: '所需资料', a: '<b>开发板原理图</b>：灯接在哪个脚、什么电平亮。<b>参考手册框图</b>：GPIO 挂在哪条总线、引脚内部的输出结构。<b>寄存器说明</b>：具体写哪一位。' },
       { q: '程序负责的部分', a: '时钟（RCC 里开 GPIOA）、引脚模式（推挽输出）、输出的值（0 亮 1 灭）。延时不归 LED 管，交给 delay 模块。' }
-    ],
-    facts: [
-      '<b>推挽输出</b>：写 1 → P-MOS 导通，引脚接到 3.3 V；写 0 → N-MOS 导通，引脚接到地。两个管子轮流工作，引脚总有确定的电平。',
-      '<b>低电平点亮</b>：引脚是 0 时，电流从 3V3 经 2kΩ 电阻、LED 流进引脚，再经 N-MOS 到地，灯亮；引脚是 1 时 LED 两端都是 3.3 V，没有电流，灯灭。',
-      '<b>寄存器</b>：CRL / CRH 决定引脚是输入还是输出、推挽还是开漏；ODR 是输出的值；BSRR 只改某几位（写 1 置 1 / 清 0），不用先读。',
-      '<b>时钟</b>：GPIOA 挂在 APB2 上，RCC 里的 IOPAEN 不开，往 GPIOA 写什么都没反应。'
-    ],
-    tour: [   // 硬件原理里的「路径总览」：几行代码把信号会走的路走一遍
-      ['RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;', '开时钟：Cortex-M3 → 系统总线 → 总线矩阵 → AHB → RCC。之后 GPIOA 才「通电」。'],
-      ['GPIOA->CRL &= ~(GPIO_CRL_CNF0 | GPIO_CRL_MODE0);', '配引脚：Cortex-M3 → 总线 → 桥接1 → APB2 → GPIOA。先清掉 PA0 的 4 个配置位（模拟输入：输入、输出驱动器都断开）。'],
-      ['GPIOA->CRL |= GPIO_CRL_MODE0;', 'PA0 配成推挽输出：输出驱动器接上，P-MOS、N-MOS 都能用。ODR 复位值是 0，N-MOS 导通——灯一下就亮了。'],
-      ['GPIOA->BSRR = GPIO_BSRR_BS0;', '写 1：位设置/清除寄存器 → 输出数据寄存器第 0 位 = 1 → P-MOS 导通，PA0 = 3.3 V，LED 两端一样高，灭。'],
-      ['GPIOA->BSRR = GPIO_BSRR_BR0;', '写 0：第 0 位 = 0 → N-MOS 导通，电流从 3V3 经 2kΩ、LED 流进 PA0，再经 N-MOS 到地——亮。']
     ],
     fns: [
       { name: 'LED_Init', sig: 'void LED_Init(void)', job: '开 GPIOA 的时钟，把 PA0、PA1、PA8 配成推挽输出，先让灯都灭着', args: '无', ret: '无' },
@@ -77,36 +62,14 @@
         intro: '编程思维「编写」的第一版：只有一个灯，全写在 main 里。开时钟、先写 1、切推挽，然后亮、灭。' }
     ],
     hwFns: [['LED_Init', 'init'], ['LED_On', 'on'], ['LED_Off', 'off'], ['LED_Toggle', 'toggle']],
-    hw: {
-      'RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;': 'Cortex-M3 → 系统总线 → 总线矩阵 → AHB → <b>RCC</b>：IOPAEN 置 1，GPIOA 有了时钟。',
-      'LED_PORT->BSRR = GPIO_BSRR_BS0 | GPIO_BSRR_BS1 | GPIO_BSRR_BS8;': '经 APB2 到 GPIOA 的<b>位设置/清除寄存器</b>，输出数据寄存器第 0、1、8 位都变成 1。三个脚还是输入，<b>输出驱动器没接上</b>，引脚不动。',
-      'LED_PORT->CRL &= ~(GPIO_CRL_CNF0 | GPIO_CRL_MODE0 | GPIO_CRL_CNF1 | GPIO_CRL_MODE1);': 'PA0、PA1 的 4 个配置位清零：变成模拟输入，输入、输出驱动器都断开（连肖特基触发器也关了）。',
-      'LED_PORT->CRL |= (GPIO_CRL_MODE0 | GPIO_CRL_MODE1);': 'PA0、PA1 变成<b>推挽输出</b>：输出驱动器接上。ODR 已经是 1 → <b>P-MOS 导通</b>，引脚 3.3 V，灯不亮（没闪一下）。',
-      'LED_PORT->CRH &= ~(GPIO_CRH_CNF8 | GPIO_CRH_MODE8);': 'PA8 在 CRH 里，同样先清零。',
-      'LED_PORT->CRH |= (GPIO_CRH_MODE8);': 'PA8 也变成推挽输出，P-MOS 导通，灯灭着。',
-      'if (n < 1 || n > 3) return;': '只在 Cortex-M3 里比较一下，<b>不碰总线和引脚</b>。',
-      'LED_PORT->BSRR = (uint32_t)led_pin[n] << 16;': '写 BSRR 的高 16 位（BR）：这一位清 0 → <b>N-MOS 导通</b> → 电流从 3V3 经 2kΩ、LED 流进引脚，经 N-MOS 到地——<b>亮</b>。',
-      'LED_PORT->BSRR = led_pin[n];': '写 BSRR 的低 16 位（BS）：这一位置 1 → <b>P-MOS 导通</b>，引脚 3.3 V，LED 两端一样高——<b>灭</b>。',
-      'LED_PORT->ODR ^= led_pin[n];': '读-改-写：先把 <b>ODR 读回</b> Cortex-M3，异或这一位，再整个写回去。比 BSRR 多走一趟总线。',
-      'LED_Init();': '初始化：开时钟、先写 1、配推挽输出。',
-      'LED_On(n);': '点亮第 n 个灯。',
-      'Delay_ms(500);': 'CPU 原地等 0.5 秒，引脚保持不变。',
-      'LED_Off(n);': '熄灭，轮到下一个。'
-    },
     exercises: [
       { id: 'init', label: '编写 LED_Init', fns: ['LED_Init'], rows: 8, check: 'checkInit',
-        ask: '开 GPIOA 的时钟，把 PA0、PA1、PA8 配成推挽输出（50 MHz），而且上电那一刻灯不能闪一下。',
-        tokens: ['RCC->APB2ENR', 'RCC_APB2ENR_IOPAEN', 'LED_PORT->', 'BSRR', 'CRL', 'CRH', '|=', '&= ~(', ' | ', ');', ';', 'GPIO_BSRR_BS', 'GPIO_CRL_CNF', 'GPIO_CRL_MODE', 'GPIO_CRH_CNF', 'GPIO_CRH_MODE'],
-        mine: 'mine-init' },
+        ask: '开 GPIOA 的时钟，把 PA0、PA1、PA8 配成推挽输出（50 MHz），而且上电那一刻灯不能闪一下。' },
       { id: 'onoff', label: '编写 LED_On / LED_Off', fns: ['LED_On', 'LED_Off'], rows: 3, check: 'checkOnOff',
-        ask: '用 LED_PORT 和 led_pin[n] 写出点亮、熄灭第 n 个灯，只动这一个脚；编号不对就什么都不做。',
-        tokens: ['LED_PORT->', 'BSRR', 'ODR', '=', 'led_pin[n]', '(uint32_t)', '<< 16', ';', 'if (', ')', 'return;', '||', '<', '>'],
-        mine: 'mine-on' }
+        ask: '用 LED_PORT 和 led_pin[n] 写出点亮、熄灭第 n 个灯，只动这一个脚；编号不对就什么都不做。' }
     ],
-    mine: { 'mine-init': ['LED_Init', ['LED_Init();'], '我写的 LED_Init'], 'mine-on': ['LED_On', ['LED_Init();', 'LED_On(1);'], '我写的 LED_On'], 'mine-off': ['LED_Off', ['LED_Init();', 'LED_On(1);', 'LED_Off(1);'], '我写的 LED_Off'] },
-    fill: { file: 'led.c', from: 5, to: 25, ask: '按注释补全 led.c 里的寄存器操作。' },
     ctx: [0, 3],   // 自己写时上面给出的 led.c 前几行
-    defaults: { task: 'sch-led', look: 'sch-led', v1: 'reg-apb2', v2: 'reg-crl', fill: 'reg-apb2' },
+    defaults: { task: 'sch-led', look: 'sch-led', v1: 'reg-apb2', v2: 'reg-crl' },
 
     look: [
       { q: 'LED 连接与点亮电平', doc: 'sch-led',
@@ -170,7 +133,8 @@
       'reg-crh-key': { kind: 'reg', id: 'GPIO_CRH', f: ['MODE8', 'CNF8'], val: 0x44444448, port: 'F' },
       'reg-bsrr': { kind: 'reg', id: 'GPIO_BSRR', f: ['BR0', 'BS0'] },
       'reg-odr': { kind: 'reg', id: 'GPIO_ODR', f: ['ODR0', 'ODR1', 'ODR8'] },
-      'reg-idr': { kind: 'reg', id: 'GPIO_IDR', f: ['IDR8'], port: 'F' }
+      'reg-idr': { kind: 'reg', id: 'GPIO_IDR', f: ['IDR8'], port: 'F' },
+      'reg-bsrr-key': { kind: 'reg', id: 'GPIO_BSRR', f: ['BS8'], val: 0x100, write: true, port: 'F' }
     },
     transfer: {
       label: '迁移：按键控制 LED', doc: 'sch-key', check: 'checkKey',
@@ -184,7 +148,6 @@
         { key: 'KEY_Init', file: 'key.c', head: 'void KEY_Init(void)\n{', tail: '}', rows: 6, label: 'KEY_Init 的函数体' },
         { key: 'KEY_loop', file: 'main.c', head: 'int main(void)\n{\n    LED_Init();\n    KEY_Init();\n    while (1) {', tail: '    }\n}', rows: 4, label: '主循环里的代码', init: '        ' }
       ],
-      tokens: ['RCC->APB2ENR', 'RCC_APB2ENR_IOPFEN', 'GPIOF->', 'CRH', 'BSRR', 'IDR', '|=', '&= ~(', ' | ', ');', ';', 'GPIO_CRH_CNF8', 'GPIO_CRH_MODE8', '_1', 'GPIO_BSRR_BS8', 'GPIO_IDR_IDR8', 'if (', ') == 0)', 'else', 'LED_On(LED1);', 'LED_Off(LED1);'],
       ref: 'void KEY_Init(void)\n{\n    RCC->APB2ENR |= RCC_APB2ENR_IOPFEN;                  // ① 开 GPIOF 的时钟\n    GPIOF->CRH &= ~(GPIO_CRH_CNF8 | GPIO_CRH_MODE8);     // ② PF8：先清掉\n    GPIOF->CRH |= GPIO_CRH_CNF8_1;                       //    CNF8 = 10 上拉/下拉输入\n    GPIOF->BSRR = GPIO_BSRR_BS8;                         //    ODR8 = 1 选上拉\n}\n\n// main 的 while (1) 里：\nif ((GPIOF->IDR & GPIO_IDR_IDR8) == 0) LED_On(LED1);   // 按下读到 0\nelse LED_Off(LED1);'
     }
   };
@@ -200,12 +163,6 @@
       { q: '实现效果', a: 'LED2 的亮度在 0 和 100% 之间来回变化，每 10 ms 变一点。拆开是两件事：<b>调亮度</b>（PWM）和<b>计时</b>（1 ms 节拍）。' },
       { q: '所需资料', a: '<b>开发板原理图</b>：LED2 接哪个脚。<b>数据手册引脚表</b>：这个脚能接哪个定时器通道。<b>参考手册</b>：时钟树、定时器框图、PWM 模式、相关寄存器。' },
       { q: '程序负责的部分', a: '两个定时器：TIM5 通道 2 输出 PWM 调亮度；TIM6 每 1 ms 产生一次更新中断，中断里计数。主循环只看时间、改亮度。' }
-    ],
-    facts: [
-      '<b>计数</b>：72 MHz 的时钟先经 PSC 分频，CNT 每来一个脉冲加 1，加到 ARR 以后回到 0，同时产生一次更新事件（UEV）。',
-      '<b>PWM</b>：CNT 一圈一圈地数，每一圈里 CNT 小于 CCR 的那段时间输出有效。CCR 越大，有效的时间越长，LED 越亮。',
-      '<b>中断</b>：更新事件把 UIF 置 1；UIE 打开、NVIC 也打开时，CPU 停下手里的事去执行 TIM6_IRQHandler，执行完再回来。',
-      '<b>复用推挽</b>：PA1 的输出由定时器驱动，不听 ODR，所以配成「复用」推挽（CNF = 10）。'
     ],
     fns: [
       { name: 'Tick_Init', sig: 'void Tick_Init(void)', job: 'TIM6 每 1 ms 产生一次更新中断，开始计时', args: '无', ret: '无' },
@@ -233,47 +190,14 @@
         intro: '编程思维「编写」的第一版：只做呼吸灯，全写在 main 里，用 Delay 等 10 ms。' }
     ],
     hwFns: [['Tick_Init', 'tick'], ['PWM_Init', 'pwm'], ['PWM_SetDuty', 'duty'], ['TIM6_IRQHandler', 'isr']],
-    hw: {
-      'RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;': 'Cortex-M3 → 总线矩阵 → AHB → <b>RCC</b>：APB1ENR 的 TIM6EN 置 1，TIM6 有了时钟（72 MHz）。',
-      'RCC->APB1ENR |= RCC_APB1ENR_TIM5EN;': '经 AHB 到 <b>RCC</b>：TIM5EN 置 1，TIM5 有了时钟。',
-      'RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;': '经 AHB 到 <b>RCC</b>：IOPAEN 置 1，GPIOA 有了时钟（PA1 要用）。',
-      'TIM6->PSC = 72 - 1;': '经 APB1 到 TIM6，写进 <b>PSC</b>。这是预装载值，要等更新事件才真正生效。',
-      'TIM6->ARR = 1000 - 1;': '写 <b>ARR</b> = 999：CNT 从 0 数到 999，正好 1000 个 1 µs = 1 ms。',
-      'TIM6->EGR = TIM_EGR_UG;': '手动产生一次更新事件：PSC、ARR 立刻装进影子寄存器，CNT 清 0。顺带把 <b>UIF</b> 置 1。',
-      'TIM6->SR = ~TIM_SR_UIF;': '把 UG 顺带置起的 <b>UIF</b> 清掉（写 0 清除），免得一开中断就进去一次。',
-      'TIM6->DIER |= TIM_DIER_UIE;': '打开 <b>UIE</b>：以后 UIF 置 1 就向 NVIC 发中断请求。',
-      'NVIC_EnableIRQ(TIM6_IRQn);': '<b>NVIC</b> 在 Cortex-M3 里面：打开 TIM6 这一路中断，请求才能打断 CPU。',
-      'TIM6->CR1 |= TIM_CR1_CEN;': '<b>CEN</b> = 1，CNT 开始计数。之后每 1 ms 溢出一次、进一次中断——CPU 不用管，定时器自己在跑。',
-      'GPIOA->CRL &= ~(GPIO_CRL_CNF1 | GPIO_CRL_MODE1);': '经 APB2 到 GPIOA：PA1 的 4 个配置位清零。',
-      'GPIOA->CRL |= (GPIO_CRL_MODE1 | GPIO_CRL_CNF1_1);': 'PA1 变成<b>复用推挽输出</b>：输出控制的输入从输出数据寄存器换成了 <b>TIM5_CH2</b>。',
-      'TIM5->PSC = 72 - 1;': '经 APB1 到 TIM5，写 <b>PSC</b>：72 MHz ÷ 72 = 1 MHz。',
-      'TIM5->ARR = 1000 - 1;': '写 <b>ARR</b> = 999：一圈 1000 个数 = 1 ms，PWM 频率 1 kHz。',
-      'TIM5->CCR2 = 0;': '写 <b>CCR2</b> = 0：CNT 永远不小于 0，输出一直无效——灭。',
-      'TIM5->CCMR1 = TIM_CCMR1_OC2M_2 | TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2PE;': '通道 2 设成 <b>PWM 模式 1</b>（OC2M = 110）：CNT < CCR2 时 OC2REF 有效。',
-      'TIM5->CCER = TIM_CCER_CC2E | TIM_CCER_CC2P;': '<b>CC2E</b> 打开通道 2 输出；<b>CC2P</b> = 1，有效 = 低电平（LED2 低电平亮）。',
-      'TIM5->CR1 = TIM_CR1_ARPE;': 'ARR 也开预装载：改 ARR 时等这一圈数完再生效，波形不会断。',
-      'TIM5->EGR = TIM_EGR_UG;': '更新事件：PSC、ARR、CCR2 装进影子寄存器。',
-      'TIM5->CR1 |= TIM_CR1_CEN;': '<b>CEN</b> = 1，CNT 开始一圈一圈地数，和 CCR2 比较，结果经输出控制送到 PA1。',
-      'if (permille > 1000) permille = 1000;': '只在 Cortex-M3 里比较一下，<b>不碰总线</b>。',
-      'TIM5->CCR2 = permille;': '写 <b>CCR2</b>：下一圈开始按新的比较值输出，LED2 亮的时间跟着变。',
-      'if (TIM6->SR & TIM_SR_UIF) {': '读 TIM6 的 <b>SR</b>：经 APB1 读回 Cortex-M3，看 UIF 是不是 1。',
-      'TIM6->SR = ~TIM_SR_UIF;': '清 <b>UIF</b>。不清的话，一退出中断马上又进来。',
-      'ms++;': '只在 Cortex-M3 里：毫秒数加 1。',
-      'TIM5->CCR2 = duty;': '写 <b>CCR2</b>：LED2 亮的时间跟着变。',
-      'Delay_ms(10);': 'CPU 原地等 10 ms。这段时间里 PWM 照样在输出——那是定时器自己的事。'
-    },
     exercises: [
       { id: 'pwm', label: '编写 PWM_Init', fns: ['PWM_Init'], rows: 12, check: 'checkPwm',
-        ask: 'TIM5 通道 2 在 PA1（LED2）上输出 1 kHz 的 PWM，低电平有效；初始化完先灭（占空比 0）。',
-        tokens: ['RCC->APB1ENR', 'RCC->APB2ENR', 'RCC_APB1ENR_TIM5EN', 'RCC_APB2ENR_IOPAEN', 'GPIOA->CRL', 'GPIO_CRL_CNF1', 'GPIO_CRL_MODE1', '_1', 'TIM5->', 'PSC', 'ARR', 'CCR2', 'CCMR1', 'CCER', 'EGR', 'CR1', '72 - 1', '1000 - 1', 'TIM_CCMR1_OC2M_2', 'TIM_CCMR1_OC2M_1', 'TIM_CCER_CC2E', 'TIM_CCER_CC2P', 'TIM_EGR_UG', 'TIM_CR1_CEN', '|=', '&= ~(', ' | ', ';'] },
+        ask: 'TIM5 通道 2 在 PA1（LED2）上输出 1 kHz 的 PWM，低电平有效；初始化完先灭（占空比 0）。' },
       { id: 'tick', label: '编写 Tick_Init', fns: ['Tick_Init'], rows: 9, check: 'checkTick',
-        ask: 'TIM6 每 1 ms 产生一次更新中断。中断函数已经写好（清 UIF、ms++）。',
-        tokens: ['RCC->APB1ENR', 'RCC_APB1ENR_TIM6EN', 'TIM6->', 'PSC', 'ARR', 'EGR', 'SR', 'DIER', 'CR1', '72 - 1', '1000 - 1', 'TIM_EGR_UG', '~TIM_SR_UIF', 'TIM_DIER_UIE', 'NVIC_EnableIRQ(TIM6_IRQn);', 'TIM_CR1_CEN', '|=', '=', ';'] }
+        ask: 'TIM6 每 1 ms 产生一次更新中断。中断函数已经写好（清 UIF、ms++）。' }
     ],
-    mine: { 'mine-pwm': ['PWM_Init', ['PWM_Init();', 'TIM5->CCR2 = 250;'], '我写的 PWM_Init'], 'mine-tick': ['Tick_Init', ['Tick_Init();'], '我写的 Tick_Init'] },
-    fill: { file: 'tim.c', from: 6, to: 32, ask: '按注释补全 tim.c 里两个初始化函数的寄存器操作。' },
     ctx: null,
-    defaults: { task: 'sch-led', look: 'sch-led', v1: 'reg-apb1', v2: 'reg-psc', fill: 'reg-apb1' },
+    defaults: { task: 'sch-led', look: 'sch-led', v1: 'reg-apb1', v2: 'reg-psc' },
 
     look: [
       { q: 'LED2 连接', doc: 'sch-led', find: 'LED2（蓝）接 PA1，接法和 LED1 一样：3V3 → 2kΩ → LED → 引脚，<b>输出 0 亮</b>。', card: 'LED2 = PA1，输出 0 亮' },
@@ -319,7 +243,7 @@
     ],
     groups: {
       'single': { 6: '① 开时钟', 8: '② 配引脚', 10: '③ 配外设', 15: '④ 使能', 17: '用：每 10 ms 改一次亮度' },
-      'tim.c': { 8: '① 开时钟', 9: '③ 配外设（1 ms 溢出一次）', 13: '④ 使能（中断 + 计数）', 20: '① 开时钟', 22: '② 配引脚（PA1 复用推挽）', 24: '③ 配外设（PWM 模式 1，1 kHz）', 30: '④ 使能', 34: '用：读时间', 39: '用：调亮度', 45: '中断：每 1 ms 一次' },
+      'tim.c': { 8: '① 开时钟', 9: '③ 配外设（1 ms 溢出一次）', 13: '④ 使能（中断 + 计数）', 20: '① 开时钟', 22: '② 配引脚（PA1 复用推挽）', 24: '③ 配外设（PWM 模式 1，1 kHz）', 31: '④ 使能', 34: '用：读时间', 39: '用：调亮度', 45: '中断：每 1 ms 一次' },
       'tim.h': { 0: '头文件保护', 5: '对外的函数' },
       'main.c': { 6: '初始化', 8: '主循环：到时间才改亮度，不等' }
     },
@@ -332,6 +256,7 @@
       'fig-pwm': { kind: 'fig', fig: 'tim-pwm-edge' },
       'reg-apb1': { kind: 'reg', id: 'RCC_APB1ENR', f: ['TIM5EN', 'TIM6EN'], val: 0x18 },
       'reg-apb1-t2': { kind: 'reg', id: 'RCC_APB1ENR', f: ['TIM2EN'], val: 0x1 },
+      'reg-apb2': { kind: 'reg', id: 'RCC_APB2ENR', f: ['IOPAEN'], val: 0x4 },
       'reg-crl-pa1': { kind: 'reg', id: 'GPIO_CRL', f: ['MODE1', 'CNF1'], val: 0x444444B4 },
       'reg-crl-pa0': { kind: 'reg', id: 'GPIO_CRL', f: ['MODE0', 'CNF0'], val: 0x4444444B },
       'reg-psc': { kind: 'reg', id: 'TIM_PSC', f: ['PSC'], val: 71, note: 'ARR 同理：ARR = 999，CNT 从 0 数到 999 为一圈。' },
@@ -358,10 +283,151 @@
       editors: [
         { key: 'PWM1_Init', file: 'tim.c', head: 'void PWM1_Init(void)\n{', tail: '}', rows: 12, label: 'PWM1_Init 的函数体' }
       ],
-      tokens: ['RCC->APB1ENR', 'RCC->APB2ENR', 'RCC_APB1ENR_TIM2EN', 'RCC_APB2ENR_IOPAEN', 'GPIOA->CRL', 'GPIO_CRL_CNF0', 'GPIO_CRL_MODE0', '_1', 'TIM2->', 'PSC', 'ARR', 'CCR1', 'CCMR1', 'CCER', 'EGR', 'CR1', 'TIM_CCMR1_OC1M_2', 'TIM_CCMR1_OC1M_1', 'TIM_CCER_CC1E', 'TIM_CCER_CC1P', 'TIM_EGR_UG', 'TIM_CR1_CEN', '|=', '&= ~(', ' | ', ';'],
       ref: 'void PWM1_Init(void)\n{\n    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;                   // ① 开 TIM2 的时钟\n    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;                   // ① 开 GPIOA 的时钟\n    GPIOA->CRL &= ~(GPIO_CRL_CNF0 | GPIO_CRL_MODE0);      // ② PA0：先清掉\n    GPIOA->CRL |= (GPIO_CRL_MODE0 | GPIO_CRL_CNF0_1);     //    复用推挽 50 MHz\n    TIM2->PSC = 72 - 1;                                   // ③ 1 MHz\n    TIM2->ARR = 500 - 1;                                  // ③ 500 个数 = 2 kHz\n    TIM2->CCR1 = 125;                                     // ③ 25%\n    TIM2->CCMR1 = TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1PE;   // ③ PWM 模式 1\n    TIM2->CCER = TIM_CCER_CC1E | TIM_CCER_CC1P;           // ③ 打开通道 1，低电平有效\n    TIM2->EGR = TIM_EGR_UG;                               // ④ 装载\n    TIM2->CR1 |= TIM_CR1_CEN;                             // ④ 开始计数\n}'
     }
   };
+  /* ===================== 结构图（硬件原理） =====================
+     自绘的「讲解图」：一个外设拆成几块，每块讲一个知识点，并标出这一块要初始化的寄存器。
+     图上：开关 = 使能位（置 1），方框 = 寄存器（写一个值），闪电 = 事件，红框 = 标志位。
+     regs：s = 初始化框架的哪一步（1 开时钟 / 2 配引脚 / 3 配外设 / 4 使能 / 0 用），id = 寄存器（找位图、找所在的块），
+           n = 图上和卡片里的写法，f = 位域（多个用逗号），v = 写的值，why = 一句话原因。
+     variants：同一张图，按任务换数值；none = 这一种外设根本没有的块，idle = 这个任务用不到的块。 */
+  CH.gpio.map = {
+    title: 'GPIO 端口位结构图',
+    basis: '依据 RM0008「I/O 端口位的基本结构」（中文版 8.1 / 英文版 9.1）和开发板原理图第 8 页重画，只保留讲解用到的部分。',
+    variants: [
+      { id: 'led', label: 'PA0 · LED1 输出', pin: 'PA0', port: 'A', bit: 0, idle: ['in'] },
+      { id: 'key', label: 'PF8 · KEY1 输入', pin: 'PF8', port: 'F', bit: 8, idle: ['out'] }
+    ],
+    zones: [
+      { id: 'clk', name: '时钟', color: 'slate',
+        lead: 'GPIOA~GPIOG 都挂在 APB2 上。RCC_APB2ENR 里一个端口一位，打开以后这个端口的寄存器才能读写。',
+        regs: {
+          led: [{ s: 1, id: 'RCC_APB2ENR', n: 'APB2ENR.IOPAEN', f: 'IOPAEN', v: '1', why: '开 GPIOA 的时钟', doc: 'reg-apb2' }],
+          key: [{ s: 1, id: 'RCC_APB2ENR', n: 'APB2ENR.IOPFEN', f: 'IOPFEN', v: '1', why: '开 GPIOF 的时钟', doc: 'reg-apb2-f' }]
+        },
+        points: ['时钟不开，往 GPIO 写什么都没反应，读 IDR 也一直是 0。', '一个端口 16 个脚共用这一位：PA0、PA1、PA8 只需要开一次 IOPAEN。'] },
+      { id: 'cfg', name: '端口配置', color: 'violet',
+        lead: '每个脚在 CRL / CRH 里占 4 位：MODE 选输入还是输出（输出时还选最高速度），CNF 选具体接哪种电路。PA0~PA7 在 CRL，PA8~PA15 在 CRH。',
+        regs: {
+          led: [{ s: 2, id: 'GPIO_CRL', n: 'CRL.MODE0', f: 'MODE0', v: '11', why: '输出，最高 50 MHz', doc: 'reg-crl' }, { s: 2, id: 'GPIO_CRL', n: 'CRL.CNF0', f: 'CNF0', v: '00', why: '通用推挽', doc: 'reg-crl' }],
+          key: [{ s: 2, id: 'GPIO_CRH', n: 'CRH.MODE8', f: 'MODE8', v: '00', why: '输入', doc: 'reg-crh-key' }, { s: 2, id: 'GPIO_CRH', n: 'CRH.CNF8', f: 'CNF8', v: '10', why: '上拉 / 下拉输入', doc: 'reg-crh-key' }]
+        },
+        points: ['复位值是 0100（浮空输入）。先用 &= ~(CNF | MODE) 把 4 位清掉，再用 |= 置需要的位。', '输出模式下输入通路照样接着：读 IDR 能读到引脚上的实际电平。'],
+        mini: 'modes' },
+      { id: 'out', name: '输出驱动', color: 'blue',
+        lead: '写 ODR（或者用 BSRR 只改其中几位）→ 输出控制 → 两个 MOS 管。推挽：1 时 P-MOS 导通，引脚接 VDD；0 时 N-MOS 导通，引脚接地。开漏只用 N-MOS。',
+        regs: {
+          led: [{ s: 2, id: 'GPIO_BSRR', n: 'BSRR.BS0', f: 'BS0', v: '1', why: '切成输出之前先输出 1，上电不闪', doc: 'reg-bsrr' },
+            { s: 0, id: 'GPIO_BSRR', n: 'BSRR.BR0', f: 'BR0', v: '1', why: '输出 0：灯亮', doc: 'reg-bsrr' },
+            { s: 0, id: 'GPIO_BSRR', n: 'BSRR.BS0', f: 'BS0', v: '1', why: '输出 1：灯灭', doc: 'reg-bsrr' }],
+          key: []
+        },
+        points: ['BSRR 低 16 位写 1 置 1、高 16 位写 1 清 0，只动写了 1 的那几位，不用先读出来。ODR ^= 要先读、再改、再写回。', '复位后 ODR = 0：先切成输出再写 1 的话，切过去那一刻 LED 会闪一下。'],
+        mini: 'drive' },
+      { id: 'in', name: '输入', color: 'green',
+        lead: '引脚上的电平经过施密特触发器整形，存进 IDR。上拉 / 下拉输入时，内部有一个约 40 kΩ 的电阻接到 VDD 或 VSS，接哪边由 ODR 这一位决定。',
+        regs: {
+          led: [],
+          key: [{ s: 2, id: 'GPIO_BSRR', n: 'BSRR.BS8', f: 'BS8', v: '1', why: 'ODR8 = 1：选上拉', doc: 'reg-bsrr-key' },
+            { s: 0, id: 'GPIO_IDR', n: 'IDR.IDR8', f: 'IDR8', v: '读', why: '读到 0 = 按下', doc: 'reg-idr' }]
+        },
+        points: ['原理图上 KEY1 没有外部上拉：松开时引脚悬空，读到的是随机值，所以要用内部上拉。', '模拟输入（CNF = 00、MODE = 00）时施密特触发器关闭，引脚直接给 ADC 用。'] },
+      { id: 'pin', name: '引脚与外部电路', color: 'amber',
+        lead: { led: 'LED1：3V3 → 2 kΩ → LED → PA0。PA0 输出 0 时 LED 两端有压差，电流流进引脚，灯亮；输出 1 时两端都是 3.3 V，灯灭。', key: 'KEY1：PF8 → 按键 → GND。按下时引脚接地，读到 0；松开时靠内部上拉，读到 1。' },
+        regs: { led: [], key: [] },
+        points: ['引脚旁的两个保护二极管把电压钳在 VSS ~ VDD 附近；标 FT 的引脚能承受 5 V。', '这一块不用写寄存器，决定的是「写 0 还是写 1 才是亮」「按下读到几」。'] }
+    ]
+  };
+
+  CH.tim.map = {
+    title: '定时器结构图',
+    basis: '依据 RM0008「通用定时器框图」（中文版 14.2 / 英文版 15.2）、「基本定时器框图」和时钟树重画，只保留这一章用到的部分。',
+    variants: [
+      { id: 'pwm', label: 'TIM5 通道 2 · PWM', tim: 5, fn: 'PWM_Init', idle: ['irq'] },
+      { id: 'tick', label: 'TIM6 · 1 ms 中断', tim: 6, fn: 'Tick_Init', none: ['oc', 'pin'] }
+    ],
+    zones: [
+      { id: 'clk', name: '时钟', color: 'slate',
+        lead: 'TIM2~TIM7 挂在 APB1。APB1 只有 36 MHz，但它的分频系数不是 1 时，送给定时器的那一路会再 ×2，所以定时器拿到的是 72 MHz。',
+        regs: {
+          pwm: [{ s: 1, id: 'RCC_APB1ENR', n: 'APB1ENR.TIM5EN', f: 'TIM5EN', v: '1', why: '开 TIM5 的时钟', doc: 'reg-apb1' }],
+          tick: [{ s: 1, id: 'RCC_APB1ENR', n: 'APB1ENR.TIM6EN', f: 'TIM6EN', v: '1', why: '开 TIM6 的时钟', doc: 'reg-apb1' }]
+        },
+        points: ['时钟不开，往定时器寄存器里写什么都没反应。', 'TIM1、TIM8 挂在 APB2，使能位在 APB2ENR。'] },
+      { id: 'tb', name: '时基单元', color: 'blue',
+        lead: 'PSC 把 72 MHz 分频，CNT 每来一个脉冲加 1；数到 ARR 以后回到 0，同时产生一次更新事件。',
+        formula: ['计数频率 = 72 MHz ÷ (PSC + 1)', '一圈 = ARR + 1 个数'],
+        regs: {
+          pwm: [{ s: 3, id: 'TIM_PSC', n: 'PSC', f: 'PSC', v: '71', why: '1 MHz：1 µs 数一个', doc: 'reg-psc' },
+            { s: 3, id: 'TIM_ARR', n: 'ARR', f: 'ARR', v: '999', why: '1000 个数一圈 = 1 ms，PWM 1 kHz', doc: 'reg-arr' },
+            { s: 3, id: 'TIM_CR1', n: 'CR1.ARPE', f: 'ARPE', v: '1', why: '改 ARR 时等这一圈数完再生效', doc: 'reg-cr1' },
+            { s: 3, id: 'TIM_EGR', n: 'EGR.UG', f: 'UG', v: '1', why: '立刻装载 PSC、ARR、CCR2', doc: 'reg-egr' },
+            { s: 4, id: 'TIM_CR1', n: 'CR1.CEN', f: 'CEN', v: '1', why: '开始计数', doc: 'reg-cr1' }],
+          tick: [{ s: 3, id: 'TIM_PSC', n: 'PSC', f: 'PSC', v: '71', why: '1 MHz：1 µs 数一个', doc: 'reg-psc' },
+            { s: 3, id: 'TIM_ARR', n: 'ARR', f: 'ARR', v: '999', why: '1000 个数 = 1 ms 溢出一次', doc: 'reg-arr' },
+            { s: 3, id: 'TIM_EGR', n: 'EGR.UG', f: 'UG', v: '1', why: '立刻装载 PSC、ARR', doc: 'reg-egr' },
+            { s: 4, id: 'TIM_CR1', n: 'CR1.CEN', f: 'CEN', v: '1', why: '开始计数', doc: 'reg-cr1' }]
+        },
+        points: ['<b>影子寄存器</b>：PSC、ARR 写进去先放在预装载寄存器里，等到更新事件才搬进真正干活的那一份。初始化时写一次 UG，让它们马上生效。', 'UG 产生的更新事件也会把 UIF 置 1：要开更新中断的话，先把它清掉（见「中断」）。'],
+        mini: 'saw' },
+      { id: 'oc', name: '输出比较', color: 'violet',
+        lead: '每个通道把 CNT 和自己的 CCR 比较。PWM 模式 1：CNT < CCR 时参考信号 OC2REF 有效，否则无效；再经过极性选择和输出使能送到引脚。',
+        formula: ['占空比 = CCR2 ÷ (ARR + 1)', 'ARR = 999 时，CCR2 就是千分比'],
+        regs: {
+          pwm: [{ s: 3, id: 'TIM_CCR2', n: 'CCR2', f: 'CCR2', v: '0', why: '先灭；以后由 PWM_SetDuty 改', doc: 'reg-ccr2' },
+            { s: 3, id: 'TIM_CCMR1', n: 'CCMR1.OC2M', f: 'OC2M', v: '110', why: 'PWM 模式 1', doc: 'reg-ccmr1' },
+            { s: 3, id: 'TIM_CCMR1', n: 'CCMR1.OC2PE', f: 'OC2PE', v: '1', why: 'CCR2 预装载：新值从下一圈开始用', doc: 'reg-ccmr1' },
+            { s: 3, id: 'TIM_CCER', n: 'CCER.CC2P', f: 'CC2P', v: '1', why: '有效 = 低电平（LED2 低电平亮）', doc: 'reg-ccer' },
+            { s: 3, id: 'TIM_CCER', n: 'CCER.CC2E', f: 'CC2E', v: '1', why: '打开通道 2 的输出', doc: 'reg-ccer' },
+            { s: 0, id: 'TIM_CCR2', n: 'CCR2', f: 'CCR2', v: '0~1000', why: '调亮度', doc: 'reg-ccr2' }],
+          tick: []
+        },
+        points: ['一个定时器 4 个通道共用同一个 CNT：频率一样，占空比各自由 CCR1~CCR4 决定。', 'CC2P 只决定「有效」是高还是低。设成低有效以后，CCR 越大，LED 亮的时间越长。'],
+        mini: 'pwm', noneText: '基本定时器 TIM6、TIM7 没有输出通道，只有时基单元和更新中断。' },
+      { id: 'pin', name: '引脚', color: 'green',
+        lead: 'PA1 的默认复用功能里有 TIM5_CH2。配成复用推挽，输出控制改由定时器驱动，不再听 ODR。',
+        regs: {
+          pwm: [{ s: 1, id: 'RCC_APB2ENR', n: 'APB2ENR.IOPAEN', f: 'IOPAEN', v: '1', why: 'PA1 在 GPIOA', doc: 'reg-apb2' },
+            { s: 2, id: 'GPIO_CRL', n: 'CRL.MODE1', f: 'MODE1', v: '11', why: '输出，最高 50 MHz', doc: 'reg-crl-pa1' },
+            { s: 2, id: 'GPIO_CRL', n: 'CRL.CNF1', f: 'CNF1', v: '10', why: '复用推挽', doc: 'reg-crl-pa1' }],
+          tick: []
+        },
+        points: ['配成普通推挽（CNF = 00）的话，PA1 只听 ODR，定时器的波形出不来。', '哪个脚能接哪个通道，查数据手册的引脚定义表；默认位置不合适时再用 AFIO 重映射。'],
+        noneText: '基本定时器没有输出通道，也就不占引脚。' },
+      { id: 'irq', name: '中断', color: 'red',
+        lead: '更新事件把 SR 的 UIF 置 1。DIER 的 UIE 打开时，请求送到 NVIC；NVIC 里也打开，CPU 才会跳去执行中断函数。',
+        regs: {
+          pwm: [],
+          tick: [{ s: 3, id: 'TIM_SR', n: 'SR.UIF', f: 'UIF', v: '0', why: '清掉 UG 顺带置起的 UIF，免得一开中断就进去一次', doc: 'reg-sr' },
+            { s: 4, id: 'TIM_DIER', n: 'DIER.UIE', f: 'UIE', v: '1', why: '允许更新中断', doc: 'reg-dier' },
+            { s: 4, id: 'NVIC_ISER', n: 'NVIC_EnableIRQ(TIM6_IRQn)', f: 'SETENA', v: '', why: 'NVIC 打开 TIM6 这一路' },
+            { s: 0, id: 'TIM_SR', n: 'SR.UIF', f: 'UIF', v: '0', why: '中断函数里先判断，再写 0 清除', doc: 'reg-sr' }]
+        },
+        points: ['标志位 → 使能开关 → 或门 → NVIC：所有外设的中断都是这样接的。同一个定时器的几个中断共用一个中断函数，所以函数里要先判断是哪个标志。', '标志位要软件清（写 0）。不清的话，一退出中断马上又进来。'],
+        idleText: '这个任务不用中断：PWM 是定时器自己输出的，不需要 CPU 参与。' }
+    ]
+  };
+  // 没在 regs 里出现的寄存器（比如 PA8 的 CRH）按所属的块归类
+  CH.gpio.map.fam = { RCC_APB2ENR: 'clk', GPIO_CRL: 'cfg', GPIO_CRH: 'cfg', GPIO_ODR: 'out', GPIO_BSRR: 'out', GPIO_BRR: 'out', GPIO_IDR: 'in' };
+  CH.tim.map.fam = { RCC_APB1ENR: 'clk', TIM_PSC: 'tb', TIM_ARR: 'tb', TIM_CNT: 'tb', TIM_EGR: 'tb', TIM_CR1: 'tb', TIM_CCR1: 'oc', TIM_CCR2: 'oc', TIM_CCR3: 'oc', TIM_CCR4: 'oc', TIM_CCMR1: 'oc', TIM_CCMR2: 'oc', TIM_CCER: 'oc', RCC_APB2ENR: 'pin', GPIO_CRL: 'pin', TIM_DIER: 'irq', TIM_SR: 'irq', NVIC_ISER: 'irq' };
+  // 这个寄存器（资料面板里的一份）在结构图的哪一块；vr 是哪种用法（TIM6 → 节拍，PF 口 → 按键）
+  function zoneOf(ch, d) {
+    var M = ch.map; if (!M || !d || d.kind !== 'reg') return null;
+    var vr = M.variants[0].id;
+    if (ch.id === 'tim' && (d.tim === 6 || d.tim === 7 || /^TIM_(SR|DIER)$/.test(d.id) || d.id === 'NVIC_ISER' || ((d.f || []).length && d.f.every(function (f) { return /^TIM[67]EN$/.test(f); })))) vr = 'tick';
+    if (ch.id === 'gpio' && (d.port === 'F' || d.id === 'GPIO_IDR')) vr = 'key';
+    var best = null;
+    M.zones.forEach(function (z) {
+      ((z.regs || {})[vr] || []).forEach(function (r) {
+        if (r.id !== d.id) return;
+        var hit = (d.f || []).some(function (f) { return String(r.f).split(',').indexOf(f) >= 0; });
+        if (!best || (hit && !best.hit)) best = { z: z.id, hit: hit };
+      });
+    });
+    var z = best ? best.z : (M.fam || {})[d.id];
+    return z ? { z: z, vr: vr } : null;
+  }
   var ORDER = ['gpio', 'tim'];
 
 
@@ -549,7 +615,7 @@
       else if (R === 'EGR') { f = ['UG']; v = 1; }
       else if (ts && ts[R] != null) v = ts[R];
       var id = 'TIM_' + R.replace(/^CCR(\d)$/, 'CCR$1');
-      var d = { kind: 'reg', id: id, f: f, val: v, write: R === 'EGR' };
+      var d = { kind: 'reg', id: id, f: f, val: v, write: R === 'EGR', tim: tn };
       if (tn === 6 || tn === 7) d.note = 'TIM' + tn + ' 是基本定时器，参考手册里它的寄存器在「基本定时器」一章，这几位的位置相同。';
       return d;
     }
@@ -700,6 +766,6 @@
   return {
     CH: CH, ORDER: ORDER, FRAME: FRAME, chapter: function (id) { return CH[id] || null; },
     file: file, parseFile: parseFile, joinElse: joinElse, program: program, trace: trace, diff: diff, body: body,
-    checkInit: checkInit, checkOnOff: checkOnOff, checkKey: checkKey, checkPwm: checkPwm, checkTick: checkTick, checkTransferPwm: checkTransferPwm, measure: measure, docFor: docFor, levelAt: levelAt
+    checkInit: checkInit, checkOnOff: checkOnOff, checkKey: checkKey, checkPwm: checkPwm, checkTick: checkTick, checkTransferPwm: checkTransferPwm, measure: measure, docFor: docFor, zoneOf: zoneOf, levelAt: levelAt
   };
 });

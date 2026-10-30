@@ -3,7 +3,8 @@
    代码在 VS Code 里写；这里只放题目、资料和检查（把写好的函数体粘贴进来，模拟器跑一遍）。
    页面：顶上一条框架（明确任务 → 查资料 → 规划 → 编写 → 验证），左边讲思路和代码，右边一次只放一份最相关的资料
    （开发板原理图 / 参考手册框图 / 寄存器位图），点一行代码右边就换成这一行用到的寄存器。
-   手机：「讲解 | 资料」切换。动画不在这里：每行寄存器代码后面有「看硬件」，跳到「硬件原理」里同一行。 */
+   规划这一步占满整页：上面是这一章的结构图（labmap.js），点框架里的一步，图上这一步要写的寄存器亮起来。
+   寄存器资料下面有「在结构图里看」，跳到「硬件原理」里这个寄存器所在的那一块。手机：「讲解 | 资料」切换。 */
 (function () {
   'use strict';
   var STM = window.STM, ui = STM.ui, el = ui.el, L = window.STM32Lab;
@@ -139,6 +140,8 @@
         var pgs = r.page || {}, rs = REGSEC[d.id] || [];
         if (pgs.pm0056) src.textContent = 'PM0056 Cortex-M3 编程手册 · ' + pgs.pm0056 + '「' + r.title_en + '」';
         else src.textContent = 'RM0008 参考手册 · 中文版' + (rs[0] ? ' ' + rs[0] : '') + (pgs.cn ? ' 第 ' + pgs.cn + ' 页' : '') + ' · 英文版 Rev21' + (rs[1] ? ' ' + rs[1] : '') + (pgs.en ? ' 第 ' + pgs.en + ' 页' : '') + '「' + r.title_en + '」';
+        var zo = !opt.noMap && L.zoneOf(ch, d), zn = zo && ch.map.zones.filter(function (q) { return q.id === zo.z; })[0];
+        if (zn) act('在结构图里看：' + zn.name, function () { app.navigate({ v: 'think', t: ch.id, hv: 'map', z: zo.z, fn: zo.vr }); });
         act('打开寄存器面板', function () { var o = { reg: d.id }; if (/^GPIO_/.test(d.id)) o.i = 'GPIO' + (d.port || ch.port); if (/^TIM_/.test(d.id)) o.i = 'TIM' + (d.tim || 5); if (d.val != null && !d.write) o.val = '0x' + (d.val >>> 0).toString(16); app.navigate(o); });
       }
       if (onChange) onChange(d);
@@ -213,6 +216,7 @@
       page = null; ui.clear(mainCol); cur = s; setMode('a'); mB.classList.remove('new');
       Array.prototype.forEach.call(tabs.children, function (a) { var on = a.dataset.st === s; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'step'); else a.removeAttribute('aria-current'); });
       page = (STAGE[s])(mainCol, ch, r, app, pane) || {};
+      wrap.classList.toggle('lp-solo', !!page.solo);
       markSeen(ch.id, s);
       ui.clear(foot);
       var i = STAGES.map(function (x) { return x[0]; }).indexOf(s);
@@ -238,8 +242,8 @@
     box.appendChild(b); box.appendChild(ans); return box;
   }
   function sec(host, title) { var s = el('section', 'lab-sec'); if (title) s.appendChild(el('h2', 'sec-h', title)); host.appendChild(s); return s; }
-  // 一份代码：子目标小标题 + 每行（注释 / 代码 / 点开看原因）+ 寄存器行后面「看硬件」
-  function codeFile(name, lines, groups, onPick, hwLink) {
+  // 一份代码：子目标小标题 + 每行（注释 / 代码 / 点开看原因）
+  function codeFile(name, lines, groups, onPick) {
     var R = STM.codederive.rows, fig = el('figure', 'code rc-code cd-file lp-file'), h = el('figcaption', 'code-h');
     h.appendChild(el('span', 'code-t mono', name)); fig.appendChild(h);
     var body = el('div', 'rc-fn');
@@ -247,14 +251,12 @@
       if (groups && groups[i]) body.appendChild(el('div', 'lp-goal', groups[i]));
       var l = R.norm(x), row = R.line(l);
       row.dataset.i = i;
-      var go = hwLink && hwLink(i, l.c);
-      if (go) { go.classList.add('lp-hw'); row.querySelector('.rc-lb').appendChild(go); }
       if (onPick && l.c.trim()) row.querySelector('.rc-lb').addEventListener('click', function () { onPick(i, l.c, row); });
       body.appendChild(row);
     });
     fig.appendChild(body); return fig;
   }
-  function hwChipFor(ch, file, i) {   // 这一行在「硬件原理」里是哪个函数的第几行
+  function hwChipFor(ch, file, i) {   // 这一行属于哪段示例程序（用来算这一行执行完的寄存器值）
     if (file === 'single') return 'single';
     if (file === 'main.c') return ch.chips.some(function (c) { return c.id === 'main'; }) ? 'main' : null;
     if (file !== ch.cfile) return null;
@@ -301,19 +303,23 @@
     }
     draw(); pane.show(ch.look[0].doc);
   };
-  function showCards(pane, ch) {
-    var b = pane.el.querySelector('.lp-doc-b'); ui.clear(b); pane.el.querySelector('.lp-doc-h').innerHTML = ''; pane.el.querySelector('.lp-src').textContent = ''; ui.clear(pane.el.querySelector('.lp-acts'));
-    pane.el.dataset.kind = 'cards';
-    cards(b, ch, pane, function () { showCards(pane, ch); });
-  }
-  /* ③ 规划：初始化框架；模块划分；对外接口；头文件与源文件分工 */
+  /* ③ 规划：初始化框架（对着结构图想要写哪些寄存器）；模块划分；对外接口；头文件与源文件分工 */
   STAGE.plan = function (body, ch, route, app, pane) {
-    var s1 = sec(body, '初始化框架');
+    var s1 = sec(body, '初始化框架'), map = null;
+    s1.appendChild(el('p', 'lp-lead', '对着结构图从时钟走到引脚：图上带圆圈数字的开关和方框，就是初始化要写的寄存器。点上面的一步，图上这一步要写的寄存器亮起来。'));
+    if (ch.map && STM.lab && STM.lab.MapView) {
+      map = STM.lab.MapView(s1, ch, { app: app, card: false, steps: true, onZone: function (z) { app.navigate({ v: 'think', t: ch.id, hv: 'map', z: z || null, fn: map.vr() }); } });
+    }
     var fr = el('div', 'lp-frame-t');
-    L.FRAME.forEach(function (x, i) { var row = el('div', 'lp-fr'); row.appendChild(el('b', 'lp-fr-k', x[0])); row.appendChild(reveal(x[1], ch.frame[i], 'lp-fr-q')); fr.appendChild(row); });
+    L.FRAME.forEach(function (x, i) {
+      var row = el('div', 'lp-fr'), q = reveal(x[1], ch.frame[i], 'lp-fr-q'), k = i < 4 ? i + 1 : 0;
+      q.querySelector('.lab-q-h').addEventListener('click', function () { if (map && q.classList.contains('open')) map.set({ step: k }); });
+      row.appendChild(el('b', 'lp-fr-k', x[0])); row.appendChild(q); fr.appendChild(row);
+    });
     s1.appendChild(fr);
-    var s2 = sec(body, '模块划分'); s2.appendChild(reveal(ch.split.q, ch.split.a));
-    var s3 = sec(body, '对外接口');
+    var narrow = el('div', 'lp-narrow'); body.appendChild(narrow);
+    var s2 = sec(narrow, '模块划分'); s2.appendChild(reveal(ch.split.q, ch.split.a));
+    var s3 = sec(narrow, '对外接口');
     var g = el('div', 'lab-fns');
     ch.fns.forEach(function (f) {
       var c = el('article', 'lab-fn'), sig = el('code', 'lab-fn-sig'); sig.appendChild(ui.hlC(f.sig)); c.appendChild(sig);
@@ -324,7 +330,7 @@
     s3.appendChild(g);
     function tr(n) { var ul = el('ul', 'lab-tree'); n.forEach(function (x, i) { if (Array.isArray(x)) return; var li = el('li'), cd = el('code'); cd.appendChild(ui.hlC(x)); li.appendChild(cd); if (Array.isArray(n[i + 1])) li.appendChild(tr(n[i + 1])); ul.appendChild(li); }); return ul; }
     s3.appendChild(el('h3', 'lp-h3', '调用顺序')); s3.appendChild(tr(ch.calls));
-    var s4 = sec(body, '头文件与源文件分工');
+    var s4 = sec(narrow, '头文件与源文件分工');
     ch.place.forEach(function (it) {
       var row = el('div', 'lab-pl'), t = el('span', 'lab-pl-t'), bs = el('span', 'lab-pl-b'), fb = html('p', 'lab-pl-f', '');
       t.appendChild(ui.hlC(it.t)); fb.hidden = true;
@@ -340,7 +346,7 @@
       });
       row.appendChild(t); row.appendChild(bs); row.appendChild(fb); s4.appendChild(row);
     });
-    showCards(pane, ch);
+    return { solo: true, destroy: function () { if (map) map.destroy(); } };
   };
   /* ④ 编写：第一版单文件；第二版拆成模块 */
   STAGE.code = function (body, ch, route, app, pane) {
@@ -358,22 +364,13 @@
       var chip = hwChipFor(ch, file, i), st = chip ? stateAfter(ch, chip, i) : null, d = L.docFor(ch, code, st);
       if (d) pane.show(d);
     }
-    function hwLink(file) {
-      return function (i, code) {
-        var chip = hwChipFor(ch, file, i); if (!chip || !/->|NVIC_|\w+_\w+\(|Delay_ms/.test(code)) return null;
-        if (!stateAfter(ch, chip, i)) return null;
-        var a = app.link({ v: 'think', t: ch.id, hv: 'run', fn: chip, ln: String(i) }, 'lp-hwl'); a.textContent = '动画'; a.title = '在「硬件原理」里看这一行';
-        a.addEventListener('click', function (e) { e.stopPropagation(); });
-        return a;
-      };
-    }
     if (v === 'v1') {
-      body.appendChild(codeFile('main.c', ch.single, ch.groups.single, function (i, c, row) { pick('single', i, c, row); }, hwLink('single')));
+      body.appendChild(codeFile('main.c', ch.single, ch.groups.single, function (i, c, row) { pick('single', i, c, row); }));
       body.appendChild(reveal(ch.v1.limit[0], ch.v1.limit[1]));
       pane.show(ch.defaults.v1);
     } else {
       ch.files.forEach(function (name) {
-        body.appendChild(codeFile(name, L.file(ch, name), ch.groups[name], function (i, c, row) { pick(name, i, c, row); }, hwLink(name)));
+        body.appendChild(codeFile(name, L.file(ch, name), ch.groups[name], function (i, c, row) { pick(name, i, c, row); }));
       });
       pane.show(ch.defaults.v2);
     }
@@ -443,7 +440,6 @@
       ex.fns.forEach(function (name) { ed[name] = editor(eds, SKEY + ch.id + '.' + name, { file: ch.cfile, head: fns[name].sig + '\n{', tail: '}', label: name + ' 的函数体' }, ex.rows); });
       var acts = el('div', 'lab-acts'), bC = ui.btn('lab-b lab-p', '检查'), bR = ui.btn('lab-b', '参考答案');
       acts.appendChild(bC); acts.appendChild(bR);
-      if (ex.mine) { var mine = app.link({ v: 'think', t: ch.id, hv: 'run', fn: ex.mine }, 'lab-b lp-mine'); mine.textContent = '放进动画'; acts.appendChild(mine); }
       sp.appendChild(acts);
       var out = el('div', 'lab-res'); out.setAttribute('aria-live', 'polite'); sp.appendChild(out);
       var ref = el('div', 'lab-ref'); ref.hidden = true; sp.appendChild(ref);

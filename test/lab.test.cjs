@@ -1,4 +1,5 @@
-/* 编程思维模块（lab-core.js）：课件代码真的跑一遍，每一行在硬件上造成的变化对得上；自己写的检查能找出常见错误 */
+/* 编程思维 / 硬件原理（lab-core.js）：课件代码真的跑一遍，每一行在硬件上造成的变化对得上；自己写的检查能找出常见错误；
+   结构图上标的寄存器和初始化步骤，和课件代码一行一行对得上 */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -29,7 +30,6 @@ test('LED_Init：开时钟 → 先写 1 → 配推挽，切成输出时灯是灭
   const end = t.states[t.states.length - 1];
   for (const k of ['PA0', 'PA1', 'PA8']) { assert.equal(end.pins[k].mode, 'pp'); assert.equal(end.pins[k].level, 1); }
   assert.ok(t.states.every((s) => ['PA0', 'PA1', 'PA8'].every((k) => s.pins[k].level !== 0)), '中途不能亮');
-  t.evs.forEach((e) => assert.ok(ch.hw[e.code], '每一行都有硬件说明：' + e.code));
 });
 
 test('LED_On / LED_Off 走 BSRR，LED_Toggle 是读-改-写', () => {
@@ -53,8 +53,8 @@ test('main.c 流水灯：一圈里三个灯轮流亮，延时 500 ms', () => {
   assert.ok(t.evs.filter((e) => e.parts[0].t === 'delay').every((e) => e.parts[0].ms === 500));
 });
 
-test('硬件那一步的五行：配成输出那一下灯亮、写 1 灭、写 0 亮', () => {
-  const t = L.trace(ch, { fn: 'main', main: ch.tour.map((x) => x[0]) });
+test('五行代码：配成输出那一下灯亮、写 1 灭、写 0 亮', () => {
+  const t = L.trace(ch, { fn: 'main', main: ['RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;', 'GPIOA->CRL &= ~(GPIO_CRL_CNF0 | GPIO_CRL_MODE0);', 'GPIOA->CRL |= GPIO_CRL_MODE0;', 'GPIOA->BSRR = GPIO_BSRR_BS0;', 'GPIOA->BSRR = GPIO_BSRR_BR0;'] });
   assert.equal(t.evs.length, 5);
   eq(t.states.slice(1).map((s) => s.pins.PA0.level), ['z', 'z', 0, 1, 0]);
 });
@@ -89,11 +89,12 @@ test('路由：v=lab 带章节、步骤、函数；乱写的值丢掉', () => {
   assert.equal(core.params({ v: 'lab', t: 'gpio', st: 'c', fn: 'main' }), 'v=lab&t=gpio&st=c&fn=main');
 });
 
-test('路由：编程思维的新五步、硬件原理的 hv / fn / ln', () => {
+test('路由：编程思维的新五步、硬件原理的 hv / z / fn（旧的 hv=run 归到结构图，ln 不要了）', () => {
   assert.deepEqual(core.fromParams('v=lab&t=gpio&st=look'), { v: 'lab', t: 'gpio', st: 'look' });
-  assert.deepEqual(core.fromParams('v=think&t=gpio&hv=run&fn=mine-init&ln=010'), { v: 'think', t: 'gpio', fn: 'mine-init', hv: 'run', ln: '10' });
-  assert.deepEqual(core.fromParams('v=think&t=gpio&hv=x&ln=abc'), { v: 'think', t: 'gpio' });
-  assert.deepEqual(core.fromParams('v=home&hv=run&ln=3'), { v: 'home' });
+  assert.deepEqual(core.fromParams('v=think&t=tim&hv=map&z=tb&fn=tick'), { v: 'think', t: 'tim', fn: 'tick', hv: 'map', z: 'tb' });
+  assert.deepEqual(core.fromParams('v=think&t=gpio&hv=run&fn=mine-init&ln=010'), { v: 'think', t: 'gpio', fn: 'mine-init', hv: 'map' });
+  assert.deepEqual(core.fromParams('v=think&t=gpio&hv=x&z=<b>'), { v: 'think', t: 'gpio' });
+  assert.deepEqual(core.fromParams('v=home&hv=map&z=tb'), { v: 'home' });
 });
 
 test('第一版（单文件 main.c）能跑：开时钟 → 先写 1 → 切推挽 → 亮 → 等 → 灭', () => {
@@ -148,7 +149,6 @@ test('定时器：PWM_Init 逐行 → 开时钟、配引脚、写定时器寄存
   const end = t.states[t.states.length - 1];
   assert.equal(end.pins.PA1.mode, 'afpp');
   eq([end.tim[5].PSC, end.tim[5].ARR, end.tim[5].CR1 & 1], [71, 999, 1]);
-  t.evs.forEach((e) => assert.ok(tc.hw[e.code], '每一行都有硬件说明：' + e.code));
 });
 test('定时器：Tick_Init 打开中断；中断函数一行行：读 SR、清 UIF、ms++', () => {
   const t = L.trace(tc, tc.chips.find((c) => c.id === 'tick'));
@@ -199,4 +199,60 @@ test('标题不用问句：查资料、任务分解、框架提示都是名词�
     assert.ok(!/[？?]/.test(c.split.q));
   });
   L.FRAME.forEach((x) => assert.ok(!/[？?]|什么|怎么|哪/.test(x[1]), x[1]));
+});
+
+/* ---------- 结构图（硬件原理） ---------- */
+const STEPOF = (h) => ({ '①': 1, '②': 2, '③': 3, '④': 4 })[String(h || '').trim()[0]] || 0;   // 「用：……」「中断：……」都算用的时候
+// 课件代码里每一行寄存器操作 → 结构图上的哪一块、标的是第几步；和代码上方的小标题（① 开时钟 ……）一致
+function walk(c, file, fnNames) {
+  const src = L.file(c, file), fns = L.parseFile(src).fns, groups = c.groups[file], out = [];
+  fnNames.forEach((n) => fns[n].src.forEach((i) => {
+    let g = null; Object.keys(groups).map(Number).filter((k) => k <= i).forEach((k) => { g = groups[k]; });
+    const d = L.docFor(c, src[i][0], null); if (d && d.kind === 'reg') out.push({ code: src[i][0].trim(), d, step: STEPOF(g) });
+  }));
+  return out;
+}
+function regsAt(c, z, vr) { return ((c.map.zones.find((q) => q.id === z).regs || {})[vr]) || []; }
+test('结构图：课件初始化代码的每个寄存器都画在图上，圆圈数字和代码的小标题一致', () => {
+  assert.ok(walk(tc, 'tim.c', ['Tick_Init', 'PWM_Init']).length === 20 && walk(ch, 'led.c', ['LED_Init']).length === 6);
+  const check = (c, list) => list.forEach(({ code, d, step }) => {
+    const z = L.zoneOf(c, d); assert.ok(z, '图上找不到：' + code);
+    const hits = regsAt(c, z.z, z.vr).filter((r) => r.id === d.id && (!d.f.length || d.f.some((f) => String(r.f).split(',').includes(f))));
+    if (/CRH/.test(code) && c.id === 'gpio') return;   // PA8 的 CRH：图上只画 PA0 这一位，归在「端口配置」
+    if (/ODR \^=/.test(code)) return;   // 翻转：图上只画 BSRR
+    assert.ok(hits.length, '这一块没标这个寄存器：' + code + ' → ' + z.z + '/' + z.vr);
+    assert.ok(hits.some((r) => r.s === step), '步骤不一致：' + code + ' 代码里是 ' + step + '，图上是 ' + hits.map((r) => r.s));
+  });
+  check(tc, walk(tc, 'tim.c', ['Tick_Init', 'PWM_Init', 'PWM_SetDuty', 'TIM6_IRQHandler']));
+  check(ch, walk(ch, 'led.c', ['LED_Init', 'LED_On', 'LED_Off', 'LED_Toggle']));
+  // 换题的参考写法（按键）：每一行都落在「按键」那种用法上
+  ch.transfer.ref.split('\n').filter((l) => /->/.test(l)).forEach((l) => {
+    const d = L.docFor(ch, l.replace(/\/\/.*$/, ''), null), z = L.zoneOf(ch, Object.assign({ port: 'F' }, d));
+    assert.ok(z && z.vr === 'key', l);
+    assert.ok(regsAt(ch, z.z, 'key').some((r) => r.id === d.id), l);
+  });
+});
+test('结构图：用法、块、寄存器的资料都对得上', () => {
+  const regs = fs.readFileSync(path.join(root, 'assets/registers.js'), 'utf8');
+  [ch, tc].forEach((c) => {
+    const ids = c.map.zones.map((z) => z.id), vrs = c.map.variants.map((v) => v.id);
+    c.map.variants.forEach((v) => (v.none || []).concat(v.idle || []).forEach((z) => assert.ok(ids.includes(z), z)));
+    c.map.zones.forEach((z) => {
+      assert.ok(!/[？?]|什么|怎么/.test(z.name), z.name);
+      assert.ok(z.lead && z.points.length >= 2, z.id);
+      Object.keys(z.regs).forEach((k) => assert.ok(vrs.includes(k), k));
+      vrs.forEach((v) => (z.regs[v] || []).forEach((r) => {
+        assert.ok([0, 1, 2, 3, 4].includes(r.s), r.n);
+        assert.ok(regs.includes('"id":"' + r.id + '"'), r.id);
+        if (r.doc) { assert.ok(c.docs[r.doc], r.doc); assert.equal(c.docs[r.doc].id, r.id, r.doc); }
+      }));
+      if (z.mini) assert.ok(['saw', 'pwm', 'modes', 'drive'].includes(z.mini), z.mini);
+    });
+  });
+  eq(L.zoneOf(tc, tc.docs['reg-dier']), { z: 'irq', vr: 'tick' });
+  eq(L.zoneOf(tc, tc.docs['reg-crl-pa1']), { z: 'pin', vr: 'pwm' });
+  eq(L.zoneOf(tc, L.docFor(tc, 'RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;')), { z: 'clk', vr: 'tick' });
+  eq(L.zoneOf(ch, ch.docs['reg-idr']), { z: 'in', vr: 'key' });
+  eq(L.zoneOf(ch, ch.docs['reg-crh']), { z: 'cfg', vr: 'led' });
+  assert.equal(L.zoneOf(ch, ch.docs['sch-led']), null);
 });
