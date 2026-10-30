@@ -294,7 +294,7 @@
      variants：同一张图，按任务换数值；none = 这一种外设根本没有的块，idle = 这个任务用不到的块。 */
   CH.gpio.map = {
     title: 'GPIO 端口位结构图',
-    basis: '依据 RM0008「I/O 端口位的基本结构」（中文版 8.1 / 英文版 9.1）和开发板原理图第 8 页重画，只保留讲解用到的部分。',
+    basis: '依据 RM0008「I/O 端口位的基本结构」和开发板原理图第 8 页重画，只保留讲解用到的部分。',
     variants: [
       { id: 'led', label: 'PA0 · LED1 输出', pin: 'PA0', port: 'A', bit: 0, idle: ['in'] },
       { id: 'key', label: 'PF8 · KEY1 输入', pin: 'PF8', port: 'F', bit: 8, idle: ['out'] }
@@ -342,7 +342,7 @@
 
   CH.tim.map = {
     title: '定时器结构图',
-    basis: '依据 RM0008「通用定时器框图」（中文版 14.2 / 英文版 15.2）、「基本定时器框图」和时钟树重画，只保留这一章用到的部分。',
+    basis: '依据 RM0008「通用定时器框图」、「基本定时器框图」和时钟树重画，只保留这一章用到的部分。',
     variants: [
       { id: 'pwm', label: 'TIM5 通道 2 · PWM', tim: 5, fn: 'PWM_Init', idle: ['irq'] },
       { id: 'tick', label: 'TIM6 · 1 ms 中断', tim: 6, fn: 'Tick_Init', none: ['oc', 'pin'] }

@@ -11,10 +11,7 @@
   var STAGES = [['task', '明确任务'], ['look', '查资料'], ['plan', '规划'], ['code', '编写'], ['check', '验证']];
   var OLD = { need: 'task', hw: 'look', fn: 'plan', h: 'plan', c: 'code', self: 'check' };   // 旧地址
   var SKEY = 'lm.stm.lab.';
-  // 资料的章节号（参考手册中文版 2009 / 英文版 Rev21）；页码来自 manual.js / registers.js
-  var FIGSEC = { 'sys-arch': ['2.1', '3.1'], 'gpio-bit': ['8.1', '9.1'], 'gpio-in': ['8.1.7', '9.1.7'], 'gpio-out': ['8.1.8', '9.1.8'], 'clock-tree': ['6.2', '7.2'], 'tim-gp': ['14.2', '15.2'], 'tim-pwm-edge': ['14.3.9', '15.3.9'] };
-  var REGSEC = { RCC_APB2ENR: ['6.3.7', '7.3.7'], RCC_APB1ENR: ['6.3.8', '7.3.8'], GPIO_CRL: ['8.2.1', '9.2.1'], GPIO_CRH: ['8.2.2', '9.2.2'], GPIO_IDR: ['8.2.3', '9.2.3'], GPIO_ODR: ['8.2.4', '9.2.4'], GPIO_BSRR: ['8.2.5', '9.2.5'], GPIO_BRR: ['8.2.6', '9.2.6'] };
-  ['CR1', 'CR2', 'SMCR', 'DIER', 'SR', 'EGR', 'CCMR1', 'CCMR2', 'CCER', 'CNT', 'PSC', 'ARR', 'CCR1', 'CCR2', 'CCR3', 'CCR4'].forEach(function (r, i) { REGSEC['TIM_' + r] = ['14.4.' + (i + 1), '15.4.' + (i + 1)]; });   // 通用定时器（TIM2~5）一章
+  // 资料的页码来自 manual.js / registers.js；不标章节号
   var SCH = { 'board-08': { w: 848.16, h: 599.76, n: 8, name: '小电路' } };
   function html(tag, cls, h) { var e = el(tag, cls); e.innerHTML = h; return e; }
   function seen(ch) { var o = {}; try { o = JSON.parse(ui.lsGet(SKEY + ch + '.seen2') || '{}') || {}; } catch (e) {} return o; }
@@ -116,8 +113,7 @@
         var f = figOf(d.fig); if (!f) return;
         head.appendChild(el('span', 'lp-kind', '参考手册')); head.appendChild(el('b', null, f.label + ' ' + f.title));
         body.appendChild(picture('assets/' + f.src, f.width, f.height, d.crop, d.hl));
-        var sec = FIGSEC[d.fig] || [];
-        src.textContent = 'RM0008 参考手册 · 中文版' + (sec[0] ? ' ' + sec[0] : '') + (f.page ? ' 第 ' + f.page + ' 页' : '') + ' · 英文版 Rev21' + (sec[1] ? ' ' + sec[1] : '') + (f.page_en ? ' 第 ' + f.page_en + ' 页' : '') + '。矢量图取自英文版，中文标注按中文版术语转译。';
+        src.textContent = 'RM0008 参考手册' + (f.page ? ' · 中文版第 ' + f.page + ' 页' : '') + (f.page_en ? ' · 英文版第 ' + f.page_en + ' 页' : '') + '。矢量图取自英文版，中文标注按中文版术语转译。';
         if (d.crop) act(whole ? '局部' : '全图', function () { whole = !whole; show(d, { keepWhole: true }); });
         act('放大', function () { app.navigate({ fig: d.fig }); });
       } else if (d.kind === 'pin') {
@@ -137,9 +133,9 @@
         var r = regOf(d.id); if (!r) return;
         head.appendChild(el('span', 'lp-kind', '参考手册 · 寄存器')); head.appendChild(el('b', 'mono', r.name));
         body.appendChild(regView(d));
-        var pgs = r.page || {}, rs = REGSEC[d.id] || [];
-        if (pgs.pm0056) src.textContent = 'PM0056 Cortex-M3 编程手册 · ' + pgs.pm0056 + '「' + r.title_en + '」';
-        else src.textContent = 'RM0008 参考手册 · 中文版' + (rs[0] ? ' ' + rs[0] : '') + (pgs.cn ? ' 第 ' + pgs.cn + ' 页' : '') + ' · 英文版 Rev21' + (rs[1] ? ' ' + rs[1] : '') + (pgs.en ? ' 第 ' + pgs.en + ' 页' : '') + '「' + r.title_en + '」';
+        var pgs = r.page || {};
+        if (pgs.pm0056) src.textContent = 'PM0056 Cortex-M3 编程手册「' + r.title_en + '」';
+        else src.textContent = 'RM0008 参考手册' + (pgs.cn ? ' · 中文版第 ' + pgs.cn + ' 页' : '') + (pgs.en ? ' · 英文版第 ' + pgs.en + ' 页' : '') + '「' + r.title_en + '」';
         var zo = !opt.noMap && L.zoneOf(ch, d), zn = zo && ch.map.zones.filter(function (q) { return q.id === zo.z; })[0];
         if (zn) act('在结构图里看：' + zn.name, function () { app.navigate({ v: 'think', t: ch.id, hv: 'map', z: zo.z, fn: zo.vr }); });
         act('打开寄存器面板', function () { var o = { reg: d.id }; if (/^GPIO_/.test(d.id)) o.i = 'GPIO' + (d.port || ch.port); if (/^TIM_/.test(d.id)) o.i = 'TIM' + (d.tim || 5); if (d.val != null && !d.write) o.val = '0x' + (d.val >>> 0).toString(16); app.navigate(o); });
