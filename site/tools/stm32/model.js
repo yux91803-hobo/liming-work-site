@@ -160,13 +160,24 @@
     return t;
   });
   var topicById = {}; topics.forEach(function (t) { topicById[t.id] = t; });
-  /* 每个代码片段只归一个外设：先看哪个外设的课件章节用到它，再看寄存器组的关联（NVIC 组也挂着串口中断片段，不能让它落到 EXTI） */
+  /* 每个代码片段只归一个外设。原来靠课件章节判断归属，课件删掉后固定在这张表里；
+     表里没有的再按寄存器组的关联（NVIC 组也挂着串口中断片段，靠关联会落到 EXTI，所以要写表） */
+  var SNIP_OWNER = {
+    "LED 亮灭 / 翻转": "gpio",
+    "蜂鸣器": "gpio",
+    "按键输入（消抖）": "gpio",
+    "EXTI 外部中断（KEY1 下降沿）": "exti",
+    "USART1 中断收发": "usart",
+    "printf 重定向到 USART1": "usart",
+    "I2C 读写 EEPROM（M24C02 · I2C2）": "i2c",
+    "定时器中断（TIM6 1s）": "tim",
+    "PWM 呼吸灯（LED1 · TIM2_CH1）": "tim",
+    "延时 / SysTick": "tim",
+    "ADC 读电位器（ADC1 · IN10 · PC0）": "adc",
+    "SPI 读 Flash ID（W25Q32 · SPI1）": "spi"
+  };
   snips.forEach(function (s) {
-    var owner = null;
-    topics.forEach(function (t) {
-      if (owner) return;
-      t.chapters.forEach(function (ch) { [ch].concat(ch.kids).forEach(function (x) { if (!owner && x.c.snippetTitle === s.title) owner = t; }); });
-    });
+    var owner = topicById[SNIP_OWNER[s.title]] || null;
     if (!owner) topics.forEach(function (t) {
       if (!owner && t.regGroups.some(function (x) { return (x.g.snippets || []).some(function (ref) { return ref.title === s.title; }); })) owner = t;
     });
