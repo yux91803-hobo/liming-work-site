@@ -21,7 +21,7 @@ for (const f of all.filter(f => /\.html$/.test(f))) {
   }
 }
 const ctx = { window: {} }; vm.createContext(ctx);
-for (const rel of ['assets/assets.js', 'assets/manual.js', 'assets/teach-arch/teach-arch.js', 'assets/courseware/courseware.js']) vm.runInContext(fs.readFileSync(path.join(site, 'tools/stm32', rel), 'utf8'), ctx);
+for (const rel of ['assets/assets.js', 'assets/manual.js', 'assets/teach-arch/teach-arch.js']) vm.runInContext(fs.readFileSync(path.join(site, 'tools/stm32', rel), 'utf8'), ctx);
 let resources = 0;
 function visit(x) {
   if (typeof x === 'string' && /\.(svg|webp|png|jpe?g|pdf)$/i.test(x) && !/^https?:/.test(x)) {
