@@ -1,6 +1,6 @@
 """STM32 学习台端到端测试（需要 python playwright + chromium）
 先 npm run dev，再 python3 test/e2e/stm32_e2e.py [http://localhost:5173]"""
-import asyncio, json, sys
+import asyncio, json, os, sys
 from playwright.async_api import async_playwright
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else 'http://localhost:5173'
@@ -10,7 +10,7 @@ INSTR = """
   const R = history.replaceState.bind(history);
   history.replaceState = function () { window.__rs++; return R.apply(null, arguments); };
 """
-results, errors = [], []
+results, errors, local_fail = [], [], []
 
 def check(name, ok, detail=''):
     results.append((name, bool(ok)))
@@ -22,6 +22,9 @@ async def page(b, w=1280, h=860, mobile=False, theme='light'):
     # 小芯的「叛逆」是随机的（不肯睡、偏要走回去），测试里关掉，免得结果时好时坏
     await ctx.add_init_script("addEventListener('load', function () { if (window.LimingXin) LimingXin.obedient = true; })")
     pg = await ctx.new_page()
+    # 网站自己的资源失败才算问题；外部地图瓦片等第三方资源不计
+    pg.on('response', lambda r: local_fail.append('%d %s' % (r.status, r.url)) if r.status >= 400 and r.url.startswith(BASE) else None)
+    pg.on('requestfailed', lambda r: local_fail.append('%s %s' % (r.failure, r.url)) if r.url.startswith(BASE) else None)
     pg.on('pageerror', lambda e: errors.append('pageerror ' + pg.url + ' :: ' + str(e)))
     pg.on('console', lambda m: errors.append('console.error ' + m.text) if m.type == 'error' else None)
     return pg
@@ -41,7 +44,8 @@ async def wait_img(f, timeout=10000):
 
 async def main():
     async with async_playwright() as p:
-        b = await p.chromium.launch()
+        exe = os.environ.get('CHROMIUM_PATH')
+        b = await p.chromium.launch(**({'executable_path': exe} if exe else {}))
 
         # ---------- 1. 独立打开：首页 → 主题 → 寄存器 → 返回 ----------
         pg = await page(b)
@@ -853,6 +857,8 @@ async def main():
     print('\n==== %d/%d 通过 ====' % (sum(1 for r in results if r[1]), len(results)))
     real = [e for e in errors if 'Failed to load resource' not in e]
     print('JS 报错：%d' % len(real)); [print('  ' + e[:300]) for e in real[:20]]
-    print('资源 404：%d' % (len(errors) - len(real)))
+    print('外部资源加载失败（不计）：%d' % (len(errors) - len(real)))
+    print('本站资源失败：%d' % len(local_fail)); [print('  ' + e[:300]) for e in local_fail[:20]]
+    return all(r[1] for r in results) and not real and not local_fail
 
-asyncio.run(main())
+sys.exit(0 if asyncio.run(main()) else 1)
