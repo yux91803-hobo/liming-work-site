@@ -24,7 +24,8 @@ async def page(b, w=1280, h=860, mobile=False, theme='light'):
     pg = await ctx.new_page()
     # 网站自己的资源失败才算问题；外部地图瓦片等第三方资源不计
     pg.on('response', lambda r: local_fail.append('%d %s' % (r.status, r.url)) if r.status >= 400 and r.url.startswith(BASE) else None)
-    pg.on('requestfailed', lambda r: local_fail.append('%s %s' % (r.failure, r.url)) if r.url.startswith(BASE) else None)
+    # ERR_ABORTED 是页面跳走时浏览器主动取消的请求，不算失败
+    pg.on('requestfailed', lambda r: local_fail.append('%s %s' % (r.failure, r.url)) if r.url.startswith(BASE) and 'ERR_ABORTED' not in (r.failure or '') else None)
     pg.on('pageerror', lambda e: errors.append('pageerror ' + pg.url + ' :: ' + str(e)))
     pg.on('console', lambda m: errors.append('console.error ' + m.text) if m.type == 'error' else None)
     return pg
