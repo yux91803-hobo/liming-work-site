@@ -7,6 +7,7 @@
     "dev": "node scripts/preview.mjs",
     "check": "node scripts/check.mjs",
     "test": "node --test test/*.test.cjs",
-    "check:c": "node scripts/check-stm32-c.cjs"
+    "check:c": "node scripts/check-stm32-c.cjs",
+    "test:e2e": "python3 test/e2e/stm32_e2e.py"
   }
 }
