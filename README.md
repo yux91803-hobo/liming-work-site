@@ -39,24 +39,17 @@ src/worker.js         Cloudflare Worker（资源 404、/api 404）
 scripts/preview.mjs   无依赖静态预览
 scripts/check.mjs     语法、资源与行为检查
 test/                 关键行为回归测试
-docs/CHANGES.md        修改清单与验证范围
-RESOURCE-MANIFEST.json 文件大小与 SHA-256
-wrangler.jsonc        站点名、域名；删除旧 Durable Object 的迁移
+docs/CHANGES.md       修改清单与验证范围
+wrangler.jsonc        正式站（顶层）与测试站（env.staging）配置
+.github/workflows/    检查 + 自动部署
 ```
 
-从原站公开路径补齐了上传包中缺失的 STM32 数据、课件图、架构图、原理图和应用图标；文件清单记录其哈希。没有混入旧备份、历史审查目录、部署日志、会话数据或访问密钥。
+## 部署
 
-## 更新现有 Cloudflare 站点
+由 GitHub Actions（`.github/workflows/deploy.yml`）完成，令牌在仓库 Secrets 里：
 
-`wrangler.jsonc` 保留原站 `liming-worldmap` 的名字和域名。互传和协作中心删掉后：
+- 开 PR 到 `main`：检查通过后部署测试站 `liming-hub-staging`（只有 `*.workers.dev` 地址），并检查首页和 `/tools/stm32/`。
+- 合并到 `main`：部署正式站 `liming-worldmap`（liming-work.com）；检查失败自动回滚到上一版。
+- Actions 页面可以手动运行，默认只 dry-run。
 
-- 不再绑定 D1 数据库 `liming-hub`；数据库本身还在 Cloudflare 账号里，确认不要了可以执行 `npx wrangler d1 delete liming-hub`。
-- 迁移 `v2` 删除 Durable Object `Space`（互传的文件和文字）和 `Limiter`（登录限流）。**第一次部署这一版时，里面存的数据会被永久删除。**
-- 旧密钥 `TRANSFER_PASSWORD`、`TRANSFER_KEY`、`TRANSFER_PW_VERSION` 和协作中心的密钥已经用不到，可以用 `npx wrangler secret delete <名字>` 删掉。
-
-1. 保留当前正式版源码及可回滚的部署版本。
-2. 解压此包，在 `worldmap/` 执行 `npm run check`。
-3. 在已有 Wrangler 环境执行 `npx wrangler deploy --dry-run`，确认站点名、资源目录，以及迁移里只删除了 `Space`、`Limiter`。
-4. 按原有测试站流程验收后，使用该环境的既有部署方式上线。
-
-这一交付是完整修改后的源码和静态资源包，不代表正式站已经完成部署。
+互传和协作中心删除时留下的 Cloudflare 资源（迁移 `v2` 已在两个站执行过）：D1 数据库 `liming-hub` 还在账号里，确认不要可以 `npx wrangler d1 delete liming-hub`；旧密钥 `TRANSFER_PASSWORD`、`TRANSFER_KEY`、`TRANSFER_PW_VERSION` 可以用 `npx wrangler secret delete <名字>` 删掉。
