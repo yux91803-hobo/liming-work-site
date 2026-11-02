@@ -340,7 +340,7 @@ a.sig:hover { background: color-mix(in srgb, var(--h) 22%, transparent); }
 .chipv-r { min-width: 0; align-self: start; }
 .chipv-r > .mtags:first-child { margin-top: 0; }
 .chipv-r > .pdetail { margin-top: 16px; }
-@media (min-width: 900px) { .chipv-g { grid-template-columns: minmax(0, 1.25fr) minmax(300px, .9fr); } .chipv-r { position: sticky; top: 24px; } }
+@media (min-width: 1180px) { .chipv-g { grid-template-columns: minmax(0, 1.25fr) minmax(300px, .9fr); } .chipv-r { position: sticky; top: 24px; } }
 
 /* ---------- 开发板 ---------- */
 .photo { display: block; width: 100%; max-width: 640px; padding: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--surface); text-align: left; }
