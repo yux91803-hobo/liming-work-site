@@ -132,12 +132,15 @@ async def main():
         async def check_mod(tg):
             await pg.wait_for_selector('svg.mod')
             mp = await pg.evaluate("document.querySelectorAll('svg.mod .mp').length")
-            await pg.click('svg.mod .mp >> nth=0', force=True)
             cond = "(() => { const s = document.querySelector('svg.mod .mp.sel'); return !!s && !!document.querySelector('.pdetail .pd-mp.on') && !!document.querySelector('.pdetail .pd-doc p'); })()"
-            # CI 机器忙时选中和详情渲染可能超过 200 ms，等条件成立（最多 2 秒）
-            try: await pg.wait_for_function(cond, timeout=2000)
-            except Exception: pass
-            ok = await pg.evaluate(cond)
+            # 模块图刚打开还在渲染时，CI 机器上按下到抬起可能被拖过 400 ms，缩放组件会当成长按不选中。
+            # 先等两帧让渲染完；第一次没选中再点一次，两次都不行才算失败
+            ok = False
+            for _ in range(2):
+                await pg.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+                await pg.click('svg.mod .mp >> nth=0', force=True)
+                try: await pg.wait_for_function(cond, timeout=2000); ok = True; break
+                except Exception: pass
             if mp < 3 or not ok: bad.append((tg, mp, ok))
         for gname in groups:
             await pg.click('.mgrp:has-text("%s")' % gname); await pg.wait_for_timeout(150)
@@ -663,12 +666,15 @@ async def main():
         await pg.click('.xin-bag .xin-it:has-text("敲代码")'); await pg.wait_for_timeout(1500)
         check('敲代码：掏出笔记本', await pg.evaluate("!!LimingXin.el.querySelector('rect.c-lt')"))
         await pg.wait_for_timeout(16000)
+        # 碎片可能只存在一瞬间，每 200 ms 看一次会漏：在页面里挂监听，记下出现过的最多碎片数
+        await pg.evaluate("""window.__xinK = 0; new MutationObserver(() => { window.__xinK = Math.max(window.__xinK, document.querySelectorAll('.xin-k').length); })
+          .observe(document.body, { childList: true, subtree: true })""")
         await pg.evaluate("LimingXin.code(true, 'smash')")
         pcs = []
         for i in range(90):
             await pg.wait_for_timeout(200)
-            pcs.append(await pg.evaluate("[!!LimingXin.el.querySelector('rect.c-lt'), document.querySelectorAll('.xin-k').length]"))
-        check('写不出来气炸了：把电脑砸了（电脑碎成碎片）', any(k[1] > 0 for k in pcs) and not pcs[-1][0], pcs[-1])
+            pcs.append(await pg.evaluate("[!!LimingXin.el.querySelector('rect.c-lt'), window.__xinK]"))
+        check('写不出来气炸了：把电脑砸了（电脑碎成碎片）', pcs[-1][1] > 0 and not pcs[-1][0], pcs[-1])
         await pg.wait_for_timeout(4000)
         await pg.evaluate("(() => { const ps = LimingXin.plats(); LimingXin.hop(ps.findIndex(p => p.kind === 'top' && p.el.dataset.id === 'map')); })()"); await pg.wait_for_timeout(1500)
         await pg.evaluate("LimingXin.swing()")
