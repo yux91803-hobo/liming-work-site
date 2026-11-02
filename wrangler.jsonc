@@ -18,5 +18,20 @@
   "routes": [
     { "pattern": "liming-work.com", "custom_domain": true },
     { "pattern": "www.liming-work.com", "custom_domain": true }
-  ]
+  ],
+  // 测试站：wrangler deploy --env staging
+  // 单独的 Worker，不绑正式域名，只用 *.workers.dev 地址
+  "env": {
+    "staging": {
+      "name": "liming-hub-staging",
+      "routes": [],
+      "workers_dev": true,
+      "assets": {
+        "directory": "./site",
+        "binding": "ASSETS",
+        "not_found_handling": "single-page-application",
+        "run_worker_first": ["/api/*", "/tools/*/assets/*"]
+      }
+    }
+  }
 }
