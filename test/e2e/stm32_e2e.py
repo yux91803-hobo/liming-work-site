@@ -115,6 +115,9 @@ async def main():
         det = await pg.inner_text('.pdetail')
         check('点 101 脚：详情列出 USART1_TX，并指出接到 ST-Link 口的 TX', 'PA9' in det and 'USART1_TX' in det and 'ST-Link' in det, det[:80])
         await pg.click('.pdetail .mlink'); await pg.wait_for_selector('svg.mod')
+        # 地址同步有节流，等它写进地址栏再判断
+        try: await pg.wait_for_function("location.href.includes('m=stlink')", timeout=3000)
+        except Exception: pass
         st = await pg.evaluate("[document.querySelector('.mod .mp.sel').dataset.mp, document.querySelector('.pdetail h2').textContent, document.querySelector('.msub .mtag.on').textContent, document.querySelector('.mgrp.on').textContent]")
         check('跳到 ST-Link 模块图，选中 TX 脚，「通信」组自动展开', st == ['p6', 'TX', 'ST-Link', '通信'] and 'm=stlink' in pg.url, st)
         await pg.click('.pdetail .mcubtn'); await pg.wait_for_selector('.boardh .chip .pin.sel')
