@@ -1,6 +1,8 @@
-// Liming 工具箱 Worker：只做两件事，其余全部交给静态资源（SPA 回退）。
+// Liming 工具箱 Worker：只做三件事，其余全部交给静态资源（SPA 回退）。
 // 1. 工具的 assets 文件缺失时回 404，不让 SPA 回退成 index.html（找图失败时好排查）
 // 2. /api/* 一律 404（互传、协作中心的接口已经删掉）
+// 3. 工具 assets 里的图片缓存一天
+const IMAGE_CACHE = 'public, max-age=86400';
 const SEC_HEADERS = { 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
 export default {
@@ -11,6 +13,12 @@ export default {
       const ct = (r.headers.get('content-type') || '').toLowerCase();
       // 只把「真缺失」改成 404：资源层 404，或 SPA 回退出来的 200 HTML。304 等其他状态原样透传
       if (r.status === 404 || (r.status === 200 && ct.includes('text/html'))) return new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+      // 图片（课件图、原理图、手册图）缓存一天：再次打开不用逐张问服务器；JS / 数据不缓存，改了马上生效
+      if (r.status === 200 && ct.startsWith('image/')) {
+        const res = new Response(r.body, r);
+        res.headers.set('Cache-Control', IMAGE_CACHE);
+        return res;
+      }
       return r;
     }
     if (url.pathname.startsWith('/api/')) {
