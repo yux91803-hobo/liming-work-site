@@ -132,8 +132,12 @@ async def main():
         async def check_mod(tg):
             await pg.wait_for_selector('svg.mod')
             mp = await pg.evaluate("document.querySelectorAll('svg.mod .mp').length")
-            await pg.click('svg.mod .mp >> nth=0', force=True); await pg.wait_for_timeout(200)
-            ok = await pg.evaluate("(() => { const s = document.querySelector('svg.mod .mp.sel'); return !!s && !!document.querySelector('.pdetail .pd-mp.on') && !!document.querySelector('.pdetail .pd-doc p'); })()")
+            await pg.click('svg.mod .mp >> nth=0', force=True)
+            cond = "(() => { const s = document.querySelector('svg.mod .mp.sel'); return !!s && !!document.querySelector('.pdetail .pd-mp.on') && !!document.querySelector('.pdetail .pd-doc p'); })()"
+            # CI 机器忙时选中和详情渲染可能超过 200 ms，等条件成立（最多 2 秒）
+            try: await pg.wait_for_function(cond, timeout=2000)
+            except Exception: pass
+            ok = await pg.evaluate(cond)
             if mp < 3 or not ok: bad.append((tg, mp, ok))
         for gname in groups:
             await pg.click('.mgrp:has-text("%s")' % gname); await pg.wait_for_timeout(150)
