@@ -1,0 +1,123 @@
+# 部署流程
+#   PR 到 main           → 测试站 liming-hub-staging（*.workers.dev，不绑正式域名）
+#   合并到 main           → 正式站 liming-worldmap（liming-work.com）
+#   手动运行（Actions 页） → 自选站点，默认只 dry-run
+#
+# 需要仓库 Secrets：CLOUDFLARE_API_TOKEN、CLOUDFLARE_ACCOUNT_ID
+
+name: Deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 部署到哪个站点
+        type: choice
+        options: [staging, production]
+        default: staging
+      dry_run:
+        description: 只 dry-run，不真正部署
+        type: boolean
+        default: true
+
+env:
+  # 总开关："false" 时所有运行都只 dry-run
+  DEPLOY_ENABLED: "true"
+  WRANGLER: wrangler@4.151.1
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: 语法、资源引用和单元测试
+        run: npm run check
+
+  deploy:
+    needs: check
+    # 外部 fork 的 PR 拿不到 Secrets，跳过
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.target || (github.event_name == 'push' && 'production' || 'staging') }}
+      cancel-in-progress: false
+    env:
+      TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || (github.event_name == 'push' && 'production' || 'staging') }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: 选择站点
+        run: |
+          if [ "$TARGET" = production ]; then
+            echo "ENV_FLAG=--env=" >> "$GITHUB_ENV"
+            echo "WORKER=liming-worldmap" >> "$GITHUB_ENV"
+          else
+            echo "ENV_FLAG=--env=staging" >> "$GITHUB_ENV"
+            echo "WORKER=liming-hub-staging" >> "$GITHUB_ENV"
+          fi
+
+      - name: Dry-run
+        run: npx -y "$WRANGLER" deploy --dry-run $ENV_FLAG
+
+      - name: 线上现状（只读）
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "== 账号里的 Worker 及已执行的迁移（migration_tag）=="
+          curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts" \
+            | jq -r '.result[] | "\(.id)\tmigration_tag=\(.migration_tag // "无")\tmodified=\(.modified_on)"'
+          echo
+          echo "== $WORKER 最近的部署 =="
+          npx -y "$WRANGLER" deployments list --name "$WORKER" | tail -40
+
+      - name: 部署
+        id: deploy
+        if: env.DEPLOY_ENABLED == 'true' && env.DRY_RUN != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx -y "$WRANGLER" deploy $ENV_FLAG | tee deploy.log
+          if [ "$TARGET" = production ]; then
+            echo "BASE=https://liming-work.com" >> "$GITHUB_ENV"
+          else
+            url=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1)
+            [ -n "$url" ] || { echo "没从部署输出里找到 workers.dev 地址"; exit 1; }
+            echo "BASE=$url" >> "$GITHUB_ENV"
+          fi
+
+      - name: 冒烟检查
+        id: smoke
+        if: steps.deploy.outcome == 'success'
+        run: |
+          sleep 5
+          fail=0
+          for p in / /tools/stm32/; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 5 "$BASE$p")
+            echo "$code $BASE$p"
+            [ "$code" = 200 ] || fail=1
+          done
+          exit $fail
+
+      - name: 正式站检查失败，自动回滚到上一版
+        if: failure() && steps.smoke.outcome == 'failure' && env.TARGET == 'production'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx -y "$WRANGLER" rollback --name liming-worldmap --message "冒烟检查失败，自动回滚"
