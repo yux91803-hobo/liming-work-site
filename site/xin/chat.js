@@ -1,5 +1,5 @@
 /* xin/chat.js — 小芯聊天：和 InstaBox 云电脑里的 AI（Claude Code / Codex）聊天、让它干活
-   入口：登录后小芯的背包里多一个「聊天」；地址后面加 #xin 也能打开（没登录时先输密码）。
+   入口：小芯的背包里的「聊天」（首页和 STM32 学习台里的小芯都有）；地址后面加 #xin 也能打开。没登录时先输密码。
    接口见 src/xin.js；AI 每一步（说话、执行命令、xin 动作）都整理成事件，这里一边轮询一边画出来，同时让小芯跟着动：
    AI 在想 → 小芯坐在电脑前挠头；在执行命令 → 敲代码；xin 命令 → 照做；做完 → 开心，失败 → 难过。 */
 (function () {
@@ -11,7 +11,16 @@
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
 
   function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { return null; } }
-  function xin() { return window.LimingXin || null; }
+  // 现在看得见的那个小芯：打开了 STM32 学习台、小芯又被扔进去了，就是学习台里的那个
+  function xin() {
+    if (document.body.classList.contains('tool-open')) {
+      var fs = document.querySelectorAll('iframe');
+      for (var i = 0; i < fs.length; i++) {
+        try { var X = fs[i].contentWindow && fs[i].contentWindow.LimingXin; if (X && X.mode !== 'away') return X; } catch (e) { /* 别的源 */ }
+      }
+    }
+    return window.LimingXin || null;
+  }
   function h(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function sleepMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
@@ -164,8 +173,9 @@
     req('logout', {}).then(function () { S.authed = false; syncBag(); render(); });
   }
   function syncBag() {
-    var x = xin(); if (!x || !x.addBag) return;
-    if (S.enabled && S.authed) x.addBag('chat', '聊天', open); else x.removeBag('chat');
+    // 功能开着就放进背包；没登录时点它先要密码（学习台里的小芯在 mascot.js 里直接问这里）
+    var x = window.LimingXin; if (!x || !x.addBag) return;
+    if (S.enabled) x.addBag('chat', '聊天', open); else x.removeBag('chat');
   }
 
   /* ---------- 对话 ---------- */

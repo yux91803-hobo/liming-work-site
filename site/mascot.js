@@ -1356,6 +1356,9 @@
       }]
     ];
     extraBag.forEach(function (it) { out.push([it.icon, it.label, it.fn]); });
+    // 学习台里的小芯：聊天面板在外面的工具箱页面上（xin/chat.js），从这里叫它打开
+    var chat = null; try { chat = STM && window.parent !== window ? window.parent.LimingXinChat : null; } catch (e) { chat = null; }
+    if (chat && chat.state && chat.state.enabled) out.push(['chat', '聊天', function () { chat.open(); }]);
     if (HOME) {
       out.push(['home', '回标题栏', function () { var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) come(function () { hop(g, g.x0 + (g.x1 - g.x0) * 0.4); }); }]);
       out.push(['hide', '收起来', function () { setOff(true); }]);
