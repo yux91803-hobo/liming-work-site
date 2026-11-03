@@ -6,8 +6,10 @@
 (function () {
   'use strict';
   var API = '/api/xin/';
-  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft';
+  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort';
   var AGENTS = { codex: 'Codex', claude: 'Claude' };
+  // 思考强度：自动 = 写代码的活用最高（max），聊天用 AI 自己的默认（规则在 vm-agent.mjs 的 resolveEffort）
+  var EFFORTS = { auto: '自动', high: '高', max: '最高' }, EFF_DONE = { max: '最高思考', high: '高思考', low: '低思考' };
   var ACT_NAME = { say: '说', happy: '开心', sad: '难过', angry: '生气', wow: '惊讶', confused: '疑惑', dance: '跳舞', jump: '跳一下', cookie: '吃饼干', battery: '吸电池', ball: '抛小球', led: '玩 LED', sleep: '睡觉', wake: '醒来', music: '听歌', swing: '荡秋千', sit: '坐下', code: '敲代码', rage: '发脾气', tongue: '吐舌头' };
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
 
@@ -25,7 +27,7 @@
   function h(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function sleepMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', agent: AGENTS[ls(LS_AGENT)] ? ls(LS_AGENT) : 'codex', sessAgent: '',
+  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', agent: AGENTS[ls(LS_AGENT)] ? ls(LS_AGENT) : 'codex', sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto',
     run: '', off: 0, polling: false, mine: {}, tools: {}, lastAct: 0, view: 'chat', machine: '', loadSeq: 0 };
 
   /* ---------- 请求 ---------- */
@@ -77,7 +79,8 @@
         '<p class="xc-err" role="alert"></p>' +
       '</form>' +
       '<form class="xc-ft">' +
-        '<div class="xc-seg" role="radiogroup" aria-label="用哪个 AI"></div>' +
+        '<div class="xc-opts"><div class="xc-seg" role="radiogroup" aria-label="用哪个 AI"></div>' +
+        '<div class="xc-eff" role="radiogroup" aria-label="思考强度"><span class="xc-eff-l">思考</span></div></div>' +
         '<div class="xc-row">' +
           '<textarea rows="1" placeholder="让小芯做点什么…" aria-label="消息" enterkeyhint="' + (touch ? 'enter' : 'send') + '"></textarea>' +
           '<button type="submit" class="xc-send" aria-label="发送"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>' +
@@ -86,6 +89,13 @@
     document.body.appendChild(root);
     list = root.querySelector('.xc-msgs'); statusEl = root.querySelector('.xc-st'); input = root.querySelector('textarea');
     sendBtn = root.querySelector('.xc-send'); agentSeg = root.querySelector('.xc-seg'); titleEl = root.querySelector('.xc-sub');
+    var effEl = root.querySelector('.xc-eff');
+    Object.keys(EFFORTS).forEach(function (k) {
+      var b = h('button', 'xc-ag', EFFORTS[k]); b.type = 'button'; b.dataset.effort = k; b.setAttribute('role', 'radio');
+      b.title = k === 'auto' ? '写代码、编译、调试时自动用最高，聊天用默认' : k === 'max' ? '每一句都用最高强度思考（慢一些）' : '每一句都用高强度';
+      b.addEventListener('click', function () { S.effort = k; ls(LS_EFF, k); renderSeg(); });
+      effEl.appendChild(b);
+    });
     sessEl = root.querySelector('.xc-sess'); loginEl = root.querySelector('.xc-login'); foot = root.querySelector('.xc-ft');
     Object.keys(AGENTS).forEach(function (k) {
       var b = h('button', 'xc-ag', AGENTS[k]); b.type = 'button'; b.dataset.agent = k; b.setAttribute('role', 'radio');
@@ -122,6 +132,7 @@
       b.setAttribute('aria-checked', on); b.disabled = locked && !on; b.hidden = locked && !on;
     });
     titleEl.textContent = AGENTS[locked ? S.sessAgent : S.agent] + (S.machine ? ' · ' + S.machine : '');
+    [].forEach.call(root.querySelectorAll('.xc-eff button'), function (b) { b.setAttribute('aria-checked', S.effort === b.dataset.effort); });
   }
   function render() {
     if (!root) return;
@@ -257,7 +268,7 @@
     if (given == null) { input.value = ''; ls(LS_DRAFT, null); grow(); }
     toBottom(true); S.lastText = '';
     var x = xin(); if (x) x.ai('think');
-    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text }, 90000).then(function (d) {
+    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort }, 90000).then(function (d) {
       S.sending = false; pending.classList.remove('pending');
       S.sid = d.sid; S.sessAgent = d.agent || S.sessAgent || S.agent; ls(LS_SID, d.sid);
       S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); S.doing = 'think'; render(); startPolling();
@@ -372,7 +383,7 @@
     else if (ev.t === 'err') e = h('div', 'xc-errm', ev.text);
     else if (ev.t === 'done') {
       var sec = Math.round((ev.ms || 0) / 1000);
-      e = h('div', 'xc-done' + (ev.ok || ev.stopped ? '' : ' bad'), ev.stopped ? '已停止' : (ev.ok ? '完成' : '没做成') + (sec ? ' · ' + (sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒' : sec + ' 秒') : ''));
+      e = h('div', 'xc-done' + (ev.ok || ev.stopped ? '' : ' bad'), ev.stopped ? '已停止' : (ev.ok ? '完成' : '没做成') + (sec ? ' · ' + (sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒' : sec + ' 秒') : '') + (EFF_DONE[ev.effort] ? ' · ' + EFF_DONE[ev.effort] : ''));
     }
     if (e) list.appendChild(e);
     return e;

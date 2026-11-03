@@ -232,3 +232,34 @@ test('系统提示里列出了 xin 的全部动作', async () => {
   const p = systemPrompt();
   for (const k of Object.keys(ACTS)) assert.ok(p.includes(k + '（'), k);
 });
+
+test('思考强度：自动时写代码的活用 max，聊天不指定；手动指定原样用', async () => {
+  const { resolveEffort } = await load('../site/xin/vm-agent.mjs');
+  for (const t of ['帮我写一个 STM32 点灯的 main.c', '编译报错了：undefined reference', '这段代码有 bug', '```c\nint a;\n```', '把 led.c 改一下', '实现一个 I2C 驱动'])
+    assert.strictEqual(resolveEffort('auto', t), 'max', t);
+  for (const t of ['你好', 'GPIO 的推挽输出是什么意思？', 'APB2 的时钟是多少'])
+    assert.strictEqual(resolveEffort('auto', t), '', t);
+  assert.strictEqual(resolveEffort(undefined, '写代码'), 'max');
+  assert.strictEqual(resolveEffort('high', '写代码'), 'high');
+  assert.strictEqual(resolveEffort('max', '你好'), 'max');
+  assert.strictEqual(resolveEffort('low', '你好'), 'low');
+  assert.strictEqual(resolveEffort('xhigh', '你好'), '');   // 不认识的值当自动
+});
+
+test('思考强度：Codex 用 -c model_reasoning_effort（续接也带），Claude 用 --effort；不指定就不加', async () => {
+  const { agentArgs } = await load('../site/xin/vm-agent.mjs');
+  const fresh = { started: false, agentSid: null }, cont = { started: true, agentSid: 'th-1' };
+  let [cmd, a] = agentArgs('codex', fresh, '写代码', 'max');
+  assert.strictEqual(cmd, 'codex');
+  assert.deepStrictEqual(a.slice(a.indexOf('-c'), a.indexOf('-c') + 2), ['-c', 'model_reasoning_effort="max"']);
+  [, a] = agentArgs('codex', cont, '再改改', 'max');
+  assert.deepStrictEqual(a.slice(0, 2), ['exec', 'resume']);
+  assert.ok(a.includes('model_reasoning_effort="max"') && a[a.length - 2] === 'th-1' && a[a.length - 1] === '再改改');
+  [, a] = agentArgs('codex', fresh, '你好', '');
+  assert.ok(!a.includes('-c'));
+  [cmd, a] = agentArgs('claude', { started: false, agentSid: 'u-1' }, '写代码', 'max');
+  assert.strictEqual(cmd, 'claude');
+  assert.deepStrictEqual(a.slice(a.indexOf('--effort'), a.indexOf('--effort') + 2), ['--effort', 'max']);
+  [, a] = agentArgs('claude', { started: false, agentSid: 'u-1' }, '你好', '');
+  assert.ok(!a.includes('--effort'));
+});
