@@ -185,7 +185,7 @@
     el.style.transform = 'translate3d(' + Math.round(x) + 'px,' + Math.round(y) + 'px,0)' + (sc !== 1 ? ' scale(' + sc.toFixed(3) + ')' : '');
     var q = Math.round(ang / 12) * 12;            // 像素风：摆动角度按 12° 一档跳
     rEl.style.transform = q ? 'rotate(' + q + 'deg)' : '';
-    drawThread();
+    drawThread(); placeSay();
   }
   /* 线：上端挂在 thread.top（文档 y），下端在小芯举起来的右手上 */
   var thread = null;
@@ -1046,6 +1046,7 @@
     if (ragePending && mode === 'idle' && !seq) { rage(); return; }
     if (mode !== 'idle' || mood || seq) { schedule(); return; }
     if (!onScreen() || !plat) { dropIn(0); return; }      // 页面滚走了：跳回看得见的地方
+    if (aiState && !reduce) { lastInput = Date.now(); aiStep(); return; }   // 云电脑里的 AI 在想 / 在干活：坐在电脑前陪着
     if (music) {                 // 听歌：待着听，时不时跳段舞；听久了会烦，把耳机砸了
       lastInput = Date.now();
       if (!reduce && Date.now() > boreAt) { rage('phones'); return; }
@@ -1219,6 +1220,93 @@
   el.addEventListener('contextmenu', function (e) { e.preventDefault(); if (drag && drag.on) return; openBag(); });
 
 
+  /* ---------- 说话气泡（小芯聊天：AI 让它说的话） ---------- */
+  var sayEl = null, sayTm = 0;
+  function placeSay() {
+    if (!sayEl) return;
+    if (mode === 'away') { sayEl.style.visibility = 'hidden'; return; }
+    sayEl.style.visibility = '';
+    sayEl.style.maxWidth = '';
+    var bw = sayEl.offsetWidth, bh = sayEl.offsetHeight, head = y + H * (6 + OY) / G;
+    if (head - bh - 10 >= sY() + 4) {            // 头顶放得下：气泡在头上
+      sayEl.className = 'xin-say';
+      var half = bw / 2, cx = clamp(x + W / 2, sX() + 8 + half, sX() + innerWidth - 8 - half);
+      sayEl.style.left = Math.round(cx) + 'px'; sayEl.style.top = Math.round(head - 6) + 'px';
+      sayEl.style.setProperty('--tail', Math.round(clamp(x + W / 2 - cx + half, 10, bw - 10)) + 'px');
+    } else {                                     // 站在页面最上面（手机标题栏）：放在旁边空得多的一侧
+      var roomL = x + W * 0.12 - sX() - 8, roomR = sX() + innerWidth - 8 - (x + W * 0.88), left = roomL > roomR;
+      sayEl.className = 'xin-say ' + (left ? 'l' : 'r');
+      sayEl.style.maxWidth = Math.round(Math.min(240, Math.max(96, left ? roomL : roomR))) + 'px';
+      bw = sayEl.offsetWidth; bh = sayEl.offsetHeight;
+      var ty = clamp(y + H * 0.42, sY() + 4 + bh / 2, sY() + innerHeight - 4 - bh / 2);
+      sayEl.style.top = Math.round(ty) + 'px';
+      sayEl.style.left = Math.round(left ? Math.max(x + W * 0.12, sX() + 8 + bw) : Math.min(x + W * 0.88, sX() + innerWidth - 8 - bw)) + 'px';
+    }
+  }
+  function say(text, ms) {
+    clearTimeout(sayTm);
+    text = String(text == null ? '' : text).replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (!text) { if (sayEl) { sayEl.remove(); sayEl = null; } return; }
+    if (!sayEl) { sayEl = document.createElement('div'); sayEl.className = 'xin-say'; sayEl.setAttribute('role', 'status'); layer.appendChild(sayEl); }
+    sayEl.textContent = text; placeSay();
+    sayTm = setTimeout(function () { if (sayEl) { sayEl.remove(); sayEl = null; } }, ms || Math.min(9000, 2600 + text.length * 160));
+  }
+
+  /* ---------- 跟着云电脑里的 AI 动：think 坐在电脑前想，work 敲代码（一直循环到 AI 停下来） ---------- */
+  var aiState = '', aiLoop = false;
+  function aiStep() {
+    aiLoop = true; stopWalk(); setMood(''); setMode('play');
+    var f = aiState === 'work' ? [pcS({ armR: 'typeUp', t: 160 })].concat(typing(12)) : thinking(1900);
+    playSeq(f, function () {
+      if (aiState && mode === 'play' && !paused()) { aiStep(); return; }
+      aiLoop = false;
+      if (mode === 'play') { mode = 'idle'; render(); }
+      schedule();
+    });
+  }
+  function setAi(st) {
+    st = st === 'work' || st === 'think' ? st : '';
+    if (st === aiState) return;
+    aiState = st; lastInput = Date.now();
+    if (st) {
+      if (mode === 'sleep') { clearTimeout(zTm); clearTimeout(sleepTm); setMode('idle'); }
+      if (reduce || paused()) return;
+      if (aiLoop) return;                     // 已经在电脑前了：这一段做完自动换成新的状态
+      if (mode === 'idle' || mode === 'walk') aiStep();
+      else schedule(300);                     // 正在做别的（跳舞、吃饼干…）：做完再回电脑前
+    } else if (aiLoop && mode === 'play') { aiLoop = false; stopSeq(); putPcAway(); }
+  }
+  function putPcAway() { setMode('play'); playSeq([pc({ t: 260 })].concat(putAway()), done); }
+  // AI 用 xin 命令让小芯做的动作（名字和 site/xin/vm-agent.mjs 里的 ACTS 一致）
+  var AI_MOOD = { happy: 'happy', sad: 'sad', angry: 'angry', wow: 'wow', confused: 'confused' };
+  function idleNow() { aiLoop = false; stopWalk(); if (mode === 'play') { stopSeq(); setMode('idle'); } }
+  function command(name, arg) {
+    if (paused() || mode === 'away') return false;
+    lastInput = Date.now();
+    if (name === 'say') { say(arg); return true; }
+    act(function () {
+      aiLoop = false;                         // 动作接替了电脑前的循环；AI 还在忙的话，做完动作会自己回电脑前
+      if (mode === 'sleep' && name !== 'sleep') { clearTimeout(zTm); clearTimeout(sleepTm); setMode('idle'); }
+      if (AI_MOOD[name]) { idleNow(); setMood(AI_MOOD[name], 2600); if (name === 'happy') sparks(4); schedule(2800); return; }
+      switch (name) {
+        case 'dance': dance(); break;
+        case 'jump': idleNow(); jump(5); schedule(1400); break;
+        case 'cookie': case 'ball': case 'led': playToy(name, true); break;
+        case 'battery': playToy('batt', true); break;
+        case 'sleep': idleNow(); setMood(''); sleep(true); break;
+        case 'wake': wake(false); break;
+        case 'music': setMusic(arg !== 'off'); break;
+        case 'swing': idleNow(); if (!swing()) jump(4); break;
+        case 'sit': idleNow(); if (!sitDown()) schedule(); break;
+        case 'code': code(true, 'ok'); break;
+        case 'rage': idleNow(); rage(); break;
+        case 'tongue': idleNow(); var r = el.getBoundingClientRect(); tease(r.left + r.width); break;
+        default: break;
+      }
+    });
+    return true;
+  }
+
   /* ---------- 小背包：电脑上右键小芯、手机上长按小芯打开 ----------
      吃的（饼干、电池）、玩的（小球、LED）、耳机（陪你听歌）、睡觉 / 叫醒、回来、收起来（首页）。 */
   var ICONS = {
@@ -1233,7 +1321,8 @@
     moon:   ['...###..', '..##....', '.##.....', '.##.....', '.##.....', '.##.....', '..##....', '...###..'],
     sun:    ['...#....', '#..#..#.', '.#####..', '##ooo##.', '.#ooo#..', '.#####..', '#..#..#.', '...#....'],
     home:   ['...##...', '..####..', '.######.', '########', '.#....#.', '.#.##.#.', '.#.##.#.', '.######.'],
-    hide:   ['...##...', '...##...', '...##...', '#..##..#', '.#.##.#.', '..####..', '...##...', '########']
+    hide:   ['...##...', '...##...', '...##...', '#..##..#', '.#.##.#.', '..####..', '...##...', '########'],
+    chat:   ['.######.', '#hhhhhh#', '#hkhkhk#', '#hhhhhh#', '.######.', '..##....', '..#.....', '........']
   };
   var PAL = { '#': 'var(--ink)', c: '#5a3a22', o: 'var(--ink-3, #888)', g: '#7bd88f', h: '#ffffff', r: '#d9573f', m: '#9a948a', k: 'var(--clay)' };
   var ICON_C = { cookie: { '#': '#c98d4b' }, ball: { '#': 'var(--clay)' }, phones: { '#': 'var(--ink)' }, moon: { '#': '#e5b84f' }, dance: { '#': 'var(--clay)' }, sun: { '#': '#e5b84f', o: '#f2d27a' }, home: { '#': 'var(--ink-2, var(--ink))' }, hide: { '#': 'var(--ink-2, var(--ink))' } };
@@ -1248,7 +1337,7 @@
     });
     return o.join('') + '</svg>';
   }
-  var bagEl = null;
+  var bagEl = null, extraBag = [];
   function bagItems() {
     var out = [
       ['cookie', '饼干', function () { feed('cookie'); }],
@@ -1266,6 +1355,7 @@
         sleep(true);
       }]
     ];
+    extraBag.forEach(function (it) { out.push([it.icon, it.label, it.fn]); });
     if (HOME) {
       out.push(['home', '回标题栏', function () { var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) come(function () { hop(g, g.x0 + (g.x1 - g.x0) * 0.4); }); }]);
       out.push(['hide', '收起来', function () { setOff(true); }]);
@@ -1448,6 +1538,15 @@
     get grr() { return grr; },
     set obedient(v) { REBEL = v ? 0 : 0.3; },   // 测试用：不叛逆
     dance: dance, swing: swing, rage: rage, refuse: refuse, sit: sitDown, trip: trip, code: code, tease: tease, mischief: mischief,
-    bore: function () { boreAt = 0; }
+    bore: function () { boreAt = 0; },
+    // 小芯聊天（xin-chat.js）用
+    say: say,
+    ai: setAi,
+    get aiState() { return aiState; },
+    cmd: command,
+    addBag: function (id, label, fn) { extraBag = extraBag.filter(function (it) { return it.id !== id; }); extraBag.push({ id: id, icon: ICONS[id] ? id : 'chat', label: label, fn: fn }); },
+    // 回到标题栏上（手机上聊天面板从底下升起来，别让小芯被挡住）
+    home: function () { if (!HOME || paused() || !(mode === 'idle' || mode === 'walk' || mode === 'play')) return; var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) { aiLoop = false; stopWalk(); stopSeq(); setMode('idle'); hop(g, g.x0 + (g.x1 - g.x0) * 0.4); } },
+    removeBag: function (id) { extraBag = extraBag.filter(function (it) { return it.id !== id; }); }
   };
 })();

@@ -74,3 +74,19 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .spark.xin-call{cursor:pointer;animation:xcall 1.6s steps(2,end) infinite}
 @keyframes xcall{50%{opacity:.45}}
 @media (prefers-reduced-motion:reduce){.xin-bag,.spark.xin-call{animation:none}}
+/* 说话气泡（小芯聊天：AI 让小芯说的话）；left / top 是小芯头顶，气泡往上长 */
+.xin-say{position:absolute;z-index:3;width:max-content;max-width:min(240px,calc(100vw - 32px));padding:6px 9px;transform:translate(-50%,-100%);
+  background:var(--panel,#fff);color:var(--ink);border:2px solid var(--ink);border-radius:0;box-shadow:3px 3px 0 rgba(20,20,19,.18);
+  font:13px/1.4 var(--mono);white-space:normal;word-break:break-word;pointer-events:none;animation:xsay .18s steps(3,end)}
+.xin-say::after{content:"";position:absolute;left:var(--tail,50%);bottom:-8px;width:8px;height:6px;margin-left:-4px;background:var(--ink);
+  clip-path:polygon(0 0,100% 0,50% 100%)}
+/* 头顶放不下时放在旁边：.l 在小芯左边（尾巴朝右），.r 在右边 */
+.xin-say.l{transform:translate(-100%,-50%)}
+.xin-say.r{transform:translate(0,-50%)}
+.xin-say.l::after,.xin-say.r::after{left:auto;bottom:auto;top:50%;width:6px;height:8px;margin:-4px 0 0}
+.xin-say.l::after{right:-8px;clip-path:polygon(0 0,100% 50%,0 100%)}
+.xin-say.r::after{left:-8px;clip-path:polygon(100% 0,0 50%,100% 100%)}
+.xin-say.l,.xin-say.r{animation:none}
+[data-theme=dark] .xin-say{box-shadow:3px 3px 0 rgba(0,0,0,.5)}
+@keyframes xsay{from{opacity:0;transform:translate(-50%,calc(-100% + 6px))}}
+@media (prefers-reduced-motion:reduce){.xin-say{animation:none}}

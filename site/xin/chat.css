@@ -1,0 +1,105 @@
+/* xin/chat.css — 小芯聊天面板（首页）。手机、竖着的平板：从底下升起来的面板，标题栏上的小芯露在上面；900px 以上（横着的平板、电脑）：右侧抽屉。
+   颜色全用 shell.css 的变量，深色主题自动跟着变。 */
+.xc{position:fixed;z-index:40;display:flex;flex-direction:column;background:var(--panel);color:var(--ink);
+  left:0;right:0;bottom:0;height:min(74dvh,calc(100dvh - 128px - var(--st)));border-top:2px solid var(--ink);
+  box-shadow:0 -4px 0 rgba(20,20,19,.08);transform:translateY(102%);transition:transform .22s var(--out)}
+.xc.show{transform:none}
+[data-theme=dark] .xc{box-shadow:0 -4px 0 rgba(0,0,0,.4)}
+@media (min-width:900px){
+  .xc{left:auto;top:0;height:auto;width:min(420px,52vw);border-top:0;border-left:2px solid var(--ink);box-shadow:-4px 0 0 rgba(20,20,19,.08);transform:translateX(102%)}
+  [data-theme=dark] .xc{box-shadow:-4px 0 0 rgba(0,0,0,.4)}
+}
+/* 宽屏：首页往左让出位置，不被面板挡住 */
+@media (min-width:1000px){
+  #home{transition:transform .55s var(--out),opacity .55s var(--out),margin .22s var(--out)}
+  body.xc-open #home{margin-right:min(420px,52vw)}
+}
+.xc [hidden]{display:none!important}
+
+.xc-hd{display:flex;align-items:center;gap:2px;flex:none;height:52px;padding:0 6px;padding-top:0;border-bottom:1px solid var(--line)}
+@media (min-width:900px){.xc-hd{height:calc(56px + var(--st));padding-top:var(--st)}}
+.xc-ib{display:grid;place-items:center;width:40px;height:40px;border-radius:8px;color:var(--ink-2);flex:none}
+.xc-ib:hover{background:var(--sunk);color:var(--ink)}
+.xc-ttl{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px;padding:0 4px;white-space:nowrap;overflow:hidden}
+.xc-ttl b{font-size:15px}
+.xc-sub{font-size:12px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis}
+
+.xc-st{flex:none;padding:6px 14px;font-size:12px;line-height:1.5;color:var(--ink-2);background:var(--sunk);border-bottom:1px solid var(--line)}
+.xc-st.wait::before{content:"● ";color:var(--clay);animation:xcblink 1s steps(2,end) infinite}
+.xc-st.bad{color:#b4472f}
+[data-theme=dark] .xc-st.bad{color:#f08b70}
+
+.xc-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:14px 14px 18px}
+.xc-msgs{display:flex;flex-direction:column;gap:10px}
+.xc-hint{margin:0;color:var(--ink-3);font-size:12.5px;line-height:1.6}
+.xc-hello{padding:4px 2px;color:var(--ink-2)}
+.xc-hello p{margin:0 0 8px}
+
+.xc-m{max-width:100%;min-width:0}
+.xc-me{align-self:flex-end;max-width:88%}
+.xc-bub{padding:8px 11px;background:var(--clay-soft);border:1px solid var(--line-2);border-radius:10px 10px 2px 10px;white-space:pre-wrap;word-break:break-word}
+.xc-me.pending{opacity:.55}
+.xc-ai{align-self:stretch}
+.xc-md{line-height:1.65;word-break:break-word}
+.xc-md p{margin:0 0 8px}
+.xc-md p:last-child{margin-bottom:0}
+.xc-md code{padding:1px 4px;border-radius:4px;background:var(--sunk);font-size:.92em}
+.xc-md a{color:var(--clay);text-decoration:underline;text-underline-offset:2px;word-break:break-all}
+.xc-code{display:grid;grid-template-columns:1fr auto;margin:4px 0 10px;border:1px solid var(--line-2);border-radius:8px;background:var(--sunk);overflow:hidden}
+.xc-lang{grid-column:1;align-self:center;padding:4px 10px;font-size:11px;color:var(--ink-3)}
+.xc-copy{grid-column:2;padding:4px 10px;font-size:11.5px;color:var(--ink-2)}
+.xc-copy:hover{color:var(--clay)}
+.xc-code pre{grid-column:1/-1;margin:0;padding:10px 12px;overflow-x:auto;border-top:1px solid var(--line);font-size:12.5px;line-height:1.55;tab-size:4}
+.xc-code pre code{padding:0;background:none;font-size:inherit;white-space:pre}
+
+.xc-tool{border:1px solid var(--line);border-radius:6px;font-size:12px;background:var(--panel)}
+.xc-tool-h{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:5px 9px;text-align:left;color:var(--ink-2)}
+.xc-tool-i{width:12px;flex:none;text-align:center;font-weight:700}
+.xc-tool.run .xc-tool-i{color:var(--clay);animation:xcblink .8s steps(2,end) infinite}
+.xc-tool.ok .xc-tool-i{color:#3f8f5a}
+.xc-tool.bad .xc-tool-i{color:#c0503a}
+[data-theme=dark] .xc-tool.ok .xc-tool-i{color:#7bd88f}
+[data-theme=dark] .xc-tool.bad .xc-tool-i{color:#f08b70}
+.xc-tool-n{flex:none;color:var(--clay);font-weight:700}
+.xc-tool-d{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.xc-tool.open .xc-tool-d{white-space:pre-wrap;word-break:break-all}
+.xc-tool-o{display:none;margin:0;max-height:260px;overflow:auto;padding:8px 10px;border-top:1px solid var(--line);background:var(--sunk);font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-all}
+.xc-tool.open .xc-tool-o{display:block}
+.xc-tool.has-o .xc-tool-h::after{content:"▾";flex:none;color:var(--ink-3)}
+.xc-tool.has-o.open .xc-tool-h::after{content:"▴"}
+.xc-note{font-size:12px;color:var(--ink-3);word-break:break-word}
+.xc-errm{padding:8px 10px;border:1px solid rgba(217,87,63,.4);border-radius:6px;background:rgba(217,87,63,.08);font-size:12.5px;white-space:pre-wrap;word-break:break-word}
+.xc-done{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--ink-3)}
+.xc-done::before,.xc-done::after{content:"";flex:1;border-top:1px dashed var(--line-2)}
+.xc-done.bad{color:#c0503a}
+
+.xc-ft{flex:none;padding:8px 10px calc(10px + var(--sb));border-top:1px solid var(--line);background:var(--panel)}
+.xc-seg{display:flex;gap:6px;margin:0 0 8px}
+.xc-ag{padding:3px 10px;border:1px solid var(--line-2);border-radius:6px;font-size:12px;color:var(--ink-2)}
+.xc-ag[aria-checked=true]{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.xc-seg.locked{display:none}   /* 已经开始的对话换不了 AI，标题里写着是哪个 */
+.xc-row{display:flex;align-items:flex-end;gap:8px}
+.xc-row textarea{flex:1;min-width:0;min-height:42px;max-height:150px;padding:10px 11px;border:1px solid var(--line-2);border-radius:8px;background:var(--bg);color:var(--ink);
+  font:14px/1.45 var(--mono);resize:none;outline:none}
+.xc-row textarea:focus{border-color:var(--clay)}
+@media (pointer:coarse){.xc-row textarea,.xc-login input{font-size:16px}}   /* iOS：小于 16px 聚焦时会放大页面 */
+.xc-send{display:grid;place-items:center;width:42px;height:42px;flex:none;border-radius:8px;background:var(--clay);color:#fff}
+.xc-send svg{width:20px;height:20px}
+.xc.running .xc-send{background:var(--ink);color:var(--bg)}
+
+.xc-login{display:flex;flex-direction:column;gap:10px;padding:20px 18px}
+.xc-login input{height:44px;padding:0 12px;border:1px solid var(--line-2);border-radius:8px;background:var(--bg);color:var(--ink);font:14px var(--mono);outline:none}
+.xc-login input:focus{border-color:var(--clay)}
+.xc-btn{height:44px;border-radius:8px;background:var(--ink);color:var(--bg);font-weight:700}
+.xc-err{margin:0;min-height:1.4em;color:#c0503a;font-size:12.5px}
+
+.xc-sess{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:6px 8px calc(12px + var(--sb))}
+.xc-sl{list-style:none;margin:0;padding:0}
+.xc-si{display:block;width:100%;padding:10px 10px;border-bottom:1px solid var(--line);text-align:left;border-radius:6px}
+.xc-si:hover,.xc-si.cur{background:var(--sunk)}
+.xc-si-t{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xc-si-m{display:block;margin-top:2px;font-size:11.5px;color:var(--ink-3)}
+.xc-link{display:block;margin:14px auto 0;padding:8px 12px;font-size:12.5px;color:var(--ink-3);text-decoration:underline}
+
+@keyframes xcblink{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.xc,body.xc-open #home{transition:none}.xc-st.wait::before,.xc-tool.run .xc-tool-i{animation:none}}
