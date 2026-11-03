@@ -87,6 +87,32 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin-say.l::after{right:-8px;clip-path:polygon(0 0,100% 50%,0 100%)}
 .xin-say.r::after{left:-8px;clip-path:polygon(100% 0,0 50%,100% 100%)}
 .xin-say.l,.xin-say.r{animation:none}
+/* .b 在小芯脚下（尾巴朝上） */
+.xin-say.b{transform:translate(-50%,0);animation:none}
+.xin-say.b::after{bottom:auto;top:-8px;clip-path:polygon(50% 0,100% 100%,0 100%)}
 [data-theme=dark] .xin-say{box-shadow:3px 3px 0 rgba(0,0,0,.5)}
 @keyframes xsay{from{opacity:0;transform:translate(-50%,calc(-100% + 6px))}}
 @media (prefers-reduced-motion:reduce){.xin-say{animation:none}}
+/* 能点的气泡（小芯聊天：点了看全文） */
+.xin-say[data-tap]{pointer-events:auto;cursor:pointer}
+.xin-say[data-tap]:hover{border-color:var(--clay)}
+/* 和小芯说话的输入框：和小背包一样的像素风 */
+.xin-ask{position:fixed;z-index:60;padding:8px;background:var(--panel,#fff);border:2px solid var(--ink);border-radius:0;box-shadow:4px 4px 0 rgba(20,20,19,.2);
+  font:13px/1.4 var(--mono);color:var(--ink);animation:xbag .16s steps(3,end)}
+[data-theme=dark] .xin-ask{box-shadow:4px 4px 0 rgba(0,0,0,.5)}
+.xin-ask-row{display:flex;align-items:flex-end;gap:6px}
+.xin-ask textarea{flex:1;min-width:0;min-height:38px;max-height:120px;padding:8px 9px;border:2px solid var(--line-2,#ccc);border-radius:0;background:var(--bg);color:var(--ink);
+  font:14px/1.4 var(--mono);resize:none;outline:none}
+.xin-ask textarea:focus{border-color:var(--clay)}
+@media (pointer:coarse){.xin-ask textarea{font-size:16px}}   /* iOS：小于 16px 聚焦时会放大页面 */
+.xin-ask-row button{display:grid;place-items:center;width:38px;height:38px;flex:none;border:2px solid var(--ink);border-radius:0;background:var(--sunk,#eee);color:var(--ink)}
+.xin-ask-row button svg{width:18px;height:18px}
+.xin-ask-row .xin-ask-send{background:var(--clay);border-color:var(--clay);color:#fff}
+.xin-ask-row button:active{transform:translate(1px,1px)}
+.xin-ask.rec .xin-ask-mic{background:var(--clay);border-color:var(--clay);color:#fff;animation:xcall 1s steps(2,end) infinite}
+.xin-ask-ft{display:flex;align-items:center;gap:8px;min-height:18px;margin-top:6px}
+.xin-ask-hint{flex:1;min-width:0;font-size:12px;color:var(--ink-3)}
+.xin-ask-more{display:flex;align-items:center;gap:4px;padding:2px 4px;font:12px var(--mono);color:var(--ink-2)}
+.xin-ask-more svg{width:14px;height:14px}
+.xin-ask-more:hover{color:var(--clay)}
+@media (prefers-reduced-motion:reduce){.xin-ask,.xin-ask.rec .xin-ask-mic{animation:none}}

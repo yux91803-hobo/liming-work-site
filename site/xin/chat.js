@@ -1,5 +1,6 @@
 /* xin/chat.js — 小芯聊天：和 InstaBox 云电脑里的 AI（Claude Code / Codex）聊天、让它干活
-   入口：小芯的背包里的「聊天」（首页和 STM32 学习台里的小芯都有）；地址后面加 #xin 也能打开。没登录时先输密码。
+   入口：小芯背包里的「聊天」（首页和 STM32 学习台里的小芯都有）：小芯旁边冒一个输入框（打字或语音），回复出现在小芯头上的气泡里，
+   点气泡或输入框上的「展开」才打开这个面板看全文和历史。地址后面加 #xin 直接打开面板。没登录时先在面板里输密码。
    接口见 src/xin.js；AI 每一步（说话、执行命令、xin 动作）都整理成事件，这里一边轮询一边画出来，同时让小芯跟着动：
    AI 在想 → 小芯坐在电脑前挠头；在执行命令 → 敲代码；xin 命令 → 照做；做完 → 开心，失败 → 难过。 */
 (function () {
@@ -151,7 +152,7 @@
     render(); grow();
     if (!S.enabled) return;
     if (!S.authed) { if (!touch) loginEl.pw.focus(); return; }
-    if (!list.childNodes.length || list.querySelector('.xc-hint')) loadCurrent();
+    if (S.histFor !== (S.sid || '') || !list.childNodes.length) loadCurrent();
     if (!touch) input.focus();
   }
   function close() {
@@ -173,15 +174,15 @@
     req('logout', {}).then(function () { S.authed = false; syncBag(); render(); });
   }
   function syncBag() {
-    // 功能开着就放进背包；没登录时点它先要密码（学习台里的小芯在 mascot.js 里直接问这里）
+    // 功能开着就放进背包：点了小芯旁边冒输入框（没登录先开面板输密码）。学习台里的小芯在 mascot.js 里调 ask
     var x = window.LimingXin; if (!x || !x.addBag) return;
-    if (S.enabled) x.addBag('chat', '聊天', open); else x.removeBag('chat');
+    if (S.enabled) x.addBag('chat', '聊天', function () { quick(x); }); else x.removeBag('chat');
   }
 
   /* ---------- 对话 ---------- */
   function newChat() {
     stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; S.tools = {}; ls(LS_SID, null);
-    S.view = 'chat'; list.innerHTML = ''; welcome(); render();
+    S.view = 'chat'; list.innerHTML = ''; S.histFor = ''; welcome(); render();
   }
   function welcome() {
     var p = h('div', 'xc-hello');
@@ -191,7 +192,7 @@
   }
   function loadCurrent() {
     status();
-    if (S.sid) openSession(S.sid); else { list.innerHTML = ''; welcome(); render(); }
+    if (S.sid) openSession(S.sid); else { list.innerHTML = ''; S.histFor = ''; welcome(); render(); }
   }
   function status() {
     call('status').then(function (d) {
@@ -208,7 +209,7 @@
     call('history', { sid: sid }, 60000).then(function (d) {
       if (my !== S.loadSeq) return;
       list.innerHTML = '';
-      S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid);
+      S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid;
       d.runs.forEach(function (r) { r.events.forEach(function (ev) { draw(ev, true, r.run); }); });
       if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Date.now(); S.doing = 'think'; startPolling(); var x = xin(); if (x) x.ai('think'); }
       render(); toBottom(true);
@@ -246,14 +247,15 @@
   }
 
   /* ---------- 发消息 ---------- */
-  function send() {
-    var text = input.value.trim();
-    if (!text || S.run || S.sending) return;
+  function send(given) {
+    var text = given != null ? String(given).trim() : input.value.trim();
+    if (!text || S.run || S.sending) return false;
     S.sending = true;
     if (list.querySelector('.xc-hello')) list.innerHTML = '';
     var pending = draw({ t: 'user', text: text });
     pending.classList.add('pending');
-    input.value = ''; ls(LS_DRAFT, null); grow(); toBottom(true);
+    if (given == null) { input.value = ''; ls(LS_DRAFT, null); grow(); }
+    toBottom(true); S.lastText = '';
     var x = xin(); if (x) x.ai('think');
     call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text }, 90000).then(function (d) {
       S.sending = false; pending.classList.remove('pending');
@@ -261,10 +263,25 @@
       S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); S.doing = 'think'; render(); startPolling();
     }, function (e) {
       S.sending = false; pending.remove();
-      if (!input.value) { input.value = text; grow(); }
-      var x2 = xin(); if (x2) { x2.ai(''); x2.cmd('confused'); }
+      if (!input.value) { input.value = text; ls(LS_DRAFT, text); grow(); }
+      var x2 = xin(); if (x2) { x2.ai(''); x2.cmd('confused'); if (!S.open) x2.say('没发出去：' + e.message + '（点我看看）', 9000, open); }
       if (/还没做完/.test(e.message)) { openSession(S.sid); return; }
       draw({ t: 'err', text: '没发出去：' + e.message }); toBottom(true);
+    });
+  }
+  /* ---------- 不开面板，直接和小芯说：小芯旁边冒输入框，回复在它头上的气泡里 ---------- */
+  function quick(X) {
+    X = X || xin();
+    if (!S.enabled || !X || !X.ask) return;
+    if (!S.authed) { open(); return; }
+    if (!root) build();
+    X.ask({
+      placeholder: S.run ? '小芯还在忙上一件事…' : '和小芯说点什么…',
+      onExpand: open,
+      onSend: function (t) {
+        if (S.run || S.sending) { X.say('我还在忙上一件事，等我做完～', 4000); return; }
+        send(t);
+      }
     });
   }
   function stop() {
@@ -309,18 +326,29 @@
     if (ev.t === 'status') { if (!NOISE.test(ev.text || '')) S.note = { text: ev.text, at: Date.now() }; return; }
     if (ev.t === 'tool') S.doing = 'work'; else if (ev.t === 'tool_end' || ev.t === 'text') S.doing = 'think';
     var x = xin(); if (!x) return;
-    if (ev.t === 'text') { x.ai('think'); var line = firstLine(ev.text); if (line) x.say(line); }
+    if (ev.t === 'text') { S.lastText = ev.text; x.ai('think'); var line = firstLine(ev.text); if (line) x.say(line, 0, open); }
     else if (ev.t === 'tool') x.ai('work');
     else if (ev.t === 'xin') { S.lastAct = Date.now(); x.cmd(ev.act, ev.arg); }
     else if (ev.t === 'done') {
       x.ai('');
       if (ev.stopped) return;
+      if (ev.ok && S.lastText) x.say(summary(S.lastText), 16000, open);
+      else if (!ev.ok) x.say('没做成，点我看看怎么回事', 10000, open);
       if (Date.now() - S.lastAct < 4000) return;          // AI 刚让它做了动作，就不抢戏了
       x.cmd(ev.ok ? 'happy' : 'sad');
     }
   }
+  // 气泡里放纯文字：去掉 Markdown 记号。# 和 > 只去行首的（标题、引用），RCC->APB2ENR 里的 > 要留着
+  function mdPlain(t) { return t.replace(/^[ \t]*(#{1,6}|>+)[ \t]*/gm, '').replace(/\*\*|`/g, ''); }
+  // 做完时气泡里的话：最后那段回答的开头；有代码或太长就提示点开看全文
+  function summary(t) {
+    t = String(t || '');
+    var code = /```/.test(t), plain = mdPlain(t.replace(/```[\s\S]*?(```|$)/g, ' ')).replace(/\s+/g, ' ').trim();
+    var cut = plain.length > 80 ? plain.slice(0, 78) + '…' : plain;
+    return (cut || '写好了') + (code || plain.length > 80 ? ' （点我看全文）' : '');
+  }
   function firstLine(t) {
-    t = String(t || '').replace(/```[\s\S]*?(```|$)/g, ' ').replace(/[`*#>]/g, '').trim();
+    t = mdPlain(String(t || '').replace(/```[\s\S]*?(```|$)/g, ' ')).trim();
     var m = /^[^\n。！？!?]{1,60}[。！？!?]?/.exec(t);
     if (!m) return '';
     var s = m[0].trim();
@@ -410,6 +438,6 @@
     }, function () { if (location.hash === '#xin') { S.enabled = false; open(); } });
     window.addEventListener('hashchange', function () { if (location.hash === '#xin') open(); });
   }
-  window.LimingXinChat = { open: open, close: close, get state() { return S; } };
+  window.LimingXinChat = { open: open, close: close, ask: quick, get state() { return S; } };
   boot();
 })();
