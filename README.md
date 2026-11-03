@@ -14,6 +14,7 @@
 - **硬件原理**：每个外设一张自绘结构图，按块讲解；I2C 等章节有「推导链」自主推导题。
 - **搜索**：Ctrl/Cmd+K 或右上角，搜引脚、寄存器、代码、图。
 - **小芯**：首页的像素小助手，可以拖、喂、玩。
+- **小芯聊天**（只给站长自己用，要登录）：小芯的「大脑」是 InstaBox 云电脑里的 Claude Code / Codex。登录后小芯的背包里有「聊天」（地址后面加 `#xin` 也能打开）；它能在云电脑里写代码、编译、跑命令，每一步都显示在面板里（命令可以点开看输出）。小芯跟着动：AI 在想就坐在电脑前挠头，执行命令就敲键盘，做完开心、失败难过；AI 也能用 `xin dance`、`xin say 搞定啦` 这类命令直接指挥小芯。
 
 推导进度、粘贴的代码等只存在当前浏览器里，不跨设备同步。寄存器页面是计算器，没有连接真实开发板。
 
@@ -33,7 +34,9 @@ npm run test:e2e   # 浏览器端到端测试（需要 Python playwright + Chrom
 
 ```text
 site/                 网页、数据与完整图片资源
-src/worker.js         Cloudflare Worker（资源 404、/api 404）
+src/worker.js         Cloudflare Worker（资源 404、/api 404，/api/xin 交给 xin.js）
+src/xin.js            小芯聊天：密码登录、转发到 InstaBox 云电脑
+site/xin/             小芯聊天面板（chat.js / chat.css）和跑在云电脑里的 vm-agent.mjs
 scripts/preview.mjs   无依赖静态预览
 scripts/check.mjs     语法、资源与行为检查
 test/                 关键行为回归测试
@@ -49,5 +52,17 @@ wrangler.jsonc        正式站（顶层）与测试站（env.staging）配置
 - 开 PR 到 `main`：检查通过后部署测试站 `liming-hub-staging`（只有 `*.workers.dev` 地址），并检查首页和 `/tools/stm32/`。
 - 合并到 `main`：部署正式站 `liming-worldmap`（liming-work.com）；检查失败自动回滚到上一版。
 - Actions 页面可以手动运行，默认只 dry-run。
+
+### 小芯聊天要配的东西
+
+| 放在哪 | 名字 | 是什么 |
+|---|---|---|
+| GitHub 仓库 Secrets | `XIN_OWNER_PASSWORD` | 网站登录密码，至少 12 位 |
+| GitHub 仓库 Secrets | `XIN_INSTABOX_API_KEY` | InstaBox 的 API key（`ibk_…`） |
+| 云电脑里 | AI 的 key | Codex / Claude Code 自己的登录或 key；推荐用 InstaBox 后台的 Secrets（代理模式），云电脑里只看到占位符 |
+
+两个 GitHub Secrets 都配了，合并到 `main` 时 Actions 才把它们写进正式站（测试站不写，功能关着）。云电脑默认找名字叫 `li` 的那台（`wrangler.jsonc` 里的 `XIN_MACHINE`）。
+云电脑里的管理脚本 `vm-agent.mjs` 不用手动装：网站第一次用、或者脚本改过时，会自动传到 `/data/home/.xin/agent/`。对话记录存在云电脑的 `/data/home/.xin/`，AI 的工作目录是 `/data/workspace`。
+AI 在云电脑里是完全放权的（不经确认就执行命令），云电脑里别放重要的东西，也别放 InstaBox key。
 
 互传和协作中心删除时留下的 Cloudflare 资源（迁移 `v2` 已在两个站执行过）：D1 数据库 `liming-hub` 还在账号里，确认不要可以 `npx wrangler d1 delete liming-hub`；旧密钥 `TRANSFER_PASSWORD`、`TRANSFER_KEY`、`TRANSFER_PW_VERSION` 可以用 `npx wrangler secret delete <名字>` 删掉。

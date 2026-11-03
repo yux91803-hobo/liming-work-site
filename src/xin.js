@@ -59,7 +59,7 @@ export async function authed(req, env, now = Date.now()) {
   const m = /^v1\.(\d{9,11})\.([A-Za-z0-9_-]{43})$/.exec(readCookie(req));
   if (!m || Number(m[1]) * 1000 < now) return false;
   const want = await crypto.subtle.sign('HMAC', await signKey(env), enc.encode('v1.' + m[1]));
-  return b64url(want) === m[2];
+  return sameBytes(enc.encode(b64url(want)), enc.encode(m[2]));
 }
 async function checkPassword(env, pw) {
   const [a, b] = await Promise.all([crypto.subtle.digest('SHA-256', enc.encode(String(pw))), crypto.subtle.digest('SHA-256', enc.encode(env.OWNER_PASSWORD))]);

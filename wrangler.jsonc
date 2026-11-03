@@ -15,6 +15,10 @@
     { "tag": "v2", "deleted_classes": ["Space", "Limiter"] }
   ],
   "observability": { "enabled": false },
+  // 小芯聊天（src/xin.js）：云电脑的名字；登录每个 IP 每分钟最多试 5 次
+  // 密钥 OWNER_PASSWORD、INSTABOX_API_KEY 由 Actions 从 GitHub Secrets 写进正式站（XIN_OWNER_PASSWORD、XIN_INSTABOX_API_KEY），测试站不配，功能关着
+  "vars": { "XIN_MACHINE": "li" },
+  "ratelimits": [{ "name": "XIN_LOGIN_LIMIT", "namespace_id": "1801", "simple": { "limit": 5, "period": 60 } }],
   "routes": [
     { "pattern": "liming-work.com", "custom_domain": true },
     { "pattern": "www.liming-work.com", "custom_domain": true }
@@ -26,6 +30,8 @@
       "name": "liming-hub-staging",
       "routes": [],
       "workers_dev": true,
+      "vars": { "XIN_MACHINE": "li" },
+      "ratelimits": [{ "name": "XIN_LOGIN_LIMIT", "namespace_id": "1802", "simple": { "limit": 5, "period": 60 } }],
       "assets": {
         "directory": "./site",
         "binding": "ASSETS",
