@@ -1,12 +1,14 @@
-// Liming 工具箱 Worker：只做三件事，其余全部交给静态资源（SPA 回退）。
+// Liming 工具箱 Worker：只做这几件事，其余全部交给静态资源（SPA 回退）。
 // 1. 工具的 assets 文件缺失时回 404，不让 SPA 回退成 index.html（找图失败时好排查）
-// 2. /api/* 一律 404（互传、协作中心的接口已经删掉）
-// 3. 工具 assets 里的图片缓存一天
+// 2. /api/xin/* 小芯聊天（站长登录后，经 InstaBox 云电脑里的 AI 聊天干活，见 xin.js）
+// 3. 其余 /api/* 一律 404（互传、协作中心的接口已经删掉）
+// 4. 工具 assets 里的图片缓存一天
+import { handleXin } from './xin.js';
 const IMAGE_CACHE = 'public, max-age=86400';
 const SEC_HEADERS = { 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (/^\/tools\/[^/]+\/assets\//.test(url.pathname)) {
       const r = await env.ASSETS.fetch(req);
@@ -21,6 +23,7 @@ export default {
       }
       return r;
     }
+    if (url.pathname === '/api/xin' || url.pathname.startsWith('/api/xin/')) return handleXin(req, env, ctx);
     if (url.pathname.startsWith('/api/')) {
       return new Response(JSON.stringify({ error: 'not_found' }), { status: 404, headers: { 'Content-Type': 'application/json; charset=utf-8', ...SEC_HEADERS } });
     }
