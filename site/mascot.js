@@ -294,6 +294,18 @@
     }
     return out;
   }
+  // 学习台：屏幕上没有能站的横线时（电脑布局里方块都顶在最上面，站上去头会出屏），就站进大方块里面，沿着底边走
+  function inside() {
+    var out = [];
+    lines().forEach(function (c) {
+      if (c.kind !== 'top') return;
+      var r = c.el.getBoundingClientRect();
+      if (r.height < H * 2 || r.width < W * 2.5) return;
+      var p = platOf(c.el, 'in'); if (p) out.push(p);
+    });
+    out.sort(function (a, b) { return (b.x1 - b.x0) - (a.x1 - a.x0); });
+    return out;
+  }
   function same(a, b) { return !!a && !!b && a.el === b.el && a.kind === b.kind; }
   // 学习台顶上有一条吸顶的栏（手机上），小芯的身子不能钻到它底下
   function topPad() {
@@ -310,6 +322,7 @@
   function bestPlat() {
     var ps = plats().filter(function (p) { return inView(p); });
     if (HOME) { var g = ps.filter(function (p) { return p.kind === 'ground'; })[0]; if (g) return g; }
+    if (!ps.length && STM) ps = inside().filter(function (p) { return inView(p); });
     if (!ps.length) return null;
     var mid = sY() + innerHeight * 0.45;
     ps.sort(function (a, b) { return Math.abs(a.fy - mid) - Math.abs(b.fy - mid); });
@@ -1356,6 +1369,9 @@
       }]
     ];
     extraBag.forEach(function (it) { out.push([it.icon, it.label, it.fn]); });
+    // 学习台里的小芯：聊天面板在外面的工具箱页面上（xin/chat.js），从这里叫它打开
+    var chat = null; try { chat = STM && window.parent !== window ? window.parent.LimingXinChat : null; } catch (e) { chat = null; }
+    if (chat && chat.state && chat.state.enabled) out.push(['chat', '聊天', function () { chat.open(); }]);
     if (HOME) {
       out.push(['home', '回标题栏', function () { var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) come(function () { hop(g, g.x0 + (g.x1 - g.x0) * 0.4); }); }]);
       out.push(['hide', '收起来', function () { setOff(true); }]);

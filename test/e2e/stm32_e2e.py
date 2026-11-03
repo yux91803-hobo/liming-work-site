@@ -915,9 +915,11 @@ async def main():
         pg = await page(b)
         xs = await xin_mock(pg)
         await pg.goto(BASE + '/#xin'); await pg.wait_for_selector('.xc.show .xc-login')
-        check('没登录：#xin 先要密码，背包里没有「聊天」', await pg.is_visible('.xc-login input[type=password]') and not await pg.is_visible('.xc-ft')
-              and '聊天' not in await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))"))
-        await pg.keyboard.press('Escape'); await pg.goto(BASE + '/#xin'); await pg.wait_for_selector('.xc.show .xc-login')
+        check('没登录：#xin 先要密码', await pg.is_visible('.xc-login input[type=password]') and not await pg.is_visible('.xc-ft'))
+        await pg.click('.xc-x'); await pg.wait_for_timeout(400)
+        items = await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
+        await pg.click('.xin-bag .xin-it:has-text("聊天")'); await pg.wait_for_selector('.xc.show .xc-login')
+        check('功能开着、没登录：背包里也有「聊天」，点了先要密码', '聊天' in items and await pg.is_visible('.xc-login input[type=password]'), items)
         await pg.fill('.xc-login input', 'pw-ok-123456'); await pg.click('.xc-login .xc-btn')
         await pg.wait_for_selector('.xc-hello')
         check('登录以后：欢迎语、选 AI（默认 Codex）、输入框', await pg.is_visible('.xc-row textarea') and await pg.get_attribute('.xc-ag[data-agent=codex]', 'aria-checked') == 'true')
@@ -942,6 +944,20 @@ async def main():
         check('打开旧对话：代码块、失败的命令（点开看输出），AI 不能再换', st == ['int main(void) { return 0; }', True, 'none', True] and st2 == 'block', (st, st2))
         await pg.click('.xc-x'); await pg.wait_for_timeout(400)
         check('关掉面板', not await pg.is_visible('.xc'))
+        # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
+        await pg.wait_for_timeout(1500)
+        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(), cx = r.x + r.width / 2; for (let yy = r.y; yy < r.bottom; yy++) { const e = document.elementFromPoint(cx, yy); if (e && LimingXin.el.contains(e)) return [cx, yy + 2]; } return [cx, r.y + r.height * 0.55]; })()")
+        c = await pg.evaluate("(() => { const r = document.querySelector('.card[data-id=stm32]').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+        await pg.mouse.move(*r); await pg.mouse.down()
+        for i in range(1, 13):
+            await pg.mouse.move(r[0] + (c[0] - r[0]) * i / 12, r[1] + (c[1] - r[1]) * i / 12); await pg.wait_for_timeout(30)
+        await pg.mouse.up(); f = await tool_frame(pg)
+        for _ in range(80):
+            if await f.evaluate("LimingXin.mode") in ('idle', 'walk', 'play'): break
+            await pg.wait_for_timeout(100)
+        st = await f.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [LimingXin.mode, LimingXin.plat && LimingXin.plat.kind, r.top >= 0 && r.bottom <= innerHeight]; })()")
+        items = await f.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
+        check('电脑：小芯能被扔进学习台（站在芯片图框里，整个在屏幕内），背包里有「聊天」', st[0] in ('idle', 'walk', 'play') and st[1] == 'in' and st[2] and '聊天' in items, (st, items))
         await pg.context.close()
 
         pg = await page(b, 390, 844, mobile=True)
@@ -954,6 +970,23 @@ async def main():
         await pg.evaluate("LimingXin.say('你好呀，这是一句比较长的话')"); await pg.wait_for_timeout(100)
         st = await pg.evaluate("(() => { const r = document.querySelector('.xin-say').getBoundingClientRect(); return [r.left >= 0, r.right <= innerWidth, r.top >= 0, r.width > 80]; })()")
         check('手机：小芯的气泡完整显示在屏幕里', st == [True, True, True, True], st)
+        # 小芯被扔进 STM32 学习台：学习台里那个小芯的背包也有「聊天」，打开的是外面工具箱页面上的面板
+        await pg.click('.xc-x'); await pg.wait_for_timeout(1500)
+        cdp = await pg.context.new_cdp_session(pg)
+        async def touch2(kind, x=0, y=0):
+            await cdp.send('Input.dispatchTouchEvent', {'type': kind, 'touchPoints': [] if kind == 'touchEnd' else [{'x': x, 'y': y}]})
+        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height * 0.55]; })()")
+        c = await pg.evaluate("(() => { const r = document.querySelector('.card[data-id=stm32]').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+        await touch2('touchStart', *r)
+        for i in range(1, 13):
+            await touch2('touchMove', r[0] + (c[0] - r[0]) * i / 12, r[1] + (c[1] - r[1]) * i / 12); await pg.wait_for_timeout(30)
+        await touch2('touchEnd'); f = await tool_frame(pg)
+        for _ in range(60):
+            if await f.evaluate("LimingXin.mode") in ('idle', 'walk', 'play'): break
+            await pg.wait_for_timeout(100)
+        items = await f.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
+        await f.click('.xin-bag .xin-it:has-text("聊天")'); await pg.wait_for_selector('.xc.show .xc-tool')
+        check('学习台里的小芯：背包有「聊天」，点了打开工具箱页面上的聊天面板', '聊天' in items and await pg.is_visible('.xc.show'), items)
         await pg.context.close()
         # 直接打开学习台（不经过工具箱首页）：没有小芯
         pg = await page(b, 390, 844, mobile=True)
