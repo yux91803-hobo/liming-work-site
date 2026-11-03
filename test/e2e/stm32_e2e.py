@@ -43,6 +43,47 @@ async def tool_frame(pg):
 async def wait_img(f, timeout=10000):
     await f.wait_for_function("(() => { const i = document.querySelector('.viewer.on .zoom-content img'); return i && i.naturalWidth > 0; })()", timeout=timeout)
 
+# ---------- 小芯聊天：假的 /api/xin（不连云电脑） ----------
+XIN_HIST = [
+    {'t': 'user', 'text': '编译 main.c'},
+    {'t': 'text', 'text': '好的：\n\n```c\nint main(void) { return 0; }\n```'},
+    {'t': 'tool', 'id': 'item_1', 'name': 'Bash', 'detail': 'arm-none-eabi-gcc -c main.c'},
+    {'t': 'tool_end', 'id': 'item_1', 'ok': False, 'out': 'main.c:1: error: boom'},
+    {'t': 'done', 'ok': False, 'code': 1, 'ms': 3000},
+]
+XIN_LIVE = [
+    [{'t': 'user', 'text': '看看工作目录'}, {'t': 'text', 'text': '收到，我看看。'}, {'t': 'tool', 'id': 'item_1', 'name': 'Bash', 'detail': 'ls /data/workspace'}],
+    [],
+    [{'t': 'tool_end', 'id': 'item_1', 'ok': True, 'out': 'blink'}, {'t': 'xin', 'act': 'dance', 'arg': ''}, {'t': 'text', 'text': '里面有一个 blink 目录。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 4000}],
+]
+
+async def xin_mock(pg, authed=False):
+    st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': []}
+    async def handle(route):
+        req = route.request
+        path = req.url.split('/api/xin/')[1].split('?')[0]
+        def ok(body): return route.fulfill(status=200, content_type='application/json', body=json.dumps(body))
+        if path == 'me': return await ok({'enabled': True, 'authed': st['authed']})
+        body = json.loads(req.post_data or '{}')
+        if path == 'login':
+            st['authed'] = body.get('password') == 'pw-ok-123456'
+            return await ok({'ok': True})
+        op, args = body.get('op'), body.get('args') or {}
+        st['ops'].append(op)
+        if op == 'status': return await ok({'ok': True, 'data': {'name': 'li', 'state': 'running'}})
+        if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': None}})
+        if op == 'sessions': return await ok({'ok': True, 'data': {'sessions': [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0}]}})
+        if op == 'send':
+            st['sent'] = args
+            return await ok({'ok': True, 'data': {'sid': 'snew000001', 'run': 'rlive00001', 'agent': args.get('agent') or 'codex'}})
+        if op == 'poll':
+            i = min(st['polls'], len(XIN_LIVE) - 1); st['polls'] += 1
+            evs = XIN_LIVE[i] if st['polls'] <= len(XIN_LIVE) else []
+            return await ok({'ok': True, 'data': {'events': evs, 'off': args.get('off', 0) + len(evs), 'done': st['polls'] >= len(XIN_LIVE)}})
+        return await ok({'ok': False, 'state': 'error', 'msg': 'mock'})
+    await pg.route('**/api/xin/**', handle)
+    return st
+
 async def main():
     async with async_playwright() as p:
         exe = os.environ.get('CHROMIUM_PATH')
@@ -860,6 +901,59 @@ async def main():
         st = await pg.evaluate("""(() => { const f = document.querySelector('.lm-scroll').getBoundingClientRect(), c = document.querySelector('.lm-card').getBoundingClientRect();
           return [f.bottom <= c.top + 1, c.width > 300, document.querySelector('.lm-ch').textContent, document.documentElement.scrollWidth <= innerWidth]; })()""")
         check('手机·硬件原理：放大的一块在上、讲解卡片在下，页面没有横向滚动', st == [True, True, '输出比较', True], st)
+        await pg.context.close()
+        # ---------- 小芯聊天 ----------
+        pg = await page(b)
+        await pg.goto(BASE + '/'); await pg.wait_for_timeout(1500)
+        items = await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
+        check('小芯聊天：网站没配密钥（本地预览）时背包里没有「聊天」', '聊天' not in items, items)
+        await pg.keyboard.press('Escape')
+        await pg.goto(BASE + '/#xin'); await pg.wait_for_selector('.xc.show')
+        check('没配密钥时 #xin 打开面板，只说没开', '还没开' in await pg.text_content('.xc') and not await pg.is_visible('.xc-login') and not await pg.is_visible('.xc-ft'))
+        await pg.context.close()
+
+        pg = await page(b)
+        xs = await xin_mock(pg)
+        await pg.goto(BASE + '/#xin'); await pg.wait_for_selector('.xc.show .xc-login')
+        check('没登录：#xin 先要密码，背包里没有「聊天」', await pg.is_visible('.xc-login input[type=password]') and not await pg.is_visible('.xc-ft')
+              and '聊天' not in await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))"))
+        await pg.keyboard.press('Escape'); await pg.goto(BASE + '/#xin'); await pg.wait_for_selector('.xc.show .xc-login')
+        await pg.fill('.xc-login input', 'pw-ok-123456'); await pg.click('.xc-login .xc-btn')
+        await pg.wait_for_selector('.xc-hello')
+        check('登录以后：欢迎语、选 AI（默认 Codex）、输入框', await pg.is_visible('.xc-row textarea') and await pg.get_attribute('.xc-ag[data-agent=codex]', 'aria-checked') == 'true')
+        await pg.click('.xc-ag[data-agent=claude]')
+        await pg.fill('.xc-row textarea', '看看工作目录'); await pg.keyboard.press('Enter')
+        await pg.wait_for_selector('.xc-tool.run')
+        await pg.wait_for_timeout(300)
+        st = await pg.evaluate("[LimingXin.aiState, document.querySelector('.xc').classList.contains('running'), document.querySelectorAll('.xc-me').length, (document.querySelector('.xin-say') || {}).textContent]")
+        check('发出去：选的 AI 和文字传给后台，只显示一条自己的话，小芯坐到电脑前敲代码、头上冒 AI 的第一句话',
+              xs['sent'] == {'agent': 'claude', 'text': '看看工作目录'} and st == ['work', True, 1, '收到，我看看。'], (xs['sent'], st))
+        await pg.wait_for_selector('.xc-done', timeout=8000); await pg.wait_for_timeout(200)
+        st = await pg.evaluate("[LimingXin.aiState, LimingXin.mode, document.querySelector('.xc').classList.contains('running'), document.querySelector('.xc-tool').className, document.querySelector('.xc-note').textContent, localStorage.getItem('lm.xin.sid')]")
+        check('做完：工具打勾，xin dance 让小芯跳舞，停止键变回发送，记住对话', st[0] == '' and st[1] == 'play' and not st[2] and 'ok' in st[3] and '跳舞' in st[4] and st[5] == 'snew000001', st)
+        items = await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
+        check('登录以后背包里有「聊天」', '聊天' in items, items)
+        await pg.keyboard.press('Escape')
+        await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-si')
+        await pg.click('.xc-si'); await pg.wait_for_selector('.xc-code')
+        st = await pg.evaluate("[document.querySelector('.xc-code code').textContent, document.querySelector('.xc-tool').classList.contains('bad'), getComputedStyle(document.querySelector('.xc-tool-o')).display, document.querySelector('.xc-seg').classList.contains('locked')]")
+        await pg.click('.xc-tool-h')
+        st2 = await pg.evaluate("getComputedStyle(document.querySelector('.xc-tool-o')).display")
+        check('打开旧对话：代码块、失败的命令（点开看输出），AI 不能再换', st == ['int main(void) { return 0; }', True, 'none', True] and st2 == 'block', (st, st2))
+        await pg.click('.xc-x'); await pg.wait_for_timeout(400)
+        check('关掉面板', not await pg.is_visible('.xc'))
+        await pg.context.close()
+
+        pg = await page(b, 390, 844, mobile=True)
+        await xin_mock(pg, authed=True)
+        await pg.add_init_script("localStorage.setItem('lm.xin.sid', 'shist00001')")
+        await pg.goto(BASE + '/#xin'); await pg.wait_for_selector('.xc.show .xc-tool'); await pg.wait_for_timeout(1500)
+        st = await pg.evaluate("""(() => { const p = document.querySelector('.xc').getBoundingClientRect(), x = LimingXin.el.getBoundingClientRect();
+          return [Math.round(p.top) > 150, Math.round(p.bottom) == innerHeight, x.bottom <= p.top + 1, document.documentElement.scrollWidth <= innerWidth]; })()""")
+        check('手机：面板从底下升起来，小芯在标题栏上露着，页面不横向滚动', st == [True, True, True, True], st)
+        await pg.evaluate("LimingXin.say('你好呀，这是一句比较长的话')"); await pg.wait_for_timeout(100)
+        st = await pg.evaluate("(() => { const r = document.querySelector('.xin-say').getBoundingClientRect(); return [r.left >= 0, r.right <= innerWidth, r.top >= 0, r.width > 80]; })()")
+        check('手机：小芯的气泡完整显示在屏幕里', st == [True, True, True, True], st)
         await pg.context.close()
         # 直接打开学习台（不经过工具箱首页）：没有小芯
         pg = await page(b, 390, 844, mobile=True)

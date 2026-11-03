@@ -1,12 +1,11 @@
 // Worker：资源缺失 404、/api 404、图片加缓存
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 
+const { pathToFileURL } = require('node:url');
 async function loadWorker() {
-  const src = fs.readFileSync(path.join(__dirname, '../src/worker.js'), 'utf8');
-  return (await import('data:text/javascript,' + encodeURIComponent(src))).default;
+  return (await import(pathToFileURL(path.join(__dirname, '../src/worker.js')).href)).default;
 }
 const env = (status, type) => ({ ASSETS: { fetch: async () => new Response('x', { status, headers: { 'content-type': type } }) } });
 const get = (w, p, e) => w.fetch(new Request('https://liming-work.com' + p), e);
