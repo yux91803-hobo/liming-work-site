@@ -944,6 +944,20 @@ async def main():
         check('打开旧对话：代码块、失败的命令（点开看输出），AI 不能再换', st == ['int main(void) { return 0; }', True, 'none', True] and st2 == 'block', (st, st2))
         await pg.click('.xc-x'); await pg.wait_for_timeout(400)
         check('关掉面板', not await pg.is_visible('.xc'))
+        # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
+        await pg.wait_for_timeout(1500)
+        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(), cx = r.x + r.width / 2; for (let yy = r.y; yy < r.bottom; yy++) { const e = document.elementFromPoint(cx, yy); if (e && LimingXin.el.contains(e)) return [cx, yy + 2]; } return [cx, r.y + r.height * 0.55]; })()")
+        c = await pg.evaluate("(() => { const r = document.querySelector('.card[data-id=stm32]').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+        await pg.mouse.move(*r); await pg.mouse.down()
+        for i in range(1, 13):
+            await pg.mouse.move(r[0] + (c[0] - r[0]) * i / 12, r[1] + (c[1] - r[1]) * i / 12); await pg.wait_for_timeout(30)
+        await pg.mouse.up(); f = await tool_frame(pg)
+        for _ in range(80):
+            if await f.evaluate("LimingXin.mode") in ('idle', 'walk', 'play'): break
+            await pg.wait_for_timeout(100)
+        st = await f.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [LimingXin.mode, LimingXin.plat && LimingXin.plat.kind, r.top >= 0 && r.bottom <= innerHeight]; })()")
+        items = await f.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
+        check('电脑：小芯能被扔进学习台（站在芯片图框里，整个在屏幕内），背包里有「聊天」', st[0] in ('idle', 'walk', 'play') and st[1] == 'in' and st[2] and '聊天' in items, (st, items))
         await pg.context.close()
 
         pg = await page(b, 390, 844, mobile=True)
