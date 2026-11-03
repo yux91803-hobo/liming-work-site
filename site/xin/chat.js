@@ -210,7 +210,7 @@
       list.innerHTML = '';
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid);
       d.runs.forEach(function (r) { r.events.forEach(function (ev) { draw(ev, true, r.run); }); });
-      if (d.active) { S.run = d.active.run; S.off = d.active.off; startPolling(); var x = xin(); if (x) x.ai('think'); }
+      if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Date.now(); S.doing = 'think'; startPolling(); var x = xin(); if (x) x.ai('think'); }
       render(); toBottom(true);
     }, function (e) {
       if (my !== S.loadSeq) return;
@@ -258,7 +258,7 @@
     call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text }, 90000).then(function (d) {
       S.sending = false; pending.classList.remove('pending');
       S.sid = d.sid; S.sessAgent = d.agent || S.sessAgent || S.agent; ls(LS_SID, d.sid);
-      S.mine[d.run] = true; S.run = d.run; S.off = 0; render(); startPolling();
+      S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); S.doing = 'think'; render(); startPolling();
     }, function (e) {
       S.sending = false; pending.remove();
       if (!input.value) { input.value = text; grow(); }
@@ -286,7 +286,8 @@
       d.events.forEach(function (ev) { if (!(ev.t === 'user' && S.mine[run])) draw(ev, false, run); react(ev); });
       S.off = d.off;
       if (d.events.length) toBottom();
-      if (d.done) { S.run = ''; stopPolling(); render(); if (!touch && S.open) input.focus(); return; }
+      if (d.done) { S.run = ''; stopPolling(); setStatus(''); render(); if (!touch && S.open) input.focus(); return; }
+      progress();
       pollTm = setTimeout(poll, d.events.length ? 700 : 1300);
     }, function (e) {
       if (e.state === 'cooldown') { setStatus(e.message, 'bad'); pollTm = setTimeout(poll, Math.max(30, e.retryAfter || 60) * 1000); return; }
@@ -296,7 +297,17 @@
     });
   }
   // 小芯跟着动
+  // 状态栏：AI 还没出声时显示在干什么、等了多久，分得清是慢还是卡住了
+  var NOISE = /^Model metadata for .* not found/i;   // Codex 每轮都报的无关警告
+  function progress() {
+    if (!S.run) return;
+    var sec = Math.round((Date.now() - (S.t0 || Date.now())) / 1000);
+    if (S.note && Date.now() - S.note.at < 6000) { setStatus(S.note.text, 'wait'); return; }
+    setStatus((S.doing === 'work' ? '小芯在执行命令…' : '小芯在想…') + (sec >= 3 ? ' 已 ' + (sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒' : sec + ' 秒') : ''), 'wait');
+  }
   function react(ev) {
+    if (ev.t === 'status') { if (!NOISE.test(ev.text || '')) S.note = { text: ev.text, at: Date.now() }; return; }
+    if (ev.t === 'tool') S.doing = 'work'; else if (ev.t === 'tool_end' || ev.t === 'text') S.doing = 'think';
     var x = xin(); if (!x) return;
     if (ev.t === 'text') { x.ai('think'); var line = firstLine(ev.text); if (line) x.say(line); }
     else if (ev.t === 'tool') x.ai('work');
@@ -329,11 +340,11 @@
     if (ev.t === 'user') { e = h('div', 'xc-m xc-me'); e.appendChild(h('div', 'xc-bub', ev.text)); }
     else if (ev.t === 'text') { e = h('div', 'xc-m xc-ai'); e.appendChild(md(ev.text)); }
     else if (ev.t === 'xin') e = h('div', 'xc-note', '✻ 小芯' + (ACT_NAME[ev.act] || ev.act) + (ev.arg && ev.act !== 'music' ? '：' + ev.arg : ''));
-    else if (ev.t === 'status') { if (old) return null; e = h('div', 'xc-note', ev.text); }
+    else if (ev.t === 'status') return null;   // 临时状态只在状态栏里闪一下（见 react），不进对话
     else if (ev.t === 'err') e = h('div', 'xc-errm', ev.text);
     else if (ev.t === 'done') {
       var sec = Math.round((ev.ms || 0) / 1000);
-      e = h('div', 'xc-done' + (ev.ok ? '' : ' bad'), ev.stopped ? '已停止' : (ev.ok ? '完成' : '没做成') + (sec ? ' · ' + (sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒' : sec + ' 秒') : ''));
+      e = h('div', 'xc-done' + (ev.ok || ev.stopped ? '' : ' bad'), ev.stopped ? '已停止' : (ev.ok ? '完成' : '没做成') + (sec ? ' · ' + (sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒' : sec + ' 秒') : ''));
     }
     if (e) list.appendChild(e);
     return e;

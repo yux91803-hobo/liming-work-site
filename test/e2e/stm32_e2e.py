@@ -52,7 +52,7 @@ XIN_HIST = [
     {'t': 'done', 'ok': False, 'code': 1, 'ms': 3000},
 ]
 XIN_LIVE = [
-    [{'t': 'user', 'text': '看看工作目录'}, {'t': 'text', 'text': '收到，我看看。'}, {'t': 'tool', 'id': 'item_1', 'name': 'Bash', 'detail': 'ls /data/workspace'}],
+    [{'t': 'user', 'text': '看看工作目录'}, {'t': 'status', 'text': 'Model metadata for `deepseek` not found. Defaulting to fallback metadata'}, {'t': 'text', 'text': '收到，我看看。'}, {'t': 'tool', 'id': 'item_1', 'name': 'Bash', 'detail': 'ls /data/workspace'}],
     [],
     [{'t': 'tool_end', 'id': 'item_1', 'ok': True, 'out': 'blink'}, {'t': 'xin', 'act': 'dance', 'arg': ''}, {'t': 'text', 'text': '里面有一个 blink 目录。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 4000}],
 ]
@@ -927,12 +927,13 @@ async def main():
         await pg.fill('.xc-row textarea', '看看工作目录'); await pg.keyboard.press('Enter')
         await pg.wait_for_selector('.xc-tool.run')
         await pg.wait_for_timeout(300)
-        st = await pg.evaluate("[LimingXin.aiState, document.querySelector('.xc').classList.contains('running'), document.querySelectorAll('.xc-me').length, (document.querySelector('.xin-say') || {}).textContent]")
-        check('发出去：选的 AI 和文字传给后台，只显示一条自己的话，小芯坐到电脑前敲代码、头上冒 AI 的第一句话',
-              xs['sent'] == {'agent': 'claude', 'text': '看看工作目录'} and st == ['work', True, 1, '收到，我看看。'], (xs['sent'], st))
+        st = await pg.evaluate("[LimingXin.aiState, document.querySelector('.xc').classList.contains('running'), document.querySelectorAll('.xc-me').length, (document.querySelector('.xin-say') || {}).textContent, document.querySelector('.xc-st').textContent, document.querySelector('.xc-msgs').textContent.includes('Model metadata')]")
+        check('发出去：选的 AI 和文字传给后台，只显示一条自己的话，小芯坐到电脑前敲代码、头上冒 AI 的第一句话；状态栏说在执行命令，无关警告不进对话',
+              xs['sent'] == {'agent': 'claude', 'text': '看看工作目录'} and st[:4] == ['work', True, 1, '收到，我看看。'] and '在执行命令' in st[4] and st[5] is False, (xs['sent'], st))
         await pg.wait_for_selector('.xc-done', timeout=8000); await pg.wait_for_timeout(200)
         st = await pg.evaluate("[LimingXin.aiState, LimingXin.mode, document.querySelector('.xc').classList.contains('running'), document.querySelector('.xc-tool').className, document.querySelector('.xc-note').textContent, localStorage.getItem('lm.xin.sid')]")
         check('做完：工具打勾，xin dance 让小芯跳舞，停止键变回发送，记住对话', st[0] == '' and st[1] == 'play' and not st[2] and 'ok' in st[3] and '跳舞' in st[4] and st[5] == 'snew000001', st)
+        check('做完：状态栏清空', await pg.evaluate("document.querySelector('.xc-st').hidden"))
         items = await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
         check('登录以后背包里有「聊天」', '聊天' in items, items)
         await pg.keyboard.press('Escape')
