@@ -74,7 +74,10 @@
 .xc-done.bad{color:#c0503a}
 
 .xc-ft{flex:none;padding:8px 10px calc(10px + var(--sb));border-top:1px solid var(--line);background:var(--panel)}
-.xc-seg{display:flex;gap:6px;margin:0 0 8px}
+.xc-opts{display:flex;align-items:center;gap:6px;margin:0 0 8px}
+.xc-seg,.xc-eff{display:flex;align-items:center;gap:6px}
+.xc-eff{margin-left:auto}
+.xc-eff-l{font-size:12px;color:var(--ink-3)}
 .xc-ag{padding:3px 10px;border:1px solid var(--line-2);border-radius:6px;font-size:12px;color:var(--ink-2)}
 .xc-ag[aria-checked=true]{background:var(--ink);border-color:var(--ink);color:var(--bg)}
 .xc-seg.locked{display:none}   /* 已经开始的对话换不了 AI，标题里写着是哪个 */

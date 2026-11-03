@@ -1059,6 +1059,7 @@
     if (ragePending && mode === 'idle' && !seq) { rage(); return; }
     if (mode !== 'idle' || mood || seq) { schedule(); return; }
     if (!onScreen() || !plat) { dropIn(0); return; }      // 页面滚走了：跳回看得见的地方
+    if (askEl) { lastInput = Date.now(); schedule(); return; }               // 你在跟它说话：待在原地听着
     if (aiState && !reduce) { lastInput = Date.now(); aiStep(); return; }   // 云电脑里的 AI 在想 / 在干活：坐在电脑前陪着
     if (music) {                 // 听歌：待着听，时不时跳段舞；听久了会烦，把耳机砸了
       lastInput = Date.now();
@@ -1246,6 +1247,12 @@
       var half = bw / 2, cx = clamp(x + W / 2, sX() + 8 + half, sX() + innerWidth - 8 - half);
       sayEl.style.left = Math.round(cx) + 'px'; sayEl.style.top = Math.round(head - 6) + 'px';
       sayEl.style.setProperty('--tail', Math.round(clamp(x + W / 2 - cx + half, 10, bw - 10)) + 'px');
+    } else if (bw > Math.max(x + W * 0.12 - sX() - 8, sX() + innerWidth - 8 - (x + W * 0.88))) {
+      // 站在页面最上面、旁边也放不下（手机上较长的回答）：放在脚下
+      sayEl.className = 'xin-say b';
+      var hb = bw / 2, cb = clamp(x + W / 2, sX() + 8 + hb, sX() + innerWidth - 8 - hb);
+      sayEl.style.left = Math.round(cb) + 'px'; sayEl.style.top = Math.round(y + H + 8) + 'px';
+      sayEl.style.setProperty('--tail', Math.round(clamp(x + W / 2 - cb + hb, 10, bw - 10)) + 'px');
     } else {                                     // 站在页面最上面（手机标题栏）：放在旁边空得多的一侧
       var roomL = x + W * 0.12 - sX() - 8, roomR = sX() + innerWidth - 8 - (x + W * 0.88), left = roomL > roomR;
       sayEl.className = 'xin-say ' + (left ? 'l' : 'r');
@@ -1256,14 +1263,103 @@
       sayEl.style.left = Math.round(left ? Math.max(x + W * 0.12, sX() + 8 + bw) : Math.min(x + W * 0.88, sX() + innerWidth - 8 - bw)) + 'px';
     }
   }
-  function say(text, ms) {
+  // onTap：给了就能点（小芯聊天：点气泡打开面板看全文），字也可以多一点
+  function say(text, ms, onTap) {
     clearTimeout(sayTm);
-    text = String(text == null ? '' : text).replace(/\s+/g, ' ').trim().slice(0, 80);
+    text = String(text == null ? '' : text).replace(/\s+/g, ' ').trim().slice(0, onTap ? 140 : 80);
     if (!text) { if (sayEl) { sayEl.remove(); sayEl = null; } return; }
     if (!sayEl) { sayEl = document.createElement('div'); sayEl.className = 'xin-say'; sayEl.setAttribute('role', 'status'); layer.appendChild(sayEl); }
-    sayEl.textContent = text; placeSay();
+    sayEl.textContent = text;
+    sayEl.onclick = onTap ? function (e) { e.preventDefault(); e.stopPropagation(); var f = onTap; say(''); f(); } : null;
+    if (onTap) sayEl.setAttribute('data-tap', ''); else sayEl.removeAttribute('data-tap');
+    placeSay();
     sayTm = setTimeout(function () { if (sayEl) { sayEl.remove(); sayEl = null; } }, ms || Math.min(9000, 2600 + text.length * 160));
   }
+
+  /* ---------- 和小芯说话：小芯旁边冒一个输入框（打字或语音），发出去就收起来 ----------
+     o = { onSend(text), onExpand(), placeholder }；语音用浏览器自带的识别（没有就不显示话筒） */
+  var askEl = null, rec = null;
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  var ASK_ICON = {
+    mic: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>',
+    send: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>',
+    more: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg>'
+  };
+  function closeAsk() {
+    if (rec) { try { rec.abort(); } catch (e) {} rec = null; }
+    if (askEl) { askEl.remove(); askEl = null; }
+  }
+  function placeAsk() {
+    if (!askEl) return;
+    var r = el.getBoundingClientRect(), vw = window.visualViewport ? visualViewport.width : innerWidth, vh = window.visualViewport ? visualViewport.height : innerHeight;
+    var w = Math.min(360, vw - 16), bh = askEl.offsetHeight;
+    askEl.style.width = w + 'px';
+    var left = clamp(r.left + r.width / 2 - w / 2, 8, vw - w - 8);
+    // 小芯在屏幕上半截：框放在它下面（手机上键盘弹起来也挡不住）；否则放在它头上
+    var top = r.top < vh * 0.45 ? r.bottom + 6 : r.top + r.height * 0.25 - bh - 6;
+    askEl.style.left = Math.round(left) + 'px'; askEl.style.top = Math.round(clamp(top, 8, Math.max(8, vh - bh - 8))) + 'px';
+  }
+  function ask(o) {
+    o = o || {};
+    closeBag(); closeAsk();
+    if (paused() || mode === 'away') return false;
+    lastInput = Date.now();
+    if (mode === 'sleep') wake(false);
+    stopWalk();
+    askEl = document.createElement('div');
+    askEl.className = 'xin-ask'; askEl.setAttribute('role', 'dialog'); askEl.setAttribute('aria-label', '和小芯说话');
+    askEl.innerHTML = '<div class="xin-ask-row"><textarea rows="1" enterkeyhint="send" aria-label="和小芯说的话"></textarea>' +
+      (SR ? '<button type="button" class="xin-ask-mic" aria-label="说话">' + ASK_ICON.mic + '</button>' : '') +
+      '<button type="button" class="xin-ask-send" aria-label="发送">' + ASK_ICON.send + '</button></div>' +
+      '<div class="xin-ask-ft"><span class="xin-ask-hint" role="status"></span>' +
+      (o.onExpand ? '<button type="button" class="xin-ask-more">' + ASK_ICON.more + '<span>展开</span></button>' : '') + '</div>';
+    var ta = askEl.querySelector('textarea'), hint = askEl.querySelector('.xin-ask-hint'), mic = askEl.querySelector('.xin-ask-mic'), box = askEl;
+    ta.placeholder = o.placeholder || '和小芯说点什么…';
+    var grow = function () { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; placeAsk(); };
+    var send = function () {
+      var t = ta.value.trim();
+      if (!t) { ta.focus(); return; }
+      closeAsk();
+      if (o.onSend) o.onSend(t);
+    };
+    ta.addEventListener('input', grow);
+    ta.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+      else if (e.key === 'Escape') closeAsk();
+    });
+    askEl.querySelector('.xin-ask-send').addEventListener('click', send);
+    var more = askEl.querySelector('.xin-ask-more');
+    if (more) more.addEventListener('click', function () { closeAsk(); o.onExpand(); });
+    if (mic) mic.addEventListener('click', function () {
+      if (rec) { try { rec.stop(); } catch (e) {} return; }
+      var base = ta.value ? ta.value.replace(/\s+$/, '') + ' ' : '';
+      try { rec = new SR(); } catch (e) { hint.textContent = '这个浏览器不能语音输入，可以用键盘上的话筒'; return; }
+      var me = rec;
+      rec.lang = 'zh-CN'; rec.interimResults = true; rec.continuous = false;
+      rec.onresult = function (ev) {
+        var t = '';
+        for (var i = 0; i < ev.results.length; i++) t += ev.results[i][0].transcript;
+        ta.value = (base + t).replace(/^\s+/, ''); grow();
+      };
+      rec.onerror = function (ev) {
+        var m = { 'not-allowed': '没有话筒权限：在浏览器设置里允许这个网站用话筒', 'service-not-allowed': '这个浏览器的语音识别用不了，可以用键盘上的话筒',
+          network: '语音识别连不上（电脑上的 Chrome 在国内多半用不了），可以用键盘上的话筒', 'no-speech': '没听到声音，再试一次', 'audio-capture': '找不到话筒' }[ev.error];
+        if (m) hint.textContent = m;
+      };
+      rec.onend = function () { if (rec === me) rec = null; if (box) box.classList.remove('rec'); if (mic) mic.setAttribute('aria-label', '说话'); if (mode === 'idle') setMood(''); };
+      try { rec.start(); } catch (e) { rec = null; hint.textContent = '语音输入开不了：' + e.message; return; }
+      hint.textContent = '在听…说完会自动停'; box.classList.add('rec'); mic.setAttribute('aria-label', '停止说话');
+      if (mode === 'idle') setMood('wow', 1500);
+    });
+    body.appendChild(askEl);
+    placeAsk();
+    lookEl(askEl, 1500);
+    try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); }
+    return true;
+  }
+  document.addEventListener('pointerdown', function (e) { if (askEl && !askEl.contains(e.target) && !el.contains(e.target)) closeAsk(); }, true);
+  window.addEventListener('resize', placeAsk);
+  if (window.visualViewport) visualViewport.addEventListener('resize', placeAsk);
 
   /* ---------- 跟着云电脑里的 AI 动：think 坐在电脑前想，work 敲代码（一直循环到 AI 停下来） ---------- */
   var aiState = '', aiLoop = false;
@@ -1371,7 +1467,7 @@
     extraBag.forEach(function (it) { out.push([it.icon, it.label, it.fn]); });
     // 学习台里的小芯：聊天面板在外面的工具箱页面上（xin/chat.js），从这里叫它打开
     var chat = null; try { chat = STM && window.parent !== window ? window.parent.LimingXinChat : null; } catch (e) { chat = null; }
-    if (chat && chat.state && chat.state.enabled) out.push(['chat', '聊天', function () { chat.open(); }]);
+    if (chat && chat.state && chat.state.enabled) out.push(['chat', '聊天', function () { if (chat.ask) chat.ask(window.LimingXin); else chat.open(); }]);
     if (HOME) {
       out.push(['home', '回标题栏', function () { var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) come(function () { hop(g, g.x0 + (g.x1 - g.x0) * 0.4); }); }]);
       out.push(['hide', '收起来', function () { setOff(true); }]);
@@ -1557,6 +1653,9 @@
     bore: function () { boreAt = 0; },
     // 小芯聊天（xin-chat.js）用
     say: say,
+    ask: ask,
+    closeAsk: closeAsk,
+    get asking() { return !!askEl; },
     ai: setAi,
     get aiState() { return aiState; },
     cmd: command,

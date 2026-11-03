@@ -4,7 +4,7 @@
    Worker 第一次用（或脚本改过）时会自动把这个文件传到云电脑上，不用手动装。
 
    op：
-     send     {sid?, agent, text}  开一轮对话：在后台起 Claude Code / Codex，马上返回 {sid, run}
+     send     {sid?, agent, text, effort?}  开一轮对话（effort：auto / low / high / max，见下面「思考强度」）：在后台起 Claude Code / Codex，马上返回 {sid, run}
      poll     {run, off}           读这一轮从第 off 条开始的新事件
      stop     {run}                停掉这一轮
      sessions {}                   对话列表
@@ -171,6 +171,16 @@ export function fromCodex(o, state) {
   return out;
 }
 
+/* ---------- 思考强度 ----------
+   effort：auto（默认）/ low / high / max。auto：看这句话像不像写代码的活（写、改、编译、调试、报错、代码块…），像就 max，不像就不指定（用 AI 自己的默认，Codex 配置里是 high）。
+   用户的 Codex 接的是 deepseek（经云电脑里的网关），它只认 low / high / max，别的值会被网关换成默认 high，所以这里不用 Codex 自己的 xhigh。 */
+export const EFFORTS = ['auto', 'low', 'high', 'max'];
+const CODE_RE = /代码|程序|函数|编译|调试|报错|出错|错误|bug|debug|重构|实现|驱动|烧录|写一?[个段份套]|改一?下|帮我写|帮我改|makefile|cmake|gcc|keil|\.(c|h|cpp|py|js|ts|s)\b|main\(|#include|```/i;
+export function resolveEffort(effort, text) {
+  if (effort === 'low' || effort === 'high' || effort === 'max') return effort;
+  return CODE_RE.test(String(text || '')) ? 'max' : '';
+}
+
 /* ---------- 后台跑一轮 ---------- */
 // xin 命令装两份：~/.xin/bin（PATH 里排最前）和 ~/.local/bin（Codex 用 bash -lc 跑命令，登录 shell 会重置 PATH，但 ~/.local/bin 一直在）
 function installXin() {
@@ -179,12 +189,12 @@ function installXin() {
     try { mk(d); fs.writeFileSync(path.join(d, 'xin'), sh, { mode: 0o755 }); fs.chmodSync(path.join(d, 'xin'), 0o755); } catch { /* 写不了就算了 */ }
   }
 }
-function agentArgs(agent, sess, text) {
+export function agentArgs(agent, sess, text, effort) {
   if (agent === 'claude') {
-    const a = ['-p', text, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--append-system-prompt', systemPrompt()];
+    const a = ['-p', text, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--append-system-prompt', systemPrompt()].concat(effort ? ['--effort', effort] : []);
     return ['claude', sess.started ? a.concat(['--resume', sess.agentSid]) : a.concat(['--session-id', sess.agentSid])];
   }
-  const common = ['--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox'];
+  const common = ['--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox'].concat(effort ? ['-c', 'model_reasoning_effort="' + effort + '"'] : []);
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(common, [sess.agentSid, text])];
   return ['codex', ['exec'].concat(common, ['-C', WORK, systemPrompt() + '\n\n---\n\n' + text])];
 }
@@ -194,7 +204,7 @@ function runner(run) {
   meta.pid = process.pid; writeJ(metaF(run), meta);
   const sess = readJ(sessF(meta.sid));
   mk(WORK); installXin();
-  const [cmd, args] = agentArgs(meta.agent, sess, meta.text);
+  const [cmd, args] = agentArgs(meta.agent, sess, meta.text, meta.effort || '');
   const t0 = Date.now(), state = {};
   let finished = false, stderr = '';
   const finish = (code, why) => {
@@ -209,7 +219,7 @@ function runner(run) {
       const tail = stderr.trim().split('\n').slice(-6).join('\n');
       emit(run, { t: 'err', text: why || tail || ('退出码 ' + code) });
     }
-    emit(run, { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost });
+    emit(run, { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '' });
     m.ended = Date.now(); writeJ(metaF(run), m);
   };
   let child;
@@ -282,7 +292,7 @@ const ops = {
       s = { sid: rid('s'), agent, title: text.replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
     }
     const run = rid('r');
-    writeJ(metaF(run), { run, sid: s.sid, agent: s.agent, text, started: Date.now() });
+    writeJ(metaF(run), { run, sid: s.sid, agent: s.agent, text, effort: resolveEffort(a.effort, text), started: Date.now() });
     emit(run, { t: 'user', text, at: Date.now() });
     s.runs.push(run); s.updated = Date.now(); writeJ(sessF(s.sid), s);
     const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir() });

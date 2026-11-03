@@ -52,9 +52,9 @@ XIN_HIST = [
     {'t': 'done', 'ok': False, 'code': 1, 'ms': 3000},
 ]
 XIN_LIVE = [
-    [{'t': 'user', 'text': '看看工作目录'}, {'t': 'text', 'text': '收到，我看看。'}, {'t': 'tool', 'id': 'item_1', 'name': 'Bash', 'detail': 'ls /data/workspace'}],
+    [{'t': 'user', 'text': '看看工作目录'}, {'t': 'status', 'text': 'Model metadata for `deepseek` not found. Defaulting to fallback metadata'}, {'t': 'text', 'text': '收到，我看看。'}, {'t': 'tool', 'id': 'item_1', 'name': 'Bash', 'detail': 'ls /data/workspace'}],
     [],
-    [{'t': 'tool_end', 'id': 'item_1', 'ok': True, 'out': 'blink'}, {'t': 'xin', 'act': 'dance', 'arg': ''}, {'t': 'text', 'text': '里面有一个 blink 目录。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 4000}],
+    [{'t': 'tool_end', 'id': 'item_1', 'ok': True, 'out': 'blink'}, {'t': 'xin', 'act': 'dance', 'arg': ''}, {'t': 'text', 'text': '里面有一个 blink 目录。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 4000, 'effort': 'max'}],
 ]
 
 async def xin_mock(pg, authed=False):
@@ -924,15 +924,18 @@ async def main():
         await pg.wait_for_selector('.xc-hello')
         check('登录以后：欢迎语、选 AI（默认 Codex）、输入框', await pg.is_visible('.xc-row textarea') and await pg.get_attribute('.xc-ag[data-agent=codex]', 'aria-checked') == 'true')
         await pg.click('.xc-ag[data-agent=claude]')
+        eff = await pg.evaluate("document.querySelector('.xc-eff [aria-checked=true]').dataset.effort")
+        await pg.click('.xc-eff [data-effort=max]')
         await pg.fill('.xc-row textarea', '看看工作目录'); await pg.keyboard.press('Enter')
         await pg.wait_for_selector('.xc-tool.run')
         await pg.wait_for_timeout(300)
-        st = await pg.evaluate("[LimingXin.aiState, document.querySelector('.xc').classList.contains('running'), document.querySelectorAll('.xc-me').length, (document.querySelector('.xin-say') || {}).textContent]")
-        check('发出去：选的 AI 和文字传给后台，只显示一条自己的话，小芯坐到电脑前敲代码、头上冒 AI 的第一句话',
-              xs['sent'] == {'agent': 'claude', 'text': '看看工作目录'} and st == ['work', True, 1, '收到，我看看。'], (xs['sent'], st))
+        st = await pg.evaluate("[LimingXin.aiState, document.querySelector('.xc').classList.contains('running'), document.querySelectorAll('.xc-me').length, (document.querySelector('.xin-say') || {}).textContent, document.querySelector('.xc-st').textContent, document.querySelector('.xc-msgs').textContent.includes('Model metadata')]")
+        check('发出去：选的 AI 和文字传给后台，只显示一条自己的话，小芯坐到电脑前敲代码、头上冒 AI 的第一句话；状态栏说在执行命令，无关警告不进对话',
+              eff == 'auto' and xs['sent'] == {'agent': 'claude', 'text': '看看工作目录', 'effort': 'max'} and st[:4] == ['work', True, 1, '收到，我看看。'] and '在执行命令' in st[4] and st[5] is False, (xs['sent'], st))
         await pg.wait_for_selector('.xc-done', timeout=8000); await pg.wait_for_timeout(200)
         st = await pg.evaluate("[LimingXin.aiState, LimingXin.mode, document.querySelector('.xc').classList.contains('running'), document.querySelector('.xc-tool').className, document.querySelector('.xc-note').textContent, localStorage.getItem('lm.xin.sid')]")
         check('做完：工具打勾，xin dance 让小芯跳舞，停止键变回发送，记住对话', st[0] == '' and st[1] == 'play' and not st[2] and 'ok' in st[3] and '跳舞' in st[4] and st[5] == 'snew000001', st)
+        check('做完：状态栏清空，结束那行写着用了最高思考', await pg.evaluate("document.querySelector('.xc-st').hidden && document.querySelector('.xc-done').textContent.includes('最高思考')"))
         items = await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
         check('登录以后背包里有「聊天」', '聊天' in items, items)
         await pg.keyboard.press('Escape')
@@ -944,6 +947,22 @@ async def main():
         check('打开旧对话：代码块、失败的命令（点开看输出），AI 不能再换', st == ['int main(void) { return 0; }', True, 'none', True] and st2 == 'block', (st, st2))
         await pg.click('.xc-x'); await pg.wait_for_timeout(400)
         check('关掉面板', not await pg.is_visible('.xc'))
+        # 不开面板：背包「聊天」→ 小芯旁边的输入框 → 回复在小芯头上的气泡里，点气泡才打开面板
+        pq = await page(b)
+        xq = await xin_mock(pq, authed=True)
+        await pq.goto(BASE + '/'); await pq.wait_for_timeout(1800)
+        await pq.evaluate("LimingXin.bag()"); await pq.click('.xin-bag .xin-it:has-text("聊天")')
+        await pq.wait_for_selector('.xin-ask')
+        st = await pq.evaluate("[!!document.querySelector('.xc.show'), document.activeElement === document.querySelector('.xin-ask textarea'), (() => { const r = document.querySelector('.xin-ask').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0; })()]")
+        check('背包「聊天」：小芯旁边冒输入框（不弹面板），光标在框里，框在屏幕内', st == [False, True, True], st)
+        await pq.fill('.xin-ask textarea', '看看工作目录'); await pq.keyboard.press('Enter')
+        await pq.wait_for_timeout(400)
+        st = await pq.evaluate("[!!document.querySelector('.xin-ask'), !!document.querySelector('.xc.show'), LimingXin.aiState]")
+        check('输入框里回车：框收起，面板不弹，小芯开始干活', st == [False, False, 'work'] and xq['sent'] and xq['sent'].get('text') == '看看工作目录', (st, xq['sent']))
+        await pq.wait_for_function("(() => { const b = document.querySelector('.xin-say[data-tap]'); return b && b.textContent.includes('blink'); })()", timeout=10000)
+        await pq.click('.xin-say[data-tap]'); await pq.wait_for_selector('.xc.show .xc-tool')
+        check('回复出现在小芯的气泡里，点气泡打开面板看全文', await pq.is_visible('.xc.show'))
+        await pq.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
         await pg.wait_for_timeout(1500)
         r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(), cx = r.x + r.width / 2; for (let yy = r.y; yy < r.bottom; yy++) { const e = document.elementFromPoint(cx, yy); if (e && LimingXin.el.contains(e)) return [cx, yy + 2]; } return [cx, r.y + r.height * 0.55]; })()")
@@ -985,8 +1004,9 @@ async def main():
             if await f.evaluate("LimingXin.mode") in ('idle', 'walk', 'play'): break
             await pg.wait_for_timeout(100)
         items = await f.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
-        await f.click('.xin-bag .xin-it:has-text("聊天")'); await pg.wait_for_selector('.xc.show .xc-tool')
-        check('学习台里的小芯：背包有「聊天」，点了打开工具箱页面上的聊天面板', '聊天' in items and await pg.is_visible('.xc.show'), items)
+        await f.click('.xin-bag .xin-it:has-text("聊天")'); await f.wait_for_selector('.xin-ask')
+        await f.click('.xin-ask-more'); await pg.wait_for_selector('.xc.show .xc-tool')
+        check('学习台里的小芯：背包有「聊天」，点了在它旁边冒输入框，「展开」打开工具箱页面上的面板', '聊天' in items and await pg.is_visible('.xc.show') and not await f.evaluate("!!document.querySelector('.xin-ask')"), items)
         await pg.context.close()
         # 直接打开学习台（不经过工具箱首页）：没有小芯
         pg = await page(b, 390, 844, mobile=True)
