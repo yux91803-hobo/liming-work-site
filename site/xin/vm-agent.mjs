@@ -165,13 +165,20 @@ export function fromCodex(o, state) {
       break;
     }
     case 'web_search': if (done) out.push({ t: 'tool_end', id: it.id, name: 'WebSearch', detail: String(it.query || ''), ok: true, out: '' }); break;
-    case 'error': if (done) { out.push({ t: 'err', text: String(it.message || '出错了') }); } break;
+    case 'error': if (done) out.push({ t: 'status', text: String(it.message || '') }); break;   // Codex 的警告（真失败看 turn.failed）
     default: break;   // reasoning、todo_list 之类不显示
   }
   return out;
 }
 
 /* ---------- 后台跑一轮 ---------- */
+// xin 命令装两份：~/.xin/bin（PATH 里排最前）和 ~/.local/bin（Codex 用 bash -lc 跑命令，登录 shell 会重置 PATH，但 ~/.local/bin 一直在）
+function installXin() {
+  const sh = '#!/bin/sh\nexec "' + process.execPath + '" "' + SELF + '" xin "$@"\n';
+  for (const d of [BIN, path.join(os.homedir(), '.local', 'bin')]) {
+    try { mk(d); fs.writeFileSync(path.join(d, 'xin'), sh, { mode: 0o755 }); fs.chmodSync(path.join(d, 'xin'), 0o755); } catch { /* 写不了就算了 */ }
+  }
+}
 function agentArgs(agent, sess, text) {
   if (agent === 'claude') {
     const a = ['-p', text, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--append-system-prompt', systemPrompt()];
@@ -186,8 +193,7 @@ function runner(run) {
   if (!meta) process.exit(1);
   meta.pid = process.pid; writeJ(metaF(run), meta);
   const sess = readJ(sessF(meta.sid));
-  mk(WORK); mk(BIN);
-  fs.writeFileSync(path.join(BIN, 'xin'), '#!/bin/sh\nexec "' + process.execPath + '" "' + SELF + '" xin "$@"\n', { mode: 0o755 });
+  mk(WORK); installXin();
   const [cmd, args] = agentArgs(meta.agent, sess, meta.text);
   const t0 = Date.now(), state = {};
   let finished = false, stderr = '';
