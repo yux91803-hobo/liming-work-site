@@ -2,7 +2,9 @@
    入口：小芯背包里的「聊天」（首页和 STM32 学习台里的小芯都有）：小芯旁边冒一个输入框（打字或语音），回复出现在小芯头上的气泡里，
    点气泡或输入框上的「展开」才打开这个面板看全文和历史。地址后面加 #xin 直接打开面板。没登录时先在面板里输密码。
    接口见 src/xin.js；AI 每一步（说话、执行命令、xin 动作）都整理成事件，这里一边轮询一边画出来，同时让小芯跟着动：
-   AI 在想 → 小芯坐在电脑前挠头；在执行命令 → 敲代码；xin 命令 → 照做；做完 → 开心，失败 → 难过。 */
+   AI 在想 → 小芯坐在电脑前挠头；在执行命令 → 敲代码；xin 命令 → 照做；做完 → 开心，失败 → 难过。
+   对话列表里还有：小芯的记事本、每日任务、小芯的文件（它电脑里 /data/workspace 的文件，能预览、下载）；每个对话能改名、删除。
+   回答里出现的 /data/workspace/… 路径点一下就打开那个文件。「考考我」：让小芯按你在学的出一道题。 */
 (function () {
   'use strict';
   var API = '/api/xin/';
@@ -12,6 +14,7 @@
   var EFFORTS = { auto: '自动', high: '高', max: '最高' }, EFF_DONE = { max: '最高思考', high: '高思考', low: '低思考' };
   var ACT_NAME = { say: '说', happy: '开心', sad: '难过', angry: '生气', wow: '惊讶', confused: '疑惑', dance: '跳舞', jump: '跳一下', cookie: '吃饼干', battery: '吸电池', ball: '抛小球', led: '玩 LED', sleep: '睡觉', wake: '醒来', music: '听歌', swing: '荡秋千', sit: '坐下', code: '敲代码', rage: '发脾气', tongue: '吐舌头' };
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+  var WORK = '/data/workspace', QUIZ = '考考我';
 
   function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { return null; } }
   // 现在看得见的那个小芯：打开了 STM32 学习台、小芯又被扔进去了，就是学习台里的那个
@@ -73,7 +76,7 @@
       '<div class="xc-body"><div class="xc-msgs" aria-live="polite"></div></div>' +
       '<div class="xc-sess" hidden></div>' +
       '<form class="xc-login" hidden>' +
-        '<p class="xc-hint">这是站长自己用的：小芯的大脑在 InstaBox 云电脑里，能执行命令，所以要先登录。</p>' +
+        '<p class="xc-hint">这是站长自己用的：小芯有一台能执行命令的电脑，所以要先登录。</p>' +
         '<input type="password" name="pw" autocomplete="current-password" placeholder="密码" aria-label="密码" required>' +
         '<button type="submit" class="xc-btn">登录</button>' +
         '<p class="xc-err" role="alert"></p>' +
@@ -117,6 +120,7 @@
     });
     root.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
     list.addEventListener('click', function (e) {
+      var fp = e.target.closest('.xc-path'); if (fp) { e.preventDefault(); loadFiles(fp.getAttribute('data-path'), 'chat'); return; }
       var t = e.target.closest('.xc-tool-h'); if (t) { t.parentNode.classList.toggle('open'); t.setAttribute('aria-expanded', t.parentNode.classList.contains('open')); return; }
       var c = e.target.closest('.xc-copy');
       if (c) { var code = c.parentNode.querySelector('code'); copy(code ? code.textContent : '', c); }
@@ -195,14 +199,20 @@
   }
 
   /* ---------- 对话 ---------- */
-  function newChat() {
+  function newChat(stay) {
     stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; S.tools = {}; ls(LS_SID, null);
-    S.view = 'chat'; list.innerHTML = ''; S.histFor = ''; welcome(); render();
+    if (!stay) S.view = 'chat';
+    list.innerHTML = ''; S.histFor = ''; welcome(); render();
   }
   function welcome() {
     var p = h('div', 'xc-hello');
-    p.appendChild(h('p', '', '我的大脑在你的 InstaBox 云电脑里，能在里面写代码、编译、跑命令。'));
-    p.appendChild(h('p', 'xc-hint', '比如：「在云电脑里装 arm-none-eabi-gcc，写一个 STM32F103 点灯的 main.c 并编译」'));
+    p.appendChild(h('p', '', '我有一台自己的电脑，能在里面写代码、编译、跑命令。'));
+    p.appendChild(h('p', 'xc-hint', '比如：「写一个 STM32 点灯程序，编译成 .hex 给我」，编好的文件在「小芯的文件」里下载。'));
+    var row = h('div', 'xc-chips'), qz = h('button', 'xc-chip', QUIZ), fl = h('button', 'xc-chip', '小芯的文件');
+    qz.type = fl.type = 'button';
+    qz.addEventListener('click', function () { send(QUIZ); });
+    fl.addEventListener('click', function () { loadFiles(WORK, 'chat'); });
+    row.appendChild(qz); row.appendChild(fl); p.appendChild(row);
     list.appendChild(p);
   }
   function loadCurrent() {
@@ -241,29 +251,178 @@
     sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '正在读取…'));
     call('sessions', {}, 60000).then(function (d) {
       sessEl.innerHTML = '';
-      var mb = h('button', 'xc-memb'); mb.type = 'button';
-      mb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6zM6 3v18M9 8h6M9 12h6"/></svg><span></span>';
-      mb.lastChild.textContent = '小芯的记事本'; mb.addEventListener('click', loadMemory);
-      sessEl.appendChild(mb);
-      var db = h('button', 'xc-memb xc-dailyb'); db.type = 'button';
-      db.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 2M9 3h6"/></svg><span></span>';
-      db.lastChild.textContent = '每日任务'; db.addEventListener('click', loadDaily);
-      sessEl.appendChild(db);
+      var tiles = h('div', 'xc-tiles');
+      var tile = function (cls, icon, label, fn) {
+        var b = h('button', 'xc-memb' + (cls ? ' ' + cls : '')); b.type = 'button';
+        b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + icon + '</svg><span></span>';
+        b.lastChild.textContent = label; b.addEventListener('click', fn); tiles.appendChild(b);
+      };
+      tile('', '<path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6zM6 3v18M9 8h6M9 12h6"/>', '小芯的记事本', loadMemory);
+      tile('xc-dailyb', '<circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 2M9 3h6"/>', '每日任务', loadDaily);
+      tile('xc-filesb', '<path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>', '小芯的文件', function () { loadFiles(WORK, 'sess'); });
+      sessEl.appendChild(tiles);
       var ul = h('ul', 'xc-sl');
       if (!d.sessions.length) ul.appendChild(h('li', 'xc-hint', '还没有对话'));
       d.sessions.forEach(function (s) {
-        var li = h('li'), b = h('button', 'xc-si'); b.type = 'button';
+        var li = h('li', 'xc-sli'), b = h('button', 'xc-si'); b.type = 'button';
         b.appendChild(h('span', 'xc-si-t', s.title || '（无标题）'));
         b.appendChild(h('span', 'xc-si-m', (AGENTS[s.agent] || s.agent) + ' · ' + s.turns + ' 轮 · ' + when(s.updated) + (s.active ? ' · 进行中' : '')));
         if (s.sid === S.sid) b.classList.add('cur');
         b.addEventListener('click', function () { openSession(s.sid); });
-        li.appendChild(b); ul.appendChild(li);
+        var more = h('button', 'xc-si-more'); more.type = 'button'; more.setAttribute('aria-label', '改名或删除'); more.setAttribute('aria-expanded', 'false');
+        more.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle class="fill" cx="5.5" cy="12" r="1.6"/><circle class="fill" cx="12" cy="12" r="1.6"/><circle class="fill" cx="18.5" cy="12" r="1.6"/></svg>';
+        more.addEventListener('click', function () { sessActions(li, s, more); });
+        li.appendChild(b); li.appendChild(more); ul.appendChild(li);
       });
       sessEl.appendChild(ul);
       var out = h('button', 'xc-link', '退出登录'); out.type = 'button'; out.addEventListener('click', logout);
       sessEl.appendChild(out);
     }, function (e) { sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
   }
+  /* ---------- 对话改名 / 删除：点对话后面的 ⋯ ---------- */
+  function sessActions(li, s, more) {
+    var old = li.querySelector('.xc-sa');
+    [].forEach.call(sessEl.querySelectorAll('.xc-sa'), function (x) { x.remove(); });
+    [].forEach.call(sessEl.querySelectorAll('.xc-si-more'), function (x) { x.setAttribute('aria-expanded', 'false'); });
+    if (old) return;                       // 再点一次 ⋯ 就收起
+    more.setAttribute('aria-expanded', 'true');
+    var row = h('div', 'xc-sa'), inp = h('input'), ren = h('button', 'xc-sa-b', '改名'), del = h('button', 'xc-sa-b xc-sa-del', '删除'), msg = h('p', 'xc-sa-m');
+    inp.type = 'text'; inp.value = s.title || ''; inp.maxLength = 60; inp.setAttribute('aria-label', '对话的名字'); inp.setAttribute('enterkeyhint', 'done');
+    ren.type = del.type = 'button';
+    var rename = function () {
+      var t = inp.value.replace(/\s+/g, ' ').trim();
+      if (!t) { inp.focus(); return; }
+      ren.disabled = true; msg.textContent = '';
+      call('rename', { sid: s.sid, title: t }, 60000).then(function (r) {
+        if (r && r.error) throw new Error(r.msg || r.error);
+        s.title = t; li.querySelector('.xc-si-t').textContent = t;
+        row.remove(); more.setAttribute('aria-expanded', 'false');
+      }).catch(function (e) { ren.disabled = false; msg.textContent = '没改成：' + e.message; });
+    };
+    ren.addEventListener('click', rename);
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); rename(); } });
+    // 删除要点两下：第一下变成「确定删除？」，4 秒内再点才删
+    var armed = 0;
+    del.addEventListener('click', function () {
+      if (Date.now() - armed > 4000) {
+        armed = Date.now(); del.textContent = '确定删除？'; del.classList.add('armed');
+        setTimeout(function () { if (Date.now() - armed >= 4000) { del.textContent = '删除'; del.classList.remove('armed'); } }, 4100);
+        return;
+      }
+      del.disabled = true; msg.textContent = '';
+      call('forget', { sid: s.sid }, 60000).then(function (r) {
+        if (r && r.error) throw new Error(r.msg || r.error);
+        li.remove();
+        if (s.sid === S.sid) newChat(true);
+        if (!sessEl.querySelector('.xc-sli')) { var ul = sessEl.querySelector('.xc-sl'); if (ul) ul.appendChild(h('li', 'xc-hint', '还没有对话')); }
+      }).catch(function (e) { del.disabled = false; armed = 0; del.textContent = '删除'; del.classList.remove('armed'); msg.textContent = '没删掉：' + e.message; });
+    });
+    row.appendChild(inp); row.appendChild(ren); row.appendChild(del); row.appendChild(msg);
+    li.appendChild(row);
+    if (!touch) inp.focus();
+  }
+
+  /* ---------- 小芯的文件：它电脑里工作目录（/data/workspace）的文件，能预览、能下载 ---------- */
+  var FILE_ICON = {
+    dir: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>',
+    file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v4h4"/></svg>'
+  };
+  function fmtSize(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+  function loadFiles(p, from) {
+    if (from) S.filesFrom = from;
+    S.view = 'files'; render();
+    var my = ++S.loadSeq;
+    sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '正在读取…'));
+    call('files', { path: p || WORK }, 60000).then(function (d) {
+      if (my !== S.loadSeq) return;
+      sessEl.innerHTML = '';
+      var back = h('button', 'xc-link xc-back', S.filesFrom === 'chat' ? '← 回到对话' : '← 对话列表'); back.type = 'button';
+      back.addEventListener('click', function () { if (S.filesFrom === 'chat') { S.view = 'chat'; render(); } else { S.view = 'sess'; render(); loadSessions(); } });
+      sessEl.appendChild(back);
+      if (d.error) {
+        sessEl.appendChild(h('p', 'xc-hint', d.msg || d.error));
+        var home = h('button', 'xc-link xc-inl', '去工作目录'); home.type = 'button';
+        home.addEventListener('click', function () { loadFiles(WORK); });
+        sessEl.appendChild(home);
+        return;
+      }
+      sessEl.appendChild(crumbs(d.path, d.work || WORK));
+      if (d.dir) drawDir(d); else drawFile(d);
+    }, function (e) {
+      if (my !== S.loadSeq) return;
+      sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message));
+    });
+  }
+  // 面包屑：工作目录 › blink › build（每一段都能点）
+  function crumbs(p, work) {
+    var nav = h('nav', 'xc-crumbs'); nav.setAttribute('aria-label', '位置');
+    var segs = p.length > work.length ? p.slice(work.length + 1).split('/') : [];
+    var add = function (label, target, last) {
+      if (last) { nav.appendChild(h('b', '', label)); return; }
+      var b = h('button', 'xc-crumb', label); b.type = 'button';
+      b.addEventListener('click', function () { loadFiles(target); });
+      nav.appendChild(b); nav.appendChild(h('span', 'xc-crumb-s', '›'));
+    };
+    add('工作目录', work, !segs.length);
+    segs.forEach(function (seg, i) { add(seg, work + '/' + segs.slice(0, i + 1).join('/'), i === segs.length - 1); });
+    return nav;
+  }
+  function drawDir(d) {
+    if (d.path === (d.work || WORK)) sessEl.appendChild(h('p', 'xc-hint', '小芯电脑里的工作目录：它写的代码、编译出来的 .hex 都放在这里。点文件能预览、下载。'));
+    var ul = h('ul', 'xc-fl');
+    if (!d.entries.length) ul.appendChild(h('li', 'xc-hint', d.path === (d.work || WORK) ? '还没有文件。让小芯写个程序编译一下，做好的东西会放在这里。' : '这个文件夹是空的'));
+    d.entries.forEach(function (it) {
+      var li = h('li'), b = h('button', 'xc-fi' + (it.dir ? ' dir' : '')); b.type = 'button';
+      b.innerHTML = it.dir ? FILE_ICON.dir : FILE_ICON.file;
+      b.appendChild(h('span', 'xc-fi-n', it.name));
+      b.appendChild(h('span', 'xc-fi-m', it.dir ? when(it.mtime) : fmtSize(it.size) + ' · ' + when(it.mtime)));
+      b.addEventListener('click', function () { loadFiles(d.path + '/' + it.name); });
+      li.appendChild(b); ul.appendChild(li);
+    });
+    sessEl.appendChild(ul);
+    if (d.more) sessEl.appendChild(h('p', 'xc-hint', '还有 ' + d.more + ' 个没列出来'));
+  }
+  function drawFile(d) {
+    var name = d.path.split('/').pop();
+    sessEl.appendChild(h('p', 'xc-fmeta', fmtSize(d.size) + ' · ' + when(d.mtime)));
+    var row = h('div', 'xc-memrow'), dl = h('button', 'xc-btn', '下载'), cp = h('button', 'xc-btn xc-btn2', '复制路径'), msg = h('span', 'xc-hint', '');
+    dl.type = cp.type = 'button';
+    dl.addEventListener('click', function () { download(d.path, name, dl, msg); });
+    cp.addEventListener('click', function () {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(d.path).then(function () { msg.textContent = '复制好了'; }, function () { msg.textContent = d.path; });
+      else msg.textContent = d.path;
+    });
+    row.appendChild(dl); row.appendChild(cp); row.appendChild(msg); sessEl.appendChild(row);
+    if (typeof d.text === 'string') {
+      var pre = h('pre', 'xc-pre'), c = h('code', '', d.text);
+      pre.appendChild(c); sessEl.appendChild(pre);
+    } else sessEl.appendChild(h('p', 'xc-hint', d.big ? '文件太大，这里不预览，可以下载下来看。' : '这不是文字文件（比如 .bin、.elf），不能预览，可以下载。'));
+  }
+  // 下载：先取成 Blob 再存（出错时能在这里说清楚，而不是下载一个报错的网页）；电脑在睡就等它醒
+  function download(p, name, btn, msg) {
+    var t0 = Date.now();
+    btn.disabled = true; msg.textContent = '正在下载…';
+    (function once() {
+      fetch(API + 'file?path=' + encodeURIComponent(p), { credentials: 'same-origin' }).then(function (r) {
+        if (r.ok && (r.headers.get('content-type') || '').indexOf('application/json') < 0) {
+          return r.blob().then(function (b) {
+            var u = URL.createObjectURL(b), a = document.createElement('a');
+            a.href = u; a.download = name; a.hidden = true; document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(function () { URL.revokeObjectURL(u); }, 60000);
+            btn.disabled = false; msg.textContent = '下载好了（' + fmtSize(b.size) + '）';
+          });
+        }
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (r.status === 401) { S.authed = false; syncBag(); render(); throw new Error('要先登录'); }
+          if (r.status === 503 && (d.state === 'waking' || d.state === 'busy') && Date.now() - t0 < 60000) {
+            msg.textContent = d.msg || '正在唤醒云电脑…'; setTimeout(once, (d.retryAfter || 3) * 1000); return;
+          }
+          throw new Error(d.msg || ('出错了（' + r.status + '）'));
+        });
+      }).catch(function (e) { btn.disabled = false; msg.textContent = '没下载下来：' + e.message; });
+    })();
+  }
+
   /* ---------- 小芯的记事本：它的长期记忆，能看能改 ---------- */
   /* ---------- 每日任务：网站后台每天定时叫醒小芯的电脑，让它按这份清单做一遍 ---------- */
   function loadDaily() {
@@ -443,7 +602,11 @@
       onSend: function (t) {
         if (S.run || S.sending) { X.say('我还在忙上一件事，等我做完～', 4000); return; }
         send(t);
-      }
+      },
+      extra: [{ label: QUIZ, title: '让小芯按你在学的出一道题', onClick: function () {
+        if (S.run || S.sending) { X.say('我还在忙上一件事，等我做完～', 4000); return; }
+        send(QUIZ);
+      } }]
     });
   }
   function stop() {
@@ -582,14 +745,21 @@
     return box;
   }
   function esc(s) { return s.replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  // 小芯电脑里的路径（/data/workspace/…）：点了打开「小芯的文件」
+  var PATH_RE = /(^|[^\w\/:.~-])(\/data\/workspace(?:\/[\w.+@%~=-]+)*\/?)(?!\w)/g;
+  function pathLink(p, inner) { p = p.replace(/[.\/]+$/, '') || WORK; return '<a href="#" class="xc-path" data-path="' + esc(p) + '">' + inner + '</a>'; }
   function inline(line) {
     var hm = /^(#{1,6})\s+(.*)$/.exec(line);
     if (hm) return '<b>' + inline(hm[2]) + '</b>';
     return line.split(/(`[^`]+`)/).map(function (seg, i) {
-      if (i % 2) return '<code>' + esc(seg.slice(1, -1)) + '</code>';
+      if (i % 2) {
+        var inner = seg.slice(1, -1).trim();
+        return /^\/data\/workspace(\/[\w.+@%~=-]+)*\/?$/.test(inner) ? pathLink(inner, '<code>' + esc(inner) + '</code>') : '<code>' + esc(seg.slice(1, -1)) + '</code>';
+      }
       return esc(seg)
         .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
-        .replace(/(https?:\/\/[^\s<>()（）]+[^\s<>()（）.,;:!?。，；：！？'"])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+        .replace(/(https?:\/\/[^\s<>()（）]+[^\s<>()（）.,;:!?。，；：！？'"])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
+        .replace(PATH_RE, function (m, pre, p) { var t = p.replace(/[.]+$/, ''); return pre + pathLink(t, t) + p.slice(t.length); });
     }).join('');
   }
 

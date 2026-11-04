@@ -47,6 +47,7 @@ async def wait_img(f, timeout=10000):
 XIN_HIST = [
     {'t': 'user', 'text': '编译 main.c'},
     {'t': 'text', 'text': '好的：\n\n```c\nint main(void) { return 0; }\n```'},
+    {'t': 'text', 'text': '编好了：`/data/workspace/blink/build/app.hex`'},
     {'t': 'tool', 'id': 'item_1', 'name': 'Bash', 'detail': 'arm-none-eabi-gcc -c main.c'},
     {'t': 'tool_end', 'id': 'item_1', 'ok': False, 'out': 'main.c:1: error: boom'},
     {'t': 'done', 'ok': False, 'code': 1, 'ms': 3000},
@@ -57,14 +58,29 @@ XIN_LIVE = [
     [{'t': 'tool_end', 'id': 'item_1', 'ok': True, 'out': 'blink'}, {'t': 'xin', 'act': 'dance', 'arg': ''}, {'t': 'mem', 'text': '用户在做 blink 点灯'}, {'t': 'text', 'text': '里面有一个 blink 目录。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 4000, 'effort': 'max'}],
 ]
 
+W = '/data/workspace'
+def _ent(name, d=False, size=0): return {'name': name, 'dir': d, 'size': size, 'mtime': 1762214400000}
+XIN_FILES = {
+    W: {'path': W, 'dir': True, 'work': W, 'entries': [_ent('blink', True), _ent('notes.md', size=12)], 'more': 0},
+    W + '/blink': {'path': W + '/blink', 'dir': True, 'work': W, 'entries': [_ent('build', True), _ent('main.c', size=30)], 'more': 0},
+    W + '/blink/build': {'path': W + '/blink/build', 'dir': True, 'work': W, 'entries': [_ent('app.bin', size=876), _ent('app.hex', size=2544)], 'more': 0},
+    W + '/blink/build/app.hex': {'path': W + '/blink/build/app.hex', 'dir': False, 'work': W, 'size': 2544, 'mtime': 1762214400000, 'text': ':020000040800F2\n:1000000000500020ED010008F5010008F7010008D0\n'},
+    W + '/blink/build/app.bin': {'path': W + '/blink/build/app.bin', 'dir': False, 'work': W, 'size': 876, 'mtime': 1762214400000, 'binary': True},
+}
+
 async def xin_mock(pg, authed=False):
     st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': [], 'mem': '# 小芯的记事本\n\n- 2026-11-04：用户在学定时器\n',
-          'greet': None, 'daily': '- 看看网关今天签到成没成，没成就补签\n', 'daily_args': None}
+          'greet': None, 'daily': '- 看看网关今天签到成没成，没成就补签\n', 'daily_args': None, 'renamed': None, 'forgot': None, 'download': None}
     async def handle(route):
         req = route.request
         path = req.url.split('/api/xin/')[1].split('?')[0]
         def ok(body): return route.fulfill(status=200, content_type='application/json', body=json.dumps(body))
         if path == 'me': return await ok({'enabled': True, 'authed': st['authed']})
+        if path == 'file':
+            from urllib.parse import urlparse, parse_qs
+            st['download'] = parse_qs(urlparse(req.url).query).get('path', [''])[0]
+            return await route.fulfill(status=200, content_type='application/octet-stream', body=XIN_FILES[W + '/blink/build/app.hex']['text'],
+                                       headers={'Content-Disposition': "attachment; filename=\"app.hex\"; filename*=UTF-8''app.hex"})
         body = json.loads(req.post_data or '{}')
         if path == 'login':
             st['authed'] = body.get('password') == 'pw-ok-123456'
@@ -86,7 +102,15 @@ async def xin_mock(pg, authed=False):
             st['mem'] = args.get('text', '')
             return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': None}})
-        if op == 'sessions': return await ok({'ok': True, 'data': {'sessions': [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0}]}})
+        if op == 'sessions': return await ok({'ok': True, 'data': {'sessions': [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0},
+                                                                         {'sid': 'sold000001', 'agent': 'claude', 'title': '旧对话', 'turns': 2, 'updated': 0}]}})
+        if op == 'files': return await ok({'ok': True, 'data': XIN_FILES.get(args.get('path') or W, {'error': 'not_found', 'msg': '没有这个文件'})})
+        if op == 'rename':
+            st['renamed'] = args
+            return await ok({'ok': True, 'data': {'ok': True}})
+        if op == 'forget':
+            st['forgot'] = args
+            return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'send':
             st['sent'] = args
             return await ok({'ok': True, 'data': {'sid': 'snew000001', 'run': 'rlive00001', 'agent': args.get('agent') or 'codex'}})
@@ -1040,6 +1064,55 @@ async def main():
         await pgr.click('.xc-btn2'); await pgr.wait_for_selector('.xc.show .xc-body:not([hidden]) .xc-tool')
         check('每日任务页：「现在就做一遍」强制开一轮，并打开那段对话', xg['daily_args'] == {'force': True} and await pgr.evaluate("LimingXinChat.state.view") == 'chat', xg['daily_args'])
         await pgr.context.close()
+        # 考考我、对话改名 / 删除、小芯的文件（预览、下载）、回答里的路径点了打开
+        pf = await page(b)
+        xf = await xin_mock(pf, authed=True)
+        await pf.goto(BASE + '/'); await pf.wait_for_timeout(1200)
+        await pf.evaluate("LimingXinChat.open()"); await pf.wait_for_selector('.xc.show .xc-hello')
+        await pf.click('.xc-chip:has-text("考考我")'); await pf.wait_for_selector('.xc-done', timeout=8000)
+        check('欢迎语里点「考考我」：直接把「考考我」发给小芯', (xf['sent'] or {}).get('text') == '考考我', xf['sent'])
+        await pf.click('.xc-list-b'); await pf.wait_for_selector('.xc-sli')
+        tiles = await pf.evaluate("[...document.querySelectorAll('.xc-tiles .xc-memb')].map(b => b.textContent)")
+        check('对话列表上面三个入口：记事本、每日任务、小芯的文件', tiles == ['小芯的记事本', '每日任务', '小芯的文件'], tiles)
+        await pf.click('.xc-sli:nth-child(1) .xc-si-more'); await pf.wait_for_selector('.xc-sa input')
+        await pf.fill('.xc-sa input', '点灯程序'); await pf.click('.xc-sa-b:has-text("改名")'); await pf.wait_for_timeout(300)
+        t = await pf.text_content('.xc-sli:nth-child(1) .xc-si-t')
+        check('对话 ⋯ 改名：传给后台，列表里马上变', xf['renamed'] == {'sid': 'shist00001', 'title': '点灯程序'} and t == '点灯程序' and not await pf.is_visible('.xc-sa'), (xf['renamed'], t))
+        await pf.click('.xc-sli:nth-child(2) .xc-si-more'); await pf.wait_for_selector('.xc-sa-del')
+        await pf.click('.xc-sa-del'); await pf.wait_for_timeout(200)
+        armed = await pf.text_content('.xc-sa-del'); n1 = await pf.evaluate("document.querySelectorAll('.xc-sli').length")
+        await pf.click('.xc-sa-del'); await pf.wait_for_timeout(300)
+        n2 = await pf.evaluate("document.querySelectorAll('.xc-sli').length")
+        check('对话 ⋯ 删除：第一下变「确定删除？」，第二下才删', armed == '确定删除？' and n1 == 2 and n2 == 1 and xf['forgot'] == {'sid': 'sold000001'}, (armed, n1, n2, xf['forgot']))
+        await pf.click('.xc-filesb'); await pf.wait_for_selector('.xc-fi')
+        names = await pf.evaluate("[...document.querySelectorAll('.xc-fi-n')].map(e => e.textContent)")
+        await pf.click('.xc-fi:has-text("blink")'); await pf.wait_for_selector('.xc-crumb')
+        await pf.click('.xc-fi:has-text("build")'); await pf.wait_for_selector('.xc-fi:has-text("app.hex")')
+        crumbs = await pf.text_content('.xc-crumbs')
+        await pf.click('.xc-fi:has-text("app.hex")'); await pf.wait_for_selector('.xc-pre')
+        pre = await pf.text_content('.xc-pre')
+        check('小芯的文件：一层层点进文件夹，面包屑写着在哪，点 .hex 能预览', names == ['blink', 'notes.md'] and crumbs.replace(' ', '') == '工作目录›blink›build' and pre.startswith(':02000004'), (names, crumbs, pre[:30]))
+        async with pf.expect_download() as dl:
+            await pf.click('.xc-memrow .xc-btn:has-text("下载")')
+        d = await dl.value
+        await pf.wait_for_timeout(200)
+        check('小芯的文件：点「下载」存成 app.hex', d.suggested_filename == 'app.hex' and xf['download'] == W + '/blink/build/app.hex' and '下载好了' in await pf.text_content('.xc-memrow'), (d.suggested_filename, xf['download']))
+        await pf.click('.xc-crumb:has-text("build")'); await pf.wait_for_selector('.xc-fi:has-text("app.bin")')
+        await pf.click('.xc-fi:has-text("app.bin")'); await pf.wait_for_selector('.xc-fmeta')
+        check('二进制文件不预览，只给下载', '不是文字文件' in await pf.text_content('.xc-sess') and not await pf.is_visible('.xc-pre'))
+        await pf.click('.xc-back'); await pf.wait_for_selector('.xc-sli')
+        await pf.click('.xc-si'); await pf.wait_for_selector('.xc-path')
+        await pf.click('.xc-path'); await pf.wait_for_selector('.xc-pre')
+        back = await pf.text_content('.xc-back')
+        check('回答里的 /data/workspace/… 路径点一下打开那个文件', '回到对话' in back and 'app.hex' in await pf.text_content('.xc-crumbs'), back)
+        await pf.click('.xc-back'); await pf.wait_for_timeout(200)
+        check('「← 回到对话」回到刚才的对话', await pf.evaluate("LimingXinChat.state.view") == 'chat' and await pf.is_visible('.xc-path'))
+        await pf.click('.xc-x'); await pf.wait_for_timeout(400)
+        await pf.evaluate("LimingXin.bag()"); await pf.click('.xin-bag .xin-it:has-text("聊天")'); await pf.wait_for_selector('.xin-ask-x')
+        xf['sent'] = None
+        await pf.click('.xin-ask-x'); await pf.wait_for_timeout(500)
+        check('小芯旁边的输入框有「考考我」：点了框收起，发「考考我」', not await pf.evaluate("!!document.querySelector('.xin-ask')") and (xf['sent'] or {}).get('text') == '考考我', xf['sent'])
+        await pf.context.close()
         # 附带页面信息：学习台「验证」页、粘贴的代码、选中的文字，一起发给小芯；✕ 这次不带
         pc = await page(b)
         xc = await xin_mock(pc, authed=True)

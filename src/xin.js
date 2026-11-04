@@ -8,6 +8,8 @@
 //   POST /api/xin/login    {password}
 //   POST /api/xin/logout
 //   POST /api/xin/call     {op, args}   op = status | wake | ping | send | poll | stop | sessions | history | memory | memory_set（小芯的记事本）
+//                                       | greet | daily | daily_get | daily_set | rename | forget（对话改名 / 删除）| files（小芯的文件：列文件夹、预览）
+//   GET  /api/xin/file?path=/data/workspace/…   下载小芯电脑里的一个文件（先让 vm-agent 核对在工作目录里，再从 InstaBox 原样转过来）
 // status、wake 直接调 InstaBox 的机器接口（wake：打开网页时把睡着的云电脑叫醒，已经醒着就什么都不做）；其余都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
 // 返回 {ok:true, data} 或 {ok:false, state, msg, retryAfter}：state = waking（正在唤醒云电脑）、cooldown（跑满 8 小时后的冷却）、busy、error。
 const API = 'https://api.instabox.sh';
@@ -15,7 +17,8 @@ const COOKIE = '__Host-xin';
 const SESSION_SEC = 30 * 86400;
 const AGENT_ASSET = '/xin/vm-agent.mjs';
 const VM_DIR = '/data/home/.xin/agent';
-const OPS = new Set(['status', 'wake', 'ping', 'send', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'greet', 'daily', 'daily_get', 'daily_set']);
+const OPS = new Set(['status', 'wake', 'ping', 'send', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'forget', 'files']);
+const FILE_MAX = 64 * 1024 * 1024;   // 下载最大 64 MB（.hex、.bin 才几十 KB）
 const HDRS = { 'Content-Type': 'application/json; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
 const enc = new TextEncoder();
@@ -175,11 +178,43 @@ async function call(env, origin, op, args, ctx, now) {
   }
 }
 
+/* ---------- 下载小芯的文件 ----------
+   GET（浏览器直接下载）：cookie 是 SameSite=Strict，别的网站带不上；回的是附件（attachment + nosniff + sandbox），不会当网页打开。
+   先让 vm-agent 核对路径（在工作目录里、软链接没指到外面、是文件、不太大），再用它给的真实路径从 InstaBox 取原始字节。 */
+function asciiName(n) { return n.replace(/[^\x20-\x7e]|["\\]/g, '_') || 'file'; }
+async function download(req, env, ctx, url, now) {
+  if (!enabled(env)) return json({ error: 'disabled' }, 404);
+  if (!(await authed(req, env, now))) return json({ error: 'unauthorized', msg: '要先登录' }, 401);
+  const p = url.searchParams.get('path') || '';
+  if (!p.startsWith('/') || p.length > 1024 || /[\x00-\x1f]/.test(p)) return json({ error: 'bad_path', msg: '路径不对' }, 400);
+  const r = await call(env, url.origin, 'files', { path: p, stat: true }, ctx, now);
+  if (!r.ok) return json(r, 503, r.retryAfter ? { 'Retry-After': String(r.retryAfter) } : undefined);
+  const d = r.data || {};
+  if (d.error) return json({ error: d.error, msg: d.msg }, d.error === 'not_found' ? 404 : 403);
+  if (d.dir) return json({ error: 'is_dir', msg: '这是文件夹，不能下载' }, 400);
+  if (d.size > FILE_MAX) return json({ error: 'too_large', msg: '文件太大了（超过 64 MB）' }, 413);
+  let f;
+  try {
+    const m = await machine(env, now);
+    f = await fetch(API + `/v1/machines/${m.id}/files/content?path=` + encodeURIComponent(d.real), { headers: { 'X-API-Key': env.INSTABOX_API_KEY } });
+  } catch (e) { return json(explain(e || {}), 502); }
+  if (!f.ok) return json(explain(await ibErr(f)), 502);
+  const name = d.path.split('/').pop() || 'file';
+  const h = {
+    'Content-Type': 'application/octet-stream',
+    'Content-Disposition': `attachment; filename="${asciiName(name)}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`,
+    'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow', 'Content-Security-Policy': "default-src 'none'; sandbox"
+  };
+  const len = f.headers.get('content-length'); if (len) h['Content-Length'] = len;
+  return new Response(f.body, { status: 200, headers: h });
+}
+
 /* ---------- 路由 ---------- */
 export async function handleXin(req, env, ctx, now = Date.now()) {
   const url = new URL(req.url);
   const p = url.pathname.replace(/^\/api\/xin\/?/, '');
   if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, env, now) });
+  if (p === 'file' && req.method === 'GET') return download(req, env, ctx, url, now);
   if (!['login', 'logout', 'call'].includes(p)) return json({ error: 'not_found' }, 404);
   if (req.method !== 'POST') return json({ error: 'method' }, 405);
   // 防跨站：只认本站页面发来的 JSON 请求（cookie 本身也是 SameSite=Strict）

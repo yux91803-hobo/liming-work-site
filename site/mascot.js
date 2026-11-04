@@ -1277,7 +1277,8 @@
   }
 
   /* ---------- 和小芯说话：小芯旁边冒一个输入框（打字或语音），发出去就收起来 ----------
-     o = { onSend(text), onExpand(), placeholder, chip, onChipOff() }；chip 是框上面那行「附带：…」（点 ✕ 这次不带）；语音用浏览器自带的识别（没有就不显示话筒） */
+     o = { onSend(text), onExpand(), placeholder, chip, onChipOff(), extra }；chip 是框上面那行「附带：…」（点 ✕ 这次不带）；语音用浏览器自带的识别（没有就不显示话筒）
+     extra：框下面的快捷按钮 [{label, title, onClick}]（比如「考考我」），点了框收起再调 onClick */
   var askEl = null, rec = null;
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
   var ASK_ICON = {
@@ -1312,6 +1313,7 @@
       (SR ? '<button type="button" class="xin-ask-mic" aria-label="说话">' + ASK_ICON.mic + '</button>' : '') +
       '<button type="button" class="xin-ask-send" aria-label="发送">' + ASK_ICON.send + '</button></div>' +
       '<div class="xin-ask-ft"><span class="xin-ask-hint" role="status"></span>' +
+      (o.extra || []).map(function (x, i) { return '<button type="button" class="xin-ask-x" data-i="' + i + '"></button>'; }).join('') +
       (o.onExpand ? '<button type="button" class="xin-ask-more">' + ASK_ICON.more + '<span>展开</span></button>' : '') + '</div>';
     var ta = askEl.querySelector('textarea'), hint = askEl.querySelector('.xin-ask-hint'), mic = askEl.querySelector('.xin-ask-mic'), box = askEl;
     var chip = askEl.querySelector('.xin-ask-ctx');
@@ -1335,6 +1337,11 @@
     askEl.querySelector('.xin-ask-send').addEventListener('click', send);
     var more = askEl.querySelector('.xin-ask-more');
     if (more) more.addEventListener('click', function () { closeAsk(); o.onExpand(); });
+    [].forEach.call(askEl.querySelectorAll('.xin-ask-x'), function (b) {
+      var x = o.extra[+b.getAttribute('data-i')];
+      b.textContent = x.label; if (x.title) b.title = x.title;
+      b.addEventListener('click', function () { closeAsk(); if (x.onClick) x.onClick(); });
+    });
     if (mic) mic.addEventListener('click', function () {
       if (rec) { try { rec.stop(); } catch (e) {} return; }
       var base = ta.value ? ta.value.replace(/\s+$/, '') + ' ' : '';
