@@ -342,3 +342,13 @@ test('记事本：Codex 每轮的 developer_instructions 里带着当前记事�
   const di = a.find(x => x.startsWith('developer_instructions='));
   assert.ok(JSON.parse(di.slice('developer_instructions='.length)).includes('最近在调 I2C'));
 });
+
+test('身份：设定写明以它为准；每句后面悄悄附提醒（历史里不显示）', async () => {
+  const { systemPrompt, forAgent, REMIND } = await load('../site/xin/vm-agent.mjs');
+  const p = systemPrompt('');
+  assert.ok(p.includes('这份设定优先') && p.includes('InstaBox 云电脑'));
+  const t = forAgent('你是谁呀？', '');
+  assert.ok(t.startsWith('你是谁呀？') && t.endsWith(REMIND));
+  const t2 = forAgent('这行什么意思', '【用户正在看】GPIO');
+  assert.ok(t2.indexOf('【用户正在看】GPIO') < t2.indexOf(REMIND));
+});
