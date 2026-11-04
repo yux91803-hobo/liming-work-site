@@ -54,11 +54,11 @@ XIN_HIST = [
 XIN_LIVE = [
     [{'t': 'user', 'text': '看看工作目录'}, {'t': 'status', 'text': 'Model metadata for `deepseek` not found. Defaulting to fallback metadata'}, {'t': 'text', 'text': '收到，我看看。'}, {'t': 'tool', 'id': 'item_1', 'name': 'Bash', 'detail': 'ls /data/workspace'}],
     [],
-    [{'t': 'tool_end', 'id': 'item_1', 'ok': True, 'out': 'blink'}, {'t': 'xin', 'act': 'dance', 'arg': ''}, {'t': 'text', 'text': '里面有一个 blink 目录。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 4000, 'effort': 'max'}],
+    [{'t': 'tool_end', 'id': 'item_1', 'ok': True, 'out': 'blink'}, {'t': 'xin', 'act': 'dance', 'arg': ''}, {'t': 'mem', 'text': '用户在做 blink 点灯'}, {'t': 'text', 'text': '里面有一个 blink 目录。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 4000, 'effort': 'max'}],
 ]
 
 async def xin_mock(pg, authed=False):
-    st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': []}
+    st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': [], 'mem': '# 小芯的记事本\n\n- 2026-11-04：用户在学定时器\n'}
     async def handle(route):
         req = route.request
         path = req.url.split('/api/xin/')[1].split('?')[0]
@@ -72,6 +72,10 @@ async def xin_mock(pg, authed=False):
         st['ops'].append(op)
         if op == 'status': return await ok({'ok': True, 'data': {'name': 'li', 'state': 'running'}})
         if op == 'wake': return await ok({'ok': True, 'data': {'state': 'running', 'action': 'none'}})
+        if op == 'memory': return await ok({'ok': True, 'data': {'text': st['mem'], 'size': len(st['mem'])}})
+        if op == 'memory_set':
+            st['mem'] = args.get('text', '')
+            return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': None}})
         if op == 'sessions': return await ok({'ok': True, 'data': {'sessions': [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0}]}})
         if op == 'send':
@@ -84,6 +88,25 @@ async def xin_mock(pg, authed=False):
         return await ok({'ok': False, 'state': 'error', 'msg': 'mock'})
     await pg.route('**/api/xin/**', handle)
     return st
+
+# 用鼠标把首页的小芯拖进某张卡片。小芯会自己走来走去、跳舞：先等它站定再按下去，
+# 按空了（它刚好挪开）就再来一次，最多 4 次；拖进去以后卡片对应的工具会打开
+async def drag_xin_into(pg, card_id):
+    for attempt in range(4):
+        try: await pg.wait_for_function("LimingXin.mode === 'idle'", timeout=8000)
+        except Exception: pass
+        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(), cx = r.x + r.width / 2; for (let yy = r.y; yy < r.bottom; yy++) { const e = document.elementFromPoint(cx, yy); if (e && LimingXin.el.contains(e)) return [cx, yy + 2]; } return null; })()")
+        if not r:
+            await pg.wait_for_timeout(500); continue
+        c = await pg.evaluate("(() => { const r = document.querySelector('.card[data-id=%s]').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()" % card_id)
+        await pg.mouse.move(*r); await pg.mouse.down()
+        for i in range(1, 13):
+            await pg.mouse.move(r[0] + (c[0] - r[0]) * i / 12, r[1] + (c[1] - r[1]) * i / 12); await pg.wait_for_timeout(30)
+        await pg.mouse.up()
+        for _ in range(20):
+            if await pg.evaluate("document.body.classList.contains('tool-open')"): return
+            await pg.wait_for_timeout(100)
+    raise RuntimeError('拖了 4 次都没把小芯拖进 ' + card_id)
 
 async def main():
     async with async_playwright() as p:
@@ -941,8 +964,14 @@ async def main():
         check('做完：状态栏清空，结束那行写着用了最高思考', await pg.evaluate("document.querySelector('.xc-st').hidden && document.querySelector('.xc-done').textContent.includes('最高思考')"))
         items = await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
         check('登录以后背包里有「聊天」', '聊天' in items, items)
+        check('记事本：小芯记了一笔，聊天里显示「小芯记住了」', '小芯记住了：用户在做 blink 点灯' in await pg.text_content('.xc-msgs'))
         await pg.keyboard.press('Escape')
         await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-si')
+        await pg.click('.xc-memb'); await pg.wait_for_selector('.xc-memt')
+        memv = await pg.input_value('.xc-memt')
+        await pg.fill('.xc-memt', memv + '- 2026-11-04：喜欢先看代码\n'); await pg.click('.xc-memrow .xc-btn'); await pg.wait_for_timeout(300)
+        check('记事本：对话列表里能打开，看到内容，改了能保存', '用户在学定时器' in memv and xs['mem'].endswith('喜欢先看代码\n') and '存好了' in await pg.text_content('.xc-memrow'), (memv, xs['mem']))
+        await pg.click('.xc-back'); await pg.wait_for_selector('.xc-si')
         await pg.click('.xc-si'); await pg.wait_for_selector('.xc-code')
         st = await pg.evaluate("[document.querySelector('.xc-code code').textContent, document.querySelector('.xc-tool').classList.contains('bad'), getComputedStyle(document.querySelector('.xc-tool-o')).display, document.querySelector('.xc-seg').classList.contains('locked')]")
         await pg.click('.xc-tool-h')
@@ -1021,13 +1050,7 @@ async def main():
         check('附带：关掉学习台以后不带学习台里选的', st[:2] == [False, True], st)
         await pc.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
-        await pg.wait_for_timeout(1500)
-        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(), cx = r.x + r.width / 2; for (let yy = r.y; yy < r.bottom; yy++) { const e = document.elementFromPoint(cx, yy); if (e && LimingXin.el.contains(e)) return [cx, yy + 2]; } return [cx, r.y + r.height * 0.55]; })()")
-        c = await pg.evaluate("(() => { const r = document.querySelector('.card[data-id=stm32]').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
-        await pg.mouse.move(*r); await pg.mouse.down()
-        for i in range(1, 13):
-            await pg.mouse.move(r[0] + (c[0] - r[0]) * i / 12, r[1] + (c[1] - r[1]) * i / 12); await pg.wait_for_timeout(30)
-        await pg.mouse.up(); f = await tool_frame(pg)
+        await drag_xin_into(pg, 'stm32'); f = await tool_frame(pg)
         for _ in range(80):
             if await f.evaluate("LimingXin.mode") in ('idle', 'walk', 'play'): break
             await pg.wait_for_timeout(100)

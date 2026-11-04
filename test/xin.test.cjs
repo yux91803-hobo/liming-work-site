@@ -4,6 +4,9 @@ const assert = require('node:assert');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+// vm-agent 的记事本写到临时目录（要在第一次 import 之前设好）
+const os = require('node:os'), fs = require('node:fs');
+process.env.XIN_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-test-'));
 const load = rel => import(pathToFileURL(path.join(__dirname, rel)).href);
 const PW = 'correct horse battery';
 const AGENT_TEXT = '// fake vm-agent\n';
@@ -311,4 +314,31 @@ test('Codex 每一轮都带小芯的设定（developer_instructions），续接�
   }
   const p = systemPrompt();
   assert.ok(p.includes('你就是小芯') && p.includes('第一人称') && p.includes('自己的电脑') && p.includes('不要说出'));
+});
+
+test('记事本：remember 记一条（带日期、去掉换行），没有文件时先写标题', async () => {
+  const { remember, readMemory, MEM_FILE } = await load('../site/xin/vm-agent.mjs');
+  try { fs.unlinkSync(MEM_FILE()); } catch (e) {}
+  assert.strictEqual(remember('  '), '');
+  assert.strictEqual(remember('用户叫小李\n在学定时器'), '用户叫小李 在学定时器');
+  remember('喜欢先看代码');
+  const m = readMemory();
+  assert.match(m, /^# 小芯的记事本\n\n- \d{4}-\d{2}-\d{2}：用户叫小李 在学定时器\n- \d{4}-\d{2}-\d{2}：喜欢先看代码\n$/);
+});
+
+test('记事本：每一轮都放进设定里；空的写「还是空的」；太长截断并提醒整理', async () => {
+  const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
+  assert.ok(systemPrompt('- 用户叫小李').includes('<<<记事本\n- 用户叫小李\n记事本>>>'));
+  assert.ok(systemPrompt('').includes('（还是空的）'));
+  const long = systemPrompt('x'.repeat(20000));
+  assert.ok(long.includes('该整理了') && long.length < 12000);
+  assert.ok(systemPrompt('').includes('xin remember'));
+});
+
+test('记事本：Codex 每轮的 developer_instructions 里带着当前记事本', async () => {
+  const { agentArgs, remember } = await load('../site/xin/vm-agent.mjs');
+  remember('最近在调 I2C');
+  const [, a] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '你好', '');
+  const di = a.find(x => x.startsWith('developer_instructions='));
+  assert.ok(JSON.parse(di.slice('developer_instructions='.length)).includes('最近在调 I2C'));
 });

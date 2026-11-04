@@ -105,7 +105,7 @@
     });
     root.querySelector('.xc-x').addEventListener('click', close);
     root.querySelector('.xc-new-b').addEventListener('click', function () { newChat(); if (!touch) input.focus(); });
-    root.querySelector('.xc-list-b').addEventListener('click', function () { S.view = S.view === 'sess' ? 'chat' : 'sess'; render(); if (S.view === 'sess') loadSessions(); });
+    root.querySelector('.xc-list-b').addEventListener('click', function () { S.view = S.view === 'chat' ? 'sess' : 'chat'; render(); if (S.view === 'sess') loadSessions(); });
     loginEl.addEventListener('submit', function (e) { e.preventDefault(); login(loginEl.pw.value); });
     foot.addEventListener('submit', function (e) { e.preventDefault(); if (S.run) stop(); else send(); });
     input.value = ls(LS_DRAFT) || '';
@@ -141,9 +141,9 @@
     if (!root) return;
     var login = S.enabled && !S.authed, off = !S.enabled;
     loginEl.hidden = !login;
-    foot.hidden = login || off || S.view === 'sess';
-    sessEl.hidden = login || off || S.view !== 'sess';
-    root.querySelector('.xc-body').hidden = login || S.view === 'sess';
+    foot.hidden = login || off || S.view !== 'chat';
+    sessEl.hidden = login || off || S.view === 'chat';
+    root.querySelector('.xc-body').hidden = login || S.view !== 'chat';
     root.querySelector('.xc-list-b').hidden = root.querySelector('.xc-new-b').hidden = login || off;
     root.classList.toggle('running', !!S.run);
     sendBtn.setAttribute('aria-label', S.run ? '停止' : '发送');
@@ -241,6 +241,10 @@
     sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '正在读取…'));
     call('sessions', {}, 60000).then(function (d) {
       sessEl.innerHTML = '';
+      var mb = h('button', 'xc-memb'); mb.type = 'button';
+      mb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6zM6 3v18M9 8h6M9 12h6"/></svg><span></span>';
+      mb.lastChild.textContent = '小芯的记事本'; mb.addEventListener('click', loadMemory);
+      sessEl.appendChild(mb);
       var ul = h('ul', 'xc-sl');
       if (!d.sessions.length) ul.appendChild(h('li', 'xc-hint', '还没有对话'));
       d.sessions.forEach(function (s) {
@@ -254,6 +258,28 @@
       sessEl.appendChild(ul);
       var out = h('button', 'xc-link', '退出登录'); out.type = 'button'; out.addEventListener('click', logout);
       sessEl.appendChild(out);
+    }, function (e) { sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
+  }
+  /* ---------- 小芯的记事本：它的长期记忆，能看能改 ---------- */
+  function loadMemory() {
+    S.view = 'mem'; render();
+    sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '正在读取…'));
+    call('memory', {}, 60000).then(function (d) {
+      sessEl.innerHTML = '';
+      var back = h('button', 'xc-link xc-back', '← 对话列表'); back.type = 'button';
+      back.addEventListener('click', function () { S.view = 'sess'; render(); loadSessions(); });
+      sessEl.appendChild(back);
+      sessEl.appendChild(h('p', 'xc-hint', '小芯每次聊天都会看这本记事本，聊天时了解到值得记住的事会自己记一笔，乱了也会自己整理。你可以直接改，或者在聊天里说「记住……」「忘掉……」。'));
+      var ta = h('textarea', 'xc-memt'); ta.value = d.text || ''; ta.placeholder = '还是空的'; ta.setAttribute('aria-label', '小芯的记事本');
+      sessEl.appendChild(ta);
+      var row = h('div', 'xc-memrow'), save = h('button', 'xc-btn', '保存'), msg = h('span', 'xc-hint', '');
+      save.type = 'button';
+      save.addEventListener('click', function () {
+        save.disabled = true; msg.textContent = '正在保存…';
+        call('memory_set', { text: ta.value }, 60000).then(function () { msg.textContent = '存好了'; save.disabled = false; var x = xin(); if (x) x.say('记事本改好啦', 2500); },
+          function (e) { msg.textContent = '没存上：' + e.message; save.disabled = false; });
+      });
+      row.appendChild(save); row.appendChild(msg); sessEl.appendChild(row);
     }, function (e) { sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
   }
   function when(t) {
@@ -426,6 +452,7 @@
     if (ev.t === 'text') { S.lastText = ev.text; x.ai('think'); var line = firstLine(ev.text); if (line) x.say(line, 0, open); }
     else if (ev.t === 'tool') x.ai('work');
     else if (ev.t === 'xin') { S.lastAct = Date.now(); x.cmd(ev.act, ev.arg); }
+    else if (ev.t === 'mem') x.say('记住啦～', 2500);
     else if (ev.t === 'done') {
       x.ai('');
       if (ev.stopped) return;
@@ -465,6 +492,7 @@
     if (ev.t === 'user') { e = h('div', 'xc-m xc-me'); e.appendChild(h('div', 'xc-bub', ev.text)); if (ev.ctx) e.appendChild(h('div', 'xc-ctxm', '附带：' + ev.ctx)); }
     else if (ev.t === 'text') { e = h('div', 'xc-m xc-ai'); e.appendChild(md(ev.text)); }
     else if (ev.t === 'xin') e = h('div', 'xc-note', '✻ 小芯' + (ACT_NAME[ev.act] || ev.act) + (ev.arg && ev.act !== 'music' ? '：' + ev.arg : ''));
+    else if (ev.t === 'mem') e = h('div', 'xc-note xc-mem', '✻ 小芯记住了：' + ev.text);
     else if (ev.t === 'status') return null;   // 临时状态只在状态栏里闪一下（见 react），不进对话
     else if (ev.t === 'err') e = h('div', 'xc-errm', ev.text);
     else if (ev.t === 'done') {

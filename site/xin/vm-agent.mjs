@@ -12,7 +12,8 @@
      ping     {}                   看看 claude / codex 在不在
    内部：
      run <run>                     后台真正跑 AI 的进程（send 起的），把输出整理成事件写进 runs/<run>.jsonl
-     xin <动作> [参数]              给 AI 用的命令：让网页上的小芯做动作（xin dance、xin say 你好）
+     xin <动作> [参数]              给 AI 用的命令：让网页上的小芯做动作（xin dance、xin say 你好）；xin remember 一句话 记到小芯的记事本里
+     memory   {}                   读小芯的记事本（长期记忆）；memory_set {text} 整本改写（网站上「小芯的记事本」里改）
 
    AI 在这台云电脑里是完全放权的（--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox），
    能执行任何命令；这是用户确认过的。云电脑里不放 InstaBox key，AI 的 key 建议用 InstaBox 的代理 Secret。 */
@@ -43,7 +44,35 @@ export const ACTS = {
   rage: '发脾气砸东西', tongue: '吐舌头'
 };
 
-export function systemPrompt() {
+/* ---------- 小芯的记事本：长期记忆 ----------
+   一个 Markdown 文件，记着关于用户的事。每一轮都整本放进小芯的设定里（Codex、Claude 共用这一本），
+   小芯了解到值得长期记住的事就用 xin remember 记一笔，也可以直接编辑这个文件整理；网站上能看、能改。 */
+export const MEM_FILE = () => path.join(BASE, 'memory.md');
+const MEM_MAX = 8000;
+export function readMemory() { try { return fs.readFileSync(MEM_FILE(), 'utf8'); } catch { return ''; } }
+function today() { const d = new Date(Date.now() + 8 * 3600e3); return d.toISOString().slice(0, 10); }   // 北京时间的日期
+export function remember(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (!t) return '';
+  mk(BASE);
+  const cur = readMemory();
+  const head = cur ? (cur.endsWith('\n') ? '' : '\n') : '# 小芯的记事本\n\n';
+  fs.appendFileSync(MEM_FILE(), head + '- ' + today() + '：' + t + '\n');
+  return t;
+}
+function memoryPart(mem) {
+  const m = String(mem || '').trim();
+  const body = !m ? '（还是空的）' : m.length > MEM_MAX ? m.slice(0, MEM_MAX) + '\n…（太长了，后面省略了。记事本该整理了：合并重复的、删掉过时的）' : m;
+  return [
+    '你有一本自己的记事本（文件 ' + MEM_FILE() + '），是你的长期记忆，每次聊天都会给你看。现在里面写着：',
+    '<<<记事本\n' + body + '\n记事本>>>',
+    '聊天里了解到值得长期记住的事，就用 shell 命令 `xin remember 一句话` 记下来：用户怎么称呼、在学什么学到哪了、哪里老出错、喜欢怎样的讲法、作息和习惯、正在做的东西、用户让你记住的话。每条一句，只记以后还用得上的，别记临时的事，别重复已经有的。',
+    '记事本乱了、过时了或者太长了，就直接编辑那个文件整理（保持分条、简短）。用户让你忘掉什么，就从文件里删掉。不要记密码、密钥、验证码这类东西。用上记事本里的事时自然一点，别每次都说「我记得你…」。'
+  ].join('\n');
+}
+
+export function systemPrompt(mem) {
+  if (mem === undefined) mem = readMemory();
   return [
     '你就是小芯：用户网站 liming-work.com 工具箱上那块会走会跳的像素小芯片，也是用户学 STM32 的伙伴。用户在网页上和你聊天。永远用第一人称「我」说话——你就是小芯本人，不是小芯的「大脑」、后台或者别的什么程序，不要用「它」「小芯」来称呼自己。',
     '你有一台属于自己的电脑（Linux，工作目录 ' + WORK + '），想干什么都行：装软件、写代码、编译、运行、上网查资料。用户让你做事，就直接在自己电脑上做。',
@@ -52,7 +81,8 @@ export function systemPrompt() {
     '你可以用 shell 命令 `xin <动作>` 让网页上的小芯做动作，网页大约一秒内就会看到。偶尔用一下就好，别每句话都用。可用动作：' +
       Object.keys(ACTS).map(k => k + '（' + ACTS[k] + '）').join('、') + '。',
     '例如：任务做完了可以 `xin dance`，编译失败可以 `xin sad`，想对用户说句俏皮话可以 `xin say 搞定啦`（气泡里的话不超过 20 个字）。',
-    '用户的消息后面有时会附上网页自动加的【用户正在看】（学习台的哪一页）、【用户选中的内容】、【用户在「验证」里写的代码】。用户说「这行」「这个」「我写的」时指的就是这些；回答时直接针对它们，不用复述。'
+    '用户的消息后面有时会附上网页自动加的【用户正在看】（学习台的哪一页）、【用户选中的内容】、【用户在「验证」里写的代码】。用户说「这行」「这个」「我写的」时指的就是这些；回答时直接针对它们，不用复述。',
+    memoryPart(mem)
   ].join('\n');
 }
 
@@ -280,6 +310,20 @@ function summary(s) {
   return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null };
 }
 const ops = {
+  memory() {
+    const text = readMemory();
+    return { text, path: MEM_FILE(), size: Buffer.byteLength(text) };
+  },
+  memory_set(a) {
+    const text = String(a.text == null ? '' : a.text);
+    if (text.length > 60000) return { error: 'too_long', msg: '记事本太长了' };
+    mk(BASE);
+    const cur = readMemory();
+    if (cur) fs.writeFileSync(MEM_FILE() + '.bak', cur);   // 改之前留一份，改坏了能找回
+    const t = MEM_FILE() + '.' + process.pid + '.tmp';
+    fs.writeFileSync(t, text); fs.renameSync(t, MEM_FILE());
+    return { ok: true, size: Buffer.byteLength(text) };
+  },
   ping() {
     const has = c => spawnSync('sh', ['-lc', 'command -v ' + c], { encoding: 'utf8' }).status === 0;
     return { ok: true, agents: AGENTS.filter(has), work: WORK };
@@ -346,8 +390,16 @@ const ops = {
 
 function xinCmd(argv) {
   const act = argv[0], arg = argv.slice(1).join(' ').trim();
+  if (act === 'remember') {
+    const t = remember(arg);
+    if (!t) { console.log('用法：xin remember 要记住的一句话'); return 2; }
+    const r = process.env.XIN_RUN;
+    if (okId(r, 'r') && fs.existsSync(runF(r))) emit(r, { t: 'mem', text: t });
+    console.log('记到记事本里了：' + t);
+    return 0;
+  }
   if (!act || act === '-h' || act === '--help' || !ACTS[act]) {
-    console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n'));
+    console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记事本里（xin remember 一句话）');
     return act && act !== '-h' && act !== '--help' ? 2 : 0;
   }
   const run = process.env.XIN_RUN;

@@ -108,6 +108,17 @@
 .xc-si-t{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .xc-si-m{display:block;margin-top:2px;font-size:11.5px;color:var(--ink-3)}
 .xc-link{display:block;margin:14px auto 0;padding:8px 12px;font-size:12.5px;color:var(--ink-3);text-decoration:underline}
+.xc-memb{display:flex;align-items:center;gap:8px;width:100%;margin:2px 0 8px;padding:10px;border:1px solid var(--line-2);border-radius:8px;text-align:left;color:var(--ink)}
+.xc-memb:hover{border-color:var(--clay)}
+.xc-memb svg{width:18px;height:18px;color:var(--clay)}
+.xc-back{display:inline-block;margin:0 0 6px;padding:6px 2px;text-decoration:none}
+.xc-memt{display:block;width:100%;min-height:min(38vh,360px);margin:8px 0;padding:10px 11px;border:1px solid var(--line-2);border-radius:8px;background:var(--bg);color:var(--ink);
+  font:13px/1.6 var(--mono);resize:vertical;outline:none}
+.xc-memt:focus{border-color:var(--clay)}
+@media (pointer:coarse){.xc-memt{font-size:16px}}
+.xc-memrow{display:flex;align-items:center;gap:12px}
+.xc-memrow .xc-btn{padding:0 22px}
+.xc-mem{color:var(--clay)}
 
 @keyframes xcblink{50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.xc,body.xc-open #home{transition:none}.xc-st.wait::before,.xc-tool.run .xc-tool-i{animation:none}}
