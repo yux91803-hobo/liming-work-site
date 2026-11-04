@@ -996,6 +996,25 @@ async def main():
         await pc.wait_for_selector('.xc-done', timeout=8000)
         await pc.click('.xc-ctx button')
         check('附带：点 ✕ 这次不带', await pc.evaluate("document.querySelector('.xc-ctx').hidden"))
+        # 自己取消选中（点了页面别处）→ 不再带上次选的
+        await pc.click('.xc-x'); await pc.wait_for_timeout(300)
+        await f.evaluate("(() => { const h = document.querySelector('#main h1, #main h2, #main h3'); const r = document.createRange(); r.selectNodeContents(h); const s = getSelection(); s.removeAllRanges(); s.addRange(r); })()")
+        await pc.wait_for_timeout(100)
+        await pc.evaluate("LimingXinChat.open()"); await pc.wait_for_selector('.xc.show .xc-ctx:not([hidden])')
+        had = await pc.text_content('.xc-ctx span')
+        await pc.click('.xc-x'); await pc.wait_for_timeout(300)
+        await f.click('#main h1, #main h2, #main h3', position={'x': 2, 'y': 2}); await pc.wait_for_timeout(200)
+        await pc.evaluate("LimingXinChat.open()"); await pc.wait_for_selector('.xc.show .xc-ctx:not([hidden])')
+        now = await pc.text_content('.xc-ctx span')
+        check('附带：选中后带上；点页面别处取消选中以后不再带', '选中' in had and '选中' not in now, (had, now))
+        # 关掉学习台以后，学习台里选过的也不带
+        await pc.click('.xc-x'); await pc.wait_for_timeout(300)
+        await f.evaluate("(() => { const h = document.querySelector('#main h1, #main h2, #main h3'); const r = document.createRange(); r.selectNodeContents(h); const s = getSelection(); s.removeAllRanges(); s.addRange(r); })()")
+        while await pc.evaluate("!!document.querySelector('.panel.show .back')"):
+            await pc.evaluate("document.querySelector('.panel.show .back').click()"); await pc.wait_for_timeout(1500)
+        await pc.evaluate("LimingXinChat.open()"); await pc.wait_for_timeout(500)
+        st = await pc.evaluate("[document.body.classList.contains('tool-open'), document.querySelector('.xc-ctx').hidden, document.querySelector('.xc-ctx span').textContent]")
+        check('附带：关掉学习台以后不带学习台里选的', st[:2] == [False, True], st)
         await pc.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
         await pg.wait_for_timeout(1500)

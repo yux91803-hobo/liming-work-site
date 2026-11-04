@@ -295,14 +295,27 @@
   function watchDoc(d) {
     if (!d || watched.indexOf(d) >= 0) return;
     watched.push(d);
-    // 记下最近一次选中的文字：点开输入框时选区会被清掉，所以选的那一刻就记
+    // 记下最近一次选中的文字：点开输入框时选区会被清掉，所以选的那一刻就记。
+    // 选区没了的时候分两种：是你点小芯、背包、输入框、面板（打开聊天）弄没的 → 留着；是你点了页面别处、自己取消的 → 马上忘掉
+    var UI = '.xin, .xin-bag, .xin-ask, .xin-say, .xc';
+    var lastDown = { ui: false, at: 0 };
+    d.addEventListener('pointerdown', function (e) {
+      var t = e.target;
+      lastDown = { ui: !!(t && t.closest && t.closest(UI)), at: Date.now() };
+    }, true);
     d.addEventListener('selectionchange', function () {
       var sel = d.getSelection && d.getSelection();
-      if (!sel || sel.isCollapsed || !sel.anchorNode) return;
+      if (!sel) return;
+      if (sel.isCollapsed || !String(sel).trim()) {
+        var a = d.activeElement, byChat = (a && a.closest && a.closest(UI)) || (lastDown.ui && Date.now() - lastDown.at < 2500);
+        if (!byChat && S.sel && S.sel.doc === d) S.sel = null;
+        return;
+      }
+      if (!sel.anchorNode) return;
       var n = sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement;
-      if (n && n.closest && n.closest('.xc, .xin-ask, .xin-bag, textarea, input')) return;
+      if (n && n.closest && n.closest(UI + ', textarea, input')) return;
       var t = String(sel).replace(/\u00a0/g, ' ').trim();
-      if (t) S.sel = { text: t.slice(0, SEL_MAX), at: Date.now() };
+      if (t) S.sel = { text: t.slice(0, SEL_MAX), at: Date.now(), doc: d };
     });
   }
   function toolDoc() {
@@ -324,7 +337,8 @@
       var ta = d.querySelector('#main .lab-ta');
       if (ta && ta.offsetParent && ta.value.trim()) c.code = ta.value.slice(0, CODE_MAX);
     }
-    if (S.sel && Date.now() - S.sel.at < SEL_AGE) c.sel = S.sel.text;
+    // 只带「现在这一页」上选中的：关掉学习台以后，学习台里选过的就不算了
+    if (S.sel && Date.now() - S.sel.at < SEL_AGE && (S.sel.doc === d || S.sel.doc === document)) c.sel = S.sel.text;
     return c.label || c.sel || c.code ? c : null;
   }
   function ctxLabel(c) {
