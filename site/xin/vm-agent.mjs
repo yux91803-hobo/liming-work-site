@@ -17,6 +17,9 @@
      daily    {force?}             按每日任务清单开一轮（网站后台每天定时调；今天做过就跳过，force 再做一遍）
      daily_get / daily_set {text}  读 / 改每日任务清单
      greet    {}                   下次见面的开场白（xin next 写的）；顺便在电脑刚睡醒时预热一下模型网关
+     rename   {sid, title}         给对话改名；forget {sid} 删掉一个对话（还在进行中的不让删）
+     files    {path?, stat?}       小芯的文件：列出工作目录（WORK）里的一个文件夹，或者读一个文件（文字文件带内容，用来预览）；
+                                   只认 WORK 里面的（软链接指到外面的也不行）。stat：只要大小和真实路径（网站下载前用来核对）
    内部：warm                       预热：发一个很短的请求，把刚睡醒后第一下的卡顿先吃掉（不留会话）
 
    AI 在这台云电脑里是完全放权的（--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox），
@@ -31,9 +34,11 @@ import { fileURLToPath } from 'node:url';
 const SELF = fileURLToPath(import.meta.url);
 const BASE = process.env.XIN_HOME || path.join(os.homedir(), '.xin');
 const WORK = process.env.XIN_WORK || '/data/workspace';
+const TEMPLATE = () => path.join(WORK, 'stm32-template');   // STM32 空工程（scripts/vm/setup-stm32.sh 装的）
 const SESS = path.join(BASE, 'sessions'), RUNS = path.join(BASE, 'runs'), BIN = path.join(BASE, 'bin');
 const AGENTS = ['claude', 'codex'];
 const OUT_MAX = 2000, TEXT_MAX = 20000, CTX_MAX = 12000;
+const FILES_MAX = 400, PREVIEW_MAX = 200 * 1024;   // 小芯的文件：一个文件夹最多列多少个；多大以内的文字文件给预览
 export function withContext(text, context) {
   const c = String(context || '').trim().slice(0, CTX_MAX);
   return c ? text + '\n\n---\n（以下是网页自动附上的，用户正在看的内容）\n' + c : text;
@@ -159,6 +164,9 @@ export function systemPrompt(mem) {
     '用户的消息后面有时会附上网页自动加的【用户正在看】（学习台的哪一页）、【用户选中的内容】、【用户在「验证」里写的代码】。用户说「这行」「这个」「我写的」时指的就是这些；回答时直接针对它们，不用复述。',
     '你可以用 shell 命令 `xin next 一句话` 留一句下次见面时的开场白：用户下次打开网页，你会第一时间在气泡里说这句（30 字以内，口语，像打招呼）。有值得下次跟进的事就写——没做完的事、约好的复习、每日任务的结果；新的会覆盖旧的。',
     '你有一份每日任务清单（文件 ' + DAILY_FILE() + '）。每天北京时间 9:10 左右你会被叫醒按清单做一遍（没做成 21:10 再来一次）。用户让你「每天做什么」，就写进这份清单（一条一行，写清楚怎么做、怎么确认做成了）；别自己用 cron 定时，电脑睡着的时候 cron 不会跑。',
+    '你的电脑里装好了 STM32 的编译工具（arm-none-eabi-gcc）。' + TEMPLATE() + ' 是 STM32F103ZET6 的空工程，写法和学习台一样（#include "stm32f10x.h"，寄存器名来自 ST 官方头文件，printf、malloc、中断都能用）。要编译程序就复制一份（cp -r ' + TEMPLATE() + ' ' + WORK + '/起个英文名），改 main.c（多个 .c 放同一目录），在那个目录里 make，生成 build/app.hex（烧录用）。空工程不见了就跑 sh ' + path.join(BASE, 'setup-stm32.sh') + ' 重新装。',
+    '用户在网页上「小芯的文件」里能看到你电脑里 ' + WORK + ' 下面的文件，能预览、能下载到手机或电脑上。要给用户的东西（代码、.hex、文档）都放在 ' + WORK + ' 下面；回答里提到文件就写完整路径（比如 `' + WORK + '/blink/build/app.hex`），用户点一下就能打开或下载。编译好了一定告诉用户 .hex 的完整路径。',
+    '用户说「考考我」时：结合记事本里写的他在学什么、哪里老出错，还有他正在看的页面，出一道题（选择题、填空、读代码说结果、找错都行），一次一道，先别给答案；等他答了再说对不对、讲清楚为什么，然后问要不要下一道。答错或者说不会的知识点用 xin remember 记下来（比如「定时器 PSC/ARR 算不清」），以后多考；答对了可以 xin happy。',
     memoryPart(mem)
   ].join('\n');
 }
@@ -489,6 +497,56 @@ const ops = {
     const warming = maybeWarm();
     const g = getNext();
     return g ? Object.assign({ warming }, g) : { warming };
+  },
+  rename(a) {
+    if (!okId(a.sid, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
+    const s = readJ(sessF(a.sid));
+    if (!s) return { error: 'no_session', msg: '找不到这个对话' };
+    const title = String(a.title || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!title) return { error: 'empty', msg: '名字是空的' };
+    s.title = title; writeJ(sessF(a.sid), s);
+    return { ok: true, session: summary(s) };
+  },
+  forget(a) {
+    if (!okId(a.sid, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
+    const s = readJ(sessF(a.sid));
+    if (!s) return { ok: true, already: true };
+    const r = lastRun(s);
+    if (r && !runDone(r)) return { error: 'busy', msg: '这个对话还在进行中，先停下来再删' };
+    for (const run of s.runs || []) for (const f of [runF(run), metaF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
+    fs.unlinkSync(sessF(a.sid));
+    return { ok: true };
+  },
+  files(a) {
+    const work = path.resolve(WORK);
+    const want = path.resolve(work, String(a.path || work));
+    const inside = (p, w) => p === w || p.startsWith(w + '/');
+    if (!inside(want, work)) return { error: 'outside', msg: '只能看 ' + work + ' 里面的文件' };
+    let real, st;
+    try { real = fs.realpathSync(want); st = fs.statSync(real); } catch { return { error: 'not_found', msg: '没有这个文件：' + want }; }
+    let realWork = work; try { realWork = fs.realpathSync(work); } catch { /* 工作目录还没建 */ }
+    if (!inside(real, realWork)) return { error: 'outside', msg: '只能看 ' + work + ' 里面的文件' };
+    if (st.isDirectory()) {
+      if (a.stat) return { path: want, real, dir: true };
+      const items = [];
+      for (const d of fs.readdirSync(real, { withFileTypes: true })) {
+        if (d.name.startsWith('.')) continue;   // 隐藏文件（.git 之类）不列
+        let s2 = null; try { s2 = fs.statSync(path.join(real, d.name)); } catch { /* 坏掉的软链接 */ }
+        items.push({ name: d.name, dir: !!(s2 && s2.isDirectory()), size: s2 ? s2.size : 0, mtime: s2 ? Math.round(s2.mtimeMs) : 0 });
+      }
+      items.sort((x, y) => (y.dir - x.dir) || x.name.localeCompare(y.name, 'zh-CN'));
+      return { path: want, dir: true, work, entries: items.slice(0, FILES_MAX), more: Math.max(0, items.length - FILES_MAX) };
+    }
+    if (!st.isFile()) return { error: 'not_file', msg: '这不是普通文件' };
+    const out = { path: want, real, dir: false, work, size: st.size, mtime: Math.round(st.mtimeMs) };
+    if (a.stat) return out;
+    // 预览：不太大、没有 0 字节、是正常 UTF-8 的当文字给出去；其余只能下载
+    if (st.size <= PREVIEW_MAX) {
+      const buf = fs.readFileSync(real);
+      const text = buf.includes(0) ? null : buf.toString('utf8');
+      if (text !== null && !text.includes('�')) out.text = text; else out.binary = true;
+    } else out.big = true;
+    return out;
   },
   poll(a) {
     if (!okId(a.run, 'r')) return { error: 'bad_run', msg: '编号不对' };

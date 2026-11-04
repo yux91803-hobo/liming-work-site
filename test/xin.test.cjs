@@ -449,3 +449,174 @@ test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做�
   const sess = op('sessions').sessions.find(s => s.sid === r.sid);
   assert.match(sess.title, /^每日任务 · \d\d-\d\d$/);
 });
+
+/* ---------- 小芯的文件、对话改名 / 删除 ---------- */
+test('改名、删除、文件这几个 op 都转给 vm-agent', async () => {
+  const m = await fresh(), env = mkEnv(), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true}', stderr: '', exitCode: 0 } }] });
+  try {
+    for (const op of ['rename', 'forget', 'files']) {
+      const d = await (await m.handleXin(req('/api/xin/call', { body: { op, args: { sid: 'sabc123' } }, headers: { cookie: ck } }), env, null)).json();
+      assert.deepStrictEqual(d, { ok: true, data: { ok: true } }, op);
+    }
+    assert.deepStrictEqual(ib.calls.filter(c => c.key.endsWith('/exec')).map(c => JSON.parse(c.body).argv[2]), ['rename', 'forget', 'files']);
+  } finally { ib.restore(); }
+});
+
+test('下载：先让 vm-agent 核对路径，再按它给的真实路径从 InstaBox 原样转过来（附件、不缓存）', async () => {
+  const m = await fresh(), env = mkEnv(), ck = await login(m, env);
+  const P = '/data/workspace/点灯/build/app.hex', REAL = '/data/workspace/blink/build/app.hex', BODY = ':00000001FF\n';
+  const ib = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify({ path: P, real: REAL, dir: false, size: BODY.length }), stderr: '', exitCode: 0 } }],
+    'GET /v1/machines/m_abc/files/content': [(u, init) => new Response(BODY, { status: 200, headers: { 'content-length': String(BODY.length), 'content-type': 'application/octet-stream' } })]
+  });
+  try {
+    const r = await m.handleXin(new Request(ORIGIN + '/api/xin/file?path=' + encodeURIComponent(P), { headers: { cookie: ck } }), env, null);
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(await r.text(), BODY);
+    assert.strictEqual(r.headers.get('content-type'), 'application/octet-stream');
+    assert.strictEqual(r.headers.get('content-disposition'), `attachment; filename="app.hex"; filename*=UTF-8''app.hex`);
+    assert.strictEqual(r.headers.get('cache-control'), 'no-store');
+    assert.strictEqual(r.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(r.headers.get('content-security-policy'), /sandbox/);
+    assert.strictEqual(r.headers.get('content-length'), String(BODY.length));
+    const ex = JSON.parse(ib.calls.find(c => c.key.endsWith('/exec')).body);
+    assert.strictEqual(ex.argv[2], 'files');
+    assert.deepStrictEqual(JSON.parse(ex.stdin), { path: P, stat: true });
+    const get = ib.calls.find(c => c.key.endsWith('/files/content'));
+    assert.strictEqual(get.url.searchParams.get('path'), REAL);
+    assert.strictEqual(get.init.headers['X-API-Key'], 'ibk_test_key_1234567890');
+  } finally { ib.restore(); }
+});
+
+test('下载：文件名里有中文和引号也能存；没登录 401；路径不对 400；工作目录外面 403；文件夹 400；没有 404', async () => {
+  const m = await fresh(), env = mkEnv(), ck = await login(m, env);
+  const get = (p, cookie) => m.handleXin(new Request(ORIGIN + '/api/xin/file?path=' + encodeURIComponent(p), { headers: cookie ? { cookie } : {} }), env, null);
+  const stat = o => ({ body: { stdout: JSON.stringify(o), stderr: '', exitCode: 0 } });
+  const ib = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/exec': [
+      stat({ path: '/data/workspace/说明 "v1".txt', real: '/data/workspace/说明 "v1".txt', dir: false, size: 2 }),
+      stat({ error: 'outside', msg: '只能看 /data/workspace 里面的文件' }),
+      stat({ path: '/data/workspace/blink', real: '/data/workspace/blink', dir: true }),
+      stat({ error: 'not_found', msg: '没有这个文件' })
+    ],
+    'GET /v1/machines/m_abc/files/content': [() => new Response('hi')]
+  });
+  try {
+    const ok = await get('/data/workspace/说明 "v1".txt', ck);
+    assert.strictEqual(ok.status, 200);
+    assert.strictEqual(ok.headers.get('content-disposition'), `attachment; filename="__ _v1_.txt"; filename*=UTF-8''%E8%AF%B4%E6%98%8E%20%22v1%22.txt`);
+    assert.strictEqual((await get('/data/workspace/a.hex')).status, 401);
+    assert.strictEqual((await get('data/workspace/a.hex', ck)).status, 400);
+    assert.strictEqual((await get('/data/workspace/a\nb', ck)).status, 400);
+    assert.strictEqual((await get('/etc/passwd', ck)).status, 403);
+    assert.strictEqual((await get('/data/workspace/blink', ck)).status, 400);
+    assert.strictEqual((await get('/data/workspace/nope', ck)).status, 404);
+    assert.strictEqual(ib.calls.filter(c => c.key.endsWith('/files/content')).length, 1);
+  } finally { ib.restore(); }
+});
+
+test('下载：云电脑在睡觉时回 503 + waking（网页等它醒了再下）', async () => {
+  const m = await fresh(), env = mkEnv(), ck = await login(m, env);
+  const ib = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/exec': [{ status: 409, body: { error: { code: 'machine_not_running' } } }],
+    'GET /v1/machines/m_abc': [{ body: { id: 'm_abc', state: 'suspended' } }],
+    'POST /v1/machines/m_abc/resume': [{ status: 202, body: {} }]
+  });
+  try {
+    const r = await m.handleXin(new Request(ORIGIN + '/api/xin/file?path=%2Fdata%2Fworkspace%2Fa.hex', { headers: { cookie: ck } }), env, null);
+    assert.strictEqual(r.status, 503);
+    assert.strictEqual((await r.json()).state, 'waking');
+  } finally { ib.restore(); }
+});
+
+function agentEnv() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-files-')), work = path.join(home, 'work');
+  const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: work });
+  const { execFileSync } = require('node:child_process');
+  const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
+  const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
+  return { home, work, xin: env.XIN_HOME, op };
+}
+
+test('小芯的文件：列文件夹（文件夹在前、不列隐藏的）、预览文字文件、二进制只给下载，工作目录外面一律不行', () => {
+  const { home, work, op } = agentEnv();
+  fs.mkdirSync(path.join(work, 'blink', 'build'), { recursive: true });
+  fs.writeFileSync(path.join(work, 'blink', 'main.c'), 'int main(void) { return 0; }\n');
+  fs.writeFileSync(path.join(work, 'blink', 'build', 'app.bin'), Buffer.from([0x00, 0x50, 0x00, 0x20, 0xff]));
+  fs.writeFileSync(path.join(work, 'blink', 'build', 'app.hex'), ':00000001FF\n');
+  fs.writeFileSync(path.join(work, 'blink', 'big.txt'), 'x'.repeat(210 * 1024));
+  fs.writeFileSync(path.join(work, '.secret'), 'no');
+  fs.writeFileSync(path.join(work, 'readme.md'), '# 你好');
+  fs.writeFileSync(path.join(home, 'outside.txt'), 'outside');
+  fs.symlinkSync(path.join(home, 'outside.txt'), path.join(work, 'link.txt'));
+  fs.symlinkSync(home, path.join(work, 'up'));
+
+  const root = op('files', {});
+  assert.strictEqual(root.path, work);
+  assert.deepStrictEqual(root.entries.map(e => [e.name, e.dir]), [['blink', true], ['up', true], ['link.txt', false], ['readme.md', false]]);
+  const dir = op('files', { path: work + '/blink' });
+  assert.deepStrictEqual(dir.entries.map(e => e.name), ['build', 'big.txt', 'main.c']);
+  assert.strictEqual(op('files', { path: work + '/blink/main.c' }).text, 'int main(void) { return 0; }\n');
+  assert.strictEqual(op('files', { path: work + '/blink/build/app.hex' }).text, ':00000001FF\n');
+  const bin = op('files', { path: work + '/blink/build/app.bin' });
+  assert.deepStrictEqual([bin.binary, bin.text, bin.size], [true, undefined, 5]);
+  const big = op('files', { path: work + '/blink/big.txt' });
+  assert.deepStrictEqual([big.big, big.text], [true, undefined]);
+  const st = op('files', { path: work + '/blink/main.c', stat: true });
+  assert.deepStrictEqual([st.real, st.dir, st.size, st.text], [fs.realpathSync(path.join(work, 'blink', 'main.c')), false, 29, undefined]);
+  // 外面的：绝对路径、../ 跳出去、软链接指到外面
+  for (const p of ['/etc/passwd', work + '/../outside.txt', '../outside.txt', work + '/link.txt', work + '/up/outside.txt', work + '/up', work + 'x/a']) {
+    assert.strictEqual(op('files', { path: p }).error, 'outside', p);
+  }
+  assert.strictEqual(op('files', { path: work + '/nope.c' }).error, 'not_found');
+});
+
+test('对话改名、删除（连同每一轮的记录）；还在进行中的不让删', () => {
+  const { xin, op } = agentEnv();
+  const sess = path.join(xin, 'sessions'), runs = path.join(xin, 'runs');
+  fs.mkdirSync(sess, { recursive: true }); fs.mkdirSync(runs, { recursive: true });
+  const mkSess = (sid, run, done) => {
+    fs.writeFileSync(path.join(sess, sid + '.json'), JSON.stringify({ sid, agent: 'codex', title: '老名字', runs: [run], created: 1, updated: 1 }));
+    fs.writeFileSync(path.join(runs, run + '.jsonl'), JSON.stringify({ t: 'user', text: '你好' }) + '\n' + (done ? JSON.stringify({ t: 'done', ok: true }) + '\n' : ''));
+    fs.writeFileSync(path.join(runs, run + '.json'), JSON.stringify({ run, sid, started: Date.now(), pid: process.pid }));
+  };
+  mkSess('sdone00001', 'rdone00001', true);
+  mkSess('sbusy00001', 'rbusy00001', false);
+  assert.strictEqual(op('rename', { sid: 'sdone00001', title: '  点灯\n程序  ' }).session.title, '点灯 程序');
+  assert.strictEqual(op('sessions').sessions.find(s => s.sid === 'sdone00001').title, '点灯 程序');
+  assert.strictEqual(op('rename', { sid: 'sdone00001', title: '   ' }).error, 'empty');
+  assert.strictEqual(op('rename', { sid: '../x', title: 'a' }).error, 'bad_sid');
+  assert.strictEqual(op('rename', { sid: 'snone00001', title: 'a' }).error, 'no_session');
+  assert.strictEqual(op('forget', { sid: 'sbusy00001' }).error, 'busy');
+  assert.ok(fs.existsSync(path.join(sess, 'sbusy00001.json')));
+  assert.deepStrictEqual(op('forget', { sid: 'sdone00001' }), { ok: true });
+  assert.deepStrictEqual(['sdone00001.json', 'rdone00001.jsonl', 'rdone00001.json'].map(f => fs.existsSync(path.join(f[0] === 's' ? sess : runs, f))), [false, false, false]);
+  assert.deepStrictEqual(op('sessions').sessions.map(s => s.sid), ['sbusy00001']);
+  assert.deepStrictEqual(op('forget', { sid: 'sdone00001' }), { ok: true, already: true });
+  assert.strictEqual(op('forget', { sid: '../../etc' }).error, 'bad_sid');
+});
+
+test('设定里教了：STM32 空工程怎么编译、文件写完整路径、考考我怎么出题', async () => {
+  const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
+  const p = systemPrompt('');
+  assert.ok(p.includes('/stm32-template') && p.includes('make') && p.includes('build/app.hex') && p.includes('setup-stm32.sh'));
+  assert.ok(p.includes('小芯的文件') && p.includes('完整路径'));
+  assert.ok(p.includes('考考我') && p.includes('一次一道') && p.includes('xin remember'));
+});
+
+test('STM32 环境脚本：语法对、头文件版本固定、不用 nosys.specs、带 syscalls.c、自己的 main.c 不覆盖', () => {
+  const { spawnSync } = require('node:child_process');
+  const f = path.join(__dirname, '../scripts/vm/setup-stm32.sh');
+  assert.strictEqual(spawnSync('sh', ['-n', f]).status, 0);
+  const s = fs.readFileSync(f, 'utf8');
+  assert.match(s, /cmsis_device_f1\/v\d+\.\d+\.\d+/);
+  assert.match(s, /CMSIS_5\/\d+\.\d+\.\d+/);
+  assert.ok(!s.includes('nosys.specs'));
+  assert.ok(s.includes('cat > "$T/syscalls.c"') && s.includes('_sbrk') && s.includes('__attribute__((weak))'));
+  assert.ok(s.includes('[ -f "$T/main.c" ] ||'));
+  assert.ok(s.includes('LENGTH = 512K') && s.includes('LENGTH = 64K'));
+});
