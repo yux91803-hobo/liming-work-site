@@ -68,6 +68,14 @@ XIN_FILES = {
     W + '/blink/build/app.bin': {'path': W + '/blink/build/app.bin', 'dir': False, 'work': W, 'size': 876, 'mtime': 1762214400000, 'binary': True},
 }
 
+XIN_MOVE = {'name': '打招呼', 'frames': [{'armR': 'up', 'face': 'hap', 't': 250}, {'armR': 'wave', 'face': 'hap', 't': 250}, {'armR': 'up', 't': 250}]}
+XIN_BOND = {'score': 52, 'level': 2, 'name': '好朋友', 'next': 80, 'log': [{'at': 1762214400000, 'd': 1, 'why': '陪我聊天'}, {'at': 1762214300000, 'd': -1, 'why': '你凶我'}]}
+XIN_LIVE_BOND = [
+    [{'t': 'user', 'text': '学个转圈'}, {'t': 'text', 'text': '好，我编一个。'}],
+    [{'t': 'move', 'name': '转圈', 'frames': [{'face': 'side', 't': 200}, {'face': 'back', 't': 200}, {'face': 'side', 'sx': 1, 't': 200}]},
+     {'t': 'bond', 'd': 2, 'why': '你教我新动作', 'score': 54, 'level': 2, 'name': '好朋友', 'next': 80, 'log': []},
+     {'t': 'text', 'text': '学会啦！'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 3000}],
+]
 import base64
 PUSH_KEY = base64.urlsafe_b64encode(b'\x04' + bytes(range(64))).decode().rstrip('=')
 # 浏览器里的朗读、推送都换成假的：记下念了什么、订阅了什么
@@ -95,7 +103,8 @@ FAKE_PUSH = """
   }
 """
 
-async def xin_mock(pg, authed=False):
+async def xin_mock(pg, authed=False, live=None):
+    live = live or XIN_LIVE
     st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': [], 'mem': '# 小芯的记事本\n\n- 2026-11-04：用户在学定时器\n',
           'greet': None, 'daily': '- 看看网关今天签到成没成，没成就补签\n', 'daily_args': None, 'renamed': None, 'forgot': None, 'download': None,
           'push_sub': None, 'push_unsub': None, 'push_test': 0, 'history_sid': None}
@@ -119,6 +128,11 @@ async def xin_mock(pg, authed=False):
         if op == 'wake': return await ok({'ok': True, 'data': {'state': 'running', 'action': 'none'}})
         if op == 'memory': return await ok({'ok': True, 'data': {'text': st['mem'], 'size': len(st['mem'])}})
         if op == 'greet': return await ok({'ok': True, 'data': st['greet'] or {'warming': False}})
+        if op == 'bond': return await ok({'ok': True, 'data': st.get('bond') or {'score': 0, 'level': 0, 'name': '刚认识', 'next': 15, 'log': []}})
+        if op == 'bond_play':
+            st['played'] = args
+            return await ok({'ok': True, 'data': {'delta': 1, 'score': 53, 'info': dict(XIN_BOND, score=53)}})
+        if op == 'moves': return await ok({'ok': True, 'data': {'moves': []}})
         if op == 'daily_get': return await ok({'ok': True, 'data': {'text': st['daily'], 'last': {'date': '2026-11-04', 'run': 'rdaily00001', 'sid': 'shist00001', 'ok': True}, 'done': None, 'today': '2026-11-04'}})
         if op == 'daily_set':
             st['daily'] = args.get('text', '')
@@ -151,9 +165,9 @@ async def xin_mock(pg, authed=False):
             st['sent'] = args
             return await ok({'ok': True, 'data': {'sid': 'snew000001', 'run': 'rlive00001', 'agent': args.get('agent') or 'codex'}})
         if op == 'poll':
-            i = min(st['polls'], len(XIN_LIVE) - 1); st['polls'] += 1
-            evs = XIN_LIVE[i] if st['polls'] <= len(XIN_LIVE) else []
-            return await ok({'ok': True, 'data': {'events': evs, 'off': args.get('off', 0) + len(evs), 'done': st['polls'] >= len(XIN_LIVE)}})
+            i = min(st['polls'], len(live) - 1); st['polls'] += 1
+            evs = live[i] if st['polls'] <= len(live) else []
+            return await ok({'ok': True, 'data': {'events': evs, 'off': args.get('off', 0) + len(evs), 'done': st['polls'] >= len(live)}})
         return await ok({'ok': False, 'state': 'error', 'msg': 'mock'})
     await pg.route('**/api/xin/**', handle)
     return st
@@ -1149,6 +1163,35 @@ async def main():
         await pf.click('.xin-ask-x:has-text("考考我")'); await pf.wait_for_timeout(500)
         check('小芯旁边的输入框有「考考我」：点了框收起，发「考考我」', not await pf.evaluate("!!document.querySelector('.xin-ask')") and (xf['sent'] or {}).get('text') == '考考我', xf['sent'])
         await pf.context.close()
+        # 学会的新动作、好感度
+        pm = await page(b)
+        xm = await xin_mock(pm, authed=True, live=XIN_LIVE_BOND)
+        xm['greet'] = {'warming': False, 'bond': XIN_BOND, 'moves': [XIN_MOVE]}
+        xm['bond'] = XIN_BOND
+        await pm.goto(BASE + '/'); await pm.wait_for_function("LimingXin.learned.length === 1", timeout=10000)
+        await pm.wait_for_function("LimingXin.mode === 'idle'", timeout=8000)
+        items = await pm.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
+        await pm.click('.xin-bag .xin-it:has-text("新动作")'); await pm.wait_for_timeout(150)
+        st = await pm.evaluate("[LimingXin.mode, (document.querySelector('.xin-say') || {}).textContent]")
+        check('新动作：打开网页时学会小芯编的动作，背包里「新动作」点了就做，头上说名字', '新动作' in items and st == ['play', '打招呼'], (items, st))
+        rb = await pm.evaluate("(() => { const r = [LimingXin.rebel]; LimingXin.obedient = false; r.push(LimingXin.rebel); LimingXin.bond(0); r.push(LimingXin.rebel); LimingXin.bond(3); r.push(LimingXin.rebel); LimingXin.obedient = true; r.push(LimingXin.rebel); return r; })()")
+        check('好感度：越熟越听话（叛逆概率 刚认识 0.3 → 好朋友 0.14 → 最好的朋友 0.08），测试里一直不叛逆', rb == [0, 0.14, 0.3, 0.08, 0], rb)
+        await pm.wait_for_function("LimingXin.mode === 'idle'", timeout=8000)
+        await pm.evaluate("LimingXin.bag()"); await pm.click('.xin-bag .xin-it:has-text("饼干")'); await pm.wait_for_timeout(400)
+        check('好感度：在网页上喂小芯吃饼干，告诉它的电脑（加好感）', xm.get('played') == {'kind': 'cookie'}, xm.get('played'))
+        await pm.evaluate("LimingXinChat.open()"); await pm.wait_for_selector('.xc.show')
+        await pm.click('.xc-list-b'); await pm.wait_for_selector('.xc-bond-b')
+        bt = await pm.text_content('.xc-bond-b')
+        await pm.click('.xc-bond-b'); await pm.wait_for_timeout(150)
+        logs = await pm.evaluate("[...document.querySelectorAll('.xc-bond-log li')].map(l => l.textContent)")
+        check('对话列表上面显示关系和好感度，点开看最近的变化', bt.startswith('♥♥♥♡ 好朋友 · 好感度 5') and '升一级' in bt and len(logs) == 2 and '+1陪我聊天' in logs[0] and '-1你凶我' in logs[1], (bt, logs))
+        await pm.click('.xc-new-b'); await pm.wait_for_selector('.xc-hello')
+        await pm.fill('.xc-row textarea', '学个转圈'); await pm.keyboard.press('Enter')
+        await pm.wait_for_selector('.xc-done', timeout=8000); await pm.wait_for_timeout(200)
+        notes = await pm.evaluate("[...document.querySelectorAll('.xc-note')].map(n => n.textContent)")
+        st = await pm.evaluate("[LimingXin.learned, LimingXinChat.state.bond.score]")
+        check('聊天里小芯学会新动作（马上教给页面上的小芯）、好感度 +2，面板里各留一行', '✻ 小芯学会了新动作：转圈' in notes and '♥ 好感度 +2：你教我新动作' in notes and st == [['打招呼', '转圈'], 54], (notes, st))
+        await pm.context.close()
         # 朗读回答、做完提醒、通知点进来的 #xin=<对话>
         pv = await page(b)
         await pv.context.grant_permissions(['notifications'], origin=BASE)

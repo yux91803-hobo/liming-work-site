@@ -12,7 +12,8 @@
      ping     {}                   看看 claude / codex 在不在
    内部：
      run <run>                     后台真正跑 AI 的进程（send 起的），把输出整理成事件写进 runs/<run>.jsonl
-     xin <动作> [参数]              给 AI 用的命令：让网页上的小芯做动作（xin dance、xin say 你好）；xin remember 一句话 记到小芯的记事本里
+     xin <动作> [参数]              给 AI 用的命令：让网页上的小芯做动作（xin dance、xin say 你好）；xin remember 一句话 记到小芯的记事本里；
+                                   xin move …（编新动作、做新动作）；xin bond +1 理由（好感度）
      memory   {}                   读小芯的记事本（长期记忆）；memory_set {text} 整本改写（网站上「小芯的记事本」里改）
      daily    {force?}             按每日任务清单开一轮（网站后台每天定时调；今天做过就跳过，force 再做一遍）
      daily_get / daily_set {text}  读 / 改每日任务清单
@@ -22,6 +23,8 @@
                                    只认 WORK 里面的（软链接指到外面的也不行）。stat：只要大小和真实路径（网站下载前用来核对）
      push_key {}                   做完提醒（Web Push）的公钥（VAPID，第一次用时在这里生成，私钥不出这台电脑）
      push_sub {sub, ua?}           记下一个浏览器的推送订阅；push_unsub {endpoint} 去掉；push_test {} 给每个订阅发一条试试
+     moves    {}                   小芯自己编的新动作（xin move add 记下的）
+     bond     {}                   好感度：分数、关系、最近的变化；bond_play {kind} 网页上喂它、陪它玩（一天最多 +3）
    内部：warm                       预热：发一个很短的请求，把刚睡醒后第一下的卡顿先吃掉（不留会话）
 
    AI 在这台云电脑里是完全放权的（--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox），
@@ -168,9 +171,108 @@ export function systemPrompt(mem) {
     '你有一份每日任务清单（文件 ' + DAILY_FILE() + '）。每天北京时间 9:10 左右你会被叫醒按清单做一遍（没做成 21:10 再来一次）。用户让你「每天做什么」，就写进这份清单（一条一行，写清楚怎么做、怎么确认做成了）；别自己用 cron 定时，电脑睡着的时候 cron 不会跑。',
     '你的电脑里装好了 STM32 的编译工具（arm-none-eabi-gcc）。' + TEMPLATE() + ' 是 STM32F103ZET6 的空工程，写法和学习台一样（#include "stm32f10x.h"，寄存器名来自 ST 官方头文件，printf、malloc、中断都能用）。要编译程序就复制一份（cp -r ' + TEMPLATE() + ' ' + WORK + '/起个英文名），改 main.c（多个 .c 放同一目录），在那个目录里 make，生成 build/app.hex（烧录用）。空工程不见了就跑 sh ' + path.join(BASE, 'setup-stm32.sh') + ' 重新装。',
     '用户在网页上「小芯的文件」里能看到你电脑里 ' + WORK + ' 下面的文件，能预览、能下载到手机或电脑上。要给用户的东西（代码、.hex、文档）都放在 ' + WORK + ' 下面；回答里提到文件就写完整路径（比如 `' + WORK + '/blink/build/app.hex`），用户点一下就能打开或下载。编译好了一定告诉用户 .hex 的完整路径。',
+    '你能自己编新动作：`xin move help` 看怎么写（一串姿势帧），`xin move add 名字 帧` 学会以后网页上的小芯就会做，背包里也有；用户让你学个动作、或者你想表达一个现有动作表达不了的心情时用。已经会的：' + (readMoves().map(m => m.name).join('、') || '还没有') + '。',
+    bondPart(),
     '用户说「考考我」时：结合记事本里写的他在学什么、哪里老出错，还有他正在看的页面，出一道题（选择题、填空、读代码说结果、找错都行），一次一道，先别给答案；等他答了再说对不对、讲清楚为什么，然后问要不要下一道。答错或者说不会的知识点用 xin remember 记下来（比如「定时器 PSC/ARR 算不清」），以后多考；答对了可以 xin happy。',
     memoryPart(mem)
   ].join('\n');
+}
+
+/* ---------- 学会新动作 ----------
+   小芯可以自己编动作：一串「姿势帧」，存在 moves.json（最多 30 个）。网页上的小芯会学会：背包里「新动作」挨个做，闲着时偶尔做一个。
+   命令：xin move add 名字 '<JSON 帧数组>'、xin move 名字（让网页上的小芯做一遍）、xin move list、xin move rm 名字、xin move help。
+   帧只认 MOVE_ENUM / MOVE_NUM 里的字段和取值（数字超出范围就截到边上），别的一律报错；网页那边（mascot.js 的 learn）还会再查一遍。 */
+export const MOVE_ENUM = {
+  armL: ['out', 'swingF', 'swingB', 'up', 'wave', 'hold', 'back', 'down', 'crossA', 'crossB'],
+  legs: ['stand', 'walk', 'tuck', 'dangle'],
+  face: ['eyes', 'blink', 'hap', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side']
+};
+MOVE_ENUM.armR = MOVE_ENUM.armL;
+export const MOVE_NUM = { t: [60, 1500], b: [0, 2], dy: [-6, 0], sx: [-1, 1], lx: [-1, 1], ly: [-1, 1], lp: [0, 3], mouth: [0, 2] };
+const MOVES_F = () => path.join(BASE, 'moves.json');
+const MOVES_MAX = 30, FRAMES_MAX = 48, MOVE_MS_MAX = 15000;
+export function cleanMove(name, frames) {
+  name = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 12);
+  if (!name) return { error: '要给动作起个名字（12 个字以内）' };
+  if (!Array.isArray(frames) || !frames.length) return { error: '帧要是一个 JSON 数组，比如 [{"armR":"wave","t":200}]' };
+  if (frames.length > FRAMES_MAX) return { error: '最多 ' + FRAMES_MAX + ' 帧' };
+  const out = []; let total = 0;
+  for (const f of frames) {
+    if (!f || typeof f !== 'object' || Array.isArray(f)) return { error: '每一帧都要是一个对象' };
+    const g = {};
+    for (const k of Object.keys(f)) {
+      const v = f[k];
+      if (MOVE_ENUM[k]) { if (!MOVE_ENUM[k].includes(v)) return { error: k + ' 只能是：' + MOVE_ENUM[k].join(' / ') }; g[k] = v; }
+      else if (MOVE_NUM[k]) { if (typeof v !== 'number' || !Number.isFinite(v)) return { error: k + ' 要是数字' }; g[k] = Math.round(Math.min(MOVE_NUM[k][1], Math.max(MOVE_NUM[k][0], v))); }
+      else return { error: '不认识的字段：' + k + '（能用的：' + Object.keys(MOVE_ENUM).concat(Object.keys(MOVE_NUM)).join(' ') + '）' };
+    }
+    if (!g.t) g.t = 200;
+    total += g.t; out.push(g);
+  }
+  if (total > MOVE_MS_MAX) return { error: '整个动作最长 15 秒（现在 ' + (total / 1000).toFixed(1) + ' 秒）' };
+  return { name, frames: out };
+}
+export function readMoves() { const l = readJ(MOVES_F(), []); return Array.isArray(l) ? l.filter(m => m && m.name && Array.isArray(m.frames)) : []; }
+function writeMoves(l) { mk(BASE); writeJ(MOVES_F(), l); }
+const MOVE_HELP = [
+  '用法：',
+  "  xin move add 名字 '<JSON 帧数组>'   学一个新动作（同名的会覆盖），学会以后网页上的小芯马上做一遍",
+  '  xin move 名字                      让网页上的小芯做这个动作',
+  '  xin move list / xin move rm 名字',
+  '每一帧是一个对象，没写的字段用平时的样子；t 是这一帧停多久（毫秒，60~1500，默认 200）。能用的字段：',
+  '  armL / armR（左手 / 右手）：' + MOVE_ENUM.armL.join(' '),
+  '  legs（腿）：' + MOVE_ENUM.legs.join(' ') + '；lp（走路时迈哪条腿 0~3）',
+  '  face（脸）：' + MOVE_ENUM.face.join(' '),
+  '  b（往下蹲 0~2）、dy（往上跳 -6~0）、sx（左右晃 -1~1）、lx / ly（眼睛往哪看 -1~1）、mouth（嘴 0 没有 / 1 合上 / 2 张开）',
+  '最多 48 帧、一共 15 秒。例子（挥手打招呼）：',
+  `  xin move add 打招呼 '[{"armR":"up","face":"hap","t":250},{"armR":"wave","face":"hap","t":250},{"armR":"up","face":"hap","t":250},{"armR":"wave","face":"hap","mouth":2,"t":400}]'`
+].join('\n');
+
+/* ---------- 好感度 ----------
+   bond.json：{score 0~200, seen 上次见面, log 最近 20 次变化, days 每天各类加了多少}。
+   聊天一句 +1（一天最多 +5）；网页上喂它、陪它玩 +1（一天最多 +3）；每天第一次见面 +1；
+   小芯自己觉得被暖到 / 被凶了：xin bond +2 理由 / xin bond -1 理由（一次最多 ±3，一天合计最多 6）；
+   超过 3 天没来，下次见面时按多出来的天数每天 -2。关系：0 刚认识、15 熟悉、40 好朋友、80 最好的朋友。 */
+const BOND_F = () => path.join(BASE, 'bond.json');
+export const BOND_LEVELS = [[0, '刚认识'], [15, '熟悉'], [40, '好朋友'], [80, '最好的朋友']];
+const BOND_CAP = { chat: 5, play: 3, visit: 1, ai: 6 }, BOND_MAX = 200;
+function dayOf(t) { return new Date(t + 8 * 3600e3).toISOString().slice(0, 10); }
+export function bondLevel(score) {
+  let i = 0;
+  BOND_LEVELS.forEach((l, j) => { if (score >= l[0]) i = j; });
+  return { level: i, name: BOND_LEVELS[i][1], next: BOND_LEVELS[i + 1] ? BOND_LEVELS[i + 1][0] : null };
+}
+export function bondRead() {
+  const b = readJ(BOND_F());
+  return b && typeof b.score === 'number' ? Object.assign({ log: [], days: {} }, b) : { score: 0, seen: 0, log: [], days: {} };
+}
+function bondLog(b, d, why, now) { b.log.push({ at: now, d, why: String(why || '').replace(/\s+/g, ' ').trim().slice(0, 40) }); b.log = b.log.slice(-20); }
+// kind：chat / play / visit / ai。返回这次实际加减了多少（到了当天上限就是 0）
+export function bondAdd(kind, d, why, now = Date.now()) {
+  const b = bondRead(), day = dayOf(now), used = (b.days[day] = b.days[day] || {});
+  // 好久没来：这次见面先按多出来的天数扣（只扣一次）
+  if (kind !== 'ai' && b.seen) {
+    const gone = Math.floor((now - b.seen) / 86400e3);
+    if (gone > 3) { const cut = Math.min(b.score, (gone - 3) * 2); if (cut > 0) { b.score -= cut; bondLog(b, -cut, gone + ' 天没来看我', now); } }
+  }
+  if (kind !== 'ai') b.seen = now;
+  let delta = 0;
+  if (kind === 'ai') delta = Math.sign(d) * Math.min(Math.abs(d), 3, Math.max(0, BOND_CAP.ai - (used.ai || 0)));
+  else delta = Math.max(0, Math.min(d, BOND_CAP[kind] - (used[kind] || 0)));
+  delta = Math.max(-b.score, Math.min(BOND_MAX - b.score, delta));
+  if (delta) { used[kind] = (used[kind] || 0) + Math.abs(delta); b.score += delta; bondLog(b, delta, why, now); }
+  for (const k of Object.keys(b.days)) if (k < dayOf(now - 7 * 86400e3)) delete b.days[k];
+  mk(BASE); writeJ(BOND_F(), b);
+  return { delta, score: b.score };
+}
+export function bondInfo() {
+  const b = bondRead();
+  return Object.assign({ score: b.score }, bondLevel(b.score), { log: b.log.slice(-8).reverse() });
+}
+function bondPart() {
+  const i = bondInfo();
+  return '你和用户现在的关系：' + i.name + '（好感度 ' + i.score + '）。说话的亲近程度跟着关系走：刚认识时礼貌、有点害羞；熟悉了随意一点、会开玩笑；好朋友会撒娇、记挂对方；最好的朋友无话不谈。' +
+    '用户对你好、认真学习有进步、答对你出的题时，可以用 `xin bond +1 理由` 加好感（一次最多 +3）；被敷衍、被凶时可以 `xin bond -1 理由`。别每句都用，一天合计最多 6。';
 }
 
 /* ---------- 做完提醒：Web Push ----------
@@ -551,6 +653,7 @@ const ops = {
       s = { sid: rid('s'), agent, title: text.replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
     }
     const ctxLabel = String(a.ctxLabel || '').slice(0, 160);
+    try { bondAdd('chat', 1, '陪我聊天'); } catch { /* 好感度记不下来不影响聊天 */ }
     const run = launch(s, { text: forAgent(text, a.context), effort: resolveEffort(a.effort, text) },
       ctxLabel ? { t: 'user', text, ctx: ctxLabel, at: Date.now() } : { t: 'user', text, at: Date.now() });
     return { sid: s.sid, run, agent: s.agent, title: s.title };
@@ -584,7 +687,15 @@ const ops = {
   greet() {
     const warming = maybeWarm();
     const g = getNext();
-    return g ? Object.assign({ warming }, g) : { warming };
+    let bond = null;
+    try { bondAdd('visit', 1, '今天来看我了'); bond = bondInfo(); } catch { /* 记不下来就不带 */ }
+    return Object.assign({ warming, bond, moves: readMoves() }, g || {});
+  },
+  moves() { return { moves: readMoves() }; },
+  bond() { return bondInfo(); },
+  bond_play(a) {
+    const why = { cookie: '喂我吃饼干', batt: '给我吸电池', ball: '陪我玩球', led: '陪我玩 LED', phones: '给我戴耳机', swing: '陪我荡秋千', dance: '看我跳舞' }[a.kind] || '陪我玩';
+    return Object.assign(bondAdd('play', 1, why), { info: bondInfo() });
   },
   push_key() {
     return { key: vapidKeys().publicKey, subs: readSubs().length };
@@ -699,6 +810,43 @@ function xinCmd(argv) {
     console.log('下次见面会说：' + g.text);
     return 0;
   }
+  if (act === 'move') {
+    const sub = argv[1] || '', run = process.env.XIN_RUN, live = okId(run, 'r') && fs.existsSync(runF(run));
+    if (!sub || sub === 'help' || sub === '-h' || sub === '--help') { console.log(MOVE_HELP); return sub ? 0 : 2; }
+    const list = readMoves();
+    if (sub === 'list') { console.log(list.length ? list.map(m => m.name + '（' + m.frames.length + ' 帧）').join('\n') : '还没有学过新动作'); return 0; }
+    if (sub === 'rm') {
+      const name = argv.slice(2).join(' ').trim(), left = list.filter(m => m.name !== name);
+      if (left.length === list.length) { console.log('没有叫「' + name + '」的动作'); return 1; }
+      writeMoves(left); console.log('忘掉了：' + name); return 0;
+    }
+    if (sub === 'add') {
+      let frames;
+      try { frames = JSON.parse(argv.slice(3).join(' ')); } catch (e) { console.log('帧不是合法的 JSON：' + e.message + '\n' + MOVE_HELP); return 2; }
+      const m = cleanMove(argv[2], frames);
+      if (m.error) { console.log(m.error); return 2; }
+      const left = list.filter(x => x.name !== m.name);
+      if (left.length >= MOVES_MAX) { console.log('最多记 ' + MOVES_MAX + ' 个动作，先 xin move rm 一个'); return 1; }
+      left.push({ name: m.name, frames: m.frames, at: Date.now() }); writeMoves(left);
+      if (live) emit(run, { t: 'move', name: m.name, frames: m.frames });
+      console.log('学会了：' + m.name + '（' + m.frames.length + ' 帧）' + (live ? '，网页上的小芯马上做一遍' : ''));
+      return 0;
+    }
+    const name = argv.slice(1).join(' ').trim(), m = list.find(x => x.name === name);
+    if (!m) { console.log('还没学过「' + name + '」。会的：' + (list.map(x => x.name).join('、') || '还没有') + '\n' + MOVE_HELP); return 1; }
+    if (!live) { console.log('现在没有在和网页聊天，小芯看不到'); return 1; }
+    emit(run, { t: 'xin', act: 'move', arg: m.name, frames: m.frames });
+    console.log('小芯收到：' + m.name);
+    return 0;
+  }
+  if (act === 'bond') {
+    const d = Number(argv[1]), why = argv.slice(2).join(' ').trim();
+    if (!/^[+-]?\d+$/.test(argv[1] || '') || !d || !why) { console.log('用法：xin bond +1 理由（或 -1 理由，一次最多 ±3，一天合计最多 6）'); return 2; }
+    const r = bondAdd('ai', d, why), run = process.env.XIN_RUN;
+    if (r.delta && okId(run, 'r') && fs.existsSync(runF(run))) emit(run, Object.assign({ t: 'bond', d: r.delta, why: why.slice(0, 40) }, bondInfo()));
+    console.log(r.delta ? '好感度 ' + (r.delta > 0 ? '+' : '') + r.delta + '，现在 ' + r.score + '（' + bondLevel(r.score).name + '）' : '今天的好感度已经加减够多了，这次不算（现在 ' + r.score + '）');
+    return 0;
+  }
   if (act === 'remember') {
     const t = remember(arg);
     if (!t) { console.log('用法：xin remember 要记住的一句话'); return 2; }
@@ -708,7 +856,7 @@ function xinCmd(argv) {
     return 0;
   }
   if (!act || act === '-h' || act === '--help' || !ACTS[act]) {
-    console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记事本里（xin remember 一句话）\n  next     下次见面的开场白（xin next 一句话）');
+    console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记事本里（xin remember 一句话）\n  next     下次见面的开场白（xin next 一句话）\n  move     编新动作、做新动作（xin move help）\n  bond     好感度（xin bond +1 理由）');
     return act && act !== '-h' && act !== '--help' ? 2 : 0;
   }
   const run = process.env.XIN_RUN;

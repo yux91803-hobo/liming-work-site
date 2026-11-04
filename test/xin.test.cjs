@@ -796,3 +796,92 @@ test('推送加密和 RFC 8291 附录 A 的例子逐字节一样（浏览器那�
     mlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPT
     pK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN`.replace(/\s+/g, ''));
 });
+
+/* ---------- 学会新动作、好感度 ---------- */
+test('新动作：只认能画出来的字段和取值，数字截到范围里，没写 t 用 200；名字、帧数、总时长都有上限', async () => {
+  const { cleanMove } = await load('../site/xin/vm-agent.mjs');
+  const ok = cleanMove('  挥手  打招呼 ', [{ armR: 'wave', face: 'hap', dy: -9, sx: 0.6 }, { armR: 'up', t: 5000 }]);
+  assert.deepStrictEqual(ok, { name: '挥手 打招呼', frames: [{ armR: 'wave', face: 'hap', dy: -6, sx: 1, t: 200 }, { armR: 'up', t: 1500 }] });
+  assert.strictEqual(cleanMove('超过十二个字的动作名字会被截断', [{}]).name, '超过十二个字的动作名字会');
+  assert.match(cleanMove('', [{}]).error, /名字/);
+  assert.match(cleanMove('a', {}).error, /数组/);
+  assert.match(cleanMove('a', [{ armR: 'fly' }]).error, /armR 只能是/);
+  assert.match(cleanMove('a', [{ item: 'cookie' }]).error, /不认识的字段：item/);
+  assert.match(cleanMove('a', [{ fn: 'alert(1)' }]).error, /不认识的字段/);
+  assert.match(cleanMove('a', [{ t: '100' }]).error, /t 要是数字/);
+  assert.match(cleanMove('a', Array(49).fill({})).error, /最多 48 帧/);
+  assert.match(cleanMove('a', Array(11).fill({ t: 1500 })).error, /最长 15 秒/);
+});
+
+test('新动作：xin move add 学会（网页马上做一遍）、xin move 名字 让网页做、list、rm；坏 JSON 给出用法', () => {
+  const { execFileSync, spawnSync } = require('node:child_process');
+  const { xin, op } = agentEnv();
+  const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
+  const runs = path.join(xin, 'runs'); fs.mkdirSync(runs, { recursive: true });
+  const run = 'rmove000001'; fs.writeFileSync(path.join(runs, run + '.jsonl'), '');
+  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_RUN: run });
+  const xinCmd = (...a) => spawnSync(process.execPath, [agent, 'xin', 'move', ...a], { env, encoding: 'utf8' });
+  const add = xinCmd('add', '打招呼', '[{"armR":"up","face":"hap","t":250},{"armR":"wave","t":250}]');
+  assert.strictEqual(add.status, 0, add.stdout);
+  assert.match(add.stdout, /学会了：打招呼（2 帧），网页上的小芯马上做一遍/);
+  assert.strictEqual(xinCmd('add', '坏的', '[{armR:up}]').status, 2);
+  assert.match(xinCmd('add', '坏的', '[{"armR":"fly"}]').stdout, /armR 只能是/);
+  assert.match(xinCmd('help').stdout, /xin move add 名字/);
+  assert.match(xinCmd('list').stdout, /打招呼（2 帧）/);
+  assert.strictEqual(xinCmd('打招呼').status, 0);
+  assert.strictEqual(xinCmd('不存在').status, 1);
+  const evs = fs.readFileSync(path.join(runs, run + '.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepStrictEqual(evs.map(e => e.t + ':' + (e.name || e.arg)), ['move:打招呼', 'xin:打招呼']);
+  assert.deepStrictEqual(evs[1].frames, [{ armR: 'up', face: 'hap', t: 250 }, { armR: 'wave', t: 250 }]);
+  assert.deepStrictEqual(op('moves').moves.map(m => m.name), ['打招呼']);
+  assert.strictEqual(xinCmd('rm', '打招呼').status, 0);
+  assert.deepStrictEqual(op('moves').moves, []);
+  void execFileSync;
+});
+
+test('好感度：聊天一天最多 +5、陪玩最多 +3、每天第一次见面 +1；小芯自己加减一次最多 3、一天合计 6；好久没来会掉；分等级', async () => {
+  const { bondAdd, bondInfo, bondLevel, BOND_LEVELS } = await load('../site/xin/vm-agent.mjs');
+  fs.rmSync(path.join(process.env.XIN_HOME, 'bond.json'), { force: true });
+  const day = Date.UTC(2026, 10, 4, 2);   // 北京时间 11-04 10:00
+  for (let i = 0; i < 7; i++) bondAdd('chat', 1, '陪我聊天', day + i);
+  assert.strictEqual(bondInfo().score, 5);
+  for (let i = 0; i < 5; i++) bondAdd('play', 1, '喂我吃饼干', day + 10 + i);
+  assert.strictEqual(bondInfo().score, 8);
+  bondAdd('visit', 1, '今天来看我了', day + 20); bondAdd('visit', 1, '今天来看我了', day + 21);
+  assert.strictEqual(bondInfo().score, 9);
+  assert.strictEqual(bondAdd('ai', 5, '你夸我了', day + 30).delta, 3);
+  assert.strictEqual(bondAdd('ai', -2, '你凶我', day + 31).delta, -2);
+  assert.strictEqual(bondAdd('ai', 3, '答对了', day + 32).delta, 1, '一天合计 6');
+  assert.strictEqual(bondAdd('ai', 1, '再加', day + 33).delta, 0);
+  assert.strictEqual(bondInfo().score, 11);
+  // 第二天：额度重新算
+  assert.strictEqual(bondAdd('chat', 1, '陪我聊天', day + 86400e3).delta, 1);
+  // 10 天没来：多出来的 7 天每天 -2（只扣一次），然后这次见面 +1
+  const back = day + 11 * 86400e3;
+  bondAdd('visit', 1, '今天来看我了', back);
+  const info = bondInfo();
+  assert.strictEqual(info.score, 12 - 14 < 0 ? 1 : 12 - 14 + 1);
+  assert.deepStrictEqual(info.log.slice(0, 2).map(l => l.why), ['今天来看我了', '10 天没来看我']);
+  assert.strictEqual(bondAdd('visit', 1, '今天来看我了', back + 1000).delta, 0);
+  assert.deepStrictEqual(BOND_LEVELS.map(l => bondLevel(l[0]).name), ['刚认识', '熟悉', '好朋友', '最好的朋友']);
+  assert.deepStrictEqual([bondLevel(14).level, bondLevel(15).level, bondLevel(79).next, bondLevel(200).next], [0, 1, 80, null]);
+});
+
+test('好感度、新动作进了设定；greet 顺便带回去；xin bond 在聊天里留一条', async () => {
+  const { spawnSync } = require('node:child_process');
+  const { xin, op } = agentEnv();
+  const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
+  const g = op('greet');
+  assert.deepStrictEqual([g.bond.score, g.bond.name, g.moves], [1, '刚认识', []]);
+  const runs = path.join(xin, 'runs'); fs.mkdirSync(runs, { recursive: true });
+  fs.writeFileSync(path.join(runs, 'rbond000001.jsonl'), '');
+  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_RUN: 'rbond000001' });
+  assert.strictEqual(spawnSync(process.execPath, [agent, 'xin', 'bond', 'abc'], { env, encoding: 'utf8' }).status, 2);
+  const r = spawnSync(process.execPath, [agent, 'xin', 'bond', '+2', '答对了定时器的题'], { env, encoding: 'utf8' });
+  assert.match(r.stdout, /好感度 \+2，现在 3（刚认识）/);
+  const ev = JSON.parse(fs.readFileSync(path.join(runs, 'rbond000001.jsonl'), 'utf8').trim());
+  assert.deepStrictEqual([ev.t, ev.d, ev.why, ev.score, ev.name], ['bond', 2, '答对了定时器的题', 3, '刚认识']);
+  assert.strictEqual(op('bond_play', { kind: 'cookie' }).info.log[0].why, '喂我吃饼干');
+  const p = spawnSync(process.execPath, ['--input-type=module', '-e', `import { systemPrompt } from ${JSON.stringify(require('node:url').pathToFileURL(agent).href)}; process.stdout.write(systemPrompt(''));`], { env, encoding: 'utf8' }).stdout;
+  assert.ok(p.includes('你和用户现在的关系：刚认识（好感度 4）') && p.includes('xin bond +1 理由') && p.includes('xin move help') && p.includes('已经会的：还没有'), p.slice(-600));
+});
