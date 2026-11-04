@@ -620,3 +620,179 @@ test('STM32 环境脚本：语法对、头文件版本固定、不用 nosys.spec
   assert.ok(s.includes('[ -f "$T/main.c" ] ||'));
   assert.ok(s.includes('LENGTH = 512K') && s.includes('LENGTH = 64K'));
 });
+
+/* ---------- 做完提醒（Web Push） ---------- */
+function pushDecrypt(body, uaEcdh, auth) {   // 模拟浏览器那一端：按 RFC 8291 解开
+  const crypto = require('node:crypto');
+  const salt = body.subarray(0, 16), rs = body.readUInt32BE(16), idlen = body[20], as = body.subarray(21, 21 + idlen), ct = body.subarray(21 + idlen);
+  const ikm = Buffer.from(crypto.hkdfSync('sha256', uaEcdh.computeSecret(as), Buffer.from(auth, 'base64url'), Buffer.concat([Buffer.from('WebPush: info\0'), uaEcdh.getPublicKey(), as]), 32));
+  const cek = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0'), 16));
+  const nonce = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0'), 12));
+  const d = crypto.createDecipheriv('aes-128-gcm', cek, nonce);
+  d.setAuthTag(ct.subarray(ct.length - 16));
+  const pt = Buffer.concat([d.update(ct.subarray(0, ct.length - 16)), d.final()]);
+  assert.strictEqual(pt[pt.length - 1], 2, '最后一条记录以 0x02 结尾');
+  return { rs, idlen, text: pt.subarray(0, pt.length - 1).toString() };
+}
+function fakeBrowser() {
+  const crypto = require('node:crypto');
+  const ua = crypto.createECDH('prime256v1'); ua.generateKeys();
+  return { ecdh: ua, keys: { p256dh: ua.getPublicKey().toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') } };
+}
+
+test('推送加密（RFC 8291 aes128gcm）：浏览器那端解得开；VAPID 签名验得过，aud 是推送服务的源', async () => {
+  const crypto = require('node:crypto');
+  const { pushEncrypt, vapidHeader, vapidKeys } = await load('../site/xin/vm-agent.mjs');
+  const br = fakeBrowser();
+  const msg = JSON.stringify({ title: '小芯做完了', body: '编好啦：app.hex' });
+  const out = pushDecrypt(pushEncrypt(msg, br.keys.p256dh, br.keys.auth), br.ecdh, br.keys.auth);
+  assert.deepStrictEqual(out, { rs: 4096, idlen: 65, text: msg });
+  assert.throws(() => pushEncrypt('x', 'AAAA', br.keys.auth));
+  const keys = vapidKeys();
+  assert.strictEqual(vapidKeys().publicKey, keys.publicKey, '钥匙只生成一次');
+  const h = vapidHeader('https://fcm.googleapis.com/fcm/send/abc', keys, Date.UTC(2026, 10, 4));
+  const m = /^vapid t=([^.]+)\.([^.]+)\.([^,]+), k=(.+)$/.exec(h);
+  assert.ok(m, h);
+  assert.strictEqual(m[4], keys.publicKey);
+  const raw = Buffer.from(m[4], 'base64url');
+  const pub = crypto.createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: raw.subarray(1, 33).toString('base64url'), y: raw.subarray(33).toString('base64url') }, format: 'jwk' });
+  assert.ok(crypto.verify('sha256', Buffer.from(m[1] + '.' + m[2]), { key: pub, dsaEncoding: 'ieee-p1363' }, Buffer.from(m[3], 'base64url')));
+  const claims = JSON.parse(Buffer.from(m[2], 'base64url'));
+  assert.deepStrictEqual(claims, { aud: 'https://fcm.googleapis.com', exp: Date.UTC(2026, 10, 4) / 1000 + 12 * 3600, sub: 'https://liming-work.com' });
+});
+
+test('推送订阅：只收 https 和对的钥匙；同一个地址只记一次；最多 8 个；能去掉；VAPID 私钥文件只有自己能读', () => {
+  const { xin, op } = agentEnv();
+  const k = op('push_key');
+  assert.match(k.key, /^[A-Za-z0-9_-]{87}$/);
+  assert.strictEqual(op('push_key').key, k.key);
+  assert.strictEqual(fs.statSync(path.join(xin, 'push', 'vapid.json')).mode & 0o777, 0o600);
+  const br = fakeBrowser();
+  const sub = n => ({ endpoint: 'https://push.example.com/send/' + n, keys: br.keys });
+  assert.strictEqual(op('push_sub', { sub: { endpoint: 'http://push.example.com/x', keys: br.keys } }).error, 'bad_sub');
+  assert.strictEqual(op('push_sub', { sub: { endpoint: 'https://push.example.com/x', keys: { p256dh: 'AAAA', auth: br.keys.auth } } }).error, 'bad_sub');
+  assert.strictEqual(op('push_sub', { sub: 'nope' }).error, 'bad_sub');
+  assert.strictEqual(op('push_sub', { sub: sub(1), ua: 'iPhone' }).subs, 1);
+  assert.strictEqual(op('push_sub', { sub: sub(1) }).subs, 1);
+  for (let i = 2; i <= 10; i++) op('push_sub', { sub: sub(i) });
+  const saved = JSON.parse(fs.readFileSync(path.join(xin, 'push', 'subs.json'), 'utf8'));
+  assert.deepStrictEqual(saved.map(s => s.endpoint.split('/').pop()), ['3', '4', '5', '6', '7', '8', '9', '10']);
+  assert.strictEqual(op('push_unsub', { endpoint: sub(10).endpoint }).subs, 7);
+  assert.strictEqual(op('push_key').subs, 7);
+});
+
+test('做完提醒：网页没在看时做完就推送（解得开、带标题和回答开头、点了打开那段对话），网页在看时不推；推送服务说订阅没了就删掉', async () => {
+  const http = require('node:http');
+  const { execFileSync } = require('node:child_process');
+  const got = [];
+  let reply = 201;
+  const srv = http.createServer((q, r) => { const b = []; q.on('data', c => b.push(c)); q.on('end', () => { got.push({ url: q.url, headers: q.headers, body: Buffer.concat(b) }); r.writeHead(reply); r.end(); }); });
+  await new Promise(ok => srv.listen(0, '127.0.0.1', ok));
+  const port = srv.address().port;
+  try {
+    const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-push-')), bin = path.join(home, 'fakebin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'codex'), [
+      '#!/bin/sh',
+      'echo \'{"type":"thread.started","thread_id":"th-1"}\'',
+      'sleep 1',
+      // dash 的 echo 会把 \\n 变成真换行，JSON 就断了：用 printf %s
+      'printf \'%s\\n\' \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"编好啦！\\n\\n```c\\nint main(void){}\\n```\\n烧录文件在 /data/workspace/blink/build/app.hex"}}\'',
+      'echo \'{"type":"turn.completed","usage":{}}\''
+    ].join('\n'), { mode: 0o755 });
+    const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: path.join(home, 'work'), XIN_PUSH_INSECURE: '1', PATH: bin + ':' + process.env.PATH });
+    const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
+    const br = fakeBrowser();
+    assert.strictEqual(op('push_sub', { sub: { endpoint: `http://127.0.0.1:${port}/push/a`, keys: br.keys } }).ok, true);
+    const wait = async (run, watch) => {
+      for (let i = 0; i < 80; i++) {
+        const p = watch ? op('poll', { run, off: 0 }) : JSON.parse(fs.readFileSync(path.join(home, 'xin', 'runs', run + '.jsonl'), 'utf8').trim().split('\n').pop());
+        if (watch ? p.done : p.t === 'done') return;
+        await new Promise(s => setTimeout(s, 150));
+      }
+      throw new Error('没做完');
+    };
+    // 1. 发完就没人看了：推送
+    const r1 = op('send', { agent: 'codex', text: '写个点灯程序' });
+    await wait(r1.run, false);
+    for (let i = 0; i < 40 && !got.length; i++) await new Promise(s => setTimeout(s, 100));
+    assert.strictEqual(got.length, 1);
+    const g = got[0];
+    assert.strictEqual(g.url, '/push/a');
+    assert.strictEqual(g.headers['content-encoding'], 'aes128gcm');
+    assert.strictEqual(g.headers.ttl, '86400');
+    assert.match(g.headers.authorization, /^vapid t=[^.]+\.[^.]+\.[^,]+, k=[A-Za-z0-9_-]{87}$/);
+    const msg = JSON.parse(pushDecrypt(g.body, br.ecdh, br.keys.auth).text);
+    assert.strictEqual(msg.title, '小芯做完了');
+    assert.ok(msg.body.startsWith('编好啦！') && !msg.body.includes('```') && msg.body.includes('app.hex'), msg.body);
+    assert.deepStrictEqual([msg.tag, msg.sid, msg.url], ['xin-' + r1.sid, r1.sid, '/#xin=' + r1.sid]);
+    // 2. 网页一直在取进度：不推送
+    const r2 = op('send', { sid: r1.sid, text: '再来一次' });
+    await wait(r2.run, true);
+    await new Promise(s => setTimeout(s, 600));
+    assert.strictEqual(got.length, 1, '网页在看的时候不推送');
+    // 3. 推送服务说订阅没了（410）：删掉。推送服务就在这个进程里，要用异步的 execFile，不然它答不了话
+    reply = 410;
+    const t = await new Promise((ok, no) => {
+      const c = require('node:child_process').execFile(process.execPath, [agent, 'push_test'], { env }, (e, out) => (e ? no(e) : ok(JSON.parse(out))));
+      c.stdin.end('{}');
+    });
+    assert.deepStrictEqual([t.ok, t.results[0].status], [false, 410]);
+    assert.strictEqual(op('push_key').subs, 0);
+    // 删对话时连「网页取过进度」的记号一起删
+    assert.ok(fs.existsSync(path.join(home, 'xin', 'runs', r2.run + '.seen')));
+    op('forget', { sid: r1.sid });
+    assert.ok(!fs.existsSync(path.join(home, 'xin', 'runs', r2.run + '.seen')));
+  } finally { srv.close(); }
+});
+
+test('sw.js：收到推送弹通知（标题、正文、点了去哪），点通知打开或切到网站；不拦截请求', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../site/sw.js'), 'utf8');
+  const L = {};
+  const shown = [], opened = [], posted = [];
+  const self = {
+    location: { origin: ORIGIN },
+    addEventListener: (k, f) => { L[k] = f; },
+    skipWaiting() {}, clients: { claim: () => Promise.resolve(), matchAll: () => Promise.resolve(self._wins || []), openWindow: u => { opened.push(u); return Promise.resolve(); } },
+    registration: { showNotification: (t, o) => { shown.push([t, o]); return Promise.resolve(); } }
+  };
+  new Function('self', 'URL', src)(self, URL);
+  assert.ok(!L.fetch, '不拦截请求');
+  let p;
+  L.push({ data: { json: () => ({ title: '小芯做完了', body: '编好啦', tag: 'xin-sabc12345', sid: 'sabc12345', url: '/#xin=sabc12345' }) }, waitUntil: x => { p = x; } });
+  assert.deepStrictEqual([shown[0][0], shown[0][1].body, shown[0][1].tag, shown[0][1].data], ['小芯做完了', '编好啦', 'xin-sabc12345', { url: '/#xin=sabc12345', sid: 'sabc12345' }]);
+  const click = data => new Promise(ok => L.notificationclick({ notification: { close() {}, data }, waitUntil: x => x.then(ok) }));
+  return click({ url: '/#xin=sabc12345', sid: 'sabc12345' }).then(() => {
+    assert.deepStrictEqual(opened, [ORIGIN + '/#xin=sabc12345']);
+    self._wins = [{ url: ORIGIN + '/tools/', postMessage: m => posted.push(m), focus: () => Promise.resolve('focused') }];
+    return click({ url: '/#xin=sabc12345', sid: 'sabc12345' });
+  }).then(() => {
+    assert.deepStrictEqual(posted, [{ type: 'xin-open', sid: 'sabc12345' }]);
+    assert.strictEqual(opened.length, 1, '网站开着就不再新开');
+  });
+});
+
+test('网页用到的每个 op，Worker 都放行，vm-agent 也都认识（漏一个线上就是 400 bad_op）', async () => {
+  const { OPS } = await load('../src/xin.js');
+  const chat = fs.readFileSync(path.join(__dirname, '../site/xin/chat.js'), 'utf8');
+  const used = [...new Set([...chat.matchAll(/call\('([a-z_]+)'/g)].map(m => m[1]))];
+  assert.ok(used.length > 10, used.join());
+  const missing = used.filter(op => !OPS.has(op));
+  assert.deepStrictEqual(missing, [], 'Worker 的 OPS 里少了：' + missing.join(', '));
+  const agent = fs.readFileSync(path.join(__dirname, '../site/xin/vm-agent.mjs'), 'utf8');
+  const local = new Set(['status', 'wake']);   // 这两个 Worker 自己处理，不进云电脑
+  const unknown = [...OPS].filter(op => !local.has(op) && !new RegExp('^  (async )?' + op + '\\(', 'm').test(agent));
+  assert.deepStrictEqual(unknown, [], 'vm-agent 的 ops 里没有：' + unknown.join(', '));
+});
+
+test('推送加密和 RFC 8291 附录 A 的例子逐字节一样（浏览器那边一定解得开）', async () => {
+  const { pushEncrypt } = await load('../site/xin/vm-agent.mjs');
+  const u = s => Buffer.from(s.replace(/\s+/g, ''), 'base64url');
+  const out = pushEncrypt(u('V2hlbiBJIGdyb3cgdXAsIEkgd2FudCB0byBiZSBhIHdhdGVybWVsb24'),
+    'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4', 'BTBZMqHH6r4Tts7J_aSIgg',
+    { salt: u('DGv6ra1nlYgDCS1FRnbzlw'), asPrivate: u('yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw') });
+  assert.strictEqual(out.toString('base64url'), `DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27ml
+    mlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPT
+    pK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN`.replace(/\s+/g, ''));
+});

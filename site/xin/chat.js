@@ -4,7 +4,9 @@
    接口见 src/xin.js；AI 每一步（说话、执行命令、xin 动作）都整理成事件，这里一边轮询一边画出来，同时让小芯跟着动：
    AI 在想 → 小芯坐在电脑前挠头；在执行命令 → 敲代码；xin 命令 → 照做；做完 → 开心，失败 → 难过。
    对话列表里还有：小芯的记事本、每日任务、小芯的文件（它电脑里 /data/workspace 的文件，能预览、下载）；每个对话能改名、删除。
-   回答里出现的 /data/workspace/… 路径点一下就打开那个文件。「考考我」：让小芯按你在学的出一道题。 */
+   回答里出现的 /data/workspace/… 路径点一下就打开那个文件。「考考我」：让小芯按你在学的出一道题。
+   设置（对话列表最下面）：朗读回答（浏览器自带的语音合成，小芯边念边动嘴）、做完提醒（Web Push：网页没在看时做完了发通知，
+   推送从小芯的电脑直接发出，见 vm-agent.mjs 的 pushAll；通知由 /sw.js 弹出，点了打开 #xin=<对话>）。 */
 (function () {
   'use strict';
   var API = '/api/xin/';
@@ -30,7 +32,8 @@
   function h(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function sleepMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', agent: AGENTS[ls(LS_AGENT)] ? ls(LS_AGENT) : 'codex', sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto',
+  var LS_TTS = 'lm.xin.tts';
+  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', tts: ls(LS_TTS) === '1', agent: AGENTS[ls(LS_AGENT)] ? ls(LS_AGENT) : 'codex', sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto',
     run: '', off: 0, polling: false, mine: {}, tools: {}, lastAct: 0, view: 'chat', machine: '', loadSeq: 0 };
 
   /* ---------- 请求 ---------- */
@@ -178,7 +181,7 @@
     if (!root) return;
     S.open = false; root.classList.remove('show'); document.body.classList.remove('xc-open');
     setTimeout(function () { if (!S.open) root.hidden = true; }, 220);
-    if (location.hash === '#xin') history.replaceState(null, '', location.pathname + location.search);
+    if (XIN_HASH.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
   }
 
   /* ---------- 登录 ---------- */
@@ -275,10 +278,147 @@
         li.appendChild(b); li.appendChild(more); ul.appendChild(li);
       });
       sessEl.appendChild(ul);
+      sessEl.appendChild(settings());
       var out = h('button', 'xc-link', '退出登录'); out.type = 'button'; out.addEventListener('click', logout);
       sessEl.appendChild(out);
     }, function (e) { sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
   }
+  /* ---------- 设置：朗读回答、做完提醒 ---------- */
+  function toggleRow(cls, title, desc) {
+    var row = h('div', 'xc-tg ' + cls), txt = h('div', 'xc-tg-t'), b = h('button', 'xc-sw'), note = h('p', 'xc-tg-n');
+    txt.appendChild(h('b', '', title)); txt.appendChild(h('span', '', desc));
+    b.type = 'button'; b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', 'false'); b.setAttribute('aria-label', title);
+    row.appendChild(txt); row.appendChild(b); row.appendChild(note);
+    return { row: row, btn: b, set: function (on) { b.setAttribute('aria-checked', on ? 'true' : 'false'); }, note: function (t) { note.textContent = t || ''; } };
+  }
+  function settings() {
+    var box = h('div', 'xc-set');
+    box.appendChild(h('p', 'xc-set-h', '设置'));
+    var tts = toggleRow('xc-tts', '朗读回答', '小芯做完时把回答念出来（用这台设备自带的声音）');
+    tts.set(S.tts);
+    if (!synth) { tts.btn.disabled = true; tts.note('这个浏览器不能朗读。'); }
+    tts.btn.addEventListener('click', function () { setTts(!S.tts); tts.set(S.tts); });
+    box.appendChild(tts.row);
+    var push = toggleRow('xc-push', '做完提醒', '关掉网页或切到别的应用时，小芯做完了发一条通知');
+    box.appendChild(push.row);
+    pushSetup(push);
+    return box;
+  }
+
+  /* ---------- 朗读：小芯把回答念出来 ----------
+     用浏览器自带的语音合成（手机、电脑都有，不经过网络）。iPhone 要先在一次点击里念过，之后才能自己出声，所以发消息、打开开关时先「解锁」一下。
+     Chrome 一句话念太长会断，所以按句子拆开排队念；只念回答的开头（去掉代码块、网址、路径），代码留在面板里看。 */
+  var synth = window.speechSynthesis || null, ttsUnlocked = false, talkN = 0;
+  function zhVoice() {
+    var vs = []; try { vs = synth.getVoices() || []; } catch (e) { vs = []; }
+    var zh = vs.filter(function (v) { return /^(zh[-_](CN|Hans)|cmn)/i.test(v.lang); });
+    if (!zh.length) zh = vs.filter(function (v) { return /^zh/i.test(v.lang) && !/HK|TW|yue/i.test(v.lang); });
+    var pref = [/Xiaoxiao|晓晓/i, /Xiaoyi|晓伊/i, /Tingting|婷婷/i, /Meijia|美佳/i, /Google/i];
+    for (var i = 0; i < pref.length; i++) for (var j = 0; j < zh.length; j++) if (pref[i].test(zh[j].name)) return zh[j];
+    return zh[0] || null;
+  }
+  function unlockTts() {
+    if (!synth || ttsUnlocked || !S.tts) return;
+    ttsUnlocked = true;
+    try { var u = new SpeechSynthesisUtterance(' '); u.volume = 0; synth.speak(u); } catch (e) { /* 念不了就算了 */ }
+  }
+  // 要念的话：去掉代码块、Markdown、网址，路径只念文件名，最多 6 句、160 字
+  function speechOf(t) {
+    t = mdPlain(String(t || '').replace(/```[\s\S]*?(```|$)/g, ' （代码在面板里） '))
+      .replace(/https?:\/\/\S+/g, '链接').replace(/\/data\/workspace\/(\S*\/)?([^\s/，。]+)/g, '$2').replace(/\s+/g, ' ').trim();
+    var out = [], n = 0;
+    (t.match(/[^。！？!?；;\n]+[。！？!?；;]?/g) || []).some(function (x) {
+      x = x.trim(); if (!x) return false;
+      if (n + x.length > 160 && out.length) return true;
+      out.push(x); n += x.length; return out.length >= 6;
+    });
+    return out;
+  }
+  function speak(text) {
+    if (!S.tts || !synth || !text) return;
+    var parts = Array.isArray(text) ? text : speechOf(text);
+    if (!parts.length) return;
+    try { synth.cancel(); } catch (e) { /* 没在念 */ }
+    var v = zhVoice(), x = xin(), my = ++talkN;
+    var talk = function (on) { if (my === talkN && x && x.talk) x.talk(on); };
+    parts.forEach(function (p, i) {
+      var u = new SpeechSynthesisUtterance(p);
+      u.lang = v ? v.lang : 'zh-CN'; if (v) u.voice = v; u.rate = 1.05; u.pitch = 1.2;
+      if (i === 0) u.onstart = function () { talk(true); };
+      if (i === parts.length - 1) u.onend = function () { talk(false); };
+      u.onerror = function () { talk(false); };
+      synth.speak(u);
+    });
+  }
+  function hush() { talkN++; if (synth) try { synth.cancel(); } catch (e) { /* 没在念 */ } var x = xin(); if (x && x.talk) x.talk(false); }
+  function setTts(on) {
+    S.tts = !!on; ls(LS_TTS, S.tts ? '1' : null);
+    if (S.tts) { ttsUnlocked = false; unlockTts(); speak('好的，我会把回答念给你听'); } else hush();
+  }
+  if (synth && synth.addEventListener) synth.addEventListener('voiceschanged', function () { /* 声音列表是异步加载的，下次念时再挑 */ });
+
+  /* ---------- 做完提醒：Web Push ----------
+     开关在设置里。打开时浏览器订阅推送（公钥来自小芯的电脑），订阅交给小芯的电脑保存；之后它做完一轮、而网页没在看时，直接从它的电脑发推送。
+     iPhone / iPad 要先把网站「添加到主屏幕」，从主屏幕打开才能开（Safari 的规定）。打开以后发一条试试。 */
+  function pushNoSupport() {
+    if ('serviceWorker' in navigator && window.PushManager && window.Notification) return '';
+    var ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var app = navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+    return ios && !app ? 'iPhone / iPad 上要先在 Safari 里点「分享 → 添加到主屏幕」，从主屏幕打开工具箱，再来这里打开。' : '这个浏览器收不了通知。';
+  }
+  function u8(b64) {
+    var s = atob(String(b64).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(b64).length + 3) % 4)), a = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+    return a;
+  }
+  function b64of(buf) { var s = '', a = new Uint8Array(buf || []); for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+  function swReady() { return navigator.serviceWorker.register('/sw.js').then(function () { return navigator.serviceWorker.ready; }); }
+  function pushSetup(t) {
+    var no = pushNoSupport();
+    if (no) { t.btn.disabled = true; t.note(no); return; }
+    if (Notification.permission === 'denied') t.note('通知被拒绝了：到浏览器（或系统）设置里允许这个网站发通知，再回来打开。');
+    var reg = null, key = '', busy = false;
+    // 先把 Service Worker 和公钥准备好：iPhone 要求点开关那一下直接订阅，中间不能再等别的
+    swReady().then(function (r) { reg = r; return call('push_key', {}, 60000); }).then(function (d) {
+      key = d.key;
+      return reg.pushManager.getSubscription();
+    }).then(function (sub) {
+      // 公钥换过了（小芯电脑上的钥匙重新生成）：旧订阅作废
+      if (sub && sub.options && sub.options.applicationServerKey && b64of(sub.options.applicationServerKey) !== key) return sub.unsubscribe().then(function () { return null; });
+      return sub;
+    }).then(function (sub) {
+      t.set(!!sub);
+      if (sub) call('push_sub', { sub: sub.toJSON(), ua: navigator.userAgent.slice(0, 160) }, 60000).catch(function () {});   // 让小芯那边也记着（它可能删过）
+    }).catch(function (e) { t.note('做完提醒准备不好：' + e.message); });
+    t.btn.addEventListener('click', function () {
+      if (busy) return;
+      if (!reg || !key) { t.note('还在准备，过一两秒再点'); return; }
+      busy = true; t.note('');
+      var on = t.btn.getAttribute('aria-checked') !== 'true';
+      var p = on ? reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: u8(key) }).then(function (sub) {
+        return call('push_sub', { sub: sub.toJSON(), ua: navigator.userAgent.slice(0, 160) }, 60000);
+      }).then(function () {
+        t.set(true); t.note('开好了，发了一条试试');
+        return call('push_test', {}, 60000).then(function (r) { if (!r.ok) t.note('开好了，但试的那条没发出去：' + JSON.stringify(r.results || []).slice(0, 120)); });
+      }) : reg.pushManager.getSubscription().then(function (sub) {
+        if (!sub) return null;
+        var ep = sub.endpoint;
+        return sub.unsubscribe().then(function () { return call('push_unsub', { endpoint: ep }, 60000).catch(function () {}); });
+      }).then(function () { t.set(false); t.note('关了'); });
+      p.catch(function (e) {
+        var denied = e && (e.name === 'NotAllowedError' || Notification.permission === 'denied');
+        t.note(denied ? '没有允许通知：到浏览器（或系统）设置里允许这个网站发通知，再回来打开。' : '没弄好：' + e.message);
+      }).then(function () { busy = false; });
+    });
+  }
+  // 点通知：sw.js 让已经开着的网页打开那段对话
+  if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', function (e) {
+    var d = e.data || {};
+    if (d.type !== 'xin-open' || !S.enabled) return;
+    if (d.sid && /^s[0-9a-z]{6,24}$/.test(d.sid) && d.sid !== S.sid) { S.sid = d.sid; ls(LS_SID, d.sid); S.histFor = ''; }
+    open();
+  });
+
   /* ---------- 对话改名 / 删除：点对话后面的 ⋯ ---------- */
   function sessActions(li, s, more) {
     var old = li.querySelector('.xc-sa');
@@ -493,6 +633,7 @@
     var text = given != null ? String(given).trim() : input.value.trim();
     if (!text || S.run || S.sending) return false;
     S.sending = true;
+    unlockTts(); hush();
     if (list.querySelector('.xc-hello')) list.innerHTML = '';
     var c = S.ctxOff ? null : pageContext();
     var pending = draw({ t: 'user', text: text, ctx: c ? ctxLabel(c) : '' });
@@ -603,10 +744,11 @@
         if (S.run || S.sending) { X.say('我还在忙上一件事，等我做完～', 4000); return; }
         send(t);
       },
-      extra: [{ label: QUIZ, title: '让小芯按你在学的出一道题', onClick: function () {
-        if (S.run || S.sending) { X.say('我还在忙上一件事，等我做完～', 4000); return; }
-        send(QUIZ);
-      } }]
+      extra: [{ label: '朗读', title: '把回答念出来', pressed: S.tts, keep: true, hidden: !synth, onClick: function () { setTts(!S.tts); return S.tts; } },
+        { label: QUIZ, title: '让小芯按你在学的出一道题', onClick: function () {
+          if (S.run || S.sending) { X.say('我还在忙上一件事，等我做完～', 4000); return; }
+          send(QUIZ);
+        } }]
     });
   }
   function stop() {
@@ -654,13 +796,13 @@
     var x = xin(); if (!x) return;
     if (ev.t === 'text') { S.lastText = ev.text; x.ai('think'); var line = firstLine(ev.text); if (line) x.say(line, 0, open); }
     else if (ev.t === 'tool') x.ai('work');
-    else if (ev.t === 'xin') { S.lastAct = Date.now(); x.cmd(ev.act, ev.arg); }
+    else if (ev.t === 'xin') { S.lastAct = Date.now(); x.cmd(ev.act, ev.arg); if (ev.act === 'say' && S.run && !S.lastText) speak(ev.arg); }
     else if (ev.t === 'mem') x.say('记住啦～', 2500);
     else if (ev.t === 'done') {
       x.ai('');
       if (ev.stopped) return;
-      if (ev.ok && S.lastText) x.say(summary(S.lastText), 16000, open);
-      else if (!ev.ok) x.say('没做成，点我看看怎么回事', 10000, open);
+      if (ev.ok && S.lastText) { x.say(summary(S.lastText), 16000, open); speak(S.lastText); }
+      else if (!ev.ok) { x.say('没做成，点我看看怎么回事', 10000, open); speak('这次没做成'); }
       if (Date.now() - S.lastAct < 4000) return;          // AI 刚让它做了动作，就不抢戏了
       x.cmd(ev.ok ? 'happy' : 'sad');
     }
@@ -788,11 +930,20 @@
         if (!x || !x.say || x.mode === 'away' || x.asking) { if (tries++ < 30) setTimeout(show, 2000); return; }
         ls(GREETED, g.id);
         x.say(g.text, 14000, function () { quick(x); });
+        speak(g.text);
         if (x.cmd) x.cmd('happy');
       })();
     }, function () {});
   }
 
+  // #xin 打开面板；#xin=<对话编号>（点「做完提醒」的通知进来的）打开那段对话
+  var XIN_HASH = /^#xin(=s[0-9a-z]{6,24})?$/;
+  function openFromHash() {
+    var m = XIN_HASH.exec(location.hash);
+    if (!m) return;
+    if (m[1] && m[1].slice(1) !== S.sid) { S.sid = m[1].slice(1); ls(LS_SID, S.sid); S.histFor = ''; }
+    open();
+  }
   function boot() {
     watchDoc(document);
     // 学习台在 iframe 里：它加载好就开始记选中的文字
@@ -801,10 +952,10 @@
     req('me').then(function (d) {
       S.enabled = !!d.enabled; S.authed = !!d.authed;
       syncBag(); wakeVm(); greet();
-      if (location.hash === '#xin') open();
+      openFromHash();
       // 刷新页面时上一轮还在跑：小芯接着陪着（打开面板时会接上）
-    }, function () { if (location.hash === '#xin') { S.enabled = false; open(); } });
-    window.addEventListener('hashchange', function () { if (location.hash === '#xin') open(); });
+    }, function () { if (XIN_HASH.test(location.hash)) { S.enabled = false; open(); } });
+    window.addEventListener('hashchange', openFromHash);
   }
   window.LimingXinChat = { open: open, close: close, ask: quick, get state() { return S; } };
   boot();
