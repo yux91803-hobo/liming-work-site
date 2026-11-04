@@ -20,6 +20,8 @@
      rename   {sid, title}         给对话改名；forget {sid} 删掉一个对话（还在进行中的不让删）
      files    {path?, stat?}       小芯的文件：列出工作目录（WORK）里的一个文件夹，或者读一个文件（文字文件带内容，用来预览）；
                                    只认 WORK 里面的（软链接指到外面的也不行）。stat：只要大小和真实路径（网站下载前用来核对）
+     push_key {}                   做完提醒（Web Push）的公钥（VAPID，第一次用时在这里生成，私钥不出这台电脑）
+     push_sub {sub, ua?}           记下一个浏览器的推送订阅；push_unsub {endpoint} 去掉；push_test {} 给每个订阅发一条试试
    内部：warm                       预热：发一个很短的请求，把刚睡醒后第一下的卡顿先吃掉（不留会话）
 
    AI 在这台云电脑里是完全放权的（--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox），
@@ -171,6 +173,81 @@ export function systemPrompt(mem) {
   ].join('\n');
 }
 
+/* ---------- 做完提醒：Web Push ----------
+   网页上开了「做完提醒」，浏览器的推送订阅就存在这里（push/subs.json）；VAPID 钥匙也在这里生成、保存（push/vapid.json），不经过网站。
+   一轮做完时，网页最近 8 秒没来取过进度（关掉了、切到别的应用了），就给每个订阅发一条：「小芯做完了：……」。
+   加密按 RFC 8291（aes128gcm），签名按 RFC 8292（VAPID，ES256 JWT），只用 node:crypto。 */
+const PUSH_DIR = () => path.join(BASE, 'push');
+const VAPID_F = () => path.join(PUSH_DIR(), 'vapid.json'), SUBS_F = () => path.join(PUSH_DIR(), 'subs.json');
+const PUSH_CONTACT = 'https://liming-work.com', SUBS_MAX = 8, UNWATCHED_MS = 8000;
+const b64u = b => Buffer.from(b).toString('base64url');
+const unb64u = s => Buffer.from(String(s || ''), 'base64url');
+export function vapidKeys() {
+  let k = readJ(VAPID_F());
+  if (k && k.publicKey && k.privateJwk) return k;
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = privateKey.export({ format: 'jwk' });
+  k = { publicKey: b64u(Buffer.concat([Buffer.from([4]), unb64u(jwk.x), unb64u(jwk.y)])), privateJwk: jwk, created: Date.now() };
+  mk(PUSH_DIR());
+  fs.writeFileSync(VAPID_F(), JSON.stringify(k), { mode: 0o600 });
+  return k;
+}
+export function vapidHeader(endpoint, keys, now = Date.now()) {
+  const head = b64u(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
+  const claims = b64u(JSON.stringify({ aud: new URL(endpoint).origin, exp: Math.floor(now / 1000) + 12 * 3600, sub: PUSH_CONTACT }));
+  const sig = crypto.sign('sha256', Buffer.from(head + '.' + claims), { key: crypto.createPrivateKey({ key: keys.privateJwk, format: 'jwk' }), dsaEncoding: 'ieee-p1363' });
+  return 'vapid t=' + head + '.' + claims + '.' + b64u(sig) + ', k=' + keys.publicKey;
+}
+// 一条消息加密成 aes128gcm 的正文：头（salt 16 + 记录大小 4 + 公钥长度 1 + 临时公钥 65）+ 密文（明文后面加 0x02 表示最后一条）
+export function pushEncrypt(payload, p256dh, auth) {
+  const ua = unb64u(p256dh), secret = unb64u(auth);
+  if (ua.length !== 65 || ua[0] !== 4 || secret.length !== 16) throw new Error('订阅的钥匙不对');
+  const ecdh = crypto.createECDH('prime256v1'); ecdh.generateKeys();
+  const as = ecdh.getPublicKey(), salt = crypto.randomBytes(16);
+  const ikm = Buffer.from(crypto.hkdfSync('sha256', ecdh.computeSecret(ua), secret, Buffer.concat([Buffer.from('WebPush: info\0'), ua, as]), 32));
+  const cek = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0'), 16));
+  const nonce = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0'), 12));
+  const c = crypto.createCipheriv('aes-128-gcm', cek, nonce);
+  const ct = Buffer.concat([c.update(Buffer.concat([Buffer.from(payload), Buffer.from([2])])), c.final(), c.getAuthTag()]);
+  const head = Buffer.alloc(21); salt.copy(head, 0); head.writeUInt32BE(4096, 16); head[20] = 65;
+  return Buffer.concat([head, as, ct]);
+}
+function okSub(sub) {
+  if (!sub || typeof sub !== 'object' || !sub.keys) return false;
+  let u; try { u = new URL(String(sub.endpoint)); } catch { return false; }
+  const local = process.env.XIN_PUSH_INSECURE === '1' && u.protocol === 'http:' && u.hostname === '127.0.0.1';   // 测试用
+  if (u.protocol !== 'https:' && !local) return false;
+  if (String(sub.endpoint).length > 1000) return false;
+  const ua = unb64u(sub.keys.p256dh), auth = unb64u(sub.keys.auth);
+  return ua.length === 65 && ua[0] === 4 && auth.length === 16;
+}
+function readSubs() { const l = readJ(SUBS_F(), []); return Array.isArray(l) ? l.filter(okSub) : []; }
+function writeSubs(l) { mk(PUSH_DIR()); writeJ(SUBS_F(), l); }
+export function plainText(t, max) {
+  const s = String(t || '').replace(/```[\s\S]*?(```|$)/g, ' ').replace(/^[ \t]*(#{1,6}|>+)[ \t]*/gm, '').replace(/\*\*|`/g, '').replace(/\s+/g, ' ').trim();
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+// 发给每个订阅；推送服务说这个订阅没了（404 / 410）就删掉
+export async function pushAll(msg) {
+  const subs = readSubs();
+  if (!subs.length) return [];
+  const keys = vapidKeys(), body = JSON.stringify(msg), gone = [], out = [];
+  await Promise.all(subs.map(async sub => {
+    let status = 0;
+    try {
+      const r = await fetch(sub.endpoint, {
+        method: 'POST', body: pushEncrypt(body, sub.keys.p256dh, sub.keys.auth), signal: AbortSignal.timeout(10000),
+        headers: { 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream', TTL: '86400', Urgency: 'high', Authorization: vapidHeader(sub.endpoint, keys) }
+      });
+      status = r.status;
+    } catch { status = -1; }
+    if (status === 404 || status === 410) gone.push(sub.endpoint);
+    out.push({ endpoint: sub.endpoint.slice(0, 60), status });
+  }));
+  if (gone.length) writeSubs(readSubs().filter(x => !gone.includes(x.endpoint)));
+  return out;
+}
+
 /* ---------- 小工具 ---------- */
 function mk(d) { fs.mkdirSync(d, { recursive: true }); }
 function rid(p) { return p + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'); }
@@ -182,6 +259,8 @@ function alive(pid) { if (!pid) return false; try { process.kill(pid, 0); return
 const sessF = sid => path.join(SESS, sid + '.json');
 const runF = run => path.join(RUNS, run + '.jsonl');
 const metaF = run => path.join(RUNS, run + '.json');
+const seenF = run => path.join(RUNS, run + '.seen');   // 网页最近一次来取这一轮的进度（看修改时间）
+function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
 function emit(run, ev) { fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); }
 function events(run) {
   let t; try { t = fs.readFileSync(runF(run), 'utf8'); } catch { return []; }
@@ -351,6 +430,13 @@ function runner(run) {
     emit(run, { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '' });
     m.ended = Date.now(); writeJ(metaF(run), m);
     if (meta.kind === 'daily') dailyDone(run, meta, ok);
+    // 做完提醒：你不在看（关了网页、切到别的应用）才发；你自己停的、每日任务不发
+    else if (!stopped && unwatched(run)) {
+      const last = events(run).filter(e => e.t === 'text').pop();
+      const text = plainText(last && last.text, 120);
+      setTimeout(() => process.exit(0), 20000).unref();
+      pushAll({ title: ok ? '小芯做完了' : '小芯没做成', body: text || (ok ? '点开看看' : '点开看看怎么回事'), tag: 'xin-' + meta.sid, sid: meta.sid, url: '/#xin=' + meta.sid }).catch(() => {});
+    }
   };
   const norm = meta.agent === 'claude' ? fromClaude : fromCodex;
   const start = () => {
@@ -498,6 +584,26 @@ const ops = {
     const g = getNext();
     return g ? Object.assign({ warming }, g) : { warming };
   },
+  push_key() {
+    return { key: vapidKeys().publicKey, subs: readSubs().length };
+  },
+  push_sub(a) {
+    const sub = a.sub;
+    if (!okSub(sub)) return { error: 'bad_sub', msg: '推送订阅不对' };
+    const list = readSubs().filter(x => x.endpoint !== sub.endpoint);
+    list.push({ endpoint: String(sub.endpoint), keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) }, ua: String(a.ua || '').slice(0, 160), at: Date.now() });
+    writeSubs(list.slice(-SUBS_MAX));
+    return { ok: true, subs: Math.min(list.length, SUBS_MAX) };
+  },
+  push_unsub(a) {
+    const list = readSubs(), left = list.filter(x => x.endpoint !== a.endpoint);
+    if (left.length !== list.length) writeSubs(left);
+    return { ok: true, subs: left.length };
+  },
+  async push_test() {
+    const r = await pushAll({ title: '小芯', body: '做完提醒开好啦：你不在看的时候，我做完事会这样告诉你～', tag: 'xin-test', url: '/#xin' });
+    return { ok: r.some(x => x.status >= 200 && x.status < 300), results: r };
+  },
   rename(a) {
     if (!okId(a.sid, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
     const s = readJ(sessF(a.sid));
@@ -513,7 +619,7 @@ const ops = {
     if (!s) return { ok: true, already: true };
     const r = lastRun(s);
     if (r && !runDone(r)) return { error: 'busy', msg: '这个对话还在进行中，先停下来再删' };
-    for (const run of s.runs || []) for (const f of [runF(run), metaF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
+    for (const run of s.runs || []) for (const f of [runF(run), metaF(run), seenF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
     fs.unlinkSync(sessF(a.sid));
     return { ok: true };
   },
@@ -551,6 +657,7 @@ const ops = {
   poll(a) {
     if (!okId(a.run, 'r')) return { error: 'bad_run', msg: '编号不对' };
     if (!fs.existsSync(metaF(a.run))) return { error: 'no_run', msg: '找不到这一轮' };
+    try { fs.writeFileSync(seenF(a.run), ''); } catch { /* 记不下来就当没在看 */ }
     const done = runDone(a.run);
     const evs = events(a.run), off = Math.max(0, a.off | 0);
     const slice = evs.slice(off, off + 400);
@@ -618,9 +725,8 @@ function main() {
   if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
   let args = {};
   try { const t = fs.readFileSync(0, 'utf8').trim(); if (t) args = JSON.parse(t); } catch { args = {}; }
-  let res;
-  try { res = ops[op](args || {}); } catch (e) { res = { error: 'internal', msg: String(e && e.message || e) }; }
-  process.stdout.write(JSON.stringify(res));
+  Promise.resolve().then(() => ops[op](args || {})).catch(e => ({ error: 'internal', msg: String(e && e.message || e) }))
+    .then(res => { process.stdout.write(JSON.stringify(res)); });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === SELF) main();

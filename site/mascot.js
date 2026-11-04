@@ -158,6 +158,7 @@
   var seq = null, lastSig = '', tick = 0, forced = null;
   var lastInput = Date.now(), idleTm = 0, blinkTm = 0, zTm = 0, taps = [];
   var music = false, energy = 0;   // 戴着耳机听歌；吃了电池以后一段时间跑得飞快
+  var talking = false;              // 正在念回答（xin/chat.js 的朗读）：嘴一张一合
   var grr = 0, grrT = 0, ragePending = false;   // 脾气：被惹多了就发火砸东西
   var musicAt = 0, boreAt = 0, phonesBroke = 0, ate = [];
   var REBEL = 0.3;                 // 叛逆的概率：不听话、背过身、偏要回去
@@ -395,6 +396,7 @@
       var k4 = Math.floor(t / 130) % 4;
       p.face = 'cry'; p.b = 1; p.armL = p.armR = 'down'; p.fx = [[6, 12 + k4, 'tr'], [13, 12 + (k4 + 2) % 4, 'tr']];
     }
+    if (talking && mode !== 'sleep' && p.face !== 'back') p.mouth = Math.floor(t / 150) % 3 ? 2 : 1;   // 说话：嘴张张合合
     return p;
   }
   function render() {
@@ -1278,7 +1280,8 @@
 
   /* ---------- 和小芯说话：小芯旁边冒一个输入框（打字或语音），发出去就收起来 ----------
      o = { onSend(text), onExpand(), placeholder, chip, onChipOff(), extra }；chip 是框上面那行「附带：…」（点 ✕ 这次不带）；语音用浏览器自带的识别（没有就不显示话筒）
-     extra：框下面的快捷按钮 [{label, title, onClick}]（比如「考考我」），点了框收起再调 onClick */
+     extra：框下面的快捷按钮 [{label, title, onClick, keep, pressed, hidden}]（比如「考考我」），点了框收起再调 onClick；
+       keep：点了不收起（开关用），pressed：开关现在的状态，onClick 返回新状态 */
   var askEl = null, rec = null;
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
   var ASK_ICON = {
@@ -1340,7 +1343,12 @@
     [].forEach.call(askEl.querySelectorAll('.xin-ask-x'), function (b) {
       var x = o.extra[+b.getAttribute('data-i')];
       b.textContent = x.label; if (x.title) b.title = x.title;
-      b.addEventListener('click', function () { closeAsk(); if (x.onClick) x.onClick(); });
+      if (x.hidden) { b.hidden = true; return; }
+      if (x.pressed != null) b.setAttribute('aria-pressed', x.pressed ? 'true' : 'false');
+      b.addEventListener('click', function () {
+        if (x.keep) { var on = x.onClick ? x.onClick() : null; if (x.pressed != null) b.setAttribute('aria-pressed', on ? 'true' : 'false'); ta.focus(); return; }
+        closeAsk(); if (x.onClick) x.onClick();
+      });
     });
     if (mic) mic.addEventListener('click', function () {
       if (rec) { try { rec.stop(); } catch (e) {} return; }
@@ -1671,6 +1679,8 @@
     ai: setAi,
     get aiState() { return aiState; },
     cmd: command,
+    talk: function (on) { talking = !!on; render(); },
+    get talking() { return talking; },
     addBag: function (id, label, fn) { extraBag = extraBag.filter(function (it) { return it.id !== id; }); extraBag.push({ id: id, icon: ICONS[id] ? id : 'chat', label: label, fn: fn }); },
     // 回到标题栏上（手机上聊天面板从底下升起来，别让小芯被挡住）
     home: function () { if (!HOME || paused() || !(mode === 'idle' || mode === 'walk' || mode === 'play')) return; var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) { aiLoop = false; stopWalk(); stopSeq(); setMode('idle'); hop(g, g.x0 + (g.x1 - g.x0) * 0.4); } },

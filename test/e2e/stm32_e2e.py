@@ -68,9 +68,37 @@ XIN_FILES = {
     W + '/blink/build/app.bin': {'path': W + '/blink/build/app.bin', 'dir': False, 'work': W, 'size': 876, 'mtime': 1762214400000, 'binary': True},
 }
 
+import base64
+PUSH_KEY = base64.urlsafe_b64encode(b'\x04' + bytes(range(64))).decode().rstrip('=')
+# 浏览器里的朗读、推送都换成假的：记下念了什么、订阅了什么
+FAKE_TTS = """
+  window.__spoken = [];
+  const fakeSynth = { speaking: false, pending: false, paused: false,
+    getVoices: () => [{ name: 'Tingting', lang: 'zh-CN', default: true, localService: true, voiceURI: 'Tingting' }],
+    cancel() { window.__cancels = (window.__cancels || 0) + 1; },
+    speak(u) { window.__spoken.push(u.text); setTimeout(() => { if (u.onstart) u.onstart(); setTimeout(() => { if (u.onend) u.onend(); }, 600); }, 10); },
+    addEventListener() {}, removeEventListener() {} };
+  Object.defineProperty(window, 'speechSynthesis', { value: fakeSynth, configurable: true });
+  window.SpeechSynthesisUtterance = function (t) { this.text = t; };
+"""
+FAKE_PUSH = """
+  if (window.PushManager) {
+    window.__sub = null;
+    PushManager.prototype.subscribe = function (opts) {
+      window.__subOpts = opts;
+      window.__sub = { endpoint: 'https://push.example.com/send/abc', options: opts,
+        toJSON() { return { endpoint: this.endpoint, keys: { p256dh: 'p', auth: 'a' } }; },
+        unsubscribe() { window.__sub = null; return Promise.resolve(true); } };
+      return Promise.resolve(window.__sub);
+    };
+    PushManager.prototype.getSubscription = function () { return Promise.resolve(window.__sub); };
+  }
+"""
+
 async def xin_mock(pg, authed=False):
     st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': [], 'mem': '# 小芯的记事本\n\n- 2026-11-04：用户在学定时器\n',
-          'greet': None, 'daily': '- 看看网关今天签到成没成，没成就补签\n', 'daily_args': None, 'renamed': None, 'forgot': None, 'download': None}
+          'greet': None, 'daily': '- 看看网关今天签到成没成，没成就补签\n', 'daily_args': None, 'renamed': None, 'forgot': None, 'download': None,
+          'push_sub': None, 'push_unsub': None, 'push_test': 0, 'history_sid': None}
     async def handle(route):
         req = route.request
         path = req.url.split('/api/xin/')[1].split('?')[0]
@@ -101,10 +129,18 @@ async def xin_mock(pg, authed=False):
         if op == 'memory_set':
             st['mem'] = args.get('text', '')
             return await ok({'ok': True, 'data': {'ok': True}})
+        if op == 'history': st['history_sid'] = args.get('sid')
         if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': None}})
         if op == 'sessions': return await ok({'ok': True, 'data': {'sessions': [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0},
                                                                          {'sid': 'sold000001', 'agent': 'claude', 'title': '旧对话', 'turns': 2, 'updated': 0}]}})
         if op == 'files': return await ok({'ok': True, 'data': XIN_FILES.get(args.get('path') or W, {'error': 'not_found', 'msg': '没有这个文件'})})
+        if op == 'push_key': return await ok({'ok': True, 'data': {'key': PUSH_KEY, 'subs': 0}})
+        if op in ('push_sub', 'push_unsub'):
+            st[op] = args
+            return await ok({'ok': True, 'data': {'ok': True, 'subs': 1 if op == 'push_sub' else 0}})
+        if op == 'push_test':
+            st['push_test'] += 1
+            return await ok({'ok': True, 'data': {'ok': True, 'results': [{'status': 201}]}})
         if op == 'rename':
             st['renamed'] = args
             return await ok({'ok': True, 'data': {'ok': True}})
@@ -1110,9 +1146,54 @@ async def main():
         await pf.click('.xc-x'); await pf.wait_for_timeout(400)
         await pf.evaluate("LimingXin.bag()"); await pf.click('.xin-bag .xin-it:has-text("聊天")'); await pf.wait_for_selector('.xin-ask-x')
         xf['sent'] = None
-        await pf.click('.xin-ask-x'); await pf.wait_for_timeout(500)
+        await pf.click('.xin-ask-x:has-text("考考我")'); await pf.wait_for_timeout(500)
         check('小芯旁边的输入框有「考考我」：点了框收起，发「考考我」', not await pf.evaluate("!!document.querySelector('.xin-ask')") and (xf['sent'] or {}).get('text') == '考考我', xf['sent'])
         await pf.context.close()
+        # 朗读回答、做完提醒、通知点进来的 #xin=<对话>
+        pv = await page(b)
+        await pv.context.grant_permissions(['notifications'], origin=BASE)
+        await pv.add_init_script(FAKE_TTS + FAKE_PUSH)
+        xv = await xin_mock(pv, authed=True)
+        await pv.goto(BASE + '/'); await pv.wait_for_timeout(1200)
+        await pv.evaluate("LimingXinChat.open()"); await pv.wait_for_selector('.xc.show .xc-hello')
+        await pv.click('.xc-list-b'); await pv.wait_for_selector('.xc-set')
+        rows = await pv.evaluate("[...document.querySelectorAll('.xc-tg-t b')].map(b => b.textContent)")
+        await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false' && !document.querySelector('.xc-push .xc-sw').disabled")
+        check('设置：对话列表最下面有「朗读回答」「做完提醒」两个开关，默认关着', rows == ['朗读回答', '做完提醒'] and await pv.get_attribute('.xc-tts .xc-sw', 'aria-checked') == 'false', rows)
+        await pv.click('.xc-tts .xc-sw'); await pv.wait_for_timeout(200)
+        st = await pv.evaluate("[document.querySelector('.xc-tts .xc-sw').getAttribute('aria-checked'), localStorage.getItem('lm.xin.tts'), window.__spoken.slice()]")
+        check('朗读：打开开关，记住，小芯说「好的，我会把回答念给你听」', st[0] == 'true' and st[1] == '1' and '好的，我会把回答念给你听' in st[2], st)
+        await pv.click('.xc-push .xc-sw'); await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'true'")
+        await pv.wait_for_timeout(300)
+        note = await pv.text_content('.xc-push .xc-tg-n')
+        opts = await pv.evaluate("(() => { const o = window.__subOpts; return [o.userVisibleOnly, o.applicationServerKey.length, o.applicationServerKey[0], o.applicationServerKey[64]]; })()")
+        check('做完提醒：打开时用小芯电脑的公钥订阅，订阅交给它保存，再发一条试试', xv['push_sub'] and xv['push_sub']['sub']['endpoint'] == 'https://push.example.com/send/abc' and xv['push_test'] == 1 and opts == [True, 65, 4, 63] and '开好了' in note, (xv['push_sub'], xv['push_test'], opts, note))
+        sw = await pv.evaluate("navigator.serviceWorker.getRegistration().then(r => r && r.active && r.active.scriptURL)")
+        check('做完提醒：注册了 /sw.js', (sw or '').endswith('/sw.js'), sw)
+        await pv.click('.xc-push .xc-sw'); await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false'")
+        check('做完提醒：再点关掉，退订并告诉小芯那边删掉', xv['push_unsub'] == {'endpoint': 'https://push.example.com/send/abc'} and await pv.evaluate("window.__sub === null"), xv['push_unsub'])
+        await pv.click('.xc-new-b'); await pv.wait_for_selector('.xc-hello')
+        await pv.evaluate("window.__spoken = []")
+        await pv.fill('.xc-row textarea', '看看工作目录'); await pv.keyboard.press('Enter')
+        await pv.wait_for_selector('.xc-done', timeout=8000)
+        await pv.wait_for_function("LimingXin.talking", timeout=3000)
+        said = await pv.evaluate("window.__spoken.slice()")
+        await pv.wait_for_function("!LimingXin.talking", timeout=4000)
+        check('朗读：做完时把回答念出来，念的时候小芯动嘴，念完闭上', any('blink' in x for x in said), said)
+        await pv.click('.xc-x'); await pv.wait_for_timeout(400)
+        await pv.evaluate("LimingXin.bag()"); await pv.click('.xin-bag .xin-it:has-text("聊天")'); await pv.wait_for_selector('.xin-ask-x')
+        p0 = await pv.get_attribute('.xin-ask-x:has-text("朗读")', 'aria-pressed')
+        await pv.click('.xin-ask-x:has-text("朗读")'); await pv.wait_for_timeout(150)
+        p1 = await pv.get_attribute('.xin-ask-x:has-text("朗读")', 'aria-pressed')
+        check('小芯旁边的输入框：「朗读」开关点了不收起，状态跟着变', p0 == 'true' and p1 == 'false' and await pv.is_visible('.xin-ask textarea') and await pv.evaluate("localStorage.getItem('lm.xin.tts')") is None, (p0, p1))
+        await pv.context.close()
+        ph = await page(b)
+        xh = await xin_mock(ph, authed=True)
+        await ph.goto(BASE + '/#xin=shist00001'); await ph.wait_for_selector('.xc.show .xc-code')
+        check('点「做完提醒」的通知进来（#xin=对话）：直接打开那段对话', xh['history_sid'] == 'shist00001' and await ph.evaluate("localStorage.getItem('lm.xin.sid')") == 'shist00001', xh['history_sid'])
+        await ph.click('.xc-x'); await ph.wait_for_timeout(300)
+        check('关上面板时把 #xin=… 从地址里去掉', not ph.url.endswith('#xin=shist00001'), ph.url)
+        await ph.context.close()
         # 附带页面信息：学习台「验证」页、粘贴的代码、选中的文字，一起发给小芯；✕ 这次不带
         pc = await page(b)
         xc = await xin_mock(pc, authed=True)
