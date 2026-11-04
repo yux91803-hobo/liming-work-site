@@ -963,6 +963,17 @@ async def main():
         await pq.click('.xin-say[data-tap]'); await pq.wait_for_selector('.xc.show .xc-tool')
         check('回复出现在小芯的气泡里，点气泡打开面板看全文', await pq.is_visible('.xc.show'))
         await pq.context.close()
+        # 回归：输入框发出去、还在跑的时候打开面板（重读历史时那一轮已做完）→ 不能卡在「还在忙」，第二句要发得出去
+        ps = await page(b)
+        xs2 = await xin_mock(ps, authed=True)
+        await ps.goto(BASE + '/'); await ps.wait_for_timeout(1500)
+        await ps.evaluate("LimingXin.bag()"); await ps.click('.xin-bag .xin-it:has-text("聊天")')
+        await ps.fill('.xin-ask textarea', '第一句'); await ps.keyboard.press('Enter'); await ps.wait_for_timeout(500)
+        await ps.evaluate("LimingXinChat.open()"); await ps.wait_for_selector('.xc.show .xc-tool'); await ps.wait_for_timeout(600)
+        st = await ps.evaluate("[LimingXinChat.state.run, document.querySelector('.xc').classList.contains('running')]")
+        await ps.fill('.xc-row textarea', '第二句'); await ps.keyboard.press('Enter'); await ps.wait_for_timeout(600)
+        check('还在跑时打开面板：以历史为准，不卡在「还在忙」，第二句发得出去', st == ['', False] and (xs2['sent'] or {}).get('text') == '第二句', (st, xs2['sent']))
+        await ps.context.close()
         # 附带页面信息：学习台「验证」页、粘贴的代码、选中的文字，一起发给小芯；✕ 这次不带
         pc = await page(b)
         xc = await xin_mock(pc, authed=True)

@@ -219,7 +219,8 @@
   }
   function openSession(sid) {
     var my = ++S.loadSeq;
-    stopPolling(); S.view = 'chat'; S.tools = {}; list.innerHTML = ''; render();
+    // 先清掉「这一轮还在跑」：重读期间那一轮可能已经做完了，以历史里说的为准（还在跑就从那里接着取）
+    stopPolling(); S.run = ''; S.off = 0; S.view = 'chat'; S.tools = {}; list.innerHTML = ''; render();
     list.appendChild(h('p', 'xc-hint xc-loading', '正在读取对话…'));
     call('history', { sid: sid }, 60000).then(function (d) {
       if (my !== S.loadSeq) return;
@@ -366,7 +367,8 @@
   }
   function stop() {
     if (!S.run) return;
-    call('stop', { run: S.run }, 20000).catch(function (e) { setStatus('停不下来：' + e.message, 'bad'); });
+    // 停完（或者其实早就做完了）再取一次进度：拿到「做完」，停止键才会变回发送
+    call('stop', { run: S.run }, 20000).then(function () { if (S.run && !S.polling) startPolling(); }, function (e) { setStatus('停不下来：' + e.message, 'bad'); });
   }
 
   /* ---------- 轮询这一轮的新事件 ---------- */
