@@ -15,7 +15,7 @@ const COOKIE = '__Host-xin';
 const SESSION_SEC = 30 * 86400;
 const AGENT_ASSET = '/xin/vm-agent.mjs';
 const VM_DIR = '/data/home/.xin/agent';
-const OPS = new Set(['status', 'wake', 'ping', 'send', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set']);
+const OPS = new Set(['status', 'wake', 'ping', 'send', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'greet', 'daily', 'daily_get', 'daily_set']);
 const HDRS = { 'Content-Type': 'application/json; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
 const enc = new TextEncoder();
@@ -162,7 +162,7 @@ async function call(env, origin, op, args, ctx, now) {
     const data = await exec(env, origin, m.id, op, args);
     // AI 在等模型回话时云电脑看起来是闲着的：挂一个「有活在干」的租约，别让它半路自己暂停
     const lease = (method, run) => ib(env, `/v1/machines/${m.id}/activity-leases/xin-${run}`, method === 'PUT' ? { method, body: JSON.stringify({ ttlSeconds: 1800 }) } : { method }).catch(() => null);
-    if (op === 'send' && data && data.run && ctx) ctx.waitUntil(lease('PUT', data.run));
+    if ((op === 'send' || op === 'daily') && data && data.run && ctx) ctx.waitUntil(lease('PUT', data.run));
     if (op === 'poll' && data && data.done && args && args.run && ctx) ctx.waitUntil(lease('DELETE', args.run));
     return { ok: true, data };
   } catch (e) {
@@ -205,6 +205,26 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
   if (!OPS.has(op)) return json({ error: 'bad_op' }, 400);
   const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? body.args : {};
   return json(await call(env, url.origin, op, args, ctx, now));
+}
+
+/* ---------- 定时任务（Cloudflare Cron，只在正式站配了） ----------
+   北京时间 8:55 叫醒电脑：网关 9:00 自己签到要电脑醒着；
+   北京时间 9:10、21:10 让小芯按每日任务清单做一遍（今天做成了 21:10 那次会跳过）。 */
+export const CRON_WAKE = '55 0 * * *', CRON_DAILY = '10 1,13 * * *';
+const CRON_ORIGIN = 'https://liming-work.com';   // 取 vm-agent.mjs 用（静态资源，和域名无关）
+const pause = ms => new Promise(r => setTimeout(r, ms));
+export async function runCron(cron, env, ctx, opt = {}) {
+  if (!enabled(env)) return { ok: false, state: 'disabled' };
+  const op = cron === CRON_WAKE ? 'wake' : 'daily';
+  const wait = opt.wait || pause;
+  let r = null;
+  // 云电脑在睡觉 / 正在醒：等一会儿再试，最多等 3 分钟左右
+  for (let i = 0; i < 12; i++) {
+    r = await call(env, CRON_ORIGIN, op, {}, ctx, Date.now());
+    if (r.ok || (r.state !== 'waking' && r.state !== 'busy')) return r;
+    await wait(Math.min(30, Math.max(5, r.retryAfter || 5)) * 1000);
+  }
+  return r;
 }
 
 // 测试用：清掉缓存

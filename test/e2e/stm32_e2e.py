@@ -58,7 +58,8 @@ XIN_LIVE = [
 ]
 
 async def xin_mock(pg, authed=False):
-    st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': [], 'mem': '# 小芯的记事本\n\n- 2026-11-04：用户在学定时器\n'}
+    st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': [], 'mem': '# 小芯的记事本\n\n- 2026-11-04：用户在学定时器\n',
+          'greet': None, 'daily': '- 看看网关今天签到成没成，没成就补签\n', 'daily_args': None}
     async def handle(route):
         req = route.request
         path = req.url.split('/api/xin/')[1].split('?')[0]
@@ -73,6 +74,14 @@ async def xin_mock(pg, authed=False):
         if op == 'status': return await ok({'ok': True, 'data': {'name': 'li', 'state': 'running'}})
         if op == 'wake': return await ok({'ok': True, 'data': {'state': 'running', 'action': 'none'}})
         if op == 'memory': return await ok({'ok': True, 'data': {'text': st['mem'], 'size': len(st['mem'])}})
+        if op == 'greet': return await ok({'ok': True, 'data': st['greet'] or {'warming': False}})
+        if op == 'daily_get': return await ok({'ok': True, 'data': {'text': st['daily'], 'last': {'date': '2026-11-04', 'run': 'rdaily00001', 'sid': 'shist00001', 'ok': True}, 'done': None, 'today': '2026-11-04'}})
+        if op == 'daily_set':
+            st['daily'] = args.get('text', '')
+            return await ok({'ok': True, 'data': {'ok': True}})
+        if op == 'daily':
+            st['daily_args'] = args
+            return await ok({'ok': True, 'data': {'sid': 'shist00001', 'run': 'rdaily00002', 'agent': 'codex'}})
         if op == 'memory_set':
             st['mem'] = args.get('text', '')
             return await ok({'ok': True, 'data': {'ok': True}})
@@ -1007,6 +1016,30 @@ async def main():
         await ps.fill('.xc-row textarea', '第二句'); await ps.keyboard.press('Enter'); await ps.wait_for_timeout(600)
         check('还在跑时打开面板：以历史为准，不卡在「还在忙」，第二句发得出去', st == ['', False] and (xs2['sent'] or {}).get('text') == '第二句', (st, xs2['sent']))
         await ps.context.close()
+        # 见面打招呼：小芯留的那句话在打开网页时冒出来；同一句只说一次
+        pgr = await page(b)
+        xg = await xin_mock(pgr, authed=True)
+        xg['greet'] = {'id': 'g0000001', 'text': '今天签到好啦，连签 10 天', 'at': 0}
+        await pgr.goto(BASE + '/')
+        await pgr.wait_for_function("(() => { const b = document.querySelector('.xin-say'); return b && b.textContent.includes('签到好啦'); })()", timeout=10000)
+        st = await pgr.evaluate("[localStorage.getItem('lm.xin.greeted'), document.querySelector('.xin-say').hasAttribute('data-tap')]")
+        check('见面打招呼：打开网页时小芯说出它留的话（能点），记下说过了', st[0] == 'g0000001' and st[1] and 'greet' in xg['ops'], (st, xg['ops']))
+        await pgr.click('.xin-say[data-tap]'); await pgr.wait_for_selector('.xin-ask')
+        check('点打招呼的气泡：冒输入框回它一句', await pgr.is_visible('.xin-ask textarea'))
+        await pgr.reload(); await pgr.wait_for_timeout(2500)
+        again = await pgr.evaluate("(() => { const b = document.querySelector('.xin-say'); return !!b && b.textContent.includes('签到好啦'); })()")
+        check('见面打招呼：同一句刷新以后不再说', not again)
+        # 每日任务页：看清单、改了保存、现在就做一遍（打开那段对话）
+        await pgr.evaluate("LimingXinChat.open()"); await pgr.wait_for_selector('.xc.show')
+        await pgr.click('.xc-list-b'); await pgr.wait_for_selector('.xc-dailyb')
+        await pgr.click('.xc-dailyb'); await pgr.wait_for_selector('.xc-memt')
+        v = await pgr.input_value('.xc-memt')
+        stt = await pgr.text_content('.xc-dailyst')
+        await pgr.fill('.xc-memt', v + '- 提醒我复习定时器\n'); await pgr.click('.xc-memrow .xc-btn:not(.xc-btn2)'); await pgr.wait_for_timeout(300)
+        check('每日任务页：看到清单和最近一次结果，改了能保存', '签到' in v and '做完了' in stt and xg['daily'].endswith('提醒我复习定时器\n'), (v, stt, xg['daily']))
+        await pgr.click('.xc-btn2'); await pgr.wait_for_selector('.xc.show .xc-body:not([hidden]) .xc-tool')
+        check('每日任务页：「现在就做一遍」强制开一轮，并打开那段对话', xg['daily_args'] == {'force': True} and await pgr.evaluate("LimingXinChat.state.view") == 'chat', xg['daily_args'])
+        await pgr.context.close()
         # 附带页面信息：学习台「验证」页、粘贴的代码、选中的文字，一起发给小芯；✕ 这次不带
         pc = await page(b)
         xc = await xin_mock(pc, authed=True)

@@ -181,7 +181,7 @@
   function login(pw) {
     var err = loginEl.querySelector('.xc-err'); err.textContent = '';
     req('login', { password: pw }).then(function (d) {
-      if (d._status === 200) { S.authed = true; loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
+      if (d._status === 200) { S.authed = true; loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); greet(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
       err.textContent = d.msg || (d._status === 429 ? '试太多次了，过一分钟再试' : '登录失败');
     }, function () { err.textContent = '网络不通'; });
   }
@@ -245,6 +245,10 @@
       mb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6zM6 3v18M9 8h6M9 12h6"/></svg><span></span>';
       mb.lastChild.textContent = '小芯的记事本'; mb.addEventListener('click', loadMemory);
       sessEl.appendChild(mb);
+      var db = h('button', 'xc-memb xc-dailyb'); db.type = 'button';
+      db.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 2M9 3h6"/></svg><span></span>';
+      db.lastChild.textContent = '每日任务'; db.addEventListener('click', loadDaily);
+      sessEl.appendChild(db);
       var ul = h('ul', 'xc-sl');
       if (!d.sessions.length) ul.appendChild(h('li', 'xc-hint', '还没有对话'));
       d.sessions.forEach(function (s) {
@@ -261,6 +265,42 @@
     }, function (e) { sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
   }
   /* ---------- 小芯的记事本：它的长期记忆，能看能改 ---------- */
+  /* ---------- 每日任务：网站后台每天定时叫醒小芯的电脑，让它按这份清单做一遍 ---------- */
+  function loadDaily() {
+    S.view = 'daily'; render();
+    sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '正在读取…'));
+    call('daily_get', {}, 60000).then(function (d) {
+      sessEl.innerHTML = '';
+      var back = h('button', 'xc-link xc-back', '← 对话列表'); back.type = 'button';
+      back.addEventListener('click', function () { S.view = 'sess'; render(); loadSessions(); });
+      sessEl.appendChild(back);
+      sessEl.appendChild(h('p', 'xc-hint', '每天北京时间 9:10 小芯会按这份清单做一遍（8:55 先叫醒它的电脑，网关 9:00 会自己签到）；没做成的话 21:10 再来一次。做完的结果，下次你打开网页时它会告诉你。一条一行，写清楚要做什么、怎么算做成了；也可以在聊天里跟它说「每天帮我……」，它会自己写进来。'));
+      if (d.last && d.last.date) {
+        var st = h('p', 'xc-dailyst'), lk = h('button', 'xc-link xc-inl', '看看'); lk.type = 'button';
+        st.appendChild(document.createTextNode('最近一次：' + d.last.date.slice(5) + ' ' + (d.last.ok === null ? '正在做…' : d.last.ok ? '做完了' : '没做成') + '　'));
+        lk.addEventListener('click', function () { openSession(d.last.sid); });
+        st.appendChild(lk); sessEl.appendChild(st);
+      }
+      var ta = h('textarea', 'xc-memt'); ta.value = d.text || ''; ta.placeholder = '比如：\n- 看看网关今天签到成没成，没成就补签，记下积分和连签天数'; ta.setAttribute('aria-label', '每日任务清单');
+      sessEl.appendChild(ta);
+      var row = h('div', 'xc-memrow'), save = h('button', 'xc-btn', '保存'), now = h('button', 'xc-btn xc-btn2', '现在就做一遍'), msg = h('span', 'xc-hint', '');
+      save.type = now.type = 'button';
+      var saveIt = function () { return call('daily_set', { text: ta.value }, 60000); };
+      save.addEventListener('click', function () {
+        save.disabled = true; msg.textContent = '正在保存…';
+        saveIt().then(function () { msg.textContent = '存好了'; save.disabled = false; }, function (e) { msg.textContent = '没存上：' + e.message; save.disabled = false; });
+      });
+      now.addEventListener('click', function () {
+        if (!ta.value.trim()) { msg.textContent = '清单是空的'; return; }
+        now.disabled = true; msg.textContent = '正在开始…';
+        saveIt().then(function () { return call('daily', { force: true }, 90000); }).then(function (r) {
+          now.disabled = false;
+          if (r.sid) { openSession(r.sid); var x = xin(); if (x) x.ai('think'); } else msg.textContent = r.skipped === 'running' ? '正在做着呢' : '没开始：' + (r.msg || r.skipped || '');
+        }, function (e) { now.disabled = false; msg.textContent = '没开始：' + e.message; });
+      });
+      row.appendChild(save); row.appendChild(now); row.appendChild(msg); sessEl.appendChild(row);
+    }, function (e) { sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
+  }
   function loadMemory() {
     S.view = 'mem'; render();
     sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '正在读取…'));
@@ -562,7 +602,26 @@
     wokeAt = Date.now();
     call('wake', {}, 0).catch(function () {});
   }
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && Date.now() - wokeAt > 600000) wakeVm(); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && Date.now() - wokeAt > 600000) { wakeVm(); greet(); } });
+
+  /* ---------- 见面打招呼：小芯用 xin next 留的那句话（比如每日任务的结果），打开网页时在气泡里说 ----------
+     同一句只说一次（记在本机）；小芯不在屏幕上（收起来了、在别处）就等它出来再说。点气泡回它一句。
+     取这句话时云电脑顺便预热模型网关（刚睡醒的第一个请求常常卡很久）。 */
+  var GREETED = 'lm.xin.greeted';
+  function greet() {
+    if (!S.enabled || !S.authed) return;
+    call('greet', {}, 60000).then(function (g) {
+      if (!g || !g.id || !g.text || ls(GREETED) === g.id) return;
+      var tries = 0;
+      (function show() {
+        var x = xin();
+        if (!x || !x.say || x.mode === 'away' || x.asking) { if (tries++ < 30) setTimeout(show, 2000); return; }
+        ls(GREETED, g.id);
+        x.say(g.text, 14000, function () { quick(x); });
+        if (x.cmd) x.cmd('happy');
+      })();
+    }, function () {});
+  }
 
   function boot() {
     watchDoc(document);
@@ -571,7 +630,7 @@
     [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { watchDoc(f.contentDocument); } catch (er) {} });
     req('me').then(function (d) {
       S.enabled = !!d.enabled; S.authed = !!d.authed;
-      syncBag(); wakeVm();
+      syncBag(); wakeVm(); greet();
       if (location.hash === '#xin') open();
       // 刷新页面时上一轮还在跑：小芯接着陪着（打开面板时会接上）
     }, function () { if (location.hash === '#xin') { S.enabled = false; open(); } });
