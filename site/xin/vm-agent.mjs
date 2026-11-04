@@ -199,11 +199,13 @@ export function vapidHeader(endpoint, keys, now = Date.now()) {
   return 'vapid t=' + head + '.' + claims + '.' + b64u(sig) + ', k=' + keys.publicKey;
 }
 // 一条消息加密成 aes128gcm 的正文：头（salt 16 + 记录大小 4 + 公钥长度 1 + 临时公钥 65）+ 密文（明文后面加 0x02 表示最后一条）
-export function pushEncrypt(payload, p256dh, auth) {
+// fixed：测试用，固定 salt 和临时私钥（对 RFC 8291 附录 A 的例子）
+export function pushEncrypt(payload, p256dh, auth, fixed) {
   const ua = unb64u(p256dh), secret = unb64u(auth);
   if (ua.length !== 65 || ua[0] !== 4 || secret.length !== 16) throw new Error('订阅的钥匙不对');
-  const ecdh = crypto.createECDH('prime256v1'); ecdh.generateKeys();
-  const as = ecdh.getPublicKey(), salt = crypto.randomBytes(16);
+  const ecdh = crypto.createECDH('prime256v1');
+  if (fixed) ecdh.setPrivateKey(fixed.asPrivate); else ecdh.generateKeys();
+  const as = ecdh.getPublicKey(), salt = fixed ? fixed.salt : crypto.randomBytes(16);
   const ikm = Buffer.from(crypto.hkdfSync('sha256', ecdh.computeSecret(ua), secret, Buffer.concat([Buffer.from('WebPush: info\0'), ua, as]), 32));
   const cek = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0'), 16));
   const nonce = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0'), 12));

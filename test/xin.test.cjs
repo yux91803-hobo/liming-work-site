@@ -772,3 +772,27 @@ test('sw.js：收到推送弹通知（标题、正文、点了去哪），点通
     assert.strictEqual(opened.length, 1, '网站开着就不再新开');
   });
 });
+
+test('网页用到的每个 op，Worker 都放行，vm-agent 也都认识（漏一个线上就是 400 bad_op）', async () => {
+  const { OPS } = await load('../src/xin.js');
+  const chat = fs.readFileSync(path.join(__dirname, '../site/xin/chat.js'), 'utf8');
+  const used = [...new Set([...chat.matchAll(/call\('([a-z_]+)'/g)].map(m => m[1]))];
+  assert.ok(used.length > 10, used.join());
+  const missing = used.filter(op => !OPS.has(op));
+  assert.deepStrictEqual(missing, [], 'Worker 的 OPS 里少了：' + missing.join(', '));
+  const agent = fs.readFileSync(path.join(__dirname, '../site/xin/vm-agent.mjs'), 'utf8');
+  const local = new Set(['status', 'wake']);   // 这两个 Worker 自己处理，不进云电脑
+  const unknown = [...OPS].filter(op => !local.has(op) && !new RegExp('^  (async )?' + op + '\\(', 'm').test(agent));
+  assert.deepStrictEqual(unknown, [], 'vm-agent 的 ops 里没有：' + unknown.join(', '));
+});
+
+test('推送加密和 RFC 8291 附录 A 的例子逐字节一样（浏览器那边一定解得开）', async () => {
+  const { pushEncrypt } = await load('../site/xin/vm-agent.mjs');
+  const u = s => Buffer.from(s.replace(/\s+/g, ''), 'base64url');
+  const out = pushEncrypt(u('V2hlbiBJIGdyb3cgdXAsIEkgd2FudCB0byBiZSBhIHdhdGVybWVsb24'),
+    'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4', 'BTBZMqHH6r4Tts7J_aSIgg',
+    { salt: u('DGv6ra1nlYgDCS1FRnbzlw'), asPrivate: u('yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw') });
+  assert.strictEqual(out.toString('base64url'), `DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27ml
+    mlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPT
+    pK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN`.replace(/\s+/g, ''));
+});
