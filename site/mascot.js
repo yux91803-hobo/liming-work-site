@@ -158,7 +158,6 @@
   var seq = null, lastSig = '', tick = 0, forced = null;
   var lastInput = Date.now(), idleTm = 0, blinkTm = 0, zTm = 0, taps = [];
   var music = false, energy = 0;   // 戴着耳机听歌；吃了电池以后一段时间跑得飞快
-  var talking = false;              // 正在念回答（xin/chat.js 的朗读）：嘴一张一合
   // 好感度（小芯电脑上记着，xin/chat.js 告诉这里是第几级）：越熟越听话，叛逆的概率从 0.3 降到 0.08
   var bondLv = 0, obedientF = false, REBEL_BY_BOND = [0.3, 0.22, 0.14, 0.08];
   function rebelBase() { return obedientF ? 0 : REBEL_BY_BOND[bondLv]; }
@@ -452,7 +451,6 @@
       var k4 = Math.floor(t / 130) % 4;
       p.face = 'cry'; p.b = 1; p.armL = p.armR = 'down'; p.fx = [[6, 12 + k4, 'tr'], [13, 12 + (k4 + 2) % 4, 'tr']];
     }
-    if (talking && mode !== 'sleep' && p.face !== 'back') p.mouth = Math.floor(t / 150) % 3 ? 2 : 1;   // 说话：嘴张张合合
     return p;
   }
   function render() {
@@ -1337,9 +1335,7 @@
   }
 
   /* ---------- 和小芯说话：小芯旁边冒一个输入框（打字或语音），发出去就收起来 ----------
-     o = { onSend(text), onExpand(), placeholder, chip, onChipOff(), extra }；chip 是框上面那行「附带：…」（点 ✕ 这次不带）；语音用浏览器自带的识别（没有就不显示话筒）
-     extra：框下面的快捷按钮 [{label, title, onClick, keep, pressed, hidden}]（比如「考考我」），点了框收起再调 onClick；
-       keep：点了不收起（开关用），pressed：开关现在的状态，onClick 返回新状态 */
+     o = { onSend(text), onExpand(), placeholder, chip, onChipOff() }；chip 是框上面那行「附带：…」（点 ✕ 这次不带）；语音用浏览器自带的识别（没有就不显示话筒） */
   var askEl = null, rec = null;
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
   var ASK_ICON = {
@@ -1374,7 +1370,6 @@
       (SR ? '<button type="button" class="xin-ask-mic" aria-label="说话">' + ASK_ICON.mic + '</button>' : '') +
       '<button type="button" class="xin-ask-send" aria-label="发送">' + ASK_ICON.send + '</button></div>' +
       '<div class="xin-ask-ft"><span class="xin-ask-hint" role="status"></span>' +
-      (o.extra || []).map(function (x, i) { return '<button type="button" class="xin-ask-x" data-i="' + i + '"></button>'; }).join('') +
       (o.onExpand ? '<button type="button" class="xin-ask-more">' + ASK_ICON.more + '<span>展开</span></button>' : '') + '</div>';
     var ta = askEl.querySelector('textarea'), hint = askEl.querySelector('.xin-ask-hint'), mic = askEl.querySelector('.xin-ask-mic'), box = askEl;
     var chip = askEl.querySelector('.xin-ask-ctx');
@@ -1398,16 +1393,6 @@
     askEl.querySelector('.xin-ask-send').addEventListener('click', send);
     var more = askEl.querySelector('.xin-ask-more');
     if (more) more.addEventListener('click', function () { closeAsk(); o.onExpand(); });
-    [].forEach.call(askEl.querySelectorAll('.xin-ask-x'), function (b) {
-      var x = o.extra[+b.getAttribute('data-i')];
-      b.textContent = x.label; if (x.title) b.title = x.title;
-      if (x.hidden) { b.hidden = true; return; }
-      if (x.pressed != null) b.setAttribute('aria-pressed', x.pressed ? 'true' : 'false');
-      b.addEventListener('click', function () {
-        if (x.keep) { var on = x.onClick ? x.onClick() : null; if (x.pressed != null) b.setAttribute('aria-pressed', on ? 'true' : 'false'); ta.focus(); return; }
-        closeAsk(); if (x.onClick) x.onClick();
-      });
-    });
     if (mic) mic.addEventListener('click', function () {
       if (rec) { try { rec.stop(); } catch (e) {} return; }
       var base = ta.value ? ta.value.replace(/\s+$/, '') + ' ' : '';
@@ -1742,11 +1727,9 @@
     ai: setAi,
     get aiState() { return aiState; },
     cmd: command,
-    talk: function (on) { talking = !!on; render(); },
     learn: learn,
     get learned() { return learned.map(function (m) { return m.name; }); },
     bond: setBond,
-    get talking() { return talking; },
     addBag: function (id, label, fn) { extraBag = extraBag.filter(function (it) { return it.id !== id; }); extraBag.push({ id: id, icon: ICONS[id] ? id : 'chat', label: label, fn: fn }); },
     // 回到标题栏上（手机上聊天面板从底下升起来，别让小芯被挡住）
     home: function () { if (!HOME || paused() || !(mode === 'idle' || mode === 'walk' || mode === 'play')) return; var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) { aiLoop = false; stopWalk(); stopSeq(); setMode('idle'); hop(g, g.x0 + (g.x1 - g.x0) * 0.4); } },

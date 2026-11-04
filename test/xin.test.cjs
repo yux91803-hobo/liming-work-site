@@ -600,12 +600,12 @@ test('对话改名、删除（连同每一轮的记录）；还在进行中的�
   assert.strictEqual(op('forget', { sid: '../../etc' }).error, 'bad_sid');
 });
 
-test('设定里教了：STM32 空工程怎么编译、文件写完整路径、考考我怎么出题', async () => {
+test('设定里教了：STM32 空工程怎么编译、文件写完整路径（「考考我」已经去掉）', async () => {
   const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
   const p = systemPrompt('');
   assert.ok(p.includes('/stm32-template') && p.includes('make') && p.includes('build/app.hex') && p.includes('setup-stm32.sh'));
   assert.ok(p.includes('小芯的文件') && p.includes('完整路径'));
-  assert.ok(p.includes('考考我') && p.includes('一次一道') && p.includes('xin remember'));
+  assert.ok(!p.includes('考考我'));
 });
 
 test('STM32 环境脚本：语法对、头文件版本固定、不用 nosys.specs、带 syscalls.c、自己的 main.c 不覆盖', () => {
