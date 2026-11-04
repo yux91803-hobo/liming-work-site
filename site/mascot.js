@@ -1277,7 +1277,7 @@
   }
 
   /* ---------- 和小芯说话：小芯旁边冒一个输入框（打字或语音），发出去就收起来 ----------
-     o = { onSend(text), onExpand(), placeholder }；语音用浏览器自带的识别（没有就不显示话筒） */
+     o = { onSend(text), onExpand(), placeholder, chip, onChipOff() }；chip 是框上面那行「附带：…」（点 ✕ 这次不带）；语音用浏览器自带的识别（没有就不显示话筒） */
   var askEl = null, rec = null;
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
   var ASK_ICON = {
@@ -1308,12 +1308,17 @@
     stopWalk();
     askEl = document.createElement('div');
     askEl.className = 'xin-ask'; askEl.setAttribute('role', 'dialog'); askEl.setAttribute('aria-label', '和小芯说话');
-    askEl.innerHTML = '<div class="xin-ask-row"><textarea rows="1" enterkeyhint="send" aria-label="和小芯说的话"></textarea>' +
+    askEl.innerHTML = (o.chip ? '<div class="xin-ask-ctx"><span></span><button type="button" aria-label="这次不带">✕</button></div>' : '') + '<div class="xin-ask-row"><textarea rows="1" enterkeyhint="send" aria-label="和小芯说的话"></textarea>' +
       (SR ? '<button type="button" class="xin-ask-mic" aria-label="说话">' + ASK_ICON.mic + '</button>' : '') +
       '<button type="button" class="xin-ask-send" aria-label="发送">' + ASK_ICON.send + '</button></div>' +
       '<div class="xin-ask-ft"><span class="xin-ask-hint" role="status"></span>' +
       (o.onExpand ? '<button type="button" class="xin-ask-more">' + ASK_ICON.more + '<span>展开</span></button>' : '') + '</div>';
     var ta = askEl.querySelector('textarea'), hint = askEl.querySelector('.xin-ask-hint'), mic = askEl.querySelector('.xin-ask-mic'), box = askEl;
+    var chip = askEl.querySelector('.xin-ask-ctx');
+    if (chip) {
+      chip.firstChild.textContent = o.chip;
+      chip.lastChild.addEventListener('click', function () { chip.remove(); placeAsk(); if (o.onChipOff) o.onChipOff(); ta.focus(); });
+    }
     ta.placeholder = o.placeholder || '和小芯说点什么…';
     var grow = function () { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; placeAsk(); };
     var send = function () {

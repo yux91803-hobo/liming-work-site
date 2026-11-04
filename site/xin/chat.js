@@ -81,6 +81,7 @@
       '<form class="xc-ft">' +
         '<div class="xc-opts"><div class="xc-seg" role="radiogroup" aria-label="用哪个 AI"></div>' +
         '<div class="xc-eff" role="radiogroup" aria-label="思考强度"><span class="xc-eff-l">思考</span></div></div>' +
+        '<div class="xc-ctx" hidden><span></span><button type="button" aria-label="这次不带">✕</button></div>' +
         '<div class="xc-row">' +
           '<textarea rows="1" placeholder="让小芯做点什么…" aria-label="消息" enterkeyhint="' + (touch ? 'enter' : 'send') + '"></textarea>' +
           '<button type="submit" class="xc-send" aria-label="发送"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>' +
@@ -109,6 +110,8 @@
     foot.addEventListener('submit', function (e) { e.preventDefault(); if (S.run) stop(); else send(); });
     input.value = ls(LS_DRAFT) || '';
     input.addEventListener('input', function () { grow(); ls(LS_DRAFT, input.value || null); });
+    input.addEventListener('focus', refreshCtx);
+    root.querySelector('.xc-ctx button').addEventListener('click', function () { S.ctxOff = true; refreshCtx(); input.focus(); });
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touch) { e.preventDefault(); if (!S.run) send(); }
     });
@@ -155,12 +158,13 @@
 
   /* ---------- 打开 / 关上 ---------- */
   function open() {
+    S.ctxOff = false;
     if (!root) build();
     S.open = true; root.hidden = false; S.view = 'chat';
     requestAnimationFrame(function () { root.classList.add('show'); });
     document.body.classList.add('xc-open');
     var x = xin(); if (x && x.home && window.innerWidth < 900) x.home();
-    render(); grow();
+    render(); grow(); refreshCtx();
     if (!S.enabled) return;
     if (!S.authed) { if (!touch) loginEl.pw.focus(); return; }
     if (S.histFor !== (S.sid || '') || !list.childNodes.length) loadCurrent();
@@ -263,12 +267,15 @@
     if (!text || S.run || S.sending) return false;
     S.sending = true;
     if (list.querySelector('.xc-hello')) list.innerHTML = '';
-    var pending = draw({ t: 'user', text: text });
+    var c = S.ctxOff ? null : pageContext();
+    var pending = draw({ t: 'user', text: text, ctx: c ? ctxLabel(c) : '' });
     pending.classList.add('pending');
     if (given == null) { input.value = ''; ls(LS_DRAFT, null); grow(); }
     toBottom(true); S.lastText = '';
     var x = xin(); if (x) x.ai('think');
-    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort }, 90000).then(function (d) {
+    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined }, 90000).then(function (d) {
+      if (c && c.sel) S.sel = null;      // 选中的内容用过一次就不再带
+      S.ctxOff = false; refreshCtx();
       S.sending = false; pending.classList.remove('pending');
       S.sid = d.sid; S.sessAgent = d.agent || S.sessAgent || S.agent; ls(LS_SID, d.sid);
       S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); S.doing = 'think'; render(); startPolling();
@@ -280,14 +287,76 @@
       draw({ t: 'err', text: '没发出去：' + e.message }); toBottom(true);
     });
   }
+  /* ---------- 附带页面信息：发消息时告诉小芯你正在看什么 ----------
+     在哪一页（学习台的标题 + 亮着的小标签）、最近 3 分钟里在网站上选中的文字、「验证」里写的代码。
+     不是一直盯着：只在发消息那一下读一次；只发到你自己的云电脑。 */
+  var SEL_MAX = 4000, CODE_MAX = 6000, SEL_AGE = 180000, watched = [];
+  function watchDoc(d) {
+    if (!d || watched.indexOf(d) >= 0) return;
+    watched.push(d);
+    // 记下最近一次选中的文字：点开输入框时选区会被清掉，所以选的那一刻就记
+    d.addEventListener('selectionchange', function () {
+      var sel = d.getSelection && d.getSelection();
+      if (!sel || sel.isCollapsed || !sel.anchorNode) return;
+      var n = sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement;
+      if (n && n.closest && n.closest('.xc, .xin-ask, .xin-bag, textarea, input')) return;
+      var t = String(sel).replace(/\u00a0/g, ' ').trim();
+      if (t) S.sel = { text: t.slice(0, SEL_MAX), at: Date.now() };
+    });
+  }
+  function toolDoc() {
+    if (!document.body.classList.contains('tool-open')) return null;
+    var f = document.querySelector('.panel.show iframe');
+    try { return f && f.contentDocument; } catch (e) { return null; }
+  }
+  function pageContext() {
+    var d = toolDoc(), c = { label: '', sel: '', code: '' };
+    if (d && d.getElementById('main')) {
+      watchDoc(d);
+      var title = String(d.title || '').replace(/\s*·\s*STM32 学习台\s*$/, '').trim();
+      var parts = title ? title.split(/\s*·\s*/) : ['首页'];
+      [].forEach.call(d.querySelectorAll('#main .snav-i.on, #main .cseg-b.on, #main .lm-tab.on'), function (e) {
+        var t = e.textContent.replace(/\s+/g, ' ').trim();
+        if (t && parts.indexOf(t) < 0 && title.indexOf(t) < 0) parts.push(t);
+      });
+      c.place = parts.join(' · '); c.label = 'STM32 学习台 · ' + c.place;   // 给 AI 的写全，框上面那行短一点
+      var ta = d.querySelector('#main .lab-ta');
+      if (ta && ta.offsetParent && ta.value.trim()) c.code = ta.value.slice(0, CODE_MAX);
+    }
+    if (S.sel && Date.now() - S.sel.at < SEL_AGE) c.sel = S.sel.text;
+    return c.label || c.sel || c.code ? c : null;
+  }
+  function ctxLabel(c) {
+    var out = [c.place || c.label || '网页'];
+    if (c.sel) { var n = c.sel.split('\n').length, one = c.sel.replace(/\s+/g, ' '); out.push(n > 1 ? '选中 ' + n + ' 行' : '选中「' + (one.length > 14 ? one.slice(0, 13) + '…' : one) + '」'); }
+    if (c.code) out.push('你写的代码');
+    return out.join(' · ');
+  }
+  function ctxText(c) {
+    var t = [];
+    if (c.label) t.push('【用户正在看】' + c.label);
+    if (c.sel) t.push('【用户选中的内容】\n' + c.sel);
+    if (c.code) t.push('【用户在「验证」里写的代码】\n```c\n' + c.code + '\n```');
+    return t.join('\n');
+  }
+  function refreshCtx() {
+    if (!root) return;
+    var box = root.querySelector('.xc-ctx'), c = S.ctxOff ? null : pageContext();
+    box.hidden = !c; if (c) box.firstChild.textContent = '附带：' + ctxLabel(c);
+  }
+
   /* ---------- 不开面板，直接和小芯说：小芯旁边冒输入框，回复在它头上的气泡里 ---------- */
   function quick(X) {
     X = X || xin();
     if (!S.enabled || !X || !X.ask) return;
     if (!S.authed) { open(); return; }
     if (!root) build();
+    S.ctxOff = false;
+    var c = pageContext();
     X.ask({
       placeholder: S.run ? '小芯还在忙上一件事…' : '和小芯说点什么…',
+      chip: c ? '附带：' + ctxLabel(c) : '',
+      onChipOff: function () { S.ctxOff = true; },
       onExpand: open,
       onSend: function (t) {
         if (S.run || S.sending) { X.say('我还在忙上一件事，等我做完～', 4000); return; }
@@ -376,7 +445,7 @@
   function draw(ev, old, run) {
     var e = null;
     if (ev.t === 'tool' || ev.t === 'tool_end') return drawTool(ev, run || S.run);
-    if (ev.t === 'user') { e = h('div', 'xc-m xc-me'); e.appendChild(h('div', 'xc-bub', ev.text)); }
+    if (ev.t === 'user') { e = h('div', 'xc-m xc-me'); e.appendChild(h('div', 'xc-bub', ev.text)); if (ev.ctx) e.appendChild(h('div', 'xc-ctxm', '附带：' + ev.ctx)); }
     else if (ev.t === 'text') { e = h('div', 'xc-m xc-ai'); e.appendChild(md(ev.text)); }
     else if (ev.t === 'xin') e = h('div', 'xc-note', '✻ 小芯' + (ACT_NAME[ev.act] || ev.act) + (ev.arg && ev.act !== 'music' ? '：' + ev.arg : ''));
     else if (ev.t === 'status') return null;   // 临时状态只在状态栏里闪一下（见 react），不进对话
@@ -441,6 +510,10 @@
 
   /* ---------- 启动 ---------- */
   function boot() {
+    watchDoc(document);
+    // 学习台在 iframe 里：它加载好就开始记选中的文字
+    document.addEventListener('load', function (e) { if (e.target && e.target.tagName === 'IFRAME') try { watchDoc(e.target.contentDocument); } catch (er) {} }, true);
+    [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { watchDoc(f.contentDocument); } catch (er) {} });
     req('me').then(function (d) {
       S.enabled = !!d.enabled; S.authed = !!d.authed;
       syncBag();
