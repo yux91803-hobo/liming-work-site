@@ -7,15 +7,15 @@
 //   GET  /api/xin/me       {enabled, authed}
 //   POST /api/xin/login    {password}
 //   POST /api/xin/logout
-//   POST /api/xin/call     {op, args}   op = status | ping | send | poll | stop | sessions | history
-// 除 status 以外都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
+//   POST /api/xin/call     {op, args}   op = status | wake | ping | send | poll | stop | sessions | history
+// status、wake 直接调 InstaBox 的机器接口（wake：打开网页时把睡着的云电脑叫醒，已经醒着就什么都不做）；其余都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
 // 返回 {ok:true, data} 或 {ok:false, state, msg, retryAfter}：state = waking（正在唤醒云电脑）、cooldown（跑满 8 小时后的冷却）、busy、error。
 const API = 'https://api.instabox.sh';
 const COOKIE = '__Host-xin';
 const SESSION_SEC = 30 * 86400;
 const AGENT_ASSET = '/xin/vm-agent.mjs';
 const VM_DIR = '/data/home/.xin/agent';
-const OPS = new Set(['status', 'ping', 'send', 'poll', 'stop', 'sessions', 'history']);
+const OPS = new Set(['status', 'wake', 'ping', 'send', 'poll', 'stop', 'sessions', 'history']);
 const HDRS = { 'Content-Type': 'application/json; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
 const enc = new TextEncoder();
@@ -141,6 +141,17 @@ async function exec(env, origin, id, op, args, retried) {
 async function call(env, origin, op, args, ctx, now) {
   let m;
   try { m = await machine(env, now); } catch (e) { return explain(e); }
+  if (op === 'wake') {
+    const r = await ib(env, '/v1/machines/' + m.id);
+    if (!r.ok) return explain(await ibErr(r));
+    const d = await r.json();
+    if (d.cooldownUntil && Date.parse(d.cooldownUntil) > now) return { ok: true, data: { state: d.state, action: 'cooldown', cooldownUntil: d.cooldownUntil } };
+    if (d.state !== 'suspended' && d.state !== 'stopped') return { ok: true, data: { state: d.state, action: 'none' } };
+    const op2 = d.state === 'stopped' ? 'start' : 'resume';
+    const w = await ib(env, `/v1/machines/${m.id}/${op2}`, { method: 'POST', headers: { 'Idempotency-Key': uuid() }, body: '{}' });
+    if (!w.ok && w.status !== 202) { const e = await ibErr(w); if (e.code !== 'operation_conflict') return explain(e); }
+    return { ok: true, data: { state: d.state, action: op2 } };
+  }
   if (op === 'status') {
     const r = await ib(env, '/v1/machines/' + m.id);
     if (!r.ok) return explain(await ibErr(r));

@@ -181,7 +181,7 @@
   function login(pw) {
     var err = loginEl.querySelector('.xc-err'); err.textContent = '';
     req('login', { password: pw }).then(function (d) {
-      if (d._status === 200) { S.authed = true; loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
+      if (d._status === 200) { S.authed = true; loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
       err.textContent = d.msg || (d._status === 429 ? '试太多次了，过一分钟再试' : '登录失败');
     }, function () { err.textContent = '网络不通'; });
   }
@@ -212,7 +212,8 @@
   function status() {
     call('status').then(function (d) {
       S.machine = d.name || '';
-      var st = { running: '', suspended: '云电脑在睡觉，发消息会叫醒它（要等几秒）', stopped: '云电脑关机了，发消息会替它开机（要等一会儿）' }[d.state];
+      var st = { running: '', suspended: '小芯的电脑在睡觉，正在叫醒它（要等几秒）', stopped: '小芯的电脑关机了，正在替它开机（要等一会儿）' }[d.state];
+      if (d.state === 'suspended' || d.state === 'stopped') wakeVm();
       setStatus(st === undefined ? '云电脑：' + d.state : st, 'info');
       renderSeg();
     }, function (e) { setStatus(e.message, 'bad'); });
@@ -525,6 +526,16 @@
   }
 
   /* ---------- 启动 ---------- */
+  /* ---------- 打开网页就叫醒云电脑：等你发第一句话时它已经醒了 ----------
+     登录了才叫；已经醒着什么都不做；离开页面超过 10 分钟再回来时再叫一次（它空闲 30 分钟会自己睡）。失败不提示，发消息时还会再叫。 */
+  var wokeAt = 0;
+  function wakeVm() {
+    if (!S.enabled || !S.authed) return;
+    wokeAt = Date.now();
+    call('wake', {}, 0).catch(function () {});
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && Date.now() - wokeAt > 600000) wakeVm(); });
+
   function boot() {
     watchDoc(document);
     // 学习台在 iframe 里：它加载好就开始记选中的文字
@@ -532,7 +543,7 @@
     [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { watchDoc(f.contentDocument); } catch (er) {} });
     req('me').then(function (d) {
       S.enabled = !!d.enabled; S.authed = !!d.authed;
-      syncBag();
+      syncBag(); wakeVm();
       if (location.hash === '#xin') open();
       // 刷新页面时上一轮还在跑：小芯接着陪着（打开面板时会接上）
     }, function () { if (location.hash === '#xin') { S.enabled = false; open(); } });

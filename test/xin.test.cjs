@@ -251,12 +251,12 @@ test('思考强度：Codex 用 -c model_reasoning_effort（续接也带），Cla
   const fresh = { started: false, agentSid: null }, cont = { started: true, agentSid: 'th-1' };
   let [cmd, a] = agentArgs('codex', fresh, '写代码', 'max');
   assert.strictEqual(cmd, 'codex');
-  assert.deepStrictEqual(a.slice(a.indexOf('-c'), a.indexOf('-c') + 2), ['-c', 'model_reasoning_effort="max"']);
+  assert.strictEqual(a[a.indexOf('model_reasoning_effort="max"') - 1], '-c');
   [, a] = agentArgs('codex', cont, '再改改', 'max');
   assert.deepStrictEqual(a.slice(0, 2), ['exec', 'resume']);
   assert.ok(a.includes('model_reasoning_effort="max"') && a[a.length - 2] === 'th-1' && a[a.length - 1] === '再改改');
   [, a] = agentArgs('codex', fresh, '你好', '');
-  assert.ok(!a.includes('-c'));
+  assert.ok(!a.some(x => x.startsWith('model_reasoning_effort')));
   [cmd, a] = agentArgs('claude', { started: false, agentSid: 'u-1' }, '写代码', 'max');
   assert.strictEqual(cmd, 'claude');
   assert.deepStrictEqual(a.slice(a.indexOf('--effort'), a.indexOf('--effort') + 2), ['--effort', 'max']);
@@ -277,4 +277,38 @@ test('附带页面信息：接在消息后面给 AI，没有就原样；太长�
 test('系统提示告诉 AI 附带信息是什么', async () => {
   const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
   assert.ok(systemPrompt().includes('【用户选中的内容】'));
+});
+
+test('wake：睡着的叫醒（resume），关机的开机（start），醒着的不动，冷却中不动', async () => {
+  for (const [state, extra, expect] of [['suspended', {}, 'resume'], ['stopped', {}, 'start'], ['running', {}, 'none'], ['suspended', { cooldownUntil: new Date(Date.now() + 600000).toISOString() }, 'cooldown']]) {
+    const m = await fresh(), env = mkEnv(), ck = await login(m, env);
+    const ib = fakeIB({
+      'GET /v1/machines': [MACHINES],
+      'GET /v1/machines/m_abc': [{ body: Object.assign({ id: 'm_abc', state }, extra) }],
+      'POST /v1/machines/m_abc/resume': [{ status: 202, body: { id: 'op_1' } }],
+      'POST /v1/machines/m_abc/start': [{ status: 202, body: { id: 'op_2' } }]
+    });
+    try {
+      const d = await (await m.handleXin(req('/api/xin/call', { body: { op: 'wake' }, headers: { cookie: ck } }), env, null)).json();
+      assert.strictEqual(d.ok, true, state);
+      assert.strictEqual(d.data.action, expect, state);
+      const posts = ib.calls.filter(c => c.key.startsWith('POST'));
+      assert.strictEqual(posts.length, expect === 'resume' || expect === 'start' ? 1 : 0, state);
+      if (posts.length) assert.ok(posts[0].init.headers['Idempotency-Key']);
+      assert.ok(!ib.calls.some(c => c.key.endsWith('/exec')));
+    } finally { ib.restore(); }
+  }
+});
+
+test('Codex 每一轮都带小芯的设定（developer_instructions），续接对话也带；第一句不再拼设定', async () => {
+  const { agentArgs, systemPrompt } = await load('../site/xin/vm-agent.mjs');
+  for (const sess of [{ started: false, agentSid: null }, { started: true, agentSid: 'th-1' }]) {
+    const [, a] = agentArgs('codex', sess, '你好', '');
+    const i = a.findIndex(x => x.startsWith('developer_instructions='));
+    assert.ok(i > 0 && a[i - 1] === '-c');
+    assert.strictEqual(JSON.parse(a[i].slice('developer_instructions='.length)), systemPrompt());
+    assert.strictEqual(a[a.length - 1], '你好');
+  }
+  const p = systemPrompt();
+  assert.ok(p.includes('你就是小芯') && p.includes('第一人称') && p.includes('自己的电脑') && p.includes('不要说出'));
 });

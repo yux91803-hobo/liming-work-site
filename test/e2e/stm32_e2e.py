@@ -71,6 +71,7 @@ async def xin_mock(pg, authed=False):
         op, args = body.get('op'), body.get('args') or {}
         st['ops'].append(op)
         if op == 'status': return await ok({'ok': True, 'data': {'name': 'li', 'state': 'running'}})
+        if op == 'wake': return await ok({'ok': True, 'data': {'state': 'running', 'action': 'none'}})
         if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': None}})
         if op == 'sessions': return await ok({'ok': True, 'data': {'sessions': [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0}]}})
         if op == 'send':
@@ -920,8 +921,10 @@ async def main():
         items = await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
         await pg.click('.xin-bag .xin-it:has-text("聊天")'); await pg.wait_for_selector('.xc.show .xc-login')
         check('功能开着、没登录：背包里也有「聊天」，点了先要密码', '聊天' in items and await pg.is_visible('.xc-login input[type=password]'), items)
+        ops_before = list(xs['ops'])
         await pg.fill('.xc-login input', 'pw-ok-123456'); await pg.click('.xc-login .xc-btn')
-        await pg.wait_for_selector('.xc-hello')
+        await pg.wait_for_selector('.xc-hello'); await pg.wait_for_timeout(200)
+        check('没登录不叫醒云电脑，登录以后马上叫醒', 'wake' not in ops_before and 'wake' in xs['ops'], (ops_before, xs['ops']))
         check('登录以后：欢迎语、选 AI（默认 Codex）、输入框', await pg.is_visible('.xc-row textarea') and await pg.get_attribute('.xc-ag[data-agent=codex]', 'aria-checked') == 'true')
         await pg.click('.xc-ag[data-agent=claude]')
         eff = await pg.evaluate("document.querySelector('.xc-eff [aria-checked=true]').dataset.effort")
@@ -955,6 +958,7 @@ async def main():
         await pq.wait_for_selector('.xin-ask')
         st = await pq.evaluate("[!!document.querySelector('.xc.show'), document.activeElement === document.querySelector('.xin-ask textarea'), (() => { const r = document.querySelector('.xin-ask').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0; })()]")
         check('背包「聊天」：小芯旁边冒输入框（不弹面板），光标在框里，框在屏幕内', st == [False, True, True], st)
+        check('登录了：一打开网页就叫醒云电脑（wake）', 'wake' in xq['ops'], xq['ops'])
         await pq.fill('.xin-ask textarea', '看看工作目录'); await pq.keyboard.press('Enter')
         await pq.wait_for_timeout(400)
         st = await pq.evaluate("[!!document.querySelector('.xin-ask'), !!document.querySelector('.xc.show'), LimingXin.aiState]")
