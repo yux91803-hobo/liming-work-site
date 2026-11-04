@@ -14,6 +14,10 @@
      run <run>                     后台真正跑 AI 的进程（send 起的），把输出整理成事件写进 runs/<run>.jsonl
      xin <动作> [参数]              给 AI 用的命令：让网页上的小芯做动作（xin dance、xin say 你好）；xin remember 一句话 记到小芯的记事本里
      memory   {}                   读小芯的记事本（长期记忆）；memory_set {text} 整本改写（网站上「小芯的记事本」里改）
+     daily    {force?}             按每日任务清单开一轮（网站后台每天定时调；今天做过就跳过，force 再做一遍）
+     daily_get / daily_set {text}  读 / 改每日任务清单
+     greet    {}                   下次见面的开场白（xin next 写的）；顺便在电脑刚睡醒时预热一下模型网关
+   内部：warm                       预热：发一个很短的请求，把刚睡醒后第一下的卡顿先吃掉（不留会话）
 
    AI 在这台云电脑里是完全放权的（--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox），
    能执行任何命令；这是用户确认过的。云电脑里不放 InstaBox key，AI 的 key 建议用 InstaBox 的代理 Secret。 */
@@ -55,6 +59,72 @@ export const MEM_FILE = () => path.join(BASE, 'memory.md');
 const MEM_MAX = 8000;
 export function readMemory() { try { return fs.readFileSync(MEM_FILE(), 'utf8'); } catch { return ''; } }
 function today() { const d = new Date(Date.now() + 8 * 3600e3); return d.toISOString().slice(0, 10); }   // 北京时间的日期
+function bjNow() { return new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 16).replace('T', ' '); }
+function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } }
+
+/* ---------- 每日任务：网站后台每天北京时间 8:55 叫醒电脑（网关 9 点自己签到），9:10 让小芯按清单做一遍，没做成 21:10 再来一次 ---------- */
+export const DAILY_FILE = () => path.join(BASE, 'daily.md');
+const DAILY_DONE = () => path.join(BASE, 'daily-done.json');   // 今天做成了：{date, run, sid, at}
+const DAILY_LAST = () => path.join(BASE, 'daily-last.json');   // 最近一次：{date, run, sid, at, ok}
+export function dailyPrompt(list) {
+  return [
+    '⏰ 现在是北京时间 ' + bjNow() + '，到点做每日任务了。用户现在不在，别问问题，自己按清单做完：',
+    '<<<每日任务\n' + String(list).trim() + '\n每日任务>>>',
+    '每一条都要确认真的做成了。做法可以记进记事本，下次直接用（别记密码）。',
+    '全部做完后用 `xin next 一句话` 留一句下次见面时对用户说的话，汇报结果（30 字以内）；最后用几句话总结每一条的结果。'
+  ].join('\n');
+}
+function dailyDone(run, meta, ok) {
+  const rec = { date: today(), run, sid: meta.sid, at: Date.now(), ok };
+  writeJ(DAILY_LAST(), rec);
+  if (ok) writeJ(DAILY_DONE(), rec);
+}
+
+/* ---------- 下次见面的开场白：小芯用 xin next 写，用户下次打开网页时在气泡里说 ---------- */
+export const NEXT_FILE = () => path.join(BASE, 'next.json');
+const NEXT_TTL = 3 * 86400e3;
+export function setNext(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (!t) return null;
+  mk(BASE);
+  const g = { id: rid('g'), text: t, at: Date.now() };
+  writeJ(NEXT_FILE(), g);
+  return g;
+}
+export function getNext(now = Date.now()) {
+  const g = readJ(NEXT_FILE());
+  return g && g.text && now - g.at < NEXT_TTL ? g : null;
+}
+
+/* ---------- 网关预热：电脑睡醒后第一个请求常卡很久（实测一次 124 秒），先发一个很短的请求把它吃掉 ---------- */
+const WARM_FILE = () => path.join(BASE, 'warm.json');
+const WARM_IDLE = 25 * 60e3;          // 25 分钟没动静（电脑 30 分钟没事干会睡）就当它睡过
+function lastActivity() {
+  let t = (readJ(WARM_FILE()) || {}).at || 0;
+  try { for (const f of fs.readdirSync(RUNS)) { const st = fs.statSync(path.join(RUNS, f)); if (st.mtimeMs > t) t = st.mtimeMs; } } catch { /* 还没有记录 */ }
+  return t;
+}
+function hasCmd(c) { return spawnSync('sh', ['-lc', 'command -v ' + c], { encoding: 'utf8' }).status === 0; }
+function maybeWarm() {
+  if (Date.now() - lastActivity() < WARM_IDLE || !hasCmd('codex')) return false;
+  mk(BASE); writeJ(WARM_FILE(), { at: Date.now(), running: true });
+  spawn(process.execPath, [SELF, 'warm'], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref();
+  return true;
+}
+function warm() {
+  const t0 = Date.now();
+  const child = spawn('codex', ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '-c', 'developer_instructions="只回复一个字：1"', '1'],
+    { cwd: os.homedir(), stdio: ['ignore', 'ignore', 'ignore'] });
+  const kill = setTimeout(() => { try { child.kill('SIGTERM'); } catch { /* 已经退了 */ } }, 200e3);
+  const end = (code) => {
+    clearTimeout(kill);
+    const rec = { at: Date.now(), ms: Date.now() - t0, ok: code === 0 };
+    writeJ(WARM_FILE(), rec);
+    try { fs.appendFileSync(path.join(BASE, 'warm.log'), JSON.stringify(rec) + '\n'); } catch { /* 不要紧 */ }
+  };
+  child.on('error', () => end(127));
+  child.on('close', code => end(code));
+}
 export function remember(text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
   if (!t) return '';
@@ -87,6 +157,8 @@ export function systemPrompt(mem) {
       Object.keys(ACTS).map(k => k + '（' + ACTS[k] + '）').join('、') + '。',
     '例如：任务做完了可以 `xin dance`，编译失败可以 `xin sad`，想对用户说句俏皮话可以 `xin say 搞定啦`（气泡里的话不超过 20 个字）。',
     '用户的消息后面有时会附上网页自动加的【用户正在看】（学习台的哪一页）、【用户选中的内容】、【用户在「验证」里写的代码】。用户说「这行」「这个」「我写的」时指的就是这些；回答时直接针对它们，不用复述。',
+    '你可以用 shell 命令 `xin next 一句话` 留一句下次见面时的开场白：用户下次打开网页，你会第一时间在气泡里说这句（30 字以内，口语，像打招呼）。有值得下次跟进的事就写——没做完的事、约好的复习、每日任务的结果；新的会覆盖旧的。',
+    '你有一份每日任务清单（文件 ' + DAILY_FILE() + '）。每天北京时间 9:10 左右你会被叫醒按清单做一遍（没做成 21:10 再来一次）。用户让你「每天做什么」，就写进这份清单（一条一行，写清楚怎么做、怎么确认做成了）；别自己用 cron 定时，电脑睡着的时候 cron 不会跑。',
     memoryPart(mem)
   ].join('\n');
 }
@@ -242,17 +314,22 @@ export function agentArgs(agent, sess, text, effort) {
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(common, [sess.agentSid, text])];
   return ['codex', ['exec'].concat(common, ['-C', WORK, text])];
 }
+function killTree(c) {
+  if (!c || !c.pid) return;
+  try { process.kill(-c.pid, 'SIGTERM'); } catch { try { c.kill('SIGTERM'); } catch { /* 已经退了 */ } }
+}
+// 一直没有任何输出就当卡住了（实测电脑刚睡醒时模型网关第一下能卡 124 秒）：停掉重来一次
+const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
 function runner(run) {
   const meta = readJ(metaF(run));
   if (!meta) process.exit(1);
   meta.pid = process.pid; writeJ(metaF(run), meta);
   const sess = readJ(sessF(meta.sid));
   mk(WORK); installXin();
-  const [cmd, args] = agentArgs(meta.agent, sess, meta.text, meta.effort || '');
   const t0 = Date.now(), state = {};
-  let finished = false, stderr = '';
+  let finished = false, stderr = '', child = null, retried = false, restarting = false, stallTm = 0;
   const finish = (code, why) => {
-    if (finished) return; finished = true;
+    if (finished) return; finished = true; clearTimeout(stallTm);
     const s = readJ(sessF(meta.sid), sess);
     if (state.sid) { s.agentSid = state.sid; s.started = true; }
     s.updated = Date.now(); writeJ(sessF(meta.sid), s);
@@ -265,38 +342,66 @@ function runner(run) {
     }
     emit(run, { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '' });
     m.ended = Date.now(); writeJ(metaF(run), m);
+    if (meta.kind === 'daily') dailyDone(run, meta, ok);
   };
-  let child;
-  try {
-    child = spawn(cmd, args, {
-      cwd: WORK, stdio: ['ignore', 'pipe', 'pipe'],
-      env: Object.assign({}, process.env, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
-    });
-  } catch (e) { finish(127, '启动 ' + cmd + ' 失败：' + e.message); return; }
-  child.on('error', e => finish(127, e.code === 'ENOENT' ? '云电脑里没有 ' + cmd + ' 命令' : '启动 ' + cmd + ' 失败：' + e.message));
   const norm = meta.agent === 'claude' ? fromClaude : fromCodex;
-  let buf = '';
-  child.stdout.setEncoding('utf8');
-  child.stdout.on('data', d => {
-    buf += d;
-    let i;
-    while ((i = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-      if (!line || line[0] !== '{') continue;
-      let o; try { o = JSON.parse(line); } catch { continue; }
-      for (const ev of norm(o, state)) emit(run, ev);
-      // 一拿到 AI 自己的会话号就记下来：中途被停掉，下一句也能接着聊
-      if (state.sid && !state.sidSaved) { state.sidSaved = true; const s = readJ(sessF(meta.sid), sess); s.agentSid = state.sid; s.started = true; writeJ(sessF(meta.sid), s); }
-    }
-  });
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', d => { stderr = (stderr + d).slice(-8000); });
-  child.on('close', code => finish(code == null ? 1 : code));
-  const term = () => { try { child.kill('SIGTERM'); } catch { /* 已经退了 */ } };
+  const start = () => {
+    // 每次都重新读会话：重来时 AI 的会话号可能已经有了，要接着那个会话
+    const [cmd, args] = agentArgs(meta.agent, readJ(sessF(meta.sid), sess), meta.text, meta.effort || '');
+    let got = false, buf = '';
+    try {
+      // 自己一个进程组：卡住或停掉时连它起的子进程一起杀，不然子进程攥着输出管道，这边永远等不到它结束
+      child = spawn(cmd, args, {
+        cwd: WORK, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+        env: Object.assign({}, process.env, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
+      });
+    } catch (e) { finish(127, '启动 ' + cmd + ' 失败：' + e.message); return; }
+    child.on('error', e => finish(127, e.code === 'ENOENT' ? '云电脑里没有 ' + cmd + ' 命令' : '启动 ' + cmd + ' 失败：' + e.message));
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', d => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+        if (!line || line[0] !== '{') continue;
+        let o; try { o = JSON.parse(line); } catch { continue; }
+        for (const ev of norm(o, state)) { emit(run, ev); if (ev.t !== 'status') got = true; }
+        // 一拿到 AI 自己的会话号就记下来：中途被停掉，下一句也能接着聊
+        if (state.sid && !state.sidSaved) { state.sidSaved = true; const s = readJ(sessF(meta.sid), sess); s.agentSid = state.sid; s.started = true; writeJ(sessF(meta.sid), s); }
+      }
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', d => { stderr = (stderr + d).slice(-8000); });
+    child.on('close', code => {
+      clearTimeout(stallTm);
+      if (restarting) { restarting = false; start(); return; }
+      finish(code == null ? 1 : code);
+    });
+    stallTm = setTimeout(() => {
+      if (got || retried || finished) return;
+      if ((readJ(metaF(run), meta) || {}).stopped) return;
+      retried = true; restarting = true;
+      emit(run, { t: 'status', text: '这次连接卡住了，重新连一次…' });
+      killTree(child);
+    }, STALL_MS);
+  };
+  start();
+  const term = () => { restarting = false; killTree(child); };
   process.on('SIGTERM', term); process.on('SIGINT', term);
 }
 
 /* ---------- 对外的 op ---------- */
+// 开一轮：记下这一轮要给 AI 的话，历史里放 userEv（用户看到的那句），在后台起 runner
+function launch(s, m, userEv) {
+  const run = rid('r');
+  writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, m));
+  emit(run, userEv);
+  s.runs.push(run); s.updated = Date.now(); writeJ(sessF(s.sid), s);
+  const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir() });
+  const mm = readJ(metaF(run)); if (mm && !mm.pid) { mm.pid = child.pid; writeJ(metaF(run), mm); }
+  child.unref();
+  return run;
+}
 function lastRun(s) { return s && s.runs && s.runs.length ? s.runs[s.runs.length - 1] : null; }
 function runDone(run) {
   const evs = events(run);
@@ -349,15 +454,41 @@ const ops = {
       const agent = AGENTS.includes(a.agent) ? a.agent : 'claude';
       s = { sid: rid('s'), agent, title: text.replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
     }
-    const run = rid('r');
     const ctxLabel = String(a.ctxLabel || '').slice(0, 160);
-    writeJ(metaF(run), { run, sid: s.sid, agent: s.agent, text: forAgent(text, a.context), effort: resolveEffort(a.effort, text), started: Date.now() });
-    emit(run, ctxLabel ? { t: 'user', text, ctx: ctxLabel, at: Date.now() } : { t: 'user', text, at: Date.now() });
-    s.runs.push(run); s.updated = Date.now(); writeJ(sessF(s.sid), s);
-    const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir() });
-    const m = readJ(metaF(run)); if (m && !m.pid) { m.pid = child.pid; writeJ(metaF(run), m); }
-    child.unref();
+    const run = launch(s, { text: forAgent(text, a.context), effort: resolveEffort(a.effort, text) },
+      ctxLabel ? { t: 'user', text, ctx: ctxLabel, at: Date.now() } : { t: 'user', text, at: Date.now() });
     return { sid: s.sid, run, agent: s.agent, title: s.title };
+  },
+  daily_get() {
+    return { text: readText(DAILY_FILE()), last: readJ(DAILY_LAST()) || null, done: readJ(DAILY_DONE()) || null, today: today() };
+  },
+  daily_set(a) {
+    const text = String(a.text == null ? '' : a.text);
+    if (text.length > 20000) return { error: 'too_long', msg: '清单太长了' };
+    mk(BASE);
+    const t = DAILY_FILE() + '.' + process.pid + '.tmp';
+    fs.writeFileSync(t, text); fs.renameSync(t, DAILY_FILE());
+    return { ok: true };
+  },
+  daily(a) {
+    const list = readText(DAILY_FILE()).trim();
+    if (!list) return { skipped: 'empty' };
+    const done = readJ(DAILY_DONE());
+    if (done && done.date === today() && !a.force) return { skipped: 'done', done };
+    const last = readJ(DAILY_LAST());
+    if (last && last.run && fs.existsSync(metaF(last.run)) && !runDone(last.run)) return { skipped: 'running', run: last.run, sid: last.sid };
+    const agent = hasCmd('codex') ? 'codex' : hasCmd('claude') ? 'claude' : null;
+    if (!agent) return { error: 'no_agent', msg: '电脑里没有 codex 也没有 claude' };
+    mk(SESS); mk(RUNS);
+    const s = { sid: rid('s'), agent, title: '每日任务 · ' + today().slice(5), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now(), kind: 'daily' };
+    const run = launch(s, { text: forAgent(dailyPrompt(list), ''), effort: '', kind: 'daily' }, { t: 'user', text: '⏰ 每日任务：按清单做一遍', at: Date.now() });
+    writeJ(DAILY_LAST(), { date: today(), run, sid: s.sid, at: Date.now(), ok: null });
+    return { sid: s.sid, run, agent };
+  },
+  greet() {
+    const warming = maybeWarm();
+    const g = getNext();
+    return g ? Object.assign({ warming }, g) : { warming };
   },
   poll(a) {
     if (!okId(a.run, 'r')) return { error: 'bad_run', msg: '编号不对' };
@@ -395,6 +526,12 @@ const ops = {
 
 function xinCmd(argv) {
   const act = argv[0], arg = argv.slice(1).join(' ').trim();
+  if (act === 'next') {
+    const g = setNext(arg);
+    if (!g) { console.log('用法：xin next 下次见面要说的一句话'); return 2; }
+    console.log('下次见面会说：' + g.text);
+    return 0;
+  }
   if (act === 'remember') {
     const t = remember(arg);
     if (!t) { console.log('用法：xin remember 要记住的一句话'); return 2; }
@@ -404,7 +541,7 @@ function xinCmd(argv) {
     return 0;
   }
   if (!act || act === '-h' || act === '--help' || !ACTS[act]) {
-    console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记事本里（xin remember 一句话）');
+    console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记事本里（xin remember 一句话）\n  next     下次见面的开场白（xin next 一句话）');
     return act && act !== '-h' && act !== '--help' ? 2 : 0;
   }
   const run = process.env.XIN_RUN;
@@ -418,6 +555,7 @@ function xinCmd(argv) {
 function main() {
   const op = process.argv[2];
   if (op === 'run') { runner(process.argv[3]); return; }
+  if (op === 'warm') { warm(); return; }
   if (op === 'xin') { process.exitCode = xinCmd(process.argv.slice(3)); return; }
   if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
   let args = {};

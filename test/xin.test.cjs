@@ -352,3 +352,100 @@ test('身份：设定写明以它为准；每句后面悄悄附提醒（历史�
   const t2 = forAgent('这行什么意思', '【用户正在看】GPIO');
   assert.ok(t2.indexOf('【用户正在看】GPIO') < t2.indexOf(REMIND));
 });
+
+/* ---------- 每日任务、开场白、预热、卡住重来 ---------- */
+test('定时任务：8:55 那个只叫醒；9:10 / 21:10 那个开每日任务（电脑在睡就等它醒了再试）；没配密钥什么都不做', async () => {
+  const m = await fresh(), env = mkEnv();
+  const { CRON_WAKE, CRON_DAILY } = m;
+  assert.deepStrictEqual(await m.runCron(CRON_DAILY, mkEnv({ OWNER_PASSWORD: undefined }), null), { ok: false, state: 'disabled' });
+  let ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'GET /v1/machines/m_abc': [{ body: { id: 'm_abc', state: 'suspended' } }], 'POST /v1/machines/m_abc/resume': [{ status: 202, body: {} }] });
+  try {
+    const r = await m.runCron(CRON_WAKE, env, null, { wait: async () => {} });
+    assert.deepStrictEqual([r.ok, r.data.action], [true, 'resume']);
+    assert.ok(!ib.calls.some(c => c.key.endsWith('/exec')));
+  } finally { ib.restore(); }
+  m._reset();
+  ib = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/exec': [
+      { status: 409, body: { error: { code: 'machine_not_running' } } },
+      { body: { stdout: JSON.stringify({ sid: 'sd0000001', run: 'rd0000001', agent: 'codex' }), stderr: '', exitCode: 0 } }
+    ],
+    'GET /v1/machines/m_abc': [{ body: { id: 'm_abc', state: 'stopped' } }],
+    'POST /v1/machines/m_abc/start': [{ status: 202, body: {} }],
+    'PUT /v1/machines/m_abc/activity-leases/xin-rd0000001': [{ body: {} }]
+  });
+  const waits = [];
+  try {
+    const r = await m.runCron(CRON_DAILY, env, { waitUntil: p => waits.push(p) }, { wait: async () => {} });
+    await Promise.all(waits);
+    assert.deepStrictEqual(r, { ok: true, data: { sid: 'sd0000001', run: 'rd0000001', agent: 'codex' } });
+    const execs = ib.calls.filter(c => c.key.endsWith('/exec'));
+    assert.strictEqual(execs.length, 2);
+    assert.strictEqual(JSON.parse(execs[1].body).argv[2], 'daily');
+    assert.ok(ib.calls.some(c => c.key.endsWith('/start')) && ib.calls.some(c => c.key.includes('activity-leases')));
+  } finally { ib.restore(); }
+});
+
+test('Worker 有 scheduled 入口，交给 runCron', async () => {
+  const w = (await load('../src/worker.js')).default;
+  assert.strictEqual(typeof w.scheduled, 'function');
+  const waits = [];
+  await w.scheduled({ cron: '10 1,13 * * *' }, mkEnv({ OWNER_PASSWORD: undefined }), { waitUntil: p => waits.push(p) });
+  assert.strictEqual(waits.length, 1);
+  assert.deepStrictEqual(await waits[0], { ok: false, state: 'disabled' });
+});
+
+test('wrangler：正式站有两个定时任务，测试站一个都没有', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../wrangler.jsonc'), 'utf8');
+  const top = src.slice(0, src.indexOf('"env"')), stg = src.slice(src.indexOf('"env"'));
+  assert.match(top, /"triggers":\s*\{\s*"crons":\s*\["55 0 \* \* \*", "10 1,13 \* \* \*"\]\s*\}/);
+  assert.match(stg, /"triggers":\s*\{\s*"crons":\s*\[\]\s*\}/);
+});
+
+test('开场白：xin next 写一句，3 天内有效；设定里教了 xin next 和每日任务清单', async () => {
+  const { setNext, getNext, systemPrompt, dailyPrompt, DAILY_FILE } = await load('../site/xin/vm-agent.mjs');
+  assert.strictEqual(setNext('  '), null);
+  const g = setNext('今天签到好啦\n连签 10 天');
+  assert.strictEqual(g.text, '今天签到好啦 连签 10 天');
+  assert.deepStrictEqual(getNext(), g);
+  assert.strictEqual(getNext(Date.now() + 4 * 86400e3), null);
+  const p = systemPrompt('');
+  assert.ok(p.includes('xin next') && p.includes(DAILY_FILE()) && p.includes('别自己用 cron'));
+  const d = dailyPrompt('- 网关签到');
+  assert.ok(d.includes('<<<每日任务\n- 网关签到\n每日任务>>>') && d.includes('xin next') && d.includes('别问问题'));
+});
+
+test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做完；记下今天做过，再叫就跳过；开场白取得到', async () => {
+  const { execFileSync } = require('node:child_process');
+  const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-daily-')), bin = path.join(home, 'fakebin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'codex'), [
+    '#!/bin/sh',
+    'case "$*" in *--ephemeral*) exit 0;; esac',
+    'n=$(cat "$XIN_HOME/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$XIN_HOME/n"',
+    'echo \'{"type":"thread.started","thread_id":"th-1"}\'',
+    'if [ "$n" = 1 ]; then sleep 30; exit 0; fi',
+    'xin next 今天签到好啦 >/dev/null',
+    'echo \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"签到好了"}}\'',
+    'echo \'{"type":"turn.completed","usage":{}}\''
+  ].join('\n'), { mode: 0o755 });
+  const env = Object.assign({}, process.env, { XIN_HOME: home, XIN_WORK: path.join(home, 'work'), XIN_STALL_MS: '800', PATH: bin + ':' + process.env.PATH });
+  const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
+  assert.deepStrictEqual(op('daily'), { skipped: 'empty' });
+  op('daily_set', { text: '- 网关签到' });
+  const r = op('daily');
+  assert.strictEqual(r.agent, 'codex');
+  let p = null;
+  for (let i = 0; i < 60; i++) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(s => setTimeout(s, 200)); }
+  const ts = p.events.map(e => e.t);
+  assert.deepStrictEqual(ts, ['user', 'status', 'text', 'done'], JSON.stringify(p.events));
+  assert.strictEqual(p.events[1].text, '这次连接卡住了，重新连一次…');
+  assert.strictEqual(p.events[3].ok, true);
+  assert.strictEqual(op('daily').skipped, 'done');
+  assert.strictEqual(op('daily_get').done.run, r.run);
+  assert.strictEqual(op('greet').text, '今天签到好啦');
+  const sess = op('sessions').sessions.find(s => s.sid === r.sid);
+  assert.match(sess.title, /^每日任务 · \d\d-\d\d$/);
+});

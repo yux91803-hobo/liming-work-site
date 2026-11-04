@@ -19,6 +19,8 @@
   // 密钥 OWNER_PASSWORD、INSTABOX_API_KEY 由 Actions 从 GitHub Secrets 写进正式站（XIN_OWNER_PASSWORD、XIN_INSTABOX_API_KEY），测试站不配，功能关着
   "vars": { "XIN_MACHINE": "li" },
   "ratelimits": [{ "name": "XIN_LOGIN_LIMIT", "namespace_id": "1801", "simple": { "limit": 5, "period": 60 } }],
+  // 小芯的每日任务（UTC）：0:55 = 北京 8:55 叫醒电脑（网关 9:00 自己签到）；1:10、13:10 = 北京 9:10、21:10 按清单做一遍
+  "triggers": { "crons": ["55 0 * * *", "10 1,13 * * *"] },
   "routes": [
     { "pattern": "liming-work.com", "custom_domain": true },
     { "pattern": "www.liming-work.com", "custom_domain": true }
@@ -32,6 +34,7 @@
       "workers_dev": true,
       "vars": { "XIN_MACHINE": "li" },
       "ratelimits": [{ "name": "XIN_LOGIN_LIMIT", "namespace_id": "1802", "simple": { "limit": 5, "period": 60 } }],
+      "triggers": { "crons": [] },   // 测试站不跑定时任务
       "assets": {
         "directory": "./site",
         "binding": "ASSETS",
