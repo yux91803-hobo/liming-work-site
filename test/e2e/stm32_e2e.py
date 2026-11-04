@@ -89,6 +89,25 @@ async def xin_mock(pg, authed=False):
     await pg.route('**/api/xin/**', handle)
     return st
 
+# 用鼠标把首页的小芯拖进某张卡片。小芯会自己走来走去、跳舞：先等它站定再按下去，
+# 按空了（它刚好挪开）就再来一次，最多 4 次；拖进去以后卡片对应的工具会打开
+async def drag_xin_into(pg, card_id):
+    for attempt in range(4):
+        try: await pg.wait_for_function("LimingXin.mode === 'idle'", timeout=8000)
+        except Exception: pass
+        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(), cx = r.x + r.width / 2; for (let yy = r.y; yy < r.bottom; yy++) { const e = document.elementFromPoint(cx, yy); if (e && LimingXin.el.contains(e)) return [cx, yy + 2]; } return null; })()")
+        if not r:
+            await pg.wait_for_timeout(500); continue
+        c = await pg.evaluate("(() => { const r = document.querySelector('.card[data-id=%s]').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()" % card_id)
+        await pg.mouse.move(*r); await pg.mouse.down()
+        for i in range(1, 13):
+            await pg.mouse.move(r[0] + (c[0] - r[0]) * i / 12, r[1] + (c[1] - r[1]) * i / 12); await pg.wait_for_timeout(30)
+        await pg.mouse.up()
+        for _ in range(20):
+            if await pg.evaluate("document.body.classList.contains('tool-open')"): return
+            await pg.wait_for_timeout(100)
+    raise RuntimeError('拖了 4 次都没把小芯拖进 ' + card_id)
+
 async def main():
     async with async_playwright() as p:
         exe = os.environ.get('CHROMIUM_PATH')
@@ -1031,13 +1050,7 @@ async def main():
         check('附带：关掉学习台以后不带学习台里选的', st[:2] == [False, True], st)
         await pc.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
-        await pg.wait_for_timeout(1500)
-        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(), cx = r.x + r.width / 2; for (let yy = r.y; yy < r.bottom; yy++) { const e = document.elementFromPoint(cx, yy); if (e && LimingXin.el.contains(e)) return [cx, yy + 2]; } return [cx, r.y + r.height * 0.55]; })()")
-        c = await pg.evaluate("(() => { const r = document.querySelector('.card[data-id=stm32]').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
-        await pg.mouse.move(*r); await pg.mouse.down()
-        for i in range(1, 13):
-            await pg.mouse.move(r[0] + (c[0] - r[0]) * i / 12, r[1] + (c[1] - r[1]) * i / 12); await pg.wait_for_timeout(30)
-        await pg.mouse.up(); f = await tool_frame(pg)
+        await drag_xin_into(pg, 'stm32'); f = await tool_frame(pg)
         for _ in range(80):
             if await f.evaluate("LimingXin.mode") in ('idle', 'walk', 'play'): break
             await pg.wait_for_timeout(100)
