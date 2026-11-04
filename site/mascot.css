@@ -76,7 +76,7 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 @media (prefers-reduced-motion:reduce){.xin-bag,.spark.xin-call{animation:none}}
 /* 说话气泡（小芯聊天：AI 让小芯说的话）；left / top 是小芯头顶，气泡往上长 */
 .xin-say{position:absolute;z-index:3;width:max-content;max-width:min(240px,calc(100vw - 32px));padding:6px 9px;transform:translate(-50%,-100%);
-  background:var(--panel,#fff);color:var(--ink);border:2px solid var(--ink);border-radius:0;box-shadow:3px 3px 0 rgba(20,20,19,.18);
+  background:var(--panel,var(--surface,#fff));color:var(--ink);border:2px solid var(--ink);border-radius:0;box-shadow:3px 3px 0 rgba(20,20,19,.18);
   font:13px/1.4 var(--mono);white-space:normal;word-break:break-word;pointer-events:none;animation:xsay .18s steps(3,end)}
 .xin-say::after{content:"";position:absolute;left:var(--tail,50%);bottom:-8px;width:8px;height:6px;margin-left:-4px;background:var(--ink);
   clip-path:polygon(0 0,100% 0,50% 100%)}
@@ -97,10 +97,17 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin-say[data-tap]{pointer-events:auto;cursor:pointer}
 .xin-say[data-tap]:hover{border-color:var(--clay)}
 /* 和小芯说话的输入框：和小背包一样的像素风 */
-.xin-ask{position:fixed;z-index:60;padding:8px;background:var(--panel,#fff);border:2px solid var(--ink);border-radius:0;box-shadow:4px 4px 0 rgba(20,20,19,.2);
+.xin-ask{position:fixed;z-index:60;padding:8px;background:var(--panel,var(--surface,#fff));border:2px solid var(--ink);border-radius:0;box-shadow:4px 4px 0 rgba(20,20,19,.2);
   font:13px/1.4 var(--mono);color:var(--ink);animation:xbag .16s steps(3,end)}
 [data-theme=dark] .xin-ask{box-shadow:4px 4px 0 rgba(0,0,0,.5)}
+.xin-ask button{-webkit-appearance:none;appearance:none;margin:0;padding:0;border:0;border-radius:0;background:none;color:inherit;font:inherit;line-height:1;box-shadow:none;cursor:pointer}
+/* 学习台页面有自己的按钮和图标样式：这里的图标自己定好，不吃页面的 */
+.xin-ask svg{display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .xin-ask-row{display:flex;align-items:flex-end;gap:6px}
+.xin-ask-ctx{display:flex;align-items:center;gap:6px;margin:0 0 6px;font-size:12px;color:var(--ink-2)}
+.xin-ask-ctx span{flex:1;min-width:0;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.4;word-break:break-all}
+.xin-ask-ctx button{flex:none;width:22px;height:22px;color:var(--ink-3);font:12px var(--mono)}
+.xin-ask-ctx button:hover{color:var(--clay)}
 .xin-ask textarea{flex:1;min-width:0;min-height:38px;max-height:120px;padding:8px 9px;border:2px solid var(--line-2,#ccc);border-radius:0;background:var(--bg);color:var(--ink);
   font:14px/1.4 var(--mono);resize:none;outline:none}
 .xin-ask textarea:focus{border-color:var(--clay)}

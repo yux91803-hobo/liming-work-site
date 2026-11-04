@@ -963,6 +963,29 @@ async def main():
         await pq.click('.xin-say[data-tap]'); await pq.wait_for_selector('.xc.show .xc-tool')
         check('回复出现在小芯的气泡里，点气泡打开面板看全文', await pq.is_visible('.xc.show'))
         await pq.context.close()
+        # 附带页面信息：学习台「验证」页、粘贴的代码、选中的文字，一起发给小芯；✕ 这次不带
+        pc = await page(b)
+        xc = await xin_mock(pc, authed=True)
+        await pc.goto(BASE + '/'); await pc.wait_for_timeout(1200)
+        await pc.click('.card[data-id=stm32]', position={'x': 20, 'y': 20}); f = await tool_frame(pc)
+        await f.goto(BASE + '/tools/stm32/?embed=1&v=lab&t=tim&st=check'); await pc.wait_for_timeout(300)
+        f = await tool_frame(pc)
+        await f.fill('.lab-ta', 'TIM5->PSC = 71;')
+        await f.evaluate("(() => { const h = document.querySelector('#main h1, #main h2, #main h3'); const r = document.createRange(); r.selectNodeContents(h); const s = getSelection(); s.removeAllRanges(); s.addRange(r); window.__selTxt = String(s).trim(); })()")
+        sel = await f.evaluate("window.__selTxt")
+        await pc.evaluate("LimingXinChat.open()"); await pc.wait_for_selector('.xc.show .xc-ctx:not([hidden])')
+        chip = await pc.text_content('.xc-ctx span')
+        check('附带：学习台里打开聊天，输入框上面写着在哪一页、选中了什么、你写的代码', '验证' in chip and '选中' in chip and '你写的代码' in chip, chip)
+        await pc.fill('.xc-row textarea', '我这样写对吗'); await pc.keyboard.press('Enter')
+        await pc.wait_for_selector('.xc-me .xc-ctxm')
+        ctx = (xc['sent'] or {}).get('context') or ''
+        check('附带：页面、选中的文字、验证里的代码都传给后台，自己的话下面显示附带了什么',
+              '【用户正在看】STM32 学习台' in ctx and '验证' in ctx and sel and sel in ctx and 'TIM5->PSC = 71;' in ctx and xc['sent'].get('text') == '我这样写对吗' and xc['sent'].get('ctxLabel'),
+              (sel, ctx[:200], xc['sent'].get('ctxLabel')))
+        await pc.wait_for_selector('.xc-done', timeout=8000)
+        await pc.click('.xc-ctx button')
+        check('附带：点 ✕ 这次不带', await pc.evaluate("document.querySelector('.xc-ctx').hidden"))
+        await pc.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
         await pg.wait_for_timeout(1500)
         r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(), cx = r.x + r.width / 2; for (let yy = r.y; yy < r.bottom; yy++) { const e = document.elementFromPoint(cx, yy); if (e && LimingXin.el.contains(e)) return [cx, yy + 2]; } return [cx, r.y + r.height * 0.55]; })()")

@@ -4,7 +4,7 @@
    Worker 第一次用（或脚本改过）时会自动把这个文件传到云电脑上，不用手动装。
 
    op：
-     send     {sid?, agent, text, effort?}  开一轮对话（effort：auto / low / high / max，见下面「思考强度」）：在后台起 Claude Code / Codex，马上返回 {sid, run}
+     send     {sid?, agent, text, effort?, context?, ctxLabel?}  开一轮对话（context：网页附带的「用户正在看什么」，接在消息后面给 AI）（effort：auto / low / high / max，见下面「思考强度」）：在后台起 Claude Code / Codex，马上返回 {sid, run}
      poll     {run, off}           读这一轮从第 off 条开始的新事件
      stop     {run}                停掉这一轮
      sessions {}                   对话列表
@@ -28,7 +28,11 @@ const BASE = process.env.XIN_HOME || path.join(os.homedir(), '.xin');
 const WORK = process.env.XIN_WORK || '/data/workspace';
 const SESS = path.join(BASE, 'sessions'), RUNS = path.join(BASE, 'runs'), BIN = path.join(BASE, 'bin');
 const AGENTS = ['claude', 'codex'];
-const OUT_MAX = 2000, TEXT_MAX = 20000;
+const OUT_MAX = 2000, TEXT_MAX = 20000, CTX_MAX = 12000;
+export function withContext(text, context) {
+  const c = String(context || '').trim().slice(0, CTX_MAX);
+  return c ? text + '\n\n---\n（以下是网页自动附上的，用户正在看的内容）\n' + c : text;
+}
 
 /* 小芯能做的动作（xin 命令和网页共用这张表；网页只认这些名字） */
 export const ACTS = {
@@ -45,7 +49,8 @@ export function systemPrompt() {
     '用户在学 STM32 嵌入式。用中文回答，简洁口语；代码用 Markdown 代码块。用户主要在手机和平板上看，别输出太宽的表格。',
     '你可以用 shell 命令 `xin <动作>` 让网页上的小芯做动作，网页大约一秒内就会看到。偶尔用一下就好，别每句话都用。可用动作：' +
       Object.keys(ACTS).map(k => k + '（' + ACTS[k] + '）').join('、') + '。',
-    '例如：任务做完了可以 `xin dance`，编译失败可以 `xin sad`，想对用户说句俏皮话可以 `xin say 搞定啦`（气泡里的话不超过 20 个字）。'
+    '例如：任务做完了可以 `xin dance`，编译失败可以 `xin sad`，想对用户说句俏皮话可以 `xin say 搞定啦`（气泡里的话不超过 20 个字）。',
+    '用户的消息后面有时会附上网页自动加的【用户正在看】（学习台的哪一页）、【用户选中的内容】、【用户在「验证」里写的代码】。用户说「这行」「这个」「我写的」时指的就是这些；回答时直接针对它们，不用复述。'
   ].join('\n');
 }
 
@@ -292,8 +297,9 @@ const ops = {
       s = { sid: rid('s'), agent, title: text.replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
     }
     const run = rid('r');
-    writeJ(metaF(run), { run, sid: s.sid, agent: s.agent, text, effort: resolveEffort(a.effort, text), started: Date.now() });
-    emit(run, { t: 'user', text, at: Date.now() });
+    const ctxLabel = String(a.ctxLabel || '').slice(0, 160);
+    writeJ(metaF(run), { run, sid: s.sid, agent: s.agent, text: withContext(text, a.context), effort: resolveEffort(a.effort, text), started: Date.now() });
+    emit(run, ctxLabel ? { t: 'user', text, ctx: ctxLabel, at: Date.now() } : { t: 'user', text, at: Date.now() });
     s.runs.push(run); s.updated = Date.now(); writeJ(sessF(s.sid), s);
     const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir() });
     const m = readJ(metaF(run)); if (m && !m.pid) { m.pid = child.pid; writeJ(metaF(run), m); }

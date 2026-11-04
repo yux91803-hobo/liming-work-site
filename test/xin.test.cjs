@@ -263,3 +263,18 @@ test('思考强度：Codex 用 -c model_reasoning_effort（续接也带），Cla
   [, a] = agentArgs('claude', { started: false, agentSid: 'u-1' }, '你好', '');
   assert.ok(!a.includes('--effort'));
 });
+
+test('附带页面信息：接在消息后面给 AI，没有就原样；太长截断', async () => {
+  const { withContext } = await load('../site/xin/vm-agent.mjs');
+  assert.strictEqual(withContext('这行什么意思', ''), '这行什么意思');
+  assert.strictEqual(withContext('这行什么意思', undefined), '这行什么意思');
+  const t = withContext('这行什么意思', '【用户正在看】STM32 学习台 · GPIO\n【用户选中的内容】\nGPIOA->CRL |= 0x3;');
+  assert.ok(t.startsWith('这行什么意思\n\n---\n'));
+  assert.ok(t.includes('GPIOA->CRL |= 0x3;'));
+  assert.ok(withContext('x', 'y'.repeat(50000)).length < 12200);
+});
+
+test('系统提示告诉 AI 附带信息是什么', async () => {
+  const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
+  assert.ok(systemPrompt().includes('【用户选中的内容】'));
+});
