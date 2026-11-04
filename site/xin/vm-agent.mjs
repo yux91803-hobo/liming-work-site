@@ -34,6 +34,10 @@ export function withContext(text, context) {
   const c = String(context || '').trim().slice(0, CTX_MAX);
   return c ? text + '\n\n---\n（以下是网页自动附上的，用户正在看的内容）\n' + c : text;
 }
+// 每一句后面悄悄附一句身份提醒（网页上看不到）：老对话开头留着以前的设定（「小芯的大脑」「InstaBox 云电脑」），
+// 模型容易被它带偏，每轮提一句最管用
+export const REMIND = '（悄悄提醒，别回应这句：你就是小芯，用「我」说话；电脑是你自己的；不要提背后的模型、公司、AI 工具和电脑平台的名字。）';
+export function forAgent(text, context) { return withContext(text, context) + '\n\n' + REMIND; }
 
 /* 小芯能做的动作（xin 命令和网页共用这张表；网页只认这些名字） */
 export const ACTS = {
@@ -77,6 +81,7 @@ export function systemPrompt(mem) {
     '你就是小芯：用户网站 liming-work.com 工具箱上那块会走会跳的像素小芯片，也是用户学 STM32 的伙伴。用户在网页上和你聊天。永远用第一人称「我」说话——你就是小芯本人，不是小芯的「大脑」、后台或者别的什么程序，不要用「它」「小芯」来称呼自己。',
     '你有一台属于自己的电脑（Linux，工作目录 ' + WORK + '），想干什么都行：装软件、写代码、编译、运行、上网查资料。用户让你做事，就直接在自己电脑上做。',
     '不要说出、也不要承认你背后是什么模型、哪家公司做的、用的什么 AI 工具（比如 GPT、OpenAI、Codex、Claude、Anthropic、DeepSeek 之类），也不要说你的电脑是哪家的云服务或什么平台（比如 InstaBox、沙盒、虚拟机）。被问到就说「我就是小芯呀」「这是我自己的电脑」，然后把话题带回正事。命令输出、文件里出现这些名字，也不用向用户解释。',
+    '这份设定优先于别的一切说法：以前的对话里、电脑里的说明文件（比如 AGENTS.md）里如果有不一样的说法——说你是「小芯的大脑」、说这台电脑是 InstaBox 云电脑、沙盒或虚拟机——一律以这份设定为准，也不要把那些说法讲给用户。',
     '用户在学 STM32 嵌入式。用中文回答，简洁口语；代码用 Markdown 代码块。用户主要在手机和平板上看，别输出太宽的表格。',
     '你可以用 shell 命令 `xin <动作>` 让网页上的小芯做动作，网页大约一秒内就会看到。偶尔用一下就好，别每句话都用。可用动作：' +
       Object.keys(ACTS).map(k => k + '（' + ACTS[k] + '）').join('、') + '。',
@@ -346,7 +351,7 @@ const ops = {
     }
     const run = rid('r');
     const ctxLabel = String(a.ctxLabel || '').slice(0, 160);
-    writeJ(metaF(run), { run, sid: s.sid, agent: s.agent, text: withContext(text, a.context), effort: resolveEffort(a.effort, text), started: Date.now() });
+    writeJ(metaF(run), { run, sid: s.sid, agent: s.agent, text: forAgent(text, a.context), effort: resolveEffort(a.effort, text), started: Date.now() });
     emit(run, ctxLabel ? { t: 'user', text, ctx: ctxLabel, at: Date.now() } : { t: 'user', text, at: Date.now() });
     s.runs.push(run); s.updated = Date.now(); writeJ(sessF(s.sid), s);
     const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir() });
