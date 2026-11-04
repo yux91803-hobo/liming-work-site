@@ -122,8 +122,4 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin-ask-more{display:flex;align-items:center;gap:4px;padding:2px 4px;font:12px var(--mono);color:var(--ink-2)}
 .xin-ask-more svg{width:14px;height:14px}
 .xin-ask-more:hover{color:var(--clay)}
-.xin-ask .xin-ask-x{flex:none;padding:3px 8px;border:1px solid var(--line-2,#ccc);font:12px var(--mono);color:var(--ink-2)}
-.xin-ask .xin-ask-x:hover{border-color:var(--clay);color:var(--clay)}
-.xin-ask .xin-ask-x[aria-pressed=true]{background:var(--clay);border-color:var(--clay);color:#fff}
-.xin-ask .xin-ask-x[hidden]{display:none}
 @media (prefers-reduced-motion:reduce){.xin-ask,.xin-ask.rec .xin-ask-mic{animation:none}}
