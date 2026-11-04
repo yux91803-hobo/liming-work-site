@@ -6,7 +6,9 @@
    对话列表里还有：小芯的记事本、每日任务、小芯的文件（它电脑里 /data/workspace 的文件，能预览、下载）；每个对话能改名、删除。
    回答里出现的 /data/workspace/… 路径点一下就打开那个文件。「考考我」：让小芯按你在学的出一道题。
    设置（对话列表最下面）：朗读回答（浏览器自带的语音合成，小芯边念边动嘴）、做完提醒（Web Push：网页没在看时做完了发通知，
-   推送从小芯的电脑直接发出，见 vm-agent.mjs 的 pushAll；通知由 /sw.js 弹出，点了打开 #xin=<对话>）。 */
+   推送从小芯的电脑直接发出，见 vm-agent.mjs 的 pushAll；通知由 /sw.js 弹出，点了打开 #xin=<对话>）。
+   小芯会自己编新动作（xin move add），打开网页时拿过来教给页面上的小芯（背包「新动作」、闲着时偶尔做）；
+   好感度记在它电脑上：聊天、每天来看它、喂它陪它玩会涨，越熟越听话；对话列表上面显示关系和最近的变化。 */
 (function () {
   'use strict';
   var API = '/api/xin/';
@@ -14,7 +16,7 @@
   var AGENTS = { codex: 'Codex', claude: 'Claude' };
   // 思考强度：自动 = 写代码的活用最高（max），聊天用 AI 自己的默认（规则在 vm-agent.mjs 的 resolveEffort）
   var EFFORTS = { auto: '自动', high: '高', max: '最高' }, EFF_DONE = { max: '最高思考', high: '高思考', low: '低思考' };
-  var ACT_NAME = { say: '说', happy: '开心', sad: '难过', angry: '生气', wow: '惊讶', confused: '疑惑', dance: '跳舞', jump: '跳一下', cookie: '吃饼干', battery: '吸电池', ball: '抛小球', led: '玩 LED', sleep: '睡觉', wake: '醒来', music: '听歌', swing: '荡秋千', sit: '坐下', code: '敲代码', rage: '发脾气', tongue: '吐舌头' };
+  var ACT_NAME = { say: '说', happy: '开心', sad: '难过', angry: '生气', wow: '惊讶', confused: '疑惑', dance: '跳舞', jump: '跳一下', cookie: '吃饼干', battery: '吸电池', ball: '抛小球', led: '玩 LED', sleep: '睡觉', wake: '醒来', music: '听歌', swing: '荡秋千', sit: '坐下', code: '敲代码', rage: '发脾气', tongue: '吐舌头', move: '做动作' };
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
   var WORK = '/data/workspace', QUIZ = '考考我';
 
@@ -33,7 +35,7 @@
   function sleepMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   var LS_TTS = 'lm.xin.tts';
-  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', tts: ls(LS_TTS) === '1', agent: AGENTS[ls(LS_AGENT)] ? ls(LS_AGENT) : 'codex', sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto',
+  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', tts: ls(LS_TTS) === '1', moves: [], bond: null, agent: AGENTS[ls(LS_AGENT)] ? ls(LS_AGENT) : 'codex', sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto',
     run: '', off: 0, polling: false, mine: {}, tools: {}, lastAct: 0, view: 'chat', machine: '', loadSeq: 0 };
 
   /* ---------- 请求 ---------- */
@@ -264,6 +266,7 @@
       tile('xc-dailyb', '<circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 2M9 3h6"/>', '每日任务', loadDaily);
       tile('xc-filesb', '<path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>', '小芯的文件', function () { loadFiles(WORK, 'sess'); });
       sessEl.appendChild(tiles);
+      sessEl.appendChild(bondLine());
       var ul = h('ul', 'xc-sl');
       if (!d.sessions.length) ul.appendChild(h('li', 'xc-hint', '还没有对话'));
       d.sessions.forEach(function (s) {
@@ -283,6 +286,56 @@
       sessEl.appendChild(out);
     }, function (e) { sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
   }
+  /* ---------- 新动作、好感度 ----------
+     都存在小芯的电脑上（vm-agent.mjs 的 moves / bond），打开网页时跟着 greet 一起拿过来；
+     页面上可能有两个小芯（工具箱首页一个、学习台 iframe 里一个），两个都教。 */
+  function allXin() {
+    var out = [];
+    if (window.LimingXin) out.push(window.LimingXin);
+    [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { var X = f.contentWindow && f.contentWindow.LimingXin; if (X) out.push(X); } catch (e) { /* 别的源 */ } });
+    return out;
+  }
+  function setMoves(list) { S.moves = Array.isArray(list) ? list : []; allXin().forEach(function (X) { if (X.learn) X.learn(S.moves); }); }
+  function setBond(b) { if (!b || typeof b.score !== 'number') return; S.bond = b; allXin().forEach(function (X) { if (X.bond) X.bond(b.level); }); refreshBond(); }
+  function bondText(b) { return b.name + ' · 好感度 ' + b.score + (b.next != null ? '（再 ' + (b.next - b.score) + ' 升一级）' : ''); }
+  var bondEl = null;
+  function bondLine() {
+    var box = h('div', 'xc-bond'), b = h('button', 'xc-bond-b'), log = h('ul', 'xc-bond-log');
+    b.type = 'button'; b.setAttribute('aria-expanded', 'false'); log.hidden = true;
+    b.addEventListener('click', function () { log.hidden = !log.hidden; b.setAttribute('aria-expanded', !log.hidden); });
+    box.appendChild(b); box.appendChild(log); bondEl = box;
+    refreshBond();
+    call('bond', {}, 60000).then(setBond, function () {});
+    return box;
+  }
+  function refreshBond() {
+    if (!bondEl) return;
+    var b = S.bond, btn = bondEl.firstChild, log = bondEl.lastChild;
+    bondEl.hidden = !b;
+    if (!b) return;
+    var lv = Math.max(0, Math.min(3, b.level | 0));
+    btn.textContent = '';
+    btn.appendChild(h('span', 'xc-hearts', '♥♥♥♥'.slice(0, lv + 1)));
+    btn.appendChild(h('span', 'xc-hearts-e', '♡♡♡'.slice(0, 3 - lv)));
+    btn.appendChild(document.createTextNode(' ' + bondText(b)));
+    log.innerHTML = '';
+    (b.log || []).forEach(function (it) {
+      var li = h('li', it.d < 0 ? 'down' : '');
+      li.appendChild(h('span', 'xc-bond-d', (it.d > 0 ? '+' : '') + it.d));
+      li.appendChild(h('span', '', it.why || ''));
+      li.appendChild(h('span', 'xc-bond-w', when(it.at)));
+      log.appendChild(li);
+    });
+    if (!(b.log || []).length) log.appendChild(h('li', 'xc-hint', '还没有变化。多陪它聊聊、喂喂它，每天来看看它～'));
+  }
+  // 你在网页上喂它、陪它玩（mascot.js 告诉这里）：一分钟最多报一次，小芯电脑那边一天最多 +3
+  var playedAt = 0;
+  function played(kind) {
+    if (!S.enabled || !S.authed || Date.now() - playedAt < 60000) return;
+    playedAt = Date.now();
+    call('bond_play', { kind: kind }, 0).then(function (r) { if (r && r.info) setBond(r.info); }, function () {});
+  }
+
   /* ---------- 设置：朗读回答、做完提醒 ---------- */
   function toggleRow(cls, title, desc) {
     var row = h('div', 'xc-tg ' + cls), txt = h('div', 'xc-tg-t'), b = h('button', 'xc-sw'), note = h('p', 'xc-tg-n');
@@ -796,8 +849,10 @@
     var x = xin(); if (!x) return;
     if (ev.t === 'text') { S.lastText = ev.text; x.ai('think'); var line = firstLine(ev.text); if (line) x.say(line, 0, open); }
     else if (ev.t === 'tool') x.ai('work');
-    else if (ev.t === 'xin') { S.lastAct = Date.now(); x.cmd(ev.act, ev.arg); if (ev.act === 'say' && S.run && !S.lastText) speak(ev.arg); }
+    else if (ev.t === 'xin') { S.lastAct = Date.now(); if (ev.act === 'move' && ev.frames) x.learn([{ name: ev.arg, frames: ev.frames }]); x.cmd(ev.act, ev.arg); if (ev.act === 'say' && S.run && !S.lastText) speak(ev.arg); }
     else if (ev.t === 'mem') x.say('记住啦～', 2500);
+    else if (ev.t === 'move') { setMoves(S.moves.filter(function (m) { return m.name !== ev.name; }).concat([{ name: ev.name, frames: ev.frames }])); S.lastAct = Date.now(); x.cmd('move', ev.name); x.say('学会新动作啦：' + ev.name, 3000); }
+    else if (ev.t === 'bond') { setBond(ev); S.lastAct = Date.now(); x.say(ev.d > 0 ? '好感度 +' + ev.d + ' ♥' : '哼，好感度 ' + ev.d, 3000); x.cmd(ev.d > 0 ? 'happy' : 'sad'); }
     else if (ev.t === 'done') {
       x.ai('');
       if (ev.stopped) return;
@@ -838,6 +893,8 @@
     else if (ev.t === 'text') { e = h('div', 'xc-m xc-ai'); e.appendChild(md(ev.text)); }
     else if (ev.t === 'xin') e = h('div', 'xc-note', '✻ 小芯' + (ACT_NAME[ev.act] || ev.act) + (ev.arg && ev.act !== 'music' ? '：' + ev.arg : ''));
     else if (ev.t === 'mem') e = h('div', 'xc-note xc-mem', '✻ 小芯记住了：' + ev.text);
+    else if (ev.t === 'move') e = h('div', 'xc-note', '✻ 小芯学会了新动作：' + ev.name);
+    else if (ev.t === 'bond') e = h('div', 'xc-note xc-bondn', '♥ 好感度 ' + (ev.d > 0 ? '+' : '') + ev.d + (ev.why ? '：' + ev.why : ''));
     else if (ev.t === 'status') return null;   // 临时状态只在状态栏里闪一下（见 react），不进对话
     else if (ev.t === 'err') e = h('div', 'xc-errm', ev.text);
     else if (ev.t === 'done') {
@@ -923,6 +980,8 @@
   function greet() {
     if (!S.enabled || !S.authed) return;
     call('greet', {}, 60000).then(function (g) {
+      if (g && g.moves) setMoves(g.moves);
+      if (g && g.bond) setBond(g.bond);
       if (!g || !g.id || !g.text || ls(GREETED) === g.id) return;
       var tries = 0;
       (function show() {
@@ -957,6 +1016,6 @@
     }, function () { if (XIN_HASH.test(location.hash)) { S.enabled = false; open(); } });
     window.addEventListener('hashchange', openFromHash);
   }
-  window.LimingXinChat = { open: open, close: close, ask: quick, get state() { return S; } };
+  window.LimingXinChat = { open: open, close: close, ask: quick, played: played, get state() { return S; } };
   boot();
 })();

@@ -148,6 +148,21 @@
 /* 对话列表上面的三个入口：记事本、每日任务、小芯的文件 */
 .xc-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:2px 0 10px}
 .xc-tiles .xc-memb{flex-direction:column;justify-content:center;gap:5px;margin:0;padding:10px 4px;text-align:center;font-size:12.5px;line-height:1.3}
+/* 好感度：入口下面一行，点开看最近的变化 */
+.xc-bond{margin:0 0 8px}
+.xc-bond-b{display:block;width:100%;padding:6px 4px;text-align:left;font-size:13px;color:var(--ink-2)}
+.xc-hearts{color:#d9573f}
+.xc-hearts-e{color:var(--ink-3)}
+.xc-bond-b:hover{color:var(--ink)}
+.xc-bond-log{list-style:none;margin:2px 0 6px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--sunk);font-size:12px}
+.xc-bond-log li{display:flex;gap:8px;padding:3px 0;color:var(--ink-2)}
+.xc-bond-log li span:nth-child(2){flex:1;min-width:0}
+.xc-bond-d{flex:none;width:2.4em;color:#3f8f5a;font-weight:700}
+.xc-bond-log li.down .xc-bond-d{color:#c0503a}
+[data-theme=dark] .xc-bond-d{color:#7bd88f}
+[data-theme=dark] .xc-bond-log li.down .xc-bond-d{color:#f08b70}
+.xc-bond-w{flex:none;color:var(--ink-3)}
+.xc-bondn{color:#d9573f}
 /* 小芯的文件 */
 .xc-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;margin:0 0 8px;font-size:13px}
 .xc-crumbs b{padding:4px 2px;word-break:break-all}
