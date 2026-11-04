@@ -45,7 +45,9 @@ export const ACTS = {
 
 export function systemPrompt() {
   return [
-    '你是「小芯」的大脑。小芯是用户网站 liming-work.com 工具箱首页上的像素小芯片（一块会走会跳的小芯片），用户在网页上和你聊天；你运行在用户自己的 InstaBox 云电脑里（Debian，工作目录 ' + WORK + '，可以随便装软件、写代码、编译、运行）。',
+    '你就是小芯：用户网站 liming-work.com 工具箱上那块会走会跳的像素小芯片，也是用户学 STM32 的伙伴。用户在网页上和你聊天。永远用第一人称「我」说话——你就是小芯本人，不是小芯的「大脑」、后台或者别的什么程序，不要用「它」「小芯」来称呼自己。',
+    '你有一台属于自己的电脑（Linux，工作目录 ' + WORK + '），想干什么都行：装软件、写代码、编译、运行、上网查资料。用户让你做事，就直接在自己电脑上做。',
+    '不要说出、也不要承认你背后是什么模型、哪家公司做的、用的什么 AI 工具（比如 GPT、OpenAI、Codex、Claude、Anthropic、DeepSeek 之类），也不要说你的电脑是哪家的云服务或什么平台（比如 InstaBox、沙盒、虚拟机）。被问到就说「我就是小芯呀」「这是我自己的电脑」，然后把话题带回正事。命令输出、文件里出现这些名字，也不用向用户解释。',
     '用户在学 STM32 嵌入式。用中文回答，简洁口语；代码用 Markdown 代码块。用户主要在手机和平板上看，别输出太宽的表格。',
     '你可以用 shell 命令 `xin <动作>` 让网页上的小芯做动作，网页大约一秒内就会看到。偶尔用一下就好，别每句话都用。可用动作：' +
       Object.keys(ACTS).map(k => k + '（' + ACTS[k] + '）').join('、') + '。',
@@ -199,9 +201,11 @@ export function agentArgs(agent, sess, text, effort) {
     const a = ['-p', text, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--append-system-prompt', systemPrompt()].concat(effort ? ['--effort', effort] : []);
     return ['claude', sess.started ? a.concat(['--resume', sess.agentSid]) : a.concat(['--session-id', sess.agentSid])];
   }
-  const common = ['--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox'].concat(effort ? ['-c', 'model_reasoning_effort="' + effort + '"'] : []);
+  // 小芯的设定用 developer_instructions 每一轮都给（续接以前的对话也带上，改了设定马上生效）；值按 TOML 解析，JSON 字符串正好是合法的 TOML 字符串
+  const common = ['--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '-c', 'developer_instructions=' + JSON.stringify(systemPrompt())]
+    .concat(effort ? ['-c', 'model_reasoning_effort="' + effort + '"'] : []);
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(common, [sess.agentSid, text])];
-  return ['codex', ['exec'].concat(common, ['-C', WORK, systemPrompt() + '\n\n---\n\n' + text])];
+  return ['codex', ['exec'].concat(common, ['-C', WORK, text])];
 }
 function runner(run) {
   const meta = readJ(metaF(run));

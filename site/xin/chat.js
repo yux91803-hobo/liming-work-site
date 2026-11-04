@@ -181,7 +181,7 @@
   function login(pw) {
     var err = loginEl.querySelector('.xc-err'); err.textContent = '';
     req('login', { password: pw }).then(function (d) {
-      if (d._status === 200) { S.authed = true; loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
+      if (d._status === 200) { S.authed = true; loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
       err.textContent = d.msg || (d._status === 429 ? '试太多次了，过一分钟再试' : '登录失败');
     }, function () { err.textContent = '网络不通'; });
   }
@@ -212,14 +212,16 @@
   function status() {
     call('status').then(function (d) {
       S.machine = d.name || '';
-      var st = { running: '', suspended: '云电脑在睡觉，发消息会叫醒它（要等几秒）', stopped: '云电脑关机了，发消息会替它开机（要等一会儿）' }[d.state];
+      var st = { running: '', suspended: '小芯的电脑在睡觉，正在叫醒它（要等几秒）', stopped: '小芯的电脑关机了，正在替它开机（要等一会儿）' }[d.state];
+      if (d.state === 'suspended' || d.state === 'stopped') wakeVm();
       setStatus(st === undefined ? '云电脑：' + d.state : st, 'info');
       renderSeg();
     }, function (e) { setStatus(e.message, 'bad'); });
   }
   function openSession(sid) {
     var my = ++S.loadSeq;
-    stopPolling(); S.view = 'chat'; S.tools = {}; list.innerHTML = ''; render();
+    // 先清掉「这一轮还在跑」：重读期间那一轮可能已经做完了，以历史里说的为准（还在跑就从那里接着取）
+    stopPolling(); S.run = ''; S.off = 0; S.view = 'chat'; S.tools = {}; list.innerHTML = ''; render();
     list.appendChild(h('p', 'xc-hint xc-loading', '正在读取对话…'));
     call('history', { sid: sid }, 60000).then(function (d) {
       if (my !== S.loadSeq) return;
@@ -294,14 +296,27 @@
   function watchDoc(d) {
     if (!d || watched.indexOf(d) >= 0) return;
     watched.push(d);
-    // 记下最近一次选中的文字：点开输入框时选区会被清掉，所以选的那一刻就记
+    // 记下最近一次选中的文字：点开输入框时选区会被清掉，所以选的那一刻就记。
+    // 选区没了的时候分两种：是你点小芯、背包、输入框、面板（打开聊天）弄没的 → 留着；是你点了页面别处、自己取消的 → 马上忘掉
+    var UI = '.xin, .xin-bag, .xin-ask, .xin-say, .xc';
+    var lastDown = { ui: false, at: 0 };
+    d.addEventListener('pointerdown', function (e) {
+      var t = e.target;
+      lastDown = { ui: !!(t && t.closest && t.closest(UI)), at: Date.now() };
+    }, true);
     d.addEventListener('selectionchange', function () {
       var sel = d.getSelection && d.getSelection();
-      if (!sel || sel.isCollapsed || !sel.anchorNode) return;
+      if (!sel) return;
+      if (sel.isCollapsed || !String(sel).trim()) {
+        var a = d.activeElement, byChat = (a && a.closest && a.closest(UI)) || (lastDown.ui && Date.now() - lastDown.at < 2500);
+        if (!byChat && S.sel && S.sel.doc === d) S.sel = null;
+        return;
+      }
+      if (!sel.anchorNode) return;
       var n = sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement;
-      if (n && n.closest && n.closest('.xc, .xin-ask, .xin-bag, textarea, input')) return;
+      if (n && n.closest && n.closest(UI + ', textarea, input')) return;
       var t = String(sel).replace(/\u00a0/g, ' ').trim();
-      if (t) S.sel = { text: t.slice(0, SEL_MAX), at: Date.now() };
+      if (t) S.sel = { text: t.slice(0, SEL_MAX), at: Date.now(), doc: d };
     });
   }
   function toolDoc() {
@@ -323,7 +338,8 @@
       var ta = d.querySelector('#main .lab-ta');
       if (ta && ta.offsetParent && ta.value.trim()) c.code = ta.value.slice(0, CODE_MAX);
     }
-    if (S.sel && Date.now() - S.sel.at < SEL_AGE) c.sel = S.sel.text;
+    // 只带「现在这一页」上选中的：关掉学习台以后，学习台里选过的就不算了
+    if (S.sel && Date.now() - S.sel.at < SEL_AGE && (S.sel.doc === d || S.sel.doc === document)) c.sel = S.sel.text;
     return c.label || c.sel || c.code ? c : null;
   }
   function ctxLabel(c) {
@@ -366,7 +382,8 @@
   }
   function stop() {
     if (!S.run) return;
-    call('stop', { run: S.run }, 20000).catch(function (e) { setStatus('停不下来：' + e.message, 'bad'); });
+    // 停完（或者其实早就做完了）再取一次进度：拿到「做完」，停止键才会变回发送
+    call('stop', { run: S.run }, 20000).then(function () { if (S.run && !S.polling) startPolling(); }, function (e) { setStatus('停不下来：' + e.message, 'bad'); });
   }
 
   /* ---------- 轮询这一轮的新事件 ---------- */
@@ -509,6 +526,16 @@
   }
 
   /* ---------- 启动 ---------- */
+  /* ---------- 打开网页就叫醒云电脑：等你发第一句话时它已经醒了 ----------
+     登录了才叫；已经醒着什么都不做；离开页面超过 10 分钟再回来时再叫一次（它空闲 30 分钟会自己睡）。失败不提示，发消息时还会再叫。 */
+  var wokeAt = 0;
+  function wakeVm() {
+    if (!S.enabled || !S.authed) return;
+    wokeAt = Date.now();
+    call('wake', {}, 0).catch(function () {});
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && Date.now() - wokeAt > 600000) wakeVm(); });
+
   function boot() {
     watchDoc(document);
     // 学习台在 iframe 里：它加载好就开始记选中的文字
@@ -516,7 +543,7 @@
     [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { watchDoc(f.contentDocument); } catch (er) {} });
     req('me').then(function (d) {
       S.enabled = !!d.enabled; S.authed = !!d.authed;
-      syncBag();
+      syncBag(); wakeVm();
       if (location.hash === '#xin') open();
       // 刷新页面时上一轮还在跑：小芯接着陪着（打开面板时会接上）
     }, function () { if (location.hash === '#xin') { S.enabled = false; open(); } });
