@@ -7,6 +7,9 @@ const { pathToFileURL } = require('node:url');
 // vm-agent 的记事本写到临时目录（要在第一次 import 之前设好）
 const os = require('node:os'), fs = require('node:fs');
 process.env.XIN_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-test-'));
+// 删对话、每日任务会顺手清 Codex / Claude 自己的会话记录：测试里一律指到空的临时目录，不碰本机真的记录
+process.env.CODEX_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-codex-'));
+process.env.CLAUDE_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-claude-'));
 const load = rel => import(pathToFileURL(path.join(__dirname, rel)).href);
 const PW = 'correct horse battery';
 const AGENT_TEXT = '// fake vm-agent\n';
@@ -596,11 +599,84 @@ test('对话改名、删除（连同每一轮的记录）；还在进行中的�
   assert.strictEqual(op('rename', { sid: 'snone00001', title: 'a' }).error, 'no_session');
   assert.strictEqual(op('forget', { sid: 'sbusy00001' }).error, 'busy');
   assert.ok(fs.existsSync(path.join(sess, 'sbusy00001.json')));
-  assert.deepStrictEqual(op('forget', { sid: 'sdone00001' }), { ok: true });
+  assert.deepStrictEqual(op('forget', { sid: 'sdone00001' }), { ok: true, freed: 0 });
   assert.deepStrictEqual(['sdone00001.json', 'rdone00001.jsonl', 'rdone00001.json'].map(f => fs.existsSync(path.join(f[0] === 's' ? sess : runs, f))), [false, false, false]);
   assert.deepStrictEqual(op('sessions').sessions.map(s => s.sid), ['sbusy00001']);
   assert.deepStrictEqual(op('forget', { sid: 'sdone00001' }), { ok: true, already: true });
   assert.strictEqual(op('forget', { sid: '../../etc' }).error, 'bad_sid');
+});
+
+test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对应对话的旧记录也清掉（只清网站开的、1 小时前的）', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-logs-'));
+  const codexHome = path.join(tmp, 'codex'), claudeHome = path.join(tmp, 'claude'), bin = path.join(tmp, 'bin'), log = path.join(tmp, 'codex.log');
+  fs.mkdirSync(bin);
+  // 假的 codex：记下参数，像真的 `codex delete --force <id>` 一样删掉记录文件
+  fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\necho "$@" >> "' + log + '"\n[ "$1" = delete ] && [ "$2" = --force ] && find "$CODEX_HOME/sessions" -name "*-$3.jsonl" -delete\nexit 0\n', { mode: 0o755 });
+  const { xin, op } = agentEnv({ CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, PATH: bin + ':' + process.env.PATH });
+  const id = n => '01a1a1f7-0000-7000-8000-' + String(n).padStart(12, '0');
+  const old = (Date.now() - 2 * 3600e3) / 1000;
+  const cxDir = path.join(codexHome, 'sessions', '2026', '11', '05');
+  fs.mkdirSync(cxDir, { recursive: true });
+  const cx = (n, originator, recent) => {
+    const f = path.join(cxDir, 'rollout-2026-11-05T10-00-00-' + id(n) + '.jsonl');
+    fs.writeFileSync(f, JSON.stringify({ type: 'session_meta', payload: { id: id(n), cwd: '/data/workspace', originator } }) + '\n' + 'x'.repeat(1000) + '\n');
+    if (!recent) fs.utimesSync(f, old, old);
+    return f;
+  };
+  const clDir = path.join(claudeHome, 'projects', '-data-workspace');
+  fs.mkdirSync(clDir, { recursive: true });
+  const cl = (n, promptSource, recent) => {
+    const f = path.join(clDir, id(n) + '.jsonl');
+    fs.writeFileSync(f, JSON.stringify({ type: 'user', sessionId: id(n), promptSource, message: { role: 'user', content: '你好' } }) + '\n');
+    if (!recent) fs.utimesSync(f, old, old);
+    return f;
+  };
+  const sess = path.join(xin, 'sessions'), runs = path.join(xin, 'runs');
+  fs.mkdirSync(sess, { recursive: true }); fs.mkdirSync(runs, { recursive: true });
+  const mkSess = (sid, agent, agentSid) => {
+    const run = 'r' + sid.slice(1);
+    fs.writeFileSync(path.join(sess, sid + '.json'), JSON.stringify({ sid, agent, title: '对话', agentSid, started: true, runs: [run], created: 1, updated: 1 }));
+    fs.writeFileSync(path.join(runs, run + '.jsonl'), JSON.stringify({ t: 'done', ok: true }) + '\n');
+    fs.writeFileSync(path.join(runs, run + '.json'), JSON.stringify({ run, sid, started: 1, pid: process.pid }));
+  };
+  const fA = cx(1, 'codex_exec'), fB = cx(2, 'codex_exec');                    // 两个对话在用的
+  const fOrphan = cx(3, 'codex_exec');                                          // 对话早删了的：清掉
+  const fMine = cx(4, 'codex_cli_rs');                                          // 自己在终端里开的：不动
+  const fNew = cx(5, 'codex_exec', true);                                       // 刚开的、还没记进对话：不动
+  const fC = cl(6, 'sdk'), cOrphan = cl(7, 'sdk'), cMine = cl(8, 'user');
+  fs.mkdirSync(path.join(clDir, id(6), 'subagents'), { recursive: true });     // Claude 会话的同名文件夹也一起删
+  mkSess('sa00000001', 'codex', id(1));
+  mkSess('sb00000001', 'codex', id(2));
+  mkSess('sc00000001', 'claude', id(6));
+  const exists = l => l.map(f => fs.existsSync(f));
+
+  const r = op('forget', { sid: 'sa00000001' });
+  assert.ok(r.ok && r.freed > 2000, JSON.stringify(r));
+  assert.deepStrictEqual(exists([fA, fB, fOrphan, fMine, fNew]), [false, true, false, true, true]);
+  assert.deepStrictEqual(exists([fC, cOrphan, cMine]), [true, false, true]);
+  // Codex 的用它自己的命令删（连它的索引一起清）
+  assert.deepStrictEqual(fs.readFileSync(log, 'utf8').trim().split('\n').sort(), ['delete --force ' + id(1), 'delete --force ' + id(3)]);
+
+  assert.ok(op('forget', { sid: 'sc00000001' }).ok);
+  assert.deepStrictEqual(exists([fC, path.join(clDir, id(6))]), [false, false]);
+  assert.deepStrictEqual(op('prune'), { codex: 0, claude: 0, bytes: 0 });
+
+  // 有一个对话文件读不出来：整个不清，宁可留着
+  fs.utimesSync(fNew, old, old);
+  fs.writeFileSync(path.join(sess, 'sbad000001.json'), '{坏了');
+  assert.strictEqual(op('prune').skipped, 'bad_session_file');
+  assert.ok(fs.existsSync(fNew));
+  fs.unlinkSync(path.join(sess, 'sbad000001.json'));
+
+  // codex 删不掉（版本老、没这个命令）：直接删文件
+  fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const size = fs.statSync(fNew).size;
+  assert.deepStrictEqual(op('prune'), { codex: 1, claude: 0, bytes: size });
+  assert.deepStrictEqual(exists([fB, fNew, fMine, cMine]), [true, false, true, true]);
+  // 对话的会话号不像样（被改坏了）：不拿它去拼路径
+  fs.writeFileSync(path.join(sess, 'sd00000001.json'), JSON.stringify({ sid: 'sd00000001', agent: 'codex', title: 'x', agentSid: '../../etc/passwd', runs: [], created: 1, updated: 1 }));
+  assert.deepStrictEqual(op('forget', { sid: 'sd00000001' }), { ok: true, freed: 0 });
+  assert.ok(fs.existsSync(fB));
 });
 
 test('设定里教了：STM32 空工程怎么编译、文件写完整路径（「考考我」已经去掉）', async () => {
