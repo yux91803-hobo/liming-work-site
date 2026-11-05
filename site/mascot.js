@@ -45,8 +45,15 @@
   };
   // 脸：[x, y, 宽, 高, 颜色]；eyes / blink 会跟着视线挪一格
   var FACE = {
-    eyes:  function (lx, ly) { return [[6 + lx, 8 + ly, 2, 2], [12 + lx, 8 + ly, 2, 2]]; },
-    blink: function (lx, ly) { return [[6 + lx, 9 + ly, 2, 1], [12 + lx, 9 + ly, 2, 1]]; },
+    // 默认表情是原图的 > <，用 1 格宽的折线替代旧的 2×2 方眼；视线仍可平移 ±1 格。
+    eyes: function (lx, ly) {
+      var y = 8 + ly;
+      return [
+        [6 + lx, y], [7 + lx, y + 1], [8 + lx, y + 1], [7 + lx, y + 2], [6 + lx, y + 3],
+        [13 + lx, y], [12 + lx, y + 1], [11 + lx, y + 1], [12 + lx, y + 2], [13 + lx, y + 3]
+      ];
+    },
+    blink: function (lx, ly) { return [[6 + lx, 10 + ly, 3, 1], [11 + lx, 10 + ly, 3, 1]]; },
     hap:   [[5, 9], [6, 8, 2, 1], [8, 9], [11, 9], [12, 8, 2, 1], [14, 9]],
     shut:  [[6, 9, 2, 1, 'g'], [12, 9, 2, 1, 'g']],
     dz:    [[5, 7], [7, 7], [6, 8], [5, 9], [7, 9], [12, 7], [14, 7], [13, 8], [12, 9], [14, 9]],
@@ -93,7 +100,11 @@
     R(X + 1, Y + 1, 10, 8, 'b'); R(X + 5, Y + 1, 2, 1, 'o');
     // 脸
     var f = FACE[p.face] || FACE.eyes, fl = typeof f === 'function' ? f(p.lx | 0, p.ly | 0) : f;
-    fl.forEach(function (c) { R(c[0] + sx, c[1] + b, c[2] || 1, c[3] || 1, c[4] || 'w'); });
+    fl.forEach(function (c) { R(c[0] + sx, c[1] + b, c[2] || 1, c[3] || 1, c[4] || 'ew'); });
+    // 腮红固定在脸颊，眼睛移动时它不跟着跑；睡觉、生气、伤心时不强加笑脸。
+    if (p.face === 'eyes' || p.face === 'blink' || p.face === 'hap' || p.face === 'wow' || p.face === 'confused' || p.face === 'tongue') {
+      R(6 + sx, 13 + b, 2, 1, 'rose'); R(12 + sx, 13 + b, 2, 1, 'rose');
+    }
     // 手里的东西
     var it = p.item;
     if (it && it.k === 'cookie') {
