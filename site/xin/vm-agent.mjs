@@ -4,7 +4,7 @@
    Worker 第一次用（或脚本改过）时会自动把这个文件传到云电脑上，不用手动装。
 
    op：
-     send     {sid?, agent, text, effort?, context?, ctxLabel?}  开一轮对话（context：网页附带的「用户正在看什么」，接在消息后面给 AI）（effort：auto / low / high / max，见下面「思考强度」）：在后台起 Claude Code / Codex，马上返回 {sid, run}
+     send     {sid?, agent, text, effort?, context?, ctxLabel?, files?}（files：网页传到 WORK/uploads 的文件 [{path, name}]，图片 Codex 用 -i 直接看）  开一轮对话（context：网页附带的「用户正在看什么」，接在消息后面给 AI）（effort：auto / low / high / max，见下面「思考强度」）：在后台起 Claude Code / Codex，马上返回 {sid, run}
      poll     {run, off}           读这一轮从第 off 条开始的新事件
      stop     {run}                停掉这一轮
      sessions {}                   对话列表
@@ -18,6 +18,7 @@
      daily    {force?}             按每日任务清单开一轮（网站后台每天定时调；今天做过就跳过，force 再做一遍）
      daily_get / daily_set {text}  读 / 改每日任务清单
      greet    {}                   下次见面的开场白（xin next 写的）；顺便在电脑刚睡醒时预热一下模型网关
+     plugins  {}                   Codex 的插件（MCP 服务器）和开没开；plugin_set {name, on} 开关（每一轮起 codex 时加 -c，下一句生效）
      archive  {sid, on?}           归档一个对话（on:false 取消归档）：只是收起来，记录都留着；sessions 里带 archived
      rename   {sid, title}         给对话改名；forget {sid} 删掉一个对话（还在进行中的不让删），连 Codex / Claude 自己存的那份会话记录一起删
      prune    {}                   清掉没有对应对话的 Codex / Claude 会话记录（删对话、每日任务时都会顺手做；网站不直接调）
@@ -127,7 +128,7 @@ function maybeWarm() {
 }
 function warm() {
   const t0 = Date.now();
-  const child = spawn('codex', ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '-c', 'developer_instructions="只回复一个字：1"', '1'],
+  const child = spawn('codex', ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '-c', 'developer_instructions="只回复一个字：1"'].concat(mcpFlags(), ['1']),
     { cwd: os.homedir(), stdio: ['ignore', 'ignore', 'ignore'] });
   const kill = setTimeout(() => { try { child.kill('SIGTERM'); } catch { /* 已经退了 */ } }, 200e3);
   const end = (code) => {
@@ -177,6 +178,7 @@ export function systemPrompt(mem) {
     '用户在网页上「小芯的文件」里能看到你电脑里 ' + WORK + ' 下面的文件，能预览、能下载到手机或电脑上。要给用户的东西（代码、.hex、文档）都放在 ' + WORK + ' 下面；回答里提到文件就写完整路径（比如 `' + WORK + '/blink/build/app.hex`），用户点一下就能打开或下载。编译好了一定告诉用户 .hex 的完整路径。',
     '用户在网页上能看你电脑的屏幕（桌面是 DISPLAY=' + screenDisplay() + '，上面「小芯在干什么」那个终端会实时显示你执行的命令），也可能接管过去自己操作。想给用户看点什么（网页、图片、程序界面），可以在桌面上打开，比如 `DISPLAY=' + screenDisplay() + ' chromium 网址 >/dev/null 2>&1 &`，告诉他点聊天框上面的「屏幕」看；别关掉「小芯在干什么」那个终端。',
     '你能自己编新动作：`xin move help` 看怎么写（一串姿势帧），`xin move add 名字 帧` 学会以后网页上的小芯就会做，背包里也有；用户让你学个动作、或者你想表达一个现有动作表达不了的心情时用。已经会的：' + (readMoves().map(m => m.name).join('、') || '还没有') + '。',
+    '你的插件（MCP 工具，比如 rea 逆向）用户能在网页聊天框「＋ → 插件」里开关，关掉的从下一句起就不带（省 token）。用户让你开关插件时用 `xin plugin on 名字` / `xin plugin off 名字`，`xin plugin` 看有哪些、开没开；别自己改 ~/.codex/config.toml 来开关插件。用户还能直接给你发文件和图片：消息后面会附【用户发来的文件】和路径（在 ' + UPLOADS() + ' 下面）。',
     bondPart(),
     memoryPart(mem)
   ].join('\n');
@@ -570,16 +572,18 @@ function installXin() {
     try { mk(d); fs.writeFileSync(path.join(d, 'xin'), sh, { mode: 0o755 }); fs.chmodSync(path.join(d, 'xin'), 0o755); } catch { /* 写不了就算了 */ }
   }
 }
-export function agentArgs(agent, sess, text, effort) {
+export function agentArgs(agent, sess, text, effort, extra) {
   if (agent === 'claude') {
     const a = ['-p', text, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--append-system-prompt', systemPrompt()].concat(effort ? ['--effort', effort] : []);
     return ['claude', sess.started ? a.concat(['--resume', sess.agentSid]) : a.concat(['--session-id', sess.agentSid])];
   }
   // 小芯的设定用 developer_instructions 每一轮都给（续接以前的对话也带上，改了设定马上生效）；值按 TOML 解析，JSON 字符串正好是合法的 TOML 字符串
+  // 图片放在最前面（-i 后面能跟好几个值，紧跟着 -- 开头的选项它才知道结束）；插件开关见 mcpFlags
+  const imgs = ((extra && extra.images) || []).reduce((a, p) => a.concat(['-i', p]), []);
   const common = ['--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '-c', 'developer_instructions=' + JSON.stringify(systemPrompt())]
-    .concat(effort ? ['-c', 'model_reasoning_effort="' + effort + '"'] : []);
-  if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(common, [sess.agentSid, text])];
-  return ['codex', ['exec'].concat(common, ['-C', WORK, text])];
+    .concat(effort ? ['-c', 'model_reasoning_effort="' + effort + '"'] : [], mcpFlags());
+  if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(imgs, common, [sess.agentSid, text])];
+  return ['codex', ['exec'].concat(imgs, common, ['-C', WORK, text])];
 }
 function killTree(c) {
   if (!c || !c.pid) return;
@@ -623,7 +627,7 @@ function runner(run) {
   const norm = meta.agent === 'claude' ? fromClaude : fromCodex;
   const start = () => {
     // 每次都重新读会话：重来时 AI 的会话号可能已经有了，要接着那个会话
-    const [cmd, args] = agentArgs(meta.agent, readJ(sessF(meta.sid), sess), meta.text, meta.effort || '');
+    const [cmd, args] = agentArgs(meta.agent, readJ(sessF(meta.sid), sess), meta.text, meta.effort || '', { images: meta.images || [] });
     let got = false, buf = '';
     try {
       // 自己一个进程组：卡住或停掉时连它起的子进程一起杀，不然子进程攥着输出管道，这边永远等不到它结束
@@ -749,6 +753,88 @@ function pruneLogs(minAge = PRUNE_AGE) {
   return res;
 }
 
+/* ---------- 插件（Codex 的 MCP 服务器） ----------
+   用户在网页聊天框「＋ → 插件」里开关。开关记在 ~/.xin/plugins.json（{state: {名字: true / false}}），每一轮起 codex 时加
+   -c mcp_servers.名字.enabled=…：下一句就生效（同一个对话里也行），不用改 Codex 的配置文件。
+   只给配置里真有的名字加（没有的名字 codex 会当成要新建一个服务器，缺 command 报错）。配置在 ~/.codex/config.toml（自己装的）
+   和 /etc/codex/config.toml（系统装的，比如 instabox、open-computer-use）。
+   以前小芯用 xin-rea 把 REA 那段挪到 ~/.codex/rea.mcp.toml 里来「关掉」：第一次读插件列表时并回 config.toml，记成关着，
+   xin-rea 换成转到 xin plugin 的小脚本，免得两套开关打架。 */
+const PLUGINS_F = () => path.join(BASE, 'plugins.json');
+const CODEX_SYS = () => process.env.XIN_CODEX_SYS || '/etc/codex/config.toml';
+const PLUGIN_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const PLUGIN_DESC = { rea: '逆向分析（Ghidra）', instabox: '管理云电脑（开机、快照之类）', 'open-computer-use': '操作电脑桌面（看屏幕、点鼠标、打字）' };
+function mcpNames(text) {
+  const out = [], re = /^[ \t]*\[mcp_servers\.(?:"([^"\n]+)"|([A-Za-z0-9_-]+))\][ \t]*$/gm;
+  let m;
+  while ((m = re.exec(String(text || '')))) out.push(m[1] || m[2]);
+  return out;
+}
+function mcpDefined() { return new Set(mcpNames(readText(path.join(CODEX_HOME(), 'config.toml'))).concat(mcpNames(readText(CODEX_SYS())))); }
+function pluginState() { const j = readJ(PLUGINS_F(), {}); return j && j.state && typeof j.state === 'object' ? j.state : {}; }
+function savePluginState(st) { mk(BASE); writeJ(PLUGINS_F(), { state: st }); }
+export function mcpFlags() {
+  const st = pluginState(), have = mcpDefined(), out = [];
+  for (const n of Object.keys(st)) if (PLUGIN_RE.test(n) && have.has(n) && typeof st[n] === 'boolean') out.push('-c', 'mcp_servers.' + n + '.enabled=' + st[n]);
+  return out;
+}
+function mergeParked() {
+  const dir = CODEX_HOME(), cfgF = path.join(dir, 'config.toml'), done = [];
+  let cfg = readText(cfgF);
+  for (const e of listDir(dir)) {
+    if (!e.isFile() || !/\.mcp\.toml$/.test(e.name)) continue;
+    const f = path.join(dir, e.name), block = readText(f), names = mcpNames(block).filter(n => PLUGIN_RE.test(n));
+    if (!names.length) continue;
+    const have = new Set(mcpNames(cfg));
+    if (names.some(n => have.has(n))) continue;      // 配置里已经有了：不重复加
+    if (!done.length && cfg) { try { fs.copyFileSync(cfgF, cfgF + '.xin-bak'); } catch { /* 备份不了也接着做 */ } }
+    cfg = (cfg.trim() ? cfg.replace(/\n*$/, '\n\n') : '') + block.replace(/\n*$/, '\n');
+    done.push({ f, names });
+  }
+  if (!done.length) return [];
+  const t = cfgF + '.' + process.pid + '.tmp';
+  fs.writeFileSync(t, cfg, { mode: 0o600 }); fs.renameSync(t, cfgF);
+  const st = pluginState();
+  for (const d of done) { try { fs.renameSync(d.f, d.f + '.merged'); } catch { /* 改不了名也不要紧 */ } for (const n of d.names) st[n] = false; }
+  savePluginState(st);
+  // 小芯以前写的 xin-rea（挪配置段的那个）换成转到 xin plugin 的小脚本
+  const xr = path.join(os.homedir(), '.local', 'bin', 'xin-rea');
+  if (readText(xr).includes('.mcp.toml')) {
+    try { fs.writeFileSync(xr, '#!/bin/sh\n# 插件开关挪到网页上了（聊天框「＋ → 插件」）；这个命令留着兼容：xin-rea on | off\ncase "$1" in on|off) exec xin plugin "$1" rea;; *) exec xin plugin;; esac\n', { mode: 0o755 }); } catch { /* 写不了就算了 */ }
+  }
+  return done.reduce((a, d) => a.concat(d.names), []);
+}
+function codexEnv() { return Object.assign({}, process.env, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin') }); }
+
+/* ---------- 用户发来的文件 ----------
+   网页把文件传到 WORK/uploads/日期/ 下面（网站 Worker 直接写进这台电脑），发消息时带上路径。这里核对一遍：
+   必须在上传目录里、软链接没指到外面、是普通文件。图片 Codex 用 -i 直接看，别的文件把路径写进消息里，AI 自己去读。 */
+const UPLOADS = () => path.join(WORK, 'uploads');
+const SEND_FILES_MAX = 10;
+const IMG_RE = /\.(png|jpe?g|gif|webp)$/i;
+function checkFiles(list) {
+  if (list == null) return { files: [] };
+  if (!Array.isArray(list) || list.length > SEND_FILES_MAX) return { error: 'bad_files', msg: '一次最多发 ' + SEND_FILES_MAX + ' 个文件' };
+  const root = path.resolve(UPLOADS());
+  let realRoot = root; try { realRoot = fs.realpathSync(root); } catch { /* 还没传过文件 */ }
+  const out = [];
+  for (const f of list) {
+    const p = f && typeof f.path === 'string' ? path.resolve(f.path) : '';
+    if (!p.startsWith(root + '/')) return { error: 'bad_file', msg: '文件不在上传目录里' };
+    let real, st;
+    try { real = fs.realpathSync(p); st = fs.statSync(real); } catch { return { error: 'no_file', msg: '找不到文件：' + path.basename(p) }; }
+    if (!real.startsWith(realRoot + '/') || !st.isFile()) return { error: 'bad_file', msg: '文件不在上传目录里' };
+    out.push({ path: p, name: String((f && f.name) || path.basename(p)).replace(/[\x00-\x1f]/g, '').slice(0, 120) || path.basename(p), size: st.size, image: IMG_RE.test(p) });
+  }
+  return { files: out };
+}
+function sizeText(n) { return n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+export function filesPart(files, agent) {
+  if (!files || !files.length) return '';
+  return '\n\n【用户发来的文件（已经在你电脑上）】\n' + files.map(f => '- ' + f.path + '（' + f.name + '，' + (f.image ? '图片，' : '') + sizeText(f.size) + '）').join('\n') +
+    (files.some(f => f.image) ? (agent === 'codex' ? '\n图片已经直接给你看了。' : '\n图片用 Read 工具打开就能看。') : '');
+}
+
 /* ---------- 一个对话的用量 ----------
    网页聊天框底下那一行：上下文（最近一次请求占了多少 / 模型上限）、这个对话累计消耗的 token、缓存命中率。
    Codex：记录里每次请求后都有一条 token_count：total_token_usage 是整个会话累计的（续接也接着算），last_token_usage 是最近一次请求，
@@ -862,8 +948,11 @@ const ops = {
     return { ok: true, agents: AGENTS.filter(has), work: WORK };
   },
   send(a) {
+    const fc = checkFiles(a.files);
+    if (fc.error) return fc;
+    const files = fc.files;
     const text = String(a.text || '').trim();
-    if (!text) return { error: 'empty', msg: '消息是空的' };
+    if (!text && !files.length) return { error: 'empty', msg: '消息是空的' };
     if (text.length > TEXT_MAX) return { error: 'too_long', msg: '消息太长了（最多 ' + TEXT_MAX + ' 字）' };
     mk(SESS); mk(RUNS);
     let s;
@@ -875,12 +964,16 @@ const ops = {
       if (r && !runDone(r)) return { error: 'busy', msg: '上一句还没做完', run: r };
     } else {
       const agent = AGENTS.includes(a.agent) ? a.agent : 'claude';
-      s = { sid: rid('s'), agent, title: text.replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
+      s = { sid: rid('s'), agent, title: (text || files.map(f => f.name).join('、')).replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
     }
     const ctxLabel = String(a.ctxLabel || '').slice(0, 160);
     try { bondAdd('chat', 1, '陪我聊天'); } catch { /* 好感度记不下来不影响聊天 */ }
-    const run = launch(s, { text: forAgent(text, a.context), effort: resolveEffort(a.effort, text) },
-      ctxLabel ? { t: 'user', text, ctx: ctxLabel, at: Date.now() } : { t: 'user', text, at: Date.now() });
+    // 只发了文件没说话：给 AI 的话里补一句
+    const said = text || (files.every(f => f.image) ? '看看我发的图片。' : '看看我发的文件。');
+    const userEv = { t: 'user', text, at: Date.now() };
+    if (ctxLabel) userEv.ctx = ctxLabel;
+    if (files.length) userEv.files = files.map(f => ({ name: f.name, path: f.path, size: f.size, image: f.image }));
+    const run = launch(s, { text: forAgent(said, a.context) + filesPart(files, s.agent), effort: resolveEffort(a.effort, said), images: s.agent === 'codex' ? files.filter(f => f.image).map(f => f.path) : [] }, userEv);
     return { sid: s.sid, run, agent: s.agent, title: s.title };
   },
   daily_get() {
@@ -943,6 +1036,27 @@ const ops = {
   async push_test() {
     const r = await pushAll({ title: '小芯', body: '做完提醒开好啦：你不在看的时候，我做完事会这样告诉你～', tag: 'xin-test', url: '/#xin' });
     return { ok: r.some(x => x.status >= 200 && x.status < 300), results: r };
+  },
+  plugins() {
+    let merged = [];
+    try { merged = mergeParked(); } catch { /* 并不回去就按现在的来 */ }
+    const r = spawnSync('codex', ['mcp', 'list', '--json'], { encoding: 'utf8', timeout: 30000, cwd: os.homedir(), env: codexEnv() });
+    let list;
+    try { list = JSON.parse(r.stdout || ''); } catch { return { error: 'list_failed', msg: r.error && r.error.code === 'ENOENT' ? '电脑里没有 codex' : '读不出插件列表' }; }
+    const st = pluginState();
+    const plugins = (Array.isArray(list) ? list : []).filter(x => x && PLUGIN_RE.test(x.name)).map(x => {
+      const t = x.transport || {};
+      return { name: x.name, desc: PLUGIN_DESC[x.name] || '', cmd: t.command ? path.basename(String(t.command)) : String(t.url || t.type || ''), on: typeof st[x.name] === 'boolean' ? st[x.name] : x.enabled !== false };
+    });
+    return { plugins, merged };
+  },
+  plugin_set(a) {
+    const name = String(a.name || '');
+    if (!PLUGIN_RE.test(name)) return { error: 'bad_name', msg: '插件名字不对' };
+    if (!mcpDefined().has(name)) return { error: 'no_plugin', msg: '没有这个插件：' + name };
+    const st = pluginState();
+    st[name] = !!a.on; savePluginState(st);
+    return { ok: true, name, on: st[name] };
   },
   rename(a) {
     if (!okId(a.sid, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
@@ -1048,6 +1162,19 @@ const ops = {
 
 function xinCmd(argv) {
   const act = argv[0], arg = argv.slice(1).join(' ').trim();
+  if (act === 'plugin') {   // 插件开关：xin plugin（列出来）、xin plugin on 名字、xin plugin off 名字；下一句开始生效
+    const sub = argv[1] || '', name = argv[2] || '';
+    if (sub === 'on' || sub === 'off') {
+      const r = ops.plugin_set({ name, on: sub === 'on' });
+      console.log(r.error ? r.msg : (r.on ? '已打开 ' : '已关掉 ') + name + '，下一句开始生效（网页上「＋ → 插件」里也能开关）');
+      return r.error ? 1 : 0;
+    }
+    const r = ops.plugins();
+    if (r.error) { console.log(r.msg); return 1; }
+    console.log(r.plugins.length ? r.plugins.map(p => (p.on ? '开着  ' : '关着  ') + p.name + (p.desc ? '：' + p.desc : '')).join('\n') : '没有装插件');
+    console.log('用法：xin plugin on 名字 / xin plugin off 名字（下一句开始生效）');
+    return 0;
+  }
   if (act === 'next') {
     const g = setNext(arg);
     if (!g) { console.log('用法：xin next 下次见面要说的一句话'); return 2; }
