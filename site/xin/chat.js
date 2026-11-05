@@ -102,8 +102,8 @@
       '<form class="xc-ft">' +
         // 「＋」点开的小菜单：发图片或文件、开关插件
         '<div class="xc-menu" role="menu" hidden>' +
-          '<button type="button" class="xc-mi xc-mi-file" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5l6-6"/></svg><span><b>图片或文件</b><i>拍照、相册、文件都行，发给小芯看</i></span></button>' +
-          '<button type="button" class="xc-mi xc-mi-plug" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg><span><b>插件</b><i class="xc-mi-n">开关小芯的插件，关掉的不占 token</i></span></button>' +
+          '<button type="button" class="xc-mi xc-mi-file" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5l6-6"/></svg><b>图片或文件</b></button>' +
+          '<button type="button" class="xc-mi xc-mi-plug" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg><b>插件</b></button>' +
         '</div>' +
         '<input type="file" class="xc-file" multiple hidden>' +
         '<div class="xc-atts" hidden></div>' +
@@ -871,7 +871,6 @@
     if (!menuEl) return;
     menuEl.hidden = !on;
     root.querySelector('.xc-plus').setAttribute('aria-expanded', on ? 'true' : 'false');
-    if (on) { var n = menuEl.querySelector('.xc-mi-n'), p = S.plugins; if (p && p.length) n.textContent = p.filter(function (x) { return x.on; }).length + ' / ' + p.length + ' 个开着 · 关掉的不占 token'; }
   }
   function setSheet(on) {
     S.sheet = !!on; sheetEl.hidden = !on;

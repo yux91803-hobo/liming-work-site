@@ -1518,7 +1518,7 @@ async def main():
         xa = await xin_mock(pa, authed=True)
         await pa.goto(BASE + '/#xin'); await pa.wait_for_selector('.xc.show .xc-row textarea'); await pa.wait_for_timeout(300)
         await pa.click('.xc-plus'); await pa.wait_for_selector('.xc-menu:not([hidden])')
-        menu = await pa.evaluate("[...document.querySelectorAll('.xc-mi b')].map(b => b.textContent)")
+        menu = await pa.evaluate("[...document.querySelectorAll('.xc-mi')].map(b => b.textContent)")
         PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
         xa['upload_delay'] = 0.8
         await pa.set_input_files('.xc-file', files=[{'name': '板子.png', 'mimeType': 'image/png', 'buffer': PNG}, {'name': '说明书.pdf', 'mimeType': 'application/pdf', 'buffer': b'%PDF-1.4 test'}])
@@ -1531,7 +1531,7 @@ async def main():
         await pa.wait_for_function(CHAT_DONE, timeout=8000)
         sent = xa['sent'] or {}
         shown = await pa.evaluate("[!!document.querySelector('.xc-me .xc-mimg img'), document.querySelector('.xc-me .xc-mfile span').textContent, document.querySelector('.xc-me .xc-bub').textContent, document.querySelector('.xc-atts').hidden]")
-        check('「＋」菜单：图片或文件、插件；选了文件马上传（传的时候发送键不能点、图片有缩略图），传完能发；消息里带图片缩略图和文件卡片，附件条清空',
+        check('「＋」菜单只有两项、不带小字：图片或文件、插件；选了文件马上传（传的时候发送键不能点、图片有缩略图），传完能发；消息里带图片缩略图和文件卡片，附件条清空',
               menu == ['图片或文件', '插件'] and busy == [2, True, True, True] and done == [['板子.png', '说明书.pdf'], False]
               and sorted(u['name'] for u in xa['uploads']) == ['板子.png', '说明书.pdf'] and all(u['xin'] == '1' for u in xa['uploads'])
               and sent.get('files') == [{'path': '/data/workspace/uploads/20261106/003005-ab12-板子.png', 'name': '板子.png'}, {'path': '/data/workspace/uploads/20261106/003005-ab12-说明书.pdf', 'name': '说明书.pdf'}]
@@ -1553,12 +1553,9 @@ async def main():
         note = await pa.text_content('.xc-sheet [data-name=rea] .xc-tg-n')
         await pa.mouse.click(195, 300); await pa.wait_for_timeout(300)
         closed = await pa.evaluate("[document.querySelector('.xc-sheet').hidden, !!document.querySelector('.xc.show')]")
-        await pa.click('.xc-plus'); await pa.wait_for_selector('.xc-menu:not([hidden])')
-        cnt = await pa.text_content('.xc-mi-n')
-        await pa.keyboard.press('Escape'); await pa.wait_for_timeout(100)
-        check('插件：「＋ → 插件」列出插件和开没开；点开关告诉小芯的电脑、提示下一句生效；点遮罩收起不关面板；菜单上写几个开着',
+        check('插件：「＋ → 插件」列出插件和开没开；点开关告诉小芯的电脑、提示下一句生效；点遮罩收起不关面板',
               rows == [['rea', 'REA 逆向', 'false'], ['instabox', 'InstaBox', 'true']] and xa.get('plugin_set') == [{'name': 'rea', 'on': True}]
-              and '下一句' in note and closed == [True, True] and cnt.startswith('2 / 2 个开着'), (rows, xa.get('plugin_set'), note, closed, cnt))
+              and '下一句' in note and closed == [True, True], (rows, xa.get('plugin_set'), note, closed))
         await pa.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
         # （之前在学习台里收起来过：再把它扔进去，照样出来）
