@@ -914,8 +914,8 @@
 
   /* ---------- 发图片和文件 ----------
      选好马上传到小芯的电脑（/api/xin/upload → 它工作目录的 uploads/日期/），输入框上面一排显示，能去掉；
-     传完了才能发。图片太大先在手机上压一下（长边 2048、JPEG），省流量也省 token。一次最多 10 个、每个 30 MB 以内。 */
-  var ATT_MAX = 10, ATT_SIZE = 30 * 1024 * 1024, attSeq = 0;
+     传完了才能发。图片太大先在手机上压一下（长边 2048、JPEG），省流量也省 token。一次最多 10 个、每个 100 MB 以内（网站那边收请求的上限）。 */
+  var ATT_MAX = 10, ATT_SIZE = 100 * 1024 * 1024, attSeq = 0;
   function attsBusy() { return (S.atts || []).some(function (a) { return a.state === 'up'; }); }
   function addFiles(fl) {
     S.atts = S.atts || [];
@@ -929,7 +929,7 @@
       var a = { id: ++attSeq, name: f.name || (img ? 'image.jpg' : 'file'), size: f.size, image: img, blob: f, state: 'up', pct: 0 };
       if (img) { try { a.url = URL.createObjectURL(f); } catch (e) { /* 没有预览也能传 */ } }
       S.atts.push(a);
-      if (f.size > ATT_SIZE) { a.state = 'err'; a.err = '太大了（最大 30 MB）'; return; }
+      if (f.size > ATT_SIZE) { a.state = 'err'; a.err = '太大了（最大 100 MB）'; return; }
       (img ? shrink(f) : Promise.resolve(null)).then(function (b) {
         if (b) { a.blob = b; a.size = b.size; a.name = a.name.replace(/\.[^.]*$/, '') + '.jpg'; }
         if (S.atts.indexOf(a) >= 0) upload(a, 0);
@@ -960,7 +960,7 @@
       if (S.atts.indexOf(a) < 0) return;
       if (x.status === 200 && d && d.ok && d.data) { a.state = 'ok'; a.path = d.data.path; a.name = d.data.name; a.image = !!d.data.image; a.note = ''; }
       else if (d && d.state === 'waking' && tries < 30) { a.note = '唤醒中'; renderAtt(a); setTimeout(function () { if (S.atts.indexOf(a) >= 0) upload(a, tries + 1); }, 3000); return; }
-      else { a.state = 'err'; a.err = (d && (d.msg || d.error)) || ('没传上去（' + x.status + '）'); }
+      else { a.state = 'err'; a.err = (d && (d.msg || d.error)) || (x.status === 413 ? '太大了（最大 100 MB）' : '没传上去（' + x.status + '）'); }
       renderAtts(); render();
     };
     x.onerror = function () { if (S.atts.indexOf(a) < 0) return; a.state = 'err'; a.err = '网络断了'; renderAtts(); render(); };

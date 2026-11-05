@@ -520,7 +520,7 @@ test('给小芯发文件：原样转给 InstaBox，写进 uploads/北京日期/ 
     assert.strictEqual((await up('a.txt', BODY, { cookie: '' })).status, 401);
     assert.strictEqual((await up('a.txt', BODY, { origin: 'https://evil.example' })).status, 403);
     assert.strictEqual((await up('a.txt', BODY, { 'x-xin': '' })).status, 403);
-    assert.strictEqual((await up('a.txt', BODY, { 'content-length': String(31 * 1024 * 1024) })).status, 413);
+    assert.strictEqual((await up('a.txt', BODY, { 'content-length': String(100 * 1024 * 1024 + 1) })).status, 413);
     assert.strictEqual(ib.calls.length, n);
   } finally { ib.restore(); }
   // 聊天里显示发过的图片：?img=1 按图片类型 inline；svg 和别的文件还是附件下载
