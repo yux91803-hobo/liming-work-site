@@ -551,7 +551,7 @@
   /* ---------- 设置：新对话用哪个 AI、思考强度、做完提醒 ---------- */
   function toggleRow(cls, title, desc) {
     var row = h('div', 'xc-tg ' + cls), txt = h('div', 'xc-tg-t'), b = h('button', 'xc-sw'), note = h('p', 'xc-tg-n');
-    txt.appendChild(h('b', '', title)); txt.appendChild(h('span', '', desc));
+    txt.appendChild(h('b', '', title)); if (desc) txt.appendChild(h('span', '', desc));   // 说明小字：没有就不放
     b.type = 'button'; b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', 'false'); b.setAttribute('aria-label', title);
     row.appendChild(txt); row.appendChild(b); row.appendChild(note);
     return { row: row, btn: b, set: function (on) { b.setAttribute('aria-checked', on ? 'true' : 'false'); }, note: function (t) { note.textContent = t || ''; } };
@@ -559,7 +559,7 @@
   // 一排选项（单选）：新对话用哪个 AI、思考强度
   function segRow(cls, title, desc, opts, cur, key, onPick) {
     var row = h('div', 'xc-tg ' + cls), txt = h('div', 'xc-tg-t'), seg = h('div', 'xc-segs');
-    txt.appendChild(h('b', '', title)); txt.appendChild(h('span', '', desc));
+    txt.appendChild(h('b', '', title)); if (desc) txt.appendChild(h('span', '', desc));   // 说明小字：没有就不放
     seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', title);
     Object.keys(opts).forEach(function (k) {
       var b = h('button', 'xc-ag', opts[k]); b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset[key] = k;
@@ -579,7 +579,7 @@
     box.appendChild(segRow('xc-agent', '新对话用', '已经开始的对话不会换', AGENTS, S.agent, 'agent', function (k) { S.agent = k; ls(LS_AGENT, k); }));
     box.appendChild(segRow('xc-effort', '思考强度', '自动：写代码、编译、调试时用最高', EFFORTS, S.effort, 'effort', function (k) { S.effort = k; ls(LS_EFF, k); }));
     // 附带：发消息时带上学习台里正在看的页面、选中的文字、写的代码。关掉就都不带（记在这个浏览器里）
-    var ctx = toggleRow('xc-ctxauto', '附带正在看的页面', '发消息时带上学习台里正在看的页面、选中的文字和你写的代码；关掉就都不带');
+    var ctx = toggleRow('xc-ctxauto', '附带正在看的页面', '');
     ctx.set(ls(LS_CTX) !== '0');
     ctx.btn.addEventListener('click', function () { var on = ls(LS_CTX) === '0'; ls(LS_CTX, on ? null : '0'); ctx.set(on); S.ctxSkip = null; refreshCtx(); });
     box.appendChild(ctx.row);
@@ -885,9 +885,6 @@
     x.addEventListener('click', function () { setSheet(false); });
     hd.appendChild(h('b', '', '插件')); hd.appendChild(x);
     sheetEl.appendChild(hd);
-    var note = h('p', 'xc-sh-note', '插件是小芯的额外工具。开着的每说一句都要把它的说明书带上，很费 token；用不上就关掉，要用的时候再打开。改了从下一句开始生效。');
-    if (S.sessAgent === 'claude') note.textContent += '（插件只管 Codex 的对话，现在这个对话用的是 Claude。）';
-    sheetEl.appendChild(note);
     var box = h('div', 'xc-sh-list'); box.appendChild(h('p', 'xc-hint', '正在读取…'));
     sheetEl.appendChild(box);
     setSheet(true);
@@ -895,16 +892,16 @@
       if (d && d.error) throw new Error(d.msg || d.error);
       S.plugins = d.plugins || [];
       box.innerHTML = '';
-      if (!S.plugins.length) { box.appendChild(h('p', 'xc-hint', '还没有装插件。')); return; }
+      if (!S.plugins.length) { box.appendChild(h('p', 'xc-hint', '还没有自己装的插件。')); return; }
       S.plugins.forEach(function (p) {
-        var t = toggleRow('xc-plug-' + p.name, PLUG_NAME[p.name] || p.name, (p.desc ? p.desc + ' · ' : '') + p.name);
+        var t = toggleRow('xc-plug-' + p.name, PLUG_NAME[p.name] || p.name, '');
         t.set(p.on); t.row.dataset.name = p.name;
         t.btn.addEventListener('click', function () {
           var want = !p.on; t.btn.disabled = true; t.note('');
           call('plugin_set', { name: p.name, on: want }, 60000).then(function (r) {
             if (r && r.error) throw new Error(r.msg || r.error);
             p.on = r.on; t.set(p.on); t.btn.disabled = false;
-            t.note(p.on ? '开了，下一句开始带上它' : '关了，下一句开始不带');
+            t.note('');
           }).catch(function (e) { t.btn.disabled = false; t.note('没改成：' + e.message); });
         });
         box.appendChild(t.row);

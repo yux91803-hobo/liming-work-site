@@ -650,7 +650,7 @@ test('对话改名、删除（连同每一轮的记录）；还在进行中的�
   assert.strictEqual(op('forget', { sid: '../../etc' }).error, 'bad_sid');
 });
 
-test('插件：列出 Codex 的 MCP 服务器和开没开；开关记下来，每轮起 codex 时加 -c（只给配置里有的）；小芯挪走的 REA 并回配置、记成关着', async () => {
+test('插件：只列用户自己装的（电脑自带的不显示、不让关）和开没开；开关记下来，每轮起 codex 时加 -c（只给自己装的）；小芯挪走的 REA 并回配置、记成关着', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-plug-'));
   const codexHome = path.join(tmp, 'codex'), sys = path.join(tmp, 'etc.toml'), bin = path.join(tmp, 'bin'), home = path.join(tmp, 'home');
   fs.mkdirSync(codexHome); fs.mkdirSync(bin); fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
@@ -664,7 +664,7 @@ test('插件：列出 Codex 的 MCP 服务器和开没开；开关记下来，�
   const { op, xin: xinDir } = agentEnv({ CODEX_HOME: codexHome, XIN_CODEX_SYS: sys, HOME: home, PATH: bin + ':' + process.env.PATH });
   const r = op('plugins');
   assert.deepStrictEqual(r.merged, ['rea']);
-  assert.deepStrictEqual(r.plugins.map(p => [p.name, p.on, p.cmd]), [['rea', false, 'rea-bin'], ['instabox', true, 'instabox-bin'], ['open-computer-use', true, 'open-computer-use-bin']]);
+  assert.deepStrictEqual(r.plugins.map(p => [p.name, p.on, p.cmd]), [['rea', false, 'rea-bin']]);
   assert.strictEqual(r.plugins[0].desc, '逆向分析（Ghidra）');
   const cfg = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
   assert.ok(cfg.startsWith('model = "x"') && cfg.includes('[mcp_servers.rea]') && cfg.includes('JAVA_HOME'));
@@ -672,24 +672,23 @@ test('插件：列出 Codex 的 MCP 服务器和开没开；开关记下来，�
   assert.ok(fs.existsSync(path.join(codexHome, 'config.toml.xin-bak')));
   assert.match(fs.readFileSync(path.join(home, '.local', 'bin', 'xin-rea'), 'utf8'), /exec xin plugin "\$1" rea/);
   assert.deepStrictEqual(op('plugins').merged, []);   // 只并一次
-  assert.deepStrictEqual(op('plugin_set', { name: 'instabox', on: false }), { ok: true, name: 'instabox', on: false });
+  assert.strictEqual(op('plugin_set', { name: 'instabox', on: false }).error, 'builtin');
   assert.deepStrictEqual(op('plugin_set', { name: 'rea', on: true }), { ok: true, name: 'rea', on: true });
   assert.strictEqual(op('plugin_set', { name: 'nope', on: true }).error, 'no_plugin');
   assert.strictEqual(op('plugin_set', { name: 'a b', on: true }).error, 'bad_name');
-  assert.deepStrictEqual(op('plugins').plugins.map(p => [p.name, p.on]), [['rea', true], ['instabox', false], ['open-computer-use', true]]);
-  // 每轮起 codex 的参数：开关变成 -c；配置里没有的名字（手动塞进 plugins.json 的）不加
+  assert.deepStrictEqual(op('plugins').plugins.map(p => [p.name, p.on]), [['rea', true]]);
+  // 每轮起 codex 的参数：开关变成 -c；配置里没有的名字、电脑自带的（手动塞进 plugins.json 的）都不加
   const st = JSON.parse(fs.readFileSync(path.join(xinDir, 'plugins.json'), 'utf8'));
-  st.state.ghost = false; fs.writeFileSync(path.join(xinDir, 'plugins.json'), JSON.stringify(st));
+  st.state.ghost = false; st.state.instabox = false; fs.writeFileSync(path.join(xinDir, 'plugins.json'), JSON.stringify(st));
   const saved = [process.env.XIN_HOME, process.env.CODEX_HOME, process.env.XIN_CODEX_SYS];
   process.env.XIN_HOME = xinDir; process.env.CODEX_HOME = codexHome; process.env.XIN_CODEX_SYS = sys;
   try {
     // 换了 XIN_HOME 要重新载入（BASE 在载入时定好），后面加个参数当成新模块
     const { mcpFlags, agentArgs } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-agent.mjs')).href + '?plug');
-    const fl = mcpFlags();
-    assert.deepStrictEqual([fl.filter((x, i) => i % 2 === 0), fl.filter((x, i) => i % 2).sort()], [['-c', '-c'], ['mcp_servers.instabox.enabled=false', 'mcp_servers.rea.enabled=true']]);
+    assert.deepStrictEqual(mcpFlags(), ['-c', 'mcp_servers.rea.enabled=true']);
     const [, a] = agentArgs('codex', { started: false }, '你好', '', { images: ['/data/workspace/uploads/1/a.png', '/data/workspace/uploads/1/b.jpg'] });
     assert.deepStrictEqual(a.slice(0, 6), ['exec', '-i', '/data/workspace/uploads/1/a.png', '-i', '/data/workspace/uploads/1/b.jpg', '--json']);
-    assert.ok(a.join(' ').includes('-c mcp_servers.instabox.enabled=false'));
+    assert.ok(a.join(' ').includes('-c mcp_servers.rea.enabled=true') && !a.join(' ').includes('instabox'));
     const [, b] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '你好', '', { images: ['/x/a.png'] });
     assert.deepStrictEqual(b.slice(0, 4), ['exec', 'resume', '-i', '/x/a.png']);
     assert.deepStrictEqual(b.slice(-2), ['th-1', '你好']);
