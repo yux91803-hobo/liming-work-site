@@ -457,15 +457,15 @@ test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做�
 });
 
 /* ---------- 小芯的文件、对话改名 / 删除 ---------- */
-test('改名、归档、删除、文件这几个 op 都转给 vm-agent', async () => {
+test('改名、归档、删除、文件、插件这几个 op 都转给 vm-agent', async () => {
   const m = await fresh(), env = mkEnv(), ck = await login(m, env);
   const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true}', stderr: '', exitCode: 0 } }] });
   try {
-    for (const op of ['rename', 'archive', 'forget', 'files']) {
+    for (const op of ['rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set']) {
       const d = await (await m.handleXin(req('/api/xin/call', { body: { op, args: { sid: 'sabc123' } }, headers: { cookie: ck } }), env, null)).json();
       assert.deepStrictEqual(d, { ok: true, data: { ok: true } }, op);
     }
-    assert.deepStrictEqual(ib.calls.filter(c => c.key.endsWith('/exec')).map(c => JSON.parse(c.body).argv[2]), ['rename', 'archive', 'forget', 'files']);
+    assert.deepStrictEqual(ib.calls.filter(c => c.key.endsWith('/exec')).map(c => JSON.parse(c.body).argv[2]), ['rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set']);
   } finally { ib.restore(); }
 });
 
@@ -494,6 +494,50 @@ test('下载：先让 vm-agent 核对路径，再按它给的真实路径从 Ins
     assert.strictEqual(get.url.searchParams.get('path'), REAL);
     assert.strictEqual(get.init.headers['X-API-Key'], 'ibk_test_key_1234567890');
   } finally { ib.restore(); }
+});
+
+test('给小芯发文件：原样转给 InstaBox，写进 uploads/北京日期/ 下面（文件名去掉路径和怪字符）；图片能在聊天里直接显示', async () => {
+  const m = await fresh(), env = mkEnv(), ck = await login(m, env);
+  const BODY = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'PUT /v1/machines/m_abc/files': [async (u, init) => new Response(JSON.stringify({ path: u.searchParams.get('path') }), { status: 201 })] });
+  const up = (name, body, headers) => m.handleXin(new Request(ORIGIN + '/api/xin/upload?name=' + encodeURIComponent(name), {
+    method: 'POST', headers: Object.assign({ cookie: ck, 'x-xin': '1', origin: ORIGIN, 'content-type': 'application/octet-stream', 'content-length': String(body.length) }, headers || {}), body
+  }), env, null, Date.UTC(2026, 10, 5, 16, 30, 5));   // 北京时间 11-06 00:30:05
+  try {
+    const r = await up('../照片 1.PNG', BODY);
+    assert.strictEqual(r.status, 200);
+    const d = (await r.json()).data;
+    assert.match(d.path, /^\/data\/workspace\/uploads\/20261106\/003005-[0-9a-f]{4}-照片 1\.PNG$/);
+    assert.deepStrictEqual([d.name, d.size, d.image], ['照片 1.PNG', BODY.length, true]);
+    const put = ib.calls.find(c => c.key === 'PUT /v1/machines/m_abc/files');
+    assert.deepStrictEqual([put.url.searchParams.get('path'), put.url.searchParams.get('parents')], [d.path, 'true']);
+    assert.strictEqual(put.init.headers['X-API-Key'], 'ibk_test_key_1234567890');
+    assert.deepStrictEqual(new Uint8Array(await new Response(put.init.body).arrayBuffer()), BODY);
+    const r2 = await up('说明书.pdf', BODY);
+    assert.strictEqual((await r2.json()).data.image, false);
+    // 不登录、别的网站、没有 x-xin、太大：都不行，也不碰 InstaBox
+    const n = ib.calls.length;
+    assert.strictEqual((await up('a.txt', BODY, { cookie: '' })).status, 401);
+    assert.strictEqual((await up('a.txt', BODY, { origin: 'https://evil.example' })).status, 403);
+    assert.strictEqual((await up('a.txt', BODY, { 'x-xin': '' })).status, 403);
+    assert.strictEqual((await up('a.txt', BODY, { 'content-length': String(100 * 1024 * 1024 + 1) })).status, 413);
+    assert.strictEqual(ib.calls.length, n);
+  } finally { ib.restore(); }
+  // 聊天里显示发过的图片：?img=1 按图片类型 inline；svg 和别的文件还是附件下载
+  const stat = o => ({ body: { stdout: JSON.stringify(o), stderr: '', exitCode: 0 } });
+  const P = '/data/workspace/uploads/20261106/003005-ab12-a.png';
+  const ib2 = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/exec': [stat({ path: P, real: P, dir: false, size: 3 }), stat({ path: '/data/workspace/x.svg', real: '/data/workspace/x.svg', dir: false, size: 3 })],
+    'GET /v1/machines/m_abc/files/content': [() => new Response('abc', { status: 200 })]
+  });
+  try {
+    const g = p => m.handleXin(new Request(ORIGIN + '/api/xin/file?img=1&path=' + encodeURIComponent(p), { headers: { cookie: ck } }), env, null);
+    const r = await g(P);
+    assert.deepStrictEqual([r.status, r.headers.get('content-type'), r.headers.get('content-disposition').split(';')[0]], [200, 'image/png', 'inline']);
+    const r2 = await g('/data/workspace/x.svg');
+    assert.deepStrictEqual([r2.headers.get('content-type'), r2.headers.get('content-disposition').split(';')[0]], ['application/octet-stream', 'attachment']);
+  } finally { ib2.restore(); }
 });
 
 test('下载：文件名里有中文和引号也能存；没登录 401；路径不对 400；工作目录外面 403；文件夹 400；没有 404', async () => {
@@ -604,6 +648,88 @@ test('对话改名、删除（连同每一轮的记录）；还在进行中的�
   assert.deepStrictEqual(op('sessions').sessions.map(s => s.sid), ['sbusy00001']);
   assert.deepStrictEqual(op('forget', { sid: 'sdone00001' }), { ok: true, already: true });
   assert.strictEqual(op('forget', { sid: '../../etc' }).error, 'bad_sid');
+});
+
+test('插件：列出 Codex 的 MCP 服务器和开没开；开关记下来，每轮起 codex 时加 -c（只给配置里有的）；小芯挪走的 REA 并回配置、记成关着', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-plug-'));
+  const codexHome = path.join(tmp, 'codex'), sys = path.join(tmp, 'etc.toml'), bin = path.join(tmp, 'bin'), home = path.join(tmp, 'home');
+  fs.mkdirSync(codexHome); fs.mkdirSync(bin); fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "x"\n\n[features]\nmemories = true\n');
+  fs.writeFileSync(path.join(codexHome, 'rea.mcp.toml'), '[mcp_servers.rea]\ncommand = "/opt/rea/run"\nargs = []\n\n[mcp_servers.rea.env]\nJAVA_HOME = "/usr/lib/jvm"\n');
+  fs.writeFileSync(sys, '[mcp_servers.instabox]\ncommand = "/usr/local/bin/instabox-mcp"\n\n[mcp_servers."open-computer-use"]\ncommand = "/usr/local/bin/oc"\n');
+  fs.writeFileSync(path.join(home, '.local', 'bin', 'xin-rea'), '#!/bin/bash\nSEG=/data/home/.codex/rea.mcp.toml\n');
+  // 假的 codex mcp list --json：按两个配置文件里写了的服务器回
+  fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\n[ "$1 $2 $3" = "mcp list --json" ] || exit 3\nprintf \'[\'; sep=""\n' +
+    'for n in $(grep -ho "^\\[mcp_servers\\.[^].]*\\]" "$CODEX_HOME/config.toml" "$XIN_CODEX_SYS" | sed -e "s/^\\[mcp_servers\\.//" -e "s/\\]$//" -e "s/\\"//g"); do printf "%s{\\"name\\":\\"%s\\",\\"enabled\\":true,\\"transport\\":{\\"type\\":\\"stdio\\",\\"command\\":\\"/x/%s-bin\\"}}" "$sep" "$n" "$n"; sep=","; done\nprintf \']\'\n', { mode: 0o755 });
+  const { op, xin: xinDir } = agentEnv({ CODEX_HOME: codexHome, XIN_CODEX_SYS: sys, HOME: home, PATH: bin + ':' + process.env.PATH });
+  const r = op('plugins');
+  assert.deepStrictEqual(r.merged, ['rea']);
+  assert.deepStrictEqual(r.plugins.map(p => [p.name, p.on, p.cmd]), [['rea', false, 'rea-bin'], ['instabox', true, 'instabox-bin'], ['open-computer-use', true, 'open-computer-use-bin']]);
+  assert.strictEqual(r.plugins[0].desc, '逆向分析（Ghidra）');
+  const cfg = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
+  assert.ok(cfg.startsWith('model = "x"') && cfg.includes('[mcp_servers.rea]') && cfg.includes('JAVA_HOME'));
+  assert.ok(fs.existsSync(path.join(codexHome, 'rea.mcp.toml.merged')) && !fs.existsSync(path.join(codexHome, 'rea.mcp.toml')));
+  assert.ok(fs.existsSync(path.join(codexHome, 'config.toml.xin-bak')));
+  assert.match(fs.readFileSync(path.join(home, '.local', 'bin', 'xin-rea'), 'utf8'), /exec xin plugin "\$1" rea/);
+  assert.deepStrictEqual(op('plugins').merged, []);   // 只并一次
+  assert.deepStrictEqual(op('plugin_set', { name: 'instabox', on: false }), { ok: true, name: 'instabox', on: false });
+  assert.deepStrictEqual(op('plugin_set', { name: 'rea', on: true }), { ok: true, name: 'rea', on: true });
+  assert.strictEqual(op('plugin_set', { name: 'nope', on: true }).error, 'no_plugin');
+  assert.strictEqual(op('plugin_set', { name: 'a b', on: true }).error, 'bad_name');
+  assert.deepStrictEqual(op('plugins').plugins.map(p => [p.name, p.on]), [['rea', true], ['instabox', false], ['open-computer-use', true]]);
+  // 每轮起 codex 的参数：开关变成 -c；配置里没有的名字（手动塞进 plugins.json 的）不加
+  const st = JSON.parse(fs.readFileSync(path.join(xinDir, 'plugins.json'), 'utf8'));
+  st.state.ghost = false; fs.writeFileSync(path.join(xinDir, 'plugins.json'), JSON.stringify(st));
+  const saved = [process.env.XIN_HOME, process.env.CODEX_HOME, process.env.XIN_CODEX_SYS];
+  process.env.XIN_HOME = xinDir; process.env.CODEX_HOME = codexHome; process.env.XIN_CODEX_SYS = sys;
+  try {
+    // 换了 XIN_HOME 要重新载入（BASE 在载入时定好），后面加个参数当成新模块
+    const { mcpFlags, agentArgs } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-agent.mjs')).href + '?plug');
+    const fl = mcpFlags();
+    assert.deepStrictEqual([fl.filter((x, i) => i % 2 === 0), fl.filter((x, i) => i % 2).sort()], [['-c', '-c'], ['mcp_servers.instabox.enabled=false', 'mcp_servers.rea.enabled=true']]);
+    const [, a] = agentArgs('codex', { started: false }, '你好', '', { images: ['/data/workspace/uploads/1/a.png', '/data/workspace/uploads/1/b.jpg'] });
+    assert.deepStrictEqual(a.slice(0, 6), ['exec', '-i', '/data/workspace/uploads/1/a.png', '-i', '/data/workspace/uploads/1/b.jpg', '--json']);
+    assert.ok(a.join(' ').includes('-c mcp_servers.instabox.enabled=false'));
+    const [, b] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '你好', '', { images: ['/x/a.png'] });
+    assert.deepStrictEqual(b.slice(0, 4), ['exec', 'resume', '-i', '/x/a.png']);
+    assert.deepStrictEqual(b.slice(-2), ['th-1', '你好']);
+  } finally { [process.env.XIN_HOME, process.env.CODEX_HOME, process.env.XIN_CODEX_SYS] = saved; }
+});
+
+test('发文件：send 带 files（只认上传目录里的普通文件）；消息里列出路径，图片 Codex 用 -i 看；只发文件不说话也行', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-files-send-'));
+  const bin = path.join(tmp, 'bin'), log = path.join(tmp, 'args.log');
+  fs.mkdirSync(bin);
+  // 假的 codex：把参数一行一个记下来，再回一句
+  fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\ncase "$*" in *--ephemeral*) exit 0;; esac\nfor a in "$@"; do printf "%s\\n" "$a"; done > "' + log + '"\n' +
+    'echo \'{"type":"thread.started","thread_id":"th-1"}\'\necho \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"看到了"}}\'\necho \'{"type":"turn.completed","usage":{}}\'\n', { mode: 0o755 });
+  const { work, op } = agentEnv({ PATH: bin + ':' + process.env.PATH });
+  const up = path.join(work, 'uploads', '20261106');
+  fs.mkdirSync(up, { recursive: true });
+  fs.writeFileSync(path.join(up, '003005-ab12-板子.jpg'), 'jpg');
+  fs.writeFileSync(path.join(up, '003006-cd34-说明.pdf'), 'pdf');
+  fs.writeFileSync(path.join(work, 'secret.txt'), 'x');
+  fs.symlinkSync(path.join(work, 'secret.txt'), path.join(up, 'link.txt'));
+  const img = path.join(up, '003005-ab12-板子.jpg'), pdf = path.join(up, '003006-cd34-说明.pdf');
+  // 不在上传目录里、软链接指到外面、不存在、太多：都不行
+  assert.strictEqual(op('send', { agent: 'codex', text: 'x', files: [{ path: path.join(work, 'secret.txt') }] }).error, 'bad_file');
+  assert.strictEqual(op('send', { agent: 'codex', text: 'x', files: [{ path: path.join(up, 'link.txt') }] }).error, 'bad_file');
+  assert.strictEqual(op('send', { agent: 'codex', text: 'x', files: [{ path: path.join(up, '../../uploads/20261106/../../secret.txt') }] }).error, 'bad_file');
+  assert.strictEqual(op('send', { agent: 'codex', text: 'x', files: [{ path: path.join(up, 'none.png') }] }).error, 'no_file');
+  assert.strictEqual(op('send', { agent: 'codex', text: 'x', files: Array.from({ length: 11 }, () => ({ path: img })) }).error, 'bad_files');
+  assert.strictEqual(op('send', { agent: 'codex', text: '  ' }).error, 'empty');
+  const r = op('send', { agent: 'codex', text: '', files: [{ path: img, name: '板子.jpg' }, { path: pdf, name: '说明.pdf' }] });
+  assert.ok(r.run, JSON.stringify(r));
+  assert.strictEqual(r.title, '板子.jpg、说明.pdf');
+  let p = null;
+  for (let i = 0; i < 60; i++) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  const user = p.events[0];
+  assert.deepStrictEqual(user.files, [{ name: '板子.jpg', path: img, size: 3, image: true }, { name: '说明.pdf', path: pdf, size: 3, image: false }]);
+  assert.strictEqual(user.text, '');
+  const args = fs.readFileSync(log, 'utf8').split('\n');
+  assert.deepStrictEqual(args.slice(0, 3), ['exec', '-i', img]);
+  const prompt = args.join('\n');
+  assert.ok(prompt.includes('看看我发的文件。') && prompt.includes('【用户发来的文件（已经在你电脑上）】') && prompt.includes(pdf + '（说明.pdf，3 B）') && prompt.includes('图片已经直接给你看了'), prompt.slice(-400));
 });
 
 test('归档：只是收起来（记录、AI 的会话记录都留着），能取消；对话列表带 archived，归档的排在后面', () => {

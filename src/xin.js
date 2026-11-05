@@ -19,10 +19,12 @@ const COOKIE = '__Host-xin';
 const SESSION_SEC = 30 * 86400;
 const AGENT_ASSET = '/xin/vm-agent.mjs';
 const VM_DIR = '/data/home/.xin/agent';
-export const OPS = new Set(['status', 'wake', 'ping', 'send', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files',
+export const OPS = new Set(['status', 'wake', 'ping', 'send', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
   'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off']);
 const SCREEN_W = 1280, SCREEN_H = 800, SCREEN_VIEW_TTL = 1800, SCREEN_CTL_TTL = 900;   // 桌面大小；链接多久内能打开（秒）
-const FILE_MAX = 64 * 1024 * 1024;   // 下载最大 64 MB（.hex、.bin 才几十 KB）
+const FILE_MAX = 100 * 1024 * 1024;   // 下载最大 100 MB（和上传一样大：发给小芯的文件也能原样下回来）
+const UPLOAD_MAX = 100 * 1024 * 1024, UPLOAD_DIR = '/data/workspace/uploads';   // 给小芯发文件：一个最大 100 MB（Cloudflare Worker 收请求的上限），放在它工作目录的 uploads/日期/ 下面
+const IMG_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
 const HDRS = { 'Content-Type': 'application/json; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
 const enc = new TextEncoder();
@@ -221,7 +223,7 @@ async function download(req, env, ctx, url, now) {
   const d = r.data || {};
   if (d.error) return json({ error: d.error, msg: d.msg }, d.error === 'not_found' ? 404 : 403);
   if (d.dir) return json({ error: 'is_dir', msg: '这是文件夹，不能下载' }, 400);
-  if (d.size > FILE_MAX) return json({ error: 'too_large', msg: '文件太大了（超过 64 MB）' }, 413);
+  if (d.size > FILE_MAX) return json({ error: 'too_large', msg: '文件太大了（超过 100 MB）' }, 413);
   let f;
   try {
     const m = await machine(env, now);
@@ -229,13 +231,49 @@ async function download(req, env, ctx, url, now) {
   } catch (e) { return json(explain(e || {}), 502); }
   if (!f.ok) return json(explain(await ibErr(f)), 502);
   const name = d.path.split('/').pop() || 'file';
+  // ?img=1：聊天里显示你发过的图片（只认 png / jpg / gif / webp，不认 svg），按图片类型、inline 回；别的一律当附件下载
+  const img = url.searchParams.get('img') === '1' && IMG_TYPES[(name.split('.').pop() || '').toLowerCase()];
   const h = {
-    'Content-Type': 'application/octet-stream',
-    'Content-Disposition': `attachment; filename="${asciiName(name)}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`,
+    'Content-Type': img || 'application/octet-stream',
+    'Content-Disposition': `${img ? 'inline' : 'attachment'}; filename="${asciiName(name)}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`,
     'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow', 'Content-Security-Policy': "default-src 'none'; sandbox"
   };
   const len = f.headers.get('content-length'); if (len) h['Content-Length'] = len;
   return new Response(f.body, { status: 200, headers: h });
+}
+
+/* ---------- 给小芯发文件：网页把文件原样 POST 过来（?name=文件名），直接写进它电脑的 uploads/日期/ 下面 ----------
+   和 /call 一样防跨站（本站页面、带 x-xin: 1）；要登录；最大 100 MB；文件名只留最后一段、去掉怪字符，前面加时间免得重名。
+   返回在它电脑上的路径，发消息时带上（vm-agent 的 send 会再核对一遍在不在上传目录里）。 */
+export function uploadName(raw) {
+  let n = String(raw || '').split(/[\\/]/).pop().replace(/[\x00-\x1f\x7f"<>|:*?]/g, '').replace(/^\.+/, '').trim();
+  if (n.length > 80) { const i = n.lastIndexOf('.'), ext = i > 0 && n.length - i <= 10 ? n.slice(i) : ''; n = n.slice(0, 80 - ext.length) + ext; }
+  return n || 'file';
+}
+async function upload(req, env, ctx, url, now) {
+  const origin = req.headers.get('origin');
+  if ((origin && origin !== url.origin) || req.headers.get('x-xin') !== '1') return json({ error: 'forbidden' }, 403);
+  if (!enabled(env)) return json({ error: 'disabled' }, 404);
+  if (!(await authed(req, env, now))) return json({ error: 'unauthorized', msg: '要先登录' }, 401);
+  const len = Number(req.headers.get('content-length') || NaN);
+  if (!(len >= 0)) return json({ error: 'length_required', msg: '缺文件大小' }, 411);
+  if (len > UPLOAD_MAX) return json({ error: 'too_large', msg: '文件太大了（最大 100 MB）' }, 413);
+  const name = uploadName(url.searchParams.get('name'));
+  const bj = new Date(now + 8 * 3600e3).toISOString();   // 北京时间：日期做文件夹，时分秒做前缀
+  const dest = `${UPLOAD_DIR}/${bj.slice(0, 10).replace(/-/g, '')}/${bj.slice(11, 19).replace(/:/g, '')}-${uuid().slice(0, 4)}-${name}`;
+  let m;
+  try { m = await machine(env, now); } catch (e) { return json(explain(e || {}), 502); }
+  const body = req.body || new Uint8Array(0);
+  const put = () => fetch(API + `/v1/machines/${m.id}/files?path=${encodeURIComponent(dest)}&parents=true`,
+    { method: 'PUT', headers: { 'X-API-Key': env.INSTABOX_API_KEY, 'Content-Type': 'application/octet-stream', 'Content-Length': String(len) }, body, duplex: 'half' });
+  let r;
+  try { r = await put(); } catch (e) { return json({ ok: false, state: 'error', msg: '传不上去：' + String(e && e.message || e) }, 502); }
+  if (!r.ok) {
+    const e = await ibErr(r);
+    if (e.code === 'machine_not_running') { const w = await wakeUp(env, m.id); if (!w || w.code === 'operation_conflict') return json({ ok: false, state: 'waking', msg: '唤醒中…', retryAfter: 3 }, 503); }
+    return json(explain(e), e.status === 429 || e.status === 503 ? 503 : 502);
+  }
+  return json({ ok: true, data: { path: dest, name, size: len, image: !!IMG_TYPES[(name.split('.').pop() || '').toLowerCase()] } });
 }
 
 /* ---------- 路由 ---------- */
@@ -244,6 +282,7 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
   const p = url.pathname.replace(/^\/api\/xin\/?/, '');
   if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, env, now) });
   if (p === 'file' && req.method === 'GET') return download(req, env, ctx, url, now);
+  if (p === 'upload' && req.method === 'POST') return upload(req, env, ctx, url, now);
   if (!['login', 'logout', 'call'].includes(p)) return json({ error: 'not_found' }, 404);
   if (req.method !== 'POST') return json({ error: 'method' }, 405);
   // 防跨站：只认本站页面发来的 JSON 请求（cookie 本身也是 SameSite=Strict）

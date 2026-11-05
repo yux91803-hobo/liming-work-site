@@ -115,6 +115,13 @@ async def xin_mock(pg, authed=False, live=None):
             st['download'] = parse_qs(urlparse(req.url).query).get('path', [''])[0]
             return await route.fulfill(status=200, content_type='application/octet-stream', body=XIN_FILES[W + '/blink/build/app.hex']['text'],
                                        headers={'Content-Disposition': "attachment; filename=\"app.hex\"; filename*=UTF-8''app.hex"})
+        if path == 'upload':   # 发文件：记下名字和大小，回一个在小芯电脑上的路径（upload_delay：传得慢）
+            from urllib.parse import urlparse, parse_qs
+            name = parse_qs(urlparse(req.url).query).get('name', [''])[0]
+            st.setdefault('uploads', []).append({'name': name, 'size': len(req.post_data_buffer or b''), 'xin': req.headers.get('x-xin')})
+            if st.get('upload_delay'): await asyncio.sleep(st['upload_delay'])
+            img = name.lower().rsplit('.', 1)[-1] in ('png', 'jpg', 'jpeg', 'gif', 'webp')
+            return await ok({'ok': True, 'data': {'path': '/data/workspace/uploads/20261106/003005-ab12-' + name, 'name': name, 'size': len(req.post_data_buffer or b''), 'image': img}})
         body = json.loads(req.post_data or '{}')
         if path == 'login':
             st['authed'] = body.get('password') == 'pw-ok-123456'
@@ -162,6 +169,15 @@ async def xin_mock(pg, authed=False, live=None):
         if op == 'rename':
             st['renamed'] = args
             return await ok({'ok': True, 'data': {'ok': True}})
+        if op == 'plugins':
+            return await ok({'ok': True, 'data': {'plugins': [dict(p) for p in st.setdefault('plugins', [
+                {'name': 'rea', 'desc': '逆向分析（Ghidra）', 'cmd': 'run', 'on': False},
+                {'name': 'instabox', 'desc': '管理云电脑（开机、快照之类）', 'cmd': 'instabox-mcp', 'on': True}])], 'merged': []}})
+        if op == 'plugin_set':
+            st.setdefault('plugin_set', []).append(args)
+            for p in st.get('plugins', []):
+                if p['name'] == args.get('name'): p['on'] = bool(args.get('on'))
+            return await ok({'ok': True, 'data': {'ok': True, 'name': args.get('name'), 'on': bool(args.get('on'))}})
         if op == 'archive':
             st.setdefault('archived', []).append(args)
             return await ok({'ok': True, 'data': {'ok': True}})
@@ -1497,6 +1513,50 @@ async def main():
         st = await pc.evaluate("[document.body.classList.contains('tool-open'), document.querySelector('.xc-ctx').hidden, document.querySelector('.xc-ctx span').textContent]")
         check('附带：关掉学习台以后不带学习台里选的', st[:2] == [False, True], st)
         await pc.context.close()
+        # 「＋」：发图片和文件（选了马上传，传完才能发，发出去的消息里显示缩略图和文件卡片）；开关插件
+        pa = await page(b, 390, 844, mobile=True)
+        xa = await xin_mock(pa, authed=True)
+        await pa.goto(BASE + '/#xin'); await pa.wait_for_selector('.xc.show .xc-row textarea'); await pa.wait_for_timeout(300)
+        await pa.click('.xc-plus'); await pa.wait_for_selector('.xc-menu:not([hidden])')
+        menu = await pa.evaluate("[...document.querySelectorAll('.xc-mi')].map(b => b.textContent)")
+        PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
+        xa['upload_delay'] = 0.8
+        await pa.set_input_files('.xc-file', files=[{'name': '板子.png', 'mimeType': 'image/png', 'buffer': PNG}, {'name': '说明书.pdf', 'mimeType': 'application/pdf', 'buffer': b'%PDF-1.4 test'}])
+        await pa.wait_for_selector('.xc-att.up')
+        busy = await pa.evaluate("[document.querySelectorAll('.xc-att').length, document.querySelector('.xc-send').disabled, !!document.querySelector('.xc-att.img .xc-att-p'), document.querySelector('.xc-menu').hidden]")
+        await pa.wait_for_function("document.querySelectorAll('.xc-att.ok').length === 2", timeout=8000)
+        done = await pa.evaluate("[[...document.querySelectorAll('.xc-att b')].map(b => b.textContent), document.querySelector('.xc-send').disabled]")
+        await pa.fill('.xc-row textarea', '帮我看看这块板子'); await pa.click('.xc-send')
+        await pa.wait_for_function("document.querySelector('.xc-me .xc-mfiles')", timeout=5000)
+        await pa.wait_for_function(CHAT_DONE, timeout=8000)
+        sent = xa['sent'] or {}
+        shown = await pa.evaluate("[!!document.querySelector('.xc-me .xc-mimg img'), document.querySelector('.xc-me .xc-mfile span').textContent, document.querySelector('.xc-me .xc-bub').textContent, document.querySelector('.xc-atts').hidden]")
+        check('「＋」菜单只有两项、不带小字：图片或文件、插件；选了文件马上传（传的时候发送键不能点、图片有缩略图），传完能发；消息里带图片缩略图和文件卡片，附件条清空',
+              menu == ['图片或文件', '插件'] and busy == [2, True, True, True] and done == [['板子.png', '说明书.pdf'], False]
+              and sorted(u['name'] for u in xa['uploads']) == ['板子.png', '说明书.pdf'] and all(u['xin'] == '1' for u in xa['uploads'])
+              and sent.get('files') == [{'path': '/data/workspace/uploads/20261106/003005-ab12-板子.png', 'name': '板子.png'}, {'path': '/data/workspace/uploads/20261106/003005-ab12-说明书.pdf', 'name': '说明书.pdf'}]
+              and sent.get('text') == '帮我看看这块板子' and shown == [True, '说明书.pdf', '帮我看看这块板子', True], (menu, busy, done, xa.get('uploads'), sent, shown))
+        # 只发文件不说话也行；附件能去掉
+        xa['upload_delay'] = 0
+        await pa.set_input_files('.xc-file', files=[{'name': 'a.txt', 'mimeType': 'text/plain', 'buffer': b'a'}, {'name': 'b.txt', 'mimeType': 'text/plain', 'buffer': b'b'}])
+        await pa.wait_for_function("document.querySelectorAll('.xc-att.ok').length === 2", timeout=5000)
+        await pa.click('.xc-att:nth-child(1) .xc-att-x'); await pa.wait_for_timeout(100)
+        left = await pa.evaluate("[...document.querySelectorAll('.xc-att b')].map(b => b.textContent)")
+        await pa.click('.xc-send'); await pa.wait_for_timeout(600)
+        sent2 = xa['sent'] or {}
+        check('只发文件不说话也能发；附件条上的 ✕ 去掉一个', left == ['b.txt'] and sent2.get('text') == '' and [f['name'] for f in sent2.get('files') or []] == ['b.txt'], (left, sent2))
+        await pa.wait_for_function(CHAT_DONE, timeout=8000)
+        # 插件：「＋ → 插件」升起一页，列出插件和开没开；点开关告诉小芯的电脑，提示下一句生效；点遮罩收起
+        await pa.click('.xc-plus'); await pa.click('.xc-mi-plug'); await pa.wait_for_selector('.xc-sheet [data-name=rea] .xc-sw')
+        rows = await pa.evaluate("[...document.querySelectorAll('.xc-sheet .xc-tg')].map(r => [r.dataset.name, r.querySelector('.xc-tg-t b').textContent, r.querySelector('.xc-sw').getAttribute('aria-checked')])")
+        await pa.click('.xc-sheet [data-name=rea] .xc-sw'); await pa.wait_for_function("document.querySelector('.xc-sheet [data-name=rea] .xc-sw').getAttribute('aria-checked') === 'true'")
+        note = await pa.text_content('.xc-sheet [data-name=rea] .xc-tg-n')
+        await pa.mouse.click(195, 300); await pa.wait_for_timeout(300)
+        closed = await pa.evaluate("[document.querySelector('.xc-sheet').hidden, !!document.querySelector('.xc.show')]")
+        check('插件：「＋ → 插件」列出插件和开没开；点开关告诉小芯的电脑、提示下一句生效；点遮罩收起不关面板',
+              rows == [['rea', 'REA 逆向', 'false'], ['instabox', 'InstaBox', 'true']] and xa.get('plugin_set') == [{'name': 'rea', 'on': True}]
+              and '下一句' in note and closed == [True, True], (rows, xa.get('plugin_set'), note, closed))
+        await pa.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
         # （之前在学习台里收起来过：再把它扔进去，照样出来）
         await pg.evaluate("sessionStorage.setItem('lm.xin.stmoff', '1')")

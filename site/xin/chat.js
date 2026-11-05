@@ -74,7 +74,7 @@
   }
 
   /* ---------- 面板 ---------- */
-  var root, list, statusEl, input, sendBtn, titleEl, sessEl, loginEl, foot, drawerEl, useEl;
+  var root, list, statusEl, input, sendBtn, titleEl, sessEl, loginEl, foot, drawerEl, useEl, sheetEl, menuEl, fileEl, attsEl;
   function build() {
     root = h('section', 'xc'); root.id = 'xinChat'; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', '和小芯聊天'); root.hidden = true;
     root.innerHTML =
@@ -97,9 +97,19 @@
         '<button type="submit" class="xc-btn">登录</button>' +
         '<p class="xc-err" role="alert"></p>' +
       '</form>' +
+      // 插件：从「＋」打开，从底下升起来的一页，盖在聊天上面
+      '<section class="xc-sheet" aria-label="插件" hidden></section>' +
       '<form class="xc-ft">' +
+        // 「＋」点开的小菜单：发图片或文件、开关插件
+        '<div class="xc-menu" role="menu" hidden>' +
+          '<button type="button" class="xc-mi xc-mi-file" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5l6-6"/></svg><b>图片或文件</b></button>' +
+          '<button type="button" class="xc-mi xc-mi-plug" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg><b>插件</b></button>' +
+        '</div>' +
+        '<input type="file" class="xc-file" multiple hidden>' +
+        '<div class="xc-atts" hidden></div>' +
         '<div class="xc-ctx" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5l6-6"/></svg><span></span><button type="button" aria-label="这次不带">✕</button></div>' +
         '<div class="xc-row">' +
+          '<button type="button" class="xc-plus" aria-label="发图片、文件或开关插件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>' +
           '<textarea rows="1" placeholder="和小芯说点什么…" aria-label="消息" enterkeyhint="' + (touch ? 'enter' : 'send') + '"></textarea>' +
           '<button type="submit" class="xc-send" aria-label="发送"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6 11l6-6 6 6"/></svg></button>' +
         '</div>' +
@@ -112,8 +122,17 @@
     root.querySelector('.xc-ttl').insertBefore(avatar(), root.querySelector('.xc-ttl-t'));
     sessEl = root.querySelector('.xc-sess'); loginEl = root.querySelector('.xc-login'); foot = root.querySelector('.xc-ft'); drawerEl = root.querySelector('.xc-dr');
     useEl = root.querySelector('.xc-use');
+    sheetEl = root.querySelector('.xc-sheet'); menuEl = root.querySelector('.xc-menu'); fileEl = root.querySelector('.xc-file'); attsEl = root.querySelector('.xc-atts');
+    root.querySelector('.xc-plus').addEventListener('click', function () { setMenu(menuEl.hidden); });
+    root.querySelector('.xc-mi-file').addEventListener('click', function () { setMenu(false); fileEl.value = ''; fileEl.click(); });
+    root.querySelector('.xc-mi-plug').addEventListener('click', function () { setMenu(false); openPlugins(); });
+    fileEl.addEventListener('change', function () { addFiles(fileEl.files); fileEl.value = ''; });
+    // 粘贴图片、把文件拖进面板：也当附件
+    root.addEventListener('dragover', function (e) { if (e.dataTransfer && [].indexOf.call(e.dataTransfer.types || [], 'Files') >= 0 && S.view === 'chat' && S.authed) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+    root.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length && S.view === 'chat' && S.authed) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
+    document.addEventListener('pointerdown', function (e) { if (menuEl && !menuEl.hidden && !e.target.closest('.xc-menu, .xc-plus')) setMenu(false); }, true);
     useEl.addEventListener('click', function () { S.useMore = !S.useMore; renderUsage(); });
-    root.querySelector('.xc-scrim').addEventListener('click', function () { setDrawer(false); });
+    root.querySelector('.xc-scrim').addEventListener('click', function () { if (S.sheet) setSheet(false); else setDrawer(false); });
     root.querySelector('.xc-list-b').setAttribute('aria-expanded', 'false');
     root.querySelector('.xc-x').addEventListener('click', close);
     root.querySelector('.xc-scr-b').addEventListener('click', function () { openScreen(false); });
@@ -125,13 +144,18 @@
     input.addEventListener('input', function () { grow(); ls(LS_DRAFT, input.value || null); });
     root.querySelector('.xc-row').addEventListener('click', function (e) { if (e.target === this) input.focus(); });
     input.addEventListener('focus', refreshCtx);
+    input.addEventListener('paste', function (e) {
+      var fs = e.clipboardData && e.clipboardData.files;
+      if (fs && fs.length) { e.preventDefault(); addFiles(fs); }
+    });
     root.querySelector('.xc-ctx button').addEventListener('click', function () { skipCtx(); refreshCtx(); input.focus(); });
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touch) { e.preventDefault(); if (!S.run) send(); }
     });
     root.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || (scrEl && !scrEl.hidden)) return;
-      if (S.drawer) setDrawer(false); else close();
+      if (menuEl && !menuEl.hidden) { setMenu(false); return; }
+      if (S.sheet) setSheet(false); else if (S.drawer) setDrawer(false); else close();
     });
     list.addEventListener('click', function (e) {
       var fp = e.target.closest('.xc-path'); if (fp) { e.preventDefault(); loadFiles(fp.getAttribute('data-path'), 'chat'); return; }
@@ -168,6 +192,7 @@
     if ((login || off) && S.drawer) setDrawer(false);
     root.classList.toggle('running', !!S.run);
     sendBtn.setAttribute('aria-label', S.run ? '停止' : '发送');
+    sendBtn.disabled = !S.run && attsBusy();
     sendBtn.innerHTML = S.run ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" class="fill"/></svg>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>';
     if (off) { list.innerHTML = ''; list.appendChild(h('p', 'xc-hint', '小芯聊天还没开（网站没配密码或 InstaBox key）。')); }
     renderHead();
@@ -841,21 +866,175 @@
     return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
   }
 
+  /* ---------- 「＋」菜单、插件 ---------- */
+  function setMenu(on) {
+    if (!menuEl) return;
+    menuEl.hidden = !on;
+    root.querySelector('.xc-plus').setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
+  function setSheet(on) {
+    S.sheet = !!on; sheetEl.hidden = !on;
+    root.classList.toggle('sheet-open', !!on);
+  }
+  // 插件：Codex 的 MCP 服务器。开关记在小芯电脑上，从下一句开始生效（每一句都重新起一次 AI）
+  var PLUG_NAME = { rea: 'REA 逆向', instabox: 'InstaBox', 'open-computer-use': '操作桌面' };
+  function openPlugins() {
+    sheetEl.innerHTML = '';
+    var hd = h('div', 'xc-sh-hd'), x = h('button', 'xc-ib xc-sh-x');
+    x.type = 'button'; x.setAttribute('aria-label', '关掉'); x.innerHTML = svgIcon('x');
+    x.addEventListener('click', function () { setSheet(false); });
+    hd.appendChild(h('b', '', '插件')); hd.appendChild(x);
+    sheetEl.appendChild(hd);
+    var note = h('p', 'xc-sh-note', '插件是小芯的额外工具。开着的每说一句都要把它的说明书带上，很费 token；用不上就关掉，要用的时候再打开。改了从下一句开始生效。');
+    if (S.sessAgent === 'claude') note.textContent += '（插件只管 Codex 的对话，现在这个对话用的是 Claude。）';
+    sheetEl.appendChild(note);
+    var box = h('div', 'xc-sh-list'); box.appendChild(h('p', 'xc-hint', '正在读取…'));
+    sheetEl.appendChild(box);
+    setSheet(true);
+    call('plugins', {}, 60000).then(function (d) {
+      if (d && d.error) throw new Error(d.msg || d.error);
+      S.plugins = d.plugins || [];
+      box.innerHTML = '';
+      if (!S.plugins.length) { box.appendChild(h('p', 'xc-hint', '还没有装插件。')); return; }
+      S.plugins.forEach(function (p) {
+        var t = toggleRow('xc-plug-' + p.name, PLUG_NAME[p.name] || p.name, (p.desc ? p.desc + ' · ' : '') + p.name);
+        t.set(p.on); t.row.dataset.name = p.name;
+        t.btn.addEventListener('click', function () {
+          var want = !p.on; t.btn.disabled = true; t.note('');
+          call('plugin_set', { name: p.name, on: want }, 60000).then(function (r) {
+            if (r && r.error) throw new Error(r.msg || r.error);
+            p.on = r.on; t.set(p.on); t.btn.disabled = false;
+            t.note(p.on ? '开了，下一句开始带上它' : '关了，下一句开始不带');
+          }).catch(function (e) { t.btn.disabled = false; t.note('没改成：' + e.message); });
+        });
+        box.appendChild(t.row);
+      });
+    }).catch(function (e) { box.innerHTML = ''; box.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
+  }
+
+  /* ---------- 发图片和文件 ----------
+     选好马上传到小芯的电脑（/api/xin/upload → 它工作目录的 uploads/日期/），输入框上面一排显示，能去掉；
+     传完了才能发。图片太大先在手机上压一下（长边 2048、JPEG），省流量也省 token。一次最多 10 个、每个 100 MB 以内（网站那边收请求的上限）。 */
+  var ATT_MAX = 10, ATT_SIZE = 100 * 1024 * 1024, attSeq = 0;
+  function attsBusy() { return (S.atts || []).some(function (a) { return a.state === 'up'; }); }
+  function addFiles(fl) {
+    S.atts = S.atts || [];
+    var arr = [].slice.call(fl || []);
+    if (!arr.length) return;
+    setMenu(false);
+    var room = ATT_MAX - S.atts.length;
+    if (arr.length > room) { setStatus('一次最多发 ' + ATT_MAX + ' 个文件', 'bad'); setTimeout(function () { setStatus(''); }, 3000); arr = arr.slice(0, Math.max(0, room)); }
+    arr.forEach(function (f) {
+      var img = /^image\/(png|jpeg|gif|webp|heic|heif)$/i.test(f.type || '');
+      var a = { id: ++attSeq, name: f.name || (img ? 'image.jpg' : 'file'), size: f.size, image: img, blob: f, state: 'up', pct: 0 };
+      if (img) { try { a.url = URL.createObjectURL(f); } catch (e) { /* 没有预览也能传 */ } }
+      S.atts.push(a);
+      if (f.size > ATT_SIZE) { a.state = 'err'; a.err = '太大了（最大 100 MB）'; return; }
+      (img ? shrink(f) : Promise.resolve(null)).then(function (b) {
+        if (b) { a.blob = b; a.size = b.size; a.name = a.name.replace(/\.[^.]*$/, '') + '.jpg'; }
+        if (S.atts.indexOf(a) >= 0) upload(a, 0);
+      });
+    });
+    renderAtts(); render();
+    if (!touch) input.focus();
+  }
+  function shrink(f) {
+    return new Promise(function (ok) {
+      if (!/^image\/(jpeg|png|webp|heic|heif)$/i.test(f.type) || !window.createImageBitmap) { ok(null); return; }
+      createImageBitmap(f).then(function (bm) {
+        var k = Math.min(1, 2048 / Math.max(bm.width, bm.height));
+        if (k === 1 && f.size < 1.5e6 && /jpeg|png|webp/i.test(f.type)) { ok(null); return; }
+        var c = document.createElement('canvas'); c.width = Math.round(bm.width * k); c.height = Math.round(bm.height * k);
+        var g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(bm, 0, 0, c.width, c.height);
+        c.toBlob(function (b) { ok(b && (b.size < f.size || /heic|heif/i.test(f.type)) ? b : null); }, 'image/jpeg', 0.86);
+      }).catch(function () { ok(null); });
+    });
+  }
+  function upload(a, tries) {
+    var x = new XMLHttpRequest(); a.xhr = x;
+    x.open('POST', '/api/xin/upload?name=' + encodeURIComponent(a.name));
+    x.setRequestHeader('x-xin', '1'); x.setRequestHeader('Content-Type', 'application/octet-stream');
+    x.upload.onprogress = function (e) { if (e.lengthComputable) { a.pct = Math.round(e.loaded / e.total * 100); renderAtt(a); } };
+    x.onload = function () {
+      var d = null; try { d = JSON.parse(x.responseText); } catch (e) { /* 不是 JSON */ }
+      if (S.atts.indexOf(a) < 0) return;
+      if (x.status === 200 && d && d.ok && d.data) { a.state = 'ok'; a.path = d.data.path; a.name = d.data.name; a.image = !!d.data.image; a.note = ''; }
+      else if (d && d.state === 'waking' && tries < 30) { a.note = '唤醒中'; renderAtt(a); setTimeout(function () { if (S.atts.indexOf(a) >= 0) upload(a, tries + 1); }, 3000); return; }
+      else { a.state = 'err'; a.err = (d && (d.msg || d.error)) || (x.status === 413 ? '太大了（最大 100 MB）' : '没传上去（' + x.status + '）'); }
+      renderAtts(); render();
+    };
+    x.onerror = function () { if (S.atts.indexOf(a) < 0) return; a.state = 'err'; a.err = '网络断了'; renderAtts(); render(); };
+    x.send(a.blob);
+  }
+  function removeAtt(a) {
+    if (a.xhr && a.state === 'up') { try { a.xhr.abort(); } catch (e) { /* 已经完了 */ } }
+    S.atts = (S.atts || []).filter(function (b) { return b !== a; });
+    renderAtts(); render();
+  }
+  function attLine(a) { return a.state === 'err' ? a.err : a.state === 'up' ? (a.note || ('上传中 ' + (a.pct || 0) + '%')) : fmtSize(a.size); }
+  function renderAtt(a) {
+    var e = attsEl && attsEl.querySelector('[data-att="' + a.id + '"]');
+    if (!e) return;
+    e.className = 'xc-att' + (a.image ? ' img' : '') + ' ' + a.state;
+    var m = e.querySelector('.xc-att-m'); if (m) m.textContent = attLine(a);
+    var bar = e.querySelector('.xc-att-bar i'); if (bar) bar.style.width = (a.state === 'up' ? a.pct || 0 : 100) + '%';
+  }
+  function renderAtts() {
+    if (!attsEl) return;
+    var l = S.atts || [];
+    attsEl.hidden = !l.length; attsEl.innerHTML = '';
+    l.forEach(function (a) {
+      var e = h('div', ''); e.dataset.att = a.id;
+      if (a.image && a.url) { var im = h('img', 'xc-att-p'); im.src = a.url; im.alt = ''; e.appendChild(im); }
+      else e.appendChild(h('span', 'xc-att-ic', ''));
+      if (!(a.image && a.url)) e.querySelector('.xc-att-ic').innerHTML = FILE_ICON.file;
+      var t = h('span', 'xc-att-t'); t.appendChild(h('b', '', a.name)); t.appendChild(h('i', 'xc-att-m', '')); e.appendChild(t);
+      var bar = h('span', 'xc-att-bar'); bar.appendChild(h('i')); e.appendChild(bar);
+      var x = h('button', 'xc-att-x'); x.type = 'button'; x.setAttribute('aria-label', '去掉 ' + a.name); x.innerHTML = svgIcon('x');
+      x.addEventListener('click', function () { removeAtt(a); });
+      e.appendChild(x);
+      attsEl.appendChild(e); renderAtt(a);
+    });
+  }
+  // 消息里的附件：图片显示缩略图（点开看大图），别的文件一个小卡片（点开在「小芯的文件」里预览、下载）
+  function fileUrl(p, img) { return '/api/xin/file?' + (img ? 'img=1&' : '') + 'path=' + encodeURIComponent(p); }
+  function msgFiles(files) {
+    var box = h('div', 'xc-mfiles');
+    files.forEach(function (f) {
+      if (f.image) {
+        var a = h('a', 'xc-mimg'); a.href = fileUrl(f.path, true); a.target = '_blank'; a.rel = 'noopener';
+        var im = h('img'); im.src = f.url || fileUrl(f.path, true); im.alt = f.name; im.loading = 'lazy';
+        a.appendChild(im); box.appendChild(a);
+      } else {
+        var b = h('button', 'xc-mfile'); b.type = 'button';
+        b.innerHTML = FILE_ICON.file; b.appendChild(h('span', '', f.name)); if (f.size != null) b.appendChild(h('i', '', fmtSize(f.size)));
+        b.addEventListener('click', function () { loadFiles(f.path, 'chat'); });
+        box.appendChild(b);
+      }
+    });
+    return box;
+  }
+
   /* ---------- 发消息 ---------- */
   function send(given) {
     var text = given != null ? String(given).trim() : input.value.trim();
-    if (!text || S.run || S.sending) return false;
+    var atts = given != null ? [] : (S.atts || []).filter(function (a) { return a.state === 'ok'; });
+    if ((!text && !atts.length) || S.run || S.sending) return false;
+    if (given == null && attsBusy()) { setStatus('文件还没传完，传完再发', 'wait'); setTimeout(function () { setStatus(''); }, 2500); return false; }
     S.sending = true;
     if (list.querySelector('.xc-hello')) clearList();
     var c = curCtx();
-    var pending = draw({ t: 'user', text: text, ctx: c ? ctxLabel(c) : '' });
+    var files = atts.map(function (a) { return { name: a.name, path: a.path, size: a.size, image: a.image, url: a.url }; });
+    if (atts.length) { S.atts = []; renderAtts(); }
+    var pending = draw({ t: 'user', text: text, ctx: c ? ctxLabel(c) : '', files: files });
     pending.classList.add('pending');
     if (given == null) { input.value = ''; ls(LS_DRAFT, null); grow(); }
     // 还没送到小芯的电脑：「正在输入」旁边写「接收中」（电脑在睡写「唤醒中」），送到了才「思考中」并开始计时
     S.lastText = ''; S.doing = 'think'; S.note = null; S.waitSend = '';
     typing(true); renderHead(); toBottom(true);
     var x = xin(); if (x) x.ai('think');
-    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined }, 90000, function (w) { S.waitSend = w.state; progress(); }).then(function (d) {
+    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,
+      files: files.length ? files.map(function (f) { return { path: f.path, name: f.name }; }) : undefined }, 90000, function (w) { S.waitSend = w.state; progress(); }).then(function (d) {
       if (c && c.sel) S.sel = null;      // 选中的内容用过一次就不再带
       refreshCtx();
       // 送到了：小芯的电脑收到这句、AI 开始干活，从这一刻开始算「思考中」的时间
@@ -865,6 +1044,7 @@
     }, function (e) {
       S.sending = false; S.waitSend = ''; pending.remove(); typing(false); renderHead();
       if (!input.value) { input.value = text; ls(LS_DRAFT, text); grow(); }
+      if (atts.length && !(S.atts || []).length) { S.atts = atts; renderAtts(); render(); }   // 没发出去：附件放回去
       var x2 = xin(); if (x2) { x2.ai(''); x2.cmd('confused'); if (!S.open) x2.say('没发出去：' + e.message + '（点我看看）', 9000, open); }
       if (/还没做完/.test(e.message)) { openSession(S.sid); return; }
       draw({ t: 'err', text: '没发出去：' + e.message }); toBottom(true);
@@ -1086,7 +1266,9 @@
     run = run || S.run || '';
     if (ev.t === 'user') {
       timeSep(ev.at);
-      e = h('div', 'xc-m xc-me'); e.appendChild(h('div', 'xc-bub', ev.text));
+      e = h('div', 'xc-m xc-me');
+      if (ev.files && ev.files.length) e.appendChild(msgFiles(ev.files));
+      if (ev.text) e.appendChild(h('div', 'xc-bub', ev.text));
       if (ev.ctx) e.appendChild(h('div', 'xc-ctxm', '附带：' + ev.ctx));
     } else if (ev.t === 'text') {
       m = aiMsg(run); var body = md(ev.text); m.b.appendChild(body);
