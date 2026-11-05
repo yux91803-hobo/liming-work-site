@@ -38,23 +38,12 @@
   var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: AGENTS[ls(LS_AGENT)] ? ls(LS_AGENT) : 'codex', sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto',
     run: '', off: 0, polling: false, mine: {}, errRuns: {}, lastAct: 0, view: 'chat', machine: '', mstate: '', loadSeq: 0 };
 
-  /* ---------- 小芯的头像：和页面上的小芯同一个像素造型（16×10 格） ---------- */
-  var AV_ROWS = ['..ooooo..ooooo..', '..obbbboobbbbo..', '..obbbbbbbbbbo..', 'ppobwwbbbbwwbopp', 'ppobwwbbbbwwbopp',
-    '..obbbbbbbbbbo..', '..obbbbbbbbbbo..', '..oooooooooooo..', '...p.p....p.p...', '...p.p....p.p...'];
-  var AV_SVG = (function () {
-    var o = ['<svg class="xc-px" viewBox="0 0 16 10" aria-hidden="true" shape-rendering="crispEdges">'];
-    AV_ROWS.forEach(function (row, y) {
-      for (var x = 0; x < row.length; x++) {
-        var c = row.charAt(x), n = 1;
-        if (c === '.') continue;
-        while (row.charAt(x + n) === c) n++;      // 同色的连成一条，少画几个方块
-        o.push('<rect class="' + c + '" x="' + x + '" y="' + y + '" width="' + n + '" height="1"/>');
-        x += n - 1;
-      }
-    });
-    return o.join('') + '</svg>';
-  })();
-  function avatar(cls) { var e = h('span', 'xc-av' + (cls ? ' ' + cls : '')); e.innerHTML = AV_SVG; return e; }
+  /* ---------- 和页面上的小芯共用机身、眼睛和引脚，避免头像仍然显示旧方眼 ---------- */
+  function avatar(cls) {
+    var e = h('span', 'xc-av' + (cls ? ' ' + cls : '')), x = xin();
+    if (x && x.portrait) e.innerHTML = x.portrait();
+    return e;
+  }
 
   /* ---------- 请求 ---------- */
   function req(path, body) {

@@ -1,5 +1,5 @@
 /* mascot.js — 小芯（像素风），首页和 STM32 学习台共用
-   一块像素小芯片：两只引脚手、四只引脚脚、两个方块眼。整个页面都是它的地盘：
+   一块像素小芯片：两只引脚手、四只引脚脚、两只发光像素眼。整个页面都是它的地盘：
    首页能站在标题栏、每张卡片的上沿，也能跳进卡片里沿着底边走；学习台里在芯片图、标题区、代码框这些方块的上沿走来走去。
    平台之间先蹲一下再划弧线跳过去，落到方块上时那块被压得往下沉一下；页面滚走了，它会跳回你正在看的地方。
    学习台里只有被你从首页拖着扔进 STM32 卡片时才有小芯；关掉学习台，它跳回首页。
@@ -8,7 +8,7 @@
    有脾气：连戳、被扔、被拎太久、被吵醒会攒火气，攒够了砸东西（耳机、LED），跺脚，抱着胳膊哼一声背过身去；听歌听久了会烦，把耳机砸了。
    会荡秋千、跳舞、坐在边上晃腿、走着走着绊一跤；有点叛逆：让它睡、叫它过来有时候偏不，吃饱了不吃，被拎走了偏要走回去，冲你吐舌头。
    学习台里你在看代码区时，它跳到代码框上掏出笔记本敲代码，停下来想；想通了开心，想不出来会烦躁、伤心、生气，甚至把电脑砸了。
-   画法：20×20 像素格，每一帧按「姿势」重新拼出所有方块（逐帧动画，不做缩放旋转插值）。
+   画法：20×20 动作坐标，机身用分层倒角、像素眼和金属引脚复刻参考造型；动作仍然逐帧拼合。
    坐标：小芯挂在 body 下的一层（.xin-layer），x / y 是它左上角在整个文档里的位置。 */
 (function () {
   'use strict';
@@ -22,14 +22,14 @@
 
   /* ---------- 像素造型 ----------
      身子：x 4..15、y 7..16（外框一圈深色，顶边正中一个芯片缺口）；姿势里的 b 是身子往下蹲几格。
-     脚：x = 5 / 7 / 12 / 14（都在身子里面，中间两条隔得开一点），3 格长，从身子下面到地面 y = 19；蹲下时脚尖往外撇。
+     脚：x = 5.5 / 7.5 / 12 / 14（都在身子里面，中间两条隔得开一点），3 格长，从身子下面到地面 y = 19；蹲下时脚尖往外撇。
      手：从身子两侧水平伸出来。
      下面 ARM / FACE / 饼干 / LED 的坐标都按身子在 y 6 写的，画的时候整体再往下挪 OY 格。 */
-  var LEG_X = [5, 7, 12, 14], OY = 1;
+  var LEG_X = [5.5, 7.5, 12, 14], OY = 1;
   // 手是一根粗引脚（2 格粗、3 格长），不分节：平时水平伸出、垂直于身子侧边，做动作时整根换个朝向。
   // [x, y, 宽, 高]，左手；右手按 x → 20 - x - 宽 镜像
   var ARM = {
-    out:    [[1, 10, 3, 2]],
+    out:    [[1.7, 7.2, 2.3, 2.6]],
     swingF: [[1, 9, 3, 2]],
     swingB: [[1, 11, 3, 2]],
     up:     [[2, 7, 2, 3]],
@@ -45,19 +45,22 @@
   };
   // 脸：[x, y, 宽, 高, 颜色]；eyes / blink 会跟着视线挪一格
   var FACE = {
-    // 默认表情是原图的 > <，用 1 格宽的折线替代旧的 2×2 方眼；视线仍可平移 ±1 格。
+    // 参考图的 > < 由正方形像素拼成；缩小视线位移，避免眼睛撞到倒角内框。
     eyes: function (lx, ly) {
-      var y = 8 + ly;
+      var x = lx * .35, y = 8.25 + ly * .35;
       return [
-        [6 + lx, y], [7 + lx, y + 1], [8 + lx, y + 1], [7 + lx, y + 2], [6 + lx, y + 3],
-        [13 + lx, y], [12 + lx, y + 1], [11 + lx, y + 1], [12 + lx, y + 2], [13 + lx, y + 3]
+        [6.5 + x, y, .625, .625], [7.125 + x, y + .625, .625, .625], [7.75 + x, y + 1.25, .625, .625], [7.125 + x, y + 1.875, .625, .625], [6.5 + x, y + 2.5, .625, .625],
+        [12.875 + x, y, .625, .625], [12.25 + x, y + .625, .625, .625], [11.625 + x, y + 1.25, .625, .625], [12.25 + x, y + 1.875, .625, .625], [12.875 + x, y + 2.5, .625, .625]
       ];
     },
-    blink: function (lx, ly) { return [[6 + lx, 10 + ly, 3, 1], [11 + lx, 10 + ly, 3, 1]]; },
-    hap:   [[5, 9], [6, 8, 2, 1], [8, 9], [11, 9], [12, 8, 2, 1], [14, 9]],
-    shut:  [[6, 9, 2, 1, 'g'], [12, 9, 2, 1, 'g']],
+    blink: function (lx, ly) { return [[6.1 + lx * .35, 9.65 + ly * .35, 2.5, .4], [11.4 + lx * .35, 9.65 + ly * .35, 2.5, .4]]; },
+    hap:   [[6.1, 9.5, .625, .85], [6.725, 8.875, 1.25, .625], [7.975, 9.5, .625, .85], [11.4, 9.5, .625, .85], [12.025, 8.875, 1.25, .625], [13.275, 9.5, .625, .85]],
+    shut:  [[6.1, 9.65, 2.5, .4], [11.4, 9.65, 2.5, .4]],
+    focus: [[6.85, 8.75, .95, 2.2], [12.2, 8.75, .95, 2.2]],
+    calm:  [[6.1, 9.5, 2.5, .45], [6.75, 9.95, 1.2, .95], [11.4, 9.5, 2.5, .45], [12.05, 9.95, 1.2, .95]],
+    love:  [[6.2, 8.6, .9, .45], [7.55, 8.6, .9, .45], [5.75, 9.05, 3.15, .9], [6.2, 9.95, 2.25, .45], [6.65, 10.4, 1.35, .45], [7.1, 10.85, .45, .45], [11.55, 8.6, .9, .45], [12.9, 8.6, .9, .45], [11.1, 9.05, 3.15, .9], [11.55, 9.95, 2.25, .45], [12, 10.4, 1.35, .45], [12.45, 10.85, .45, .45]],
     dz:    [[5, 7], [7, 7], [6, 8], [5, 9], [7, 9], [12, 7], [14, 7], [13, 8], [12, 9], [14, 9]],
-    wow:   [[6, 7, 2, 3], [12, 7, 2, 3]],
+    wow:   [[7.1, 8.25, .5, 3], [5.85, 9.5, 3, .5], [6.6, 9, .5, .5], [7.6, 9, .5, .5], [6.6, 10, .5, .5], [7.6, 10, .5, .5], [12.4, 8.25, .5, 3], [11.15, 9.5, 3, .5], [11.9, 9, .5, .5], [12.9, 9, .5, .5], [11.9, 10, .5, .5], [12.9, 10, .5, .5]],
     sad:   [[6, 10, 2, 1], [12, 10, 2, 1]],
     scared:   [[6, 7, 2, 3], [12, 7, 2, 3], [16, 5, 1, 1, 'sw'], [16, 6, 1, 1, 'sw'], [17, 7, 1, 1, 'sw']],   // 眼睛瞪圆 + 一滴汗
     confused: [[6, 8, 2, 2], [12, 9, 2, 1]],                                                          // 一只眼眯起来
@@ -82,9 +85,17 @@
   // 蹲：脚变短，脚尖往外撇（b = 1 蹲一格，b = 2 蹲到底）
   function bent(x, s, b) { return b === 1 ? [[x, 18], [x + s, 19]] : [[x + s, 19]]; }
 
-  function draw(p) {
+  function draw(p, prefix) {
     var o = [], lb = p.b | 0, b = lb + OY, sx = p.sx | 0, i;
+    prefix = prefix || 'xin-body';
     function R(x, y, w, h, c) { o.push('<rect class="c-' + c + '" x="' + x + '" y="' + y + '" width="' + (w || 1) + '" height="' + (h || 1) + '"/>'); }
+    function P(points, fill) { o.push('<polygon points="' + points.map(function (a) { return a.join(','); }).join(' ') + '" fill="' + fill + '"/>'); }
+    function metal(x, y, w, h) {
+      o.push('<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" fill="url(#' + prefix + '-pin)"/>');
+    }
+    o.push('<defs><linearGradient id="' + prefix + '-pin"><stop stop-color="#c2b19c"/><stop offset=".45" stop-color="#dfd0ba"/><stop offset="1" stop-color="#bcaa94"/></linearGradient>' +
+      '<linearGradient id="' + prefix + '-glass" x2=".9" y2="1"><stop stop-color="#121212"/><stop offset=".55" stop-color="#211e1b"/><stop offset="1" stop-color="#171615"/></linearGradient>' +
+      '<linearGradient id="' + prefix + '-bevel" x2="1" y2="1"><stop stop-color="#56534c"/><stop offset=".2" stop-color="#373530"/><stop offset=".7" stop-color="#252421"/><stop offset="1" stop-color="#111110"/></linearGradient></defs>');
     // 脚（画在身子后面）
     for (i = 0; i < 4; i++) {
       var lx = LEG_X[i], s = i < 2 ? -1 : 1, A = i % 2 === 0, q = p.lp | 0, pix;
@@ -92,18 +103,29 @@
       else if (p.legs === 'tuck') pix = [[lx, 17 + lb], [lx + s, 18 + lb]];
       else if (p.legs === 'dangle') pix = ((q === 0) === A) ? straight(lx) : [[lx, 17], [lx - s, 18]];
       else pix = lb ? bent(lx, s, lb) : straight(lx);
-      pix.forEach(function (c) { R(c[0], c[1], 1, 1, 'p'); });
+      pix.forEach(function (c) { metal(c[0], c[1], 1, 1); });
     }
     // 身子
     var X = 4 + sx, Y = 6 + b;
-    R(X, Y, 5, 1, 'o'); R(X + 7, Y, 5, 1, 'o'); R(X, Y + 1, 1, 9, 'o'); R(X + 11, Y + 1, 1, 9, 'o'); R(X, Y + 9, 12, 1, 'o');
-    R(X + 1, Y + 1, 10, 8, 'b'); R(X + 5, Y + 1, 2, 1, 'o');
+    // 顶部两段凸台、中央缺口、黑色厚框、斜切内沿和暗玻璃；颜色不随网页主题改变。
+    R(X + .9, Y - .85, 3.75, .85, 'o'); R(X + 7.35, Y - .85, 3.75, .85, 'o');
+    R(X + .9, Y - .45, 3.75, .4, 'edge'); R(X + 7.35, Y - .45, 3.75, .4, 'edge');
+    P([[X, Y + .35], [X + .4, Y + .35], [X + .4, Y], [X + 4.65, Y], [X + 4.65, Y + .55], [X + 7.35, Y + .55], [X + 7.35, Y], [X + 11.6, Y], [X + 11.6, Y + .35], [X + 12, Y + .35], [X + 12, Y + 10], [X, Y + 10]], '#050505');
+    R(X + .4, Y + .4, 11.2, 9.2, 'rim');
+    P([[X + .7, Y + .75], [X + 4.65, Y + .75], [X + 4.65, Y + 1], [X + 7.35, Y + 1], [X + 7.35, Y + .75], [X + 11.3, Y + .75], [X + 11.3, Y + 9.35], [X + .7, Y + 9.35]], 'url(#' + prefix + '-bevel)');
+    P([[X + 1.2, Y + 1.3], [X + 10.8, Y + 1.3], [X + 10.8, Y + 8.8], [X + 1.2, Y + 8.8]], 'url(#' + prefix + '-glass)');
+    P([[X + .7, Y + .75], [X + 1.2, Y + 1.3], [X + 1.2, Y + 8.8], [X + .7, Y + 9.35]], '#3c3933');
+    P([[X + 10.8, Y + 1.3], [X + 11.3, Y + .75], [X + 11.3, Y + 9.35], [X + 10.8, Y + 8.8]], '#121211');
+    R(X + .6, Y + .05, 4.05, .2, 'edge'); R(X + 7.35, Y + .05, 4.05, .2, 'edge');
+    R(X + 4.65, Y + .55, 2.7, .25, 'edge'); R(X + .15, Y + .6, .15, 8.9, 'rim');
     // 脸
     var f = FACE[p.face] || FACE.eyes, fl = typeof f === 'function' ? f(p.lx | 0, p.ly | 0) : f;
     fl.forEach(function (c) { R(c[0] + sx, c[1] + b, c[2] || 1, c[3] || 1, c[4] || 'ew'); });
-    // 腮红固定在脸颊，眼睛移动时它不跟着跑；睡觉、生气、伤心时不强加笑脸。
-    if (p.face === 'eyes' || p.face === 'blink' || p.face === 'hap' || p.face === 'wow' || p.face === 'confused' || p.face === 'tongue') {
-      R(6 + sx, 13 + b, 2, 1, 'rose'); R(12 + sx, 13 + b, 2, 1, 'rose');
+    // 腮红固定在脸颊，不跟着视线跑；背面、生气和伤心时隐藏。
+    if (['eyes', 'blink', 'hap', 'wow', 'focus', 'calm', 'love', 'shut', 'confused', 'tongue'].indexOf(p.face) >= 0) {
+      [5.8, 6.8, 12.2, 13.2].forEach(function (cx) {
+        P([[cx + sx + .25, 12.35 + b], [cx + sx + 1, 12.35 + b], [cx + sx + .75, 13.1 + b], [cx + sx, 13.1 + b]], 'var(--xr)');
+      });
     }
     // 手里的东西
     var it = p.item;
@@ -119,8 +141,8 @@
     // 嘴：只有吃东西时才有（1 合上，2 张开咬下去）
     if (p.mouth) R(9 + sx, 11 + b, 2, p.mouth === 2 ? 2 : 1, 'o');
     // 手（在身子前面）
-    [[p.armL || 'out', false], [p.armR || 'out', true]].forEach(function (a) {
-      (ARM[a[0]] || ARM.out).forEach(function (c) { R((a[1] ? 20 - c[0] - c[2] : c[0]) + sx, c[1] + b, c[2], c[3], 'p'); });
+    [[p.armL || 'out', false], [p.armR || 'wave', true]].forEach(function (a) {
+      (ARM[a[0]] || ARM.out).forEach(function (c) { metal((a[1] ? 20 - c[0] - c[2] : c[0]) + sx, c[1] + b, c[2], c[3]); });
     });
     if (it && it.k === 'ball') { R(it.x, it.y, 2, 2, 'ball'); R(it.x, it.y, 1, 1, 'bh'); }
     if (it && it.k === 'batt') {             // 电池：4×4，绿色格子是电量
@@ -411,7 +433,7 @@
 
   /* ---------- 姿势：基础姿势（由状态决定）+ 正在播放的那一帧 ---------- */
   function base(t) {
-    var p = { b: 0, sx: 0, legs: 'stand', lp: 0, dir: dir, armL: 'out', armR: 'out', face: 'eyes', lx: look.x, ly: look.y, mouth: 0, item: null, fx: null, dy: 0 };
+    var p = { b: 0, sx: 0, legs: 'stand', lp: 0, dir: dir, armL: 'out', armR: 'wave', face: 'eyes', lx: look.x, ly: look.y, mouth: 0, item: null, fx: null, dy: 0 };
     if (mode === 'walk') {
       var q = Math.floor(t / 90) % 4;
       p.legs = 'walk'; p.lp = q; p.b = q % 2;
@@ -447,7 +469,7 @@
       }
     }
     if (mood === 'happy') { var w = Math.floor(t / 170) % 2; p.face = 'hap'; p.armL = w ? 'up' : 'wave'; p.armR = w ? 'wave' : 'up'; }
-    else if (mood === 'over') { p.face = 'hap'; p.armL = p.armR = Math.floor(t / 140) % 2 ? 'up' : 'wave'; }
+    else if (mood === 'over') { p.face = 'love'; p.armL = p.armR = Math.floor(t / 140) % 2 ? 'up' : 'wave'; }
     else if (mood === 'dizzy') { p.face = 'dz'; p.sx = Math.floor(t / 150) % 2; p.armL = 'wave'; p.armR = 'swingB'; }
     else if (mood === 'sad') { p.face = 'sad'; p.b = Math.max(p.b, 1); p.lx = 0; p.ly = 0; p.armL = p.armR = 'down'; }
     else if (mood === 'wow') { p.face = 'wow'; p.armL = p.armR = 'wave'; }
@@ -729,7 +751,7 @@
     var f = [{ b: 1, t: 120 }, { b: 2, armL: 'down', armR: 'down', t: 140 }], n = 12 + Math.floor(Math.random() * 8), i;
     for (i = 0; i < n; i++) {
       var lx = i > n * 0.4 && i < n * 0.6 ? 1 : i >= n * 0.6 && i < n * 0.8 ? -1 : 0;   // 慢慢左右看看
-      f.push({ dy: 3, legs: 'dangle', lp: i % 2, armL: 'down', armR: 'down', lx: lx, ly: 0, t: 420 });
+      f.push({ dy: 3, legs: 'dangle', lp: i % 2, armL: 'down', armR: 'down', face: 'calm', lx: lx, ly: 0, t: 420 });
     }
     f.push({ b: 1, t: 140 });
     playSeq(f, done);
@@ -830,7 +852,7 @@
   }
   function thinking(ms) {     // 停下来想：转过来，一只手挠头，眼睛往上看，头顶冒「…」
     var f = [], n = Math.max(1, Math.round(ms / 320));
-    for (var i = 0; i < n; i++) f.push(pc({ armR: 'up', face: 'eyes', lx: 1, ly: -1, fx: [[14, 3, 'q'], [16, 3, 'q'], [18, 3, 'q']].slice(0, i % 4), t: 320 }));
+    for (var i = 0; i < n; i++) f.push(pc({ armR: 'up', face: 'focus', lx: 1, ly: -1, fx: [[14, 3, 'q'], [16, 3, 'q'], [18, 3, 'q']].slice(0, i % 4), t: 320 }));
     return f;
   }
   function code(given, how) {
@@ -1709,7 +1731,7 @@
       peek = document.createElement('button');
       peek.type = 'button'; peek.className = 'xin-peek'; peek.title = '叫小芯出来'; peek.setAttribute('aria-label', '叫小芯出来');
       var p = base(0); p.face = 'eyes'; p.lx = -1; p.ly = 0; p.item = null; p.fx = null; p.mouth = 0; p.armL = 'out'; p.armR = 'out'; p.b = 0; p.sx = 0; p.dy = 0;
-      peek.innerHTML = '<svg viewBox="2 6 16 10" aria-hidden="true" shape-rendering="crispEdges">' + draw(p) + '</svg>';
+      peek.innerHTML = '<svg viewBox="2 6 16 10" aria-hidden="true" shape-rendering="crispEdges">' + draw(p, 'xin-peek-body') + '</svg>';
       peek.addEventListener('click', function () { setStmOff(false); });
       body.appendChild(peek);
     }
@@ -1736,11 +1758,13 @@
   }
   blinkLoop();
 
+  var portraitId = 0;
   window.LimingXin = {
     get mode() { return mode; },
     get mood() { return mood; },
     get plat() { return plat ? { kind: plat.kind, el: plat.el } : null; },
     el: el,
+    portrait: function () { return '<svg class="xc-px xin-portrait" viewBox="0 5.8 20 14.2" aria-hidden="true" shape-rendering="crispEdges">' + draw({ face: 'eyes', armL: 'out', armR: 'wave' }, 'xin-portrait-' + (++portraitId)) + '</svg>'; },
     sleep: function () { setMode('idle'); setMood(''); sleep(); },
     toy: playToy,
     bag: openBag,

@@ -536,9 +536,9 @@ test('下载：云电脑在睡觉时回 503 + waking（网页等它醒了再下�
   } finally { ib.restore(); }
 });
 
-function agentEnv() {
+function agentEnv(extraEnv = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-files-')), work = path.join(home, 'work');
-  const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: work });
+  const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: work }, extraEnv);
   const { execFileSync } = require('node:child_process');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
   const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
@@ -965,7 +965,10 @@ test('小芯的屏幕：screen.log 每一类事件写成好读的一行（命令
   assert.ok(long.includes('  line29\n') && !long.includes('line30') && long.includes('…（还有 5 行）') && long.endsWith('  ✗ 没成功\n'), long);
   assert.strictEqual(plain({ t: 'done', ok: true, ms: 41200 }), '── 做完了 · 41 秒\n');
   assert.strictEqual(plain({ t: 'status', text: 'x' }), '');
-  const { op, xin } = agentEnv();
+  // 这个用例验证「没装终端」；隔离 PATH，避免开发机装着桌面终端时误启动它。
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-no-terminal-'));
+  fs.writeFileSync(path.join(bin, 'sh'), '#!/bin/sh\nif [ "$1" = "-lc" ]; then shift; exec /bin/sh -c "$@"; fi\nexec /bin/sh "$@"\n', { mode: 0o755 });
+  const { op, xin } = agentEnv({ PATH: bin });
   const r = op('screen');
   assert.strictEqual(r.error, 'no_terminal');
   assert.ok(fs.readFileSync(path.join(xin, 'screen.log'), 'utf8').includes('小芯的屏幕'));
