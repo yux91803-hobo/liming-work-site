@@ -22,13 +22,9 @@
 [data-theme=dark] .xc{--bub:#2b2a27;--bub-line:#46443f;--me-line:#5b4033;--hard:var(--ps,#121110)}
 
 /* 小芯的像素头像（颜色和页面上的小芯一样） */
-.xc-av{display:inline-flex;flex:none;width:32px;height:20px}
-.xc-av.big{width:64px;height:40px}
+.xc-av{display:inline-flex;flex:none;width:32px;height:24px}
+.xc-av.big{width:64px;height:48px}
 .xc-px{display:block;width:100%;height:100%;stroke:none;fill:none}
-.xc-px .o{fill:#141413}.xc-px .b{fill:#3b3833}.xc-px .p{fill:#aaa497}.xc-px .w{fill:#f7f2e8}
-[data-theme=dark] .xc-px .o{fill:#0d0c0b}
-[data-theme=dark] .xc-px .b{fill:#4a4640}
-[data-theme=dark] .xc-px .p{fill:#bdb7aa}
 
 .xc-hd{display:flex;align-items:center;gap:2px;flex:none;height:56px;padding:0 6px;border-bottom:1px solid var(--line);background:var(--panel)}
 @media (min-width:900px){.xc-hd{height:calc(60px + var(--st));padding-top:var(--st)}}
