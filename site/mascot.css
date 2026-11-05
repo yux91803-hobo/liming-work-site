@@ -4,8 +4,8 @@
 .xin-layer.in-stm{z-index:15}
 .xin{position:absolute;left:0;top:0;width:80px;height:80px;touch-action:none;cursor:grab;pointer-events:none;
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;will-change:transform;
-  --xo:#141413;--xb:#3b3833;--xp:#aaa497;--xw:#f7f2e8;--xg:#8d887c;--xd:#b8b2a4}
-[data-theme=dark] .xin{--xo:#0d0c0b;--xb:#4a4640;--xp:#bdb7aa;--xw:#f7f2e8;--xg:#9a9488;--xd:#5d5850}
+  --xo:#141413;--xb:#3b3833;--xp:#aaa497;--xw:#f7f2e8;--xg:#8d887c;--xd:#b8b2a4;--xe:#ffefce;--xr:#e9a18e}
+[data-theme=dark] .xin{--xo:#0d0c0b;--xb:#4a4640;--xp:#bdb7aa;--xw:#f7f2e8;--xg:#9a9488;--xd:#5d5850;--xe:#fff0d3;--xr:#efa58f}
 @media (min-width:720px){.xin{width:100px;height:100px}}
 .xin svg rect{pointer-events:visiblePainted}
 .xin.is-drag{cursor:grabbing}
@@ -19,6 +19,9 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin .c-b{fill:var(--xb)}
 .xin .c-p{fill:var(--xp)}
 .xin .c-w{fill:var(--xw)}
+/* 发光只应用于眼睛像素，不影响机身边框、手脚和小芯的物品。 */
+.xin .c-ew{fill:var(--xe);filter:drop-shadow(0 0 .45px rgba(255,199,124,.70))}
+.xin .c-rose{fill:var(--xr);opacity:.88}
 .xin .c-g{fill:var(--xg)}
 .xin .c-d{fill:var(--xd)}
 .xin .c-ck{fill:#c98d4b}
