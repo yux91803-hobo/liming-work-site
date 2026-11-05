@@ -223,7 +223,7 @@ const MOVE_HELP = [
   '每一帧是一个对象，没写的字段用平时的样子；t 是这一帧停多久（毫秒，60~1500，默认 200）。能用的字段：',
   '  armL / armR（左手 / 右手）：' + MOVE_ENUM.armL.join(' '),
   '  legs（腿）：' + MOVE_ENUM.legs.join(' ') + '；lp（走路时迈哪条腿 0~3）',
-  '  face（脸）：' + MOVE_ENUM.face.join(' ') + '（hap 笑成 > < 带腮红，smile 眯眼笑 ^ ^，wow 吃惊，dz 晕，shut 闭眼，tongue 吐舌头，back 背过身）',
+  '  face（脸）：' + MOVE_ENUM.face.join(' ') + '（hap 笑成 > <，smile 眯眼笑 ^ ^ 带腮红，wow 吃惊，dz 晕，shut 闭眼，tongue 吐舌头，back 背过身）',
   '  b（往下蹲 0~2）、dy（往上跳 -6~0）、sx（左右晃 -1~1）、lx / ly（眼睛往哪看 -1~1）、mouth（嘴 0 没有 / 1 合上 / 2 张开）',
   '最多 48 帧、一共 15 秒。例子（挥手打招呼）：',
   `  xin move add 打招呼 '[{"armR":"up","face":"hap","t":250},{"armR":"wave","face":"hap","t":250},{"armR":"up","face":"hap","t":250},{"armR":"wave","face":"hap","mouth":2,"t":400}]'`
