@@ -328,7 +328,8 @@
     if (!shown(e)) return null;
     var r = e.getBoundingClientRect(), ox = sX(), oy = sY();
     if (r.width < 4) return null;
-    if (kind === 'ground') return { el: e, kind: kind, x0: r.left + ox, x1: Math.max(r.left + ox, r.right + ox - W), fy: r.bottom + oy + 2 };
+    // 宽屏上的小芯更大：标题栏落脚点留足头顶空间，顶部凸台不会被视口裁掉。
+    if (kind === 'ground') return { el: e, kind: kind, x0: r.left + ox, x1: Math.max(r.left + ox, r.right + ox - W), fy: Math.max(r.bottom + oy + 2, 8 + H * (1 - (6 + OY - .85) / G)) };
     if (kind === 'in') {
       if (r.height < H * 0.8 + 16 || r.width < W + 16) return null;
       return { el: e, kind: kind, x0: r.left + ox + 6, x1: r.right + ox - W - 6, fy: r.bottom + oy - 5 };
