@@ -64,6 +64,7 @@ wrangler.jsonc        正式站（顶层）与测试站（env.staging）配置
 
 两个 GitHub Secrets 都配了，合并到 `main` 时 Actions 才把它们写进正式站（测试站不写，功能关着）。正式站还有两个定时任务（`wrangler.jsonc` 的 `triggers.crons`，UTC）：`55 0 * * *` 叫醒云电脑，`10 1,13 * * *` 让小芯做每日任务；测试站没有。云电脑默认找名字叫 `li` 的那台（`wrangler.jsonc` 里的 `XIN_MACHINE`）。
 云电脑里的管理脚本 `vm-agent.mjs` 不用手动装：网站第一次用、或者脚本改过时，会自动传到 `/data/home/.xin/agent/`。对话记录存在云电脑的 `/data/home/.xin/`，AI 的工作目录是 `/data/workspace`（网站上「小芯的文件」只能看、只能下载这里面的）。
+同一对话的发送、改名、归档、删除和后台状态更新用 Linux 的 `flock` 串行处理（InstaBox 的 Debian 镜像自带）；两个设备同时发送时，后一个会明确提示上一句未完成，避免漏记历史。自动清理只处理 `~/.xin/agent-sessions/` 登记过、已没有网页对话关联且超过一小时未更新的 AI 记录：现有网页对话会自动补登记，其他命令行任务和无法确认归属的旧记录保留。模型持续输出思考等有效进展时，会刷新 75 秒的无进展计时；真正没有回应的连接仍只自动重试一次，手动停止照常可用。
 STM32 编译环境用 `scripts/vm/setup-stm32.sh` 装（已经装好；换了新的云电脑就把它传到 `/data/home/.xin/setup-stm32.sh` 跑一次）：装 `gcc-arm-none-eabi`，从 ST、ARM 官方仓库下固定版本的 CMSIS 头文件和启动文件，在 `/data/workspace/stm32-template` 放一个能直接 `make` 的空工程（链接脚本按 ZET6：Flash 512K、RAM 64K；`syscalls.c` 让 printf / malloc 能链接）。可以重复跑，不会覆盖自己改过的 `main.c`。
 AI 在云电脑里是完全放权的（不经确认就执行命令），云电脑里别放重要的东西，也别放 InstaBox key。
 做完提醒用的是标准 Web Push：VAPID 钥匙在云电脑的 `/data/home/.xin/push/vapid.json` 里生成（私钥不离开云电脑，文件只有自己能读），浏览器的订阅存在同目录的 `subs.json`，推送从云电脑直接发给浏览器厂商的推送服务；网站只多了一个 `/sw.js`（只管弹通知，不拦截任何请求）。
