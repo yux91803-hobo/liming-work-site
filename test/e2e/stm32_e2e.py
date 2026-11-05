@@ -734,6 +734,13 @@ async def main():
         await pg.wait_for_function("document.querySelector('.xin svg').dataset.face === 'eyes'")
         normal = await pg.evaluate("[...document.querySelectorAll('.xin .c-ew')].map(e => [+e.getAttribute('width'), +e.getAttribute('height')])")
         check('小芯常态是两只睁开的竖眼，不是微笑', len(normal) == 2 and all(h > w * 2 for w, h in normal), normal)
+        hands = await pg.evaluate("""(() => {
+          const arms = svg => [...svg.querySelectorAll('rect')].filter(e => (e.getAttribute('fill') || '').includes('-pin)') && (+e.getAttribute('x') < 4 || +e.getAttribute('x') >= 16))
+            .map(e => ['x', 'y', 'width', 'height'].map(a => +e.getAttribute(a)));
+          const avatar = document.createElement('div'); avatar.innerHTML = LimingXin.portrait();
+          return [arms(LimingXin.el.querySelector('svg')), arms(avatar.querySelector('svg'))];
+        })()""")
+        check('常态和聊天头像的双手对称平伸，没有固定举手', all(len(a) == 2 and a[0][1:] == a[1][1:] and a[0][2] > a[0][3] and a[0][0] + a[0][2] + a[1][0] == 20 for a in hands), hands)
         expressions, cheeks = [], []
         for cmd, face in [('smile', 'smile'), ('focus', 'focus'), ('happy', 'hap'), ('calm', 'calm'), ('wow', 'wow'), ('love', 'love')]:
             await pg.evaluate('cmd => LimingXin.cmd(cmd)', cmd)

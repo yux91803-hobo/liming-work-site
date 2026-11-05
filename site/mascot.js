@@ -29,7 +29,7 @@
   // 手是一根粗引脚（2 格粗、3 格长），不分节：平时水平伸出、垂直于身子侧边，做动作时整根换个朝向。
   // [x, y, 宽, 高]，左手；右手按 x → 20 - x - 宽 镜像
   var ARM = {
-    out:    [[1.7, 7.2, 2.3, 2.6]],
+    out:    [[1, 10, 3, 2]],
     swingF: [[1, 9, 3, 2]],
     swingB: [[1, 11, 3, 2]],
     up:     [[2, 7, 2, 3]],
@@ -58,7 +58,7 @@
     blink: function (lx, ly) { return [[6.1 + lx * .35, 9.65 + ly * .35, 2.5, .4], [11.4 + lx * .35, 9.65 + ly * .35, 2.5, .4]]; },
     hap:   [[6.1, 9.5, .625, .85], [6.725, 8.875, 1.25, .625], [7.975, 9.5, .625, .85], [11.4, 9.5, .625, .85], [12.025, 8.875, 1.25, .625], [13.275, 9.5, .625, .85]],
     shut:  [[6.1, 9.65, 2.5, .4], [11.4, 9.65, 2.5, .4]],
-    focus: [[6.85, 8.75, .95, 2.2], [12.2, 8.75, .95, 2.2]],
+    focus: [[6.45, 8.5, 1.5, 2.65, 'ew', .2], [12.05, 8.5, 1.5, 2.65, 'ew', .2]],
     calm:  [[6.1, 9.5, 2.5, .45], [6.75, 9.95, 1.2, .95], [11.4, 9.5, 2.5, .45], [12.05, 9.95, 1.2, .95]],
     love:  [[6.2, 8.6, .9, .45], [7.55, 8.6, .9, .45], [5.75, 9.05, 3.15, .9], [6.2, 9.95, 2.25, .45], [6.65, 10.4, 1.35, .45], [7.1, 10.85, .45, .45], [11.55, 8.6, .9, .45], [12.9, 8.6, .9, .45], [11.1, 9.05, 3.15, .9], [11.55, 9.95, 2.25, .45], [12, 10.4, 1.35, .45], [12.45, 10.85, .45, .45]],
     dz:    [[5, 7], [7, 7], [6, 8], [5, 9], [7, 9], [12, 7], [14, 7], [13, 8], [12, 9], [14, 9]],
@@ -91,7 +91,7 @@
   function draw(p, prefix) {
     var o = [], lb = p.b | 0, b = lb + OY, sx = p.sx | 0, i;
     prefix = prefix || 'xin-body';
-    function R(x, y, w, h, c) { o.push('<rect class="c-' + c + '" x="' + x + '" y="' + y + '" width="' + (w || 1) + '" height="' + (h || 1) + '"/>'); }
+    function R(x, y, w, h, c, radius) { o.push('<rect class="c-' + c + '" x="' + x + '" y="' + y + '" width="' + (w || 1) + '" height="' + (h || 1) + '"' + (radius ? ' rx="' + radius + '" ry="' + radius + '"' : '') + '/>'); }
     function P(points, fill, cls) { o.push('<polygon' + (cls ? ' class="' + cls + '"' : '') + ' points="' + points.map(function (a) { return a.join(','); }).join(' ') + '" fill="' + fill + '"/>'); }
     function metal(x, y, w, h) {
       o.push('<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" fill="url(#' + prefix + '-pin)"/>');
@@ -123,7 +123,7 @@
     R(X + 4.65, Y + .55, 2.7, .25, 'edge'); R(X + .15, Y + .6, .15, 8.9, 'rim');
     // 脸
     var f = FACE[p.face] || FACE.eyes, fl = typeof f === 'function' ? f(p.lx | 0, p.ly | 0) : f;
-    fl.forEach(function (c) { R(c[0] + sx, c[1] + b, c[2] || 1, c[3] || 1, c[4] || 'ew'); });
+    fl.forEach(function (c) { R(c[0] + sx, c[1] + b, c[2] || 1, c[3] || 1, c[4] || 'ew', c[5]); });
     // 只有微笑、开心和喜欢有淡腮红；常态和其余情绪保持干净的面板。
     if (['smile', 'hap', 'love'].indexOf(p.face) >= 0) {
       [5.8, 6.8, 12.2, 13.2].forEach(function (cx) {
@@ -144,7 +144,7 @@
     // 嘴：只有吃东西时才有（1 合上，2 张开咬下去）
     if (p.mouth) R(9 + sx, 11 + b, 2, p.mouth === 2 ? 2 : 1, 'o');
     // 手（在身子前面）
-    [[p.armL || 'out', false], [p.armR || 'wave', true]].forEach(function (a) {
+    [[p.armL || 'out', false], [p.armR || 'out', true]].forEach(function (a) {
       (ARM[a[0]] || ARM.out).forEach(function (c) { metal((a[1] ? 20 - c[0] - c[2] : c[0]) + sx, c[1] + b, c[2], c[3]); });
     });
     if (it && it.k === 'ball') { R(it.x, it.y, 2, 2, 'ball'); R(it.x, it.y, 1, 1, 'bh'); }
@@ -437,7 +437,7 @@
 
   /* ---------- 姿势：基础姿势（由状态决定）+ 正在播放的那一帧 ---------- */
   function base(t) {
-    var p = { b: 0, sx: 0, legs: 'stand', lp: 0, dir: dir, armL: 'out', armR: 'wave', face: 'eyes', lx: look.x, ly: look.y, mouth: 0, item: null, fx: null, dy: 0 };
+    var p = { b: 0, sx: 0, legs: 'stand', lp: 0, dir: dir, armL: 'out', armR: 'out', face: 'eyes', lx: look.x, ly: look.y, mouth: 0, item: null, fx: null, dy: 0 };
     if (mode === 'walk') {
       var q = Math.floor(t / 90) % 4;
       p.legs = 'walk'; p.lp = q; p.b = q % 2;
@@ -1774,7 +1774,7 @@
     get mood() { return mood; },
     get plat() { return plat ? { kind: plat.kind, el: plat.el } : null; },
     el: el,
-    portrait: function () { return '<svg class="xc-px xin-portrait" viewBox="0 5.8 20 14.2" aria-hidden="true" shape-rendering="crispEdges">' + draw({ face: 'eyes', armL: 'out', armR: 'wave' }, 'xin-portrait-' + (++portraitId)) + '</svg>'; },
+    portrait: function () { return '<svg class="xc-px xin-portrait" viewBox="0 5.8 20 14.2" aria-hidden="true" shape-rendering="crispEdges">' + draw({ face: 'eyes', armL: 'out', armR: 'out' }, 'xin-portrait-' + (++portraitId)) + '</svg>'; },
     sleep: function () { setMode('idle'); setMood(''); sleep(); },
     toy: playToy,
     bag: openBag,
