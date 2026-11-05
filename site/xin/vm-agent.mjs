@@ -18,7 +18,8 @@
      daily    {force?}             按每日任务清单开一轮（网站后台每天定时调；今天做过就跳过，force 再做一遍）
      daily_get / daily_set {text}  读 / 改每日任务清单
      greet    {}                   下次见面的开场白（xin next 写的）；顺便在电脑刚睡醒时预热一下模型网关
-     rename   {sid, title}         给对话改名；forget {sid} 删掉一个对话（还在进行中的不让删）
+     rename   {sid, title}         给对话改名；forget {sid} 删掉一个对话（还在进行中的不让删），连 Codex / Claude 自己存的那份会话记录一起删
+     prune    {}                   清掉没有对应对话的 Codex / Claude 会话记录（删对话、每日任务时都会顺手做；网站不直接调）
      files    {path?, stat?}       小芯的文件：列出工作目录（WORK）里的一个文件夹，或者读一个文件（文字文件带内容，用来预览）；
                                    只认 WORK 里面的（软链接指到外面的也不行）。stat：只要大小和真实路径（网站下载前用来核对）
      push_key {}                   做完提醒（Web Push）的公钥（VAPID，第一次用时在这里生成，私钥不出这台电脑）
@@ -660,6 +661,89 @@ function runner(run) {
   process.on('SIGTERM', term); process.on('SIGINT', term);
 }
 
+/* ---------- AI 自己的会话记录 ----------
+   Codex / Claude 每个会话都在自己的目录里存一份完整记录，网站删对话时要一起删，不然越攒越多：
+   Codex：~/.codex/sessions/年/月/日/rollout-<时间>-<会话号>.jsonl，外加它自己的 sqlite 索引，用它自带的 `codex delete --force` 删（两样一起清）；
+          命令删不掉（没装、版本太老）就直接删文件。
+   Claude：~/.claude/projects/<目录>/<会话号>.jsonl（有同名文件夹也一起删）。 */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CODEX_HOME = () => process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+const CLAUDE_HOME = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+const PRUNE_AGE = 3600e3;   // 1 小时内动过的不当没人要的：可能正在跑、会话号还没来得及记进对话
+function listDir(d) { try { return fs.readdirSync(d, { withFileTypes: true }); } catch { return []; } }
+function fileInfo(f) { try { const st = fs.statSync(f); return { size: st.size, mtime: st.mtimeMs }; } catch { return null; } }
+function headText(f, n) {
+  let fd = null;
+  try { fd = fs.openSync(f, 'r'); const b = Buffer.alloc(n); return b.toString('utf8', 0, fs.readSync(fd, b, 0, n, 0)); } catch { return ''; } finally { if (fd !== null) fs.closeSync(fd); }
+}
+function codexLogs() {
+  const out = [], root = path.join(CODEX_HOME(), 'sessions');
+  const walk = (d, depth) => {
+    for (const e of listDir(d)) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory() && depth < 3) walk(p, depth + 1);
+      const m = e.isFile() && /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(e.name);
+      if (m) out.push(Object.assign({ id: m[1].toLowerCase(), file: p }, fileInfo(p)));
+    }
+  };
+  walk(root, 0);
+  return out;
+}
+function claudeLogs() {
+  const out = [];
+  for (const d of listDir(path.join(CLAUDE_HOME(), 'projects'))) {
+    if (!d.isDirectory()) continue;
+    const dir = path.join(CLAUDE_HOME(), 'projects', d.name);
+    for (const e of listDir(dir)) {
+      const m = e.isFile() && /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(e.name);
+      if (m) out.push(Object.assign({ id: m[1].toLowerCase(), file: path.join(dir, e.name) }, fileInfo(path.join(dir, e.name))));
+    }
+  }
+  return out;
+}
+// 删掉一个 AI 会话的记录；返回删掉的字节数（大概）
+function dropLogs(agent, id, logs) {
+  if (!AGENTS.includes(agent) || typeof id !== 'string' || !UUID_RE.test(id)) return 0;
+  id = id.toLowerCase();
+  const mine = (logs || (agent === 'claude' ? claudeLogs() : codexLogs())).filter(l => l.id === id);
+  if (agent === 'codex') {
+    // 有记录才叫 codex 来删（没有的话它会报错，白跑一趟）
+    if (mine.length) spawnSync('codex', ['delete', '--force', id], { cwd: os.homedir(), stdio: 'ignore', timeout: 30000, env: Object.assign({}, process.env, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin') }) });
+  }
+  let bytes = 0;
+  for (const l of mine) {
+    bytes += l.size || 0;
+    try { fs.unlinkSync(l.file); } catch { /* codex 已经删了 */ }
+    if (agent === 'claude') { try { fs.rmSync(path.join(path.dirname(l.file), id), { recursive: true, force: true }); } catch { /* 没有同名文件夹 */ } }
+  }
+  return bytes;
+}
+// 清掉没有对应对话的旧记录：只动网站这边开的（Codex 记录里 originator 是 codex_exec；Claude 是 -p 模式开的），
+// 而且 1 小时内没动过的。对话记录读不全（有坏文件）就整个不清，宁可留着也不误删。
+function pruneLogs(minAge = PRUNE_AGE) {
+  const res = { codex: 0, claude: 0, bytes: 0 };
+  if (!fs.existsSync(SESS)) return Object.assign(res, { skipped: 'no_sessions_dir' });
+  const used = new Set();
+  for (const f of fs.readdirSync(SESS)) {
+    if (!/^s[0-9a-z]+\.json$/.test(f)) continue;
+    const s = readJ(path.join(SESS, f));
+    if (!s) return Object.assign(res, { skipped: 'bad_session_file', file: f });
+    if (s.agentSid) used.add(String(s.agentSid).toLowerCase());
+  }
+  const old = l => !used.has(l.id) && l.mtime && Date.now() - l.mtime > minAge;
+  const cx = codexLogs();
+  for (const l of cx.filter(old)) {
+    if (!/"originator"\s*:\s*"codex_exec"/.test(headText(l.file, 16384))) continue;   // 自己在终端里开的 Codex 不动
+    res.bytes += dropLogs('codex', l.id, cx); res.codex++;
+  }
+  const cl = claudeLogs();
+  for (const l of cl.filter(old)) {
+    if (!/"promptSource"\s*:\s*"sdk"|"entrypoint"\s*:\s*"sdk-/.test(headText(l.file, 16384))) continue;   // 交互模式开的 Claude 不动
+    res.bytes += dropLogs('claude', l.id, cl); res.claude++;
+  }
+  return res;
+}
+
 /* ---------- 对外的 op ---------- */
 // 开一轮：记下这一轮要给 AI 的话，历史里放 userEv（用户看到的那句），在后台起 runner
 function launch(s, m, userEv) {
@@ -742,6 +826,7 @@ const ops = {
     return { ok: true };
   },
   daily(a) {
+    try { pruneLogs(); } catch { /* 清不了不影响每日任务 */ }
     const list = readText(DAILY_FILE()).trim();
     if (!list) return { skipped: 'empty' };
     const done = readJ(DAILY_DONE());
@@ -807,8 +892,14 @@ const ops = {
     if (r && !runDone(r)) return { error: 'busy', msg: '这个对话还在进行中，先停下来再删' };
     for (const run of s.runs || []) for (const f of [runF(run), metaF(run), seenF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
     fs.unlinkSync(sessF(a.sid));
-    return { ok: true };
+    // AI 自己那份会话记录也删掉；顺手把别的没有对应对话的旧记录清一清
+    let freed = 0, pruned = null;
+    try { freed = dropLogs(s.agent, s.agentSid); } catch { /* 删不掉就留着，不影响网站这边 */ }
+    try { pruned = pruneLogs(); } catch { /* 同上 */ }
+    return { ok: true, freed: freed + (pruned ? pruned.bytes : 0) };
   },
+  // 只清没有对应对话的旧记录（每日任务时也会顺手清一次）
+  prune() { return pruneLogs(); },
   files(a) {
     const work = path.resolve(WORK);
     const want = path.resolve(work, String(a.path || work));
