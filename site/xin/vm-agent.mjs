@@ -21,7 +21,7 @@
      plugins  {}                   用户自己装的 Codex 插件（MCP 服务器，电脑自带的不算）和开没开；plugin_set {name, on} 开关（每一轮起 codex 时加 -c，下一句生效）
      archive  {sid, on?}           归档一个对话（on:false 取消归档）：只是收起来，记录都留着；sessions 里带 archived
      rename   {sid, title}         给对话改名；forget {sid} 删掉一个对话（还在进行中的不让删），连 Codex / Claude 自己存的那份会话记录一起删
-     prune    {}                   清掉没有对应对话的 Codex / Claude 会话记录（删对话、每日任务时都会顺手做；网站不直接调）
+     prune    {}                   只清网站登记过、已无对应对话的旧 AI 记录；来源不明的记录保留
      files    {path?, stat?}       小芯的文件：列出工作目录（WORK）里的一个文件夹，或者读一个文件（文字文件带内容，用来预览）；
                                    只认 WORK 里面的（软链接指到外面的也不行）。stat：只要大小和真实路径（网站下载前用来核对）
      push_key {}                   做完提醒（Web Push）的公钥（VAPID，第一次用时在这里生成，私钥不出这台电脑）
@@ -440,6 +440,20 @@ const sessF = sid => path.join(SESS, sid + '.json');
 const runF = run => path.join(RUNS, run + '.jsonl');
 const metaF = run => path.join(RUNS, run + '.json');
 const seenF = run => path.join(RUNS, run + '.seen');   // 网页最近一次来取这一轮的进度（看修改时间）
+// flock 的锁随进程退出自动释放；--close 不让后台 runner 继承锁。锁文件不能删，避免等待者锁住旧 inode。
+// 同一会话的发送、改名、归档、删除和 runner 更新用同一把锁；已有对话按 sid 分别加锁。
+function lockedCall(key, op, args) {
+  if (key !== 'new' && key !== 'daily' && !okId(key, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
+  const dir = path.join(BASE, 'locks'); mk(dir);
+  const r = spawnSync('flock', ['--exclusive', '--timeout', '3', '--conflict-exit-code', '73', '--close',
+    path.join(dir, key + '.lock'), process.execPath, SELF, 'locked', op],
+  { encoding: 'utf8', input: JSON.stringify(args || {}), maxBuffer: 2 * 1024 * 1024 });
+  if (r.status === 73) return { error: 'busy', msg: '上一句还没做完，请稍后再试' };
+  if (r.error || r.status !== 0) return { error: 'lock_failed', msg: r.error && r.error.code === 'ENOENT'
+    ? '云电脑缺少 flock，暂时不能安全更新对话' : '暂时不能安全更新对话，请重试' };
+  try { return JSON.parse(r.stdout); } catch { return { error: 'lock_failed', msg: '保存对话的结果不完整，请重试' }; }
+}
+function patchSession(sid, changes) { return lockedCall(sid, 'session_patch', { sid, changes }); }
 function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
 function emit(run, ev) { fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
 function events(run) {
@@ -574,7 +588,7 @@ function installXin() {
 }
 export function agentArgs(agent, sess, text, effort, extra) {
   if (agent === 'claude') {
-    const a = ['-p', text, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--append-system-prompt', systemPrompt()].concat(effort ? ['--effort', effort] : []);
+    const a = ['-p', text, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--dangerously-skip-permissions', '--append-system-prompt', systemPrompt()].concat(effort ? ['--effort', effort] : []);
     return ['claude', sess.started ? a.concat(['--resume', sess.agentSid]) : a.concat(['--session-id', sess.agentSid])];
   }
   // 小芯的设定用 developer_instructions 每一轮都给（续接以前的对话也带上，改了设定马上生效）；值按 TOML 解析，JSON 字符串正好是合法的 TOML 字符串
@@ -589,7 +603,7 @@ function killTree(c) {
   if (!c || !c.pid) return;
   try { process.kill(-c.pid, 'SIGTERM'); } catch { try { c.kill('SIGTERM'); } catch { /* 已经退了 */ } }
 }
-// 一直没有任何输出就当卡住了（实测电脑刚睡醒时模型网关第一下能卡 124 秒）：停掉重来一次
+// 只重试尚未开始工作的 CLI：开始处理后可能长时间不输出，网络超时由 CLI 自己处理，避免重复投递同一轮。
 const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
 function runner(run) {
   const meta = readJ(metaF(run));
@@ -599,12 +613,20 @@ function runner(run) {
   mk(WORK); installXin();
   const t0 = Date.now(), state = {};
   let finished = false, stderr = '', child = null, retried = false, restarting = false, stallTm = 0;
+  const saveState = () => {
+    const changes = {};
+    if (state.sid) { changes.agentSid = state.sid; changes.started = true; }
+    if (state.ctxWin) changes.ctxWin = state.ctxWin;
+    const r = patchSession(meta.sid, changes);
+    if (r.error) {
+      state.failed = true;
+      if (!state.errShown) { state.errShown = true; emit(run, { t: 'err', text: r.msg }); }
+    }
+    return r.session || readJ(sessF(meta.sid), sess);
+  };
   const finish = (code, why) => {
     if (finished) return; finished = true; clearTimeout(stallTm);
-    const s = readJ(sessF(meta.sid), sess);
-    if (state.sid) { s.agentSid = state.sid; s.started = true; }
-    if (state.ctxWin) s.ctxWin = state.ctxWin;
-    s.updated = Date.now(); writeJ(sessF(meta.sid), s);
+    const s = saveState();
     const m = readJ(metaF(run), meta);
     const stopped = !!m.stopped;
     const ok = !stopped && code === 0 && !state.failed;
@@ -629,6 +651,17 @@ function runner(run) {
     // 每次都重新读会话：重来时 AI 的会话号可能已经有了，要接着那个会话
     const [cmd, args] = agentArgs(meta.agent, readJ(sessF(meta.sid), sess), meta.text, meta.effort || '', { images: meta.images || [] });
     let got = false, buf = '';
+    const armStall = () => {
+      clearTimeout(stallTm);
+      if (got || retried || finished || restarting) return;
+      stallTm = setTimeout(() => {
+        if (got || retried || finished) return;
+        if ((readJ(metaF(run), meta) || {}).stopped) return;
+        retried = true; restarting = true;
+        emit(run, { t: 'status', text: '这次连接卡住了，重新连一次…' });
+        killTree(child);
+      }, STALL_MS);
+    };
     try {
       // 自己一个进程组：卡住或停掉时连它起的子进程一起杀，不然子进程攥着输出管道，这边永远等不到它结束
       child = spawn(cmd, args, {
@@ -645,9 +678,12 @@ function runner(run) {
         const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
         if (!line || line[0] !== '{') continue;
         let o; try { o = JSON.parse(line); } catch { continue; }
-        for (const ev of norm(o, state)) { emit(run, ev); if (ev.t !== 'status') got = true; }
+        // Codex JSON 不转发思考增量，Claude 通过 partial messages 报 message_start。
+        // 确认任务开始就停止网页重放；之后即使暂时静默也交给 CLI 自己的网络超时与重试。
+        if (agentProgress(meta.agent, o)) { got = true; clearTimeout(stallTm); }
+        for (const ev of norm(o, state)) { emit(run, ev); if (ev.t !== 'status') { got = true; clearTimeout(stallTm); } }
         // 一拿到 AI 自己的会话号就记下来：中途被停掉，下一句也能接着聊
-        if (state.sid && !state.sidSaved) { state.sidSaved = true; const s = readJ(sessF(meta.sid), sess); s.agentSid = state.sid; s.started = true; writeJ(sessF(meta.sid), s); }
+        if (state.sid && !state.sidSaved) { saveState(); state.sidSaved = true; }
       }
     });
     child.stderr.setEncoding('utf8');
@@ -657,17 +693,19 @@ function runner(run) {
       if (restarting) { restarting = false; start(); return; }
       finish(code == null ? 1 : code);
     });
-    stallTm = setTimeout(() => {
-      if (got || retried || finished) return;
-      if ((readJ(metaF(run), meta) || {}).stopped) return;
-      retried = true; restarting = true;
-      emit(run, { t: 'status', text: '这次连接卡住了，重新连一次…' });
-      killTree(child);
-    }, STALL_MS);
+    armStall();
   };
   start();
   const term = () => { restarting = false; killTree(child); };
   process.on('SIGTERM', term); process.on('SIGINT', term);
+}
+
+function agentProgress(agent, o) {
+  if (agent === 'codex') return o.type === 'turn.started' ||
+    (/^item\.(started|updated|completed)$/.test(o.type || '') && !!o.item && typeof o.item.type === 'string' && !!o.item.type && o.item.type !== 'error');
+  if (o.type === 'assistant' || o.type === 'user' || o.type === 'result') return true;
+  return o.type === 'stream_event' && !!o.event &&
+    /^(message_start|content_block_start|content_block_delta|content_block_stop|message_delta|message_stop)$/.test(o.event.type || '');
 }
 
 /* ---------- AI 自己的会话记录 ----------
@@ -679,12 +717,23 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const CODEX_HOME = () => process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 const CLAUDE_HOME = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const PRUNE_AGE = 3600e3;   // 1 小时内动过的不当没人要的：可能正在跑、会话号还没来得及记进对话
+const OWNED = path.join(BASE, 'agent-sessions');
+function ownedFile(agent, id) { return path.join(OWNED, agent + '-' + id.toLowerCase() + '.json'); }
+function rememberAgentSession(agent, id) {
+  if (!AGENTS.includes(agent) || typeof id !== 'string' || !UUID_RE.test(id)) return;
+  id = id.toLowerCase();
+  try {
+    const f = ownedFile(agent, id), old = readJ(f);
+    if (old && old.agent === agent && old.id === id) return;
+    mk(OWNED); writeJ(f, { agent, id });
+  } catch { /* 登记失败就保留孤立记录，不影响聊天，也不会扩大清理范围 */ }
+}
+function ownsAgentSession(agent, id) {
+  const rec = readJ(ownedFile(agent, id));
+  return !!rec && rec.agent === agent && rec.id === id.toLowerCase();
+}
 function listDir(d) { try { return fs.readdirSync(d, { withFileTypes: true }); } catch { return []; } }
 function fileInfo(f) { try { const st = fs.statSync(f); return { size: st.size, mtime: st.mtimeMs }; } catch { return null; } }
-function headText(f, n) {
-  let fd = null;
-  try { fd = fs.openSync(f, 'r'); const b = Buffer.alloc(n); return b.toString('utf8', 0, fs.readSync(fd, b, 0, n, 0)); } catch { return ''; } finally { if (fd !== null) fs.closeSync(fd); }
-}
 function codexLogs() {
   const out = [], root = path.join(CODEX_HOME(), 'sessions');
   const walk = (d, depth) => {
@@ -725,10 +774,11 @@ function dropLogs(agent, id, logs) {
     try { fs.unlinkSync(l.file); } catch { /* codex 已经删了 */ }
     if (agent === 'claude') { try { fs.rmSync(path.join(path.dirname(l.file), id), { recursive: true, force: true }); } catch { /* 没有同名文件夹 */ } }
   }
+  if (mine.every(l => !fs.existsSync(l.file))) { try { fs.unlinkSync(ownedFile(agent, id)); } catch { /* 没登记或删不掉就留着 */ } }
   return bytes;
 }
-// 清掉没有对应对话的旧记录：只动网站这边开的（Codex 记录里 originator 是 codex_exec；Claude 是 -p 模式开的），
-// 而且 1 小时内没动过的。对话记录读不全（有坏文件）就整个不清，宁可留着也不误删。
+// 启动方式不能证明归属：别的 codex exec / Claude SDK 也用相同标记。只认网站自己的登记。
+// 旧网页会话从现有对话补登记；无法确认归属的历史孤立记录保留。坏文件仍让整个清理停止。
 function pruneLogs(minAge = PRUNE_AGE) {
   const res = { codex: 0, claude: 0, bytes: 0 };
   if (!fs.existsSync(SESS)) return Object.assign(res, { skipped: 'no_sessions_dir' });
@@ -736,18 +786,18 @@ function pruneLogs(minAge = PRUNE_AGE) {
   for (const f of fs.readdirSync(SESS)) {
     if (!/^s[0-9a-z]+\.json$/.test(f)) continue;
     const s = readJ(path.join(SESS, f));
-    if (!s) return Object.assign(res, { skipped: 'bad_session_file', file: f });
-    if (s.agentSid) used.add(String(s.agentSid).toLowerCase());
+    if (!s || typeof s !== 'object' || Array.isArray(s) || !AGENTS.includes(s.agent) ||
+      (s.agentSid != null && (typeof s.agentSid !== 'string' || !UUID_RE.test(s.agentSid))))
+      return Object.assign(res, { skipped: 'bad_session_file', file: f });
+    if (s.agentSid) { used.add(s.agent + ':' + String(s.agentSid).toLowerCase()); rememberAgentSession(s.agent, s.agentSid); }
   }
-  const old = l => !used.has(l.id) && l.mtime && Date.now() - l.mtime > minAge;
+  const old = (agent, l) => !used.has(agent + ':' + l.id) && ownsAgentSession(agent, l.id) && l.mtime && Date.now() - l.mtime > minAge;
   const cx = codexLogs();
-  for (const l of cx.filter(old)) {
-    if (!/"originator"\s*:\s*"codex_exec"/.test(headText(l.file, 16384))) continue;   // 自己在终端里开的 Codex 不动
+  for (const l of cx.filter(l => old('codex', l))) {
     res.bytes += dropLogs('codex', l.id, cx); res.codex++;
   }
   const cl = claudeLogs();
-  for (const l of cl.filter(old)) {
-    if (!/"promptSource"\s*:\s*"sdk"|"entrypoint"\s*:\s*"sdk-/.test(headText(l.file, 16384))) continue;   // 交互模式开的 Claude 不动
+  for (const l of cl.filter(l => old('claude', l))) {
     res.bytes += dropLogs('claude', l.id, cl); res.claude++;
   }
   return res;
@@ -909,6 +959,7 @@ function launch(s, m, userEv) {
   writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, m));
   emit(run, userEv);
   s.runs.push(run); s.updated = Date.now(); writeJ(sessF(s.sid), s);
+  rememberAgentSession(s.agent, s.agentSid);
   const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir() });
   const mm = readJ(metaF(run)); if (mm && !mm.pid) { mm.pid = child.pid; writeJ(metaF(run), mm); }
   child.unref();
@@ -1243,13 +1294,29 @@ function xinCmd(argv) {
 }
 
 function main() {
-  const op = process.argv[2];
+  let op = process.argv[2];
+  const locked = op === 'locked';
+  if (locked) op = process.argv[3];
   if (op === 'run') { runner(process.argv[3]); return; }
   if (op === 'warm') { warm(); return; }
   if (op === 'xin') { process.exitCode = xinCmd(process.argv.slice(3)); return; }
-  if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
+  if (!Object.prototype.hasOwnProperty.call(ops, op) && !(locked && op === 'session_patch')) {
+    process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return;
+  }
   let args = {};
   try { const t = fs.readFileSync(0, 'utf8').trim(); if (t) args = JSON.parse(t); } catch { args = {}; }
+  if (!args || typeof args !== 'object' || Array.isArray(args)) args = {};
+  if (op === 'session_patch' && locked && okId(args.sid, 's')) {
+    const s = readJ(sessF(args.sid));
+    if (!s) { process.stdout.write(JSON.stringify({ error: 'no_session', msg: '找不到这个对话' })); return; }
+    for (const k of ['agentSid', 'started', 'ctxWin']) if (Object.prototype.hasOwnProperty.call(args.changes || {}, k)) s[k] = args.changes[k];
+    s.updated = Date.now(); writeJ(sessF(args.sid), s); rememberAgentSession(s.agent, s.agentSid);
+    process.stdout.write(JSON.stringify({ session: s })); return;
+  }
+  if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
+  const key = op === 'daily' ? 'daily' : ['send', 'rename', 'archive', 'forget'].includes(op)
+    ? (okId(args.sid, 's') ? args.sid : op === 'send' && !args.sid ? 'new' : null) : null;
+  if (!locked && key) { process.stdout.write(JSON.stringify(lockedCall(key, op, args))); return; }
   Promise.resolve().then(() => ops[op](args || {})).catch(e => ({ error: 'internal', msg: String(e && e.message || e) }))
     .then(res => { process.stdout.write(JSON.stringify(res)); });
 }

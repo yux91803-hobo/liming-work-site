@@ -794,6 +794,10 @@ test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对�
   mkSess('sa00000001', 'codex', id(1));
   mkSess('sb00000001', 'codex', id(2));
   mkSess('sc00000001', 'claude', id(6));
+  // 已失去网页关联的记录必须有网站自己的归属登记，不能只凭 exec / SDK 标记来删。
+  const owned = path.join(xin, 'agent-sessions'); fs.mkdirSync(owned);
+  for (const [agent, n] of [['codex', 3], ['codex', 5], ['claude', 7]])
+    fs.writeFileSync(path.join(owned, agent + '-' + id(n) + '.json'), JSON.stringify({ agent, id: id(n) }));
   const exists = l => l.map(f => fs.existsSync(f));
 
   const r = op('forget', { sid: 'sa00000001' });
