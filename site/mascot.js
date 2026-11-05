@@ -47,11 +47,12 @@
   var FACE = {
     eyes:  function (lx, ly) { return [[6 + lx, 8 + ly, 2, 2], [12 + lx, 8 + ly, 2, 2]]; },
     blink: function (lx, ly) { return [[6 + lx, 9 + ly, 2, 1], [12 + lx, 9 + ly, 2, 1]]; },
-    hap:   [[5, 9], [6, 8, 2, 1], [8, 9], [11, 9], [12, 8, 2, 1], [14, 9]],
+    hap:   [[6, 8], [7, 9], [6, 10], [13, 8], [12, 9], [13, 10], [5, 12, 2, 1, 'bs'], [13, 12, 2, 1, 'bs']],   // 笑：眼睛眯成 > <，脸上一点红
+    smile: [[5, 9], [6, 8, 2, 1], [8, 9], [11, 9], [12, 8, 2, 1], [14, 9], [5, 11, 2, 1, 'bs'], [13, 11, 2, 1, 'bs']],   // 眯眼笑 ^ ^（陶醉、荡秋千）
     shut:  [[6, 9, 2, 1, 'g'], [12, 9, 2, 1, 'g']],
     dz:    [[5, 7], [7, 7], [6, 8], [5, 9], [7, 9], [12, 7], [14, 7], [13, 8], [12, 9], [14, 9]],
     wow:   [[6, 7, 2, 3], [12, 7, 2, 3]],
-    sad:   [[6, 10, 2, 1], [12, 10, 2, 1]],
+    sad:   [[5, 8], [6, 8], [7, 7], [12, 7], [13, 8], [14, 8], [6, 10, 2, 1], [12, 10, 2, 1]],   // 眉毛里高外低、眼睛耷拉
     scared:   [[6, 7, 2, 3], [12, 7, 2, 3], [16, 5, 1, 1, 'sw'], [16, 6, 1, 1, 'sw'], [17, 7, 1, 1, 'sw']],   // 眼睛瞪圆 + 一滴汗
     confused: [[6, 8, 2, 2], [12, 9, 2, 1]],                                                          // 一只眼眯起来
     angry:    [[5, 7], [6, 7], [7, 8], [12, 8], [13, 7], [14, 7], [6, 9, 2, 1], [12, 9, 2, 1]],      // 眉毛往中间压
@@ -168,7 +169,7 @@
      背包里「新动作」挨个做；闲着时偶尔做一个；聊天时它也能让这里做（xin move 名字）。 */
   var MOVE_ARMS = ['out', 'swingF', 'swingB', 'up', 'wave', 'hold', 'back', 'down', 'crossA', 'crossB'];
   var MOVE_ENUM = { armL: MOVE_ARMS, armR: MOVE_ARMS, legs: ['stand', 'walk', 'tuck', 'dangle'],
-    face: ['eyes', 'blink', 'hap', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side'] };
+    face: ['eyes', 'blink', 'hap', 'smile', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side'] };
   var MOVE_NUM = { t: [60, 1500], b: [0, 2], dy: [-6, 0], sx: [-1, 1], lx: [-1, 1], ly: [-1, 1], lp: [0, 3], mouth: [0, 2] };
   var learned = [], learnI = 0;
   function cleanFrames(frames) {
@@ -415,7 +416,7 @@
     } else if (mode === 'swing') {
       // 荡秋千：往外荡时收腿，往回荡时伸腿（像小孩荡秋千那样蹬），一直笑着
       var outw = !!sw && sw.th * sw.thd > 0;
-      p.legs = outw ? 'tuck' : 'stand'; p.armR = 'up'; p.armL = 'wave'; p.face = 'hap'; p.lx = 0; p.ly = 0;
+      p.legs = outw ? 'tuck' : 'stand'; p.armR = 'up'; p.armL = 'wave'; p.face = 'smile'; p.lx = 0; p.ly = 0;
     } else if (mode === 'fly' || mode === 'plug') {
       p.legs = 'tuck'; p.armL = p.armR = 'up'; p.face = 'wow';
     } else if (mode === 'sleep') {
@@ -431,11 +432,15 @@
       if (mode === 'idle') {               // 跟着节拍点头、跺脚，头顶冒音符
         var bt = Math.floor(t / 300), kk = Math.floor(t / 200) % 8;
         p.b = bt % 2; p.legs = 'walk'; p.lp = bt % 2 ? 0 : 2; p.armL = p.armR = 'down';
-        p.face = bt % 10 < 8 ? 'hap' : 'eyes'; p.lx = 0; p.ly = 0;   // 大部分时间闭眼陶醉，偶尔睁眼
+        p.face = bt % 10 < 8 ? 'smile' : 'eyes'; p.lx = 0; p.ly = 0;   // 大部分时间闭眼陶醉，偶尔睁眼
         p.fx = noteFx(16, 3 - kk % 4).concat(noteFx(1, 4 - (kk + 2) % 4));
       }
     }
-    if (mood === 'happy') { var w = Math.floor(t / 170) % 2; p.face = 'hap'; p.armL = w ? 'up' : 'wave'; p.armR = w ? 'wave' : 'up'; }
+    if (mood === 'happy') {
+      var w = Math.floor(t / 170) % 2; p.face = 'hap'; p.armL = w ? 'up' : 'wave'; p.armR = w ? 'wave' : 'up';
+      // 站着时高兴得原地蹦：跳起来收腿 → 往下落 → 落地蹲一下 → 站直，两只手跟着挥
+      if (mode === 'idle' && !seq) { var hb = Math.floor(t / 170) % 4; if (hb === 1) { p.dy = -2; p.legs = 'tuck'; } else if (hb === 2) { p.dy = -1; p.legs = 'tuck'; } else if (hb === 3) p.b = 1; }
+    }
     else if (mood === 'over') { p.face = 'hap'; p.armL = p.armR = Math.floor(t / 140) % 2 ? 'up' : 'wave'; }
     else if (mood === 'dizzy') { p.face = 'dz'; p.sx = Math.floor(t / 150) % 2; p.armL = 'wave'; p.armR = 'swingB'; }
     else if (mood === 'sad') { p.face = 'sad'; p.b = Math.max(p.b, 1); p.lx = 0; p.ly = 0; p.armL = p.armR = 'down'; }

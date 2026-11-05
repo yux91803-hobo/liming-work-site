@@ -820,6 +820,21 @@ test('新动作：只认能画出来的字段和取值，数字截到范围里�
   assert.match(cleanMove('a', [{ t: '100' }]).error, /t 要是数字/);
   assert.match(cleanMove('a', Array(49).fill({})).error, /最多 48 帧/);
   assert.match(cleanMove('a', Array(11).fill({ t: 1500 })).error, /最长 15 秒/);
+  assert.deepStrictEqual(cleanMove('a', [{ face: 'smile' }]).frames, [{ face: 'smile', t: 200 }]);   // 眯眼笑 ^ ^
+});
+
+test('新动作：云电脑这边认的字段和取值，和网页上小芯（mascot.js）认的一模一样', async () => {
+  const { MOVE_ENUM } = await load('../site/xin/vm-agent.mjs');
+  const src = fs.readFileSync(path.join(__dirname, '../site/mascot.js'), 'utf8');
+  const arms = JSON.parse(/var MOVE_ARMS = (\[[^\]]*\])/.exec(src)[1].replace(/'/g, '"'));
+  const m = /var MOVE_ENUM = \{ armL: MOVE_ARMS, armR: MOVE_ARMS, legs: (\[[^\]]*\]),\s*face: (\[[^\]]*\]) \}/.exec(src);
+  assert.ok(m, 'mascot.js 里找不到 MOVE_ENUM');
+  assert.deepStrictEqual(MOVE_ENUM.armL, arms);
+  assert.deepStrictEqual(MOVE_ENUM.legs, JSON.parse(m[1].replace(/'/g, '"')));
+  assert.deepStrictEqual(MOVE_ENUM.face, JSON.parse(m[2].replace(/'/g, '"')));
+  // 能用的脸都画得出来
+  const faces = /var FACE = \{([\s\S]*?)\n  \};/.exec(src)[1];
+  MOVE_ENUM.face.forEach(f => assert.ok(new RegExp('\\n\\s+' + f + ':').test(faces), 'FACE 里没有 ' + f));
 });
 
 test('新动作：xin move add 学会（网页马上做一遍）、xin move 名字 让网页做、list、rm；坏 JSON 给出用法', () => {

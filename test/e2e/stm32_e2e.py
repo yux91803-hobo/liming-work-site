@@ -896,6 +896,22 @@ async def main():
         check('荡秋千：吊着线来回荡，最后松手落到平台上', 'swing' in modes and modes[-1] in ('idle', 'walk', 'play', 'sleep') and thr == 'none', modes[::4])
         faces = await pg.evaluate("LimingXin.frames('dance').map(f => f.face)")
         check('跳舞：有转身（背过去）和笑', 'back' in faces and faces.count('hap') > 10)
+        # 表情：笑是 > <（每只眼 3 个点）带两团腮红；眯眼笑 ^ ^ 也带腮红；难过有眉毛
+        px = "(() => { const s = LimingXin.el.querySelector('svg'); return [s.querySelectorAll('rect.c-w').length, s.querySelectorAll('rect.c-bs').length]; })()"
+        got = {}
+        for fc in ['eyes', 'hap', 'smile', 'sad']:
+            await pg.evaluate("f => LimingXin.pose({ face: f, item: null, fx: null, phones: false })", fc); await pg.wait_for_timeout(120)
+            got[fc] = await pg.evaluate(px)
+        await pg.evaluate("LimingXin.pose(null)")
+        check('表情：笑成 > < 带腮红，眯眼笑 ^ ^ 带腮红，难过加了眉毛，平时没有腮红', got == {'eyes': [2, 0], 'hap': [6, 2], 'smile': [6, 2], 'sad': [8, 0]}, got)
+        # 高兴：站着时原地蹦（往上跳、落下、蹲一下），不是只挥手
+        await pg.wait_for_function("LimingXin.mode === 'idle'", timeout=15000)
+        await pg.evaluate("LimingXin.feel('happy', 3000)")
+        dys = []
+        for _ in range(12):
+            await pg.wait_for_timeout(70)
+            dys.append(await pg.evaluate("(() => { const m = /translateY\\((-?[\\d.]+)px\\)/.exec(LimingXin.el.querySelector('.xin-s').style.transform || ''); return m ? Math.round(+m[1]) : 0; })()"))
+        check('高兴：站着时原地蹦（往上跳又落下）', min(dys) < 0 and 0 in dys, dys)
         await pg.context.close()
 
         # 电脑：返回键旁边一直有「回工具箱」（学习台首页也有）；点了好几层，点它一下回到首页
