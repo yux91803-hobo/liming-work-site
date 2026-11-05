@@ -65,6 +65,7 @@ XIN_FILES = {
     W + '/blink': {'path': W + '/blink', 'dir': True, 'work': W, 'entries': [_ent('build', True), _ent('main.c', size=30)], 'more': 0},
     W + '/blink/build': {'path': W + '/blink/build', 'dir': True, 'work': W, 'entries': [_ent('app.bin', size=876), _ent('app.hex', size=2544)], 'more': 0},
     W + '/blink/build/app.hex': {'path': W + '/blink/build/app.hex', 'dir': False, 'work': W, 'size': 2544, 'mtime': 1762214400000, 'text': ':020000040800F2\n:1000000000500020ED010008F5010008F7010008D0\n'},
+    W + '/blink/main.c': {'path': W + '/blink/main.c', 'dir': False, 'work': W, 'size': 30, 'mtime': 1762214400000, 'text': '#include "stm32f10x.h"\nint main(void)\n{\n    GPIOA->ODR ^= 1u << 0;\n}\n'},
     W + '/blink/build/app.bin': {'path': W + '/blink/build/app.bin', 'dir': False, 'work': W, 'size': 876, 'mtime': 1762214400000, 'binary': True},
 }
 
@@ -142,6 +143,11 @@ async def xin_mock(pg, authed=False, live=None):
                                                                          {'sid': 'sold000001', 'agent': 'claude', 'title': '旧对话', 'turns': 2, 'updated': 0}]}})
         if op == 'files': return await ok({'ok': True, 'data': XIN_FILES.get(args.get('path') or W, {'error': 'not_found', 'msg': '没有这个文件'})})
         if op == 'push_key': return await ok({'ok': True, 'data': {'key': PUSH_KEY, 'subs': 0}})
+        if op == 'screen':
+            st.setdefault('screen', []).append(args)
+            ctl = bool(args.get('control'))
+            return await ok({'ok': True, 'data': {'url': BASE + '/icons/icon-192.png?' + ('ctl=1' if ctl else 'view=1'), 'expiresAt': '2026-11-05T03:00:00Z', 'control': ctl, 'terminal': True}})
+        if op == 'screen_off': return await ok({'ok': True, 'data': {'ok': True}})
         if op in ('push_sub', 'push_unsub'):
             st[op] = args
             return await ok({'ok': True, 'data': {'ok': True, 'subs': 1 if op == 'push_sub' else 0}})
@@ -1025,8 +1031,8 @@ async def main():
         await pg.wait_for_selector('.xc-hello'); await pg.wait_for_timeout(200)
         check('没登录不叫醒云电脑，登录以后马上叫醒', 'wake' not in ops_before and 'wake' in xs['ops'], (ops_before, xs['ops']))
         st = await pg.evaluate("[!!document.querySelector('.xc-hello .xc-av'), [...document.querySelectorAll('.xc-hello .xc-chip')].map(b => b.textContent), !!document.querySelector('.xc-ft .xc-ag'), document.querySelector('.xc-sub').textContent]")
-        check('登录以后：欢迎页（小芯头像、两个建议），输入框那里没有选 AI / 思考强度的按钮（挪进设置了），标题下面写着在线',
-              await pg.is_visible('.xc-row textarea') and st == [True, ['写个点灯程序', '小芯的文件'], False, '在线'], st)
+        check('登录以后：欢迎页（小芯头像和一句话，没有建议按钮），输入框那里没有选 AI / 思考强度的按钮（挪进设置了），标题下面写着在线',
+              await pg.is_visible('.xc-row textarea') and st == [True, [], False, '在线'] and not await pg.evaluate("!!document.querySelector('.xc-hello button')"), st)
         await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-set')
         st = await pg.evaluate("[document.querySelector('.xc-agent [aria-checked=true]').dataset.agent, document.querySelector('.xc-effort [aria-checked=true]').dataset.effort]")
         await pg.click('.xc-agent [data-agent=claude]'); await pg.click('.xc-effort [data-effort=max]')
@@ -1062,6 +1068,9 @@ async def main():
           (document.querySelector('.xc-ai.bad .xc-bub') || {}).textContent, !!document.querySelector('.xc-time'), document.querySelector('.xc-msgs').textContent.includes('arm-none-eabi-gcc')]""")
         check('打开旧对话：代码块（带语言、复制），执行的命令不显示；小芯接着说的不再画头像；没做成的那一轮有一句提示；最前面有时间',
               st[:3] == ['int main(void) { return 0; }', 'c', False] and st[3] == ['wide', 'cont', 'cont bad'] and st[4] == '这次没做成' and st[5] and not st[6], st)
+        hl = await pg.evaluate("""(() => { const by = c => [...document.querySelectorAll('.xc-code .hl-' + c)].map(e => e.textContent);
+          const kw = document.querySelector('.xc-code .hl-kw'); return [by('kw'), by('fn'), by('num'), kw && getComputedStyle(kw).color !== getComputedStyle(document.querySelector('.xc-code code')).color]; })()""")
+        check('代码上色：关键字、函数名、数字各有颜色（复制出来还是原文）', hl == [['int', 'void', 'return'], ['main'], ['0'], True], hl)
         await pg.click('.xc-x'); await pg.wait_for_timeout(400)
         check('关掉面板', not await pg.is_visible('.xc'))
         # 不开面板：背包「聊天」→ 小芯旁边的输入框 → 回复在小芯头上的气泡里，点气泡才打开面板
@@ -1116,15 +1125,12 @@ async def main():
         await pgr.click('.xc-btn2'); await pgr.wait_for_selector('.xc.show .xc-body:not([hidden]) .xc-code')
         check('每日任务页：「现在就做一遍」强制开一轮，并打开那段对话', xg['daily_args'] == {'force': True} and await pgr.evaluate("LimingXinChat.state.view") == 'chat', xg['daily_args'])
         await pgr.context.close()
-        # 欢迎页的建议、对话改名 / 删除、小芯的文件（预览、下载）、回答里的路径点了打开
+        # 对话改名 / 删除、小芯的文件（预览、下载）、回答里的路径点了打开
         pf = await page(b)
         xf = await xin_mock(pf, authed=True)
         await pf.goto(BASE + '/'); await pf.wait_for_timeout(1200)
         await pf.evaluate("LimingXinChat.open()"); await pf.wait_for_selector('.xc.show .xc-hello')
-        await pf.click('.xc-chip:has-text("写个点灯程序")'); await pf.wait_for_timeout(150)
-        v = await pf.input_value('.xc-row textarea')
-        await pf.keyboard.press('Enter'); await pf.wait_for_function(CHAT_DONE, timeout=8000)
-        check('欢迎页的「写个点灯程序」：把一句完整的话填进输入框（还能改），回车发出去', '点灯' in v and '.hex' in v and (xf['sent'] or {}).get('text') == v, (v, xf['sent']))
+        await pf.fill('.xc-row textarea', '写个点灯程序'); await pf.keyboard.press('Enter'); await pf.wait_for_function(CHAT_DONE, timeout=8000)
         await pf.click('.xc-list-b'); await pf.wait_for_selector('.xc-sli')
         tiles = await pf.evaluate("[...document.querySelectorAll('.xc-tiles .xc-memb')].map(b => b.textContent)")
         check('对话列表上面三个入口：记事本、每日任务、小芯的文件', tiles == ['小芯的记事本', '每日任务', '小芯的文件'], tiles)
@@ -1154,6 +1160,10 @@ async def main():
         await pf.click('.xc-crumb:has-text("build")'); await pf.wait_for_selector('.xc-fi:has-text("app.bin")')
         await pf.click('.xc-fi:has-text("app.bin")'); await pf.wait_for_selector('.xc-fmeta')
         check('二进制文件不预览，只给下载', '不是文字文件' in await pf.text_content('.xc-sess') and not await pf.is_visible('.xc-pre'))
+        await pf.click('.xc-crumb:has-text("blink")'); await pf.wait_for_selector('.xc-fi:has-text("main.c")')
+        await pf.click('.xc-fi:has-text("main.c")'); await pf.wait_for_selector('.xc-pre')
+        st = await pf.evaluate("[document.querySelector('.xc-pre').textContent, [...document.querySelectorAll('.xc-pre .hl-pre, .xc-pre .hl-kw, .xc-pre .hl-mc')].map(e => e.textContent)]")
+        check('小芯的文件：.c 文件的预览也上色（预处理、关键字、寄存器宏）', st[0].startswith('#include') and '#include' in st[1] and 'int' in st[1] and 'GPIOA' in st[1], st)
         await pf.click('.xc-back'); await pf.wait_for_selector('.xc-sli')
         await pf.click('.xc-si'); await pf.wait_for_selector('.xc-path')
         await pf.click('.xc-path'); await pf.wait_for_selector('.xc-pre')
@@ -1195,6 +1205,22 @@ async def main():
         st = await pm.evaluate("[LimingXin.learned, LimingXinChat.state.bond.score]")
         check('聊天里小芯学会新动作（马上教给页面上的小芯）、好感度 +2，各一个小提示', '学会了新动作：转圈' in notes and '好感度 +2 · 你教我新动作' in notes and st == [['打招呼', '转圈'], 54], (notes, st))
         await pm.context.close()
+        # 小芯的屏幕：观看 → 接管 → 关掉（接管过就作废链接）
+        pw = await page(b)
+        xw = await xin_mock(pw, authed=True)
+        await pw.goto(BASE + '/'); await pw.wait_for_timeout(1000)
+        await pw.evaluate("LimingXinChat.open()"); await pw.wait_for_selector('.xc.show .xc-scr-b')
+        await pw.click('.xc-scr-b'); await pw.wait_for_function("(() => { const f = document.querySelector('.xs .xs-fr'); return f && !f.hidden && f.src.includes('/icons/icon-192.png'); })()", timeout=8000)
+        st = await pw.evaluate("""[!document.querySelector('.xs').hidden, document.querySelector('.xs-mode [aria-checked=true]').dataset.mode, document.querySelector('.xs-tip').textContent,
+          (() => { const r = document.querySelector('.xs-fr').getBoundingClientRect(); return r.width >= innerWidth - 1 && r.height > innerHeight * 0.6; })(), document.body.classList.contains('xs-open')]""")
+        check('小芯的屏幕：标题栏点「屏幕」全屏打开它的桌面，默认只看（提示说怎么接管），画面占满', xw['screen'] == [{'control': False}] and st[:2] == [True, 'view'] and '接管' in st[2] and st[3] and st[4], (xw['screen'], st))
+        await pw.click('.xs-mode [data-mode=ctl]'); await pw.wait_for_function("document.querySelector('.xs .xs-fr').src.includes('ctl=1')", timeout=8000)
+        st = await pw.evaluate("[document.querySelector('.xs-mode [aria-checked=true]').dataset.mode, document.querySelector('.xs').classList.contains('ctl'), document.querySelector('.xs-tip').textContent]")
+        check('小芯的屏幕：点「接管」换成能操作的链接，提示变成接管中', xw['screen'][-1] == {'control': True} and st[:2] == ['ctl', True] and '接管中' in st[2], (xw['screen'], st))
+        await pw.click('.xs-x'); await pw.wait_for_timeout(300)
+        st = await pw.evaluate("[document.querySelector('.xs').hidden, document.querySelector('.xs-fr').src, document.body.classList.contains('xs-open')]")
+        check('小芯的屏幕：关掉，接管过就让后台把链接全部作废', st == [True, 'about:blank', False] and 'screen_off' in xw['ops'], (st, xw['ops'][-3:]))
+        await pw.context.close()
         # 做完提醒、通知点进来的 #xin=<对话>
         pv = await page(b)
         await pv.context.grant_permissions(['notifications'], origin=BASE)

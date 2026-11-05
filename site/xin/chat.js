@@ -5,7 +5,8 @@
    AI 在想 → 小芯坐在电脑前挠头；在执行命令 → 敲代码；xin 命令 → 照做；做完 → 开心，失败 → 难过。
    对话列表里还有：小芯的记事本、每日任务、小芯的文件（它电脑里 /data/workspace 的文件，能预览、下载）；每个对话能改名、删除。
    回答里出现的 /data/workspace/… 路径点一下就打开那个文件。
-   聊天区像聊天软件：小芯在左边（像素头像）、你在右边；它在电脑上执行的命令不显示，干活时只冒一个「正在输入」的气泡和用时。
+   聊天区像聊天软件：小芯在左边（像素头像）、你在右边；它在电脑上执行的命令不显示，干活时只冒一个「正在输入」的气泡和用时；代码上色。
+   标题栏的「屏幕」：全屏看小芯的电脑桌面（桌面上有个终端实时滚动它在干什么），能「观看」也能「接管」。
    设置（对话列表最下面）：新对话用哪个 AI、思考强度、做完提醒（Web Push：网页没在看时做完了发通知，
    推送从小芯的电脑直接发出，见 vm-agent.mjs 的 pushAll；通知由 /sw.js 弹出，点了打开 #xin=<对话>）。
    小芯会自己编新动作（xin move add），打开网页时拿过来教给页面上的小芯（背包「新动作」、闲着时偶尔做）；
@@ -91,6 +92,7 @@
       '<header class="xc-hd">' +
         '<button class="xc-ib xc-list-b" type="button" aria-label="对话列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9"/></svg></button>' +
         '<div class="xc-ttl"><span class="xc-ttl-t"><b>小芯</b><span class="xc-sub"></span></span></div>' +
+        '<button class="xc-ib xc-scr-b" type="button" aria-label="小芯的屏幕" title="看小芯的电脑屏幕"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M8 20h8M12 16v4"/></svg></button>' +
         '<button class="xc-ib xc-new-b" type="button" aria-label="新对话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>' +
         '<button class="xc-ib xc-x" type="button" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>' +
       '</header>' +
@@ -116,6 +118,7 @@
     root.querySelector('.xc-ttl').insertBefore(avatar(), root.querySelector('.xc-ttl-t'));
     sessEl = root.querySelector('.xc-sess'); loginEl = root.querySelector('.xc-login'); foot = root.querySelector('.xc-ft');
     root.querySelector('.xc-x').addEventListener('click', close);
+    root.querySelector('.xc-scr-b').addEventListener('click', function () { openScreen(false); });
     root.querySelector('.xc-new-b').addEventListener('click', function () { newChat(); if (!touch) input.focus(); });
     root.querySelector('.xc-list-b').addEventListener('click', function () { S.view = S.view === 'chat' ? 'sess' : 'chat'; render(); if (S.view === 'sess') loadSessions(); });
     loginEl.addEventListener('submit', function (e) { e.preventDefault(); login(loginEl.pw.value); });
@@ -128,10 +131,9 @@
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touch) { e.preventDefault(); if (!S.run) send(); }
     });
-    root.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+    root.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !(scrEl && !scrEl.hidden)) close(); });
     list.addEventListener('click', function (e) {
       var fp = e.target.closest('.xc-path'); if (fp) { e.preventDefault(); loadFiles(fp.getAttribute('data-path'), 'chat'); return; }
-      var hc = e.target.closest('.xc-chip-go'); if (hc && hc._go) { hc._go(); return; }
       var c = e.target.closest('.xc-copy');
       if (c) { var code = c.closest('.xc-code').querySelector('code'); copy(code ? code.textContent : '', c); }
     });
@@ -159,7 +161,7 @@
     foot.hidden = login || off || S.view !== 'chat';
     sessEl.hidden = login || off || S.view === 'chat';
     root.querySelector('.xc-body').hidden = login || S.view !== 'chat';
-    root.querySelector('.xc-list-b').hidden = root.querySelector('.xc-new-b').hidden = login || off;
+    root.querySelector('.xc-list-b').hidden = root.querySelector('.xc-new-b').hidden = root.querySelector('.xc-scr-b').hidden = login || off;
     root.classList.toggle('running', !!S.run);
     sendBtn.setAttribute('aria-label', S.run ? '停止' : '发送');
     sendBtn.innerHTML = S.run ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" class="fill"/></svg>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>';
@@ -216,18 +218,12 @@
     if (!stay) S.view = 'chat';
     clearList(); S.histFor = ''; welcome(); render();
   }
-  // 空对话：大一点的小芯、一句介绍、两个点了就能用的建议
+  // 空对话：大一点的小芯和一句介绍
   function welcome() {
     var p = h('div', 'xc-hello');
     p.appendChild(avatar('big'));
     p.appendChild(h('b', 'xc-hello-t', '嗨，我是小芯'));
     p.appendChild(h('p', '', '我有一台自己的电脑，能帮你写代码、编译、跑命令。'));
-    var row = h('div', 'xc-chips');
-    [['写个点灯程序', function () { input.value = '写一个 STM32 点灯程序（PA0 接 LED），编译成 .hex 给我'; ls(LS_DRAFT, input.value); grow(); input.focus(); }],
-     ['小芯的文件', function () { loadFiles(WORK, 'chat'); }]].forEach(function (c) {
-      var b = h('button', 'xc-chip xc-chip-go', c[0]); b.type = 'button'; b._go = c[1]; row.appendChild(b);
-    });
-    p.appendChild(row);
     list.appendChild(p);
   }
   function loadCurrent() {
@@ -342,6 +338,59 @@
     if (!S.enabled || !S.authed || Date.now() - playedAt < 60000) return;
     playedAt = Date.now();
     call('bond_play', { kind: kind }, 0).then(function (r) { if (r && r.info) setBond(r.info); }, function () {});
+  }
+
+  /* ---------- 小芯的屏幕：全屏看它的电脑桌面，也能接管 ----------
+     Worker 的 screen：开桌面、在桌面上开一个终端实时滚动它在干什么、要一个短时链接（InstaBox 的桌面查看页），嵌在 iframe 里。
+     「观看」时服务器丢掉你的键盘鼠标；「接管」换一个能操作的链接；关掉时接管过的话把链接全部作废（screen_off）。 */
+  var scrEl = null, scrUsedCtl = false, scrSeq = 0;
+  function buildScreen() {
+    scrEl = h('div', 'xs'); scrEl.setAttribute('role', 'dialog'); scrEl.setAttribute('aria-label', '小芯的屏幕'); scrEl.hidden = true;
+    scrEl.innerHTML =
+      '<header class="xs-hd">' +
+        '<button class="xc-ib xs-x" type="button" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>' +
+        '<b class="xs-t">小芯的屏幕</b>' +
+        '<div class="xc-segs xs-mode" role="radiogroup" aria-label="模式">' +
+          '<button class="xc-ag" type="button" role="radio" data-mode="view">观看</button>' +
+          '<button class="xc-ag" type="button" role="radio" data-mode="ctl">接管</button>' +
+        '</div>' +
+      '</header>' +
+      '<p class="xs-tip"></p>' +
+      '<div class="xs-body"><p class="xs-msg"></p><iframe class="xs-fr" title="小芯的电脑桌面" allow="clipboard-read; clipboard-write; fullscreen" referrerpolicy="no-referrer" hidden></iframe></div>';
+    document.body.appendChild(scrEl);
+    scrEl.querySelector('.xs-x').addEventListener('click', closeScreen);
+    [].forEach.call(scrEl.querySelectorAll('.xs-mode .xc-ag'), function (b) {
+      b.addEventListener('click', function () { var ctl = b.getAttribute('data-mode') === 'ctl'; if (ctl !== scrEl._ctl) loadScreen(ctl); });
+    });
+    scrEl.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeScreen(); });
+  }
+  function openScreen(control) {
+    if (!S.enabled || !S.authed) return;
+    if (!scrEl) buildScreen();
+    scrEl.hidden = false; document.body.classList.add('xs-open');
+    loadScreen(!!control);
+    try { scrEl.querySelector('.xs-x').focus({ preventScroll: true }); } catch (e) { /* 老浏览器 */ }
+  }
+  function loadScreen(control) {
+    var my = ++scrSeq, fr = scrEl.querySelector('.xs-fr'), msg = scrEl.querySelector('.xs-msg');
+    scrEl._ctl = control; if (control) scrUsedCtl = true;
+    scrEl.classList.toggle('ctl', control);
+    [].forEach.call(scrEl.querySelectorAll('.xs-mode .xc-ag'), function (b) { b.setAttribute('aria-checked', (b.getAttribute('data-mode') === 'ctl') === control ? 'true' : 'false'); });
+    scrEl.querySelector('.xs-tip').textContent = control ? '接管中：你的鼠标、键盘会直接操作小芯的电脑。用完点「观看」或关掉。' : '只看不动：中间那个终端实时显示小芯在干什么。想自己动手，点「接管」。';
+    fr.hidden = true; fr.src = 'about:blank';
+    msg.hidden = false; msg.textContent = '正在打开小芯的屏幕…（电脑在睡觉的话要等一会儿）';
+    call('screen', { control: control }, 90000).then(function (d) {
+      if (my !== scrSeq || scrEl.hidden) return;
+      fr.src = d.url; fr.hidden = false; msg.hidden = true;
+    }, function (e) { if (my === scrSeq) msg.textContent = '打不开：' + e.message; });
+  }
+  function closeScreen() {
+    if (!scrEl || scrEl.hidden) return;
+    scrSeq++;
+    scrEl.hidden = true; document.body.classList.remove('xs-open');
+    var fr = scrEl.querySelector('.xs-fr'); fr.src = 'about:blank'; fr.hidden = true;
+    if (scrUsedCtl) { scrUsedCtl = false; call('screen_off', {}, 20000).catch(function () {}); }   // 接管过：能操作的链接全部作废
+    if (root && S.open && !touch) root.querySelector('.xc-scr-b').focus();
   }
 
   /* ---------- 设置：新对话用哪个 AI、思考强度、做完提醒 ---------- */
@@ -557,7 +606,10 @@
     });
     row.appendChild(dl); row.appendChild(cp); row.appendChild(msg); sessEl.appendChild(row);
     if (typeof d.text === 'string') {
-      var pre = h('pre', 'xc-pre'), c = h('code', '', d.text);
+      var pre = h('pre', 'xc-pre'), c = h('code');
+      // 按扩展名上色（Makefile 没有扩展名）；太长的就不上色了
+      var ext = /^makefile$/i.test(name) ? 'make' : (name.indexOf('.') > 0 ? name.split('.').pop() : '');
+      if (d.text.length < 150000) c.innerHTML = hl(d.text, ext); else c.textContent = d.text;
       pre.appendChild(c); sessEl.appendChild(pre);
     } else sessEl.appendChild(h('p', 'xc-hint', d.big ? '文件太大，这里不预览，可以下载下来看。' : '这不是文字文件（比如 .bin、.elf），不能预览，可以下载。'));
   }
@@ -916,7 +968,8 @@
     parts.forEach(function (part, i) {
       if (i % 2) {
         var nl = part.indexOf('\n'), lang = nl >= 0 ? part.slice(0, nl).trim() : '', code = nl >= 0 ? part.slice(nl + 1) : part;
-        var wrap = h('div', 'xc-code'), hd = h('div', 'xc-code-h'), pre = h('pre'), c = h('code', '', code.replace(/\n$/, ''));
+        var wrap = h('div', 'xc-code'), hd = h('div', 'xc-code-h'), pre = h('pre'), c = h('code'), src = code.replace(/\n$/, '');
+        c.innerHTML = hl(src, lang);
         hd.appendChild(h('span', 'xc-lang', lang || '代码'));
         var cp = h('button', 'xc-copy'); cp.type = 'button';
         cp.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></svg><span>复制</span>';
@@ -980,6 +1033,80 @@
     });
     t.appendChild(tb); wrap.appendChild(t);
     return wrap;
+  }
+  /* ---------- 代码上色：C（含 STM32 的寄存器宏）、shell、Python、JS / JSON、Makefile、汇编 ----------
+     一个大正则从头扫到尾：注释、字符串、预处理（#include）、变量（$x）、数字、标识符；标识符再分关键字、类型、函数（后面跟括号）、
+     全大写的宏 / 寄存器名，shell 里每条命令的第一个词也算「函数」。没认出语言就按内容猜，猜不出就不上色。全部先转义。 */
+  var HL_ALIAS = { c: 'c', h: 'c', cpp: 'c', 'c++': 'c', cc: 'c', hpp: 'c', cxx: 'c', ino: 'c', arduino: 'c', java: 'c', ld: 'c',
+    js: 'js', javascript: 'js', mjs: 'js', cjs: 'js', ts: 'js', typescript: 'js', json: 'js', jsonc: 'js',
+    sh: 'sh', bash: 'sh', shell: 'sh', console: 'sh', zsh: 'sh', terminal: 'sh', shellsession: 'sh',
+    py: 'py', python: 'py', python3: 'py', make: 'make', makefile: 'make', mk: 'make', s: 'asm', asm: 'asm', armasm: 'asm' };
+  var HL_KW = {}, HL_RE = {};
+  (function () {
+    var w = {
+      c: 'auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while bool true false NULL nullptr class public private protected namespace template typename new delete this virtual override using __IO __I __O __attribute__ __asm __NOP __WFI',
+      js: 'await break case catch class const continue debugger default delete do else export extends finally for from function if import in instanceof let new of return static super switch this throw try typeof var void while with yield async true false null undefined',
+      py: 'and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield True False None self',
+      sh: 'if then else elif fi for while until do done case esac function in return export local readonly unset set source alias',
+      make: 'ifeq ifneq ifdef ifndef else endif include define endef export override',
+      asm: ''
+    };
+    Object.keys(w).forEach(function (l) { HL_KW[l] = {}; w[l].split(' ').forEach(function (k) { if (k) HL_KW[l][k] = 1; }); });
+  })();
+  var HL_TYPE = /^(u?int(8|16|32|64)_t|u?int_(least|fast)(8|16|32|64)_t|size_t|ssize_t|ptrdiff_t|u?intptr_t|[us](8|16|32|64)|uint(8|16|32)|\w+_TypeDef|\w+_t|FILE)$/;
+  function hlLang(lang, code) {
+    var l = HL_ALIAS[String(lang || '').toLowerCase()];
+    if (l) return l;
+    if (lang) return '';
+    if (/#\s*include|->|\b(void|uint32_t|int)\b[^\n]*[;{]/.test(code)) return 'c';
+    if (/^\s*(\$ |sudo |cd |make\b|ls\b|cp\b|mkdir\b|arm-none-eabi-)/m.test(code)) return 'sh';
+    if (/^\s*(def |import |from \S+ import )/m.test(code)) return 'py';
+    return '';
+  }
+  function hlRe(l) {
+    if (HL_RE[l]) return HL_RE[l];
+    var NO = '(?!)';
+    var com = l === 'c' || l === 'js' ? '\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?(?:\\*\\/|$)' : l === 'asm' ? '\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?(?:\\*\\/|$)|[;@][^\\n]*' : '#[^\\n]*';
+    var str = '"(?:[^"\\\\\\n]|\\\\.)*"?|\'(?:[^\'\\\\\\n]|\\\\.)*\'?' + (l === 'js' || l === 'sh' ? '|`(?:[^`\\\\]|\\\\.)*`?' : '');
+    var pre = l === 'c' ? '^[ \\t]*#[ \\t]*\\w+(?:[ \\t]*<[^>\\n]*>)?' : l === 'asm' ? '\\.\\w+' : NO;
+    var vr = l === 'sh' ? '\\$\\{[^}\\n]*\\}|\\$\\w+|\\$[@#?$!*-]' : l === 'make' ? '\\$\\([^)\\n]*\\)|\\$[@<^\\w]' : NO;
+    var num = '\\b(?:0[xX][0-9a-fA-F]+|0[bB][01]+|\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)[uUlLfF]*\\b';
+    var parts = l === 'c' ? [pre, com, str, vr, num] : [com, str, pre, vr, num];
+    // shell 的命令名、文件名里常有 - 和 .（arm-none-eabi-gcc）
+    HL_RE[l] = new RegExp(parts.map(function (x) { return '(' + x + ')'; }).join('|') + (l === 'sh' ? '|([A-Za-z_][\\w.-]*)' : '|([A-Za-z_]\\w*)'), 'gm');
+    HL_RE[l].order = l === 'c' ? ['pre', 'com', 'str', 'var', 'num'] : ['com', 'str', 'pre', 'var', 'num'];
+    return HL_RE[l];
+  }
+  function hlId(l, word, src, i) {
+    if (HL_KW[l][word]) return 'kw';
+    var j = i + word.length; while (src.charAt(j) === ' ' || src.charAt(j) === '\t') j++;
+    var k = i - 1; while (k >= 0 && (src.charAt(k) === ' ' || src.charAt(k) === '\t')) k--;
+    var prev = k < 0 ? '\n' : src.charAt(k);
+    if (l === 'asm') { if (/^(r\d{1,2}|sp|lr|pc|apsr|primask)$/i.test(word)) return 'mc'; if (prev === '\n' || prev === ':') return src.charAt(j) === ':' ? 'fn' : 'kw'; }
+    if (l === 'sh') {
+      if (prev === '\n' || prev === '|' || prev === ';' || prev === '&' || prev === '(' || (prev === '$' && (k === 0 || src.charAt(k - 1) === '\n'))) return 'fn';
+      if (prev === '-' || src.charAt(i - 1) === '-') return '';
+    }
+    if (l === 'make' && prev === '\n' && src.charAt(j) === ':') return 'fn';
+    if (l === 'c' || l === 'js' || l === 'py') { if (HL_TYPE.test(word) && l === 'c') return 'ty'; if (src.charAt(j) === '(') return 'fn'; }
+    if (/^[A-Z][A-Z0-9_]+$/.test(word) && /[A-Z]/.test(word)) return 'mc';
+    return '';
+  }
+  function hl(src, lang) {
+    var l = hlLang(lang, src);
+    if (!l) return esc(src);
+    var re = hlRe(l), out = '', last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(src))) {
+      if (!m[0]) { re.lastIndex++; continue; }
+      out += esc(src.slice(last, m.index));
+      var cls = '';
+      for (var g = 1; g <= 5; g++) if (m[g] !== undefined) { cls = re.order[g - 1]; break; }
+      if (!cls) cls = hlId(l, m[6], src, m.index);
+      out += cls ? '<span class="hl-' + cls + '">' + esc(m[0]) + '</span>' : esc(m[0]);
+      last = re.lastIndex;
+    }
+    return out + esc(src.slice(last));
   }
   function esc(s) { return s.replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   // 小芯电脑里的路径（/data/workspace/…）：点了打开「小芯的文件」
