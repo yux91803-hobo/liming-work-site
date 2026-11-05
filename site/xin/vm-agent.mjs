@@ -18,7 +18,7 @@
      daily    {force?}             按每日任务清单开一轮（网站后台每天定时调；今天做过就跳过，force 再做一遍）
      daily_get / daily_set {text}  读 / 改每日任务清单
      greet    {}                   下次见面的开场白（xin next 写的）；顺便在电脑刚睡醒时预热一下模型网关
-     plugins  {}                   Codex 的插件（MCP 服务器）和开没开；plugin_set {name, on} 开关（每一轮起 codex 时加 -c，下一句生效）
+     plugins  {}                   用户自己装的 Codex 插件（MCP 服务器，电脑自带的不算）和开没开；plugin_set {name, on} 开关（每一轮起 codex 时加 -c，下一句生效）
      archive  {sid, on?}           归档一个对话（on:false 取消归档）：只是收起来，记录都留着；sessions 里带 archived
      rename   {sid, title}         给对话改名；forget {sid} 删掉一个对话（还在进行中的不让删），连 Codex / Claude 自己存的那份会话记录一起删
      prune    {}                   只清网站登记过、已无对应对话的旧 AI 记录；来源不明的记录保留
@@ -806,8 +806,9 @@ function pruneLogs(minAge = PRUNE_AGE) {
 /* ---------- 插件（Codex 的 MCP 服务器） ----------
    用户在网页聊天框「＋ → 插件」里开关。开关记在 ~/.xin/plugins.json（{state: {名字: true / false}}），每一轮起 codex 时加
    -c mcp_servers.名字.enabled=…：下一句就生效（同一个对话里也行），不用改 Codex 的配置文件。
-   只给配置里真有的名字加（没有的名字 codex 会当成要新建一个服务器，缺 command 报错）。配置在 ~/.codex/config.toml（自己装的）
-   和 /etc/codex/config.toml（系统装的，比如 instabox、open-computer-use）。
+   只管用户自己装的：~/.codex/config.toml 里的（比如 REA）。/etc/codex/config.toml 里电脑自带的（instabox、open-computer-use）
+   是基础能力，一直开着，列表里不显示、也不让关（plugins.json 里就算有它们的开关也不用）。
+   只给配置里真有的名字加（没有的名字 codex 会当成要新建一个服务器，缺 command 报错）。
    以前小芯用 xin-rea 把 REA 那段挪到 ~/.codex/rea.mcp.toml 里来「关掉」：第一次读插件列表时并回 config.toml，记成关着，
    xin-rea 换成转到 xin plugin 的小脚本，免得两套开关打架。 */
 const PLUGINS_F = () => path.join(BASE, 'plugins.json');
@@ -820,11 +821,13 @@ function mcpNames(text) {
   while ((m = re.exec(String(text || '')))) out.push(m[1] || m[2]);
   return out;
 }
-function mcpDefined() { return new Set(mcpNames(readText(path.join(CODEX_HOME(), 'config.toml'))).concat(mcpNames(readText(CODEX_SYS())))); }
+// 用户自己装的插件（~/.codex/config.toml 里的）；电脑自带的（/etc/codex/config.toml）不算
+function mcpUser() { return new Set(mcpNames(readText(path.join(CODEX_HOME(), 'config.toml')))); }
+function mcpBuiltin() { return new Set(mcpNames(readText(CODEX_SYS()))); }
 function pluginState() { const j = readJ(PLUGINS_F(), {}); return j && j.state && typeof j.state === 'object' ? j.state : {}; }
 function savePluginState(st) { mk(BASE); writeJ(PLUGINS_F(), { state: st }); }
 export function mcpFlags() {
-  const st = pluginState(), have = mcpDefined(), out = [];
+  const st = pluginState(), have = mcpUser(), out = [];
   for (const n of Object.keys(st)) if (PLUGIN_RE.test(n) && have.has(n) && typeof st[n] === 'boolean') out.push('-c', 'mcp_servers.' + n + '.enabled=' + st[n]);
   return out;
 }
@@ -1095,7 +1098,8 @@ const ops = {
     let list;
     try { list = JSON.parse(r.stdout || ''); } catch { return { error: 'list_failed', msg: r.error && r.error.code === 'ENOENT' ? '电脑里没有 codex' : '读不出插件列表' }; }
     const st = pluginState();
-    const plugins = (Array.isArray(list) ? list : []).filter(x => x && PLUGIN_RE.test(x.name)).map(x => {
+    const mine = mcpUser();
+    const plugins = (Array.isArray(list) ? list : []).filter(x => x && PLUGIN_RE.test(x.name) && mine.has(x.name)).map(x => {
       const t = x.transport || {};
       return { name: x.name, desc: PLUGIN_DESC[x.name] || '', cmd: t.command ? path.basename(String(t.command)) : String(t.url || t.type || ''), on: typeof st[x.name] === 'boolean' ? st[x.name] : x.enabled !== false };
     });
@@ -1104,7 +1108,7 @@ const ops = {
   plugin_set(a) {
     const name = String(a.name || '');
     if (!PLUGIN_RE.test(name)) return { error: 'bad_name', msg: '插件名字不对' };
-    if (!mcpDefined().has(name)) return { error: 'no_plugin', msg: '没有这个插件：' + name };
+    if (!mcpUser().has(name)) return mcpBuiltin().has(name) ? { error: 'builtin', msg: name + ' 是电脑自带的，一直开着' } : { error: 'no_plugin', msg: '没有这个插件：' + name };
     const st = pluginState();
     st[name] = !!a.on; savePluginState(st);
     return { ok: true, name, on: st[name] };
