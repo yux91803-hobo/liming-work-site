@@ -45,8 +45,10 @@
   };
   // 脸：[x, y, 宽, 高, 颜色]；eyes / blink 会跟着视线挪一格
   var FACE = {
+    // 常态睁眼；> < 是单独的微笑表情，不能作为静止和走动时的默认眼睛。
+    eyes: function (lx, ly) { return [[6.85 + lx * .35, 8.75 + ly * .35, .95, 2.2], [12.2 + lx * .35, 8.75 + ly * .35, .95, 2.2]]; },
     // 参考图的 > < 由正方形像素拼成；缩小视线位移，避免眼睛撞到倒角内框。
-    eyes: function (lx, ly) {
+    smile: function (lx, ly) {
       var x = lx * .35, y = 8.25 + ly * .35;
       return [
         [6.5 + x, y, .625, .625], [7.125 + x, y + .625, .625, .625], [7.75 + x, y + 1.25, .625, .625], [7.125 + x, y + 1.875, .625, .625], [6.5 + x, y + 2.5, .625, .625],
@@ -122,7 +124,7 @@
     var f = FACE[p.face] || FACE.eyes, fl = typeof f === 'function' ? f(p.lx | 0, p.ly | 0) : f;
     fl.forEach(function (c) { R(c[0] + sx, c[1] + b, c[2] || 1, c[3] || 1, c[4] || 'ew'); });
     // 腮红固定在脸颊，不跟着视线跑；背面、生气和伤心时隐藏。
-    if (['eyes', 'blink', 'hap', 'wow', 'focus', 'calm', 'love', 'shut', 'confused', 'tongue'].indexOf(p.face) >= 0) {
+    if (['eyes', 'smile', 'blink', 'hap', 'wow', 'focus', 'calm', 'love', 'shut', 'confused', 'tongue'].indexOf(p.face) >= 0) {
       [5.8, 6.8, 12.2, 13.2].forEach(function (cx) {
         P([[cx + sx + .25, 12.35 + b], [cx + sx + 1, 12.35 + b], [cx + sx + .75, 13.1 + b], [cx + sx, 13.1 + b]], 'var(--xr)');
       });
@@ -201,7 +203,7 @@
      背包里「新动作」挨个做；闲着时偶尔做一个；聊天时它也能让这里做（xin move 名字）。 */
   var MOVE_ARMS = ['out', 'swingF', 'swingB', 'up', 'wave', 'hold', 'back', 'down', 'crossA', 'crossB'];
   var MOVE_ENUM = { armL: MOVE_ARMS, armR: MOVE_ARMS, legs: ['stand', 'walk', 'tuck', 'dangle'],
-    face: ['eyes', 'blink', 'hap', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side'] };
+    face: ['eyes', 'smile', 'focus', 'calm', 'love', 'blink', 'hap', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side'] };
   var MOVE_NUM = { t: [60, 1500], b: [0, 2], dy: [-6, 0], sx: [-1, 1], lx: [-1, 1], ly: [-1, 1], lp: [0, 3], mouth: [0, 2] };
   var learned = [], learnI = 0;
   function cleanFrames(frames) {
@@ -469,8 +471,12 @@
         p.fx = noteFx(16, 3 - kk % 4).concat(noteFx(1, 4 - (kk + 2) % 4));
       }
     }
-    if (mood === 'happy') { var w = Math.floor(t / 170) % 2; p.face = 'hap'; p.armL = w ? 'up' : 'wave'; p.armR = w ? 'wave' : 'up'; }
-    else if (mood === 'over') { p.face = 'love'; p.armL = p.armR = Math.floor(t / 140) % 2 ? 'up' : 'wave'; }
+    if (mood === 'smile') { p.face = 'smile'; }
+    else if (mood === 'focus') { p.face = 'focus'; }
+    else if (mood === 'calm') { p.face = 'calm'; }
+    else if (mood === 'love') { p.face = 'love'; }
+    else if (mood === 'happy') { var w = Math.floor(t / 170) % 2; p.face = 'hap'; p.armL = w ? 'up' : 'wave'; p.armR = w ? 'wave' : 'up'; }
+    else if (mood === 'over') { p.face = 'smile'; p.armL = p.armR = Math.floor(t / 140) % 2 ? 'up' : 'wave'; }
     else if (mood === 'dizzy') { p.face = 'dz'; p.sx = Math.floor(t / 150) % 2; p.armL = 'wave'; p.armR = 'swingB'; }
     else if (mood === 'sad') { p.face = 'sad'; p.b = Math.max(p.b, 1); p.lx = 0; p.ly = 0; p.armL = p.armR = 'down'; }
     else if (mood === 'wow') { p.face = 'wow'; p.armL = p.armR = 'wave'; }
@@ -499,6 +505,7 @@
     if (sig === lastSig) return;
     lastSig = sig;
     svgEl.innerHTML = draw(p);
+    svgEl.setAttribute('data-face', p.face);
     var S = W / G;
     sEl.style.transform = p.dy ? 'translateY(' + Math.round(p.dy * S) + 'px)' : '';
   }
@@ -1047,7 +1054,7 @@
       setMood('dizzy', 1900);
       return;
     }
-    setMood('happy', 1100); sparks(3); jump(6);
+    setMood('smile', 1100); sparks(3); jump(6);
     schedule();
   }
   // 跳到另一个平台：先蹲两格蓄力，再划一道弧线过去，落地屈膝
@@ -1488,7 +1495,7 @@
   }
   function putPcAway() { setMode('play'); playSeq([pc({ t: 260 })].concat(putAway()), done); }
   // AI 用 xin 命令让小芯做的动作（名字和 site/xin/vm-agent.mjs 里的 ACTS 一致）
-  var AI_MOOD = { happy: 'happy', sad: 'sad', angry: 'angry', wow: 'wow', confused: 'confused' };
+  var AI_MOOD = { smile: 'smile', focus: 'focus', calm: 'calm', love: 'love', happy: 'happy', sad: 'sad', angry: 'angry', wow: 'wow', confused: 'confused' };
   function idleNow() { aiLoop = false; stopWalk(); if (mode === 'play') { stopSeq(); setMode('idle'); } }
   function command(name, arg) {
     if (paused() || mode === 'away') return false;
@@ -1499,6 +1506,7 @@
       if (mode === 'sleep' && name !== 'sleep') { clearTimeout(zTm); clearTimeout(sleepTm); setMode('idle'); }
       if (AI_MOOD[name]) { idleNow(); setMood(AI_MOOD[name], 2600); if (name === 'happy') sparks(4); schedule(2800); return; }
       switch (name) {
+        case 'normal': idleNow(); setMood(''); schedule(); break;
         case 'dance': dance(); break;
         case 'jump': idleNow(); jump(5); schedule(1400); break;
         case 'cookie': case 'ball': case 'led': playToy(name, true); break;

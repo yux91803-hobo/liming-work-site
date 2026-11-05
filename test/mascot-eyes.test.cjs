@@ -11,9 +11,17 @@ const block = js.match(/  var FACE = \{[\s\S]*?\n  \};/);
 assert.ok(block, '小芯的表情图案存在');
 const FACE = vm.runInNewContext(block[0] + '\nFACE');
 
-test('视线移动时，像素折线保持镜像且不会碰到机身内框', () => {
+test('常态是睁开的竖眼，微笑与常态不混用', () => {
   for (const lx of [-1, 0, 1]) for (const ly of [-1, 0, 1]) {
-    const pixels = FACE.eyes(lx, ly), half = pixels.length / 2;
+    const normal = FACE.eyes(lx, ly);
+    assert.equal(normal.length, 2);
+    assert.ok(normal.every(([x, y, w, h]) => h > w * 2 && x >= 5.2 && x + w <= 14.8 && y >= 7.3 && y + h <= 14.8));
+    assert.notDeepEqual(normal, FACE.smile(lx, ly));
+  }
+});
+test('微笑的像素折线保持镜像且不会碰到机身内框', () => {
+  for (const lx of [-1, 0, 1]) for (const ly of [-1, 0, 1]) {
+    const pixels = FACE.smile(lx, ly), half = pixels.length / 2;
     assert.ok(half >= 3);
     for (const [x, y, w, h] of pixels) {
       assert.ok(x >= 5.2 && x + w <= 14.8, '眼睛水平位于内框内');
@@ -36,8 +44,20 @@ test('眨眼是细横线，六种参考表情及原有特殊表情均可绘制',
     assert.equal(closed.length, 2);
     assert.ok(closed.every(p => p[2] > p[3] * 4));
   }
-  for (const mood of ['focus', 'calm', 'love', 'hap', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side']) {
+  for (const mood of ['smile', 'focus', 'calm', 'love', 'hap', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side']) {
     assert.ok(FACE[mood], mood + ' 未丢失');
+  }
+});
+test('六种表情能从聊天指令和自编动作进入，网页与电脑的校验名单一致', async () => {
+  const agent = await import('../site/xin/vm-agent.mjs');
+  const enums = js.slice(js.indexOf('  var MOVE_ARMS'), js.indexOf('  var MOVE_NUM'));
+  const front = vm.runInNewContext(enums + '\nMOVE_ENUM');
+  assert.deepEqual(Array.from(front.face), agent.MOVE_ENUM.face);
+  for (const [command, face] of [['smile', 'smile'], ['focus', 'focus'], ['happy', 'hap'], ['calm', 'calm'], ['wow', 'wow'], ['love', 'love']]) {
+    assert.ok(agent.ACTS[command]);
+    const move = agent.cleanMove(command, [{ face, t: 200 }]);
+    assert.equal(move.frames[0].face, face);
+    assert.ok(FACE[face]);
   }
 });
 test('机身、头像与收起的小脑袋复用画法，独立的渐变不会串色', () => {

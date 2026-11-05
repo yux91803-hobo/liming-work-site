@@ -57,6 +57,7 @@ export function forAgent(text, context) { return withContext(text, context) + '\
 /* 小芯能做的动作（xin 命令和网页共用这张表；网页只认这些名字） */
 export const ACTS = {
   say: '头上冒一个气泡说一句话（xin say 编译过了！）',
+  normal: '恢复常态睁眼', smile: '微笑（> < 笑眼）', focus: '专注（竖眼）', calm: '冷静（半闭眼）', love: '喜欢（爱心眼）',
   happy: '开心', sad: '难过', angry: '生气', wow: '惊讶', confused: '疑惑',
   dance: '跳舞', jump: '跳一下', cookie: '吃饼干', battery: '吸电池（之后跑得飞快）', ball: '抛小球', led: '玩 LED',
   sleep: '睡觉', wake: '叫醒', music: '戴耳机听歌（xin music off 摘下来）', swing: '荡秋千', sit: '坐在边上晃腿', code: '掏出电脑敲代码',
@@ -186,7 +187,7 @@ export function systemPrompt(mem) {
 export const MOVE_ENUM = {
   armL: ['out', 'swingF', 'swingB', 'up', 'wave', 'hold', 'back', 'down', 'crossA', 'crossB'],
   legs: ['stand', 'walk', 'tuck', 'dangle'],
-  face: ['eyes', 'blink', 'hap', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side']
+  face: ['eyes', 'smile', 'focus', 'calm', 'love', 'blink', 'hap', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side']
 };
 MOVE_ENUM.armR = MOVE_ENUM.armL;
 export const MOVE_NUM = { t: [60, 1500], b: [0, 2], dy: [-6, 0], sx: [-1, 1], lx: [-1, 1], ly: [-1, 1], lp: [0, 3], mouth: [0, 2] };
@@ -224,6 +225,7 @@ const MOVE_HELP = [
   '  armL / armR（左手 / 右手）：' + MOVE_ENUM.armL.join(' '),
   '  legs（腿）：' + MOVE_ENUM.legs.join(' ') + '；lp（走路时迈哪条腿 0~3）',
   '  face（脸）：' + MOVE_ENUM.face.join(' '),
+  '    eyes 常态睁眼；smile > < 微笑；focus 专注竖眼；hap 开心弧眼；calm 冷静半闭眼；wow 惊喜星星眼；love 喜欢爱心眼；blink 眨眼。',
   '  b（往下蹲 0~2）、dy（往上跳 -6~0）、sx（左右晃 -1~1）、lx / ly（眼睛往哪看 -1~1）、mouth（嘴 0 没有 / 1 合上 / 2 张开）',
   '最多 48 帧、一共 15 秒。例子（挥手打招呼）：',
   `  xin move add 打招呼 '[{"armR":"up","face":"hap","t":250},{"armR":"wave","face":"hap","t":250},{"armR":"up","face":"hap","t":250},{"armR":"wave","face":"hap","mouth":2,"t":400}]'`
