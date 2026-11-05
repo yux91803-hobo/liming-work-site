@@ -1132,7 +1132,7 @@ async def main():
         await pg.click('.xc-agent [data-agent=claude]'); await pg.click('.xc-effort [data-effort=max]')
         st2 = await pg.evaluate("[localStorage.getItem('lm.xin.agent'), localStorage.getItem('lm.xin.effort'), document.querySelector('.xc-agent [aria-checked=true]').dataset.agent]")
         check('设置：新对话用哪个 AI（默认 Codex）、思考强度（默认自动），点了记住', st == ['codex', 'auto'] and st2 == ['claude', 'max', 'claude'], (st, st2))
-        await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-hello')
+        await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')"); await pg.wait_for_selector('.xc-hello')
         await pg.fill('.xc-row textarea', '看看工作目录'); await pg.keyboard.press('Enter')
         await pg.wait_for_function("document.querySelector('.xc-typing-l') && document.querySelector('.xc-typing-l').textContent.startsWith('在电脑上忙')", timeout=5000)
         st = await pg.evaluate("""[LimingXin.aiState, document.querySelector('.xc').classList.contains('running'), document.querySelectorAll('.xc-me').length, (document.querySelector('.xin-say') || {}).textContent,
@@ -1250,12 +1250,12 @@ async def main():
         await pf.goto(BASE + '/'); await pf.wait_for_timeout(1200)
         await pf.evaluate("LimingXinChat.open()"); await pf.wait_for_selector('.xc.show .xc-hello')
         await pf.fill('.xc-row textarea', '写个点灯程序'); await pf.keyboard.press('Enter'); await pf.wait_for_function(CHAT_DONE, timeout=8000)
-        await pf.click('.xc-list-b'); await pf.wait_for_selector('.xc-sli')
+        await pf.click('.xc-list-b'); await pf.wait_for_selector('.xc-sli'); await pf.wait_for_timeout(350)   # 等侧边栏滑完
         tiles = await pf.evaluate("[...document.querySelectorAll('.xc-nav .xc-memb')].map(b => b.textContent)")
         dr = await pf.evaluate("""(() => { const d = document.querySelector('.xc-drawer').getBoundingClientRect(), p = document.querySelector('.xc').getBoundingClientRect();
           return [document.querySelector('.xc').classList.contains('dr-open'), Math.round(d.left - p.left), d.width < p.width, !!document.querySelector('.xc-dr .xc-dr-new'), document.querySelector('.xc-set').hidden,
             getComputedStyle(document.querySelector('.xc-scrim')).opacity, document.querySelector('.xc-list-b').getAttribute('aria-expanded'), !document.querySelector('.xc-body').hidden]; })()""")
-        check('☰ 拉开侧边栏：从面板左边滑出来、比面板窄，后面一层遮罩，聊天还在下面；上面「新对话」，三个入口：记事本、每日任务、小芯的文件；设置收着', tiles == ['小芯的记事本', '每日任务', '小芯的文件'] and dr == [True, 0, True, True, True, '1', 'true', True], (tiles, dr))
+        check('☰ 拉开侧边栏：从面板左边滑出来、比面板窄，后面一层遮罩，聊天还在下面；上面「新对话」，三个入口：记事本、每日任务、小芯的文件；设置收着', tiles == ['小芯的记事本', '每日任务', '小芯的文件'] and 0 <= dr[1] <= 2 and dr[:1] + dr[2:] == [True, True, True, True, '1', 'true', True], (tiles, dr))   # 宽屏面板左边有 2px 边框，侧边栏贴着它
         await pf.click('.xc-sli:nth-child(1) .xc-si-more'); await pf.wait_for_selector('.xc-sa input')
         await pf.fill('.xc-sa input', '点灯程序'); await pf.click('.xc-sa-b:has-text("改名")'); await pf.wait_for_timeout(300)
         t = await pf.text_content('.xc-sli:nth-child(1) .xc-si-t')
@@ -1326,7 +1326,8 @@ async def main():
         await pm.click('.xc-bond-b'); await pm.wait_for_timeout(150)
         logs = await pm.evaluate("[...document.querySelectorAll('.xc-bond-log li')].map(l => l.textContent)")
         check('对话列表上面显示关系和好感度，点开看最近的变化', bt.startswith('♥♥♥♡ 好朋友 · 好感度 5') and '升一级' in bt and len(logs) == 2 and '+1陪我聊天' in logs[0] and '-1你凶我' in logs[1], (bt, logs))
-        await pm.click('.xc-new-b'); await pm.wait_for_selector('.xc-hello')
+        await pm.click('.xc-dr-new'); await pm.wait_for_selector('.xc-hello')   # 侧边栏里的「新对话」：开新对话并收起侧边栏
+        check('侧边栏里点「新对话」：开新对话、侧边栏收起', not await pm.evaluate("document.querySelector('.xc').classList.contains('dr-open')"))
         await pm.fill('.xc-row textarea', '学个转圈'); await pm.keyboard.press('Enter')
         await pm.wait_for_function(CHAT_DONE, timeout=8000); await pm.wait_for_timeout(200)
         notes = await pm.evaluate("[...document.querySelectorAll('.xc-sys')].map(n => n.textContent)")
