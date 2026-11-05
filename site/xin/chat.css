@@ -149,6 +149,18 @@
   font:14.5px/1.45 var(--sans);resize:none;outline:none}
 .xc-row textarea::placeholder{color:var(--ink-3)}
 @media (pointer:coarse){.xc-row textarea,.xc-login input{font-size:16px}}   /* iOS：小于 16px 聚焦时会放大页面 */
+.xc-use{margin:7px 0 -3px;text-align:center}
+.xc-use-b{display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:center;max-width:100%;padding:1px 4px;border:0;background:none;
+  font:11.5px/1.6 var(--sans);color:var(--ink-3);font-variant-numeric:tabular-nums;cursor:pointer}
+.xc-use-b:hover{color:var(--ink-2)}
+.xc-use-i{display:inline-flex;align-items:center;white-space:nowrap}
+.xc-use-i+.xc-use-i::before{content:"·";margin:0 7px;color:var(--line-2)}
+.xc-use-bar{position:relative;display:inline-block;width:30px;height:7px;margin:0 5px 0 2px;border:1px solid currentColor;flex:none}
+.xc-use-bar>i{position:absolute;left:0;top:0;bottom:0;background:currentColor}
+.xc-use-bar.warm>i{background:var(--clay)}
+.xc-use-bar.hot{border-color:#b4472f}.xc-use-bar.hot>i{background:#b4472f}
+[data-theme=dark] .xc-use-bar.hot{border-color:#f08b70}[data-theme=dark] .xc-use-bar.hot>i{background:#f08b70}
+.xc-use-more{font:11px/1.5 var(--sans);color:var(--ink-3);font-variant-numeric:tabular-nums}
 .xc-send{display:grid;place-items:center;width:36px;height:36px;flex:none;background:var(--clay);color:#fff}
 .xc-send:active{transform:translate(1px,1px)}
 .xc-send svg{width:18px;height:18px;stroke-width:2.2}

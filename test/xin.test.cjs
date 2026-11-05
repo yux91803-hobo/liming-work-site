@@ -679,6 +679,59 @@ test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对�
   assert.ok(fs.existsSync(fB));
 });
 
+test('对话的用量：Codex 取记录里最后一条 token_count（累计、最近一次、上限），做完那一轮的 done 和 history 都带上；Claude 把每条回答的 usage 去重加起来', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-usage-'));
+  const codexHome = path.join(tmp, 'codex'), claudeHome = path.join(tmp, 'claude'), bin = path.join(tmp, 'bin');
+  fs.mkdirSync(bin);
+  const id1 = '01a1a903-c5b4-75b0-a77d-233a63d598c6', id2 = '3f6c9a50-1111-4222-8333-444455556666';
+  // Codex 的记录：两条 token_count（取后一条）、一条 info 是空的；最后跟一段很长的命令输出（从尾巴往前读 256KB 找不到，要多读一些）
+  const cxDir = path.join(codexHome, 'sessions', '2026', '11', '05');
+  fs.mkdirSync(cxDir, { recursive: true });
+  const tc = (total, last) => JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: last, model_context_window: 258400 } } });
+  fs.writeFileSync(path.join(cxDir, 'rollout-2026-11-05T00-02-39-' + id1 + '.jsonl'), [
+    JSON.stringify({ type: 'session_meta', payload: { id: id1, originator: 'codex_exec' } }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: null } }),
+    tc({ input_tokens: 1000, cached_input_tokens: 500, output_tokens: 10, total_tokens: 1010 }, { input_tokens: 1000, output_tokens: 10, total_tokens: 1010 }),
+    tc({ input_tokens: 3699260, cached_input_tokens: 3567104, output_tokens: 28753, reasoning_output_tokens: 11523, total_tokens: 3728013 }, { input_tokens: 118789, output_tokens: 1553, total_tokens: 120342 }),
+    JSON.stringify({ type: 'response_item', payload: { type: 'function_call_output', output: 'x'.repeat(300 * 1024) } })
+  ].join('\n') + '\n');
+  fs.writeFileSync(path.join(bin, 'codex'), [
+    '#!/bin/sh',
+    'case "$*" in *--ephemeral*) exit 0;; esac',
+    'echo \'{"type":"thread.started","thread_id":"' + id1 + '"}\'',
+    'echo \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"好了"}}\'',
+    'echo \'{"type":"turn.completed","usage":{}}\''
+  ].join('\n'), { mode: 0o755 });
+  const { xin, op } = agentEnv({ CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, PATH: bin + ':' + process.env.PATH });
+  const want1 = { ctx: 120342, win: 258400, input: 3699260, cached: 3567104, output: 28753, total: 3728013 };
+  const r = op('send', { agent: 'codex', text: '你好' });
+  let p = null;
+  for (let i = 0; i < 60; i++) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  const done = p.events.find(e => e.t === 'done');
+  assert.deepStrictEqual(done.usage, want1, JSON.stringify(p.events));
+  assert.deepStrictEqual(op('history', { sid: r.sid }).usage, want1);
+
+  // Claude：同一条回答拆成几行（后面那行的 usage 才是最终的），子任务（isSidechain）算进消耗、不算上下文；上限用跑的时候记下的
+  const clDir = path.join(claudeHome, 'projects', '-data-workspace');
+  fs.mkdirSync(clDir, { recursive: true });
+  const as = (id, u, side) => JSON.stringify({ type: 'assistant', isSidechain: !!side, message: { id, role: 'assistant', usage: u } });
+  fs.writeFileSync(path.join(clDir, id2 + '.jsonl'), [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '你好' } }),
+    as('m1', { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 5000, output_tokens: 1 }),
+    as('m1', { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 5000, output_tokens: 200 }),
+    as('m3', { input_tokens: 20, cache_read_input_tokens: 5000, cache_creation_input_tokens: 300, output_tokens: 400 }),
+    as('m2', { input_tokens: 3, cache_read_input_tokens: 100, cache_creation_input_tokens: 0, output_tokens: 50 }, true)
+  ].join('\n') + '\n');
+  const sess = path.join(xin, 'sessions');
+  fs.writeFileSync(path.join(sess, 'scl0000001.json'), JSON.stringify({ sid: 'scl0000001', agent: 'claude', title: 'c', agentSid: id2, started: true, ctxWin: 1000000, runs: [], created: 1, updated: 1 }));
+  assert.deepStrictEqual(op('history', { sid: 'scl0000001' }).usage, { ctx: 5720, win: 1000000, input: 10433, cached: 5100, output: 650, total: 11083 });
+  // 还没开始的、会话号不像样的：没有用量
+  fs.writeFileSync(path.join(sess, 'snew000001.json'), JSON.stringify({ sid: 'snew000001', agent: 'claude', title: 'n', agentSid: crypto.randomUUID(), started: false, runs: [], created: 1, updated: 1 }));
+  fs.writeFileSync(path.join(sess, 'sbad000001.json'), JSON.stringify({ sid: 'sbad000001', agent: 'codex', title: 'b', agentSid: '../x', started: true, runs: [], created: 1, updated: 1 }));
+  assert.strictEqual(op('history', { sid: 'snew000001' }).usage, null);
+  assert.strictEqual(op('history', { sid: 'sbad000001' }).usage, null);
+});
+
 test('设定里教了：STM32 空工程怎么编译、文件写完整路径（「考考我」已经去掉）', async () => {
   const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
   const p = systemPrompt('');
