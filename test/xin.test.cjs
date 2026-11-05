@@ -347,6 +347,9 @@ test('身份：设定写明以它为准；每句后面悄悄附提醒（历史�
   const { systemPrompt, forAgent, REMIND } = await load('../site/xin/vm-agent.mjs');
   const p = systemPrompt('');
   assert.ok(p.includes('这份设定优先') && p.includes('InstaBox 云电脑'));
+  // 被问到是什么模型：自然地说不知道，不说「秘密」「不能说」
+  assert.ok(p.includes('自然地说不知道') && p.includes('这个我也不知道诶') && p.includes('别说「保密」「秘密」「不能说」'));
+  assert.ok(REMIND.includes('自然地说不知道') && REMIND.includes('别说是秘密'));
   const t = forAgent('你是谁呀？', '');
   assert.ok(t.startsWith('你是谁呀？') && t.endsWith(REMIND));
   const t2 = forAgent('这行什么意思', '【用户正在看】GPIO');
