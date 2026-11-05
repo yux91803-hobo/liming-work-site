@@ -43,12 +43,43 @@
     typeDn: [[2, 14, 2, 2]],      //             手按下去（正好碰到键盘）
     none:   []                    // 侧身时另一只手在身子后面看不见
   };
-  // 脸：[x, y, 宽, 高, 颜色]；eyes / blink 会跟着视线挪一格；{ l: [[x, y], …] } 是一条直线（不是方块拼的，画出来是平滑的线）
+  /* 眼睛照用户给的参考图源码（pixel_robot_eyes_source）：每种眼睛是一个字符网格，# 是亮的像素；
+     原图 240×240，这里按 1/14 缩放、以机身中心 (120, 124.5) 对到小芯的 (10, 11)，眼睛区域、像素大小、腮红位置都照原图换算 */
+  var EYE_GRID = {
+    right: ['#......', '.#.....', '..#....', '...#...', '..#....', '.#.....', '#......'],
+    left:  ['......#', '.....#.', '....#..', '...#...', '....#..', '.....#.', '......#'],
+    bar:   ['.###.', '#####', '#####', '#####', '#####', '#####', '.###.'],
+    smile: ['.......', '.......', '..###..', '.#...#.', '#.....#', '.......', '.......'],
+    flat:  ['.......', '.......', '.......', '.#####.', '.......', '.......', '.......'],
+    star:  ['...#...', '...#...', '.#####.', '#######', '.#####.', '...#...', '...#...'],
+    heart: ['.##.##.', '#######', '#######', '.#####.', '..###..', '...#...', '.......']
+  };
+  function ref(v) { return v / 14; }
+  function eyeGrid(name, ax, dx, dy) {   // ax：原图里眼睛区域的左边（72 / 128）
+    var rows = EYE_GRID[name], cols = 0, st = 5.5, out = [];
+    rows.forEach(function (r) { cols = Math.max(cols, r.length); });
+    var ox = (38 - cols * st) / 2, oy = (42 - rows.length * st) / 2;
+    rows.forEach(function (row, ri) {
+      for (var ci = 0; ci < row.length; ci++) if (row[ci] === '#') {
+        out.push([+(10 + ref(ax + ox + ci * st - 120) + (dx || 0)).toFixed(3), +(11 + ref(89 + oy + ri * st - 124.5) + (dy || 0)).toFixed(3), +ref(st + 0.3).toFixed(3), +ref(st + 0.3).toFixed(3)]);
+      }
+    });
+    return out;
+  }
+  function eyes2(a, b, dx, dy) { return eyeGrid(a, 72, dx, dy).concat(eyeGrid(b, 128, dx, dy)); }
+  // 腮红：两小笔错开的短条（原图 M68 152h13v5 / M73 147h13v5，右边对称），平时就有
+  var CHEEK = [[68, 152], [73, 147], [148, 152], [153, 147]].map(function (c) { return [+(10 + ref(c[0] - 120)).toFixed(3), +(11 + ref(c[1] - 124.5)).toFixed(3), +ref(13).toFixed(3), +ref(5).toFixed(3)]; });
+  var NO_CHEEK = { back: 1, side: 1, sidePout: 1, sideSad: 1 };
+  // 脸：[x, y, 宽, 高, 颜色]；eyes 会跟着视线挪半格
   var FACE = {
-    eyes:  function (lx, ly) { return [[6 + lx, 8 + ly, 2, 2], [12 + lx, 8 + ly, 2, 2]]; },
-    blink: function (lx, ly) { return [[6 + lx, 9 + ly, 2, 1], [12 + lx, 9 + ly, 2, 1]]; },
-    hap:   [{ l: [[6, 8], [8, 9.5], [6, 11]] }, { l: [[14, 8], [12, 9.5], [14, 11]] }],   // 笑：眼睛眯成 > <（直线画的）
-    smile: [[5, 9], [6, 8, 2, 1], [8, 9], [11, 9], [12, 8, 2, 1], [14, 9], [5, 11, 2, 1, 'bs'], [13, 11, 2, 1, 'bs']],   // 眯眼笑 ^ ^（陶醉、荡秋千）
+    eyes:  function (lx, ly) { return eyes2('bar', 'bar', lx * 0.5, ly * 0.5); },   // 平时：发光竖眼（原图「专注型」）
+    blink: function (lx, ly) { return eyes2('flat', 'flat', lx * 0.5, ly * 0.5); },
+    hap:   eyes2('right', 'left'),        // 活泼：> <
+    smile: eyes2('smile', 'smile'),       // 开心：^ ^（陶醉、荡秋千）
+    focus: eyes2('bar', 'bar'),           // 专注：竖眼
+    calm:  eyes2('flat', 'flat'),         // 冷静：半闭眼一条线
+    star:  eyes2('star', 'star'),         // 惊喜：星星眼
+    heart: eyes2('heart', 'heart'),       // 喜欢：爱心
     shut:  [[6, 9, 2, 1, 'g'], [12, 9, 2, 1, 'g']],
     dz:    [[5, 7], [7, 7], [6, 8], [5, 9], [7, 9], [12, 7], [14, 7], [13, 8], [12, 9], [14, 9]],
     wow:   [[6, 7, 2, 3], [12, 7, 2, 3]],
@@ -90,14 +121,22 @@
     }
     // 身子
     var X = 4 + sx, Y = 6 + b;
-    R(X, Y, 5, 1, 'o'); R(X + 7, Y, 5, 1, 'o'); R(X, Y + 1, 1, 9, 'o'); R(X + 11, Y + 1, 1, 9, 'o'); R(X, Y + 9, 12, 1, 'o');
-    R(X + 1, Y + 1, 10, 8, 'b'); R(X + 5, Y + 1, 2, 1, 'o');
+    // 机身照参考图：顶上两个方角（黑框里一条亮边）、粗黑框、机身、脸面，顶边和右边一道反光、左边一道暗边
+    R(X + 0.93, Y - 1.07, 4, 1.36, 'o'); R(X + 7.14, Y - 1.07, 4, 1.36, 'o');
+    R(X + 1.36, Y - 0.79, 3.21, 0.36, 'lid'); R(X + 7.57, Y - 0.79, 3.21, 0.36, 'lid');
+    R(X, Y, 12, 10, 'o'); R(X + 0.71, Y + 0.71, 10.58, 8.58, 'b'); R(X + 1.14, Y + 1.43, 9.72, 7.36, 'fc');
+    o.push('<rect class="c-hl" x="' + (X + 0.86) + '" y="' + (Y + 0.71) + '" width="10.14" height="0.43"/><rect class="c-hl" x="' + (X + 10.86) + '" y="' + (Y + 1.21) + '" width="0.43" height="8"/>');
+    o.push('<rect class="c-sh" x="' + (X + 1.14) + '" y="' + (Y + 1.43) + '" width="0.43" height="7.36"/>');
     // 脸
     var f = FACE[p.face] || FACE.eyes, fl = typeof f === 'function' ? f(p.lx | 0, p.ly | 0) : f;
+    // 眼睛（亮色像素）放进发光的一组（原图 .eyes 的 drop-shadow）；腮红、眼泪、舌头这些不发光
+    var glow = [];
     fl.forEach(function (c) {
-      if (c.l) o.push('<polyline class="c-wl" shape-rendering="geometricPrecision" points="' + c.l.map(function (q) { return (q[0] + sx) + ',' + (q[1] + b); }).join(' ') + '"/>');
-      else R(c[0] + sx, c[1] + b, c[2] || 1, c[3] || 1, c[4] || 'w');
+      var col = c[4] || 'w', s = '<rect class="c-' + col + '" x="' + (c[0] + sx) + '" y="' + (c[1] + b) + '" width="' + (c[2] || 1) + '" height="' + (c[3] || 1) + '"/>';
+      if (col === 'w') glow.push(s); else o.push(s);
     });
+    if (glow.length) o.push('<g class="xin-eyes">' + glow.join('') + '</g>');
+    if (!NO_CHEEK[p.face]) CHEEK.forEach(function (c) { R(c[0] + sx, c[1] + b, c[2], c[3], 'bs'); });
     // 手里的东西
     var it = p.item;
     if (it && it.k === 'cookie') {
@@ -172,7 +211,7 @@
      背包里「新动作」挨个做；闲着时偶尔做一个；聊天时它也能让这里做（xin move 名字）。 */
   var MOVE_ARMS = ['out', 'swingF', 'swingB', 'up', 'wave', 'hold', 'back', 'down', 'crossA', 'crossB'];
   var MOVE_ENUM = { armL: MOVE_ARMS, armR: MOVE_ARMS, legs: ['stand', 'walk', 'tuck', 'dangle'],
-    face: ['eyes', 'blink', 'hap', 'smile', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side'] };
+    face: ['eyes', 'blink', 'hap', 'smile', 'focus', 'calm', 'star', 'heart', 'shut', 'dz', 'wow', 'sad', 'scared', 'confused', 'angry', 'cry', 'pout', 'tongue', 'back', 'side'] };
   var MOVE_NUM = { t: [60, 1500], b: [0, 2], dy: [-6, 0], sx: [-1, 1], lx: [-1, 1], ly: [-1, 1], lp: [0, 3], mouth: [0, 2] };
   var learned = [], learnI = 0;
   function cleanFrames(frames) {
@@ -439,8 +478,8 @@
         p.fx = noteFx(16, 3 - kk % 4).concat(noteFx(1, 4 - (kk + 2) % 4));
       }
     }
-    if (mood === 'happy') {
-      var w = Math.floor(t / 170) % 2; p.face = 'hap'; p.armL = w ? 'up' : 'wave'; p.armR = w ? 'wave' : 'up';
+    if (mood === 'happy' || mood === 'love') {
+      var w = Math.floor(t / 170) % 2; p.face = mood === 'love' ? 'heart' : 'hap'; p.armL = w ? 'up' : 'wave'; p.armR = w ? 'wave' : 'up';
       // 站着时高兴得原地蹦：跳起来收腿 → 往下落 → 落地蹲一下 → 站直，两只手跟着挥
       if (mode === 'idle' && !seq) { var hb = Math.floor(t / 170) % 4; if (hb === 1) { p.dy = -2; p.legs = 'tuck'; } else if (hb === 2) { p.dy = -1; p.legs = 'tuck'; } else if (hb === 3) p.b = 1; }
     }
@@ -559,7 +598,7 @@
       var Hd = { armL: 'hold', armR: 'hold', lx: 0, ly: 1 }, f = given ? [] : reach(), n;
       f.push(mix(Hd, { item: { k: 'batt', n: 3 }, face: 'eyes', t: 600 }));
       for (n = 3; n >= 0; n--) f.push(mix(Hd, { item: { k: 'batt', n: n }, face: 'hap', b: n % 2, fx: [[n % 2 ? 2 : 17, 7 + n, 'gl'], [n % 2 ? 17 : 2, 11 - n, 'gl']], t: 260 }));
-      f.push({ face: 'wow', armL: 'up', armR: 'up', t: 300 });
+      f.push({ face: 'star', armL: 'up', armR: 'up', t: 400 });
       return { frames: f, after: function () { energy = Date.now() + 12000; sparks(6); setMood('happy', 1200); jump(8); } };
     },
     led: function (given) {
@@ -1462,7 +1501,7 @@
   }
   function putPcAway() { setMode('play'); playSeq([pc({ t: 260 })].concat(putAway()), done); }
   // AI 用 xin 命令让小芯做的动作（名字和 site/xin/vm-agent.mjs 里的 ACTS 一致）
-  var AI_MOOD = { happy: 'happy', sad: 'sad', angry: 'angry', wow: 'wow', confused: 'confused' };
+  var AI_MOOD = { happy: 'happy', love: 'love', sad: 'sad', angry: 'angry', wow: 'wow', confused: 'confused' };
   function idleNow() { aiLoop = false; stopWalk(); if (mode === 'play') { stopSeq(); setMode('idle'); } }
   function command(name, arg) {
     if (paused() || mode === 'away') return false;

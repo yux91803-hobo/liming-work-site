@@ -4,8 +4,8 @@
 .xin-layer.in-stm{z-index:15}
 .xin{position:absolute;left:0;top:0;width:80px;height:80px;touch-action:none;cursor:grab;pointer-events:none;
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;will-change:transform;
-  --xo:#141413;--xb:#3b3833;--xp:#aaa497;--xw:#f7f2e8;--xg:#8d887c;--xd:#b8b2a4}
-[data-theme=dark] .xin{--xo:#0d0c0b;--xb:#4a4640;--xp:#bdb7aa;--xw:#f7f2e8;--xg:#9a9488;--xd:#5d5850}
+  --xo:#0b0a0c;--xb:#252326;--xf:#332e31;--xl:#f3eadd;--xp:#b9ad9f;--xw:#fff0c9;--xg:#8d887c;--xd:#b8b2a4}
+[data-theme=dark] .xin{--xp:#d2c6b9;--xg:#9a9488;--xd:#5d5850}
 @media (min-width:720px){.xin{width:100px;height:100px}}
 .xin svg rect{pointer-events:visiblePainted}
 .xin.is-drag{cursor:grabbing}
@@ -19,6 +19,12 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin .c-b{fill:var(--xb)}
 .xin .c-p{fill:var(--xp)}
 .xin .c-w{fill:var(--xw)}
+.xin .c-fc{fill:var(--xf)}
+.xin .c-lid{fill:var(--xl)}
+.xin .c-hl{fill:#6a6061;opacity:.5}
+.xin .c-sh{fill:#51494e;opacity:.35}
+/* 眼睛微微发光（照参考图 .eyes 的 drop-shadow，按 240 → 20 换算） */
+.xin .xin-eyes{filter:drop-shadow(0 0 .33px #ffd793) drop-shadow(0 0 .58px #f2aa4b66)}
 .xin .c-g{fill:var(--xg)}
 .xin .c-d{fill:var(--xd)}
 .xin .c-ck{fill:#c98d4b}
@@ -37,8 +43,7 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin .c-bt{fill:#2f3a33}
 .xin .c-bl{fill:#7bd88f}
 .xin .c-tg{fill:#e0675a}
-.xin .c-bs{fill:#f08a7e}
-.xin .c-wl{fill:none;stroke:var(--xw);stroke-width:.9;stroke-linecap:round;stroke-linejoin:round}
+.xin .c-bs{fill:#ef9c8c;opacity:.9}
 .xin .c-lt{fill:#8d887c}
 .xin .c-lk{fill:#2f2d29}
 .xin .c-lg{fill:var(--clay)}
@@ -128,8 +133,8 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 
 /* 学习台里收起来以后：屏幕右边探出小芯的脑袋，点一下它就回来 */
 .xin-peek{position:fixed;z-index:30;right:-14px;bottom:calc(110px + env(safe-area-inset-bottom,0px));width:64px;height:40px;padding:0;border:0;background:none;cursor:pointer;
-  --xo:#141413;--xb:#3b3833;--xp:#aaa497;--xw:#f7f2e8;transition:transform .2s ease;animation:xpeek 3.2s steps(2,end) infinite}
-[data-theme=dark] .xin-peek{--xo:#0d0c0b;--xb:#4a4640;--xp:#bdb7aa}
+  --xo:#0b0a0c;--xb:#252326;--xf:#332e31;--xl:#f3eadd;--xp:#b9ad9f;--xw:#fff0c9;transition:transform .2s ease;animation:xpeek 3.2s steps(2,end) infinite}
+[data-theme=dark] .xin-peek{--xp:#d2c6b9}
 .xin-peek[hidden]{display:none}
 .xin-peek:hover,.xin-peek:focus-visible{animation:none;transform:translateX(-10px)}
 .xin-peek svg{display:block;width:100%;height:100%;stroke:none;fill:none;overflow:visible}
@@ -137,5 +142,11 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin-peek .c-b{fill:var(--xb)}
 .xin-peek .c-p{fill:var(--xp)}
 .xin-peek .c-w{fill:var(--xw)}
+.xin-peek .c-fc{fill:var(--xf)}
+.xin-peek .c-lid{fill:var(--xl)}
+.xin-peek .c-hl{fill:#6a6061;opacity:.5}
+.xin-peek .c-sh{fill:#51494e;opacity:.35}
+.xin-peek .c-bs{fill:#ef9c8c;opacity:.9}
+.xin-peek .xin-eyes{filter:drop-shadow(0 0 .33px #ffd793)}
 @keyframes xpeek{0%,100%{transform:none}50%{transform:translateX(-4px)}}
 @media (prefers-reduced-motion:reduce){.xin-peek{animation:none}}
