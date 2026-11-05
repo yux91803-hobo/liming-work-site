@@ -129,8 +129,8 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 
 /* 学习台里收起来以后：屏幕右边探出小芯的脑袋，点一下它就回来 */
 .xin-peek{position:fixed;z-index:30;right:-14px;bottom:calc(110px + env(safe-area-inset-bottom,0px));width:64px;height:40px;padding:0;border:0;background:none;cursor:pointer;
-  --xo:#141413;--xb:#3b3833;--xp:#aaa497;--xw:#f7f2e8;transition:transform .2s ease;animation:xpeek 3.2s steps(2,end) infinite}
-[data-theme=dark] .xin-peek{--xo:#0d0c0b;--xb:#4a4640;--xp:#bdb7aa}
+  --xo:#141413;--xb:#3b3833;--xp:#aaa497;--xw:#f7f2e8;--xe:#ffefce;--xr:#e9a18e;transition:transform .2s ease;animation:xpeek 3.2s steps(2,end) infinite}
+[data-theme=dark] .xin-peek{--xo:#0d0c0b;--xb:#4a4640;--xp:#bdb7aa;--xe:#fff0d3;--xr:#efa58f}
 .xin-peek[hidden]{display:none}
 .xin-peek:hover,.xin-peek:focus-visible{animation:none;transform:translateX(-10px)}
 .xin-peek svg{display:block;width:100%;height:100%;stroke:none;fill:none;overflow:visible}
@@ -138,5 +138,7 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin-peek .c-b{fill:var(--xb)}
 .xin-peek .c-p{fill:var(--xp)}
 .xin-peek .c-w{fill:var(--xw)}
+.xin-peek .c-ew{fill:var(--xe)}
+.xin-peek .c-rose{fill:var(--xr)}
 @keyframes xpeek{0%,100%{transform:none}50%{transform:translateX(-4px)}}
 @media (prefers-reduced-motion:reduce){.xin-peek{animation:none}}
