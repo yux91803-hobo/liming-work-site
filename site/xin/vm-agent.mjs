@@ -869,7 +869,8 @@ const ops = {
     const runs = (s.runs || []).slice(-30);
     const out = runs.map(r => { const d = runDone(r), evs = events(r); return { run: r, events: evs, done: d }; });
     const last = out[out.length - 1];
-    return { session: summary(s), runs: out, active: last && !last.done ? { run: last.run, off: last.events.length } : null };
+    // started：这一轮什么时候开始的（网页重新打开面板时，「思考中 · N 秒」接着算，不从 0 开始）
+    return { session: summary(s), runs: out, active: last && !last.done ? { run: last.run, off: last.events.length, started: (readJ(metaF(last.run)) || {}).started || 0 } : null };
   }
 };
 

@@ -161,6 +161,11 @@ async def xin_mock(pg, authed=False, live=None):
             st['forgot'] = args
             return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'send':
+            # send_waking：前几次说电脑在睡（网页隔 1 秒再发）；send_delay：送到小芯电脑要多久
+            if st.get('send_waking'):
+                st['send_waking'] -= 1
+                return await ok({'ok': False, 'state': 'waking', 'msg': '正在唤醒云电脑…', 'retryAfter': 1})
+            if st.get('send_delay'): await asyncio.sleep(st['send_delay'])
             st['sent'] = args
             return await ok({'ok': True, 'data': {'sid': 'snew000001', 'run': 'rlive00001', 'agent': args.get('agent') or 'codex'}})
         if op == 'poll':
@@ -1132,6 +1137,29 @@ async def main():
         check('代码上色：关键字、函数名、数字各有颜色（复制出来还是原文）', hl == [['int', 'void', 'return'], ['main'], ['0'], True], hl)
         await pg.click('.xc-x'); await pg.wait_for_timeout(400)
         check('关掉面板', not await pg.is_visible('.xc'))
+        # 发出去、还没送到小芯的电脑：自己那句下面「发送中…」，小芯那边还没有「正在输入」，标题栏写发送中；
+        # 送到了才冒「正在输入」写着「思考中」，从送到那一刻算秒数，每秒走；电脑在睡时写「叫醒了就发」
+        pt = await page(b)
+        xt = await xin_mock(pt, authed=True, live=[[{'t': 'user', 'text': '想一想'}], [], [], [{'t': 'text', 'text': '想好了。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 5000}]])
+        xt['send_delay'] = 1.5
+        await pt.goto(BASE + '/#xin'); await pt.wait_for_selector('.xc.show .xc-row textarea'); await pt.wait_for_timeout(300)
+        await pt.fill('.xc-row textarea', '想一想'); await pt.keyboard.press('Enter'); await pt.wait_for_timeout(400)
+        s1 = await pt.evaluate("[(document.querySelector('.xc-me.pending .xc-sending') || {}).textContent, !!document.querySelector('.xc-typing'), document.querySelector('.xc-sub').textContent]")
+        await pt.wait_for_selector('.xc-typing', timeout=5000)
+        s2 = await pt.evaluate("[!!document.querySelector('.xc-sending'), !!document.querySelector('.xc-me.pending'), document.querySelector('.xc-typing-l').textContent, document.querySelector('.xc-sub').textContent]")
+        await pt.wait_for_timeout(1150); l1 = await pt.text_content('.xc-typing-l')
+        await pt.wait_for_timeout(1000); l2 = await pt.text_content('.xc-typing-l')
+        sec = lambda t: int(t.split(' · ')[1].split(' ')[0]) if ' · ' in t else -1
+        check('发出去还没送到：自己那句下面「发送中…」、标题栏「发送中…」，小芯那边还没冒「正在输入」', s1 == ['发送中…', False, '发送中…'], s1)
+        check('送到了：「发送中」收起，冒「正在输入」写着「思考中」，标题栏「思考中…」；秒数从送到那一刻算、每秒走一下',
+              s2[:2] == [False, False] and s2[2].startswith('思考中') and s2[3] == '思考中…' and l1.startswith('思考中 · ') and 1 <= sec(l1) <= 2 and sec(l2) == sec(l1) + 1, (s2, l1, l2))
+        await pt.wait_for_function(CHAT_DONE, timeout=8000)
+        xt['send_waking'] = 1; xt['send_delay'] = 0
+        await pt.fill('.xc-row textarea', '再想一想'); await pt.keyboard.press('Enter')
+        await pt.wait_for_function("(document.querySelector('.xc-me.pending .xc-sending') || {}).textContent === '小芯的电脑在睡觉，叫醒了就发…'", timeout=3000)
+        await pt.wait_for_function("!document.querySelector('.xc-sending')", timeout=5000)
+        check('电脑在睡：自己那句下面写「小芯的电脑在睡觉，叫醒了就发…」，叫醒发出去以后收起', xt['sent'].get('text') == '再想一想', xt['sent'])
+        await pt.context.close()
         # 不开面板：背包「聊天」→ 小芯旁边的输入框 → 回复在小芯头上的气泡里，点气泡才打开面板
         pq = await page(b)
         xq = await xin_mock(pq, authed=True)

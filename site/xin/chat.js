@@ -2,7 +2,7 @@
    入口：小芯背包里的「聊天」（首页和 STM32 学习台里的小芯都有）：小芯旁边冒一个输入框（打字或语音），回复出现在小芯头上的气泡里，
    点气泡或输入框上的「展开」才打开这个面板看全文和历史。地址后面加 #xin 直接打开面板。没登录时先在面板里输密码。
    接口见 src/xin.js；AI 每一步（说话、执行命令、xin 动作）都整理成事件，这里一边轮询一边画出来，同时让小芯跟着动：
-   AI 在想 → 小芯坐在电脑前挠头；在执行命令 → 敲代码；xin 命令 → 照做；做完 → 开心，失败 → 难过。
+   AI 在思考 → 小芯坐在电脑前挠头；在执行命令 → 敲代码；xin 命令 → 照做；做完 → 开心，失败 → 难过。
    对话列表里还有：小芯的记事本、每日任务、小芯的文件（它电脑里 /data/workspace 的文件，能预览、下载）；每个对话能改名、删除。
    回答里出现的 /data/workspace/… 路径点一下就打开那个文件。
    聊天区像聊天软件：小芯在左边（像素头像）、你在右边；它在电脑上执行的命令不显示，干活时只冒一个「正在输入」的气泡和用时；代码上色。
@@ -64,7 +64,7 @@
     });
   }
   // 调云电脑：正在唤醒 / InstaBox 忙就等一会儿再试（最多 maxWait 毫秒），状态写在面板上
-  function call(op, args, maxWait) {
+  function call(op, args, maxWait, onWait) {
     var t0 = Date.now();
     function once() {
       return req('call', { op: op, args: args || {} }).then(function (d) {
@@ -72,7 +72,7 @@
         if (d._status !== 200) throw new Error(d.msg || d.error || ('出错了（' + d._status + '）'));
         if (d.ok) { if (op !== 'status') setStatus(''); return d.data; }
         if ((d.state === 'waking' || d.state === 'busy') && Date.now() - t0 < (maxWait || 0)) {
-          setStatus(d.msg || '正在唤醒云电脑…', 'wait');
+          if (onWait) onWait(d); else setStatus(d.msg || '正在唤醒云电脑…', 'wait');   // 发消息时写在自己那句下面，不再另外冒状态栏
           var x = xin(); if (x && op === 'send') x.ai('think');
           return sleepMs((d.retryAfter || 3) * 1000).then(once);
         }
@@ -147,7 +147,8 @@
   function renderHead() {
     if (!titleEl) return;
     var t = '', cls = '';
-    if (S.run || S.sending) { t = S.doing === 'work' ? '正在电脑上忙…' : '正在想…'; cls = 'busy'; }
+    if (S.sending) { t = '发送中…'; cls = 'busy'; }
+    else if (S.run) { t = S.doing === 'work' ? '正在电脑上忙…' : '思考中…'; cls = 'busy'; }
     else if (S.mstate === 'running') { t = '在线'; cls = 'on'; }
     else if (S.mstate === 'suspended') t = '电脑在睡觉，叫醒中…';
     else if (S.mstate === 'stopped') t = '电脑关机了，开机中…';
@@ -247,7 +248,7 @@
       clearList();
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid;
       d.runs.forEach(function (r) { r.events.forEach(function (ev) { draw(ev, true, r.run); }); });
-      if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Date.now(); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
+      if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Math.min(Date.now(), d.active.started || Date.now()); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
       render(); toBottom(true);
     }, function (e) {
       if (my !== S.loadSeq) return;
@@ -712,16 +713,21 @@
     var c = S.ctxOff ? null : pageContext();
     var pending = draw({ t: 'user', text: text, ctx: c ? ctxLabel(c) : '' });
     pending.classList.add('pending');
+    // 还没送到小芯的电脑：自己这句下面写「发送中…」（电脑在睡就写叫醒了再发），小芯那边先不冒「正在输入」
+    var note = pending.appendChild(h('div', 'xc-sending', '发送中…'));
     if (given == null) { input.value = ''; ls(LS_DRAFT, null); grow(); }
-    S.lastText = ''; S.doing = 'think'; S.t0 = Date.now(); S.note = null;
-    typing(true); renderHead(); toBottom(true);
+    S.lastText = ''; S.doing = 'think'; S.note = null;
+    renderHead(); toBottom(true);
     var x = xin(); if (x) x.ai('think');
-    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined }, 90000).then(function (d) {
+    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined }, 90000, function (w) {
+      note.textContent = w.state === 'waking' ? '小芯的电脑在睡觉，叫醒了就发…' : '小芯的电脑有点忙，等一下就发…';
+    }).then(function (d) {
       if (c && c.sel) S.sel = null;      // 选中的内容用过一次就不再带
       S.ctxOff = false; refreshCtx();
-      S.sending = false; pending.classList.remove('pending');
+      // 送到了：小芯的电脑收到这句、AI 开始干活，从这一刻开始算「思考中」的时间
+      S.sending = false; pending.classList.remove('pending'); note.remove();
       S.sid = d.sid; S.sessAgent = d.agent || S.sessAgent || S.agent; ls(LS_SID, d.sid);
-      S.mine[d.run] = true; S.run = d.run; S.off = 0; render(); startPolling();
+      S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); render(); typing(true); startPolling();
     }, function (e) {
       S.sending = false; pending.remove(); typing(false); renderHead();
       if (!input.value) { input.value = text; ls(LS_DRAFT, text); grow(); }
@@ -851,7 +857,9 @@
       pollTm = setTimeout(poll, 3000);
     });
   }
-  // 「正在输入」气泡旁边那行字：在想还是在电脑上忙、等了多久（分得清是慢还是卡住了）；偶尔的状态（比如卡住了重连）闪几秒
+  /* 「正在输入」气泡旁边那行字：思考中还是在电脑上忙、从消息送到小芯电脑那一刻起过了多久（分得清是慢还是卡住了），每秒走一下；
+     偶尔的状态（比如卡住了重连）闪几秒。「思考中」= AI 已经收到这句、还没出声也没在执行命令：主要是模型在想、在写回答
+     （回答是整段到的，看不到一个字一个字地写），也包括 AI 程序启动、请求发给模型的那一两秒 */
   var NOISE = /^Model metadata for .* not found/i;   // Codex 每轮都报的无关警告
   function progress() {
     if (!S.run && !S.sending) return;
@@ -859,7 +867,7 @@
     if (!typingEl) return;
     var sec = Math.round((Date.now() - (S.t0 || Date.now())) / 1000), lab = typingEl.querySelector('.xc-typing-l');
     if (S.note && Date.now() - S.note.at < 6000) { lab.textContent = S.note.text; return; }
-    lab.textContent = (S.doing === 'work' ? '在电脑上忙' : '在想') + (sec >= 3 ? ' · ' + (sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒' : sec + ' 秒') : '');
+    lab.textContent = (S.doing === 'work' ? '在电脑上忙' : '思考中') + (sec >= 1 ? ' · ' + (sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒' : sec + ' 秒') : '');
   }
   function react(ev) {
     if (ev.t === 'status') { if (!NOISE.test(ev.text || '')) S.note = { text: ev.text, at: Date.now() }; return; }
@@ -947,15 +955,16 @@
     if (e) put(e);
     return e;
   }
-  // 小芯在干活时，最后面冒一个「正在输入」的气泡（三个点在跳）和一行字：在想 / 在电脑上忙，用了多久
-  var typingEl = null;
+  // 小芯在干活时，最后面冒一个「正在输入」的气泡（三个点在跳）和一行字：思考中 / 在电脑上忙，用了多久（每秒走）
+  var typingEl = null, typingTick = 0;
   function typing(on) {
-    if (!on) { if (typingEl) typingEl.remove(); typingEl = null; return; }
+    if (!on) { clearInterval(typingTick); typingTick = 0; if (typingEl) typingEl.remove(); typingEl = null; return; }
+    if (!typingTick) typingTick = setInterval(progress, 1000);
     if (!typingEl) {
       typingEl = h('div', 'xc-m xc-ai xc-typing'); typingEl.setAttribute('aria-label', '小芯正在回复');
       typingEl.appendChild(avatar());
       var b = h('div', 'xc-bub'); b.innerHTML = '<i></i><i></i><i></i>';
-      typingEl.appendChild(b); typingEl.appendChild(h('span', 'xc-typing-l', '在想'));
+      typingEl.appendChild(b); typingEl.appendChild(h('span', 'xc-typing-l', '思考中'));
     }
     list.appendChild(typingEl);
     var prev = typingEl.previousElementSibling;
