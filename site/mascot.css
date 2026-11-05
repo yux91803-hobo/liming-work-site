@@ -141,7 +141,7 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 .xin-peek .c-b{fill:var(--xb)}
 .xin-peek .c-p{fill:var(--xp)}
 .xin-peek .c-w{fill:var(--xw)}
-.xin-peek .c-ew{fill:var(--xe)}
+.xin-peek .c-ew{fill:var(--xe);filter:drop-shadow(0 0 .3px #ffe2a0) drop-shadow(0 0 .65px rgba(255,195,110,.6))}
 .xin-peek .c-rose{fill:var(--xr)}
 @keyframes xpeek{0%,100%{transform:none}50%{transform:translateX(-4px)}}
 @media (prefers-reduced-motion:reduce){.xin-peek{animation:none}}
