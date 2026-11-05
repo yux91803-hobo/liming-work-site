@@ -14,7 +14,7 @@
 (function () {
   'use strict';
   var API = '/api/xin/';
-  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort';
+  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort', LS_CTX = 'lm.xin.ctx';
   var AGENTS = { codex: 'Codex', claude: 'Claude' };
   // 思考强度：自动 = 写代码的活用最高（max），聊天用 AI 自己的默认（规则在 vm-agent.mjs 的 resolveEffort）
   var EFFORTS = { auto: '自动', high: '高', max: '最高' };
@@ -125,7 +125,7 @@
     input.addEventListener('input', function () { grow(); ls(LS_DRAFT, input.value || null); });
     root.querySelector('.xc-row').addEventListener('click', function (e) { if (e.target === this) input.focus(); });
     input.addEventListener('focus', refreshCtx);
-    root.querySelector('.xc-ctx button').addEventListener('click', function () { S.ctxOff = true; refreshCtx(); input.focus(); });
+    root.querySelector('.xc-ctx button').addEventListener('click', function () { skipCtx(); refreshCtx(); input.focus(); });
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touch) { e.preventDefault(); if (!S.run) send(); }
     });
@@ -179,7 +179,6 @@
 
   /* ---------- 打开 / 关上 ---------- */
   function open() {
-    S.ctxOff = false;
     if (!root) build();
     S.open = true; root.hidden = false; S.view = 'chat'; setDrawer(false);
     requestAnimationFrame(function () { root.classList.add('show'); });
@@ -554,6 +553,11 @@
     box.appendChild(h('p', 'xc-set-h', '设置'));
     box.appendChild(segRow('xc-agent', '新对话用', '已经开始的对话不会换', AGENTS, S.agent, 'agent', function (k) { S.agent = k; ls(LS_AGENT, k); }));
     box.appendChild(segRow('xc-effort', '思考强度', '自动：写代码、编译、调试时用最高', EFFORTS, S.effort, 'effort', function (k) { S.effort = k; ls(LS_EFF, k); }));
+    // 附带：发消息时带上学习台里正在看的页面、选中的文字、写的代码。关掉就都不带（记在这个浏览器里）
+    var ctx = toggleRow('xc-ctxauto', '附带正在看的页面', '发消息时带上学习台里正在看的页面、选中的文字和你写的代码；关掉就都不带');
+    ctx.set(ls(LS_CTX) !== '0');
+    ctx.btn.addEventListener('click', function () { var on = ls(LS_CTX) === '0'; ls(LS_CTX, on ? null : '0'); ctx.set(on); S.ctxSkip = null; refreshCtx(); });
+    box.appendChild(ctx.row);
     var push = toggleRow('xc-push', '做完提醒', '关掉网页或切到别的应用时，小芯做完了发一条通知');
     box.appendChild(push.row);
     pushSetup(push);
@@ -843,7 +847,7 @@
     if (!text || S.run || S.sending) return false;
     S.sending = true;
     if (list.querySelector('.xc-hello')) clearList();
-    var c = S.ctxOff ? null : pageContext();
+    var c = curCtx();
     var pending = draw({ t: 'user', text: text, ctx: c ? ctxLabel(c) : '' });
     pending.classList.add('pending');
     if (given == null) { input.value = ''; ls(LS_DRAFT, null); grow(); }
@@ -853,7 +857,7 @@
     var x = xin(); if (x) x.ai('think');
     call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined }, 90000, function (w) { S.waitSend = w.state; progress(); }).then(function (d) {
       if (c && c.sel) S.sel = null;      // 选中的内容用过一次就不再带
-      S.ctxOff = false; refreshCtx();
+      refreshCtx();
       // 送到了：小芯的电脑收到这句、AI 开始干活，从这一刻开始算「思考中」的时间
       S.sending = false; S.waitSend = ''; pending.classList.remove('pending');
       S.sid = d.sid; S.sessAgent = d.agent || S.sessAgent || S.agent; ls(LS_SID, d.sid);
@@ -916,8 +920,21 @@
       if (ta && ta.offsetParent && ta.value.trim()) c.code = ta.value.slice(0, CODE_MAX);
     }
     // 只带「现在这一页」上选中的：关掉学习台以后，学习台里选过的就不算了
-    if (S.sel && Date.now() - S.sel.at < SEL_AGE && (S.sel.doc === d || S.sel.doc === document)) c.sel = S.sel.text;
+    if (S.sel && Date.now() - S.sel.at < SEL_AGE && (S.sel.doc === d || S.sel.doc === document)) { c.sel = S.sel.text; c.selAt = S.sel.at; }
     return c.label || c.sel || c.code ? c : null;
+  }
+  /* 这次发消息带不带「附带」：设置里关了就都不带；点过 ✕ 的，在这一页上一直不带（发完也不再冒出来），
+     换到别的页面、或者又选中了新的文字（你主动要它看的），之前的「不带」才作废 */
+  function curCtx() {
+    if (ls(LS_CTX) === '0') return null;
+    var c = pageContext(), k = S.ctxSkip;
+    if (!c) return null;
+    if (k && ((c.place || '') !== k.place || (c.sel && c.selAt !== k.selAt))) S.ctxSkip = k = null;
+    return k ? null : c;
+  }
+  function skipCtx() {
+    var c = pageContext();
+    S.ctxSkip = c ? { place: c.place || '', selAt: c.sel ? c.selAt : 0 } : null;
   }
   function ctxLabel(c) {
     var out = [c.place || c.label || '网页'];
@@ -934,7 +951,7 @@
   }
   function refreshCtx() {
     if (!root) return;
-    var box = root.querySelector('.xc-ctx'), c = S.ctxOff ? null : pageContext();
+    var box = root.querySelector('.xc-ctx'), c = curCtx();
     box.hidden = !c; if (c) box.querySelector('span').textContent = '附带：' + ctxLabel(c);
   }
 
@@ -944,12 +961,11 @@
     if (!S.enabled || !X || !X.ask) return;
     if (!S.authed) { open(); return; }
     if (!root) build();
-    S.ctxOff = false;
-    var c = pageContext();
+    var c = curCtx();
     X.ask({
       placeholder: S.run ? '小芯还在忙上一件事…' : '和小芯说点什么…',
       chip: c ? '附带：' + ctxLabel(c) : '',
-      onChipOff: function () { S.ctxOff = true; },
+      onChipOff: function () { skipCtx(); },
       onExpand: open,
       onSend: function (t) {
         if (S.run || S.sending) { X.say('我还在忙上一件事，等我做完～', 4000); return; }
