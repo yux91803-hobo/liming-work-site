@@ -744,6 +744,9 @@ test('做完提醒：网页没在看时做完就推送（解得开、带标题�
     assert.ok(fs.existsSync(path.join(home, 'xin', 'runs', r2.run + '.seen')));
     op('forget', { sid: r1.sid });
     assert.ok(!fs.existsSync(path.join(home, 'xin', 'runs', r2.run + '.seen')));
+    // 小芯的屏幕：每一轮同时写进 screen.log（你说的、它说的、做完没有）
+    const scr = fs.readFileSync(path.join(home, 'xin', 'screen.log'), 'utf8').replace(/\x1b\[[0-9;]*m/g, '');
+    assert.ok(/── 你（\d\d:\d\d）：写个点灯程序/.test(scr) && scr.includes('小芯：编好啦！') && scr.includes('── 做完了'), scr);
   } finally { srv.close(); }
 });
 
@@ -781,7 +784,7 @@ test('网页用到的每个 op，Worker 都放行，vm-agent 也都认识（漏�
   const missing = used.filter(op => !OPS.has(op));
   assert.deepStrictEqual(missing, [], 'Worker 的 OPS 里少了：' + missing.join(', '));
   const agent = fs.readFileSync(path.join(__dirname, '../site/xin/vm-agent.mjs'), 'utf8');
-  const local = new Set(['status', 'wake']);   // 这两个 Worker 自己处理，不进云电脑
+  const local = new Set(['status', 'wake', 'screen_off']);   // 这几个 Worker 自己调 InstaBox，不进云电脑（screen 两边都有）
   const unknown = [...OPS].filter(op => !local.has(op) && !new RegExp('^  (async )?' + op + '\\(', 'm').test(agent));
   assert.deepStrictEqual(unknown, [], 'vm-agent 的 ops 里没有：' + unknown.join(', '));
 });
@@ -884,4 +887,80 @@ test('好感度、新动作进了设定；greet 顺便带回去；xin bond 在�
   assert.strictEqual(op('bond_play', { kind: 'cookie' }).info.log[0].why, '喂我吃饼干');
   const p = spawnSync(process.execPath, ['--input-type=module', '-e', `import { systemPrompt } from ${JSON.stringify(require('node:url').pathToFileURL(agent).href)}; process.stdout.write(systemPrompt(''));`], { env, encoding: 'utf8' }).stdout;
   assert.ok(p.includes('你和用户现在的关系：刚认识（好感度 4）') && p.includes('xin bond +1 理由') && p.includes('xin move help') && p.includes('已经会的：还没有'), p.slice(-600));
+});
+
+/* ---------- 小芯的屏幕 ---------- */
+test('小芯的屏幕：开桌面 → 桌面上开终端 → 要观看链接（只看、30 分钟）；接管要能操作的链接（15 分钟）；screen_off 作废全部链接', async () => {
+  const m = await fresh(), env = mkEnv(), ck = await login(m, env);
+  const ib = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/desktop': [{ body: { installed: true, running: true, controller: 'agent' } }],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true,"opened":true}', stderr: '', exitCode: 0 } }],
+    'POST /v1/machines/m_abc/desktop/stream': [(u, init) => new Response(JSON.stringify({ url: 'https://dashboard.instabox.sh/desktop/m_abc#token=' + (JSON.parse(init.body).viewOnly ? 'v' : 'c'), expiresAt: '2026-11-05T03:00:00Z' }))],
+    'DELETE /v1/machines/m_abc/desktop/stream': [{ status: 204 }]
+  });
+  const call = async (op, args) => (await m.handleXin(req('/api/xin/call', { body: { op, args }, headers: { cookie: ck } }), env, null)).json();
+  try {
+    const v = await call('screen', {});
+    assert.deepStrictEqual(v, { ok: true, data: { url: 'https://dashboard.instabox.sh/desktop/m_abc#token=v', expiresAt: '2026-11-05T03:00:00Z', control: false, terminal: true } });
+    const c = await call('screen', { control: true });
+    assert.deepStrictEqual([c.data.url.endsWith('token=c'), c.data.control], [true, true]);
+    const desk = ib.calls.filter(x => x.key.endsWith('/desktop')).map(x => JSON.parse(x.body));
+    assert.deepStrictEqual(desk[0], { action: 'start', width: 1280, height: 800 });
+    const streams = ib.calls.filter(x => x.key === 'POST /v1/machines/m_abc/desktop/stream').map(x => JSON.parse(x.body));
+    assert.deepStrictEqual(streams, [{ viewOnly: true, ttlSeconds: 1800 }, { viewOnly: false, ttlSeconds: 900 }]);
+    assert.strictEqual(JSON.parse(ib.calls.find(x => x.key.endsWith('/exec')).body).argv[2], 'screen');
+    assert.deepStrictEqual(await call('screen_off', {}), { ok: true, data: { ok: true } });
+    assert.ok(ib.calls.some(x => x.key === 'DELETE /v1/machines/m_abc/desktop/stream'));
+  } finally { ib.restore(); }
+});
+
+test('小芯的屏幕：电脑在睡就叫醒（waking）；桌面在装回 waking；key 不是创建者自己的给出明白的说法；开不了终端也照样给链接', async () => {
+  const m = await fresh(), env = mkEnv(), ck = await login(m, env);
+  const call = async (op, args) => (await m.handleXin(req('/api/xin/call', { body: { op, args }, headers: { cookie: ck } }), env, null)).json();
+  let ib = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/desktop': [{ status: 409, body: { error: { code: 'machine_not_running' } } }, { body: { installed: false, installing: true, running: false } }],
+    'GET /v1/machines/m_abc': [{ body: { id: 'm_abc', state: 'suspended' } }],
+    'POST /v1/machines/m_abc/resume': [{ status: 202, body: {} }]
+  });
+  try {
+    assert.strictEqual((await call('screen', {})).state, 'waking');
+    assert.ok(ib.calls.some(x => x.key.endsWith('/resume')));
+    assert.strictEqual((await call('screen', {})).state, 'waking');
+  } finally { ib.restore(); }
+  m._reset();
+  const ck2 = await login(m, env);
+  ib = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/desktop': [{ body: { installed: true, running: true } }],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"error":"no_terminal"}', stderr: '', exitCode: 0 } }],
+    'POST /v1/machines/m_abc/desktop/stream': [{ status: 403, body: { error: { code: 'permission_denied' } } }, { body: { url: 'https://x/desktop/m_abc#token=v', expiresAt: 'z' } }]
+  });
+  const call2 = async (op, args) => (await m.handleXin(req('/api/xin/call', { body: { op, args }, headers: { cookie: ck2 } }), env, null)).json();
+  try {
+    const d = await call2('screen', {});
+    assert.deepStrictEqual([d.ok, d.state], [false, 'error']);
+    assert.match(d.msg, /创建这台云电脑的人自己的 key/);
+    const ok = await call2('screen', {});
+    assert.deepStrictEqual([ok.ok, ok.data.terminal, ok.data.url], [true, false, 'https://x/desktop/m_abc#token=v']);
+  } finally { ib.restore(); }
+});
+
+test('小芯的屏幕：screen.log 每一类事件写成好读的一行（命令去掉 /bin/bash -lc 外壳，输出太长只留前面）；电脑里没终端时 screen 说清楚', async () => {
+  const { screenLine, bareCmd } = await load('../site/xin/vm-agent.mjs');
+  const plain = ev => screenLine(ev, Date.UTC(2026, 10, 5, 2, 30)).replace(/\x1b\[[0-9;]*m/g, '');
+  assert.strictEqual(plain({ t: 'user', text: '写个\n点灯程序' }), '\n── 你（10:30）：写个 点灯程序\n');
+  assert.strictEqual(plain({ t: 'text', text: '好嘞\n马上' }), '小芯：好嘞\n      马上\n');
+  assert.strictEqual(plain({ t: 'tool', detail: "/bin/bash -lc 'cd /data/workspace/blink && make'" }), '$ cd /data/workspace/blink && make\n');
+  assert.strictEqual(bareCmd('/bin/bash -lc "echo \\"hi\\""'), 'echo "hi"');
+  assert.strictEqual(bareCmd("/bin/bash -lc 'echo '\\''a'\\'''"), "echo 'a'");
+  const long = plain({ t: 'tool_end', ok: false, out: Array.from({ length: 35 }, (_, i) => 'line' + i).join('\n') });
+  assert.ok(long.includes('  line29\n') && !long.includes('line30') && long.includes('…（还有 5 行）') && long.endsWith('  ✗ 没成功\n'), long);
+  assert.strictEqual(plain({ t: 'done', ok: true, ms: 41200 }), '── 做完了 · 41 秒\n');
+  assert.strictEqual(plain({ t: 'status', text: 'x' }), '');
+  const { op, xin } = agentEnv();
+  const r = op('screen');
+  assert.strictEqual(r.error, 'no_terminal');
+  assert.ok(fs.readFileSync(path.join(xin, 'screen.log'), 'utf8').includes('小芯的屏幕'));
 });

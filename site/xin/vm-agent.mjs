@@ -25,6 +25,7 @@
      push_sub {sub, ua?}           记下一个浏览器的推送订阅；push_unsub {endpoint} 去掉；push_test {} 给每个订阅发一条试试
      moves    {}                   小芯自己编的新动作（xin move add 记下的）
      bond     {}                   好感度：分数、关系、最近的变化；bond_play {kind} 网页上喂它、陪它玩（一天最多 +3）
+     screen   {}                   小芯的屏幕：在电脑桌面上开一个终端，实时滚动它在干什么（screen.log）；已经开着就不再开
    内部：warm                       预热：发一个很短的请求，把刚睡醒后第一下的卡顿先吃掉（不留会话）
 
    AI 在这台云电脑里是完全放权的（--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox），
@@ -171,6 +172,7 @@ export function systemPrompt(mem) {
     '你有一份每日任务清单（文件 ' + DAILY_FILE() + '）。每天北京时间 9:10 左右你会被叫醒按清单做一遍（没做成 21:10 再来一次）。用户让你「每天做什么」，就写进这份清单（一条一行，写清楚怎么做、怎么确认做成了）；别自己用 cron 定时，电脑睡着的时候 cron 不会跑。',
     '你的电脑里装好了 STM32 的编译工具（arm-none-eabi-gcc）。' + TEMPLATE() + ' 是 STM32F103ZET6 的空工程，写法和学习台一样（#include "stm32f10x.h"，寄存器名来自 ST 官方头文件，printf、malloc、中断都能用）。要编译程序就复制一份（cp -r ' + TEMPLATE() + ' ' + WORK + '/起个英文名），改 main.c（多个 .c 放同一目录），在那个目录里 make，生成 build/app.hex（烧录用）。空工程不见了就跑 sh ' + path.join(BASE, 'setup-stm32.sh') + ' 重新装。',
     '用户在网页上「小芯的文件」里能看到你电脑里 ' + WORK + ' 下面的文件，能预览、能下载到手机或电脑上。要给用户的东西（代码、.hex、文档）都放在 ' + WORK + ' 下面；回答里提到文件就写完整路径（比如 `' + WORK + '/blink/build/app.hex`），用户点一下就能打开或下载。编译好了一定告诉用户 .hex 的完整路径。',
+    '用户在网页上能看你电脑的屏幕（桌面是 DISPLAY=' + screenDisplay() + '，上面「小芯在干什么」那个终端会实时显示你执行的命令），也可能接管过去自己操作。想给用户看点什么（网页、图片、程序界面），可以在桌面上打开，比如 `DISPLAY=' + screenDisplay() + ' chromium 网址 >/dev/null 2>&1 &`，告诉他点聊天框上面的「屏幕」看；别关掉「小芯在干什么」那个终端。',
     '你能自己编新动作：`xin move help` 看怎么写（一串姿势帧），`xin move add 名字 帧` 学会以后网页上的小芯就会做，背包里也有；用户让你学个动作、或者你想表达一个现有动作表达不了的心情时用。已经会的：' + (readMoves().map(m => m.name).join('、') || '还没有') + '。',
     bondPart(),
     memoryPart(mem)
@@ -351,6 +353,75 @@ export async function pushAll(msg) {
   return out;
 }
 
+/* ---------- 小芯的屏幕 ----------
+   它平时在后台跑命令，桌面上看不到。所以每一轮的事件同时写成好读的几行（screen.log，带颜色）：你说了什么、它说了什么、
+   执行的命令和结果（太长只留前面）、做完没有；op screen 在桌面（Xvnc 的 DISPLAY）上开一个终端 tail 这个文件。
+   网站「小芯的屏幕」嵌的就是这个桌面（InstaBox 的桌面链接），能看也能接管。 */
+const SCREEN_LOG = () => path.join(BASE, 'screen.log'), SCREEN_PID = () => path.join(BASE, 'screen.pid');
+const SCREEN_MAX = 2 * 1024 * 1024, SCREEN_KEEP = 256 * 1024;
+const AN = { r: '\x1b[0m', b: '\x1b[1m', dim: '\x1b[2m', clay: '\x1b[38;5;173m', cyan: '\x1b[36m', green: '\x1b[32m', red: '\x1b[31m', gray: '\x1b[90m', yellow: '\x1b[33m' };
+// Codex 报的命令是 /bin/bash -lc '…'：只留里面那句
+export function bareCmd(d) {
+  const m = /^\/(?:usr\/)?bin\/(?:ba)?sh -lc (['"])([\s\S]*)\1$/.exec(String(d || '').trim());
+  if (!m) return String(d || '');
+  return m[1] === "'" ? m[2].replace(/'\\''/g, "'") : m[2].replace(/\\(["\\$`])/g, '$1');
+}
+function cutLines(s, n) {
+  const a = String(s || '').replace(/\s+$/, '').split('\n');
+  return a.length > n ? a.slice(0, n).concat(['…（还有 ' + (a.length - n) + ' 行）']) : a;
+}
+export function screenLine(ev, now = Date.now()) {
+  switch (ev.t) {
+    case 'user': return '\n' + AN.b + AN.clay + '── 你（' + new Date(now + 8 * 3600e3).toISOString().slice(11, 16) + '）：' + AN.r + String(ev.text || '').replace(/\s+/g, ' ').slice(0, 300) + '\n';
+    case 'text': return AN.cyan + '小芯：' + AN.r + cutLines(ev.text, 40).join('\n      ') + '\n';
+    case 'tool': return AN.b + AN.yellow + '$ ' + AN.r + AN.b + bareCmd(ev.detail || ev.name || '') + AN.r + '\n';
+    case 'tool_end': return (ev.out ? AN.gray + cutLines(ev.out, 30).map(l => '  ' + l).join('\n') + AN.r + '\n' : '') + (ev.ok ? AN.green + '  ✓' : AN.red + '  ✗ 没成功') + AN.r + '\n';
+    case 'err': return AN.red + '出错：' + String(ev.text || '') + AN.r + '\n';
+    case 'mem': return AN.dim + '（记住了：' + ev.text + '）' + AN.r + '\n';
+    case 'done': return AN.dim + '── ' + (ev.stopped ? '已停止' : ev.ok ? '做完了' : '没做成') + (ev.ms ? ' · ' + Math.round(ev.ms / 1000) + ' 秒' : '') + AN.r + '\n';
+    default: return '';
+  }
+}
+function screenLog(ev) {
+  const line = screenLine(ev);
+  if (!line) return;
+  try {
+    const f = SCREEN_LOG();
+    // 太长了只留最后一段（从一行的开头开始）；tail -F 会接着读
+    try {
+      if (fs.statSync(f).size > SCREEN_MAX) {
+        const buf = fs.readFileSync(f), tail = buf.subarray(buf.length - SCREEN_KEEP), nl = tail.indexOf(10);
+        fs.writeFileSync(f, tail.subarray(nl + 1));
+      }
+    } catch { /* 还没有这个文件 */ }
+    fs.appendFileSync(f, line);
+  } catch { /* 写不了就算了，不影响聊天 */ }
+}
+function screenDisplay() {
+  if (process.env.XIN_DISPLAY) return process.env.XIN_DISPLAY;
+  try {
+    const xs = fs.readdirSync('/tmp/.X11-unix').filter(n => /^X\d+$/.test(n)).map(n => +n.slice(1)).sort((a, b) => a - b);
+    if (xs.length) return ':' + xs[xs.length - 1];
+  } catch { /* 桌面没开 */ }
+  return ':1';
+}
+export function openScreen() {
+  mk(BASE);
+  if (!fs.existsSync(SCREEN_LOG())) fs.writeFileSync(SCREEN_LOG(), AN.clay + '小芯的屏幕：这里实时显示我在电脑上干什么（执行的命令和结果）。' + AN.r + '\n');
+  const pid = Number(readText(SCREEN_PID()).trim()) || 0;
+  if (pid && alive(pid) && /xfce4-terminal|tail/.test(readText('/proc/' + pid + '/cmdline'))) return { ok: true, already: true };
+  if (!hasCmd('xfce4-terminal')) return { error: 'no_terminal', msg: '电脑里没有 xfce4-terminal，开不了终端（桌面还是能看）' };
+  const display = screenDisplay();
+  const env = Object.assign({}, process.env, { DISPLAY: display, DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || 'unix:path=/run/user/' + process.getuid() + '/bus' });
+  // 最大化、字大一点：手机、平板上看缩小了的桌面也认得出字
+  const c = spawn('xfce4-terminal', ['--disable-server', '--title', '小芯在干什么', '--maximize', '--hide-menubar', '--hide-toolbar', '--font=Monospace 14', '-x', 'tail', '-n', '400', '-F', SCREEN_LOG()],
+    { detached: true, stdio: 'ignore', env, cwd: os.homedir() });
+  c.on('error', () => { /* 起不来就算了 */ });
+  c.unref();
+  fs.writeFileSync(SCREEN_PID(), String(c.pid));
+  return { ok: true, opened: true, display };
+}
+
 /* ---------- 小工具 ---------- */
 function mk(d) { fs.mkdirSync(d, { recursive: true }); }
 function rid(p) { return p + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'); }
@@ -364,7 +435,7 @@ const runF = run => path.join(RUNS, run + '.jsonl');
 const metaF = run => path.join(RUNS, run + '.json');
 const seenF = run => path.join(RUNS, run + '.seen');   // 网页最近一次来取这一轮的进度（看修改时间）
 function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
-function emit(run, ev) { fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); }
+function emit(run, ev) { fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
 function events(run) {
   let t; try { t = fs.readFileSync(runF(run), 'utf8'); } catch { return []; }
   const out = [];
@@ -692,6 +763,7 @@ const ops = {
   },
   moves() { return { moves: readMoves() }; },
   bond() { return bondInfo(); },
+  screen() { return openScreen(); },
   bond_play(a) {
     const why = { cookie: '喂我吃饼干', batt: '给我吸电池', ball: '陪我玩球', led: '陪我玩 LED', phones: '给我戴耳机', swing: '陪我荡秋千', dance: '看我跳舞' }[a.kind] || '陪我玩';
     return Object.assign(bondAdd('play', 1, why), { info: bondInfo() });

@@ -120,16 +120,24 @@
 .xc-copy:hover{background:var(--panel);color:var(--clay)}
 .xc-code pre{margin:0;padding:10px 14px 12px;overflow-x:auto;font:12.5px/1.6 var(--mono);tab-size:4}
 .xc-code pre code{padding:0;background:none;font:inherit;white-space:pre}
+/* 代码上色（回答里的代码块、「小芯的文件」里的预览） */
+.xc{--hl-kw:#b4502c;--hl-ty:#1f7a73;--hl-fn:#2a5fa5;--hl-mc:#8a5a0f;--hl-str:#3c7a35;--hl-num:#7448bd;--hl-com:#8d8a80;--hl-pre:#a3407b;--hl-var:#b0620a}
+[data-theme=dark] .xc{--hl-kw:#f0936f;--hl-ty:#6fd0c7;--hl-fn:#86b8f0;--hl-mc:#e3b867;--hl-str:#9ccf8c;--hl-num:#c5a6ff;--hl-com:#8a877e;--hl-pre:#f08ac0;--hl-var:#f2b46a}
+.hl-kw{color:var(--hl-kw)}
+.hl-ty{color:var(--hl-ty)}
+.hl-fn{color:var(--hl-fn)}
+.hl-mc{color:var(--hl-mc)}
+.hl-str{color:var(--hl-str)}
+.hl-num{color:var(--hl-num)}
+.hl-com{color:var(--hl-com);font-style:italic}
+.hl-pre{color:var(--hl-pre)}
+.hl-var{color:var(--hl-var)}
 
-/* 空对话：大一点的小芯、一句介绍、两个建议 */
+/* 空对话：大一点的小芯和一句介绍 */
 .xc-hello{display:flex;flex-direction:column;align-items:center;padding:36px 16px 8px;text-align:center}
 .xc-hello .xc-av{margin-bottom:14px}
 .xc-hello-t{font-size:17px;color:var(--ink)}
-.xc-hello p{max-width:300px;margin:6px 0 18px;font:14px/1.6 var(--sans);color:var(--ink-2);text-wrap:balance}
-.xc-chips{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
-.xc-chip{padding:8px 14px;border:2px solid var(--pb,var(--ink));background:var(--panel);box-shadow:3px 3px 0 var(--hard);font:13px var(--sans);color:var(--ink)}
-.xc-chip:hover{border-color:var(--clay);color:var(--clay)}
-.xc-chip:active{transform:translate(3px,3px);box-shadow:none}
+.xc-hello p{max-width:300px;margin:6px 0 0;font:14px/1.6 var(--sans);color:var(--ink-2);text-wrap:balance}
 
 /* ---------- 输入 ---------- */
 .xc-ft{flex:none;padding:10px 14px calc(12px + var(--sb));border-top:1px solid var(--line);background:var(--panel)}
@@ -241,6 +249,20 @@
 .xc-btn2{background:none;border:1px solid var(--ink);color:var(--ink);font-weight:400}
 .xc-dailyst{margin:6px 0 0;font-size:12.5px;color:var(--ink-2)}
 .xc-inl{display:inline;margin:0;padding:0 2px}
+
+/* ---------- 小芯的屏幕：全屏看它的电脑桌面 ---------- */
+.xs{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;background:var(--bg);color:var(--ink)}
+.xs[hidden]{display:none}
+body.xs-open{overflow:hidden}
+.xs-hd{display:flex;align-items:center;gap:8px;flex:none;height:calc(54px + var(--st));padding:var(--st) 10px 0 6px;border-bottom:2px solid var(--pb,var(--ink));background:var(--panel)}
+.xs-t{flex:1;min-width:0;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xs-tip{flex:none;margin:0;padding:7px 14px;font:12.5px/1.5 var(--sans,inherit);color:var(--ink-2);background:var(--sunk);border-bottom:1px solid var(--line)}
+.xs.ctl .xs-tip{background:var(--clay-soft);color:var(--ink)}
+.xs-body{position:relative;flex:1;min-height:0;background:#111}
+.xs-msg{position:absolute;inset:0;display:grid;place-items:center;margin:0;padding:20px;text-align:center;font:14px/1.6 var(--sans,inherit);color:#cfcac0}
+.xs-fr{display:block;width:100%;height:100%;border:0;background:#111}
+/* 手机竖着：提醒横过来看 */
+@media (orientation:portrait) and (max-width:700px){.xs-tip::after{content:"　手机横过来看更清楚。"}}
 
 @keyframes xcblink{50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.xc,body.xc-open #home{transition:none}.xc-st.wait::before,.xc-sub.busy::before,.xc-typing .xc-bub i{animation:none}}

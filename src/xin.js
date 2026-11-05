@@ -10,6 +10,7 @@
 //   POST /api/xin/call     {op, args}   op = status | wake | ping | send | poll | stop | sessions | history | memory | memory_set（小芯的记事本）
 //                                       | greet | daily | daily_get | daily_set | rename | forget（对话改名 / 删除）| files（小芯的文件：列文件夹、预览）
 //                                       | push_key | push_sub | push_unsub | push_test（做完提醒）| moves（新动作）| bond | bond_play（好感度）
+//                                       | screen {control?}（小芯的屏幕：开桌面、桌面上开终端、要一个短时的桌面链接）| screen_off（作废桌面链接）
 //   GET  /api/xin/file?path=/data/workspace/…   下载小芯电脑里的一个文件（先让 vm-agent 核对在工作目录里，再从 InstaBox 原样转过来）
 // status、wake 直接调 InstaBox 的机器接口（wake：打开网页时把睡着的云电脑叫醒，已经醒着就什么都不做）；其余都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
 // 返回 {ok:true, data} 或 {ok:false, state, msg, retryAfter}：state = waking（正在唤醒云电脑）、cooldown（跑满 8 小时后的冷却）、busy、error。
@@ -19,7 +20,8 @@ const SESSION_SEC = 30 * 86400;
 const AGENT_ASSET = '/xin/vm-agent.mjs';
 const VM_DIR = '/data/home/.xin/agent';
 export const OPS = new Set(['status', 'wake', 'ping', 'send', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'forget', 'files',
-  'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play']);
+  'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off']);
+const SCREEN_W = 1280, SCREEN_H = 800, SCREEN_VIEW_TTL = 1800, SCREEN_CTL_TTL = 900;   // 桌面大小；链接多久内能打开（秒）
 const FILE_MAX = 64 * 1024 * 1024;   // 下载最大 64 MB（.hex、.bin 才几十 KB）
 const HDRS = { 'Content-Type': 'application/json; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
@@ -120,6 +122,7 @@ function explain(e) {
   if (c === 'machine_not_running' || c === 'operation_conflict' || c === 'host_unavailable') return { ok: false, state: 'waking', msg: '正在唤醒云电脑…', retryAfter: 3 };
   if (c === 'machine_cooldown') return { ok: false, state: 'cooldown', msg: '云电脑连续跑满了时长，正在冷却', retryAfter: e.retryAfter || 60 };
   if (e.status === 429 || e.status === 503) return { ok: false, state: 'busy', msg: 'InstaBox 忙，稍等', retryAfter: e.retryAfter || 5 };
+  if (c === 'permission_denied') return { ok: false, state: 'error', msg: '这个 InstaBox key 不能生成桌面链接：要用创建这台云电脑的人自己的 key' };
   if (e.status === 401 || e.status === 403) return { ok: false, state: 'error', msg: 'InstaBox key 不能用（' + c + '）' };
   if (c === 'max_run_disabled') return { ok: false, state: 'error', msg: '云电脑的最长运行时间被设成了 0，到 InstaBox 后台改一下' };
   return { ok: false, state: 'error', msg: e.msg || c || '云电脑出错了' };
@@ -156,6 +159,30 @@ async function call(env, origin, op, args, ctx, now) {
     const w = await ib(env, `/v1/machines/${m.id}/${op2}`, { method: 'POST', headers: { 'Idempotency-Key': uuid() }, body: '{}' });
     if (!w.ok && w.status !== 202) { const e = await ibErr(w); if (e.code !== 'operation_conflict') return explain(e); }
     return { ok: true, data: { state: d.state, action: op2 } };
+  }
+  /* 小芯的屏幕：先把桌面开起来（已经开着就什么都不做），在桌面上开那个滚动显示它在干什么的终端（开不了也不影响看），
+     再要一个短时链接（InstaBox 的桌面查看页，能嵌进 iframe）：观看时服务器丢掉键盘鼠标，接管时能操作。screen_off 把链接全部作废 */
+  if (op === 'screen') {
+    const ds = await ib(env, `/v1/machines/${m.id}/desktop`, { method: 'POST', body: JSON.stringify({ action: 'start', width: SCREEN_W, height: SCREEN_H }) });
+    if (!ds.ok) {
+      const e = await ibErr(ds);
+      if (e.code === 'machine_not_running') { const w = await wakeUp(env, m.id); if (w && w.code !== 'operation_conflict') return explain(w); }
+      return explain(e);
+    }
+    const d = await ds.json();
+    if (!d.running) return d.installing ? { ok: false, state: 'waking', msg: '正在给电脑装桌面…', retryAfter: 10 } : { ok: false, state: 'error', msg: d.hint || '桌面没开起来' };
+    let term = null;
+    try { term = await exec(env, origin, m.id, 'screen', {}); } catch (e) { term = { error: (e && e.code) || 'exec' }; }
+    const control = !!(args && args.control);
+    const r = await ib(env, `/v1/machines/${m.id}/desktop/stream`, { method: 'POST', body: JSON.stringify({ viewOnly: !control, ttlSeconds: control ? SCREEN_CTL_TTL : SCREEN_VIEW_TTL }) });
+    if (!r.ok) return explain(await ibErr(r));
+    const link = await r.json();
+    return { ok: true, data: { url: link.url, expiresAt: link.expiresAt, control, terminal: !!(term && term.ok) } };
+  }
+  if (op === 'screen_off') {
+    const r = await ib(env, `/v1/machines/${m.id}/desktop/stream`, { method: 'DELETE' });
+    if (!r.ok && r.status !== 204) return explain(await ibErr(r));
+    return { ok: true, data: { ok: true } };
   }
   if (op === 'status') {
     const r = await ib(env, '/v1/machines/' + m.id);
