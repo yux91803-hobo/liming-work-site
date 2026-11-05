@@ -732,6 +732,9 @@ test('做完提醒：网页没在看时做完就推送（解得开、带标题�
     assert.deepStrictEqual([msg.tag, msg.sid, msg.url], ['xin-' + r1.sid, r1.sid, '/#xin=' + r1.sid]);
     // 2. 网页一直在取进度：不推送
     const r2 = op('send', { sid: r1.sid, text: '再来一次' });
+    // 这一轮还在跑时读历史：带着它什么时候开始的（网页重新打开面板，「思考中 · N 秒」接着算）
+    const h2 = op('history', { sid: r1.sid });
+    assert.ok(h2.active && h2.active.run === r2.run && typeof h2.active.started === 'number' && Math.abs(Date.now() - h2.active.started) < 5000, JSON.stringify(h2.active));
     await wait(r2.run, true);
     await new Promise(s => setTimeout(s, 600));
     assert.strictEqual(got.length, 1, '网页在看的时候不推送');
