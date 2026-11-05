@@ -231,10 +231,13 @@
   var CARRY = 'lm.xin.in';
   function carried() { try { return sessionStorage.getItem(CARRY) || ''; } catch (e) { return ''; } }
   function carry(v) { try { if (v) sessionStorage.setItem(CARRY, v); else sessionStorage.removeItem(CARRY); } catch (e) {} }
+  // 学习台里「收起来」：记在这个标签页里（刷新也还收着）；首页再把它扔进学习台时清掉
+  var STMOFF = 'lm.xin.stmoff';
+  function stmOff() { try { return sessionStorage.getItem(STMOFF) === '1'; } catch (e) { return false; } }
   function paused() {
     if (document.hidden) return true;
     if (HOME) return body.classList.contains('tool-open') || off();
-    return !panel || hiddenFrame() || carried() !== 'stm32';   // 学习台：只有被扔进来才出来
+    return !panel || hiddenFrame() || carried() !== 'stm32' || stmOff();   // 学习台：只有被扔进来、没收起来才出来
   }
   function cls(c, on) { el.classList.toggle(c, !!on); }
   function place() {
@@ -1234,6 +1237,7 @@
       setTimeout(function () { card.classList.remove('xin-hit'); }, 600);
       goAway(); sc = 1; ang = 0; av = 0; place();
       carry(card.dataset.id || 'tool');     // 小芯被扔进了这个工具
+      try { sessionStorage.removeItem(STMOFF); } catch (e) {}   // 重新扔进来：之前在学习台里收起来的不算了
       card.click();
       // 没打开（例如工具不存在），就回来
       setTimeout(function () { if (mode === 'away' && !body.classList.contains('tool-open')) { carry(''); dropIn(0); } }, 400);
@@ -1540,6 +1544,7 @@
       out.push(['hide', '收起来', function () { setOff(true); }]);
     } else {
       out.push(['home', '过来', function () { var q = bestPlat(); if (q && !same(q, plat)) come(function () { hop(q); }); }]);
+      out.push(['hide', '收起来', function () { setStmOff(true); }]);
     }
     return out;
   }
@@ -1671,10 +1676,33 @@
   }
   var wasPaused = paused();
   function onState() {
+    syncPeek();
     var p = paused();
     if (p === wasPaused) return;
     wasPaused = p;
     if (p) pause(); else resume(HOME ? 260 : 300);
+  }
+
+  /* ---------- 学习台里收起来 / 叫回来 ----------
+     背包「收起来」：小芯回去歇着，屏幕右边探出它的小脑袋；点小脑袋它就跳回来。只在被扔进学习台、学习台开着的时候有。 */
+  var peek = null;
+  function setStmOff(v) {
+    try { if (v) sessionStorage.setItem(STMOFF, '1'); else sessionStorage.removeItem(STMOFF); } catch (e) {}
+    if (v) { closeAsk(); music = false; }
+    onState();
+    if (v) saved = null;   // 叫回来时从上面掉进来，不是凭空出现在原地
+  }
+  function syncPeek() {
+    var show = STM && !!panel && carried() === 'stm32' && stmOff() && !hiddenFrame() && !document.hidden;
+    if (show && !peek) {
+      peek = document.createElement('button');
+      peek.type = 'button'; peek.className = 'xin-peek'; peek.title = '叫小芯出来'; peek.setAttribute('aria-label', '叫小芯出来');
+      var p = base(0); p.face = 'eyes'; p.lx = -1; p.ly = 0; p.item = null; p.fx = null; p.mouth = 0; p.armL = 'out'; p.armR = 'out'; p.b = 0; p.sx = 0; p.dy = 0;
+      peek.innerHTML = '<svg viewBox="2 6 16 10" aria-hidden="true" shape-rendering="crispEdges">' + draw(p) + '</svg>';
+      peek.addEventListener('click', function () { setStmOff(false); });
+      body.appendChild(peek);
+    }
+    if (peek) peek.hidden = !show;
   }
   if (window.MutationObserver) {
     if (HOME) new MutationObserver(onState).observe(body, { attributes: true, attributeFilter: ['class'] });
@@ -1684,7 +1712,7 @@
   setInterval(function () { if (!paused()) follow(); }, 120);
 
   /* ---------- 出场 ---------- */
-  place(); render();
+  place(); render(); syncPeek();
   if (!wasPaused) {
     ticker(true);
     // 学习台的内容是脚本画出来的，等它画好再掉进来
@@ -1705,6 +1733,8 @@
     sleep: function () { setMode('idle'); setMood(''); sleep(); },
     toy: playToy,
     bag: openBag,
+    hide: function (v) { if (STM) setStmOff(v !== false); },
+    get hidden() { return STM && stmOff(); },
     music: setMusic,
     feel: function (m, ms) { setMood(m, ms); },
     drop: function () { fall('drop'); },

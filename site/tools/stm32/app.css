@@ -73,6 +73,8 @@ svg.ic { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor
   .embed .side { padding-top: 60px; }
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
+a.brand { color: inherit; text-decoration: none; border-radius: 8px; }   /* 直接打开学习台时：点它回工具箱首页 */
+a.brand:hover .brand-t b { color: var(--clay, var(--lead)); }
 .brand-ic { width: 30px; height: 30px; padding: 4px; border-radius: 8px; background: var(--chip); color: var(--lead); stroke-width: 1.6; }
 .brand-t { display: flex; flex-direction: column; line-height: 1.2; }
 .brand-t b { font: 600 15px var(--mono); letter-spacing: .02em; }

@@ -88,6 +88,24 @@
   }
   function same(a, b) { return params(a) === params(b); }
 
+  /* ---------- 返回栈去重 ----------
+     「哪一页」：视图、外设 / 章节、推导的哪一环、编程思维的哪一步、开着的寄存器面板、查看器、芯片图上看的引脚 / 模块；
+     分页（sec）、代码页的写法 / 驱动 / 文件、寄存器实例和计算值、筛选词、结构图的区块和版本、硬件原理的分页（hv）不算。 */
+  function pageKey(r) {
+    var t = target(r);
+    return [t.v, t.t, t.s, t.st, t.reg, t.fig, t.sch, t.pin, t.m].map(function (x) { return x || ''; }).join('|');
+  }
+  var HOME_KEY = pageKey({ v: 'home' });
+  /* 从返回栈 stack（idx 是当前这一项）去 r，返回落在哪一项：
+     idx = 同一页，只是换了分页 / 参数，原地替换；< idx = 这一页就在返回路径上，退回到那一项（中间的丢掉）；
+     -1 = 新的一页，压一层。回首页（没带引脚 / 模块）总是退回第一项：返回栈清空。 */
+  function backTo(stack, idx, r) {
+    var key = pageKey(r), j = Math.min(idx, stack.length - 1);
+    while (j >= 0 && pageKey(stack[j]) !== key) j--;
+    if (j < 0 && key === HOME_KEY && idx >= 0) j = 0;
+    return j;
+  }
+
   /* ---------- 搜索 ---------- */
   // 「PA 9」「USART 1」合并成 PA9 / USART1；前后要是词边界，避免把 GPIO_CRL 8 粘成 GPIO_CRL8
   function normalized(s) { return String(s == null ? '' : s).toUpperCase().replace(/　/g, ' ').replace(/(^|[^A-Z0-9_])([A-Z]{1,6})\s+(\d{1,3})(?![A-Z0-9_])/g, '$1$2$3'); }
@@ -127,5 +145,5 @@
       return { item: item, order: order, score: score };
     }).filter(function (r) { return r.score > 0; }).sort(function (a, b) { return b.score - a.score || a.order - b.order; }).map(function (r) { return r.item; });
   }
-  return Object.freeze({ VIEWS: VIEWS, target: target, params: params, fromParams: fromParams, same: same, search: search, normalized: normalized });
+  return Object.freeze({ VIEWS: VIEWS, target: target, params: params, fromParams: fromParams, same: same, pageKey: pageKey, backTo: backTo, search: search, normalized: normalized });
 });
