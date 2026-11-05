@@ -172,7 +172,7 @@ async def xin_mock(pg, authed=False, live=None):
         if op == 'plugins':
             return await ok({'ok': True, 'data': {'plugins': [dict(p) for p in st.setdefault('plugins', [
                 {'name': 'rea', 'desc': '逆向分析（Ghidra）', 'cmd': 'run', 'on': False},
-                {'name': 'instabox', 'desc': '管理云电脑（开机、快照之类）', 'cmd': 'instabox-mcp', 'on': True}])], 'merged': []}})
+                {'name': 'playwright', 'desc': '', 'cmd': 'npx', 'on': True}])], 'merged': []}})
         if op == 'plugin_set':
             st.setdefault('plugin_set', []).append(args)
             for p in st.get('plugins', []):
@@ -1553,8 +1553,8 @@ async def main():
         note = await pa.text_content('.xc-sheet [data-name=rea] .xc-tg-n')
         await pa.mouse.click(195, 300); await pa.wait_for_timeout(300)
         closed = await pa.evaluate("[document.querySelector('.xc-sheet').hidden, !!document.querySelector('.xc.show')]")
-        check('插件：「＋ → 插件」列出插件和开没开；点开关告诉小芯的电脑、提示下一句生效；点遮罩收起不关面板',
-              rows == [['rea', 'REA 逆向', 'false'], ['instabox', 'InstaBox', 'true']] and xa.get('plugin_set') == [{'name': 'rea', 'on': True}]
+        check('插件：「＋ → 插件」列出自己装的插件和开没开；点开关告诉小芯的电脑、提示下一句生效；点遮罩收起不关面板',
+              rows == [['rea', 'REA 逆向', 'false'], ['playwright', 'playwright', 'true']] and xa.get('plugin_set') == [{'name': 'rea', 'on': True}]
               and '下一句' in note and closed == [True, True], (rows, xa.get('plugin_set'), note, closed))
         await pa.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」

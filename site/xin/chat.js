@@ -895,7 +895,7 @@
       if (d && d.error) throw new Error(d.msg || d.error);
       S.plugins = d.plugins || [];
       box.innerHTML = '';
-      if (!S.plugins.length) { box.appendChild(h('p', 'xc-hint', '还没有装插件。')); return; }
+      if (!S.plugins.length) { box.appendChild(h('p', 'xc-hint', '还没有自己装的插件。')); return; }
       S.plugins.forEach(function (p) {
         var t = toggleRow('xc-plug-' + p.name, PLUG_NAME[p.name] || p.name, (p.desc ? p.desc + ' · ' : '') + p.name);
         t.set(p.on); t.row.dataset.name = p.name;
