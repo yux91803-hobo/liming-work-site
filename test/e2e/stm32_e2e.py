@@ -142,6 +142,8 @@ async def xin_mock(pg, authed=False, live=None):
             return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'history': st['history_sid'] = args.get('sid')
         if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'usage': XIN_USE_HIST if args['sid'] == 'shist00001' else None, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': None}})
+        if op == 'sessions' and st.get('many'):   # 对话很多：当前的 shist00001 排在第 7 个
+            return await ok({'ok': True, 'data': {'sessions': [{'sid': 's%09d' % i if i != 6 else 'shist00001', 'agent': 'codex', 'title': '对话 %d' % (i + 1), 'turns': 1, 'updated': 0} for i in range(st['many'])]}})
         if op == 'sessions': return await ok({'ok': True, 'data': {'sessions': [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0},
                                                                          {'sid': 'sold000001', 'agent': 'claude', 'title': '旧对话', 'turns': 2, 'updated': 0}]}})
         if op == 'files': return await ok({'ok': True, 'data': XIN_FILES.get(args.get('path') or W, {'error': 'not_found', 'msg': '没有这个文件'})})
@@ -1313,6 +1315,24 @@ async def main():
         await pf.click('.xc-list-b'); await pf.wait_for_selector('.xc-sli'); await pf.keyboard.press('Escape'); await pf.wait_for_timeout(350)
         s2 = await pf.evaluate("[document.querySelector('.xc').classList.contains('dr-open'), !!document.querySelector('.xc.show')]")
         check('侧边栏：点旁边的遮罩收起、按 Esc 只收侧边栏不关面板', s1 == [False, 'hidden', True] and s2 == [False, True], (s1, s2))
+        # 对话多了：只露最近 5 个和正在看的那个，其余收在「更多对话」里；展开、收起；删掉一个以后后面的补上来
+        xf['many'] = 9
+        await pf.evaluate("LimingXinChat.state.sid = 'shist00001'")
+        await pf.click('.xc-list-b'); await pf.wait_for_selector('.xc-sli'); await pf.wait_for_timeout(350)
+        vis = "[...document.querySelectorAll('.xc-sli')].filter(e => !e.hidden).map(e => e.querySelector('.xc-si-t').textContent)"
+        f1 = await pf.evaluate("[" + vis + ", document.querySelector('.xc-dr-fold').textContent, document.querySelector('.xc-dr-h').textContent, document.querySelectorAll('.xc-sli').length]")
+        await pf.click('.xc-dr-fold'); await pf.wait_for_timeout(100)
+        f2 = await pf.evaluate("[" + vis + ".length, document.querySelector('.xc-dr-fold').textContent, document.querySelector('.xc-dr-fold').getAttribute('aria-expanded')]")
+        await pf.click('.xc-dr-fold'); await pf.wait_for_timeout(100)
+        f3 = await pf.evaluate(vis + ".length")
+        await pf.click('.xc-sli:nth-child(1) .xc-si-more'); await pf.wait_for_selector('.xc-sa-del')
+        await pf.click('.xc-sa-del'); await pf.click('.xc-sa-del'); await pf.wait_for_timeout(300)
+        f4 = await pf.evaluate("[" + vis + ", document.querySelector('.xc-dr-fold').textContent]")
+        check('对话多了侧边栏不拉长：只露最近 5 个和正在看的那个（排第 7），「更多对话（3）」展开全部、「收起」收回；删掉一个后面的补上来',
+              f1 == [['对话 1', '对话 2', '对话 3', '对话 4', '对话 5', '对话 7'], '更多对话（3）', '最近的对话 · 9', 9] and f2 == [9, '收起', 'true'] and f3 == 6
+              and f4 == [['对话 2', '对话 3', '对话 4', '对话 5', '对话 6', '对话 7'], '更多对话（2）'], (f1, f2, f3, f4))
+        await pf.click('.xc-dr-x'); await pf.wait_for_timeout(300)
+        xf['many'] = 0
         await pf.click('.xc-x'); await pf.wait_for_timeout(400)
         await pf.evaluate("LimingXin.bag()"); await pf.click('.xin-bag .xin-it:has-text("聊天")'); await pf.wait_for_selector('.xin-ask')
         btns = await pf.evaluate("[...document.querySelectorAll('.xin-ask button')].map(b => b.getAttribute('aria-label') || b.textContent.trim())")

@@ -182,7 +182,8 @@
 .xc-sess{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:6px 8px calc(12px + var(--sb))}
 .xc-sl{list-style:none;margin:0;padding:0}
 .xc-si{display:block;width:100%;padding:10px 10px;text-align:left;border-radius:10px !important}
-.xc-si:hover,.xc-si.cur{background:var(--sunk)}
+.xc-si.cur{background:var(--sunk)}
+@media (hover:hover){.xc-si:hover{background:var(--sunk)}}
 /* ---------- 侧边栏（☰ 拉开）：从面板左边滑出来，盖在聊天上面，后面一层半透明遮罩 ---------- */
 .xc-scrim{position:absolute;inset:0;z-index:6;background:rgba(20,20,19,.34);opacity:0;pointer-events:none;transition:opacity .2s var(--out)}
 .xc-drawer{position:absolute;left:0;top:0;bottom:0;z-index:7;width:min(86%,320px);display:flex;flex-direction:column;
@@ -211,7 +212,8 @@
 .xc-nav{display:flex;flex-direction:column;margin:0 0 6px;border:1px solid var(--line);border-radius:12px !important;overflow:hidden}
 .xc-nav .xc-memb{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin:0;padding:11px 12px;border:0;border-bottom:1px solid var(--line);border-radius:0 !important;font-size:14px}
 .xc-nav .xc-memb:last-child{border-bottom:0}
-.xc-nav .xc-memb:hover,.xc-nav .xc-memb:focus-visible{background:var(--sunk)}
+.xc-nav .xc-memb:focus-visible,.xc-nav .xc-memb:active{background:var(--sunk)}
+@media (hover:hover){.xc-nav .xc-memb:hover{background:var(--sunk)}}
 .xc-nav .xc-memb svg:last-child,.xc-dr-row svg:last-child{width:14px;height:14px;color:var(--ink-3)}
 .xc-dr-h{margin:16px 2px 4px;font-size:12px;letter-spacing:.06em;color:var(--ink-3)}
 .xc-dr-sc .xc-sl{margin:0 -4px}
@@ -222,9 +224,15 @@
 .xc-dr-sc .xc-si.cur .xc-si-t{font-weight:600;color:var(--ink)}
 .xc-dr-sc .xc-si-t{font-size:14px}
 .xc-sl-wait{padding:10px 8px}
+.xc-dr-fold{display:flex;align-items:center;justify-content:center;gap:4px;width:100%;margin:4px 0 0;padding:9px 8px;border-radius:10px !important;font-size:13px;color:var(--ink-2)}
+.xc-dr-fold svg{width:14px;height:14px;transform:rotate(90deg);transition:transform .15s}
+.xc-dr-fold[aria-expanded=true] svg{transform:rotate(-90deg)}
+.xc-dr-fold:active{background:var(--sunk)}
+@media (hover:hover){.xc-dr-fold:hover{background:var(--sunk);color:var(--ink)}}
 .xc-dr-ft{margin:18px 0 0;padding:6px 0 0;border-top:1px solid var(--line)}
 .xc-dr-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;padding:11px 8px;border-radius:10px !important;text-align:left;font-size:14px;color:var(--ink)}
-.xc-dr-row:hover{background:var(--sunk)}
+.xc-dr-row:active{background:var(--sunk)}
+@media (hover:hover){.xc-dr-row:hover{background:var(--sunk)}}
 .xc-dr-row svg:first-child{width:18px;height:18px;color:var(--ink-2)}
 .xc-dr-row[aria-expanded=true] svg:last-child{transform:rotate(90deg)}
 .xc-dr-ft .xc-set{margin:0 0 4px;padding:0 4px;border-top:0}
@@ -235,7 +243,8 @@
 .xc-sli{display:flex;flex-wrap:wrap;align-items:stretch}
 .xc-sli .xc-si{flex:1;min-width:0;width:auto;border-bottom:0}
 .xc-si-more{flex:none;display:grid;place-items:center;width:42px;border-radius:10px !important;color:var(--ink-3)}
-.xc-si-more:hover,.xc-si-more[aria-expanded=true]{background:var(--sunk);color:var(--ink)}
+.xc-si-more[aria-expanded=true]{background:var(--sunk);color:var(--ink)}
+@media (hover:hover){.xc-si-more:hover{background:var(--sunk);color:var(--ink)}}
 .xc-si-more svg{width:20px;height:20px}
 .xc-sa{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 6px 10px}
 .xc-sa input{flex:1;min-width:0;height:36px;padding:0 10px;border:1px solid var(--line-2);border-radius:8px !important;background:var(--bg);color:var(--ink);font:13px var(--sans);outline:none}
@@ -291,7 +300,8 @@
 .xc-crumb-s{color:var(--ink-3)}
 .xc-fl{list-style:none;margin:0;padding:0}
 .xc-fi{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;margin:1px 0;padding:10px 8px;text-align:left;border-radius:10px !important}
-.xc-fi:hover{background:var(--sunk)}
+.xc-fi:active{background:var(--sunk)}
+@media (hover:hover){.xc-fi:hover{background:var(--sunk)}}
 .xc-fi svg{width:18px;height:18px;color:var(--ink-3)}
 .xc-fi.dir svg{color:var(--clay)}
 .xc-fi-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

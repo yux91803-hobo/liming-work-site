@@ -344,10 +344,15 @@
     item('xc-dailyb', 'daily', '每日任务', loadDaily);
     item('xc-filesb', 'files', '小芯的文件', function () { loadFiles(WORK, 'sess'); });
     sc.appendChild(nav);
-    sc.appendChild(h('p', 'xc-dr-h', '最近的对话'));
+    var dh = h('p', 'xc-dr-h', '最近的对话');
+    sc.appendChild(dh);
     var ul = h('ul', 'xc-sl');
     ul.appendChild(h('li', 'xc-hint xc-sl-wait', '正在读取…'));
     sc.appendChild(ul);
+    // 对话多了只露最近几个，其余收在「更多对话」里，侧边栏不会越拉越长
+    var fold = h('button', 'xc-dr-fold'); fold.type = 'button'; fold.hidden = true;
+    fold.addEventListener('click', function () { S.sessAll = !S.sessAll; foldSess(); if (!S.sessAll) dh.scrollIntoView({ block: 'nearest' }); });
+    sc.appendChild(fold);
     // 设置：默认收着，点开
     var setB = h('button', 'xc-dr-row xc-set-b'); setB.type = 'button'; setB.setAttribute('aria-expanded', 'false');
     setB.innerHTML = svgIcon('gear') + '<span>设置</span>' + svgIcon('chev');
@@ -364,6 +369,7 @@
       if (my !== S.drawerSeq) return;
       ul.innerHTML = '';
       if (!d.sessions.length) ul.appendChild(h('li', 'xc-hint', '还没有对话'));
+      dh.textContent = '最近的对话' + (d.sessions.length > SESS_SHOW ? ' · ' + d.sessions.length : '');
       d.sessions.forEach(function (s) {
         var li = h('li', 'xc-sli'), b = h('button', 'xc-si'); b.type = 'button';
         b.appendChild(h('span', 'xc-si-t', s.title || '（无标题）'));
@@ -375,7 +381,24 @@
         more.addEventListener('click', function () { sessActions(li, s, more); });
         li.appendChild(b); li.appendChild(more); ul.appendChild(li);
       });
+      foldSess();
     }, function (e) { if (my !== S.drawerSeq) return; ul.innerHTML = ''; ul.appendChild(h('li', 'xc-hint', '读不出来：' + e.message)); });
+  }
+  // 对话列表折起来：只露最近 SESS_SHOW 个（正在看的那个不管排第几都露着），其余点「更多对话」展开；删了一个以后重新算
+  var SESS_SHOW = 5;
+  function foldSess() {
+    var ul = drawerEl && drawerEl.querySelector('.xc-sl'), fold = drawerEl && drawerEl.querySelector('.xc-dr-fold');
+    if (!ul || !fold) return;
+    var items = ul.querySelectorAll('.xc-sli'), extra = 0;
+    for (var i = 0; i < items.length; i++) {
+      var keep = i < SESS_SHOW || !!items[i].querySelector('.xc-si.cur');
+      if (!keep) extra++;
+      items[i].hidden = !keep && !S.sessAll;
+    }
+    fold.hidden = !extra;
+    fold.setAttribute('aria-expanded', S.sessAll ? 'true' : 'false');
+    fold.innerHTML = '<span></span>' + svgIcon('chev');
+    fold.querySelector('span').textContent = S.sessAll ? '收起' : '更多对话（' + extra + '）';
   }
   /* ---------- 新动作、好感度 ----------
      都存在小芯的电脑上（vm-agent.mjs 的 moves / bond），打开网页时跟着 greet 一起拿过来；
@@ -613,6 +636,7 @@
         if (r && r.error) throw new Error(r.msg || r.error);
         li.remove();
         if (s.sid === S.sid) newChat(true);
+        foldSess();
         if (!drawerEl.querySelector('.xc-sli')) { var ul = drawerEl.querySelector('.xc-sl'); if (ul) ul.appendChild(h('li', 'xc-hint', '还没有对话')); }
       }).catch(function (e) { del.disabled = false; armed = 0; del.textContent = '删除'; del.classList.remove('armed'); msg.textContent = '没删掉：' + e.message; });
     });
