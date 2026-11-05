@@ -83,7 +83,8 @@ test('机身、头像与收起的小脑袋复用画法，独立的渐变不会�
       assert.match(svg, /id="test-pin"/);
       assert.match(svg, /id="test-glass"/);
       assert.match(svg, /url\(#test-pin\)/);
-      assert.equal(/c-ew/.test(svg), face !== 'back');
+      // 背过身看不到眼睛；睡着闭眼是暗的细线，不发光
+      assert.equal(/c-ew/.test(svg), face !== 'back' && face !== 'shut');
     }
   }
   assert.match(draw({ face: 'eyes' }, 'portrait-2'), /id="portrait-2-pin"/);

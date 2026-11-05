@@ -15,6 +15,7 @@
   body.xc-open #home{margin-right:min(420px,52vw)}
 }
 .xc [hidden]{display:none!important}
+.xc{overflow:hidden}   /* 侧边栏收起时藏在面板左边外面，别露到页面上 */
 
 /* 聊天区用无衬线字（中文读着舒服）；代码、小标签还是等宽字 */
 .xc{--sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Noto Sans SC",system-ui,"Segoe UI",Roboto,sans-serif;
@@ -164,6 +165,51 @@
 .xc-sl{list-style:none;margin:0;padding:0}
 .xc-si{display:block;width:100%;padding:10px 10px;border-bottom:1px solid var(--line);text-align:left;border-radius:6px}
 .xc-si:hover,.xc-si.cur{background:var(--sunk)}
+/* ---------- 侧边栏（☰ 拉开）：从面板左边滑出来，盖在聊天上面，后面一层半透明遮罩 ---------- */
+.xc-scrim{position:absolute;inset:0;z-index:6;background:rgba(20,20,19,.34);opacity:0;pointer-events:none;transition:opacity .2s var(--out)}
+.xc-drawer{position:absolute;left:0;top:0;bottom:0;z-index:7;width:min(86%,320px);display:flex;flex-direction:column;
+  background:var(--panel);border-right:2px solid var(--ink);box-shadow:4px 0 0 var(--hard);
+  transform:translateX(calc(-100% - 8px));visibility:hidden;transition:transform .22s var(--out),visibility 0s .22s}
+.xc.dr-open .xc-scrim{opacity:1;pointer-events:auto}
+.xc.dr-open .xc-drawer{transform:none;visibility:visible;transition:transform .22s var(--out),visibility 0s}
+.xc-dr{display:flex;flex-direction:column;height:100%;min-height:0}
+.xc-dr-hd{display:flex;align-items:center;gap:10px;flex:none;height:56px;padding:0 6px 0 14px;border-bottom:1px solid var(--line)}
+@media (min-width:900px){.xc-dr-hd{height:calc(60px + var(--st));padding-top:var(--st)}}
+.xc-av.dr{width:36px;height:27px}
+.xc-dr-who{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
+.xc-dr-name{font-size:15px}
+.xc-dr-st{font-size:12px;color:var(--ink-3)}
+.xc-dr-st.on::before,.xc-dr-st.busy::before{content:"";display:inline-block;width:6px;height:6px;margin-right:5px;vertical-align:1px;background:#3f8f5a}
+.xc-dr-st.busy::before{background:var(--clay)}
+.xc-dr-sc{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px 12px calc(14px + var(--sb))}
+.xc-dr-sc .xc-bond{margin:0 0 12px;padding:8px 10px;border:1px solid var(--line-2);background:var(--sunk)}
+.xc-dr-sc .xc-bond-b{padding:0;font-size:13px}
+.xc-dr-sc .xc-bond-log{margin:8px 0 2px;background:var(--panel)}
+.xc-dr-new{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:44px;margin:0 0 14px;border:2px solid var(--ink);background:var(--ink);color:var(--bg);
+  font-weight:700;box-shadow:var(--pd,3px) var(--pd,3px) 0 var(--hard);transition:transform .06s steps(1,end),box-shadow .06s steps(1,end)}
+.xc-dr-new:active{transform:translate(var(--pd,3px),var(--pd,3px));box-shadow:0 0 0 var(--hard)}
+.xc-dr-new svg{width:18px;height:18px;stroke-width:2.4}
+.xc-nav{display:flex;flex-direction:column;margin:0 0 6px;border:1px solid var(--line-2)}
+.xc-nav .xc-memb{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin:0;padding:11px 10px;border:0;border-bottom:1px solid var(--line);font-size:14px}
+.xc-nav .xc-memb:last-child{border-bottom:0}
+.xc-nav .xc-memb:hover,.xc-nav .xc-memb:focus-visible{background:var(--sunk)}
+.xc-nav .xc-memb svg:last-child,.xc-dr-row svg:last-child{width:14px;height:14px;color:var(--ink-3)}
+.xc-dr-h{margin:16px 2px 4px;font-size:12px;letter-spacing:.06em;color:var(--ink-3)}
+.xc-dr-sc .xc-sl{margin:0 -4px}
+.xc-dr-sc .xc-sli{border-bottom:1px solid var(--line)}
+.xc-dr-sc .xc-si{padding:10px 8px;border-left:3px solid transparent}
+.xc-dr-sc .xc-si.cur{border-left-color:var(--clay);background:var(--sunk)}
+.xc-dr-sc .xc-si-t{font-size:14px}
+.xc-sl-wait{padding:10px 8px}
+.xc-dr-ft{margin:18px 0 0;padding:6px 0 0;border-top:2px solid var(--line-2)}
+.xc-dr-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;padding:11px 6px;text-align:left;font-size:14px;color:var(--ink)}
+.xc-dr-row:hover{background:var(--sunk)}
+.xc-dr-row svg:first-child{width:18px;height:18px;color:var(--ink-2)}
+.xc-dr-row[aria-expanded=true] svg:last-child{transform:rotate(90deg)}
+.xc-dr-ft .xc-set{margin:0 0 4px;padding:0 4px;border-top:0}
+.xc-dr-ft .xc-set-h{display:none}
+.xc-dr-out{margin:10px 0 0 4px;padding:8px 2px}
+@media (prefers-reduced-motion:reduce){.xc-drawer,.xc-scrim{transition:none}}
 /* 每个对话后面的 ⋯：改名 / 删除 */
 .xc-sli{display:flex;flex-wrap:wrap;align-items:stretch;border-bottom:1px solid var(--line)}
 .xc-sli .xc-si{flex:1;min-width:0;width:auto;border-bottom:0}
@@ -203,9 +249,6 @@
 .xc-memb{display:flex;align-items:center;gap:8px;width:100%;margin:2px 0 8px;padding:10px;border:1px solid var(--line-2);border-radius:8px;text-align:left;color:var(--ink)}
 .xc-memb:hover{border-color:var(--clay)}
 .xc-memb svg{width:18px;height:18px;color:var(--clay)}
-/* 对话列表上面的三个入口：记事本、每日任务、小芯的文件 */
-.xc-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:2px 0 10px}
-.xc-tiles .xc-memb{flex-direction:column;justify-content:center;gap:5px;margin:0;padding:10px 4px;text-align:center;font-size:12.5px;line-height:1.3}
 /* 好感度：入口下面一行，点开看最近的变化 */
 .xc-bond{margin:0 0 8px}
 .xc-bond-b{display:block;width:100%;padding:6px 4px;text-align:left;font-size:13px;color:var(--ink-2)}
