@@ -905,7 +905,12 @@ async def main():
         await pg.evaluate("LimingXin.pose(null)")
         check('表情：照参考图的像素网格（竖眼 31×2、> < 7×2、^ ^ 7×2、星星 21×2、爱心 27×2），都在发光的一组里；腮红两小笔一直在，背过身才没有', got == {'eyes': [62, 4], 'hap': [14, 4], 'smile': [14, 4], 'star': [42, 4], 'heart': [54, 4], 'sad': [2, 4], 'back': [0, 0]}, got)
         # 高兴：站着时原地蹦（往上跳、落下、蹲一下），不是只挥手
-        await pg.wait_for_function("LimingXin.mode === 'idle'", timeout=15000)
+        # 等它站定：睡着了就点一下叫醒（CI 慢，前面测完可能已经睡着或者在走）
+        for _ in range(60):
+            m = await pg.evaluate("LimingXin.mode")
+            if m == 'idle': break
+            if m == 'sleep': await pg.evaluate("LimingXin.jump()")
+            await pg.wait_for_timeout(500)
         await pg.evaluate("LimingXin.feel('happy', 3000)")
         dys = []
         for _ in range(12):
