@@ -67,3 +67,33 @@ test('外设页分页 sec 只认五种，和旧版 tab 参数不冲突', () => {
   assert.deepEqual(core.fromParams('v=topic&t=i2c&cf=../x.c'), { v: 'topic', t: 'i2c' });
   assert.deepEqual(core.fromParams('v=topic&t=gpio&sec=evil'), { v: 'topic', t: 'gpio' });
 });
+test('back stack: going to a page already on the way back returns there instead of stacking another copy', () => {
+  const home = { v: 'home' }, gpio = { v: 'topic', t: 'gpio' }, usart = { v: 'topic', t: 'usart' };
+  const st = [home, gpio, usart];
+  assert.equal(core.backTo(st, 2, { v: 'topic', t: 'gpio', sec: 'regs' }), 1);                     // GPIO 就在返回路径上：退回去
+  assert.equal(core.backTo(st, 2, { v: 'topic', t: 'usart', sec: 'code', cv: 'hal' }), 2);       // 同一页换分页：原地替换
+  assert.equal(core.backTo(st, 2, { v: 'topic', t: 'i2c' }), -1);                                  // 新的一页
+  assert.equal(core.backTo(st, 2, { v: 'topic', t: 'usart', reg: 'USART_BRR' }), -1);              // 寄存器面板是新的一层
+  const sheet = { v: 'topic', t: 'gpio', reg: 'GPIO_CRL', i: 'GPIOA' };
+  assert.equal(core.backTo([home, gpio, sheet], 2, { v: 'topic', t: 'gpio', reg: 'GPIO_CRL', i: 'GPIOB', val: '0x1' }), 2);   // 换实例 / 计算值：同一层
+  assert.equal(core.backTo([home, gpio, sheet, { ...sheet, sch: 'board-04' }], 3, gpio), 1);      // 从查看器点回 GPIO：面板和查看器都退掉
+  assert.equal(core.backTo(st, 2, { v: 'home' }), 0);
+});
+test('back stack: a pin looked up on the chip from a topic is its own page; going home always clears the stack', () => {
+  const home = { v: 'home' }, gpio = { v: 'topic', t: 'gpio' };
+  assert.equal(core.backTo([home, gpio], 1, { v: 'home', pin: '68' }), -1);                        // 返回还能回到 GPIO
+  assert.equal(core.backTo([home, gpio, { v: 'home', pin: '68' }], 2, gpio), 1);
+  assert.equal(core.backTo([{ v: 'home', pin: '5' }], 0, home), 0);                                // 首页上点过引脚，再点「首页」：原地
+  assert.equal(core.backTo([home, gpio, { v: 'home', pin: '68' }], 2, home), 0);
+  assert.equal(core.backTo([gpio, { v: 'topic', t: 'usart' }], 1, home), 0);                       // 从深链打开的：回首页也清空
+});
+test('back stack: lab steps and derivation steps are pages; hardware tabs and map zones are not', () => {
+  const lab = (st) => ({ v: 'lab', t: 'gpio', st });
+  assert.equal(core.backTo([lab('task'), lab('look'), lab('plan')], 2, lab('look')), 1);
+  assert.equal(core.backTo([lab('task')], 0, lab('plan')), -1);
+  assert.equal(core.backTo([lab('task'), lab('code')], 1, { ...lab('code'), fn: 'v2' }), 1);
+  const hw = { v: 'think', t: 'gpio', hv: 'map', z: 'odr' };
+  assert.equal(core.backTo([{ v: 'home' }, hw], 1, { v: 'think', t: 'gpio', hv: 'why' }), 1);
+  assert.equal(core.backTo([{ v: 'home' }, hw], 1, { v: 'think', t: 'gpio', s: 's2' }), -1);
+  assert.equal(core.pageKey({ v: 'think', t: 'gpio', s: 's2' }) === core.pageKey({ v: 'think', t: 'gpio', s: 's3' }), false);
+});

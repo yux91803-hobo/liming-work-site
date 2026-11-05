@@ -256,7 +256,7 @@
     splash.appendChild(iconBox(t));
     var bk = document.createElement('button'); bk.className = 'back'; bk.type = 'button'; bk.setAttribute('aria-label', '返回');
     bk.appendChild(svg(BACK));
-    // 回工具箱：工具里点进了好几层时，不用一层层退，一下回到首页（电脑上显示在返回键旁边）
+    // 回工具箱：工具里点进了好几层时，不用一层层退，一下回到首页（宽屏上学习台开着就一直显示在返回键旁边）
     var hb = document.createElement('button'); hb.className = 'home-b'; hb.type = 'button'; hb.setAttribute('aria-label', '回到工具箱'); hb.title = '回到工具箱';
     hb.appendChild(svg(HOUSE));
     var edge = document.createElement('div'); edge.className = 'edge';

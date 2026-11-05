@@ -236,6 +236,15 @@ async def main():
         check('返回：关掉寄存器面板，留在主题页', not await pg.evaluate("!!document.querySelector('.sheet.on')") and 'reg=' not in pg.url)
         await pg.go_back(); await pg.wait_for_timeout(300)
         check('再返回：回到首页', await pg.evaluate("!!document.querySelector('.boardh')"))
+        # 来回点几个外设再返回：按走过的路退回，不在同几页之间来回
+        for t, code in [('gpio', 'GPIO'), ('usart', 'USART'), ('gpio', 'GPIO'), ('usart', 'USART'), ('i2c', 'I2C'), ('usart', 'USART')]:
+            await pg.click('.nav-t[data-t="%s"]' % t)
+            await pg.wait_for_function("(document.querySelector('.th-code') || {}).textContent === '%s' && location.search.includes('t=%s')" % (code, t)); await pg.wait_for_timeout(120)
+        await pg.go_back(); await pg.wait_for_timeout(400)
+        u1 = [pg.url, await pg.evaluate("(document.querySelector('.th-code') || {}).textContent")]
+        await pg.go_back(); await pg.wait_for_timeout(400)
+        check('独立打开：GPIO → USART → GPIO → USART → I2C → USART 再返回，先回 GPIO 再回首页，不在几页之间打转', 't=gpio' in u1[0] and u1[1] == 'GPIO' and await pg.evaluate("!!document.querySelector('.boardh')"), u1)
+        check('独立打开：左上角「STM32F103 学习台」能点回工具箱首页', await pg.evaluate("(() => { const a = document.querySelector('#side a.brand'); return !!a && a.getAttribute('href') === '/'; })()"))
 
         # ---------- 2. 位段条与常用配置 ----------
         await pg.goto(TOOL + '?v=topic&t=gpio&reg=GPIO_CRL&i=GPIOA'); await pg.wait_for_selector('.sheet.on')
@@ -374,6 +383,40 @@ async def main():
         check('外壳返回 3：回到首页', await f.evaluate("!!document.querySelector('.boardh')"))
         await pg.go_back(); await pg.wait_for_timeout(900)
         check('外壳返回 4：关闭工具', not await pg.evaluate("!!document.querySelector('#stage .panel.show')") and await pg.evaluate("location.pathname") == '/')
+        check('嵌在工具箱里：左上角「学习台」标志不是链接（外面有返回键和回工具箱）', await f.evaluate("document.querySelector('#side .brand').tagName") == 'DIV')
+        # 来回点几个外设：外壳的返回键、浏览器返回都按走过的路退回，不在同几页之间来回
+        async def zigzag():
+            await pg.goto(BASE + '/stm32'); fr = await tool_frame(pg)
+            for t, code in [('gpio', 'GPIO'), ('usart', 'USART'), ('gpio', 'GPIO'), ('usart', 'USART'), ('i2c', 'I2C'), ('usart', 'USART')]:
+                await fr.click('.nav-t[data-t="%s"]' % t)
+                await fr.wait_for_function("(document.querySelector('.th-code') || {}).textContent === '%s'" % code); await pg.wait_for_timeout(120)
+            return fr
+        shown = lambda fr: fr.evaluate("document.querySelector('.boardh') ? 'home' : (document.querySelector('.th-code') || {}).textContent")
+        f = await zigzag()
+        steps = [await pg.evaluate("document.querySelector('#stage .panel.show')._depth")]
+        for _ in range(2):
+            await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(700); steps.append(await shown(f))
+        await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(900)
+        steps.append(await pg.evaluate("location.pathname"))
+        check('嵌入：来回点 GPIO / USART / I2C 以后只叠了 2 层；返回键：GPIO → 学习台首页 → 关闭', steps == [2, 'GPIO', 'home', '/'], steps)
+        f = await zigzag()
+        steps = []
+        for _ in range(2):
+            await pg.go_back(); await pg.wait_for_timeout(700); steps.append(await shown(f))
+        await pg.go_back(); await pg.wait_for_timeout(900)
+        steps.append(await pg.evaluate("[location.pathname, !!document.querySelector('#stage .panel.show')]"))
+        check('嵌入：浏览器 / 手机的返回也一样：GPIO → 学习台首页 → 关闭', steps == ['GPIO', 'home', ['/', False]], steps)
+        # 外设页「引脚」里点一个引脚跳到芯片图：返回回到原来的外设页（还在「引脚」分页）；首页上点过引脚再点「首页」不叠层
+        await pg.goto(BASE + '/stm32?v=topic&t=gpio&sec=pins'); f = await tool_frame(pg)
+        await f.click('.ptile >> nth=0'); await f.wait_for_selector('.boardh'); await pg.wait_for_timeout(300)
+        pin = await pg.evaluate("new URLSearchParams(location.search).get('pin')")
+        await pg.go_back(); await pg.wait_for_timeout(700)
+        st = [pin, await shown(f), await f.evaluate("[...document.querySelectorAll('.topic > .sec')].filter(x => !x.hidden).map(x => x.id)")]
+        await pg.go_back(); await pg.wait_for_timeout(700); st.append(await shown(f))
+        check('嵌入：外设页点引脚看芯片图，返回回到外设页的「引脚」，再返回到学习台首页', bool(pin) and st[1:] == ['GPIO', ['s-pins'], 'home'], st)
+        await f.evaluate("STM.app.update({ pin: '68' })"); await f.click('.nav-t[data-t="usart"]'); await pg.wait_for_timeout(300)
+        await f.evaluate("STM.app.navigate({ v: 'home' })"); await pg.wait_for_timeout(500)
+        check('嵌入：回学习台首页总是清空返回栈（返回键一下关掉）', await pg.evaluate("document.querySelector('#stage .panel.show')._depth") == 0)
         # 连续翻页后返回
         await pg.goto(BASE + '/stm32?v=board&sch=board-01'); f = await tool_frame(pg); await wait_img(f)
         rs0 = (await pg.evaluate('__rs')) + (await f.evaluate('__rs'))
@@ -729,6 +772,22 @@ async def main():
             await pg.wait_for_timeout(100)
         inside = await f.evaluate("[LimingXin.mode, !!LimingXin.plat]")
         check('扔进 STM32 卡片：小芯出现在学习台里', inside[1] and inside[0] in ('idle', 'walk', 'play'), inside)
+        # 学习台里从背包「收起来」：小芯回去歇着，右边探出小脑袋；刷新学习台也还收着；点小脑袋它跳回来
+        peek_st = "[LimingXin.mode, LimingXin.hidden, !!document.querySelector('.xin-peek') && !document.querySelector('.xin-peek').hidden, document.documentElement.scrollWidth <= innerWidth]"
+        items = await f.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
+        await f.click('.xin-bag .xin-it:has-text("收起来")'); await pg.wait_for_timeout(500)
+        st = await f.evaluate(peek_st)
+        check('学习台里背包有「收起来」：点了小芯不见了，右边探出小脑袋，页面不横向滚动', '收起来' in items and st == ['away', True, True, True], (items, st))
+        await f.evaluate("location.reload()"); await pg.wait_for_timeout(600); f = await tool_frame(pg); await pg.wait_for_timeout(800)
+        st = await f.evaluate(peek_st)
+        check('刷新学习台：小芯还收着，小脑袋还在', st == ['away', True, True, True], st)
+        await f.click('.xin-peek')
+        for _ in range(40):
+            if await f.evaluate("LimingXin.mode") in ('idle', 'walk', 'play'): break
+            await pg.wait_for_timeout(100)
+        st = await f.evaluate(peek_st)
+        check('点小脑袋：小芯跳回学习台，小脑袋收起', st[0] in ('idle', 'walk', 'play') and st[1:3] == [False, False], st)
+        await f.evaluate("LimingXin.hide()"); await pg.wait_for_timeout(300)
         await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(1500)
         while await pg.evaluate("!!document.querySelector('.panel.show .back')"):
             await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(1500)
@@ -834,7 +893,7 @@ async def main():
         check('跳舞：有转身（背过去）和笑', 'back' in faces and faces.count('hap') > 10)
         await pg.context.close()
 
-        # 电脑：学习台里点了好几层，返回键旁边的「回工具箱」一下回到首页
+        # 电脑：返回键旁边一直有「回工具箱」（学习台首页也有）；点了好几层，点它一下回到首页
         pg = await page(b)
         await pg.goto(BASE + '/'); await pg.wait_for_timeout(1200)
         await pg.click('.card[data-id=stm32]'); f = await tool_frame(pg); await pg.wait_for_timeout(600)
@@ -846,7 +905,7 @@ async def main():
         h1 = await pg.evaluate(hb)
         await pg.click('.panel[data-id=stm32] .home-b'); await pg.wait_for_timeout(1200)
         st = await pg.evaluate("[document.body.classList.contains('tool-open'), location.pathname]")
-        check('电脑：学习台首页不显示「回工具箱」，点进几层后显示，点一下回到工具箱首页', h0 == 'none' and h1 == 'grid' and st == [False, '/'], (h0, h1, st))
+        check('电脑：学习台首页就有「回工具箱」，点进几层后还在，点一下回到工具箱首页', h0 == 'grid' and h1 == 'grid' and st == [False, '/'], (h0, h1, st))
         await pg.click('.card[data-id=stm32]'); await pg.wait_for_timeout(1500)
         await pg.click('.panel[data-id=stm32] .back'); await pg.wait_for_timeout(1200)
         check('回工具箱以后再打开学习台：返回键一下关掉', await pg.evaluate("[document.body.classList.contains('tool-open'), location.pathname]") == [False, '/'])
@@ -1292,6 +1351,8 @@ async def main():
         check('附带：关掉学习台以后不带学习台里选的', st[:2] == [False, True], st)
         await pc.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
+        # （之前在学习台里收起来过：再把它扔进去，照样出来）
+        await pg.evaluate("sessionStorage.setItem('lm.xin.stmoff', '1')")
         await drag_xin_into(pg, 'stm32'); f = await tool_frame(pg)
         for _ in range(80):
             if await f.evaluate("LimingXin.mode") in ('idle', 'walk', 'play'): break
@@ -1299,6 +1360,7 @@ async def main():
         st = await f.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [LimingXin.mode, LimingXin.plat && LimingXin.plat.kind, r.top >= 0 && r.bottom <= innerHeight]; })()")
         items = await f.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
         check('电脑：小芯能被扔进学习台（站在芯片图框里，整个在屏幕内），背包里有「聊天」', st[0] in ('idle', 'walk', 'play') and st[1] == 'in' and st[2] and '聊天' in items, (st, items))
+        check('之前在学习台里收起来过，再把小芯扔进去：照样出来，没有小脑袋', await f.evaluate("[LimingXin.hidden, !!document.querySelector('.xin-peek:not([hidden])')]") == [False, False])
         await pg.context.close()
 
         pg = await page(b, 390, 844, mobile=True)

@@ -2,6 +2,8 @@
    返回栈：stack 里每一项是一个路由（study-core.target 的结果），idx 指向当前。
    - 独立打开：每次前进 pushState，浏览器返回触发 popstate 落到对应项；
    - 嵌在工具箱里：不动顶层历史，把 idx 当作 depth 报给外壳，外壳的返回键发 {type:'back'} 回来，这里退一项。
+   - 去的页面已经在返回路径上（GPIO → USART → GPIO）：退回到那一项，不再叠一层，返回时不会在同几页之间来回；
+     同一页只是换了分页 / 参数：原地替换；回首页：返回栈清空。「哪一页」见 study-core 的 pageKey / backTo。
    页面层级由路由决定：基础视图（v/t）→ 寄存器面板（reg）→ 查看器（cw / fig / sch）。 */
 (function () {
   'use strict';
@@ -59,11 +61,22 @@
   function urlOf(r) { var qs = core.params(r); if (embedded) qs = 'embed=1' + (qs ? '&' + qs : ''); return location.pathname + (qs ? '?' + qs : ''); }
   function saveScroll() { scrolls[idx] = window.scrollY || 0; }
 
+  var popping = null;   // 独立打开时退回到返回栈里已有的一项：等 popstate 落地，再换成这次要的参数
+  function popTo(j, r) {
+    if (embedded) { stack = stack.slice(0, j + 1); scrolls = scrolls.slice(0, j + 1); idx = j; stack[j] = r; scrolls[j] = 0; render(); return; }
+    popping = { j: j, r: r };
+    history.go(j - idx);
+  }
   function navigate(to, o) {
     o = o || {};
     var r = resolve(to);
     if (core.same(r, cur()) && !o.force) return;
     saveScroll();
+    if (!o.replace) {
+      var j = core.backTo(stack, idx, r);   // 哪些算「同一页」见 study-core 的 pageKey
+      if (j === idx) o = Object.assign({}, o, { replace: true });   // 同一页，只是换了分页 / 参数
+      else if (j >= 0) { popTo(j, r); return; }                      // 这一页在返回路径上（或回首页）：退回去
+    }
     if (o.replace) { stack[idx] = r; scrolls[idx] = 0; if (!embedded) try { history.replaceState({ stm: idx, r: r }, '', urlOf(r)); } catch (e) {} }
     else {
       stack = stack.slice(0, idx + 1); scrolls = scrolls.slice(0, idx + 1);
@@ -95,6 +108,11 @@
     saveScroll();
     if (st && typeof st.stm === 'number') { idx = st.stm; stack[idx] = core.target(st.r); }
     else { idx = 0; stack[0] = core.fromParams(location.search); }
+    if (popping && popping.j === idx) {
+      stack[idx] = popping.r; stack.length = idx + 1; scrolls.length = idx + 1; scrolls[idx] = 0;
+      try { history.replaceState({ stm: idx, r: popping.r }, '', urlOf(popping.r)); } catch (err) {}
+    }
+    popping = null;
     render();
   });
 
@@ -122,7 +140,8 @@
     return a;
   }
   function buildSide() {
-    var brand = el('div', 'brand');
+    var brand = el(embedded ? 'div' : 'a', 'brand');
+    if (!embedded) { brand.href = '/'; brand.title = '回到工具箱'; brand.setAttribute('aria-label', '回到工具箱首页'); }   // 直接打开学习台时也能回工具箱
     var sp = el('span', 'brand-spark', '✻'); sp.setAttribute('aria-hidden', 'true'); brand.appendChild(sp);   // 与工具箱首页同一个符号
     var bt = el('div', 'brand-t'); bt.appendChild(el('b', null, 'STM32F103')); bt.appendChild(el('span', null, '学习台')); brand.appendChild(bt);
     side.appendChild(brand);
