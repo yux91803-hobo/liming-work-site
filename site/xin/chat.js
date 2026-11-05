@@ -74,7 +74,7 @@
   }
 
   /* ---------- 面板 ---------- */
-  var root, list, statusEl, input, sendBtn, titleEl, sessEl, loginEl, foot, drawerEl;
+  var root, list, statusEl, input, sendBtn, titleEl, sessEl, loginEl, foot, drawerEl, useEl;
   function build() {
     root = h('section', 'xc'); root.id = 'xinChat'; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', '和小芯聊天'); root.hidden = true;
     root.innerHTML =
@@ -103,12 +103,16 @@
           '<textarea rows="1" placeholder="和小芯说点什么…" aria-label="消息" enterkeyhint="' + (touch ? 'enter' : 'send') + '"></textarea>' +
           '<button type="submit" class="xc-send" aria-label="发送"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6 11l6-6 6 6"/></svg></button>' +
         '</div>' +
+        // 这个对话的用量：上下文、消耗的 token、缓存命中率（点一下看明细）
+        '<div class="xc-use" hidden></div>' +
       '</form>';
     document.body.appendChild(root);
     list = root.querySelector('.xc-msgs'); statusEl = root.querySelector('.xc-st'); input = root.querySelector('textarea');
     sendBtn = root.querySelector('.xc-send'); titleEl = root.querySelector('.xc-sub');
     root.querySelector('.xc-ttl').insertBefore(avatar(), root.querySelector('.xc-ttl-t'));
     sessEl = root.querySelector('.xc-sess'); loginEl = root.querySelector('.xc-login'); foot = root.querySelector('.xc-ft'); drawerEl = root.querySelector('.xc-dr');
+    useEl = root.querySelector('.xc-use');
+    useEl.addEventListener('click', function () { S.useMore = !S.useMore; renderUsage(); });
     root.querySelector('.xc-scrim').addEventListener('click', function () { setDrawer(false); });
     root.querySelector('.xc-list-b').setAttribute('aria-expanded', 'false');
     root.querySelector('.xc-x').addEventListener('click', close);
@@ -212,7 +216,35 @@
   }
 
   /* ---------- 对话 ---------- */
-  function clearList() { list.innerHTML = ''; typingEl = null; S.lastAt = 0; S.errRuns = {}; }
+  function clearList() { list.innerHTML = ''; typingEl = null; S.lastAt = 0; S.errRuns = {}; setUsage(null); }
+  /* 聊天框底下那一行：这个对话的上下文用了多少（最近一次请求 / 模型上限）、累计消耗的 token、缓存命中率（输入里有多少是缓存命中的）。
+     打开对话时从 history 拿，每轮做完从 done 事件里拿；新对话还没有，不显示。点一下展开明细 */
+  function setUsage(u) { S.usage = u && typeof u === 'object' && u.total ? u : null; renderUsage(); }
+  function tok(n) {
+    n = Math.max(0, Math.round(+n || 0));
+    if (n < 1e4) return String(n);
+    if (n < 1e8) { var v = n / 1e4; return (v < 100 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v)) + '万'; }
+    var y = n / 1e8; return (y < 100 ? y.toFixed(2).replace(/\.?0+$/, '') : Math.round(y)) + '亿';
+  }
+  function renderUsage() {
+    if (!useEl) return;
+    var u = S.usage;
+    useEl.hidden = !u;
+    if (!u) { useEl.innerHTML = ''; return; }
+    var pct = u.win > 0 ? Math.min(100, Math.max(u.ctx > 0 ? 1 : 0, Math.round(u.ctx / u.win * 100))) : -1;
+    var hit = u.input > 0 ? Math.round(u.cached / u.input * 100) : -1;
+    var b = h('button', 'xc-use-b'), ctx = h('span', 'xc-use-i xc-use-ctx', '上下文 ');
+    b.type = 'button'; b.setAttribute('aria-expanded', S.useMore ? 'true' : 'false'); b.title = S.useMore ? '收起明细' : '看明细';
+    if (pct >= 0) {
+      var bar = h('i', 'xc-use-bar' + (pct >= 90 ? ' hot' : pct >= 70 ? ' warm' : '')), fill = h('i');
+      fill.style.width = pct + '%'; bar.appendChild(fill); ctx.appendChild(bar); ctx.appendChild(document.createTextNode(pct + '%'));
+    } else ctx.appendChild(document.createTextNode(tok(u.ctx)));
+    b.appendChild(ctx);
+    b.appendChild(h('span', 'xc-use-i', '消耗 ' + tok(u.total) + ' token'));
+    if (hit >= 0) b.appendChild(h('span', 'xc-use-i', '缓存命中 ' + hit + '%'));
+    useEl.innerHTML = ''; useEl.appendChild(b);
+    if (S.useMore) useEl.appendChild(h('div', 'xc-use-more', '上下文 ' + tok(u.ctx) + (u.win > 0 ? ' / ' + tok(u.win) : '') + ' · 输入 ' + tok(u.input) + '（缓存命中 ' + tok(u.cached) + '）· 输出 ' + tok(u.output)));
+  }
   function newChat(stay) {
     stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null);
     if (!stay) { S.view = 'chat'; setDrawer(false); }
@@ -247,6 +279,7 @@
       clearList();
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid;
       d.runs.forEach(function (r) { r.events.forEach(function (ev) { draw(ev, true, r.run); }); });
+      setUsage(d.usage);
       if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Math.min(Date.now(), d.active.started || Date.now()); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
       render(); toBottom(true);
     }, function (e) {
@@ -888,7 +921,7 @@
     var run = S.run;
     call('poll', { run: run, off: S.off }, 0).then(function (d) {
       if (run !== S.run) return;
-      d.events.forEach(function (ev) { if (!(ev.t === 'user' && S.mine[run])) draw(ev, false, run); react(ev); });
+      d.events.forEach(function (ev) { if (!(ev.t === 'user' && S.mine[run])) draw(ev, false, run); react(ev); if (ev.t === 'done' && ev.usage) setUsage(ev.usage); });
       S.off = d.off;
       if (d.events.length) toBottom();
       if (d.done) { S.run = ''; stopPolling(); setStatus(''); typing(false); render(); if (!touch && S.open) input.focus(); return; }

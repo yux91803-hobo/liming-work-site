@@ -52,10 +52,13 @@ XIN_HIST = [
     {'t': 'tool_end', 'id': 'item_1', 'ok': False, 'out': 'main.c:1: error: boom'},
     {'t': 'done', 'ok': False, 'code': 1, 'ms': 3000},
 ]
+# 对话的用量：上下文（最近一次请求 / 上限）、累计消耗、缓存命中（vm-agent 的 sessionUsage）
+XIN_USE_HIST = {'ctx': 120342, 'win': 258400, 'input': 3699260, 'cached': 3567104, 'output': 28753, 'total': 3728013}
+XIN_USE_LIVE = {'ctx': 30500, 'win': 258400, 'input': 61000, 'cached': 48800, 'output': 1200, 'total': 62200}
 XIN_LIVE = [
     [{'t': 'user', 'text': '看看工作目录'}, {'t': 'status', 'text': 'Model metadata for `deepseek` not found. Defaulting to fallback metadata'}, {'t': 'text', 'text': '收到，我看看。'}, {'t': 'tool', 'id': 'item_1', 'name': 'Bash', 'detail': 'ls /data/workspace'}],
     [],
-    [{'t': 'tool_end', 'id': 'item_1', 'ok': True, 'out': 'blink'}, {'t': 'xin', 'act': 'dance', 'arg': ''}, {'t': 'mem', 'text': '用户在做 blink 点灯'}, {'t': 'text', 'text': '里面有一个 blink 目录。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 4000, 'effort': 'max'}],
+    [{'t': 'tool_end', 'id': 'item_1', 'ok': True, 'out': 'blink'}, {'t': 'xin', 'act': 'dance', 'arg': ''}, {'t': 'mem', 'text': '用户在做 blink 点灯'}, {'t': 'text', 'text': '里面有一个 blink 目录。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 4000, 'effort': 'max', 'usage': XIN_USE_LIVE}],
 ]
 
 W = '/data/workspace'
@@ -138,7 +141,7 @@ async def xin_mock(pg, authed=False, live=None):
             st['mem'] = args.get('text', '')
             return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'history': st['history_sid'] = args.get('sid')
-        if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': None}})
+        if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'usage': XIN_USE_HIST if args['sid'] == 'shist00001' else None, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': None}})
         if op == 'sessions': return await ok({'ok': True, 'data': {'sessions': [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0},
                                                                          {'sid': 'sold000001', 'agent': 'claude', 'title': '旧对话', 'turns': 2, 'updated': 0}]}})
         if op == 'files': return await ok({'ok': True, 'data': XIN_FILES.get(args.get('path') or W, {'error': 'not_found', 'msg': '没有这个文件'})})
@@ -1133,6 +1136,7 @@ async def main():
         st2 = await pg.evaluate("[localStorage.getItem('lm.xin.agent'), localStorage.getItem('lm.xin.effort'), document.querySelector('.xc-agent [aria-checked=true]').dataset.agent]")
         check('设置：新对话用哪个 AI（默认 Codex）、思考强度（默认自动），点了记住', st == ['codex', 'auto'] and st2 == ['claude', 'max', 'claude'], (st, st2))
         await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')"); await pg.wait_for_selector('.xc-hello')
+        check('新对话还没有用量：输入框底下那一行不显示', not await pg.is_visible('.xc-use'))
         await pg.fill('.xc-row textarea', '看看工作目录'); await pg.keyboard.press('Enter')
         await pg.wait_for_function("document.querySelector('.xc-typing-l') && document.querySelector('.xc-typing-l').textContent.startsWith('在电脑上忙')", timeout=5000)
         st = await pg.evaluate("""[LimingXin.aiState, document.querySelector('.xc').classList.contains('running'), document.querySelectorAll('.xc-me').length, (document.querySelector('.xin-say') || {}).textContent,
@@ -1146,6 +1150,8 @@ async def main():
           document.querySelector('.xc-msgs').textContent.includes('跳舞'), document.querySelector('.xc-st').hidden, !!document.querySelector('.xc-done')]""")
         check('做完：「正在输入」收起、停止键变回发送、记住对话；小芯的两句话在白底气泡里；xin dance 让小芯跳舞但聊天里不写；没有状态栏和「完成 · xx 秒」那条线',
               st[0] == '' and st[1] == 'play' and not st[2] and st[3] == 'snew000001' and st[4] == ['收到，我看看。', '里面有一个 blink 目录。'] and st[6:] == [False, True, False], st)
+        use = await pg.evaluate("[document.querySelector('.xc-use').hidden, [...document.querySelectorAll('.xc-use-i')].map(e => e.textContent), document.querySelector('.xc-use-bar > i').style.width]")
+        check('做完一轮：输入框底下显示这个对话的用量（上下文 12%、消耗 6.2万 token、缓存命中 80%）', use == [False, ['上下文 12%', '消耗 6.2万 token', '缓存命中 80%'], '12%'], use)
         items = await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
         check('登录以后背包里有「聊天」', '聊天' in items, items)
         check('记事本：小芯记了一笔，聊天里一个小提示「记住了：…」', st[5] == ['记住了：用户在做 blink 点灯'], st[5])
@@ -1165,6 +1171,14 @@ async def main():
         hl = await pg.evaluate("""(() => { const by = c => [...document.querySelectorAll('.xc-code .hl-' + c)].map(e => e.textContent);
           const kw = document.querySelector('.xc-code .hl-kw'); return [by('kw'), by('fn'), by('num'), kw && getComputedStyle(kw).color !== getComputedStyle(document.querySelector('.xc-code code')).color]; })()""")
         check('代码上色：关键字、函数名、数字各有颜色（复制出来还是原文）', hl == [['int', 'void', 'return'], ['main'], ['0'], True], hl)
+        use = await pg.evaluate("[[...document.querySelectorAll('.xc-use-i')].map(e => e.textContent), !!document.querySelector('.xc-use-more')]")
+        await pg.click('.xc-use-b'); await pg.wait_for_selector('.xc-use-more')
+        more = await pg.text_content('.xc-use-more')
+        await pg.click('.xc-use-b'); await pg.wait_for_timeout(100)
+        check('打开旧对话：用量换成这个对话的（上下文 47%、消耗 373万、缓存命中 96%）；点一下展开明细（上下文 12万 / 25.8万、输入、缓存、输出），再点收起',
+              use == [['上下文 47%', '消耗 373万 token', '缓存命中 96%'], False] and more == '上下文 12万 / 25.8万 · 输入 370万（缓存命中 357万）· 输出 2.9万' and not await pg.is_visible('.xc-use-more'), (use, more))
+        await pg.click('.xc-new-b'); await pg.wait_for_selector('.xc-hello')
+        check('点新对话：用量那一行收起来', not await pg.is_visible('.xc-use'))
         await pg.click('.xc-x'); await pg.wait_for_timeout(400)
         check('关掉面板', not await pg.is_visible('.xc'))
         # 发出去、还没送到小芯的电脑：「正在输入」旁边写「接收中」、标题栏「接收中…」，自己那句下面不加小字；

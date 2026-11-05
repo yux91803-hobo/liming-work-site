@@ -8,7 +8,7 @@
      poll     {run, off}           读这一轮从第 off 条开始的新事件
      stop     {run}                停掉这一轮
      sessions {}                   对话列表
-     history  {sid}                一个对话的全部事件
+     history  {sid}                一个对话的全部事件，和这个对话的用量 usage（上下文、累计 token、缓存命中，见 sessionUsage）
      ping     {}                   看看 claude / codex 在不在
    内部：
      run <run>                     后台真正跑 AI 的进程（send 起的），把输出整理成事件写进 runs/<run>.jsonl
@@ -494,6 +494,8 @@ export function fromClaude(o, state) {
   }
   if (o.type === 'result') {
     if (typeof o.total_cost_usd === 'number') state.cost = o.total_cost_usd;
+    // 模型的上下文上限（网页显示上下文用了多少）；几个模型时取最大的那个（主模型）
+    for (const k in o.modelUsage || {}) { const w = o.modelUsage[k] && o.modelUsage[k].contextWindow; if (w > (state.ctxWin || 0)) state.ctxWin = w; }
     if (o.session_id) state.sid = o.session_id;
     if (o.is_error) {
       state.failed = true;
@@ -596,6 +598,7 @@ function runner(run) {
     if (finished) return; finished = true; clearTimeout(stallTm);
     const s = readJ(sessF(meta.sid), sess);
     if (state.sid) { s.agentSid = state.sid; s.started = true; }
+    if (state.ctxWin) s.ctxWin = state.ctxWin;
     s.updated = Date.now(); writeJ(sessF(meta.sid), s);
     const m = readJ(metaF(run), meta);
     const stopped = !!m.stopped;
@@ -604,7 +607,8 @@ function runner(run) {
       const tail = stderr.trim().split('\n').slice(-6).join('\n');
       emit(run, { t: 'err', text: why || tail || ('退出码 ' + code) });
     }
-    emit(run, { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '' });
+    // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）
+    emit(run, { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) });
     m.ended = Date.now(); writeJ(metaF(run), m);
     if (meta.kind === 'daily') dailyDone(run, meta, ok);
     // 做完提醒：你不在看（关了网页、切到别的应用）才发；你自己停的、每日任务不发
@@ -742,6 +746,70 @@ function pruneLogs(minAge = PRUNE_AGE) {
     res.bytes += dropLogs('claude', l.id, cl); res.claude++;
   }
   return res;
+}
+
+/* ---------- 一个对话的用量 ----------
+   网页聊天框底下那一行：上下文（最近一次请求占了多少 / 模型上限）、这个对话累计消耗的 token、缓存命中率。
+   Codex：记录里每次请求后都有一条 token_count：total_token_usage 是整个会话累计的（续接也接着算），last_token_usage 是最近一次请求，
+          model_context_window 是上限。取最后一条就行，从文件尾巴往前找。
+   Claude：记录里每条回答带 usage（同一条回答拆成几行时 usage 重复，按回答 id 去重），加起来；上限用跑的时候 Claude 报的（没有就当 20 万）。 */
+function readTail(f, n) {
+  let fd = null;
+  try {
+    fd = fs.openSync(f, 'r');
+    const size = fs.fstatSync(fd).size, len = Math.min(n, size), b = Buffer.alloc(len);
+    return b.toString('utf8', 0, fs.readSync(fd, b, 0, len, size - len));
+  } catch { return ''; } finally { if (fd !== null) fs.closeSync(fd); }
+}
+function codexUsage(id) {
+  const l = codexLogs().filter(x => x.id === id).sort((a, b) => b.mtime - a.mtime)[0];
+  if (!l) return null;
+  for (const n of [256 * 1024, 4 * 1024 * 1024, 64 * 1024 * 1024]) {   // 最后几步的命令输出可能很长，找不到就往前多读一些
+    const lines = readTail(l.file, n).split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i].includes('"token_count"')) continue;
+      let o; try { o = JSON.parse(lines[i]); } catch { continue; }   // 读到的第一行可能是半截
+      const info = o && o.payload && o.payload.type === 'token_count' && o.payload.info;
+      if (!info || !info.total_token_usage) continue;
+      const t = info.total_token_usage, last = info.last_token_usage || {};
+      const input = t.input_tokens || 0, output = t.output_tokens || 0;
+      return { ctx: last.total_tokens || ((last.input_tokens || 0) + (last.output_tokens || 0)), win: info.model_context_window || 0,
+        input, cached: t.cached_input_tokens || 0, output, total: t.total_tokens || input + output };
+    }
+    if (n >= l.size) break;
+  }
+  return null;
+}
+function claudeUsage(id, win) {
+  const l = claudeLogs().find(x => x.id === id);
+  if (!l || l.size > 64 * 1024 * 1024) return null;
+  const byMsg = new Map();
+  let lastKey = null;
+  for (const s of readText(l.file).split('\n')) {
+    if (!s.includes('"usage"')) continue;
+    let o; try { o = JSON.parse(s); } catch { continue; }
+    const m = o && o.type === 'assistant' && o.message;
+    if (!m || !m.usage) continue;
+    const key = m.id || o.requestId || o.uuid;
+    byMsg.set(key, m.usage);   // 同一条回答后面那行的 usage 是最终的
+    if (!o.isSidechain) lastKey = key;
+  }
+  if (!byMsg.size) return null;
+  let input = 0, cached = 0, output = 0;
+  for (const u of byMsg.values()) {
+    input += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    cached += u.cache_read_input_tokens || 0; output += u.output_tokens || 0;
+  }
+  const u = byMsg.get(lastKey) || {};
+  return { ctx: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0),
+    win: win || 200000, input, cached, output, total: input + output };
+}
+export function sessionUsage(s) {
+  try {
+    if (!s || typeof s.agentSid !== 'string' || !UUID_RE.test(s.agentSid) || !s.started) return null;
+    const id = s.agentSid.toLowerCase();
+    return s.agent === 'claude' ? claudeUsage(id, s.ctxWin) : s.agent === 'codex' ? codexUsage(id) : null;
+  } catch { return null; }
 }
 
 /* ---------- 对外的 op ---------- */
@@ -963,7 +1031,7 @@ const ops = {
     const out = runs.map(r => { const d = runDone(r), evs = events(r); return { run: r, events: evs, done: d }; });
     const last = out[out.length - 1];
     // started：这一轮什么时候开始的（网页重新打开面板时，「思考中 · N 秒」接着算，不从 0 开始）
-    return { session: summary(s), runs: out, active: last && !last.done ? { run: last.run, off: last.events.length, started: (readJ(metaF(last.run)) || {}).started || 0 } : null };
+    return { session: summary(s), usage: sessionUsage(s), runs: out, active: last && !last.done ? { run: last.run, off: last.events.length, started: (readJ(metaF(last.run)) || {}).started || 0 } : null };
   }
 };
 
