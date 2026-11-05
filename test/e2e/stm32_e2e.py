@@ -162,6 +162,9 @@ async def xin_mock(pg, authed=False, live=None):
         if op == 'rename':
             st['renamed'] = args
             return await ok({'ok': True, 'data': {'ok': True}})
+        if op == 'archive':
+            st.setdefault('archived', []).append(args)
+            return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'forget':
             st['forgot'] = args
             return await ok({'ok': True, 'data': {'ok': True}})
@@ -1323,19 +1326,38 @@ async def main():
         await pf.evaluate("LimingXinChat.state.sid = 'shist00001'")
         await pf.click('.xc-list-b'); await pf.wait_for_selector('.xc-sli'); await pf.wait_for_timeout(350)
         vis = "[...document.querySelectorAll('.xc-sli')].filter(e => !e.hidden).map(e => e.querySelector('.xc-si-t').textContent)"
-        f1 = await pf.evaluate("[" + vis + ", document.querySelector('.xc-dr-fold').textContent, document.querySelector('.xc-dr-h').textContent, document.querySelectorAll('.xc-sli').length]")
-        await pf.click('.xc-dr-fold'); await pf.wait_for_timeout(100)
-        f2 = await pf.evaluate("[" + vis + ".length, document.querySelector('.xc-dr-fold').textContent, document.querySelector('.xc-dr-fold').getAttribute('aria-expanded')]")
-        await pf.click('.xc-dr-fold'); await pf.wait_for_timeout(100)
+        f1 = await pf.evaluate("[" + vis + ", document.querySelector('.xc-more-b').textContent, document.querySelector('.xc-dr-h').textContent, document.querySelectorAll('.xc-sli').length]")
+        await pf.click('.xc-more-b'); await pf.wait_for_timeout(100)
+        f2 = await pf.evaluate("[" + vis + ".length, document.querySelector('.xc-more-b').textContent, document.querySelector('.xc-more-b').getAttribute('aria-expanded')]")
+        await pf.click('.xc-more-b'); await pf.wait_for_timeout(100)
         f3 = await pf.evaluate(vis + ".length")
         await pf.click('.xc-sli:nth-child(1) .xc-si-more'); await pf.wait_for_selector('.xc-sa-del')
         await pf.click('.xc-sa-del'); await pf.click('.xc-sa-del'); await pf.wait_for_timeout(300)
-        f4 = await pf.evaluate("[" + vis + ", document.querySelector('.xc-dr-fold').textContent]")
+        f4 = await pf.evaluate("[" + vis + ", document.querySelector('.xc-more-b').textContent]")
         check('对话多了侧边栏不拉长：只露最近 5 个和正在看的那个（排第 7），「更多对话（3）」展开全部、「收起」收回；删掉一个后面的补上来',
               f1 == [['对话 1', '对话 2', '对话 3', '对话 4', '对话 5', '对话 7'], '更多对话（3）', '最近的对话 · 9', 9] and f2 == [9, '收起', 'true'] and f3 == 6
               and f4 == [['对话 2', '对话 3', '对话 4', '对话 5', '对话 6', '对话 7'], '更多对话（2）'], (f1, f2, f3, f4))
         await pf.click('.xc-dr-x'); await pf.wait_for_timeout(300)
         xf['many'] = 0
+        # 归档：⋯ 里「归档」→ 收进「已归档（1）」（默认收着），点开能看到；在那里「取消归档」→ 放回最近的对话
+        await pf.click('.xc-list-b'); await pf.wait_for_selector('.xc-sli'); await pf.wait_for_timeout(350)
+        main = "[...document.querySelectorAll('.xc-sl-main .xc-sli')].map(e => e.querySelector('.xc-si-t').textContent)"
+        a0 = await pf.evaluate("[" + main + ", !document.querySelector('.xc-arch-b').hidden]")
+        await pf.click('.xc-sl-main .xc-sli:nth-child(2) .xc-si-more'); await pf.wait_for_selector('.xc-sa-arc')
+        btns = await pf.evaluate("[...document.querySelectorAll('.xc-sa .xc-sa-b')].map(b => b.textContent)")
+        await pf.click('.xc-sa-arc'); await pf.wait_for_timeout(200)
+        a1 = await pf.evaluate("[" + main + ", document.querySelector('.xc-arch-b').textContent, document.querySelector('.xc-sl-arch').hidden]")
+        await pf.click('.xc-arch-b'); await pf.wait_for_timeout(150)
+        a2 = await pf.evaluate("[[...document.querySelectorAll('.xc-sl-arch .xc-si-t')].map(e => e.textContent), document.querySelector('.xc-sl-arch').hidden]")
+        await pf.click('.xc-sl-arch .xc-si-more'); await pf.wait_for_selector('.xc-sa-arc')
+        unarc = await pf.text_content('.xc-sa-arc')
+        await pf.click('.xc-sa-arc'); await pf.wait_for_timeout(200)
+        a3 = await pf.evaluate("[" + main + ", document.querySelector('.xc-arch-b').hidden]")
+        check('归档：⋯ 里有改名、归档、删除；归档后收进「已归档（1）」（默认收着），点开看得到；在那里取消归档放回最近的对话',
+              a0 == [['编译 main.c', '旧对话'], False] and btns == ['改名', '归档', '删除'] and a1 == [['编译 main.c'], '已归档（1）', True]
+              and a2 == [['旧对话'], False] and unarc == '取消归档' and a3 == [['编译 main.c', '旧对话'], True]
+              and xf.get('archived') == [{'sid': 'sold000001', 'on': True}, {'sid': 'sold000001', 'on': False}], (a0, btns, a1, a2, unarc, a3, xf.get('archived')))
+        await pf.click('.xc-dr-x'); await pf.wait_for_timeout(300)
         await pf.click('.xc-x'); await pf.wait_for_timeout(400)
         await pf.evaluate("LimingXin.bag()"); await pf.click('.xin-bag .xin-it:has-text("聊天")'); await pf.wait_for_selector('.xin-ask')
         btns = await pf.evaluate("[...document.querySelectorAll('.xin-ask button')].map(b => b.getAttribute('aria-label') || b.textContent.trim())")

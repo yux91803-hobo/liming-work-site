@@ -346,13 +346,18 @@
     sc.appendChild(nav);
     var dh = h('p', 'xc-dr-h', '最近的对话');
     sc.appendChild(dh);
-    var ul = h('ul', 'xc-sl');
+    var ul = h('ul', 'xc-sl xc-sl-main');
     ul.appendChild(h('li', 'xc-hint xc-sl-wait', '正在读取…'));
     sc.appendChild(ul);
     // 对话多了只露最近几个，其余收在「更多对话」里，侧边栏不会越拉越长
-    var fold = h('button', 'xc-dr-fold'); fold.type = 'button'; fold.hidden = true;
+    var fold = h('button', 'xc-dr-fold xc-more-b'); fold.type = 'button'; fold.hidden = true;
     fold.addEventListener('click', function () { S.sessAll = !S.sessAll; foldSess(); if (!S.sessAll) dh.scrollIntoView({ block: 'nearest' }); });
     sc.appendChild(fold);
+    // 归档的对话：收在「已归档（N）」里，默认收着
+    var ab = h('button', 'xc-dr-fold xc-arch-b'); ab.type = 'button'; ab.hidden = true;
+    var aul = h('ul', 'xc-sl xc-sl-arch'); aul.hidden = true;
+    ab.addEventListener('click', function () { S.archOpen = !S.archOpen; renderSess(); if (S.archOpen) ab.scrollIntoView({ block: 'nearest' }); });
+    sc.appendChild(ab); sc.appendChild(aul);
     // 设置：默认收着，点开
     var setB = h('button', 'xc-dr-row xc-set-b'); setB.type = 'button'; setB.setAttribute('aria-expanded', 'false');
     setB.innerHTML = svgIcon('gear') + '<span>设置</span>' + svgIcon('chev');
@@ -367,27 +372,43 @@
     var my = ++S.drawerSeq;
     call('sessions', {}, 60000).then(function (d) {
       if (my !== S.drawerSeq) return;
-      ul.innerHTML = '';
-      if (!d.sessions.length) ul.appendChild(h('li', 'xc-hint', '还没有对话'));
-      dh.textContent = '最近的对话' + (d.sessions.length > SESS_SHOW ? ' · ' + d.sessions.length : '');
-      d.sessions.forEach(function (s) {
-        var li = h('li', 'xc-sli'), b = h('button', 'xc-si'); b.type = 'button';
-        b.appendChild(h('span', 'xc-si-t', s.title || '（无标题）'));
-        b.appendChild(h('span', 'xc-si-m', (AGENTS[s.agent] || s.agent) + ' · ' + s.turns + ' 轮 · ' + when(s.updated) + (s.active ? ' · 进行中' : '')));
-        if (s.sid === S.sid) { b.classList.add('cur'); b.setAttribute('aria-current', 'true'); }
-        b.addEventListener('click', function () { openSession(s.sid); });
-        var more = h('button', 'xc-si-more'); more.type = 'button'; more.setAttribute('aria-label', '改名或删除'); more.setAttribute('aria-expanded', 'false');
-        more.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle class="fill" cx="5.5" cy="12" r="1.6"/><circle class="fill" cx="12" cy="12" r="1.6"/><circle class="fill" cx="18.5" cy="12" r="1.6"/></svg>';
-        more.addEventListener('click', function () { sessActions(li, s, more); });
-        li.appendChild(b); li.appendChild(more); ul.appendChild(li);
-      });
-      foldSess();
+      S.sessList = d.sessions || [];
+      renderSess();
     }, function (e) { if (my !== S.drawerSeq) return; ul.innerHTML = ''; ul.appendChild(h('li', 'xc-hint', '读不出来：' + e.message)); });
+  }
+  // 画对话列表：没归档的放「最近的对话」，归档的放「已归档（N）」里（默认收着）。归档 / 取消归档 / 删除以后重画
+  function sessItem(s) {
+    var li = h('li', 'xc-sli'), b = h('button', 'xc-si'); b.type = 'button';
+    b.appendChild(h('span', 'xc-si-t', s.title || '（无标题）'));
+    b.appendChild(h('span', 'xc-si-m', (AGENTS[s.agent] || s.agent) + ' · ' + s.turns + ' 轮 · ' + when(s.updated) + (s.active ? ' · 进行中' : '')));
+    if (s.sid === S.sid) { b.classList.add('cur'); b.setAttribute('aria-current', 'true'); }
+    b.addEventListener('click', function () { openSession(s.sid); });
+    var more = h('button', 'xc-si-more'); more.type = 'button'; more.setAttribute('aria-label', '改名、归档或删除'); more.setAttribute('aria-expanded', 'false');
+    more.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle class="fill" cx="5.5" cy="12" r="1.6"/><circle class="fill" cx="12" cy="12" r="1.6"/><circle class="fill" cx="18.5" cy="12" r="1.6"/></svg>';
+    more.addEventListener('click', function () { sessActions(li, s, more); });
+    li.appendChild(b); li.appendChild(more);
+    return li;
+  }
+  function renderSess() {
+    var ul = drawerEl && drawerEl.querySelector('.xc-sl-main'), aul = drawerEl && drawerEl.querySelector('.xc-sl-arch'), ab = drawerEl && drawerEl.querySelector('.xc-arch-b');
+    var dh = drawerEl && drawerEl.querySelector('.xc-dr-h');
+    if (!ul || !aul || !ab) return;
+    var list = S.sessList || [], main = list.filter(function (s) { return !s.archived; }), arch = list.filter(function (s) { return s.archived; });
+    ul.innerHTML = ''; aul.innerHTML = '';
+    if (!main.length) ul.appendChild(h('li', 'xc-hint', arch.length ? '没有别的对话了（归档的在下面）' : '还没有对话'));
+    if (dh) dh.textContent = '最近的对话' + (main.length > SESS_SHOW ? ' · ' + main.length : '');
+    main.forEach(function (s) { ul.appendChild(sessItem(s)); });
+    arch.forEach(function (s) { aul.appendChild(sessItem(s)); });
+    ab.hidden = !arch.length; aul.hidden = !arch.length || !S.archOpen;
+    ab.setAttribute('aria-expanded', S.archOpen ? 'true' : 'false');
+    ab.innerHTML = '<span></span>' + svgIcon('chev');
+    ab.querySelector('span').textContent = '已归档（' + arch.length + '）';
+    foldSess();
   }
   // 对话列表折起来：只露最近 SESS_SHOW 个（正在看的那个不管排第几都露着），其余点「更多对话」展开；删了一个以后重新算
   var SESS_SHOW = 5;
   function foldSess() {
-    var ul = drawerEl && drawerEl.querySelector('.xc-sl'), fold = drawerEl && drawerEl.querySelector('.xc-dr-fold');
+    var ul = drawerEl && drawerEl.querySelector('.xc-sl-main'), fold = drawerEl && drawerEl.querySelector('.xc-more-b');
     if (!ul || !fold) return;
     var items = ul.querySelectorAll('.xc-sli'), extra = 0;
     for (var i = 0; i < items.length; i++) {
@@ -609,8 +630,17 @@
     if (old) return;                       // 再点一次 ⋯ 就收起
     more.setAttribute('aria-expanded', 'true');
     var row = h('div', 'xc-sa'), inp = h('input'), ren = h('button', 'xc-sa-b', '改名'), del = h('button', 'xc-sa-b xc-sa-del', '删除'), msg = h('p', 'xc-sa-m');
+    var arc = h('button', 'xc-sa-b xc-sa-arc', s.archived ? '取消归档' : '归档');
     inp.type = 'text'; inp.value = s.title || ''; inp.maxLength = 60; inp.setAttribute('aria-label', '对话的名字'); inp.setAttribute('enterkeyhint', 'done');
-    ren.type = del.type = 'button';
+    ren.type = del.type = arc.type = 'button';
+    // 归档：收进「已归档」，记录都留着；取消归档放回「最近的对话」
+    arc.addEventListener('click', function () {
+      arc.disabled = true; msg.textContent = '';
+      call('archive', { sid: s.sid, on: !s.archived }, 60000).then(function (r) {
+        if (r && r.error) throw new Error(r.msg || r.error);
+        s.archived = !s.archived; renderSess();
+      }).catch(function (e) { arc.disabled = false; msg.textContent = '没归档成：' + e.message; });
+    });
     var rename = function () {
       var t = inp.value.replace(/\s+/g, ' ').trim();
       if (!t) { inp.focus(); return; }
@@ -634,13 +664,12 @@
       del.disabled = true; msg.textContent = '';
       call('forget', { sid: s.sid }, 60000).then(function (r) {
         if (r && r.error) throw new Error(r.msg || r.error);
-        li.remove();
+        S.sessList = (S.sessList || []).filter(function (x) { return x !== s; });
         if (s.sid === S.sid) newChat(true);
-        foldSess();
-        if (!drawerEl.querySelector('.xc-sli')) { var ul = drawerEl.querySelector('.xc-sl'); if (ul) ul.appendChild(h('li', 'xc-hint', '还没有对话')); }
+        renderSess();
       }).catch(function (e) { del.disabled = false; armed = 0; del.textContent = '删除'; del.classList.remove('armed'); msg.textContent = '没删掉：' + e.message; });
     });
-    row.appendChild(inp); row.appendChild(ren); row.appendChild(del); row.appendChild(msg);
+    row.appendChild(inp); row.appendChild(ren); row.appendChild(arc); row.appendChild(del); row.appendChild(msg);
     li.appendChild(row);
     if (!touch) inp.focus();
   }
