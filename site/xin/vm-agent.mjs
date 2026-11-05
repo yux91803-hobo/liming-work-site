@@ -18,6 +18,7 @@
      daily    {force?}             按每日任务清单开一轮（网站后台每天定时调；今天做过就跳过，force 再做一遍）
      daily_get / daily_set {text}  读 / 改每日任务清单
      greet    {}                   下次见面的开场白（xin next 写的）；顺便在电脑刚睡醒时预热一下模型网关
+     archive  {sid, on?}           归档一个对话（on:false 取消归档）：只是收起来，记录都留着；sessions 里带 archived
      rename   {sid, title}         给对话改名；forget {sid} 删掉一个对话（还在进行中的不让删），连 Codex / Claude 自己存的那份会话记录一起删
      prune    {}                   清掉没有对应对话的 Codex / Claude 会话记录（删对话、每日任务时都会顺手做；网站不直接调）
      files    {path?, stat?}       小芯的文件：列出工作目录（WORK）里的一个文件夹，或者读一个文件（文字文件带内容，用来预览）；
@@ -839,7 +840,7 @@ function runDone(run) {
 }
 function summary(s) {
   const r = lastRun(s);
-  return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null };
+  return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null, archived: !!s.archived };
 }
 const ops = {
   memory() {
@@ -952,6 +953,15 @@ const ops = {
     s.title = title; writeJ(sessF(a.sid), s);
     return { ok: true, session: summary(s) };
   },
+  // 归档：收起来不在「最近的对话」里占地方，记录都留着（AI 自己那份会话记录也不删），随时能取消归档、接着聊
+  archive(a) {
+    if (!okId(a.sid, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
+    const s = readJ(sessF(a.sid));
+    if (!s) return { error: 'no_session', msg: '找不到这个对话' };
+    if (a.on === false) { delete s.archived; delete s.archivedAt; } else { s.archived = true; s.archivedAt = Date.now(); }
+    writeJ(sessF(a.sid), s);
+    return { ok: true, session: summary(s) };
+  },
   forget(a) {
     if (!okId(a.sid, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
     const s = readJ(sessF(a.sid));
@@ -1021,7 +1031,8 @@ const ops = {
     mk(SESS);
     const list = fs.readdirSync(SESS).filter(f => /^s[0-9a-z]+\.json$/.test(f)).map(f => readJ(path.join(SESS, f))).filter(Boolean);
     list.sort((x, y) => (y.updated || 0) - (x.updated || 0));
-    return { sessions: list.slice(0, 60).map(summary) };
+    // 没归档的、归档的各给最近 60 个（归档的多了也不会把正在用的挤出去）
+    return { sessions: list.filter(s => !s.archived).slice(0, 60).concat(list.filter(s => s.archived).slice(0, 60)).map(summary) };
   },
   history(a) {
     if (!okId(a.sid, 's')) return { error: 'bad_sid', msg: '对话编号不对' };

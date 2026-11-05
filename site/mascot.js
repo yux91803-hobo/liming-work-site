@@ -1792,7 +1792,9 @@
     get grr() { return grr; },
     set obedient(v) { obedientF = !!v; REBEL = rebelBase(); },   // 测试用：不叛逆
     get rebel() { return REBEL; },
-    dance: dance, swing: swing, rage: rage, refuse: refuse, sit: sitDown, trip: trip, code: code, tease: tease, mischief: mischief,
+    // 跳舞、敲代码：正在半空（跳、掉、吊着）就等落地再做（和背包一样走 act），不然一落地 setMode('idle') 就把动作掐掉了
+    dance: function () { act(dance); }, swing: swing, rage: rage, refuse: refuse, sit: sitDown, trip: trip,
+    code: function (given, how) { act(function () { code(given, how); }); }, tease: tease, mischief: mischief,
     bore: function () { boreAt = 0; },
     // 小芯聊天（xin-chat.js）用
     say: say,

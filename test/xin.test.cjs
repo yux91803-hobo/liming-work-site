@@ -457,15 +457,15 @@ test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做�
 });
 
 /* ---------- 小芯的文件、对话改名 / 删除 ---------- */
-test('改名、删除、文件这几个 op 都转给 vm-agent', async () => {
+test('改名、归档、删除、文件这几个 op 都转给 vm-agent', async () => {
   const m = await fresh(), env = mkEnv(), ck = await login(m, env);
   const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true}', stderr: '', exitCode: 0 } }] });
   try {
-    for (const op of ['rename', 'forget', 'files']) {
+    for (const op of ['rename', 'archive', 'forget', 'files']) {
       const d = await (await m.handleXin(req('/api/xin/call', { body: { op, args: { sid: 'sabc123' } }, headers: { cookie: ck } }), env, null)).json();
       assert.deepStrictEqual(d, { ok: true, data: { ok: true } }, op);
     }
-    assert.deepStrictEqual(ib.calls.filter(c => c.key.endsWith('/exec')).map(c => JSON.parse(c.body).argv[2]), ['rename', 'forget', 'files']);
+    assert.deepStrictEqual(ib.calls.filter(c => c.key.endsWith('/exec')).map(c => JSON.parse(c.body).argv[2]), ['rename', 'archive', 'forget', 'files']);
   } finally { ib.restore(); }
 });
 
@@ -604,6 +604,27 @@ test('对话改名、删除（连同每一轮的记录）；还在进行中的�
   assert.deepStrictEqual(op('sessions').sessions.map(s => s.sid), ['sbusy00001']);
   assert.deepStrictEqual(op('forget', { sid: 'sdone00001' }), { ok: true, already: true });
   assert.strictEqual(op('forget', { sid: '../../etc' }).error, 'bad_sid');
+});
+
+test('归档：只是收起来（记录、AI 的会话记录都留着），能取消；对话列表带 archived，归档的排在后面', () => {
+  const { xin, op } = agentEnv();
+  const sess = path.join(xin, 'sessions'), runs = path.join(xin, 'runs');
+  fs.mkdirSync(sess, { recursive: true }); fs.mkdirSync(runs, { recursive: true });
+  const mk = (sid, updated) => {
+    fs.writeFileSync(path.join(sess, sid + '.json'), JSON.stringify({ sid, agent: 'codex', title: sid, runs: ['r' + sid.slice(1)], created: 1, updated }));
+    fs.writeFileSync(path.join(runs, 'r' + sid.slice(1) + '.jsonl'), JSON.stringify({ t: 'done', ok: true }) + '\n');
+  };
+  mk('sa00000001', 3); mk('sb00000001', 2); mk('sc00000001', 1);
+  const r = op('archive', { sid: 'sa00000001' });
+  assert.deepStrictEqual([r.ok, r.session.archived], [true, true]);
+  assert.deepStrictEqual(op('sessions').sessions.map(s => [s.sid, s.archived]), [['sb00000001', false], ['sc00000001', false], ['sa00000001', true]]);
+  assert.ok(fs.existsSync(path.join(runs, 'ra00000001.jsonl')));
+  assert.strictEqual(op('history', { sid: 'sa00000001' }).runs.length, 1);   // 归档的照样能打开
+  assert.strictEqual(op('archive', { sid: 'sa00000001', on: false }).session.archived, false);
+  assert.deepStrictEqual(op('sessions').sessions.map(s => s.sid), ['sa00000001', 'sb00000001', 'sc00000001']);
+  assert.ok(!('archivedAt' in JSON.parse(fs.readFileSync(path.join(sess, 'sa00000001.json'), 'utf8'))));
+  assert.strictEqual(op('archive', { sid: '../x' }).error, 'bad_sid');
+  assert.strictEqual(op('archive', { sid: 'snone00001' }).error, 'no_session');
 });
 
 test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对应对话的旧记录也清掉（只清网站开的、1 小时前的）', () => {
