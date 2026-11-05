@@ -61,9 +61,7 @@
 /* 你说的：靠右，陶土色浅底 */
 .xc-me{align-self:flex-end;flex-direction:column;align-items:flex-end;max-width:84%;margin-left:auto}
 .xc-me .xc-bub{padding:9px 14px;background:var(--me);border:1px solid var(--me-line);box-shadow:2px 2px 0 var(--hard);font:14.5px/1.6 var(--sans);color:var(--ink);white-space:pre-wrap;word-break:break-word}
-.xc-me.pending .xc-bub,.xc-me.pending .xc-ctxm{opacity:.55}
-/* 还没送到小芯的电脑：自己那句下面一行小字「发送中…」/「小芯的电脑在睡觉，叫醒了就发…」 */
-.xc-sending{margin:4px 4px 0;font:11.5px/1.4 var(--sans);color:var(--ink-3);text-align:right}
+.xc-me.pending{opacity:.55}
 .xc-ctxm{display:flex;align-items:center;gap:4px;max-width:100%;margin:4px 4px 0;font:11.5px/1.4 var(--sans);color:var(--ink-3);text-align:right;word-break:break-word}
 /* 小芯说的：靠左，像素头像 + 白底气泡；同一轮里接着说的不再画头像 */
 .xc-ai{align-self:flex-start;align-items:flex-start;gap:8px;max-width:100%;padding-right:22px}

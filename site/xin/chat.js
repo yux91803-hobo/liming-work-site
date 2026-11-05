@@ -72,7 +72,7 @@
         if (d._status !== 200) throw new Error(d.msg || d.error || ('出错了（' + d._status + '）'));
         if (d.ok) { if (op !== 'status') setStatus(''); return d.data; }
         if ((d.state === 'waking' || d.state === 'busy') && Date.now() - t0 < (maxWait || 0)) {
-          if (onWait) onWait(d); else setStatus(d.msg || '正在唤醒云电脑…', 'wait');   // 发消息时写在自己那句下面，不再另外冒状态栏
+          if (onWait) onWait(d); else setStatus(d.msg || '唤醒中…', 'wait');   // 发消息时写在「正在输入」旁边，不再另外冒状态栏
           var x = xin(); if (x && op === 'send') x.ai('think');
           return sleepMs((d.retryAfter || 3) * 1000).then(once);
         }
@@ -147,11 +147,11 @@
   function renderHead() {
     if (!titleEl) return;
     var t = '', cls = '';
-    if (S.sending) { t = '发送中…'; cls = 'busy'; }
+    if (S.sending) { t = sendingText() + '…'; cls = 'busy'; }
     else if (S.run) { t = S.doing === 'work' ? '正在电脑上忙…' : '思考中…'; cls = 'busy'; }
     else if (S.mstate === 'running') { t = '在线'; cls = 'on'; }
-    else if (S.mstate === 'suspended') t = '电脑在睡觉，叫醒中…';
-    else if (S.mstate === 'stopped') t = '电脑关机了，开机中…';
+    else if (S.mstate === 'suspended') t = '唤醒中…';
+    else if (S.mstate === 'stopped') t = '开机中…';
     else if (S.mstate) t = S.mstate;
     titleEl.textContent = t; titleEl.className = 'xc-sub' + (cls ? ' ' + cls : '');
   }
@@ -631,7 +631,7 @@
         return r.json().catch(function () { return {}; }).then(function (d) {
           if (r.status === 401) { S.authed = false; syncBag(); render(); throw new Error('要先登录'); }
           if (r.status === 503 && (d.state === 'waking' || d.state === 'busy') && Date.now() - t0 < 60000) {
-            msg.textContent = d.msg || '正在唤醒云电脑…'; setTimeout(once, (d.retryAfter || 3) * 1000); return;
+            msg.textContent = d.msg || '唤醒中…'; setTimeout(once, (d.retryAfter || 3) * 1000); return;
           }
           throw new Error(d.msg || ('出错了（' + r.status + '）'));
         });
@@ -713,23 +713,20 @@
     var c = S.ctxOff ? null : pageContext();
     var pending = draw({ t: 'user', text: text, ctx: c ? ctxLabel(c) : '' });
     pending.classList.add('pending');
-    // 还没送到小芯的电脑：自己这句下面写「发送中…」（电脑在睡就写叫醒了再发），小芯那边先不冒「正在输入」
-    var note = pending.appendChild(h('div', 'xc-sending', '发送中…'));
     if (given == null) { input.value = ''; ls(LS_DRAFT, null); grow(); }
-    S.lastText = ''; S.doing = 'think'; S.note = null;
-    renderHead(); toBottom(true);
+    // 还没送到小芯的电脑：「正在输入」旁边写「接收中」（电脑在睡写「唤醒中」），送到了才「思考中」并开始计时
+    S.lastText = ''; S.doing = 'think'; S.note = null; S.waitSend = '';
+    typing(true); renderHead(); toBottom(true);
     var x = xin(); if (x) x.ai('think');
-    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined }, 90000, function (w) {
-      note.textContent = w.state === 'waking' ? '小芯的电脑在睡觉，叫醒了就发…' : '小芯的电脑有点忙，等一下就发…';
-    }).then(function (d) {
+    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined }, 90000, function (w) { S.waitSend = w.state; progress(); }).then(function (d) {
       if (c && c.sel) S.sel = null;      // 选中的内容用过一次就不再带
       S.ctxOff = false; refreshCtx();
       // 送到了：小芯的电脑收到这句、AI 开始干活，从这一刻开始算「思考中」的时间
-      S.sending = false; pending.classList.remove('pending'); note.remove();
+      S.sending = false; S.waitSend = ''; pending.classList.remove('pending');
       S.sid = d.sid; S.sessAgent = d.agent || S.sessAgent || S.agent; ls(LS_SID, d.sid);
       S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); render(); typing(true); startPolling();
     }, function (e) {
-      S.sending = false; pending.remove(); typing(false); renderHead();
+      S.sending = false; S.waitSend = ''; pending.remove(); typing(false); renderHead();
       if (!input.value) { input.value = text; ls(LS_DRAFT, text); grow(); }
       var x2 = xin(); if (x2) { x2.ai(''); x2.cmd('confused'); if (!S.open) x2.say('没发出去：' + e.message + '（点我看看）', 9000, open); }
       if (/还没做完/.test(e.message)) { openSession(S.sid); return; }
@@ -853,7 +850,7 @@
     }, function (e) {
       if (e.state === 'cooldown') { setStatus(e.message, 'bad'); pollTm = setTimeout(poll, Math.max(30, e.retryAfter || 60) * 1000); return; }
       if (/要先登录/.test(e.message)) { stopPolling(); return; }
-      setStatus(e.state === 'waking' ? '正在唤醒云电脑…' : '连不上云电脑，正在重试：' + e.message, 'wait');
+      setStatus(e.state === 'waking' ? '唤醒中…' : '连不上云电脑，正在重试：' + e.message, 'wait');
       pollTm = setTimeout(poll, 3000);
     });
   }
@@ -866,9 +863,12 @@
     renderHead();
     if (!typingEl) return;
     var sec = Math.round((Date.now() - (S.t0 || Date.now())) / 1000), lab = typingEl.querySelector('.xc-typing-l');
+    if (S.sending) { lab.textContent = sendingText(); return; }
     if (S.note && Date.now() - S.note.at < 6000) { lab.textContent = S.note.text; return; }
     lab.textContent = (S.doing === 'work' ? '在电脑上忙' : '思考中') + (sec >= 1 ? ' · ' + (sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒' : sec + ' 秒') : '');
   }
+  // 还没送到小芯的电脑时那行字：接收中；电脑在睡：唤醒中；InstaBox 忙：排队中
+  function sendingText() { return S.waitSend === 'waking' ? '唤醒中' : S.waitSend === 'busy' ? '排队中' : '接收中'; }
   function react(ev) {
     if (ev.t === 'status') { if (!NOISE.test(ev.text || '')) S.note = { text: ev.text, at: Date.now() }; return; }
     if (ev.t === 'tool') S.doing = 'work'; else if (ev.t === 'tool_end' || ev.t === 'text') S.doing = 'think';
