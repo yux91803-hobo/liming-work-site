@@ -588,7 +588,7 @@ function installXin() {
 }
 export function agentArgs(agent, sess, text, effort, extra) {
   if (agent === 'claude') {
-    const a = ['-p', text, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--append-system-prompt', systemPrompt()].concat(effort ? ['--effort', effort] : []);
+    const a = ['-p', text, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--dangerously-skip-permissions', '--append-system-prompt', systemPrompt()].concat(effort ? ['--effort', effort] : []);
     return ['claude', sess.started ? a.concat(['--resume', sess.agentSid]) : a.concat(['--session-id', sess.agentSid])];
   }
   // 小芯的设定用 developer_instructions 每一轮都给（续接以前的对话也带上，改了设定马上生效）；值按 TOML 解析，JSON 字符串正好是合法的 TOML 字符串
@@ -603,7 +603,7 @@ function killTree(c) {
   if (!c || !c.pid) return;
   try { process.kill(-c.pid, 'SIGTERM'); } catch { try { c.kill('SIGTERM'); } catch { /* 已经退了 */ } }
 }
-// 一直没有任何输出就当卡住了（实测电脑刚睡醒时模型网关第一下能卡 124 秒）：停掉重来一次
+// 只重试尚未开始工作的 CLI：开始处理后可能长时间不输出，网络超时由 CLI 自己处理，避免重复投递同一轮。
 const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
 function runner(run) {
   const meta = readJ(metaF(run));
@@ -678,8 +678,9 @@ function runner(run) {
         const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
         if (!line || line[0] !== '{') continue;
         let o; try { o = JSON.parse(line); } catch { continue; }
-        // 思考也算进展；init / thread.started / 重连提示不算，真正没回应的连接仍会重试。
-        if (agentProgress(meta.agent, o)) armStall();
+        // Codex JSON 不转发思考增量，Claude 通过 partial messages 报 message_start。
+        // 确认任务开始就停止网页重放；之后即使暂时静默也交给 CLI 自己的网络超时与重试。
+        if (agentProgress(meta.agent, o)) { got = true; clearTimeout(stallTm); }
         for (const ev of norm(o, state)) { emit(run, ev); if (ev.t !== 'status') { got = true; clearTimeout(stallTm); } }
         // 一拿到 AI 自己的会话号就记下来：中途被停掉，下一句也能接着聊
         if (state.sid && !state.sidSaved) { saveState(); state.sidSaved = true; }
@@ -700,11 +701,11 @@ function runner(run) {
 }
 
 function agentProgress(agent, o) {
-  if (agent === 'codex') return /^item\.(started|updated|completed)$/.test(o.type || '') &&
-    !!o.item && o.item.type !== 'error';
+  if (agent === 'codex') return o.type === 'turn.started' ||
+    (/^item\.(started|updated|completed)$/.test(o.type || '') && !!o.item && typeof o.item.type === 'string' && !!o.item.type && o.item.type !== 'error');
   if (o.type === 'assistant' || o.type === 'user' || o.type === 'result') return true;
   return o.type === 'stream_event' && !!o.event &&
-    /^(content_block_start|content_block_delta|content_block_stop|message_delta|message_stop)$/.test(o.event.type || '');
+    /^(message_start|content_block_start|content_block_delta|content_block_stop|message_delta|message_stop)$/.test(o.event.type || '');
 }
 
 /* ---------- AI 自己的会话记录 ----------

@@ -48,7 +48,11 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 emit(claude ? {type:'system',subtype:'init',session_id:id} : {type:'thread.started',thread_id:id});
 (async () => {
   if (process.env.XIN_TEST_MODE === 'cold' && number === 1) { await sleep(10000); return; }
-  if (process.env.XIN_TEST_MODE === 'thinking') {
+  if (process.env.XIN_TEST_MODE === 'silent-thinking') {
+    if (!claude) emit({type:'turn.started'});
+    else if (args.includes('--include-partial-messages')) emit({type:'stream_event',event:{type:'message_start',message:{role:'assistant'}}});
+    await sleep(1600);
+  } else if (process.env.XIN_TEST_MODE === 'thinking') {
     for (let i = 0; i < 14; i++) {
       fs.appendFileSync(path.join(root, 'progress'), process.pid + '\\n');
       emit(claude ? {type:'assistant',message:{content:[{type:'thinking',thinking:'working'}]}} :
@@ -189,6 +193,14 @@ test('锁持有进程被杀后由系统释放，后续发送不用人工删除�
 for (const agent of ['codex', 'claude']) test(agent + ' 思考进展持续超过初始等待时间，不会误重连', async t => {
   const f = fixture(t, { XIN_TEST_MODE: 'thinking', XIN_STALL_MS: '800' });
   const r = f.op('send', { agent, text: 'think' }), events = await f.wait(r.run);
+  assert.equal(fs.readFileSync(path.join(f.dir, 'launches'), 'utf8').trim().split('\n').length, 1);
+  assert.equal(events.some(e => e.t === 'status' && /重新连/.test(e.text)), false);
+  assert.equal(events.find(e => e.t === 'done').ok, true);
+});
+
+for (const agent of ['codex', 'claude']) test(agent + ' 已开始处理后长时间不输出事件，也不会被网页重放任务', async t => {
+  const f = fixture(t, { XIN_TEST_MODE: 'silent-thinking', XIN_STALL_MS: '800' });
+  const r = f.op('send', { agent, text: 'silent reasoning' }), events = await f.wait(r.run);
   assert.equal(fs.readFileSync(path.join(f.dir, 'launches'), 'utf8').trim().split('\n').length, 1);
   assert.equal(events.some(e => e.t === 'status' && /重新连/.test(e.text)), false);
   assert.equal(events.find(e => e.t === 'done').ok, true);
