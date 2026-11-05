@@ -76,3 +76,19 @@ test('机身、头像与收起的小脑袋复用画法，独立的渐变不会�
   assert.match(draw({ face: 'eyes' }, 'portrait-2'), /id="portrait-2-pin"/);
   assert.doesNotMatch(draw({ face: 'eyes' }, 'portrait-2'), /id="test-pin"/);
 });
+test('只有微笑、开心和喜欢有腮红，其余所有表情都不画腮红', () => {
+  const draw = vm.runInNewContext(js.slice(js.indexOf('  var LEG_X'), js.indexOf('  var layer =')) + '\ndraw');
+  for (const face of Object.keys(FACE)) {
+    const svg = draw({ face });
+    assert.equal((svg.match(/class="c-rose"/g) || []).length, ['smile', 'hap', 'love'].includes(face) ? 4 : 0, face);
+  }
+});
+test('生气的斜眉和半眯眼保持镜像，像素不越过机身内框', () => {
+  const half = FACE.angry.length / 2;
+  for (let i = 0; i < half; i++) {
+    const [x, y, w, h] = FACE.angry[i], right = FACE.angry[i + half];
+    assert.ok(Math.abs(x + w + right[0] - 20) < 1e-9);
+    assert.equal(y, right[1]);
+    assert.ok(x >= 5.2 && x + w <= 14.8 && y >= 7.3 && y + h <= 14.8);
+  }
+});

@@ -24,7 +24,7 @@ body.xin-drag,body.xin-drag *{cursor:grabbing!important;-webkit-user-select:none
 :is(.xin,.xin-portrait,.xin-peek) .c-rim{fill:#1b1b19}
 /* 发光只应用于眼睛像素，不影响机身边框、手脚和小芯的物品。 */
 :is(.xin,.xin-portrait) .c-ew{fill:var(--xe);filter:drop-shadow(0 0 .3px #ffe2a0) drop-shadow(0 0 .65px rgba(255,195,110,.6))}
-:is(.xin,.xin-portrait) .c-rose{fill:var(--xr);opacity:.88}
+:is(.xin,.xin-portrait,.xin-peek) .c-rose{fill:var(--xr);opacity:.65}
 :is(.xin,.xin-portrait) .c-g{fill:var(--xg)}
 :is(.xin,.xin-portrait) .c-d{fill:var(--xd)}
 :is(.xin,.xin-portrait) .c-ck{fill:#c98d4b}
