@@ -733,7 +733,7 @@ async def main():
         await pg.evaluate("LimingXin.cmd('normal')")
         await pg.wait_for_function("document.querySelector('.xin svg').dataset.face === 'eyes'")
         normal = await pg.evaluate("[...document.querySelectorAll('.xin .c-ew')].map(e => [+e.getAttribute('width'), +e.getAttribute('height')])")
-        check('小芯常态是两只睁开的竖眼，不是微笑', len(normal) == 2 and all(h > w * 2 for w, h in normal), normal)
+        check('小芯常态使用图中的专注竖矩形眼，不是微笑', len(normal) == 2 and normal == [[1.5, 2.65], [1.5, 2.65]], normal)
         hands = await pg.evaluate("""(() => {
           const arms = svg => [...svg.querySelectorAll('rect')].filter(e => (e.getAttribute('fill') || '').includes('-pin)') && (+e.getAttribute('x') < 4 || +e.getAttribute('x') >= 16))
             .map(e => ['x', 'y', 'width', 'height'].map(a => +e.getAttribute(a)));

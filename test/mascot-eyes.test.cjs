@@ -11,11 +11,11 @@ const block = js.match(/  var FACE = \{[\s\S]*?\n  \};/);
 assert.ok(block, '小芯的表情图案存在');
 const FACE = vm.runInNewContext(block[0] + '\nFACE');
 
-test('常态是睁开的竖眼，微笑与常态不混用', () => {
+test('常态使用专注竖眼，微笑与常态不混用', () => {
   for (const lx of [-1, 0, 1]) for (const ly of [-1, 0, 1]) {
     const normal = FACE.eyes(lx, ly);
     assert.equal(normal.length, 2);
-    assert.ok(normal.every(([x, y, w, h]) => h > w * 2 && x >= 5.2 && x + w <= 14.8 && y >= 7.3 && y + h <= 14.8));
+    assert.ok(normal.every(([x, y, w, h, color, radius]) => h > w && radius > 0 && x >= 5.2 && x + w <= 14.8 && y >= 7.3 && y + h <= 14.8));
     assert.notDeepEqual(normal, FACE.smile(lx, ly));
   }
 });
@@ -38,12 +38,12 @@ test('微笑的像素折线保持镜像且不会碰到机身内框', () => {
     assert.equal(left[0][0], left[half - 1][0], '折线的上下两端对齐');
   }
 });
-test('专注眼比常态更宽且略带圆角，两眼镜像、同高、位于面板内', () => {
+test('常态和专注使用相同的竖矩形、圆角和间距', () => {
   const normal = FACE.eyes(0, 0), focus = FACE.focus;
   assert.equal(focus.length, 2);
   for (let i = 0; i < 2; i++) {
     const [x, y, w, h, color, radius] = focus[i];
-    assert.ok(w > normal[i][2] && h > normal[i][3]);
+    assert.deepEqual(focus[i], normal[i]);
     assert.ok(h > w && radius > 0 && radius < w / 2);
     assert.ok(x >= 5.2 && x + w <= 14.8 && y >= 7.3 && y + h <= 14.8);
     assert.equal(color, 'ew');
