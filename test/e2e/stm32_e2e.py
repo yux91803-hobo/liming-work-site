@@ -1551,11 +1551,12 @@ async def main():
         rows = await pa.evaluate("[...document.querySelectorAll('.xc-sheet .xc-tg')].map(r => [r.dataset.name, r.querySelector('.xc-tg-t b').textContent, r.querySelector('.xc-sw').getAttribute('aria-checked')])")
         await pa.click('.xc-sheet [data-name=rea] .xc-sw'); await pa.wait_for_function("document.querySelector('.xc-sheet [data-name=rea] .xc-sw').getAttribute('aria-checked') === 'true'")
         note = await pa.text_content('.xc-sheet [data-name=rea] .xc-tg-n')
+        small = await pa.evaluate("document.querySelectorAll('.xc-sheet .xc-tg-t span, .xc-sheet p:not(.xc-tg-n)').length")
         await pa.mouse.click(195, 300); await pa.wait_for_timeout(300)
         closed = await pa.evaluate("[document.querySelector('.xc-sheet').hidden, !!document.querySelector('.xc.show')]")
-        check('插件：「＋ → 插件」列出自己装的插件和开没开；点开关告诉小芯的电脑、提示下一句生效；点遮罩收起不关面板',
+        check('插件：「＋ → 插件」列出自己装的插件和开没开（不带说明小字）；点开关告诉小芯的电脑；点遮罩收起不关面板',
               rows == [['rea', 'REA 逆向', 'false'], ['playwright', 'playwright', 'true']] and xa.get('plugin_set') == [{'name': 'rea', 'on': True}]
-              and '下一句' in note and closed == [True, True], (rows, xa.get('plugin_set'), note, closed))
+              and note == '' and small == 0 and closed == [True, True], (rows, xa.get('plugin_set'), note, small, closed))
         await pa.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
         # （之前在学习台里收起来过：再把它扔进去，照样出来）
