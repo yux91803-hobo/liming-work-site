@@ -336,3 +336,48 @@ export async function runCron(cron, env, ctx, opt = {}) {
 
 // 测试用：清掉缓存
 export function _reset() { keyCache = null; machineCache = null; agentCache = null; }
+
+// 后台监督器的持久化基础；本阶段尚未接入现有聊天链路。
+export class XinTaskSupervisor {
+  constructor(state, env) { this.state = state; this.env = env; }
+  async fetch(req) {
+    const incoming = await req.json(), current = await this.state.storage.get('tasks') || {};
+    if (incoming.version != null && current.version != null && (incoming.version < current.version || incoming.version === current.version && incoming.bg !== current.bg)) return json({ ok: true, stale: true });
+    // A browser's old read cannot cancel a newer controller callback.
+    if (incoming.version == null && current.observedAt > incoming.observedAt) return json({ ok: true, stale: true });
+    const next = { ...current, ...incoming };
+    await this.state.storage.put('tasks', next);
+    if (next.bg > 0) await this.state.storage.setAlarm(Date.now() + 60000);
+    else {
+      await this.state.storage.deleteAlarm();
+      if (next.machine) await ib(this.env, `/v1/machines/${next.machine}/activity-leases/xin-tasks`, { method: 'DELETE' });
+    }
+    return json({ ok: true });
+  }
+  async alarm() {
+    const current = await this.state.storage.get('tasks');
+    if (!current || current.bg <= 0) return;
+    let delay = 60000;
+    try {
+      const status = await ib(this.env, '/v1/machines/' + current.machine);
+      if (!status.ok) throw await ibErr(status);
+      const m = await status.json();
+      if (m.cooldownUntil && Date.parse(m.cooldownUntil) > Date.now()) delay = Math.max(60000, Date.parse(m.cooldownUntil) - Date.now() + 5000);
+      else {
+        const response = await call({ ...this.env, XIN_TASK_SUPERVISOR: undefined }, CRON_ORIGIN, 'tasks', { _watchdog: true }, { waitUntil: p => this.state.waitUntil(p) }, Date.now());
+        if (response.ok) {
+          const bg = response.data.bg || 0;
+          const latest = await this.state.storage.get('tasks') || current;
+          const next = response.data.version != null && latest.version > response.data.version ? latest : { ...latest, bg, version: response.data.version ?? latest.version, observedAt: Date.now() };
+          await this.state.storage.put('tasks', next);
+          if (next.bg === 0) { await this.state.storage.deleteAlarm(); await ib(this.env, `/v1/machines/${current.machine}/activity-leases/xin-tasks`, { method: 'DELETE' }); return; }
+          const lease = await ib(this.env, `/v1/machines/${current.machine}/activity-leases/xin-tasks`, { method: 'PUT', body: JSON.stringify({ ttlSeconds: 3600 }) });
+          if (!lease.ok) throw await ibErr(lease);
+        }
+      }
+    } finally {
+      const latest = await this.state.storage.get('tasks');
+      if (latest?.bg > 0) await this.state.storage.setAlarm(Date.now() + delay);
+    }
+  }
+}

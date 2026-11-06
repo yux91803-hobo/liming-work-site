@@ -4,6 +4,7 @@
 // 3. 其余 /api/* 一律 404（互传、协作中心的接口已经删掉）
 // 4. 工具 assets 里的图片缓存一天
 import { handleXin, runCron } from './xin.js';
+export { XinTaskSupervisor } from './xin.js';
 const IMAGE_CACHE = 'public, max-age=86400';
 const SEC_HEADERS = { 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
