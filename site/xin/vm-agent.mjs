@@ -45,7 +45,7 @@ const BASE = process.env.XIN_HOME || path.join(os.homedir(), '.xin');
 const WORK = process.env.XIN_WORK || '/data/workspace';
 const TEMPLATE = () => path.join(WORK, 'stm32-template');   // STM32 空工程（scripts/vm/setup-stm32.sh 装的）
 const SESS = path.join(BASE, 'sessions'), RUNS = path.join(BASE, 'runs'), BIN = path.join(BASE, 'bin');
-const AGENTS = ['claude', 'codex'];
+const AGENTS = ['claude', 'codex', 'harness'];
 const OUT_MAX = 2000, TEXT_MAX = 20000, CTX_MAX = 12000;
 const FILES_MAX = 400, PREVIEW_MAX = 200 * 1024;   // 小芯的文件：一个文件夹最多列多少个；多大以内的文字文件给预览
 export function withContext(text, context) {
@@ -121,18 +121,25 @@ function lastActivity() {
 }
 function hasCmd(c) { return spawnSync('sh', ['-lc', 'command -v ' + c], { encoding: 'utf8' }).status === 0; }
 function maybeWarm() {
-  if (Date.now() - lastActivity() < WARM_IDLE || !hasCmd('codex')) return false;
+  if (Date.now() - lastActivity() < WARM_IDLE || !(hasAgent('harness') || hasCmd('codex'))) return false;
   mk(BASE); writeJ(WARM_FILE(), { at: Date.now(), running: true });
   spawn(process.execPath, [SELF, 'warm'], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref();
   return true;
 }
 function warm() {
   const t0 = Date.now();
-  const child = spawn('codex', ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '-c', 'developer_instructions="只回复一个字：1"'].concat(mcpFlags(), ['1']),
-    { cwd: os.homedir(), stdio: ['ignore', 'ignore', 'ignore'] });
+  // 有 Harness 就用它预热（现在小芯用的是它）；它没有「不留会话」的开关，做完把这个会话删掉
+  const h = hasAgent('harness');
+  const child = h
+    ? spawn(dshCmd(), ['--profile', 'headless', '--json', '只回复一个字：1'], { cwd: os.homedir(), stdio: ['ignore', 'pipe', 'ignore'], env: Object.assign({}, process.env, harnessEnv()) })
+    : spawn('codex', ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '-c', 'developer_instructions="只回复一个字：1"'].concat(mcpFlags(), ['1']),
+      { cwd: os.homedir(), stdio: ['ignore', 'ignore', 'ignore'] });
+  let out = '';
+  if (h) { child.stdout.setEncoding('utf8'); child.stdout.on('data', d => { if (out.length < 4000) out += d; }); }
   const kill = setTimeout(() => { try { child.kill('SIGTERM'); } catch { /* 已经退了 */ } }, 200e3);
   const end = (code) => {
     clearTimeout(kill);
+    if (h) { const m = /"sessionId":"(session-[0-9a-f-]{36})"/i.exec(out); if (m) { try { dropLogs('harness', m[1]); } catch { /* 删不掉就留着 */ } } }
     const rec = { at: Date.now(), ms: Date.now() - t0, ok: code === 0 };
     writeJ(WARM_FILE(), rec);
     try { fs.appendFileSync(path.join(BASE, 'warm.log'), JSON.stringify(rec) + '\n'); } catch { /* 不要紧 */ }
@@ -568,6 +575,53 @@ export function fromCodex(o, state) {
   return out;
 }
 
+// Harness 的事件 → 网页的事件。用量（step_end 的 usage）攒在 state.hu：最近一步的输入算上下文，加起来算消耗
+function harnessResult(r) {
+  if (r == null) return '';
+  if (typeof r === 'string') return r;
+  if (Array.isArray(r)) return r.map(harnessResult).join('');
+  if (typeof r === 'object' && typeof r.text === 'string') return r.text;
+  return JSON.stringify(r);
+}
+export function fromHarness(o, state) {
+  const out = [];
+  if (!o || typeof o !== 'object') return out;
+  state.tools = state.tools || {};
+  switch (o.type) {
+    case 'session': if (typeof o.sessionId === 'string') state.sid = o.sessionId; break;
+    case 'text': if (o.text) out.push({ t: 'text', text: String(o.text) }); break;
+    case 'tool_call': {
+      const inp = o.input || {}, name = o.tool === 'bash' ? 'Bash' : String(o.tool || '工具');
+      const detail = cut(typeof inp.command === 'string' ? inp.command : JSON.stringify(inp), 600);
+      state.tools[o.callId] = { name, detail };
+      out.push({ t: 'tool', id: o.callId, name, detail });
+      break;
+    }
+    case 'tool_result': {
+      const t = state.tools[o.callId] || { name: '工具', detail: '' };
+      out.push({ t: 'tool_end', id: o.callId, name: t.name, detail: t.detail, ok: o.status === 'completed', out: cut(harnessResult(o.result != null ? o.result : o.error), OUT_MAX) });
+      break;
+    }
+    case 'status':
+      if (o.phase === 'step_end' && o.usage) {
+        const u = o.usage, hu = state.hu = state.hu || { input: 0, output: 0, last: 0 };
+        hu.input += u.inputTokens || 0; hu.output += u.outputTokens || 0; hu.last = (u.inputTokens || 0) + (u.outputTokens || 0);
+      }
+      if (o.phase === 'turn_end' && o.reason && o.reason.kind && o.reason.kind !== 'completed' && !state.errShown) {
+        state.failed = true; state.errShown = true;
+        out.push({ t: 'err', text: String(o.reason.message || o.reason.error || ('这一轮没做完（' + o.reason.kind + '）')) });
+      }
+      break;
+    case 'error': {
+      state.failed = true;
+      if (!state.errShown) { state.errShown = true; out.push({ t: 'err', text: String(o.message || (o.error && (o.error.message || o.error.code)) || o.code || '出错了') }); }
+      break;
+    }
+    default: break;   // thinking、final 不显示（final 和 text 一样）
+  }
+  return out;
+}
+
 /* ---------- 思考强度 ----------
    effort：auto（默认）/ low / high / max。auto：看这句话像不像写代码的活（写、改、编译、调试、报错、代码块…），像就 max，不像就不指定（用 AI 自己的默认，Codex 配置里是 high）。
    用户的 Codex 接的是 deepseek（经云电脑里的网关），它只认 low / high / max，别的值会被网关换成默认 high，所以这里不用 Codex 自己的 xhigh。 */
@@ -586,7 +640,42 @@ function installXin() {
     try { mk(d); fs.writeFileSync(path.join(d, 'xin'), sh, { mode: 0o755 }); fs.chmodSync(path.join(d, 'xin'), 0o755); } catch { /* 写不了就算了 */ }
   }
 }
+/* ---------- Harness（DeepSeek Harness，命令 dsh） ----------
+   dsh --profile headless --json：一句话一个进程，事件一行一个 JSON（session / status / text / tool_call / tool_result / final）。
+   模型和线路在 ~/.dsh/profiles/headless/cordis.patch.yml：走小芯电脑上的本地网关，固定 deepseek-v4.1-flash；
+   网关的 key 在 ~/.xin/harness.key（只有自己能读），起的时候用环境变量 XIN_HARNESS_KEY 交给它（配置里写的是 apiKeyEnv）。
+   小芯的设定写进一个 --patch 文件（system-prompt 的 personaPrefix），每一轮都带；接着聊用 --session-id。
+   权限：DSH_PERMISSION_MODE=danger-full-access（和 Codex 的 --dangerously-bypass-approvals-and-sandbox 一样，用户确认过）。 */
+const HARNESS_KEY = () => path.join(BASE, 'harness.key');
+const HARNESS_WIN = 258400;   // 和 Codex 那边一样的上下文上限（网关里的 deepseek-v4.1-flash）
+const HARNESS_PERSONA = () => path.join(BASE, 'harness-persona.yml');
+function dshCmd() {
+  if (process.env.XIN_DSH) return process.env.XIN_DSH;
+  const p = path.join(os.homedir(), '.local', 'bin', 'dsh');
+  return fs.existsSync(p) ? p : 'dsh';
+}
+function hasAgent(agent) { if (agent !== 'harness') return hasCmd(agent); const c = dshCmd(); return c !== 'dsh' ? fs.existsSync(c) : hasCmd('dsh'); }
+function writePersona() {
+  mk(BASE);
+  const t = HARNESS_PERSONA() + '.' + process.pid + '.tmp';
+  // personaPrefix 用 JSON 字符串写：JSON 字符串就是合法的 YAML 双引号字符串
+  fs.writeFileSync(t, '# 小芯的设定（网站每一轮起 Harness 前重写）\n- id: system-prompt\n  config:\n    personaPrefix: ' + JSON.stringify(systemPrompt()) + '\n');
+  fs.renameSync(t, HARNESS_PERSONA());
+  return HARNESS_PERSONA();
+}
+function harnessEnv() {
+  const env = { DSH_PERMISSION_MODE: 'danger-full-access' };
+  const key = readText(HARNESS_KEY()).trim();
+  if (key) env.XIN_HARNESS_KEY = key;
+  return env;
+}
 export function agentArgs(agent, sess, text, effort, extra) {
+  if (agent === 'harness') {
+    // 文字放最后当任务；以 - 开头会被当成选项，前面垫个空格
+    const task = /^-/.test(text) ? ' ' + text : text;
+    return [dshCmd(), ['--profile', 'headless'].concat((extra && extra.patch) ? ['--patch', extra.patch] : [], ['--json'],
+      sess.started && sess.agentSid ? ['--session-id', sess.agentSid] : [], [task])];
+  }
   if (agent === 'claude') {
     const a = ['-p', text, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--dangerously-skip-permissions', '--append-system-prompt', systemPrompt()].concat(effort ? ['--effort', effort] : []);
     return ['claude', sess.started ? a.concat(['--resume', sess.agentSid]) : a.concat(['--session-id', sess.agentSid])];
@@ -617,6 +706,7 @@ function runner(run) {
     const changes = {};
     if (state.sid) { changes.agentSid = state.sid; changes.started = true; }
     if (state.ctxWin) changes.ctxWin = state.ctxWin;
+    if (state.hUsage) changes.hUsage = state.hUsage;
     const r = patchSession(meta.sid, changes);
     if (r.error) {
       state.failed = true;
@@ -626,6 +716,12 @@ function runner(run) {
   };
   const finish = (code, why) => {
     if (finished) return; finished = true; clearTimeout(stallTm);
+    // Harness 的用量：这个对话以前的加上这一轮的（只在做完时加一次）
+    if (meta.agent === 'harness' && state.hu) {
+      const prev = (readJ(sessF(meta.sid), sess) || {}).hUsage || { input: 0, output: 0 };
+      const input = (prev.input || 0) + state.hu.input, output = (prev.output || 0) + state.hu.output;
+      state.hUsage = { ctx: state.hu.last, win: HARNESS_WIN, input, output, total: input + output };
+    }
     const s = saveState();
     const m = readJ(metaF(run), meta);
     const stopped = !!m.stopped;
@@ -646,10 +742,12 @@ function runner(run) {
       pushAll({ title: ok ? '小芯做完了' : '小芯没做成', body: text || (ok ? '点开看看' : '点开看看怎么回事'), tag: 'xin-' + meta.sid, sid: meta.sid, url: '/#xin=' + meta.sid }).catch(() => {});
     }
   };
-  const norm = meta.agent === 'claude' ? fromClaude : fromCodex;
+  const norm = meta.agent === 'claude' ? fromClaude : meta.agent === 'harness' ? fromHarness : fromCodex;
   const start = () => {
     // 每次都重新读会话：重来时 AI 的会话号可能已经有了，要接着那个会话
-    const [cmd, args] = agentArgs(meta.agent, readJ(sessF(meta.sid), sess), meta.text, meta.effort || '', { images: meta.images || [] });
+    let patch = null;
+    if (meta.agent === 'harness') { try { patch = writePersona(); } catch { /* 写不了就用 Harness 自己的设定 */ } }
+    const [cmd, args] = agentArgs(meta.agent, readJ(sessF(meta.sid), sess), meta.text, meta.effort || '', { images: meta.images || [], patch });
     let got = false, buf = '';
     const armStall = () => {
       clearTimeout(stallTm);
@@ -666,7 +764,7 @@ function runner(run) {
       // 自己一个进程组：卡住或停掉时连它起的子进程一起杀，不然子进程攥着输出管道，这边永远等不到它结束
       child = spawn(cmd, args, {
         cwd: WORK, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
-        env: Object.assign({}, process.env, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
+        env: Object.assign({}, process.env, meta.agent === 'harness' ? harnessEnv() : {}, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
       });
     } catch (e) { finish(127, '启动 ' + cmd + ' 失败：' + e.message); return; }
     child.on('error', e => finish(127, e.code === 'ENOENT' ? '云电脑里没有 ' + cmd + ' 命令' : '启动 ' + cmd + ' 失败：' + e.message));
@@ -701,6 +799,7 @@ function runner(run) {
 }
 
 function agentProgress(agent, o) {
+  if (agent === 'harness') return typeof o.type === 'string';   // 有事件就说明它起来了；之后的超时交给它自己
   if (agent === 'codex') return o.type === 'turn.started' ||
     (/^item\.(started|updated|completed)$/.test(o.type || '') && !!o.item && typeof o.item.type === 'string' && !!o.item.type && o.item.type !== 'error');
   if (o.type === 'assistant' || o.type === 'user' || o.type === 'result') return true;
@@ -714,13 +813,16 @@ function agentProgress(agent, o) {
           命令删不掉（没装、版本太老）就直接删文件。
    Claude：~/.claude/projects/<目录>/<会话号>.jsonl（有同名文件夹也一起删）。 */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Harness 的会话号是 session-<uuid>；Codex、Claude 是纯 uuid
+const HSID_RE = /^session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function okAgentSid(agent, id) { return typeof id === 'string' && (agent === 'harness' ? HSID_RE : UUID_RE).test(id); }
 const CODEX_HOME = () => process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 const CLAUDE_HOME = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const PRUNE_AGE = 3600e3;   // 1 小时内动过的不当没人要的：可能正在跑、会话号还没来得及记进对话
 const OWNED = path.join(BASE, 'agent-sessions');
 function ownedFile(agent, id) { return path.join(OWNED, agent + '-' + id.toLowerCase() + '.json'); }
 function rememberAgentSession(agent, id) {
-  if (!AGENTS.includes(agent) || typeof id !== 'string' || !UUID_RE.test(id)) return;
+  if (!AGENTS.includes(agent) || !okAgentSid(agent, id)) return;
   id = id.toLowerCase();
   try {
     const f = ownedFile(agent, id), old = readJ(f);
@@ -747,6 +849,22 @@ function codexLogs() {
   walk(root, 0);
   return out;
 }
+// Harness：~/.dsh/sessions/<工作目录>/session-<uuid>/（一个文件夹），外加 storages/session_projcache/sessions/<会话号>.json
+const DSH_HOME = () => process.env.XIN_DSH_HOME || path.join(os.homedir(), '.dsh');
+function harnessLogs() {
+  const out = [], root = path.join(DSH_HOME(), 'sessions');
+  for (const d of listDir(root)) {
+    if (!d.isDirectory()) continue;
+    for (const e of listDir(path.join(root, d.name))) {
+      if (!e.isDirectory() || !HSID_RE.test(e.name)) continue;
+      const dir = path.join(root, d.name, e.name);
+      let size = 0, mtime = 0;
+      for (const f of listDir(dir)) { const i = f.isFile() && fileInfo(path.join(dir, f.name)); if (i) { size += i.size; mtime = Math.max(mtime, i.mtime); } }
+      out.push({ id: e.name.toLowerCase(), file: dir, dir: true, size, mtime: mtime || (fileInfo(dir) || {}).mtime || 0 });
+    }
+  }
+  return out;
+}
 function claudeLogs() {
   const out = [];
   for (const d of listDir(path.join(CLAUDE_HOME(), 'projects'))) {
@@ -761,9 +879,9 @@ function claudeLogs() {
 }
 // 删掉一个 AI 会话的记录；返回删掉的字节数（大概）
 function dropLogs(agent, id, logs) {
-  if (!AGENTS.includes(agent) || typeof id !== 'string' || !UUID_RE.test(id)) return 0;
+  if (!AGENTS.includes(agent) || !okAgentSid(agent, id)) return 0;
   id = id.toLowerCase();
-  const mine = (logs || (agent === 'claude' ? claudeLogs() : codexLogs())).filter(l => l.id === id);
+  const mine = (logs || (agent === 'claude' ? claudeLogs() : agent === 'harness' ? harnessLogs() : codexLogs())).filter(l => l.id === id);
   if (agent === 'codex') {
     // 有记录才叫 codex 来删（没有的话它会报错，白跑一趟）
     if (mine.length) spawnSync('codex', ['delete', '--force', id], { cwd: os.homedir(), stdio: 'ignore', timeout: 30000, env: Object.assign({}, process.env, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin') }) });
@@ -771,7 +889,8 @@ function dropLogs(agent, id, logs) {
   let bytes = 0;
   for (const l of mine) {
     bytes += l.size || 0;
-    try { fs.unlinkSync(l.file); } catch { /* codex 已经删了 */ }
+    try { if (l.dir) fs.rmSync(l.file, { recursive: true, force: true }); else fs.unlinkSync(l.file); } catch { /* codex 已经删了 */ }
+    if (agent === 'harness') { try { fs.unlinkSync(path.join(DSH_HOME(), 'storages', 'session_projcache', 'sessions', id + '.json')); } catch { /* 没有缓存 */ } }
     if (agent === 'claude') { try { fs.rmSync(path.join(path.dirname(l.file), id), { recursive: true, force: true }); } catch { /* 没有同名文件夹 */ } }
   }
   if (mine.every(l => !fs.existsSync(l.file))) { try { fs.unlinkSync(ownedFile(agent, id)); } catch { /* 没登记或删不掉就留着 */ } }
@@ -780,14 +899,14 @@ function dropLogs(agent, id, logs) {
 // 启动方式不能证明归属：别的 codex exec / Claude SDK 也用相同标记。只认网站自己的登记。
 // 旧网页会话从现有对话补登记；无法确认归属的历史孤立记录保留。坏文件仍让整个清理停止。
 function pruneLogs(minAge = PRUNE_AGE) {
-  const res = { codex: 0, claude: 0, bytes: 0 };
+  const res = { codex: 0, claude: 0, harness: 0, bytes: 0 };
   if (!fs.existsSync(SESS)) return Object.assign(res, { skipped: 'no_sessions_dir' });
   const used = new Set();
   for (const f of fs.readdirSync(SESS)) {
     if (!/^s[0-9a-z]+\.json$/.test(f)) continue;
     const s = readJ(path.join(SESS, f));
     if (!s || typeof s !== 'object' || Array.isArray(s) || !AGENTS.includes(s.agent) ||
-      (s.agentSid != null && (typeof s.agentSid !== 'string' || !UUID_RE.test(s.agentSid))))
+      (s.agentSid != null && !okAgentSid(s.agent, s.agentSid)))
       return Object.assign(res, { skipped: 'bad_session_file', file: f });
     if (s.agentSid) { used.add(s.agent + ':' + String(s.agentSid).toLowerCase()); rememberAgentSession(s.agent, s.agentSid); }
   }
@@ -799,6 +918,10 @@ function pruneLogs(minAge = PRUNE_AGE) {
   const cl = claudeLogs();
   for (const l of cl.filter(l => old('claude', l))) {
     res.bytes += dropLogs('claude', l.id, cl); res.claude++;
+  }
+  const hl = harnessLogs();
+  for (const l of hl.filter(l => old('harness', l))) {
+    res.bytes += dropLogs('harness', l.id, hl); res.harness++;
   }
   return res;
 }
@@ -885,7 +1008,7 @@ function sizeText(n) { return n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n /
 export function filesPart(files, agent) {
   if (!files || !files.length) return '';
   return '\n\n【用户发来的文件（已经在你电脑上）】\n' + files.map(f => '- ' + f.path + '（' + f.name + '，' + (f.image ? '图片，' : '') + sizeText(f.size) + '）').join('\n') +
-    (files.some(f => f.image) ? (agent === 'codex' ? '\n图片已经直接给你看了。' : '\n图片用 Read 工具打开就能看。') : '');
+    (files.some(f => f.image) && agent !== 'harness' ? (agent === 'codex' ? '\n图片已经直接给你看了。' : '\n图片用 Read 工具打开就能看。') : '');
 }
 
 /* ---------- 一个对话的用量 ----------
@@ -946,7 +1069,8 @@ function claudeUsage(id, win) {
 }
 export function sessionUsage(s) {
   try {
-    if (!s || typeof s.agentSid !== 'string' || !UUID_RE.test(s.agentSid) || !s.started) return null;
+    if (!s || !okAgentSid(s.agent, s.agentSid) || !s.started) return null;
+    if (s.agent === 'harness') return s.hUsage && s.hUsage.total ? s.hUsage : null;
     const id = s.agentSid.toLowerCase();
     return s.agent === 'claude' ? claudeUsage(id, s.ctxWin) : s.agent === 'codex' ? codexUsage(id) : null;
   } catch { return null; }
@@ -998,8 +1122,7 @@ const ops = {
     return { ok: true, size: Buffer.byteLength(text) };
   },
   ping() {
-    const has = c => spawnSync('sh', ['-lc', 'command -v ' + c], { encoding: 'utf8' }).status === 0;
-    return { ok: true, agents: AGENTS.filter(has), work: WORK };
+    return { ok: true, agents: AGENTS.filter(hasAgent), work: WORK };
   },
   send(a) {
     const fc = checkFiles(a.files);
@@ -1017,7 +1140,7 @@ const ops = {
       const r = lastRun(s);
       if (r && !runDone(r)) return { error: 'busy', msg: '上一句还没做完', run: r };
     } else {
-      const agent = AGENTS.includes(a.agent) ? a.agent : 'claude';
+      const agent = AGENTS.includes(a.agent) ? a.agent : 'harness';
       s = { sid: rid('s'), agent, title: (text || files.map(f => f.name).join('、')).replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
     }
     const ctxLabel = String(a.ctxLabel || '').slice(0, 160);
@@ -1049,8 +1172,8 @@ const ops = {
     if (done && done.date === today() && !a.force) return { skipped: 'done', done };
     const last = readJ(DAILY_LAST());
     if (last && last.run && fs.existsSync(metaF(last.run)) && !runDone(last.run)) return { skipped: 'running', run: last.run, sid: last.sid };
-    const agent = hasCmd('codex') ? 'codex' : hasCmd('claude') ? 'claude' : null;
-    if (!agent) return { error: 'no_agent', msg: '电脑里没有 codex 也没有 claude' };
+    const agent = ['harness', 'codex', 'claude'].find(hasAgent) || null;
+    if (!agent) return { error: 'no_agent', msg: '电脑里没有 Harness、codex、claude' };
     mk(SESS); mk(RUNS);
     const s = { sid: rid('s'), agent, title: '每日任务 · ' + today().slice(5), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now(), kind: 'daily' };
     const run = launch(s, { text: forAgent(dailyPrompt(list), ''), effort: '', kind: 'daily' }, { t: 'user', text: '⏰ 每日任务：按清单做一遍', at: Date.now() });
@@ -1309,7 +1432,7 @@ function main() {
   if (op === 'session_patch' && locked && okId(args.sid, 's')) {
     const s = readJ(sessF(args.sid));
     if (!s) { process.stdout.write(JSON.stringify({ error: 'no_session', msg: '找不到这个对话' })); return; }
-    for (const k of ['agentSid', 'started', 'ctxWin']) if (Object.prototype.hasOwnProperty.call(args.changes || {}, k)) s[k] = args.changes[k];
+    for (const k of ['agentSid', 'started', 'ctxWin', 'hUsage']) if (Object.prototype.hasOwnProperty.call(args.changes || {}, k)) s[k] = args.changes[k];
     s.updated = Date.now(); writeJ(sessF(args.sid), s); rememberAgentSession(s.agent, s.agentSid);
     process.stdout.write(JSON.stringify({ session: s })); return;
   }

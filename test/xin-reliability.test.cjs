@@ -124,7 +124,7 @@ test('清理不碰独立 codex exec / Claude SDK 的旧记录，坏的归属登�
   const f = fixture(t), codex = oldLog(f.env, 'codex'), claude = oldLog(f.env, 'claude');
   const owned = path.join(f.env.XIN_HOME, 'agent-sessions'); fs.mkdirSync(owned);
   fs.writeFileSync(path.join(owned, 'codex-' + ID + '.json'), '{}');
-  assert.deepEqual(f.op('prune'), { codex: 0, claude: 0, bytes: 0 });
+  assert.deepEqual(f.op('prune'), { codex: 0, claude: 0, harness: 0, bytes: 0 });
   assert.ok(fs.existsSync(codex) && fs.existsSync(claude));
   assert.equal(fs.existsSync(path.join(f.dir, 'deletions')), false);
 });
@@ -135,7 +135,7 @@ for (const agent of ['codex', 'claude']) test(agent + '：网页新会话登记�
   const s = JSON.parse(fs.readFileSync(sessionFile, 'utf8')), marker = path.join(f.env.XIN_HOME, 'agent-sessions', agent + '-' + s.agentSid + '.json');
   assert.deepEqual(JSON.parse(fs.readFileSync(marker, 'utf8')), { agent, id: s.agentSid });
   const log = oldLog(f.env, agent, s.agentSid);
-  assert.deepEqual(f.op('prune'), { codex: 0, claude: 0, bytes: 0 }); assert.ok(fs.existsSync(log));
+  assert.deepEqual(f.op('prune'), { codex: 0, claude: 0, harness: 0, bytes: 0 }); assert.ok(fs.existsSync(log));
   fs.unlinkSync(sessionFile); // 仅模拟测试对话丢失关联，真实日志都在临时目录。
   assert.equal(f.op('prune')[agent], 1); assert.equal(fs.existsSync(log), false); assert.equal(fs.existsSync(marker), false);
 });
@@ -143,7 +143,7 @@ for (const agent of ['codex', 'claude']) test(agent + '：网页新会话登记�
 test('旧网页会话从有效关联补登记；不能把未知孤立记录当作旧网页会话', t => {
   const f = fixture(t); f.seed(); const known = oldLog(f.env, 'codex'), otherId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
   const other = oldLog(f.env, 'codex', otherId);
-  assert.deepEqual(f.op('prune'), { codex: 0, claude: 0, bytes: 0 });
+  assert.deepEqual(f.op('prune'), { codex: 0, claude: 0, harness: 0, bytes: 0 });
   assert.ok(fs.existsSync(path.join(f.env.XIN_HOME, 'agent-sessions', 'codex-' + ID + '.json')));
   fs.unlinkSync(f.session); assert.equal(f.op('prune').codex, 1);
   assert.equal(fs.existsSync(known), false); assert.ok(fs.existsSync(other));

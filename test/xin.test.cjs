@@ -10,6 +10,9 @@ process.env.XIN_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-test-'));
 // 删对话、每日任务会顺手清 Codex / Claude 自己的会话记录：测试里一律指到空的临时目录，不碰本机真的记录
 process.env.CODEX_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-codex-'));
 process.env.CLAUDE_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-claude-'));
+// Harness（dsh）也一样：会话目录指到临时目录；命令指到一个不存在的路径（本机装了 dsh 也不会被测试用到）
+process.env.XIN_DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-dsh-'));
+process.env.XIN_DSH = path.join(process.env.XIN_DSH_HOME, 'no-dsh');
 const load = rel => import(pathToFileURL(path.join(__dirname, rel)).href);
 const PW = 'correct horse battery';
 const AGENT_TEXT = '// fake vm-agent\n';
@@ -731,6 +734,73 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   assert.ok(prompt.includes('看看我发的文件。') && prompt.includes('【用户发来的文件（已经在你电脑上）】') && prompt.includes(pdf + '（说明.pdf，3 B）') && prompt.includes('图片已经直接给你看了'), prompt.slice(-400));
 });
 
+test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权限、网关 key 用环境变量；事件整理、会话号、接着聊（--session-id）、用量；删对话连它的会话一起删', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-harness-'));
+  const dshHome = path.join(tmp, 'dsh'), log = path.join(tmp, 'calls.log'), dsh = path.join(tmp, 'dsh-bin');
+  const SID = 'session-1de23629-51a4-47e9-8626-be15439b8b66';
+  // 假的 dsh：记下参数和环境，建一个会话目录，按真 dsh 的格式吐事件
+  fs.writeFileSync(dsh, '#!/bin/sh\n{ printf "ARGS"; for a in "$@"; do printf " [%s]" "$a"; done; echo; echo "KEY=$XIN_HARNESS_KEY MODE=$DSH_PERMISSION_MODE"; } >> "' + log + '"\n' +
+    'mkdir -p "$XIN_DSH_HOME/sessions/--w--/' + SID + '" "$XIN_DSH_HOME/storages/session_projcache/sessions"; echo x > "$XIN_DSH_HOME/sessions/--w--/' + SID + '/session.v4.jsonl.zstd"; echo {} > "$XIN_DSH_HOME/storages/session_projcache/sessions/' + SID + '.json"\n' +
+    'echo \'{"type":"session","sessionId":"' + SID + '","cwd":"/w"}\'\n' +
+    'echo \'{"type":"status","phase":"turn_start","turn":1}\'\n' +
+    'echo \'{"type":"thinking","text":"想一想"}\'\n' +
+    'echo \'{"type":"tool_call","callId":"c1","tool":"bash","input":{"command":"ls /w","description":"看看"}}\'\n' +
+    'printf \'%s\\n\' \'{"type":"tool_result","callId":"c1","status":"completed","result":"a\\nb\\n"}\'\n' +
+    'echo \'{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":5000,"outputTokens":20,"totalTokens":5020}}\'\n' +
+    'echo \'{"type":"text","text":"有 a 和 b"}\'\n' +
+    'echo \'{"type":"status","phase":"step_end","turn":1,"step":2,"usage":{"inputTokens":6000,"outputTokens":30,"totalTokens":6030}}\'\n' +
+    'echo \'{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}\'\n' +
+    'echo \'{"type":"final","text":"有 a 和 b"}\'\n', { mode: 0o755 });
+  const { xin, op } = agentEnv({ XIN_DSH: dsh, XIN_DSH_HOME: dshHome });
+  fs.mkdirSync(xin, { recursive: true });
+  fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
+  assert.ok(op('ping').agents.includes('harness'));
+  const poll = async run => { let p; for (let i = 0; i < 60; i++) { p = op('poll', { run, off: 0 }); if (p.done) return p; await new Promise(ok => setTimeout(ok, 150)); } return p; };
+  const r = op('send', { text: '-看看目录' });   // 没指定 AI：默认 Harness
+  assert.strictEqual(r.agent, 'harness');
+  const p = await poll(r.run);
+  assert.deepStrictEqual(p.events.map(e => e.t), ['user', 'tool', 'tool_end', 'text', 'done'], JSON.stringify(p.events));
+  assert.deepStrictEqual([p.events[1].name, p.events[1].detail, p.events[2].ok, p.events[2].out], ['Bash', 'ls /w', true, 'a\nb\n']);
+  const done = p.events[4];
+  assert.ok(done.ok);
+  assert.deepStrictEqual(done.usage, { ctx: 6030, win: 258400, input: 11000, output: 50, total: 11050 });
+  const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
+  assert.match(calls[0], /^ARGS \[--profile\] \[headless\] \[--patch\] \[[^\]]+harness-persona\.yml\] \[--json\] \[ -看看目录/);
+  assert.ok(calls.includes('KEY=gw-key-123 MODE=danger-full-access'), calls.join('\n').slice(-300));
+  const persona = fs.readFileSync(path.join(xin, 'harness-persona.yml'), 'utf8');
+  assert.ok(persona.includes('- id: system-prompt') && persona.includes('personaPrefix: "你就是小芯'));
+  const sess = JSON.parse(fs.readFileSync(path.join(xin, 'sessions', r.sid + '.json'), 'utf8'));
+  assert.deepStrictEqual([sess.agentSid, sess.started], [SID, true]);
+  // 接着聊：--session-id；用量累加
+  const r2 = op('send', { sid: r.sid, text: '再说一句' });
+  const p2 = await poll(r2.run);
+  assert.strictEqual(fs.readFileSync(log, 'utf8').split('[--session-id] [' + SID + ']').length, 2);   // 第二句才带
+  assert.deepStrictEqual(p2.events.pop().usage, { ctx: 6030, win: 258400, input: 22000, output: 100, total: 22100 });
+  assert.deepStrictEqual(op('history', { sid: r.sid }).usage.total, 22100);
+  // 清旧记录：Harness 的会话号不算坏文件；对话还在，不删
+  assert.deepStrictEqual(op('prune'), { codex: 0, claude: 0, harness: 0, bytes: 0 });
+  // 删对话：连 Harness 的会话目录和缓存一起删
+  assert.ok(op('forget', { sid: r.sid }).ok);
+  assert.ok(!fs.existsSync(path.join(dshHome, 'sessions', '--w--', SID)));
+  assert.ok(!fs.existsSync(path.join(dshHome, 'storages', 'session_projcache', 'sessions', SID + '.json')));
+});
+
+test('Harness 事件整理：出错、没做完都说清楚；会话号格式不对不拿去拼路径', async () => {
+  const { fromHarness } = await load('../site/xin/vm-agent.mjs');
+  const st = {};
+  assert.deepStrictEqual(fromHarness({ type: 'error', message: 'MISSING_CREDENTIAL' }, st), [{ t: 'err', text: 'MISSING_CREDENTIAL' }]);
+  assert.ok(st.failed);
+  const st2 = {};
+  assert.deepStrictEqual(fromHarness({ type: 'status', phase: 'turn_end', reason: { kind: 'aborted' } }, st2), [{ t: 'err', text: '这一轮没做完（aborted）' }]);
+  assert.deepStrictEqual(fromHarness({ type: 'final', text: 'x' }, {}), []);
+  assert.deepStrictEqual(fromHarness({ type: 'thinking', text: 'x' }, {}), []);
+  const { xin, op } = agentEnv();
+  fs.mkdirSync(path.join(xin, 'sessions'), { recursive: true });
+  fs.writeFileSync(path.join(xin, 'sessions', 'sh00000001.json'), JSON.stringify({ sid: 'sh00000001', agent: 'harness', title: 'x', agentSid: '../../x', started: true, runs: [], created: 1, updated: 1 }));
+  assert.strictEqual(op('prune').skipped, 'bad_session_file');
+  assert.strictEqual(op('history', { sid: 'sh00000001' }).usage, null);
+});
+
 test('归档：只是收起来（记录、AI 的会话记录都留着），能取消；对话列表带 archived，归档的排在后面', () => {
   const { xin, op } = agentEnv();
   const sess = path.join(xin, 'sessions'), runs = path.join(xin, 'runs');
@@ -809,7 +879,7 @@ test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对�
 
   assert.ok(op('forget', { sid: 'sc00000001' }).ok);
   assert.deepStrictEqual(exists([fC, path.join(clDir, id(6))]), [false, false]);
-  assert.deepStrictEqual(op('prune'), { codex: 0, claude: 0, bytes: 0 });
+  assert.deepStrictEqual(op('prune'), { codex: 0, claude: 0, harness: 0, bytes: 0 });
 
   // 有一个对话文件读不出来：整个不清，宁可留着
   fs.utimesSync(fNew, old, old);
@@ -821,7 +891,7 @@ test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对�
   // codex 删不掉（版本老、没这个命令）：直接删文件
   fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const size = fs.statSync(fNew).size;
-  assert.deepStrictEqual(op('prune'), { codex: 1, claude: 0, bytes: size });
+  assert.deepStrictEqual(op('prune'), { codex: 1, claude: 0, harness: 0, bytes: size });
   assert.deepStrictEqual(exists([fB, fNew, fMine, cMine]), [true, false, true, true]);
   // 对话的会话号不像样（被改坏了）：不拿它去拼路径
   fs.writeFileSync(path.join(sess, 'sd00000001.json'), JSON.stringify({ sid: 'sd00000001', agent: 'codex', title: 'x', agentSid: '../../etc/passwd', runs: [], created: 1, updated: 1 }));
