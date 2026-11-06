@@ -246,6 +246,10 @@ test('思考强度：只认这个模型真正支持的档位，别的（以前�
   const { resolveEffort, effortSpec } = await load('../site/xin/vm-agent.mjs');
   assert.deepStrictEqual(effortSpec('harness').efforts, ['off', 'low', 'high', 'max']);
   for (const m of ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']) assert.deepStrictEqual(effortSpec('codex', m).efforts, ['low', 'high', 'max'], m);
+  for (const m of ['glm-5.3-flash', 'glm-5.3']) assert.deepStrictEqual(effortSpec('harness', m).efforts, ['low', 'high', 'max'], m);
+  assert.deepStrictEqual(effortSpec('codex', 'deepseek-v4.1-flash').efforts, ['off', 'low', 'high', 'max']);
+  assert.strictEqual(resolveEffort('harness', 'glm-5.3', 'off'), 'high');
+  assert.strictEqual(resolveEffort('codex', 'deepseek-v4.1-flash', 'off'), 'off');
   assert.deepStrictEqual(effortSpec('claude').efforts, ['low', 'medium', 'high', 'xhigh', 'max']);
   assert.strictEqual(resolveEffort('harness', null, 'off'), 'off');
   assert.strictEqual(resolveEffort('harness', null, 'max'), 'max');
@@ -268,6 +272,8 @@ test('思考强度：Codex 用 -c model_reasoning_effort（续接也带），Cla
   assert.ok(a.includes('model_reasoning_effort="max"') && a[a.length - 2] === 'th-1' && a[a.length - 1] === '再改改');
   [, a] = agentArgs('codex', fresh, '你好', '');
   assert.ok(!a.some(x => x.startsWith('model_reasoning_effort')));
+  [, a] = agentArgs('codex', fresh, '直接回答', 'off', { model: 'deepseek-v4.1-flash' });
+  assert.ok(a.includes('model="deepseek-v4.1-flash"') && a.includes('model_reasoning_effort="none"'));
   [cmd, a] = agentArgs('claude', { started: false, agentSid: 'u-1' }, '写代码', 'max');
   assert.strictEqual(cmd, 'claude');
   assert.deepStrictEqual(a.slice(a.indexOf('--effort'), a.indexOf('--effort') + 2), ['--effort', 'max']);
@@ -720,7 +726,7 @@ test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3
     for (const want of ['model_provider="xin-gateway"', 'model_providers.xin-gateway.base_url="http://127.0.0.1:8788/v1"', 'model_providers.xin-gateway.wire_api="responses"',
       'model_providers.xin-gateway.env_key="XIN_CODEX_KEY"', 'model="glm-5.3-flash"', 'model_context_window=1000000', 'model_catalog_json=' + JSON.stringify(cat)])
       assert.ok(cs.includes(want), want + ' 不在 ' + JSON.stringify(cs));
-    assert.deepStrictEqual(CODEX_MODELS.map(m => m.id), ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']);
+    assert.deepStrictEqual(CODEX_MODELS.map(m => m.id), ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash']);
     const list = JSON.parse(fs.readFileSync(cat, 'utf8')).models;
     assert.deepStrictEqual(list.map(m => m.slug), ['gpt-5.5', 'deepseek-v4.1-flash', 'glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']);
     const g = list[2];
@@ -821,11 +827,11 @@ test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权�
   assert.deepStrictEqual([p.events[1].name, p.events[1].detail, p.events[2].ok, p.events[2].out], ['Bash', 'ls /w', true, 'a\nb\n']);
   const done = p.events[4];
   assert.ok(done.ok);
-  assert.deepStrictEqual(done.usage, { ctx: 6030, win: 258400, input: 11000, output: 50, total: 11050 });
+  assert.deepStrictEqual(done.usage, { ctx: 6030, win: 1000000, input: 11000, output: 50, total: 11050 });
   const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
-  assert.match(calls[0], /^ARGS \[--profile\] \[headless\] \[--patch\] \[[^\]]+harness-persona\.off\.yml\] \[--json\] \[ -看看目录/);
+  assert.match(calls[0], /^ARGS \[--profile\] \[headless\] \[--patch\] \[[^\]]+harness-persona\.deepseek-v4\.1-flash\.off\.yml\] \[--json\] \[ -看看目录/);
   assert.ok(calls.includes('KEY=gw-key-123 MODE=danger-full-access'), calls.join('\n').slice(-300));
-  const persona = fs.readFileSync(path.join(xin, 'harness-persona.off.yml'), 'utf8');
+  const persona = fs.readFileSync(path.join(xin, 'harness-persona.deepseek-v4.1-flash.off.yml'), 'utf8');
   // 思考强度：档位对照表（关 = none）+ 这一轮用的档
   assert.ok(persona.includes('            reasoningEfforts:\n              off: none\n              low: low\n              high: high\n              max: max\n') && persona.includes('    reasoningEffort: off\n'), persona.slice(0, 900));
   assert.ok(persona.includes('- id: system-prompt') && persona.includes('personaPrefix: "你就是小芯'));
@@ -837,11 +843,29 @@ test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权�
   // 接着聊：--session-id；用量累加
   const r2 = op('send', { sid: r.sid, text: '再说一句', effort: 'xhigh' });   // 不支持的档：用默认 high
   const p2 = await poll(r2.run);
-  assert.match(fs.readFileSync(log, 'utf8').trim().split('\n').filter(l => l.startsWith('ARGS')).pop(), /harness-persona\.high\.yml/);
-  assert.ok(fs.readFileSync(path.join(xin, 'harness-persona.high.yml'), 'utf8').includes('    reasoningEffort: high\n'));
+  assert.match(fs.readFileSync(log, 'utf8').trim().split('\n').filter(l => l.startsWith('ARGS')).pop(), /harness-persona\.deepseek-v4\.1-flash\.high\.yml/);
+  assert.ok(fs.readFileSync(path.join(xin, 'harness-persona.deepseek-v4.1-flash.high.yml'), 'utf8').includes('    reasoningEffort: high\n'));
   assert.strictEqual(fs.readFileSync(log, 'utf8').split('[--session-id] [' + SID + ']').length, 2);   // 第二句才带
-  assert.deepStrictEqual(p2.events.pop().usage, { ctx: 6030, win: 258400, input: 22000, output: 100, total: 22100 });
+  assert.deepStrictEqual(p2.events.pop().usage, { ctx: 6030, win: 1000000, input: 22000, output: 100, total: 22100 });
   assert.deepStrictEqual(op('history', { sid: r.sid }).usage.total, 22100);
+  // 换 Harness 模型后，续聊没再指定 model 也保留选择；插件开关分开存，不覆盖先前一轮的补丁。
+  const profile = path.join(dshHome, 'profiles', 'headless'); fs.mkdirSync(profile, { recursive: true });
+  fs.writeFileSync(path.join(profile, 'package.json'), JSON.stringify({ dependencies: { 'dsh-purge-community': 'file:fixture.tgz' } }));
+  assert.deepStrictEqual(op('plugins', { agent: 'harness' }).plugins.map(p => [p.name, p.on]), [['purge', true]]);
+  assert.ok(op('plugin_set', { agent: 'harness', name: 'purge', on: false }).ok);
+  const r3 = op('send', { sid: r.sid, text: '切换到 GLM', model: 'glm-5.3', effort: 'off' });
+  assert.ok((await poll(r3.run)).events.pop().ok);
+  const offFile = path.join(xin, 'harness-persona.glm-5.3.high.purge-off.yml'), offPatch = fs.readFileSync(offFile, 'utf8');
+  assert.ok(offPatch.includes('    model: "glm-5.3"\n    reasoningEffort: high\n'));
+  assert.ok(offPatch.includes('contextWindow: 1000000') && offPatch.endsWith('- id: dsh-purge\n  config:\n    enabled: false\n'));
+  assert.strictEqual(op('history', { sid: r.sid }).session.model, 'glm-5.3');
+  assert.ok(op('plugin_set', { agent: 'harness', name: 'purge', on: true }).ok);
+  const r4 = op('send', { sid: r.sid, text: '保留这个模型' });
+  assert.ok((await poll(r4.run)).events.pop().ok);
+  assert.ok(fs.readFileSync(path.join(xin, 'harness-persona.glm-5.3.high.purge-on.yml'), 'utf8').endsWith('    enabled: true\n'));
+  assert.strictEqual(fs.readFileSync(offFile, 'utf8'), offPatch);
+  assert.strictEqual(op('history', { sid: r.sid }).session.model, 'glm-5.3');
+  assert.deepStrictEqual(op('plugins', { agent: 'claude' }).plugins, []);
   // 清旧记录：Harness 的会话号不算坏文件；对话还在，不删
   assert.deepStrictEqual(op('prune'), { codex: 0, claude: 0, harness: 0, bytes: 0 });
   // 删对话：连 Harness 的会话目录和缓存一起删

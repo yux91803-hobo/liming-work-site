@@ -180,33 +180,33 @@
 .xc-mdl[aria-expanded=true] svg{transform:rotate(180deg)}
 .xc-mdl:active{background:var(--sunk)}
 @media (hover:hover){.xc-mdl:hover{background:var(--sunk);color:var(--ink)}}
-.xc-pick{position:absolute;left:12px;right:12px;bottom:calc(100% - 6px);z-index:5;max-height:min(70vh,460px);overflow-y:auto;padding:14px 14px 16px;
-  border:1px solid var(--line);border-radius:22px !important;background:var(--panel);box-shadow:0 10px 32px rgba(20,20,19,.16)}
-.xc-pick.models{padding:6px}
+.xc-pick{position:absolute;left:12px;bottom:calc(100% - 6px);z-index:5;width:calc(100% - 24px);max-width:320px;box-sizing:border-box;max-height:min(55dvh,360px);overflow-y:auto;overscroll-behavior:contain;padding:10px;
+  border:1px solid var(--line);border-radius:16px !important;background:var(--panel);box-shadow:0 8px 28px rgba(20,20,19,.12)}
 [data-theme=dark] .xc-pick{box-shadow:0 10px 32px rgba(0,0,0,.5)}
-/* 面板上面一行：模型名 + 档位（浅色），能换模型的带 › */
-.xc-pk-t{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;min-height:36px;margin:0 0 12px;padding:0 6px;border-radius:12px !important;font:600 17px var(--sans);color:var(--ink)}
-.xc-pk-t b{font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.xc-pk-t i{font-style:normal;font-weight:500;color:var(--ink-3)}
-.xc-pk-t svg{width:18px;height:18px;flex:none;stroke-width:2.2;color:var(--ink-2)}
-button.xc-pk-t:active{background:var(--sunk)}
-@media (hover:hover){button.xc-pk-t:hover{background:var(--sunk)}}
-/* 档位滑块：一个点一档，填色到选中的那档，选中的是白色圆钮 */
-.xc-eff{position:relative;display:grid;grid-template-columns:repeat(var(--n),1fr);height:52px;padding:0;border-radius:26px !important;background:var(--sunk);touch-action:none;cursor:pointer;overflow:hidden}
-.xc-eff-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:26px !important;background:var(--clay);transition:width .18s}
-.xc-eff-d{position:relative;display:grid;place-items:center;height:100%;border-radius:0 !important}
-.xc-eff-d::before{content:"";width:10px;height:10px;border-radius:50% !important;background:var(--ink-3);opacity:.55;transition:width .18s,height .18s,background .18s,opacity .18s}
-.xc-eff-d.in::before{background:#fff;opacity:.6}
-.xc-eff-d.on::before{width:40px;height:40px;background:#fff;opacity:1;box-shadow:0 1px 4px rgba(20,20,19,.25)}
-.xc-eff-d:focus-visible{outline:none}
-.xc-eff-d:focus-visible::before{box-shadow:0 0 0 3px var(--ring)}
-.xc-pk-o{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:9px 10px;border-radius:10px !important;text-align:left;font:14.5px var(--sans);color:var(--ink)}
+.xc-pk-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:32px;margin:0 0 6px;padding-left:6px}
+.xc-pk-heading{display:flex;align-items:center;gap:8px;min-width:0}
+.xc-pk-heading b{font:600 13px var(--sans)}
+.xc-pk-agent{padding:3px 6px;background:var(--sunk);border-radius:5px !important;font:11px var(--sans);color:var(--ink-3)}
+.xc-pk-close{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:8px !important;color:var(--ink-3)}
+.xc-pk-close svg{width:16px;height:16px}
+.xc-pk-g{display:flex;flex-direction:column;gap:2px}
+.xc-pk-t{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 8px;padding:12px 6px 0;border-top:1px solid var(--line);font:12px var(--sans);color:var(--ink-2)}
+.xc-pk-t b{font-weight:500}
+.xc-pk-t i{font-style:normal;color:var(--clay);font-weight:600}
+/* 带名称的分段档位；选中状态轻一点，点击区域保持足够大。 */
+.xc-eff{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:3px;padding:3px;border-radius:10px !important;background:var(--sunk);touch-action:none}
+.xc-eff-d{display:grid;place-items:center;min-width:0;min-height:38px;padding:0 3px;border-radius:7px !important;font:12.5px var(--sans);color:var(--ink-3);transition:background .15s,color .15s,box-shadow .15s}
+.xc-eff-d.on{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:0 1px 3px rgba(20,20,19,.09)}
+.xc-eff-d:focus-visible,.xc-pk-o:focus-visible,.xc-pk-close:focus-visible{outline:2px solid var(--clay);outline-offset:-2px}
+.xc-eff-help{margin:8px 6px 2px;min-height:17px;font:11.5px/1.5 var(--sans);color:var(--ink-3)}
+.xc-pk-o{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:42px;padding:9px 10px;border-radius:8px !important;text-align:left;font:13.5px var(--sans);color:var(--ink)}
 .xc-pk-o svg{width:18px;height:18px;flex:none;stroke-width:2.2;color:var(--clay);visibility:hidden}
 .xc-pk-o[aria-checked=true] svg{visibility:visible}
-.xc-pk-o[aria-checked=true]{font-weight:600}
+.xc-pk-o[aria-checked=true]{font-weight:600;background:var(--clay-soft)}
 .xc-pk-o:disabled{color:var(--ink);opacity:1;cursor:default}
 .xc-pk-o:not(:disabled):active{background:var(--sunk)}
-@media (hover:hover){.xc-pk-o:not(:disabled):hover{background:var(--sunk)}}
+@media (hover:hover){.xc-pk-o:not(:disabled):hover,.xc-pk-close:hover{background:var(--sunk)}.xc-eff-d:not(.on):hover{color:var(--ink)}}
+@media (prefers-reduced-motion:reduce){.xc-eff-d{transition:none}}
 /* 要发的附件：输入框上面一排，能横着滑 */
 .xc-atts{display:flex;gap:8px;margin:0 0 8px;padding:2px 0 4px;overflow-x:auto;scrollbar-width:none}
 .xc-atts::-webkit-scrollbar{display:none}

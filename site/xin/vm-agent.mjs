@@ -623,14 +623,14 @@ export function fromHarness(o, state) {
 }
 
 /* ---------- 思考强度 ----------
-   只给模型真正支持的档位（网关 /v1/models 的 reasoning_efforts；在小芯电脑上实测过，网关记下的就是选的这一档，思考的 token 跟着变）：
-   - Harness 的 DeepSeek V4.1 Flash：off / low / high / max（网关说它能关掉思考，off 发 none）。
-   - Codex 的 GLM-5.3 Flash、GLM-5.3、Kimi K3.1 Pro：low / high / max（不能关）。网关遇到不认识的档会换成 high，所以只发这三个。
+   只给模型真正支持的档位（网关 /v1/models 的 reasoning_efforts）：
+   - Harness / Codex 的 DeepSeek V4.1 Flash：off / low / high / max（off 发 none）。
+   - Harness / Codex 的 GLM-5.3 Flash、GLM-5.3，以及 Codex 的 Kimi K3.1 Pro：low / high / max（不能关）。网关遇到不认识的档会换成 high，所以只发这三个。
    - Claude Code：--effort low / medium / high / xhigh / max。
    默认都是 high。网页传来的不在这个模型的档位里（以前的 auto、空的）就用默认；每一轮都明确带上，不靠各家自己的默认。 */
 export const CLAUDE_EFFORT = { efforts: ['low', 'medium', 'high', 'xhigh', 'max'], def: 'high' };
 export function effortSpec(agent, model) {
-  return agent === 'harness' ? HARNESS_ROUTE : agent === 'codex' ? codexModel(model) : CLAUDE_EFFORT;
+  return agent === 'harness' ? harnessModel(model) : agent === 'codex' ? codexModel(model) : CLAUDE_EFFORT;
 }
 export function resolveEffort(agent, model, effort) {
   const m = effortSpec(agent, model);
@@ -647,16 +647,22 @@ function installXin() {
 }
 /* ---------- Harness（DeepSeek Harness，命令 dsh） ----------
    dsh --profile headless --json：一句话一个进程，事件一行一个 JSON（session / status / text / tool_call / tool_result / final）。
-   线路（走小芯电脑上的本地网关，固定 deepseek-v4.1-flash）和小芯的设定（system-prompt 的 personaPrefix）都写进一个 --patch 文件，
+   线路（本地网关、这一轮选择的模型）和小芯的设定（system-prompt 的 personaPrefix）都写进一个 --patch 文件，
    每一轮都带：不靠 ~/.dsh 里的配置，Harness 重装、升级、~/.dsh 被清掉都不影响小芯（只是 Harness 自己的旧会话接不上）。
    网关的 key 在 ~/.xin/harness.key（只有自己能读），起的时候用环境变量 XIN_HARNESS_KEY 交给它（线路里写的是 apiKeyEnv）。
    接着聊用 --session-id。
    权限：DSH_PERMISSION_MODE=danger-full-access（和 Codex 的 --dangerously-bypass-approvals-and-sandbox 一样，用户确认过）。 */
 const HARNESS_KEY = () => path.join(BASE, 'harness.key');
-const HARNESS_WIN = 258400;   // 和 Codex 那边一样的上下文上限（网关里的 deepseek-v4.1-flash）
-// 每个思考强度一份（同时跑的几个对话强度不同也不会互相改掉）
-const HARNESS_PERSONA = (effort) => path.join(BASE, 'harness-persona' + (effort ? '.' + effort : '') + '.yml');
-// 线路：本地网关（WorkBuddy），openai-responses 协议（和 Codex 一样），固定模型
+const HARNESS_WIN = 1000000;   // 网关 /v1/models 的真实 context_length，三种模型均为 100 万
+export const HARNESS_MODELS = [
+  { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', win: HARNESS_WIN, image: true, efforts: ['off', 'low', 'high', 'max'], def: 'high' },
+  { id: 'glm-5.3', name: 'GLM-5.3', win: HARNESS_WIN, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
+  { id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', win: HARNESS_WIN, image: false, efforts: ['low', 'high', 'max'], def: 'high' }
+];
+export function harnessModel(id) { return HARNESS_MODELS.find(m => m.id === id) || HARNESS_MODELS[0]; }
+// 模型、强度和插件状态共同决定文件名，几个对话同时发送时互不覆盖。
+const HARNESS_PERSONA = (model, effort, purge) => path.join(BASE, 'harness-persona.' + model + '.' + effort + (purge == null ? '' : '.purge-' + (purge ? 'on' : 'off')) + '.yml');
+// 线路：本地网关（WorkBuddy），每轮显式传入当前模型。
 export const HARNESS_ROUTE = { provider: 'xin-gateway', name: 'WorkBuddy 网关', api: 'openai-responses', baseURL: 'http://127.0.0.1:8788/v1', model: 'deepseek-v4.1-flash', modelName: 'DeepSeek V4.1 Flash',
   efforts: ['off', 'low', 'high', 'max'], def: 'high' };
 function dshCmd() {
@@ -665,21 +671,22 @@ function dshCmd() {
   return fs.existsSync(p) ? p : 'dsh';
 }
 function hasAgent(agent) { if (agent !== 'harness') return hasCmd(agent); const c = dshCmd(); return c !== 'dsh' ? fs.existsSync(c) : hasCmd('dsh'); }
-function writePersona(effort) {
+function writePersona(effort, model) {
   mk(BASE);
-  const R = HARNESS_ROUTE, q = JSON.stringify, e = R.efforts.includes(effort) ? effort : R.def, out = HARNESS_PERSONA(e);
+  const R = HARNESS_ROUTE, M = harnessModel(model), q = JSON.stringify, e = resolveEffort('harness', M.id, effort);
+  const purge = harnessPurgeInstalled() ? pluginState()['harness:purge'] !== false : null, out = HARNESS_PERSONA(M.id, e, purge);
   const t = out + '.' + process.pid + '.tmp';
   // 字符串都用 JSON 写：JSON 字符串就是合法的 YAML 双引号字符串
   fs.writeFileSync(t, [
     '# 小芯用的 Harness：线路、思考强度和设定（网站每一轮起 Harness 前重写，不用改 ~/.dsh 里的配置）',
     '- id: llm-pi-ai', '  config:', '    providers:', '      ' + R.provider + ':',
     '        displayName: ' + q(R.name), '        apiKeyEnv: XIN_HARNESS_KEY', '        api: ' + R.api, '        baseURL: ' + q(R.baseURL),
-    '        models:', '          - id: ' + q(R.model), '            name: ' + q(R.modelName), '            contextWindow: ' + HARNESS_WIN,
-    // 档位对照：网页的档 → 发给网关的值（关 = none）
-    '            reasoningEfforts:'].concat(R.efforts.map(x => '              ' + x + ': ' + (x === 'off' ? 'none' : x)), [
-    '- id: agent-default-model', '  config:', '    provider: ' + R.provider, '    model: ' + q(R.model), '    reasoningEffort: ' + e,
-    '- id: system-prompt', '  config:', '    personaPrefix: ' + q(systemPrompt()), ''
-  ]).join('\n'));
+    '        models:'].concat(HARNESS_MODELS.flatMap(m => [
+    '          - id: ' + q(m.id), '            name: ' + q(m.name), '            contextWindow: ' + m.win,
+    '            reasoningEfforts:'].concat(m.efforts.map(x => '              ' + x + ': ' + (x === 'off' ? 'none' : x)))), [
+    '- id: agent-default-model', '  config:', '    provider: ' + R.provider, '    model: ' + q(M.id), '    reasoningEffort: ' + e,
+    '- id: system-prompt', '  config:', '    personaPrefix: ' + q(systemPrompt())
+  ], purge == null ? [] : ['- id: dsh-purge', '  config:', '    enabled: ' + purge], ['']).join('\n'));
   fs.renameSync(t, out);
   return out;
 }
@@ -700,7 +707,8 @@ export const CODEX_ROUTE = { provider: 'xin-gateway', name: 'WorkBuddy 网关', 
 export const CODEX_MODELS = [
   { id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', win: 1000000, image: false, efforts: ['low', 'high', 'max'], def: 'high' },
   { id: 'glm-5.3', name: 'GLM-5.3', win: 1000000, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
-  { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', win: 1000000, image: true, efforts: ['low', 'high', 'max'], def: 'high' }
+  { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', win: 1000000, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
+  { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', win: 1000000, image: true, efforts: ['off', 'low', 'high', 'max'], def: 'high' }
 ];
 export function codexModel(id) { return CODEX_MODELS.find(m => m.id === id) || CODEX_MODELS[0]; }
 const CODEX_KEY = () => path.join(BASE, 'codex.key');
@@ -724,7 +732,7 @@ function codexCatalog() {
     });
     mk(BASE);
     const t = out + '.' + process.pid + '.tmp';
-    fs.writeFileSync(t, JSON.stringify(Object.assign({}, cat, { models: list.filter(x => !x || !CODEX_MODELS.some(M => M.id === x.slug)).concat(add) })));
+    fs.writeFileSync(t, JSON.stringify(Object.assign({}, cat, { models: list.map(x => add.find(m => m.slug === (x && x.slug)) || x).concat(add.filter(m => !list.some(x => x && x.slug === m.slug))) })));
     fs.renameSync(t, out);
     writeJ(out + '.for', { models: want, src });
     return out;
@@ -756,7 +764,7 @@ export function agentArgs(agent, sess, text, effort, extra) {
   const M = codexModel(extra && extra.model);
   const imgs = M.image ? ((extra && extra.images) || []).reduce((a, p) => a.concat(['-i', p]), []) : [];
   const common = ['--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox'].concat(codexRoute(M.id), ['-c', 'developer_instructions=' + JSON.stringify(systemPrompt())])
-    .concat(effort ? ['-c', 'model_reasoning_effort="' + effort + '"'] : [], mcpFlags());
+    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], mcpFlags());
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(imgs, common, [sess.agentSid, text])];
   return ['codex', ['exec'].concat(imgs, common, ['-C', WORK, text])];
 }
@@ -818,7 +826,7 @@ function runner(run) {
   const start = () => {
     // 每次都重新读会话：重来时 AI 的会话号可能已经有了，要接着那个会话
     let patch = null;
-    if (meta.agent === 'harness') { try { patch = writePersona(meta.effort); } catch { /* 写不了就用 Harness 自己的设定 */ } }
+    if (meta.agent === 'harness') { try { patch = writePersona(meta.effort, meta.model); } catch { /* 写不了就用 Harness 自己的设定 */ } }
     const [cmd, args] = agentArgs(meta.agent, readJ(sessF(meta.sid), sess), meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model });
     let got = false, buf = '';
     const armStall = () => {
@@ -1021,6 +1029,10 @@ function mcpUser() { return new Set(mcpNames(readText(path.join(CODEX_HOME(), 'c
 function mcpBuiltin() { return new Set(mcpNames(readText(CODEX_SYS()))); }
 function pluginState() { const j = readJ(PLUGINS_F(), {}); return j && j.state && typeof j.state === 'object' ? j.state : {}; }
 function savePluginState(st) { mk(BASE); writeJ(PLUGINS_F(), { state: st }); }
+function harnessPurgeInstalled() {
+  const p = readJ(path.join(DSH_HOME(), 'profiles', 'headless', 'package.json'), {});
+  return !!(p.dependencies && p.dependencies['dsh-purge-community']);
+}
 export function mcpFlags() {
   const st = pluginState(), have = mcpUser(), out = [];
   for (const n of Object.keys(st)) if (PLUGIN_RE.test(n) && have.has(n) && typeof st[n] === 'boolean') out.push('-c', 'mcp_servers.' + n + '.enabled=' + st[n]);
@@ -1222,8 +1234,8 @@ const ops = {
     const userEv = { t: 'user', text, at: Date.now() };
     if (ctxLabel) userEv.ctx = ctxLabel;
     if (files.length) userEv.files = files.map(f => ({ name: f.name, path: f.path, size: f.size, image: f.image }));
-    // Codex 的模型：每一轮按这次选的（不认识的当默认），记在对话上给网页显示
-    const cm = s.agent === 'codex' ? codexModel(a.model) : null;
+    // 模型每一轮明确选择；续聊没带 model 时保留对话里的选择。
+    const cm = s.agent === 'codex' ? codexModel(a.model || s.model) : s.agent === 'harness' ? harnessModel(a.model || s.model) : null;
     if (cm) s.model = cm.id;
     const run = launch(s, Object.assign({ text: forAgent(said, a.context) + filesPart(files, s.agent, !!(cm && cm.image)), effort: resolveEffort(s.agent, cm ? cm.id : null, a.effort), images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] }, cm ? { model: cm.id } : {}), userEv);
     return { sid: s.sid, run, agent: s.agent, title: s.title };
@@ -1289,7 +1301,9 @@ const ops = {
     const r = await pushAll({ title: '小芯', body: '做完提醒开好啦：你不在看的时候，我做完事会这样告诉你～', tag: 'xin-test', url: '/#xin' });
     return { ok: r.some(x => x.status >= 200 && x.status < 300), results: r };
   },
-  plugins() {
+  plugins(a = {}) {
+    if (a.agent === 'harness') return { plugins: harnessPurgeInstalled() ? [{ name: 'purge', desc: '提示词与规则管理，下一句生效', on: pluginState()['harness:purge'] !== false, agent: 'harness' }] : [], merged: [] };
+    if (a.agent === 'claude') return { plugins: [], merged: [] };
     let merged = [];
     try { merged = mergeParked(); } catch { /* 并不回去就按现在的来 */ }
     const r = spawnSync('codex', ['mcp', 'list', '--json'], { encoding: 'utf8', timeout: 30000, cwd: os.homedir(), env: codexEnv() });
@@ -1306,6 +1320,12 @@ const ops = {
   plugin_set(a) {
     const name = String(a.name || '');
     if (!PLUGIN_RE.test(name)) return { error: 'bad_name', msg: '插件名字不对' };
+    if (a.agent === 'harness') {
+      if (name !== 'purge' || !harnessPurgeInstalled()) return { error: 'no_plugin', msg: '没有这个 Harness 插件：' + name };
+      const st = pluginState(); st['harness:purge'] = !!a.on; savePluginState(st);
+      return { ok: true, name, on: st['harness:purge'], agent: 'harness' };
+    }
+    if (a.agent === 'claude') return { error: 'no_plugin', msg: 'Claude 暂未接入插件' };
     if (!mcpUser().has(name)) return mcpBuiltin().has(name) ? { error: 'builtin', msg: name + ' 是电脑自带的，一直开着' } : { error: 'no_plugin', msg: '没有这个插件：' + name };
     const st = pluginState();
     st[name] = !!a.on; savePluginState(st);
