@@ -30,12 +30,16 @@
     if (e.origin !== location.origin || !e.data) return;
     if (e.data.type === 'theme') applyTheme();
     if (e.source !== window.parent) return;
-    if (e.data.type === 'back') { if (search.isOpen()) search.close(); else back(); }
+    if (e.data.type === 'back') back();
     if (e.data.type === 'reset') { search.close(); stack = [{ v: 'home' }]; scrolls = [0]; idx = 0; render(); }
   });
 
   /* ---------- 路由 ---------- */
   var stack = [], scrolls = [], idx = 0, shown = null, view = null, viewKey = '';
+  function notifyDepth() {
+    var overlays = (html.classList.contains('drawer') ? 1 : 0) + (search && search.isOpen() ? 1 : 0);
+    toShell({ type: 'depth', depth: idx + overlays });
+  }
   function cur() { return stack[idx] || { v: 'home' }; }
   function strip(r, keys) { var o = Object.assign({}, r); keys.forEach(function (k) { delete o[k]; }); return o; }
   // 只给了一层（{reg} 或 {fig}）时叠在当前页上；给了 v 就是完整路由
@@ -73,6 +77,8 @@
     var r = resolve(to);
     if (core.same(r, cur()) && !o.force) return;
     saveScroll();
+    // 离开前提交节流中的分页 / 文件参数，浏览器返回才能拿到最新的来源位置。
+    if (!embedded) try { if (location.pathname + location.search !== urlOf(cur())) history.replaceState({ stm: idx, r: cur() }, '', urlOf(cur())); } catch (e) {}
     if (!o.replace) {
       var j = core.backTo(stack, idx, r);   // 哪些算「同一页」见 study-core 的 pageKey
       if (j === idx) o = Object.assign({}, o, { replace: true });   // 同一页，只是换了分页 / 参数
@@ -97,9 +103,11 @@
     render({ soft: true });
   }
   function back() {
+    if (search && search.isOpen()) { search.close(); return; }
+    if (html.classList.contains('drawer')) { drawer(false); return; }
     if (idx > 0) {
       if (!embedded) { history.back(); return; }
-      saveScroll(); idx--; render(); return;
+      saveScroll(); idx--; render({ restore: true }); return;
     }
     if (cur().v !== 'home' || core.params(cur())) { navigate({ v: 'home' }, { replace: true }); return; }
     if (embedded) toShell({ type: 'close' });
@@ -114,7 +122,7 @@
       try { history.replaceState({ stm: idx, r: popping.r }, '', urlOf(popping.r)); } catch (err) {}
     }
     popping = null;
-    render();
+    render({ restore: true });
   });
 
   /* 地址同步节流：单次操作下一帧，连续操作最多每 300ms 一次（浏览器对 replaceState 有频率上限） */
@@ -176,6 +184,7 @@
     if (menuBtn) menuBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
     if (on) { var f = side.querySelector('.nav-i.on, .nav-t.on') || side.querySelector('a'); if (f) try { f.focus({ preventScroll: true }); } catch (e) {} }
     else if (menuBtn && side.contains(document.activeElement)) try { menuBtn.focus({ preventScroll: true }); } catch (e) {}
+    notifyDepth();
   }
   scrim.addEventListener('click', function () { drawer(false); });
   var barBack, barTitle;
@@ -220,7 +229,8 @@
     STM.regview.sync(r);
     STM.viewer.sync(r);
     shown = r;
-    toShell({ type: 'depth', depth: idx });
+    if (o.restore) window.scrollTo(0, scrolls[idx] || 0);
+    notifyDepth();
     syncUrlSoon();
   }
 
@@ -246,13 +256,15 @@
       ui.modal(box, true);
       requestAnimationFrame(function () { if (open_) box.classList.add('on'); });
       input.value = ''; run(); input.focus();
+      notifyDepth();
     }
     function close() {
       if (!open_) return;
       open_ = false; box.classList.remove('on'); ui.modal(box, false); box.remove();
       if (lastFocus && lastFocus.isConnected) try { lastFocus.focus({ preventScroll: true }); } catch (e) {}
+      notifyDepth();
     }
-    function pick(it) { close(); navigate(it.route); }
+    function pick(it) { close(); navigate(it.kind === 'reg' && cur().v === 'topic' ? { reg: it.route.reg } : it.route); }
     function run() {
       if (!open_) return;
       ui.clear(list); items = []; sel = 0;

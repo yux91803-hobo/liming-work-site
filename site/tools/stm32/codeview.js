@@ -160,7 +160,7 @@
       var body = el('div', 'rc-fn');
       f.lines.forEach(function (x) { var l = norm(x); l.why = ''; body.appendChild(lineRow(l)); });
       bodies.push(body); fig.appendChild(body);
-      b.addEventListener('click', function () { cur = i; sync(); });
+      b.addEventListener('click', function () { if (cur === i) return; cur = i; sync(); if (opt.onPick) opt.onPick(f.name); });
     });
     function sync() {
       bodies.forEach(function (x, j) { x.hidden = j !== cur; });

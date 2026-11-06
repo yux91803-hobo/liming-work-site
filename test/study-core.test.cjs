@@ -79,6 +79,25 @@ test('back stack: going to a page already on the way back returns there instead 
   assert.equal(core.backTo([home, gpio, sheet, { ...sheet, sch: 'board-04' }], 3, gpio), 1);      // 从查看器点回 GPIO：面板和查看器都退掉
   assert.equal(core.backTo(st, 2, { v: 'home' }), 0);
 });
+
+test('explicit topic tabs take priority while retaining the code mode, driver and file', () => {
+  for (const sec of ['points', 'pins', 'regs', 'figs', 'code']) {
+    for (const cv of ['reg', 'hal', 'cd']) {
+      const route = { v: 'topic', t: 'i2c', sec, cv, cx: 'i2chw', cf: 'main.c' };
+      assert.deepEqual(core.target(route), route);
+      assert.deepEqual(core.fromParams(core.params(route)), route);
+    }
+  }
+});
+
+test('code deep links still infer the code tab when no valid tab is specified', () => {
+  for (const input of [{ cv: 'hal' }, { cx: 'i2chw' }, { cf: 'main.c' }]) {
+    assert.equal(core.target({ v: 'topic', t: 'i2c', ...input }).sec, 'code');
+    assert.equal(core.target({ v: 'topic', t: 'i2c', sec: 'unknown', ...input }).sec, 'code');
+  }
+  const route = core.target({ v: 'topic', t: 'i2c', sec: 'pins', cf: '../main.c', cx: 'https://evil.test', cv: 'evil' });
+  assert.deepEqual(route, { v: 'topic', t: 'i2c', sec: 'pins' });
+});
 test('back stack: a pin looked up on the chip from a topic is its own page; going home always clears the stack', () => {
   const home = { v: 'home' }, gpio = { v: 'topic', t: 'gpio' };
   assert.equal(core.backTo([home, gpio], 1, { v: 'home', pin: '68' }), -1);                        // 返回还能回到 GPIO
