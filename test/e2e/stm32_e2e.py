@@ -1377,6 +1377,8 @@ async def main():
             if await pg.evaluate("document.querySelector('.xc-tianqi .xc-sw').getAttribute('aria-checked') === 'true'") != on: await pg.click('.xc-tianqi .xc-sw')
             await close_dr()
         await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
+        try: await pg.wait_for_function("document.activeElement === document.querySelector('.xc-pick .xc-pk-close')", timeout=2000)
+        except Exception: pass
         au = await pg.evaluate(AUTO)
         check('默认模式的模型按钮点开：只说明小芯自己挑（列出 Codex 的四个模型），没有模型和档位可选；教怎么点名、怎么打开天启模式；焦点在关闭按钮上',
               au == ['Codex', ['GLM-5.3 Flash', 'GLM-5.3', 'Kimi K3.1 Pro', 'DeepSeek V4.1 Flash'], 0, True, True, True], au)
@@ -1748,7 +1750,7 @@ async def main():
         await pv.click('.xc-set-b'); await pv.wait_for_selector('.xc-set')
         rows = await pv.evaluate("[...document.querySelectorAll('.xc-tg-t b')].map(b => b.textContent)")
         await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false' && !document.querySelector('.xc-push .xc-sw').disabled")
-        check('设置：新对话用、附带正在看的页面、做完提醒（模型、思考强度在输入框底下；没有「朗读回答」了），做完提醒默认关着', rows == ['新对话用', '附带正在看的页面', '做完提醒'], rows)
+        check('设置：天启模式、附带正在看的页面、做完提醒（模型、思考强度在输入框底下；没有「朗读回答」了），做完提醒默认关着', rows == ['天启模式', '附带正在看的页面', '做完提醒'], rows)
         c0 = await pv.evaluate("document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked')")
         await pv.click('.xc-ctxauto .xc-sw')
         c1 = await pv.evaluate("[document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked'), localStorage.getItem('lm.xin.ctx')]")
