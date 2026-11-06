@@ -14,11 +14,11 @@
 (function () {
   'use strict';
   var API = '/api/xin/';
-  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort', LS_CTX = 'lm.xin.ctx', LS_CXM = 'lm.xin.cxmodel';
+  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort', LS_CTX = 'lm.xin.ctx', LS_CXM = 'lm.xin.cxmodel', LS_HM = 'lm.xin.hmodel';
   var AGENTS = { harness: 'Harness', codex: 'Codex', claude: 'Claude' };
-  // 思考强度：自动 = 写代码的活用最高（max），聊天用 AI 自己的默认（规则在 vm-agent.mjs 的 resolveEffort）
   // Codex 用哪个模型（小芯电脑上的网关里的）：每一轮按这里选的，已经开始的 Codex 对话下一句也换
-  var CX_MODELS = { 'glm-5.3-flash': 'GLM-5.3 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro' };
+  var CX_MODELS = { 'glm-5.3-flash': 'GLM-5.3 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash' };
+  var HM_MODELS = { 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash', 'glm-5.3': 'GLM-5.3', 'glm-5.3-flash': 'GLM-5.3 Flash' };
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
   var WORK = '/data/workspace';
 
@@ -38,12 +38,13 @@
 
   // 新对话用哪个 AI：默认 Harness。Codex 的 key 挪给 Harness 以后，以前存的选择一次性换成 Harness（之后再切照常记住）
   function cxPref() { var m = ls(LS_CXM); return CX_MODELS[m] ? m : 'glm-5.3-flash'; }
+  function hmPref() { var m = ls(LS_HM); return HM_MODELS[m] ? m : 'deepseek-v4.1-flash'; }
   function agentPref() {
     if (ls('lm.xin.agent.v') !== '2') { ls(LS_AGENT, 'harness'); ls('lm.xin.agent.v', '2'); }
     var a = ls(LS_AGENT);
     return AGENTS[a] ? a : 'harness';
   }
-  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: ls(LS_EFF) || 'high', cxModel: cxPref(),
+  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: ls(LS_EFF) || 'high', cxModel: cxPref(), hModel: hmPref(),
     run: '', off: 0, polling: false, mine: {}, errRuns: {}, lastAct: 0, view: 'chat', machine: '', mstate: '', loadSeq: 0, drawer: false, drawerSeq: 0 };
 
   /* ---------- 和页面上的小芯共用机身、眼睛和引脚，避免头像仍然显示旧方眼 ---------- */
@@ -114,14 +115,14 @@
           '<button type="button" class="xc-mi xc-mi-plug" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg><b>插件</b></button>' +
         '</div>' +
         // 模型、思考强度（新对话还能选 AI）：输入框底下那颗按钮点开
-        '<div class="xc-pick" role="menu" aria-label="模型和思考强度" hidden></div>' +
+        '<div class="xc-pick" id="xin-model-picker" role="dialog" aria-label="模型和思考强度" hidden></div>' +
         '<input type="file" class="xc-file" multiple hidden>' +
         '<div class="xc-atts" hidden></div>' +
         '<div class="xc-ctx" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5l6-6"/></svg><span></span><button type="button" aria-label="这次不带">✕</button></div>' +
         '<div class="xc-row">' +
           '<button type="button" class="xc-plus" aria-label="发图片、文件或开关插件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>' +
           '<textarea rows="1" placeholder="和小芯说点什么…" aria-label="消息" enterkeyhint="' + (touch ? 'enter' : 'send') + '"></textarea>' +
-          '<button type="button" class="xc-mdl" aria-haspopup="menu" aria-expanded="false"><span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>' +
+          '<button type="button" class="xc-mdl" aria-haspopup="dialog" aria-controls="xin-model-picker" aria-expanded="false"><span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>' +
           '<button type="submit" class="xc-send" aria-label="发送"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6 11l6-6 6 6"/></svg></button>' +
         '</div>' +
         // 这个对话的用量：上下文、消耗的 token、缓存命中率（点一下看明细）
@@ -137,6 +138,9 @@
     pickEl = root.querySelector('.xc-pick'); mdlBtn = root.querySelector('.xc-mdl');
     root.querySelector('.xc-plus').addEventListener('click', function () { setPick(false); setMenu(menuEl.hidden); });
     mdlBtn.addEventListener('click', function () { setMenu(false); setPick(pickEl.hidden); });
+    pickEl.addEventListener('focusout', function (e) { if (e.relatedTarget && !pickEl.contains(e.relatedTarget) && e.relatedTarget !== mdlBtn) setPick(false); });
+    window.addEventListener('resize', fitPick);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', fitPick);
     root.querySelector('.xc-mi-file').addEventListener('click', function () { setMenu(false); fileEl.value = ''; fileEl.click(); });
     root.querySelector('.xc-mi-plug').addEventListener('click', function () { setMenu(false); openPlugins(); });
     fileEl.addEventListener('change', function () { addFiles(fileEl.files); fileEl.value = ''; });
@@ -159,7 +163,7 @@
     input.value = ls(LS_DRAFT) || '';
     input.addEventListener('input', function () { grow(); ls(LS_DRAFT, input.value || null); });
     root.querySelector('.xc-row').addEventListener('click', function (e) { if (e.target === this) input.focus(); });
-    input.addEventListener('focus', refreshCtx);
+    input.addEventListener('focus', function () { setPick(false); refreshCtx(); });
     input.addEventListener('paste', function (e) {
       var fs = e.clipboardData && e.clipboardData.files;
       if (fs && fs.length) { e.preventDefault(); addFiles(fs); }
@@ -171,7 +175,7 @@
     root.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || (scrEl && !scrEl.hidden)) return;
       if (menuEl && !menuEl.hidden) { setMenu(false); return; }
-      if (pickEl && !pickEl.hidden) { setPick(false); return; }
+      if (pickEl && !pickEl.hidden) { e.preventDefault(); e.stopPropagation(); setPick(false, true); return; }
       if (S.sheet) setSheet(false); else if (S.drawer) setDrawer(false); else close();
     });
     list.addEventListener('click', function (e) {
@@ -288,7 +292,7 @@
     if (S.useMore) useEl.appendChild(h('div', 'xc-use-more', '上下文 ' + tok(u.ctx) + (u.win > 0 ? ' / ' + tok(u.win) : '') + ' · 输入 ' + tok(u.input) + (typeof u.cached === 'number' ? '（缓存命中 ' + tok(u.cached) + '）' : '') + ' · 输出 ' + tok(u.output)));
   }
   function newChat(stay) {
-    stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null); S.cxModel = cxPref(); setPick(false);
+    stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null); S.cxModel = cxPref(); S.hModel = hmPref(); setPick(false);
     if (!stay) { S.view = 'chat'; setDrawer(false); }
     clearList(); S.histFor = ''; welcome(); render();
   }
@@ -321,6 +325,7 @@
       clearList();
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid;
       S.cxModel = CX_MODELS[d.session.model] ? d.session.model : cxPref();   // Codex 对话：接着用它上次的模型
+      S.hModel = HM_MODELS[d.session.model] ? d.session.model : hmPref();
       d.runs.forEach(function (r) { r.events.forEach(function (ev) { draw(ev, true, r.run); }); });
       setUsage(d.usage);
       if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Math.min(Date.now(), d.active.started || Date.now()); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
@@ -884,25 +889,24 @@
     return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
   }
 
-  /* ---------- 模型和思考强度：输入框底下的按钮 ----------
-     按钮上写着这一句会用的模型和思考强度（浅色）。点开一块面板：上面一行是模型和档位，能换模型的（Codex）后面有 ›，点了列出模型；
-     下面一条滑块，一个点一档，只放这个模型真正支持的档位（和小芯电脑上 vm-agent 的 effortSpec 一致，实测过网关收到的就是这一档）：
-     Harness 的 DeepSeek V4.1 Flash 关 / 低 / 高 / 最高；Codex 的 GLM、Kimi 低 / 高 / 最高；Claude Code 低 / 中 / 高 / 超高 / 最高。默认都是高。
-     AI 在设置里选，这里跟着这个对话的 AI 走。选了记在这个浏览器里；换到不支持这一档的模型就用默认。Codex 对话打开时用它上次的模型。 */
+  /* ---------- 模型和思考强度 ----------
+     模型列表与带名称的强度档位放在同一块紧凑面板。模型、档位都支持键盘选择；
+     关闭时恢复焦点，输入时收起，窗口或软键盘变化时限制面板高度。
+     Harness 和 Codex 分开记住模型，已有对话恢复自己的选择。Claude 沿用原有命令行配置。 */
   var LEVELS = { off: '关', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高' };
   var SPECS = {
     harness: { name: 'DeepSeek V4.1 Flash', efforts: ['off', 'low', 'high', 'max'] },
     codex: { efforts: ['low', 'high', 'max'] },
     claude: { name: 'Claude', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }
   };
-  var CHEV = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
   function curAgent() { return S.sid ? (S.sessAgent || S.agent) : S.agent; }
+  function curModel() { return curAgent() === 'harness' ? S.hModel : curAgent() === 'codex' ? S.cxModel : undefined; }
   function curSpec() {
-    var a = curAgent(), sp = SPECS[a] || SPECS.claude;
-    return { agent: a, name: a === 'codex' ? CX_MODELS[S.cxModel] : sp.name, efforts: sp.efforts, models: a === 'codex' };
+    var a = curAgent(), sp = SPECS[a] || SPECS.claude, models = a === 'harness' ? HM_MODELS : a === 'codex' ? CX_MODELS : null, model = curModel();
+    return { agent: a, name: models ? models[model] : sp.name, model: model, efforts: models ? (model === 'deepseek-v4.1-flash' ? ['off', 'low', 'high', 'max'] : ['low', 'high', 'max']) : sp.efforts, models: models };
   }
   function curEffort() { var sp = curSpec(); return sp.efforts.indexOf(S.effort) >= 0 ? S.effort : 'high'; }
-  function pickKey() { return curAgent() + '|' + S.cxModel + '|' + (S.pickView || ''); }
+  function pickKey() { return curAgent() + '|' + (curModel() || ''); }
   function renderPick() {
     if (!mdlBtn) return;
     var sp = curSpec(), e = LEVELS[curEffort()];
@@ -910,64 +914,77 @@
     mdlBtn.setAttribute('aria-label', '模型和思考强度：' + sp.name + ' ' + e);
     if (!pickEl.hidden) { if (pickEl.dataset.k !== pickKey()) buildPick(); else paintEff(); }
   }
-  function setPick(on) {
+  function fitPick() {
+    if (pickEl && !pickEl.hidden) pickEl.style.maxHeight = Math.min(360, Math.max(96, root.clientHeight - foot.offsetHeight - 68)) + 'px';
+  }
+  function setPick(on, restoreFocus) {
     if (!pickEl) return;
     pickEl.hidden = !on;
     mdlBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
-    if (on) { S.pickView = ''; buildPick(); }
+    if (on) {
+      buildPick(); fitPick();
+      requestAnimationFrame(function () { if (!pickEl.hidden) { var b = pickEl.querySelector('[aria-checked="true"]'); if (b) b.focus({ preventScroll: true }); } });
+    } else if (restoreFocus) mdlBtn.focus({ preventScroll: true });
   }
   function buildPick() {
     var sp = curSpec();
     pickEl.textContent = ''; pickEl.dataset.k = pickKey();
-    pickEl.classList.toggle('models', S.pickView === 'models');
-    if (S.pickView === 'models' && sp.models) {
-      // 模型列表：点一个就回到上一页
+    var hd = h('div', 'xc-pk-hd'), title = h('div', 'xc-pk-heading');
+    title.appendChild(h('b', '', '模型与思考')); title.appendChild(h('span', 'xc-pk-agent', AGENTS[sp.agent]));
+    var close = h('button', 'xc-pk-close'); close.type = 'button'; close.setAttribute('aria-label', '关闭模型设置'); close.innerHTML = svgIcon('x');
+    close.addEventListener('click', function () { setPick(false, true); });
+    hd.appendChild(title); hd.appendChild(close); pickEl.appendChild(hd);
+    if (sp.models) {
       var g = h('div', 'xc-pk-g'); g.dataset.g = 'model';
-      Object.keys(CX_MODELS).forEach(function (k) {
-        var b = h('button', 'xc-pk-o'); b.type = 'button'; b.setAttribute('role', 'menuitemradio'); b.dataset.v = k;
-        b.setAttribute('aria-checked', k === S.cxModel ? 'true' : 'false');
-        b.appendChild(h('span', '', CX_MODELS[k]));
+      g.setAttribute('role', 'radiogroup'); g.setAttribute('aria-label', '模型');
+      function choose(k) {
+        if (sp.agent === 'harness') { S.hModel = k; ls(LS_HM, k); } else { S.cxModel = k; ls(LS_CXM, k); }
+        renderPick();
+        var b = pickEl.querySelector('.xc-pk-o[data-v="' + k + '"]'); if (b) b.focus({ preventScroll: true });
+      }
+      Object.keys(sp.models).forEach(function (k) {
+        var b = h('button', 'xc-pk-o'); b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset.v = k;
+        b.setAttribute('aria-checked', k === sp.model ? 'true' : 'false'); b.tabIndex = k === sp.model ? 0 : -1;
+        b.appendChild(h('span', '', sp.models[k]));
         b.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>');
-        b.addEventListener('click', function () { S.cxModel = k; ls(LS_CXM, k); S.pickView = ''; buildPick(); renderPick(); });
+        b.addEventListener('click', function () { choose(k); });
         g.appendChild(b);
       });
       pickEl.appendChild(g);
-      return;
+      g.addEventListener('keydown', function (ev) {
+        var keys = Object.keys(sp.models), i = keys.indexOf(curModel()), next = ev.key === 'Home' ? 0 : ev.key === 'End' ? keys.length - 1 : ev.key === 'ArrowDown' || ev.key === 'ArrowRight' ? Math.min(keys.length - 1, i + 1) : ev.key === 'ArrowUp' || ev.key === 'ArrowLeft' ? Math.max(0, i - 1) : -1;
+        if (next >= 0) { ev.preventDefault(); choose(keys[next]); }
+      });
     }
-    // 上面一行：模型名 + 档位（浅色）；能换模型的是按钮，后面带 ›
-    var t = h(sp.models ? 'button' : 'div', 'xc-pk-t');
-    t.appendChild(h('b', '', sp.name)); t.appendChild(h('i', '', ''));
-    if (sp.models) {
-      t.type = 'button'; t.setAttribute('aria-label', '换模型');
-      t.insertAdjacentHTML('beforeend', CHEV);
-      t.addEventListener('click', function () { S.pickView = 'models'; buildPick(); });
-    }
+    var t = h('div', 'xc-pk-t'); t.appendChild(h('b', '', '思考强度')); t.appendChild(h('i', '', ''));
     pickEl.appendChild(t);
-    // 下面一条滑块：一个点一档，点或者拖都行，键盘用左右键
+    // 档位直接写出名称；支持点击、拖动和方向键，不用猜圆点代表哪一档。
     var n = sp.efforts.length, tr = h('div', 'xc-eff');
     tr.setAttribute('role', 'radiogroup'); tr.setAttribute('aria-label', '思考强度');
     tr.style.setProperty('--n', n);
-    tr.appendChild(h('i', 'xc-eff-fill'));
     sp.efforts.forEach(function (lv) {
       var b = h('button', 'xc-eff-d'); b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset.v = lv; b.setAttribute('aria-label', LEVELS[lv]);
+      b.textContent = LEVELS[lv];
       b.addEventListener('click', function () { setEffort(lv); });
       tr.appendChild(b);
     });
     function at(x) { var r = tr.getBoundingClientRect(); return sp.efforts[Math.max(0, Math.min(n - 1, Math.floor((x - r.left) / r.width * n)))]; }
     var drag = false;
-    tr.addEventListener('pointerdown', function (ev) { drag = true; try { tr.setPointerCapture(ev.pointerId); } catch (er) { /* 不支持就算了 */ } setEffort(at(ev.clientX)); });
+    tr.addEventListener('pointerdown', function (ev) { if (ev.button !== 0) return; drag = true; try { tr.setPointerCapture(ev.pointerId); } catch (er) { /* 不支持就算了 */ } setEffort(at(ev.clientX)); });
     tr.addEventListener('pointermove', function (ev) { if (drag) setEffort(at(ev.clientX)); });
     tr.addEventListener('pointerup', function () { drag = false; });
     tr.addEventListener('pointercancel', function () { drag = false; });
     tr.addEventListener('keydown', function (ev) {
       var k = sp.efforts.indexOf(curEffort()), d = ev.key === 'ArrowRight' || ev.key === 'ArrowUp' ? 1 : ev.key === 'ArrowLeft' || ev.key === 'ArrowDown' ? -1 : 0;
-      if (!d) return;
+      if (!d && ev.key !== 'Home' && ev.key !== 'End') return;
       ev.preventDefault();
-      var lv = sp.efforts[Math.max(0, Math.min(n - 1, k + d))]; setEffort(lv);
+      var lv = sp.efforts[ev.key === 'Home' ? 0 : ev.key === 'End' ? n - 1 : Math.max(0, Math.min(n - 1, k + d))]; setEffort(lv);
       var f = tr.querySelector('[data-v="' + lv + '"]'); if (f) f.focus();
     });
     pickEl.appendChild(tr);
+    pickEl.appendChild(h('p', 'xc-eff-help'));
     paintEff();
+    fitPick();
   }
   function setEffort(lv) {
     if (lv === curEffort() && S.effort === lv) return;
@@ -977,12 +994,12 @@
   function paintEff() {
     var tr = pickEl.querySelector('.xc-eff'); if (!tr) return;
     var sp = curSpec(), e = curEffort(), k = sp.efforts.indexOf(e), n = sp.efforts.length;
-    tr.querySelector('.xc-eff-fill').style.width = 'min(100%, calc(' + ((k + 0.5) / n * 100) + '% + 26px))';   // 填色刚好包住圆钮
     [].forEach.call(tr.querySelectorAll('.xc-eff-d'), function (b, i) {
       b.classList.toggle('on', i === k); b.classList.toggle('in', i < k);
       b.setAttribute('aria-checked', i === k ? 'true' : 'false'); b.tabIndex = i === k ? 0 : -1;
     });
     var t = pickEl.querySelector('.xc-pk-t i'); if (t) t.textContent = LEVELS[e];
+    var help = pickEl.querySelector('.xc-eff-help'); if (help) help.textContent = e === 'off' ? '关闭额外思考，直接回答' : e === 'low' ? '减少思考，优先响应速度' : e === 'max' || e === 'xhigh' ? '增加思考时间，适合复杂问题' : '兼顾思考深度与响应速度';
   }
 
   /* ---------- 「＋」菜单、插件 ---------- */
@@ -996,18 +1013,19 @@
     root.classList.toggle('sheet-open', !!on);
   }
   // 插件：Codex 的 MCP 服务器。开关记在小芯电脑上，从下一句开始生效（每一句都重新起一次 AI）
-  var PLUG_NAME = { rea: 'REA 逆向', instabox: 'InstaBox', 'open-computer-use': '操作桌面' };
+  var PLUG_NAME = { purge: 'Purge', rea: 'REA 逆向', instabox: 'InstaBox', 'open-computer-use': '操作桌面' };
   function openPlugins() {
+    var agent = curAgent();
     sheetEl.innerHTML = '';
     var hd = h('div', 'xc-sh-hd'), x = h('button', 'xc-ib xc-sh-x');
     x.type = 'button'; x.setAttribute('aria-label', '关掉'); x.innerHTML = svgIcon('x');
     x.addEventListener('click', function () { setSheet(false); });
-    hd.appendChild(h('b', '', '插件')); hd.appendChild(x);
+    hd.appendChild(h('b', '', AGENTS[agent] + ' 插件')); hd.appendChild(x);
     sheetEl.appendChild(hd);
     var box = h('div', 'xc-sh-list'); box.appendChild(h('p', 'xc-hint', '正在读取…'));
     sheetEl.appendChild(box);
     setSheet(true);
-    call('plugins', {}, 60000).then(function (d) {
+    call('plugins', { agent: agent }, 60000).then(function (d) {
       if (d && d.error) throw new Error(d.msg || d.error);
       S.plugins = d.plugins || [];
       box.innerHTML = '';
@@ -1017,7 +1035,7 @@
         t.set(p.on); t.row.dataset.name = p.name;
         t.btn.addEventListener('click', function () {
           var want = !p.on; t.btn.disabled = true; t.note('');
-          call('plugin_set', { name: p.name, on: want }, 60000).then(function (r) {
+          call('plugin_set', { agent: agent, name: p.name, on: want }, 60000).then(function (r) {
             if (r && r.error) throw new Error(r.msg || r.error);
             p.on = r.on; t.set(p.on); t.btn.disabled = false;
             t.note('');
@@ -1149,7 +1167,7 @@
     S.lastText = ''; S.doing = 'think'; S.note = null; S.waitSend = '';
     typing(true); renderHead(); toBottom(true);
     var x = xin(); if (x) x.ai('think');
-    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: curEffort(), model: S.cxModel, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,
+    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,
       files: files.length ? files.map(function (f) { return { path: f.path, name: f.name }; }) : undefined }, 90000, function (w) { S.waitSend = w.state; progress(); }).then(function (d) {
       if (c && c.sel) S.sel = null;      // 选中的内容用过一次就不再带
       refreshCtx();

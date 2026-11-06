@@ -170,12 +170,16 @@ async def xin_mock(pg, authed=False, live=None):
             st['renamed'] = args
             return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'plugins':
+            st['plugins_agent'] = args.get('agent')
+            if args.get('agent') == 'harness':
+                return await ok({'ok': True, 'data': {'plugins': [dict(p) for p in st.setdefault('harness_plugins', [{'name': 'purge', 'desc': '提示词与规则管理，下一句生效', 'on': True}])], 'merged': []}})
+            if args.get('agent') == 'claude': return await ok({'ok': True, 'data': {'plugins': [], 'merged': []}})
             return await ok({'ok': True, 'data': {'plugins': [dict(p) for p in st.setdefault('plugins', [
                 {'name': 'rea', 'desc': '逆向分析（Ghidra）', 'cmd': 'run', 'on': False},
                 {'name': 'playwright', 'desc': '', 'cmd': 'npx', 'on': True}])], 'merged': []}})
         if op == 'plugin_set':
             st.setdefault('plugin_set', []).append(args)
-            for p in st.get('plugins', []):
+            for p in st.get('harness_plugins' if args.get('agent') == 'harness' else 'plugins', []):
                 if p['name'] == args.get('name'): p['on'] = bool(args.get('on'))
             return await ok({'ok': True, 'data': {'ok': True, 'name': args.get('name'), 'on': bool(args.get('on'))}})
         if op == 'archive':
@@ -1351,7 +1355,7 @@ async def main():
         check('登录以后：欢迎页（小芯头像和一句话，没有建议按钮），输入框底下的按钮写着这一句用的模型和思考强度（默认 Harness 的 DeepSeek V4.1 Flash、高），标题下面写着在线',
               await pg.is_visible('.xc-row textarea') and st == [True, [], 'DeepSeek V4.1 Flash高', '在线'] and not await pg.evaluate("!!document.querySelector('.xc-hello button')"), st)
         PK = """(() => { const p = document.querySelector('.xc-pick'), t = p.querySelector('.xc-pk-t'), m = p.querySelector('.xc-pk-g[data-g=model]'), on = b => b.getAttribute('aria-checked') === 'true' ? '*' : '';
-          return [t ? t.querySelector('b').textContent : null, t ? t.querySelector('i').textContent : null, !!(t && t.tagName === 'BUTTON'),
+          return [document.querySelector('.xc-mdl span').firstChild.textContent, t ? t.querySelector('i').textContent : null, !!m,
             [...p.querySelectorAll('.xc-eff-d')].map(b => b.getAttribute('aria-label') + on(b)), document.querySelector('.xc-mdl span').firstChild.textContent,
             (document.querySelector('.xc-mdl span i') || {}).textContent || '', m ? [...m.querySelectorAll('.xc-pk-o')].map(b => b.textContent + on(b)) : null, p.hidden] })()"""
         async def set_agent(a):
@@ -1361,8 +1365,8 @@ async def main():
             await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')")
         await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
         st = await pg.evaluate(PK)
-        check('模型按钮点开（Harness）：上面一行 DeepSeek V4.1 Flash 高（不能换模型、没有 ›），下面滑块是它真正支持的四档 关 / 低 / 高 / 最高，默认高',
-              st == ['DeepSeek V4.1 Flash', '高', False, ['关', '低', '高*', '最高'], 'DeepSeek V4.1 Flash', '高', None, False], st)
+        check('Harness 模型面板：直接显示三个模型，当前 DeepSeek V4.1 Flash；分段按钮写出四档名称，默认高',
+              st == ['DeepSeek V4.1 Flash', '高', True, ['关', '低', '高*', '最高'], 'DeepSeek V4.1 Flash', '高', ['DeepSeek V4.1 Flash*', 'GLM-5.3', 'GLM-5.3 Flash'], False], st)
         await pg.click('.xc-eff-d[data-v=off]'); await pg.wait_for_timeout(100)
         st = await pg.evaluate(PK)
         bo = await pg.locator('.xc-eff-d[data-v=off]').bounding_box(); bm = await pg.locator('.xc-eff-d[data-v=max]').bounding_box()
@@ -1372,10 +1376,24 @@ async def main():
         await pg.focus('.xc-eff-d[data-v=max]'); await pg.keyboard.press('ArrowLeft'); await pg.wait_for_timeout(100)
         st3 = await pg.evaluate(PK) + [await pg.evaluate("localStorage.getItem('lm.xin.effort')")]
         check('点一个点就选那一档（面板不关，标题和按钮跟着变）；按住拖到最右是最高；键盘左键往回一档；记在这个浏览器里',
-              st[1:4] == ['关', False, ['关*', '低', '高', '最高']] and st[5] == '关' and not st[7] and st2[3] == ['关', '低', '高', '最高*'] and st2[5] == '最高'
+              st[1:4] == ['关', True, ['关*', '低', '高', '最高']] and st[5] == '关' and not st[7] and st2[3] == ['关', '低', '高', '最高*'] and st2[5] == '最高'
               and st3[3] == ['关', '低', '高*', '最高'] and st3[-1] == 'high', (st, st2, st3))
+        await pg.click('.xc-pk-o[data-v="glm-5.3"]'); await pg.wait_for_timeout(100)
+        hg = await pg.evaluate(PK)
+        await pg.keyboard.press('ArrowDown'); await pg.wait_for_timeout(100)
+        hf = await pg.evaluate(PK)
+        await pg.keyboard.press('Home'); await pg.wait_for_timeout(100)
+        check('Harness 可直接换 GLM；不支持关闭思考时只显示三档；模型列表支持方向键和 Home，选择写入浏览器',
+              hg[0] == 'GLM-5.3' and hg[3] == ['低', '高*', '最高'] and hf[0] == 'GLM-5.3 Flash'
+              and await pg.evaluate("localStorage.getItem('lm.xin.hmodel')") == 'deepseek-v4.1-flash', (hg, hf))
         await pg.keyboard.press('Escape'); await pg.wait_for_timeout(100)
         st0 = [await pg.evaluate("document.querySelector('.xc-pick').hidden"), await pg.is_visible('.xc-row textarea')]
+        check('Esc 关闭模型设置后焦点回到模型按钮，聊天仍然打开', await pg.evaluate("document.activeElement === document.querySelector('.xc-mdl')") and await pg.is_visible('.xc.show'))
+        await pg.click('.xc-plus'); await pg.click('.xc-mi-plug'); await pg.wait_for_selector('.xc-sheet [data-name=purge] .xc-sw')
+        hp = await pg.evaluate("[...document.querySelectorAll('.xc-sheet [data-name]')].map(e => e.dataset.name)")
+        await pg.click('.xc-sheet [data-name=purge] .xc-sw'); await pg.wait_for_function("document.querySelector('.xc-sheet [data-name=purge] .xc-sw').getAttribute('aria-checked') === 'false'")
+        check('Harness 插件页只列 Purge，开关请求明确带 Harness，不会开关 Codex 的 MCP', hp == ['purge'] and xs.get('plugins_agent') == 'harness' and xs.get('plugin_set') == [{'agent': 'harness', 'name': 'purge', 'on': False}], (hp, xs.get('plugin_set')))
+        await pg.click('.xc-sh-x')
         await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-set-b')
         await pg.click('.xc-set-b'); await pg.wait_for_selector('.xc-set')
         st = await pg.evaluate("[document.querySelector('.xc-agent [aria-checked=true]').dataset.agent, [...document.querySelectorAll('.xc-agent [data-agent]')].map(b => b.textContent), !!document.querySelector('.xc-agent .xc-tg-t span'), !!document.querySelector('.xc-set .xc-effort, .xc-set .xc-cxmodel')]")
@@ -1385,14 +1403,17 @@ async def main():
         await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')")
         await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
         st = await pg.evaluate(PK)
-        await pg.click('.xc-pk-t'); await pg.wait_for_timeout(100)
         st2 = await pg.evaluate(PK)
         await pg.click('.xc-pk-g[data-g=model] [data-v="kimi-k3.1-pro"]'); await pg.wait_for_timeout(100)
         st3 = await pg.evaluate(PK)
-        check('选了 Codex：标题 GLM-5.3 Flash 高，带 › 能换模型；三档 低 / 高 / 最高（GLM、Kimi 不能关思考）；点标题列出三个模型，点 Kimi K3.1 Pro 回到上一页',
-              st == ['GLM-5.3 Flash', '高', True, ['低', '高*', '最高'], 'GLM-5.3 Flash', '高', None, False]
-              and st2[6] == ['GLM-5.3 Flash*', 'GLM-5.3', 'Kimi K3.1 Pro'] and st2[0] is None
-              and st3 == ['Kimi K3.1 Pro', '高', True, ['低', '高*', '最高'], 'Kimi K3.1 Pro', '高', None, False], (st, st2, st3))
+        check('Codex 直接列出四个模型，保留 GLM 和 Kimi、增加 DeepSeek Flash；点 Kimi 后选中标记和按钮同步，面板保持打开',
+              st[:6] == ['GLM-5.3 Flash', '高', True, ['低', '高*', '最高'], 'GLM-5.3 Flash', '高']
+              and st2[6] == ['GLM-5.3 Flash*', 'GLM-5.3', 'Kimi K3.1 Pro', 'DeepSeek V4.1 Flash']
+              and st3[:6] == ['Kimi K3.1 Pro', '高', True, ['低', '高*', '最高'], 'Kimi K3.1 Pro', '高'] and not st3[7], (st, st2, st3))
+        await pg.click('.xc-pk-o[data-v="deepseek-v4.1-flash"]'); await pg.wait_for_timeout(100)
+        ds = await pg.evaluate(PK)
+        check('Codex 的 DeepSeek Flash 能选择关闭思考，不能把别的模型的档位照搬过来', ds[0] == 'DeepSeek V4.1 Flash' and ds[3] == ['关', '低', '高*', '最高'], ds)
+        await pg.click('.xc-pk-o[data-v="kimi-k3.1-pro"]')
         await pg.click('.xc-eff-d[data-v=low]'); await pg.wait_for_timeout(100)
         await set_agent('claude')
         await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
@@ -1418,7 +1439,7 @@ async def main():
           document.querySelector('.xc-sub').textContent, document.querySelector('.xc-msgs').textContent.includes('Model metadata'), document.querySelector('.xc-msgs').textContent.includes('ls /data/workspace'),
           !!document.querySelector('.xc-tool'), document.querySelector('.xc-msgs').lastElementChild.classList.contains('xc-typing')]""")
         check('发出去：设置里选的 AI 和强度传给后台；只有自己的一句和小芯的第一句，它执行的命令、无关警告都不显示，最后冒「正在输入」写着在电脑上忙；小芯坐到电脑前敲代码',
-              xs['sent'] == {'agent': 'claude', 'text': '看看工作目录', 'effort': 'xhigh', 'model': 'kimi-k3.1-pro'} and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
+              xs['sent'] == {'agent': 'claude', 'text': '看看工作目录', 'effort': 'xhigh'} and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
         await pg.wait_for_function(CHAT_DONE, timeout=8000); await pg.wait_for_timeout(200)
         st = await pg.evaluate("""[LimingXin.aiState, LimingXin.mode, document.querySelector('.xc').classList.contains('running'), localStorage.getItem('lm.xin.sid'),
           [...document.querySelectorAll('.xc-ai .xc-bub')].map(b => b.textContent), [...document.querySelectorAll('.xc-sys')].map(e => e.textContent),
@@ -1767,6 +1788,7 @@ async def main():
         # 「＋」：发图片和文件（选了马上传，传完才能发，发出去的消息里显示缩略图和文件卡片）；开关插件
         pa = await page(b, 390, 844, mobile=True)
         xa = await xin_mock(pa, authed=True)
+        await pa.add_init_script("localStorage.setItem('lm.xin.agent.v','2');localStorage.setItem('lm.xin.agent','codex')")
         await pa.goto(BASE + '/#xin'); await pa.wait_for_selector('.xc.show .xc-row textarea'); await pa.wait_for_timeout(300)
         await pa.click('.xc-plus'); await pa.wait_for_selector('.xc-menu:not([hidden])')
         menu = await pa.evaluate("[...document.querySelectorAll('.xc-mi')].map(b => b.textContent)")
@@ -1806,7 +1828,7 @@ async def main():
         await pa.mouse.click(195, 300); await pa.wait_for_timeout(300)
         closed = await pa.evaluate("[document.querySelector('.xc-sheet').hidden, !!document.querySelector('.xc.show')]")
         check('插件：「＋ → 插件」列出自己装的插件和开没开（不带说明小字）；点开关告诉小芯的电脑；点遮罩收起不关面板',
-              rows == [['rea', 'REA 逆向', 'false'], ['playwright', 'playwright', 'true']] and xa.get('plugin_set') == [{'name': 'rea', 'on': True}]
+              rows == [['rea', 'REA 逆向', 'false'], ['playwright', 'playwright', 'true']] and xa.get('plugin_set') == [{'agent': 'codex', 'name': 'rea', 'on': True}]
               and note == '' and small == 0 and closed == [True, True], (rows, xa.get('plugin_set'), note, small, closed))
         await pa.context.close()
         # 电脑：学习台首页的方块都顶在最上面，小芯站进芯片图框里沿着底边走；它的背包里也有「聊天」
