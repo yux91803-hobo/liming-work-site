@@ -1440,7 +1440,10 @@ async def main():
           !!document.querySelector('.xc-tool'), document.querySelector('.xc-msgs').lastElementChild.classList.contains('xc-typing')]""")
         check('发出去：设置里选的 AI 和强度传给后台；只有自己的一句和小芯的第一句，它执行的命令、无关警告都不显示，最后冒「正在输入」写着在电脑上忙；小芯坐到电脑前敲代码',
               xs['sent'] == {'agent': 'claude', 'text': '看看工作目录', 'effort': 'xhigh'} and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
-        await pg.wait_for_function(CHAT_DONE, timeout=8000); await pg.wait_for_timeout(200)
+        await pg.wait_for_function(CHAT_DONE, timeout=8000)
+        # 荡秋千 / 跳跃时 xin dance 会先排队，落地后才开始；不要在空中动作尚未结束时读取最终姿态。
+        await pg.wait_for_function("LimingXin.mode === 'play'", timeout=20000)
+        await pg.wait_for_timeout(200)
         st = await pg.evaluate("""[LimingXin.aiState, LimingXin.mode, document.querySelector('.xc').classList.contains('running'), localStorage.getItem('lm.xin.sid'),
           [...document.querySelectorAll('.xc-ai .xc-bub')].map(b => b.textContent), [...document.querySelectorAll('.xc-sys')].map(e => e.textContent),
           document.querySelector('.xc-msgs').textContent.includes('跳舞'), document.querySelector('.xc-st').hidden, !!document.querySelector('.xc-done')]""")
