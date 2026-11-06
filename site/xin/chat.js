@@ -324,8 +324,9 @@
       if (my !== S.loadSeq) return;
       clearList();
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid;
-      S.cxModel = CX_MODELS[d.session.model] ? d.session.model : cxPref();   // Codex 对话：接着用它上次的模型
-      S.hModel = HM_MODELS[d.session.model] ? d.session.model : hmPref();
+      // 只改这个对话所属 AI 的模型，别把另一边的偏好冲掉（两边有同名模型时尤其容易）
+      if (d.session.agent === 'codex') S.cxModel = CX_MODELS[d.session.model] ? d.session.model : cxPref();
+      else if (d.session.agent === 'harness') S.hModel = HM_MODELS[d.session.model] ? d.session.model : hmPref();
       d.runs.forEach(function (r) { r.events.forEach(function (ev) { draw(ev, true, r.run); }); });
       setUsage(d.usage);
       if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Math.min(Date.now(), d.active.started || Date.now()); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
@@ -1169,18 +1170,30 @@
     var x = xin(); if (x) x.ai('think');
     call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,
       files: files.length ? files.map(function (f) { return { path: f.path, name: f.name }; }) : undefined }, 90000, function (w) { S.waitSend = w.state; progress(); }).then(function (d) {
+      // vm-agent 的软错误也包在 ok:true 的 data 里（busy / empty / no_session…），不能当发送成功
+      if (d && d.error) {
+        var er = new Error(d.msg || d.error);
+        er.code = d.error; er.run = d.run; er.sid = d.sid;
+        throw er;   // 交给后面的 catch（不能写在 then 的第二个参数里，那边接不住这里的 throw）
+      }
       if (c && c.sel) S.sel = null;      // 选中的内容用过一次就不再带
       refreshCtx();
       // 送到了：小芯的电脑收到这句、AI 开始干活，从这一刻开始算「思考中」的时间
       S.sending = false; S.waitSend = ''; pending.classList.remove('pending');
       S.sid = d.sid; S.sessAgent = d.agent || S.sessAgent || S.agent; ls(LS_SID, d.sid);
       S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); render(); typing(true); startPolling();
-    }, function (e) {
+    }).catch(function (e) {
       S.sending = false; S.waitSend = ''; pending.remove(); typing(false); renderHead();
       if (!input.value) { input.value = text; ls(LS_DRAFT, text); grow(); }
       if (atts.length && !(S.atts || []).length) { S.atts = atts; renderAtts(); render(); }   // 没发出去：附件放回去
       var x2 = xin(); if (x2) { x2.ai(''); x2.cmd('confused'); if (!S.open) x2.say('没发出去：' + e.message + '（点我看看）', 9000, open); }
-      if (/还没做完/.test(e.message)) { openSession(S.sid); return; }
+      // 上一句还在跑（多标签最常见）：别弄脏 S.run，把输入还回去，重新打开同一对话接着看进行中的那一轮
+      if (e.code === 'busy' || /还没做完/.test(e.message)) {
+        setStatus('上一句还没做完，请稍后再试', 'wait');
+        setTimeout(function () { setStatus(''); }, 4000);
+        if (e.sid || S.sid) openSession(e.sid || S.sid);
+        return;
+      }
       draw({ t: 'err', text: '没发出去：' + e.message }); toBottom(true);
     });
   }

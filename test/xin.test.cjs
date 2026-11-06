@@ -448,7 +448,9 @@ test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做�
     'echo \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"签到好了"}}\'',
     'echo \'{"type":"turn.completed","usage":{}}\''
   ].join('\n'), { mode: 0o755 });
-  const env = Object.assign({}, process.env, { XIN_HOME: home, XIN_WORK: path.join(home, 'work'), XIN_STALL_MS: '800', PATH: bin + ':' + process.env.PATH });
+  // hasCmd 走登录 shell（sh -lc），会重写 PATH；把假 codex 写进 HOME/.profile，登录后还能找到
+  fs.writeFileSync(path.join(home, '.profile'), 'PATH="' + bin + ':$PATH"\nexport PATH\n');
+  const env = Object.assign({}, process.env, { HOME: home, XIN_HOME: home, XIN_WORK: path.join(home, 'work'), XIN_STALL_MS: '800', PATH: bin + ':' + process.env.PATH });
   const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
   assert.deepStrictEqual(op('daily'), { skipped: 'empty' });
   op('daily_set', { text: '- 网关签到' });
@@ -647,6 +649,8 @@ test('对话改名、删除（连同每一轮的记录）；还在进行中的�
   };
   mkSess('sdone00001', 'rdone00001', true);
   mkSess('sbusy00001', 'rbusy00001', false);
+  // 上一句还在跑：回 busy，带上 sid，网页好接着打开同一对话
+  assert.deepStrictEqual(op('send', { sid: 'sbusy00001', text: '再问一句' }), { error: 'busy', msg: '上一句还没做完，请稍后再试', run: 'rbusy00001', sid: 'sbusy00001' });
   assert.strictEqual(op('rename', { sid: 'sdone00001', title: '  点灯\n程序  ' }).session.title, '点灯 程序');
   assert.strictEqual(op('sessions').sessions.find(s => s.sid === 'sdone00001').title, '点灯 程序');
   assert.strictEqual(op('rename', { sid: 'sdone00001', title: '   ' }).error, 'empty');
@@ -888,6 +892,20 @@ test('Harness 事件整理：出错、没做完都说清楚；会话号格式不
   fs.writeFileSync(path.join(xin, 'sessions', 'sh00000001.json'), JSON.stringify({ sid: 'sh00000001', agent: 'harness', title: 'x', agentSid: '../../x', started: true, runs: [], created: 1, updated: 1 }));
   assert.strictEqual(op('prune').skipped, 'bad_session_file');
   assert.strictEqual(op('history', { sid: 'sh00000001' }).usage, null);
+});
+
+test('发文件提示：Codex / Harness / Claude 按能不能看图写清楚；Harness 没有 -i，能看图也只说用工具打开路径', async () => {
+  const { filesPart } = await load('../site/xin/vm-agent.mjs');
+  const img = [{ path: '/data/workspace/uploads/a.png', name: 'a.png', size: 3, image: true }];
+  const mix = img.concat([{ path: '/data/workspace/uploads/b.pdf', name: 'b.pdf', size: 4, image: false }]);
+  assert.ok(filesPart(img, 'codex', true).includes('图片已经直接给你看了。'));
+  assert.ok(filesPart(img, 'codex', false).includes('看不了图片内容'));
+  assert.ok(filesPart(img, 'harness', true).includes('用工具打开上面的路径就能看') && !filesPart(img, 'harness', true).includes('已经直接给你看了'));
+  assert.ok(filesPart(img, 'harness', false).includes('看不了图片内容'));
+  assert.ok(filesPart(img, 'claude', true).includes('图片用 Read 工具打开就能看'));
+  assert.ok(filesPart(mix, 'harness', false).includes('a.png') && filesPart(mix, 'harness', false).includes('b.pdf'));
+  assert.strictEqual(filesPart([], 'harness', true), '');
+  assert.ok(!filesPart([{ path: '/x', name: 'a.txt', size: 1, image: false }], 'harness', true).includes('看不了'));
 });
 
 test('归档：只是收起来（记录、AI 的会话记录都留着），能取消；对话列表带 archived，归档的排在后面', () => {

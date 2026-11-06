@@ -190,9 +190,15 @@ async def xin_mock(pg, authed=False, live=None):
             return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'send':
             # send_waking：前几次说电脑在睡（网页隔 1 秒再发）；send_delay：送到小芯电脑要多久
+            # send_busy：模拟上一句还在跑（多标签），回软错误，网页应恢复输入、不要当成发送成功
             if st.get('send_waking'):
                 st['send_waking'] -= 1
                 return await ok({'ok': False, 'state': 'waking', 'msg': '唤醒中…', 'retryAfter': 1})
+            if st.get('send_busy'):
+                st['send_busy'] -= 1
+                st['busy_args'] = args
+                sid = args.get('sid') or 'snew000001'
+                return await ok({'ok': True, 'data': {'error': 'busy', 'msg': '上一句还没做完，请稍后再试', 'run': 'rbusy00001', 'sid': sid}})
             if st.get('send_delay'): await asyncio.sleep(st['send_delay'])
             st['sent'] = args
             return await ok({'ok': True, 'data': {'sid': 'snew000001', 'run': 'rlive00001', 'agent': args.get('agent') or 'codex'}})
@@ -1505,6 +1511,34 @@ async def main():
         check('电脑在睡：「正在输入」旁边和标题栏写「唤醒中」，不写「唤醒云电脑」、不冒状态栏；叫醒发出去以后变成「思考中」',
               s3 == ['唤醒中…', True, False, '再想一想'] and xt['sent'].get('text') == '再想一想', (s3, xt['sent']))
         await pt.context.close()
+        # 上一句还在跑（多标签）：send 回 soft busy → 输入还原、提示请稍后再试、打开同一对话，不把发送状态弄脏
+        pb = await page(b)
+        xb = await xin_mock(pb, authed=True)
+        await pb.goto(BASE + '/#xin'); await pb.wait_for_selector('.xc.show .xc-row textarea'); await pb.wait_for_timeout(300)
+        await pb.fill('.xc-row textarea', '先发一句'); await pb.keyboard.press('Enter')
+        await pb.wait_for_function(CHAT_DONE, timeout=8000)
+        xb['send_busy'] = 1; xb['sent'] = None; xb['history_sid'] = None
+        await pb.fill('.xc-row textarea', '忙的时候再发')
+        assert await pb.input_value('.xc-row textarea') == '忙的时候再发'
+        await pb.click('.xc-send')   # 点发送，避免 Enter 和 submit 抢两次
+        # 软错误：pending 消失、busy_args 记下、重新拉 history；输入应还原
+        await pb.wait_for_function("!document.querySelector('.xc-me.pending') && !LimingXinChat.state.sending", timeout=8000)
+        for _ in range(20):
+            if xb.get('busy_args') and xb.get('history_sid'): break
+            await pb.wait_for_timeout(100)
+        st = await pb.evaluate("""({
+          text: document.querySelector('.xc-row textarea').value,
+          pending: !!document.querySelector('.xc-me.pending'),
+          run: LimingXinChat.state.run || '',
+          sending: !!LimingXinChat.state.sending,
+          sid: LimingXinChat.state.sid || '',
+          err: [...document.querySelectorAll('.xc-err,.xc-sys')].map(e => e.textContent)
+        })""")
+        check('上一句还在跑：输入还在、没有 pending、没在发送；软错误不会当成发送成功，并重新打开同一对话',
+              st['text'] == '忙的时候再发' and not st['pending'] and not st['sending'] and not st['run']
+              and xb.get('sent') is None and (xb.get('busy_args') or {}).get('text') == '忙的时候再发'
+              and xb.get('history_sid') == 'snew000001' and st['sid'] == 'snew000001', (st, xb.get('busy_args'), xb.get('history_sid'), xb.get('sent')))
+        await pb.context.close()
         # 不开面板：背包「聊天」→ 小芯旁边的输入框 → 回复在小芯头上的气泡里，点气泡才打开面板
         pq = await page(b)
         xq = await xin_mock(pq, authed=True)

@@ -1091,8 +1091,14 @@ function checkFiles(list) {
 function sizeText(n) { return n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
 export function filesPart(files, agent, seesImages) {
   if (!files || !files.length) return '';
-  return '\n\n【用户发来的文件（已经在你电脑上）】\n' + files.map(f => '- ' + f.path + '（' + f.name + '，' + (f.image ? '图片，' : '') + sizeText(f.size) + '）').join('\n') +
-    (files.some(f => f.image) && agent !== 'harness' ? (agent === 'codex' ? (seesImages ? '\n图片已经直接给你看了。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。') : '\n图片用 Read 工具打开就能看。') : '');
+  let tip = '';
+  if (files.some(f => f.image)) {
+    // Codex 能看图的模型用 -i 直接塞图；Harness 没有 -i，只把路径写进消息，靠工具打开。
+    if (agent === 'codex') tip = seesImages ? '\n图片已经直接给你看了。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
+    else if (agent === 'harness') tip = seesImages ? '\n图片在你电脑上，用工具打开上面的路径就能看。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
+    else tip = '\n图片用 Read 工具打开就能看。';
+  }
+  return '\n\n【用户发来的文件（已经在你电脑上）】\n' + files.map(f => '- ' + f.path + '（' + f.name + '，' + (f.image ? '图片，' : '') + sizeText(f.size) + '）').join('\n') + tip;
 }
 
 /* ---------- 一个对话的用量 ----------
@@ -1222,7 +1228,7 @@ const ops = {
       s = readJ(sessF(a.sid));
       if (!s) return { error: 'no_session', msg: '找不到这个对话' };
       const r = lastRun(s);
-      if (r && !runDone(r)) return { error: 'busy', msg: '上一句还没做完', run: r };
+      if (r && !runDone(r)) return { error: 'busy', msg: '上一句还没做完，请稍后再试', run: r, sid: s.sid };
     } else {
       const agent = AGENTS.includes(a.agent) ? a.agent : 'harness';
       s = { sid: rid('s'), agent, title: (text || files.map(f => f.name).join('、')).replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
