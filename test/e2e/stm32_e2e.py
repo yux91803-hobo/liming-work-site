@@ -1260,6 +1260,10 @@ async def main():
         await pg.click('.xc-agent [data-agent=claude]'); await pg.click('.xc-effort [data-effort=max]')
         st2 = await pg.evaluate("[localStorage.getItem('lm.xin.agent'), localStorage.getItem('lm.xin.effort'), document.querySelector('.xc-agent [aria-checked=true]').dataset.agent]")
         check('设置：新对话用哪个 AI（Harness / Codex / Claude，默认 Harness）、思考强度（默认自动），点了记住', st == ['harness', 'auto'] and opts == ['Harness', 'Codex', 'Claude'] and st2 == ['claude', 'max', 'claude'], (st, st2))
+        cm = await pg.evaluate("[document.querySelector('.xc-cxmodel [aria-checked=true]').dataset.cxmodel, [...document.querySelectorAll('.xc-cxmodel [data-cxmodel]')].map(b => b.textContent)]")
+        await pg.click('.xc-cxmodel [data-cxmodel="kimi-k3.1-pro"]')
+        cm2 = await pg.evaluate("localStorage.getItem('lm.xin.cxmodel')")
+        check('设置：Codex 模型三选一（GLM-5.3 Flash / GLM-5.3 / Kimi K3.1 Pro，默认 GLM-5.3 Flash），点了记住', cm == ['glm-5.3-flash', ['GLM-5.3 Flash', 'GLM-5.3', 'Kimi K3.1 Pro']] and cm2 == 'kimi-k3.1-pro', (cm, cm2))
         await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')"); await pg.wait_for_selector('.xc-hello')
         check('新对话还没有用量：输入框底下那一行不显示', not await pg.is_visible('.xc-use'))
         await pg.fill('.xc-row textarea', '看看工作目录'); await pg.keyboard.press('Enter')
@@ -1268,7 +1272,7 @@ async def main():
           document.querySelector('.xc-sub').textContent, document.querySelector('.xc-msgs').textContent.includes('Model metadata'), document.querySelector('.xc-msgs').textContent.includes('ls /data/workspace'),
           !!document.querySelector('.xc-tool'), document.querySelector('.xc-msgs').lastElementChild.classList.contains('xc-typing')]""")
         check('发出去：设置里选的 AI 和强度传给后台；只有自己的一句和小芯的第一句，它执行的命令、无关警告都不显示，最后冒「正在输入」写着在电脑上忙；小芯坐到电脑前敲代码',
-              xs['sent'] == {'agent': 'claude', 'text': '看看工作目录', 'effort': 'max'} and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
+              xs['sent'] == {'agent': 'claude', 'text': '看看工作目录', 'effort': 'max', 'model': 'kimi-k3.1-pro'} and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
         await pg.wait_for_function(CHAT_DONE, timeout=8000); await pg.wait_for_timeout(200)
         st = await pg.evaluate("""[LimingXin.aiState, LimingXin.mode, document.querySelector('.xc').classList.contains('running'), localStorage.getItem('lm.xin.sid'),
           [...document.querySelectorAll('.xc-ai .xc-bub')].map(b => b.textContent), [...document.querySelectorAll('.xc-sys')].map(e => e.textContent),
@@ -1537,7 +1541,7 @@ async def main():
         await pv.click('.xc-set-b'); await pv.wait_for_selector('.xc-set')
         rows = await pv.evaluate("[...document.querySelectorAll('.xc-tg-t b')].map(b => b.textContent)")
         await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false' && !document.querySelector('.xc-push .xc-sw').disabled")
-        check('设置：新对话用、思考强度、附带正在看的页面、做完提醒（没有「朗读回答」了），做完提醒默认关着', rows == ['新对话用', '思考强度', '附带正在看的页面', '做完提醒'], rows)
+        check('设置：新对话用、Codex 模型、思考强度、附带正在看的页面、做完提醒（没有「朗读回答」了），做完提醒默认关着', rows == ['新对话用', 'Codex 模型', '思考强度', '附带正在看的页面', '做完提醒'], rows)
         c0 = await pv.evaluate("document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked')")
         await pv.click('.xc-ctxauto .xc-sw')
         c1 = await pv.evaluate("[document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked'), localStorage.getItem('lm.xin.ctx')]")

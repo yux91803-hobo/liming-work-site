@@ -14,10 +14,12 @@
 (function () {
   'use strict';
   var API = '/api/xin/';
-  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort', LS_CTX = 'lm.xin.ctx';
+  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort', LS_CTX = 'lm.xin.ctx', LS_CXM = 'lm.xin.cxmodel';
   var AGENTS = { harness: 'Harness', codex: 'Codex', claude: 'Claude' };
   // 思考强度：自动 = 写代码的活用最高（max），聊天用 AI 自己的默认（规则在 vm-agent.mjs 的 resolveEffort）
   var EFFORTS = { auto: '自动', high: '高', max: '最高' };
+  // Codex 用哪个模型（小芯电脑上的网关里的）：每一轮按这里选的，已经开始的 Codex 对话下一句也换
+  var CX_MODELS = { 'glm-5.3-flash': 'GLM-5.3 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro' };
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
   var WORK = '/data/workspace';
 
@@ -41,7 +43,7 @@
     var a = ls(LS_AGENT);
     return AGENTS[a] ? a : 'harness';
   }
-  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto',
+  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto', cxModel: CX_MODELS[ls(LS_CXM)] ? ls(LS_CXM) : 'glm-5.3-flash',
     run: '', off: 0, polling: false, mine: {}, errRuns: {}, lastAct: 0, view: 'chat', machine: '', mstate: '', loadSeq: 0, drawer: false, drawerSeq: 0 };
 
   /* ---------- 和页面上的小芯共用机身、眼睛和引脚，避免头像仍然显示旧方眼 ---------- */
@@ -410,7 +412,7 @@
   function sessItem(s) {
     var li = h('li', 'xc-sli'), b = h('button', 'xc-si'); b.type = 'button';
     b.appendChild(h('span', 'xc-si-t', s.title || '（无标题）'));
-    b.appendChild(h('span', 'xc-si-m', (AGENTS[s.agent] || s.agent) + ' · ' + s.turns + ' 轮 · ' + when(s.updated) + (s.active ? ' · 进行中' : '')));
+    b.appendChild(h('span', 'xc-si-m', (AGENTS[s.agent] || s.agent) + (s.model && CX_MODELS[s.model] ? ' ' + CX_MODELS[s.model] : '') + ' · ' + s.turns + ' 轮 · ' + when(s.updated) + (s.active ? ' · 进行中' : '')));
     if (s.sid === S.sid) { b.classList.add('cur'); b.setAttribute('aria-current', 'true'); }
     b.addEventListener('click', function () { openSession(s.sid); });
     var more = h('button', 'xc-si-more'); more.type = 'button'; more.setAttribute('aria-label', '改名、归档或删除'); more.setAttribute('aria-expanded', 'false');
@@ -583,6 +585,7 @@
     var box = h('div', 'xc-set');
     box.appendChild(h('p', 'xc-set-h', '设置'));
     box.appendChild(segRow('xc-agent', '新对话用', '已经开始的对话不会换', AGENTS, S.agent, 'agent', function (k) { S.agent = k; ls(LS_AGENT, k); }));
+    box.appendChild(segRow('xc-cxmodel', 'Codex 模型', '', CX_MODELS, S.cxModel, 'cxmodel', function (k) { S.cxModel = k; ls(LS_CXM, k); }));
     box.appendChild(segRow('xc-effort', '思考强度', '自动：写代码、编译、调试时用最高', EFFORTS, S.effort, 'effort', function (k) { S.effort = k; ls(LS_EFF, k); }));
     // 附带：发消息时带上学习台里正在看的页面、选中的文字、写的代码。关掉就都不带（记在这个浏览器里）
     var ctx = toggleRow('xc-ctxauto', '附带正在看的页面', '');
@@ -1036,7 +1039,7 @@
     S.lastText = ''; S.doing = 'think'; S.note = null; S.waitSend = '';
     typing(true); renderHead(); toBottom(true);
     var x = xin(); if (x) x.ai('think');
-    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,
+    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, model: S.cxModel, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,
       files: files.length ? files.map(function (f) { return { path: f.path, name: f.name }; }) : undefined }, 90000, function (w) { S.waitSend = w.state; progress(); }).then(function (d) {
       if (c && c.sel) S.sel = null;      // 选中的内容用过一次就不再带
       refreshCtx();

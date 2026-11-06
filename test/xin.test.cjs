@@ -700,7 +700,7 @@ test('插件：只列用户自己装的（电脑自带的不显示、不让关�
   } finally { [process.env.XIN_HOME, process.env.CODEX_HOME, process.env.XIN_CODEX_SYS] = saved; }
 });
 
-test('Codex 线路每轮自己带：本地网关 + glm-5.3-flash；模型资料照抄一份补上这个模型（看不了图）；key 先用 codex.key，没有用 harness.key', async () => {
+test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3-flash，不认识的当默认）；模型资料照抄一份补上这几个模型；看不了图的不用 -i；key 先用 codex.key，没有用 harness.key', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-cxroute-'));
   const codexHome = path.join(tmp, 'codex'), xinDir = path.join(tmp, 'xin');
   fs.mkdirSync(codexHome); fs.mkdirSync(xinDir);
@@ -711,18 +711,25 @@ test('Codex 线路每轮自己带：本地网关 + glm-5.3-flash；模型资料�
   const saved = [process.env.XIN_HOME, process.env.CODEX_HOME];
   process.env.XIN_HOME = xinDir; process.env.CODEX_HOME = codexHome;
   try {
-    const { agentArgs, codexKeyEnv, CODEX_ROUTE } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-agent.mjs')).href + '?cxroute');
+    const { agentArgs, codexKeyEnv, CODEX_MODELS } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-agent.mjs')).href + '?cxroute');
     const [, a] = agentArgs('codex', { started: false }, '你好', '');
     const cs = a.filter((x, i) => a[i - 1] === '-c');
     const cat = path.join(xinDir, 'codex-models.json');
     for (const want of ['model_provider="xin-gateway"', 'model_providers.xin-gateway.base_url="http://127.0.0.1:8788/v1"', 'model_providers.xin-gateway.wire_api="responses"',
       'model_providers.xin-gateway.env_key="XIN_CODEX_KEY"', 'model="glm-5.3-flash"', 'model_context_window=1000000', 'model_catalog_json=' + JSON.stringify(cat)])
       assert.ok(cs.includes(want), want + ' 不在 ' + JSON.stringify(cs));
-    assert.strictEqual(CODEX_ROUTE.model, 'glm-5.3-flash');
+    assert.deepStrictEqual(CODEX_MODELS.map(m => m.id), ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']);
     const list = JSON.parse(fs.readFileSync(cat, 'utf8')).models;
-    assert.deepStrictEqual(list.map(m => m.slug), ['gpt-5.5', 'deepseek-v4.1-flash', 'glm-5.3-flash']);
+    assert.deepStrictEqual(list.map(m => m.slug), ['gpt-5.5', 'deepseek-v4.1-flash', 'glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']);
     const g = list[2];
     assert.deepStrictEqual([g.display_name, g.context_window, g.max_context_window, g.input_modalities, g.model_messages], ['GLM-5.3 Flash', 1000000, 1000000, ['text'], { instructions_template: 'T' }]);
+    assert.deepStrictEqual([list[3].display_name, list[3].input_modalities, list[4].display_name, list[4].input_modalities], ['GLM-5.3', ['text', 'image'], 'Kimi K3.1 Pro', ['text', 'image']]);
+    // 换模型：能看图的用 -i；不认识的当默认
+    const [, k] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '看图', '', { model: 'kimi-k3.1-pro', images: ['/x/a.png'] });
+    assert.ok(k.includes('model="kimi-k3.1-pro"') && !k.includes('model="glm-5.3-flash"'));
+    assert.deepStrictEqual(k.slice(0, 4), ['exec', 'resume', '-i', '/x/a.png']);
+    const [, f] = agentArgs('codex', { started: false }, '看图', '', { model: 'gpt-9', images: ['/x/a.png'] });
+    assert.ok(f.includes('model="glm-5.3-flash"') && !f.includes('-i'));
     // 续接也带
     const [, b] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '再说', '');
     assert.ok(b.includes('model="glm-5.3-flash"') && b.slice(-2).join() === 'th-1,再说');
@@ -772,6 +779,14 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   assert.ok(!args.includes('-i'));
   const prompt = args.join('\n');
   assert.ok(prompt.includes('看看我发的文件。') && prompt.includes('【用户发来的文件（已经在你电脑上）】') && prompt.includes(img + '（板子.jpg，图片，3 B）') && prompt.includes(pdf + '（说明.pdf，3 B）') && prompt.includes('看不了图片'), prompt.slice(-400));
+  // 换成能看图的模型接着聊：这一轮用它，图片用 -i，对话上记下模型
+  const r2 = op('send', { sid: r.sid, model: 'glm-5.3', text: '这张呢', files: [{ path: img, name: '板子.jpg' }] });
+  assert.ok(r2.run, JSON.stringify(r2));
+  for (let i = 0; i < 60; i++) { p = op('poll', { run: r2.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  const args2 = fs.readFileSync(log, 'utf8').split('\n');
+  assert.deepStrictEqual(args2.slice(0, 4), ['exec', 'resume', '-i', img]);
+  assert.ok(args2.includes('model="glm-5.3"') && args2.join('\n').includes('图片已经直接给你看了'));
+  assert.strictEqual(op('sessions').sessions.find(x => x.sid === r.sid).model, 'glm-5.3');
 });
 
 test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权限、网关 key 用环境变量；事件整理、会话号、接着聊（--session-id）、用量；删对话连它的会话一起删', async () => {

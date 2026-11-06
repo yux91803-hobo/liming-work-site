@@ -1,3 +1,15 @@
+# 修改清单 · 2026-11-06（Codex 换成本地网关上的 GLM / Kimi，能在设置里切换模型）
+
+- 用户想在 Claude 里用 GLM-5.3 Flash：网关的 Anthropic 接口默认关着（打开后不认缓存、多扣积分），用户选了改用 Codex；后来又要能切换，加上 GLM-5.3 和 Kimi K3.1 Pro。
+- **小芯电脑上**（会话里做的，不在仓库里；用户同意新建 key）：网关里新建一把 key `xin-codex`，只允许 glm-5.3-flash、glm-5.3、kimi-k3.1-pro，存到 `~/.xin/codex.key`（权限 600）；原来的 `li-cn` 没动；改之前备份了网关的 `settings.json`。
+- **vm-agent**：Codex 的线路每一轮自己带（`-c model_provider=xin-gateway` + `base_url` / `wire_api=responses` / `env_key=XIN_CODEX_KEY` + `model` + `model_context_window`），不靠 `~/.codex/config.toml` 里写的模型和网关；key 先用 `codex.key`，没有就用 `harness.key`；正式跑和预热都带。
+  - 模型表 `CODEX_MODELS`（上限都是 100 万，GLM-5.3 Flash 看不了图）；`send` 带 `model`，不认识的当默认（GLM-5.3 Flash），记在对话上（列表里显示「Codex GLM-5.3」这样）。
+  - Codex 认不出网关的新模型（会报 metadata not found）：照着 `config.toml` 里 `model_catalog_json` 那份资料复制一份到 `~/.xin/codex-models.json`，补上这三个模型（照抄 DeepSeek 那条改名字、上限、能不能看图），每轮 `-c model_catalog_json` 指过去；资料变了或模型表改了才重做。
+  - 看不了图的模型：图片不用 `-i`，只把路径写进消息，并告诉它看不了图要如实说。
+- **网页**：设置里加「Codex 模型」三选一，记在这个浏览器里，每次发消息带上。
+- 在小芯电脑上实测过：三个模型在 Codex 里都能执行命令、回话（11～18 秒）。
+- 测试：单元测试（线路参数、模型资料、换模型、看图 / 不看图、key 的来源；send 带模型一路传到 codex 参数、记在对话上）；e2e（设置里三选一、默认、记住、发消息带上）。
+
 # 修改清单 · 2026-11-06（Harness 的线路也由网站每一轮带过去）
 
 - 用户问重装 Harness 会怎样：以前线路（本地网关、deepseek-v4.1-flash、key 的环境变量名）只写在 `~/.dsh/profiles/headless/cordis.patch.yml`，重装清掉 `~/.dsh` 小芯就连不上模型。
