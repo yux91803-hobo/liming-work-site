@@ -234,16 +234,22 @@ async def main():
 
             pg, _ = await page(b, width=390, theme='dark')
             await pg.click('#layersBtn')
-            await pg.wait_for_timeout(100)
+            await pg.wait_for_function("document.body.classList.contains('sheet') && getComputedStyle(document.querySelector('#sheet')).transform === 'none'")
             state = await pg.evaluate("""['#top','#tools','#sheet'].every(s=>{const r=document.querySelector(s).getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight}) && document.documentElement.scrollWidth===innerWidth""")
             check('390 手机深色：搜索、按钮、图层都在屏幕内，不横向溢出', state)
             cdp = await pg.context.new_cdp_session(pg)
             grip = await pg.locator('.grip').bounding_box(); x, y = grip['x'] + 15, grip['y'] + 2
             async def touch(kind, dy=0):
                 await cdp.send('Input.dispatchTouchEvent', {'type': kind, 'touchPoints': [] if kind in ('touchEnd', 'touchCancel') else [{'x': x, 'y': y + dy}]})
-            await touch('touchStart'); await touch('touchMove', 70); await touch('touchCancel')
+            await touch('touchStart'); await touch('touchMove', 70)
+            await pg.wait_for_function("document.querySelector('#sheet').style.transform === 'translateY(70px)'", timeout=3000)
+            await touch('touchCancel')
+            await pg.wait_for_function("document.body.classList.contains('sheet') && document.querySelector('#sheet').style.transform === ''", timeout=3000)
             check('手机图层下滑被系统取消后，面板复位而不留半截', await pg.evaluate("document.body.classList.contains('sheet') && document.querySelector('#sheet').style.transform === ''"))
-            await touch('touchStart'); await touch('touchMove', 80); await touch('touchEnd')
+            await touch('touchStart'); await touch('touchMove', 80)
+            await pg.wait_for_function("document.querySelector('#sheet').style.transform === 'translateY(80px)'", timeout=3000)
+            await touch('touchEnd')
+            await pg.wait_for_function("!document.body.classList.contains('sheet') && !document.querySelector('#map').inert", timeout=3000)
             check('手机图层下滑可收起，恢复地图操作', await pg.evaluate("!document.body.classList.contains('sheet') && !document.querySelector('#map').inert"))
             await pg.context.close()
         finally:

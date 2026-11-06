@@ -219,6 +219,102 @@ async def drag_xin_into(pg, card_id):
             await pg.wait_for_timeout(100)
     raise RuntimeError('拖了 4 次都没把小芯拖进 ' + card_id)
 
+async def stm32_operation_regressions(b):
+    for w in [1280, 390]:
+        for embedded in [False, True]:
+            pg = await page(b, w, 844, mobile=w == 390)
+            prefix = f'{w} ' + ('工具箱' if embedded else '独立页')
+            await pg.goto((BASE + '/stm32' if embedded else TOOL) + '?v=topic&t=usart')
+            f = await tool_frame(pg) if embedded else pg
+            await f.wait_for_selector('html.ready')
+            for mode in ['reg', 'hal', 'cd']:
+                await f.evaluate('(cv) => STM.app.navigate({v:"topic",t:"usart",sec:"code",cv})', mode)
+                states = []
+                for sec in ['points', 'pins', 'regs', 'figs']:
+                    await f.locator(f'.snav-i[href*="sec={sec}"]').click()
+                    states.append(await f.evaluate('(s) => [STM.app.route().sec === s, !document.getElementById("s-"+s).hidden]', sec))
+                    await pg.wait_for_function('(s) => new URLSearchParams(location.search).get("sec") === s', arg=sec)
+                    await f.locator('.snav-i[href*="sec=code"]').click()
+                    states.append(await f.evaluate('(cv) => [STM.app.route().sec === "code", document.querySelector(".cseg-b.on").dataset.k === cv]', mode))
+                check(prefix + f'：{mode} 代码模式能切出全部分页，再切回来保留模式与地址', all(all(s) for s in states), states)
+
+            await f.evaluate('STM.app.navigate({v:"topic",t:"i2c",sec:"code",cv:"reg",cx:"i2chw",cf:"main.c"})')
+            states = []
+            for sec in ['pins', 'points', 'regs', 'figs']:
+                await f.locator(f'.snav-i[href*="sec={sec}"]').click()
+                states.append(await f.evaluate('(s) => STM.app.route().sec === s', sec))
+                await f.locator('.snav-i[href*="sec=code"]').click()
+                states.append(await f.evaluate('STM.app.route().cx === "i2chw" && STM.app.route().cf === "main.c" && document.querySelector(".ftab.on").textContent === "main.c"'))
+            check(prefix + '：硬件 I2C 的驱动和 main.c 不会被其他分页重置', all(states), states)
+
+            await pg.goto((BASE + '/stm32' if embedded else TOOL) + '?v=topic&t=usart&sec=code&cv=reg&cf=usart.c')
+            f = await tool_frame(pg) if embedded else pg
+            await f.wait_for_selector('html.ready')
+            await f.locator('.ftab').filter(has_text='main.c').click()
+            await f.evaluate('window.scrollTo(0, Math.min(650,document.scrollingElement.scrollHeight-innerHeight-30))')
+            before = await f.evaluate('({file:document.querySelector(".ftab.on").textContent,y:scrollY,cf:STM.app.route().cf})')
+            await pg.keyboard.press('Control+k')
+            await f.locator('.search-in').fill('USART_BRR'); await f.wait_for_selector('.search-it')
+            await pg.keyboard.press('Enter'); await f.wait_for_selector('.sheet.on')
+            source = await f.evaluate('STM.app.route().cf === "main.c" && STM.app.route().sec === "code"')
+            await f.evaluate('STM.app.navigate({sch:"board-01"})'); await wait_img(f)
+            await pg.locator('.panel.show .back').click() if embedded else await f.locator('.vw-x').click()
+            await f.wait_for_function('!STM.app.route().sch')
+            sheet = await f.locator('.sheet.on').count() == 1
+            await pg.go_back(); await f.wait_for_function('!STM.app.route().reg')
+            after = await f.evaluate('({file:document.querySelector(".ftab.on").textContent,y:scrollY,cf:STM.app.route().cf,sec:STM.app.route().sec})')
+            check(prefix + '：main.c 查寄存器再看图，逐层返回保留文件与阅读位置', source and sheet and before['cf'] == 'main.c' and after['file'] == after['cf'] == 'main.c' and after['sec'] == 'code' and abs(after['y'] - before['y']) <= 2, (before, source, sheet, after))
+            await pg.wait_for_function('new URLSearchParams(location.search).get("cf") === "main.c"')
+            await pg.reload(); f = await tool_frame(pg) if embedded else pg
+            await f.wait_for_selector('html.ready')
+            check(prefix + '：刷新仍打开刚选择的代码文件', await f.locator('.ftab.on').inner_text() == 'main.c')
+            if embedded:
+                await f.locator('.snav-i[href*="sec=points"]').click()
+                await pg.wait_for_function('new URLSearchParams(location.search).get("sec") === "points"')
+                await pg.goto(BASE + '/')
+                label = await pg.locator('.card[data-id=stm32] .go').inner_text()
+                check(prefix + '：工具箱继续位置显示实际分页，不被保留的代码模式覆盖', 'USART 要点' in label, label)
+            await pg.context.close()
+
+    for w in [390, 768]:
+        pg = await page(b, w, 844, mobile=True)
+        await pg.goto(BASE + '/stm32?v=topic&t=usart'); f = await tool_frame(pg)
+        await pg.wait_for_function('document.querySelector(".panel.show")._depth === 1')
+        for native in [False, True]:
+            await f.locator('.bar-menu').click()
+            await pg.wait_for_function('document.querySelector(".panel.show")._depth === 2')
+            await pg.go_back() if native else await pg.locator('.panel.show .back').click()
+            await f.wait_for_function('!document.documentElement.classList.contains("drawer")')
+            await pg.wait_for_function('document.querySelector(".panel.show")._depth === 1 && history.state.sub')
+            check(f'{w}：' + ('浏览器返回' if native else '工具箱返回') + '先收目录，留在 USART 外设页', await f.evaluate('STM.app.route().t === "usart"'))
+        await pg.go_back(); await f.wait_for_selector('.boardh')
+        await pg.wait_for_function('document.querySelector(".panel.show")._depth === 0 && !history.state.sub')
+        await f.locator('.bar-menu').click()
+        await pg.wait_for_function('document.querySelector(".panel.show")._depth === 1')
+        await pg.go_back(); await f.wait_for_function('!document.documentElement.classList.contains("drawer")')
+        check(f'{w}：首页目录返回只收目录，学习台保持打开', await f.evaluate('STM.app.route().v === "home"') and await pg.locator('.panel.show').count() == 1)
+        await pg.wait_for_function('document.querySelector(".panel.show")._depth === 0 && !history.state.sub')
+        await f.locator('.bar-menu').click(); await f.evaluate('STM.app.openSearch()')
+        await pg.wait_for_function('document.querySelector(".panel.show")._depth === 2')
+        await pg.go_back(); await f.wait_for_function('!document.querySelector(".search")')
+        first = await f.evaluate('document.documentElement.classList.contains("drawer") && STM.app.route().v === "home"')
+        await pg.wait_for_function('document.querySelector(".panel.show")._depth === 1 && history.state.sub')
+        await pg.go_back(); await f.wait_for_function('!document.documentElement.classList.contains("drawer")')
+        check(f'{w}：目录上搜索，返回依次关搜索、收目录，页面不退', first and await pg.locator('.panel.show').count() == 1)
+        await pg.wait_for_function('document.querySelector(".panel.show")._depth === 0 && !history.state.sub')
+        await f.locator('.bar-menu').click(); await f.locator('.scrim').click(position={'x': w - 16, 'y': 80})
+        await f.evaluate('STM.app.openSearch()')
+        await f.locator('.search-in').fill('USART_BRR'); await f.wait_for_selector('.search-it')
+        await pg.keyboard.press('Enter'); await f.wait_for_selector('.sheet.on')
+        await pg.wait_for_function('document.querySelector(".panel.show")._depth > 0 && history.state.sub')
+        await pg.go_back(); await f.wait_for_function('!STM.app.route().reg')
+        await pg.wait_for_function('document.querySelector(".panel.show")._depth === 0 && !history.state.sub')
+        check(f'{w}：快速收目录后搜索，返回仍只关寄存器且没有多余历史', await f.evaluate('STM.app.route().v === "home"') and await pg.locator('.panel.show').count() == 1)
+        await pg.locator('.panel.show .back').click()
+        await pg.wait_for_function('!document.body.classList.contains("tool-open")')
+        check(f'{w}：所有临时层关闭后，再返回正常退出学习台', await pg.evaluate('location.pathname === "/"'))
+        await pg.context.close()
+
 async def stm32_audit_regressions(b):
     for w in [1280, 390]:
         pg = await page(b, w, 844, mobile=w == 390)
@@ -322,6 +418,7 @@ async def main():
         exe = os.environ.get('CHROMIUM_PATH')
         b = await p.chromium.launch(**({'executable_path': exe} if exe else {}))
 
+        await stm32_operation_regressions(b)
         await stm32_audit_regressions(b)
 
         # ---------- 1. 独立打开：首页 → 主题 → 寄存器 → 返回 ----------

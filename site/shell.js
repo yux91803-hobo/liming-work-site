@@ -97,7 +97,7 @@
   function stmWhere(route) {
     var sp; try { sp = new URLSearchParams(route || ''); } catch (e) { return null; }
     var v = sp.get('v') || 'home', t = sp.get('t'), name = TOPIC[t];
-    if (v === 'topic' && name) { var cv = sp.get('cv'), sec = sp.get('sec'); return { t: t, text: name + ' ' + (cv && CV[cv] ? CV[cv] : sec && SEC[sec] ? SEC[sec] : '') }; }
+    if (v === 'topic' && name) { var cv = sp.get('cv'), sec = sp.get('sec'); return { t: t, text: name + ' ' + (sec && sec !== 'code' && SEC[sec] ? SEC[sec] : cv && CV[cv] ? CV[cv] : sec && SEC[sec] ? SEC[sec] : '') }; }
     if (v === 'think') {
       if (!name) return { text: '设计原理' };
       var st = sp.get('s'), m = /^s(\d+)$/.exec(st || '');

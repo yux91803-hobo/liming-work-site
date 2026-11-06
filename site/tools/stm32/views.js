@@ -151,7 +151,7 @@
         var want = r.cx && vs.indexOf(r.cx) > 0 ? r.cx : vs[0];
         if (want !== cx) {
           cx = want; ui.clear(regBox); ui.clear(cdBox);
-          filesFig = CD.files(cx, { file: r.cf }); regBox.appendChild(filesFig);
+          filesFig = CD.files(cx, { file: r.cf, onPick: function (name) { app.navigate({ sec: 'code', cf: name }); } }); regBox.appendChild(filesFig);
           if (window.STM32Lab && STM32Lab.chapter(cx)) {   // 这一章的代码推导已经并进「编程思维」，这里只留个入口
             var go = app.link({ v: 'lab', t: cx }, 'thinkin'); go.appendChild(ui.icon('idea'));
             var gt = el('span', 'thinkin-t'); gt.appendChild(el('b', null, '编程思维')); gt.appendChild(el('span', null, '从需求、查资料到写代码，一步步推出这些文件')); go.appendChild(gt);
