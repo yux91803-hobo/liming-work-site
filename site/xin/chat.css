@@ -93,6 +93,8 @@
 .xc-sys.bond::before{content:"♥ "}
 [data-theme=dark] .xc-sys.bond{color:#f08b70}
 .xc-time{align-self:center;font:11.5px var(--sans);color:var(--ink-3)}
+/* 这一轮用的模型：回答下面一行小灰字（和气泡左边对齐） */
+.xc-by{align-self:flex-start;max-width:calc(100% - 62px);margin:0 0 2px 40px;font:11.5px/1.4 var(--sans);color:var(--ink-3);word-break:break-word}
 
 /* 回答里的 Markdown */
 .xc-md > :first-child{margin-top:0}
@@ -199,6 +201,14 @@
 .xc-eff-d.on{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:0 1px 3px rgba(20,20,19,.09)}
 .xc-eff-d:focus-visible,.xc-pk-o:focus-visible,.xc-pk-close:focus-visible{outline:2px solid var(--clay);outline-offset:-2px}
 .xc-eff-help{margin:8px 6px 2px;min-height:17px;font:11.5px/1.5 var(--sans);color:var(--ink-3)}
+/* 默认模式：不让选，只说明（有哪几个模型、上一句用的是谁） */
+.xc-pk-auto{padding:0 6px 4px;font:12.5px/1.6 var(--sans);color:var(--ink-2)}
+.xc-pk-auto p{margin:0}
+.xc-pk-ml{display:flex;flex-direction:column;gap:2px;margin:8px 0;padding:0;list-style:none}
+.xc-pk-ml li{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:34px;padding:6px 10px;border-radius:8px !important;font-size:13px;color:var(--ink)}
+.xc-pk-ml li.on{background:var(--clay-soft);font-weight:600}
+.xc-pk-ml li i{flex:none;font-style:normal;font-size:11.5px;font-weight:400;color:var(--clay)}
+.xc-pk-tip{color:var(--ink-3)}
 .xc-pk-o{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:42px;padding:9px 10px;border-radius:8px !important;text-align:left;font:13.5px var(--sans);color:var(--ink)}
 .xc-pk-o svg{width:18px;height:18px;flex:none;stroke-width:2.2;color:var(--clay);visibility:hidden}
 .xc-pk-o[aria-checked=true] svg{visibility:visible}

@@ -7,16 +7,17 @@
    回答里出现的 /data/workspace/… 路径点一下就打开那个文件。
    聊天区像聊天软件：小芯在左边（像素头像）、你在右边；它在电脑上执行的命令不显示，干活时只冒一个「正在输入」的气泡和用时；代码上色。
    标题栏的「屏幕」：全屏看小芯的电脑桌面（桌面上有个终端实时滚动它在干什么），能「观看」也能「接管」。
-   设置（对话列表最下面）：新对话用哪个 AI、思考强度、做完提醒（Web Push：网页没在看时做完了发通知，
+   设置（对话列表最下面）：天启模式（打开：新对话用 Harness，自己选模型和思考强度；关着（默认）：用 Codex，小芯自己挑模型、思考强度最高）、
+   附带正在看的页面、做完提醒（Web Push：网页没在看时做完了发通知，
    推送从小芯的电脑直接发出，见 vm-agent.mjs 的 pushAll；通知由 /sw.js 弹出，点了打开 #xin=<对话>）。
    小芯会自己编新动作（xin move add），打开网页时拿过来教给页面上的小芯（背包「新动作」、闲着时偶尔做）；
    好感度记在它电脑上：聊天、每天来看它、喂它陪它玩会涨，越熟越听话；对话列表上面显示关系和最近的变化。 */
 (function () {
   'use strict';
   var API = '/api/xin/';
-  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort', LS_CTX = 'lm.xin.ctx', LS_CXM = 'lm.xin.cxmodel', LS_HM = 'lm.xin.hmodel';
+  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort', LS_CTX = 'lm.xin.ctx', LS_HM = 'lm.xin.hmodel';
   var AGENTS = { harness: 'Harness', codex: 'Codex', claude: 'Claude' };
-  // Codex 用哪个模型（小芯电脑上的网关里的）：每一轮按这里选的，已经开始的 Codex 对话下一句也换
+  // Codex（默认模式）的几个模型：小芯每一轮自己挑（见 vm-agent.mjs 的路由器），这里只用来显示名字
   var CX_MODELS = { 'glm-5.3-flash': 'GLM-5.3 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash' };
   var HM_MODELS = { 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash', 'glm-5.3': 'GLM-5.3', 'glm-5.3-flash': 'GLM-5.3 Flash' };
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
@@ -36,15 +37,15 @@
   function h(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function sleepMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-  // 新对话用哪个 AI：默认 Harness。Codex 的 key 挪给 Harness 以后，以前存的选择一次性换成 Harness（之后再切照常记住）
-  function cxPref() { var m = ls(LS_CXM); return CX_MODELS[m] ? m : 'glm-5.3-flash'; }
+  // 新对话用哪个 AI：默认模式用 Codex（小芯自己挑模型、思考强度最高）；设置里打开「天启模式」才用 Harness（自己选模型和思考强度）。
+  // Claude 暂时不用：新对话不再选它，以前的 Claude 对话照样能打开、接着聊。改版时每台设备先统一回到默认模式，之后各记各的
   function hmPref() { var m = ls(LS_HM); return HM_MODELS[m] ? m : 'deepseek-v4.1-flash'; }
   function agentPref() {
-    if (ls('lm.xin.agent.v') !== '2') { ls(LS_AGENT, 'harness'); ls('lm.xin.agent.v', '2'); }
-    var a = ls(LS_AGENT);
-    return AGENTS[a] ? a : 'harness';
+    if (ls('lm.xin.agent.v') !== '3') { ls(LS_AGENT, 'codex'); ls('lm.xin.agent.v', '3'); }
+    return ls(LS_AGENT) === 'harness' ? 'harness' : 'codex';
   }
-  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: ls(LS_EFF) || 'high', cxModel: cxPref(), hModel: hmPref(),
+  function modelName(id) { return CX_MODELS[id] || HM_MODELS[id] || id || ''; }
+  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: ls(LS_EFF) || 'high', hModel: hmPref(), lastModel: '',
     run: '', off: 0, polling: false, mine: {}, errRuns: {}, lastAct: 0, view: 'chat', machine: '', mstate: '', loadSeq: 0, drawer: false, drawerSeq: 0 };
 
   /* ---------- 和页面上的小芯共用机身、眼睛和引脚，避免头像仍然显示旧方眼 ---------- */
@@ -292,7 +293,7 @@
     if (S.useMore) useEl.appendChild(h('div', 'xc-use-more', '上下文 ' + tok(u.ctx) + (u.win > 0 ? ' / ' + tok(u.win) : '') + ' · 输入 ' + tok(u.input) + (typeof u.cached === 'number' ? '（缓存命中 ' + tok(u.cached) + '）' : '') + ' · 输出 ' + tok(u.output)));
   }
   function newChat(stay) {
-    stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null); S.cxModel = cxPref(); S.hModel = hmPref(); setPick(false);
+    stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null); S.hModel = hmPref(); S.lastModel = ''; setPick(false);
     if (!stay) { S.view = 'chat'; setDrawer(false); }
     clearList(); S.histFor = ''; welcome(); render();
   }
@@ -324,9 +325,9 @@
       if (my !== S.loadSeq) return;
       clearList();
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid;
-      // 只改这个对话所属 AI 的模型，别把另一边的偏好冲掉（两边有同名模型时尤其容易）
-      if (d.session.agent === 'codex') S.cxModel = CX_MODELS[d.session.model] ? d.session.model : cxPref();
-      else if (d.session.agent === 'harness') S.hModel = HM_MODELS[d.session.model] ? d.session.model : hmPref();
+      // Harness 对话接着用它上次的模型；Codex（默认模式）的模型是小芯挑的，只记下最近一句用的是谁（模型按钮点开能看到）
+      if (d.session.agent === 'harness') S.hModel = HM_MODELS[d.session.model] ? d.session.model : hmPref();
+      S.lastModel = d.session.model || '';
       d.runs.forEach(function (r) { r.events.forEach(function (ev) { draw(ev, true, r.run); }); });
       setUsage(d.usage);
       if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Math.min(Date.now(), d.active.started || Date.now()); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
@@ -429,7 +430,8 @@
   function sessItem(s) {
     var li = h('li', 'xc-sli'), b = h('button', 'xc-si'); b.type = 'button';
     b.appendChild(h('span', 'xc-si-t', s.title || '（无标题）'));
-    b.appendChild(h('span', 'xc-si-m', (AGENTS[s.agent] || s.agent) + (s.model && CX_MODELS[s.model] ? ' ' + CX_MODELS[s.model] : '') + ' · ' + s.turns + ' 轮 · ' + when(s.updated) + (s.active ? ' · 进行中' : '')));
+    var mdl = s.agent === 'codex' ? '自动' : s.agent === 'harness' ? HM_MODELS[s.model] || '' : '';
+    b.appendChild(h('span', 'xc-si-m', (AGENTS[s.agent] || s.agent) + (mdl ? ' ' + mdl : '') + ' · ' + s.turns + ' 轮 · ' + when(s.updated) + (s.active ? ' · 进行中' : '')));
     if (s.sid === S.sid) { b.classList.add('cur'); b.setAttribute('aria-current', 'true'); }
     b.addEventListener('click', function () { openSession(s.sid); });
     var more = h('button', 'xc-si-more'); more.type = 'button'; more.setAttribute('aria-label', '改名、归档或删除'); more.setAttribute('aria-expanded', 'false');
@@ -573,7 +575,7 @@
     if (root && S.open && !touch) root.querySelector('.xc-scr-b').focus();
   }
 
-  /* ---------- 设置：新对话用哪个 AI、附带正在看的页面、做完提醒（模型、思考强度在输入框底下） ---------- */
+  /* ---------- 设置：天启模式、附带正在看的页面、做完提醒（模型、思考强度在输入框底下） ---------- */
   function toggleRow(cls, title, desc) {
     var row = h('div', 'xc-tg ' + cls), txt = h('div', 'xc-tg-t'), b = h('button', 'xc-sw'), note = h('p', 'xc-tg-n');
     txt.appendChild(h('b', '', title)); if (desc) txt.appendChild(h('span', '', desc));   // 说明小字：没有就不放
@@ -581,27 +583,19 @@
     row.appendChild(txt); row.appendChild(b); row.appendChild(note);
     return { row: row, btn: b, set: function (on) { b.setAttribute('aria-checked', on ? 'true' : 'false'); }, note: function (t) { note.textContent = t || ''; } };
   }
-  // 一排选项（单选）：新对话用哪个 AI
-  function segRow(cls, title, desc, opts, cur, key, onPick) {
-    var row = h('div', 'xc-tg ' + cls), txt = h('div', 'xc-tg-t'), seg = h('div', 'xc-segs');
-    txt.appendChild(h('b', '', title)); if (desc) txt.appendChild(h('span', '', desc));   // 说明小字：没有就不放
-    seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', title);
-    Object.keys(opts).forEach(function (k) {
-      var b = h('button', 'xc-ag', opts[k]); b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset[key] = k;
-      b.setAttribute('aria-checked', k === cur ? 'true' : 'false');
-      b.addEventListener('click', function () {
-        [].forEach.call(seg.children, function (x) { x.setAttribute('aria-checked', x === b ? 'true' : 'false'); });
-        onPick(k);
-      });
-      seg.appendChild(b);
-    });
-    row.appendChild(txt); row.appendChild(seg);
-    return row;
-  }
   function settings() {
     var box = h('div', 'xc-set');
     box.appendChild(h('p', 'xc-set-h', '设置'));
-    box.appendChild(segRow('xc-agent', '新对话用', '', AGENTS, S.agent, 'agent', function (k) { S.agent = k; ls(LS_AGENT, k); renderPick(); }));
+    // 天启模式：打开时新对话用 Harness（自己选模型和思考强度）；关着（默认）用 Codex，小芯自己挑模型、思考强度最高。
+    // 只管新对话：已经开着的对话还是原来的 AI（两边的记录不通用）
+    var tq = toggleRow('xc-tianqi', '天启模式', '打开后新对话用 Harness，自己选模型和思考强度');
+    tq.set(S.agent === 'harness');
+    tq.btn.addEventListener('click', function () {
+      S.agent = S.agent === 'harness' ? 'codex' : 'harness'; ls(LS_AGENT, S.agent); tq.set(S.agent === 'harness');
+      tq.note(S.sid && S.sessAgent && S.sessAgent !== S.agent ? '从下一个新对话开始生效（现在这个对话不变）' : '');
+      renderPick();
+    });
+    box.appendChild(tq.row);
     // 附带：发消息时带上学习台里正在看的页面、选中的文字、写的代码。关掉就都不带（记在这个浏览器里）
     var ctx = toggleRow('xc-ctxauto', '附带正在看的页面', '');
     ctx.set(ls(LS_CTX) !== '0');
@@ -893,26 +887,28 @@
   /* ---------- 模型和思考强度 ----------
      模型列表与带名称的强度档位放在同一块紧凑面板。模型、档位都支持键盘选择；
      关闭时恢复焦点，输入时收起，窗口或软键盘变化时限制面板高度。
-     Harness 和 Codex 分开记住模型，已有对话恢复自己的选择。Claude 沿用原有命令行配置。 */
+     Harness（天启模式）记住自己选的模型，已有对话恢复自己的选择。Claude 沿用原有命令行配置。
+     Codex（默认模式）不让选：按钮写「自动 · 最高」，点开只说明小芯怎么挑模型、上一句用的是谁。 */
   var LEVELS = { off: '关', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高' };
   var SPECS = {
     harness: { name: 'DeepSeek V4.1 Flash', efforts: ['off', 'low', 'high', 'max'] },
-    codex: { efforts: ['low', 'high', 'max'] },
     claude: { name: 'Claude', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }
   };
   function curAgent() { return S.sid ? (S.sessAgent || S.agent) : S.agent; }
-  function curModel() { return curAgent() === 'harness' ? S.hModel : curAgent() === 'codex' ? S.cxModel : undefined; }
+  function curModel() { return curAgent() === 'harness' ? S.hModel : undefined; }
   function curSpec() {
-    var a = curAgent(), sp = SPECS[a] || SPECS.claude, models = a === 'harness' ? HM_MODELS : a === 'codex' ? CX_MODELS : null, model = curModel();
+    var a = curAgent();
+    if (a === 'codex') return { agent: 'codex', auto: true, name: '自动', model: undefined, efforts: ['max'], models: null };
+    var sp = SPECS[a] || SPECS.claude, models = a === 'harness' ? HM_MODELS : null, model = curModel();
     return { agent: a, name: models ? models[model] : sp.name, model: model, efforts: models ? (model === 'deepseek-v4.1-flash' ? ['off', 'low', 'high', 'max'] : ['low', 'high', 'max']) : sp.efforts, models: models };
   }
-  function curEffort() { var sp = curSpec(); return sp.efforts.indexOf(S.effort) >= 0 ? S.effort : 'high'; }
-  function pickKey() { return curAgent() + '|' + (curModel() || ''); }
+  function curEffort() { var sp = curSpec(); return sp.auto ? 'max' : sp.efforts.indexOf(S.effort) >= 0 ? S.effort : 'high'; }
+  function pickKey() { return curAgent() + '|' + (curModel() || '') + '|' + (curAgent() === 'codex' ? S.lastModel : ''); }
   function renderPick() {
     if (!mdlBtn) return;
     var sp = curSpec(), e = LEVELS[curEffort()];
     var t = mdlBtn.firstChild; t.textContent = sp.name; t.appendChild(h('i', '', e));
-    mdlBtn.setAttribute('aria-label', '模型和思考强度：' + sp.name + ' ' + e);
+    mdlBtn.setAttribute('aria-label', sp.auto ? '模型和思考强度：小芯自动挑模型，思考强度最高' : '模型和思考强度：' + sp.name + ' ' + e);
     if (!pickEl.hidden) { if (pickEl.dataset.k !== pickKey()) buildPick(); else paintEff(); }
   }
   function fitPick() {
@@ -924,7 +920,7 @@
     mdlBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
     if (on) {
       buildPick(); fitPick();
-      requestAnimationFrame(function () { if (!pickEl.hidden) { var b = pickEl.querySelector('[aria-checked="true"]'); if (b) b.focus({ preventScroll: true }); } });
+      requestAnimationFrame(function () { if (!pickEl.hidden) { var b = pickEl.querySelector('[aria-checked="true"]') || pickEl.querySelector('.xc-pk-close'); if (b) b.focus({ preventScroll: true }); } });
     } else if (restoreFocus) mdlBtn.focus({ preventScroll: true });
   }
   function buildPick() {
@@ -935,11 +931,27 @@
     var close = h('button', 'xc-pk-close'); close.type = 'button'; close.setAttribute('aria-label', '关闭模型设置'); close.innerHTML = svgIcon('x');
     close.addEventListener('click', function () { setPick(false, true); });
     hd.appendChild(title); hd.appendChild(close); pickEl.appendChild(hd);
+    // 默认模式：不让选，只说明小芯怎么挑、有哪几个模型、上一句用的是谁
+    if (sp.auto) {
+      var box = h('div', 'xc-pk-auto');
+      box.appendChild(h('p', '', '小芯按要做的事自己挑模型，思考强度固定最高。'));
+      var ul = h('ul', 'xc-pk-ml');
+      Object.keys(CX_MODELS).forEach(function (k) {
+        var li = h('li', k === S.lastModel ? 'on' : '');
+        li.appendChild(h('span', '', CX_MODELS[k]));
+        if (k === S.lastModel) li.appendChild(h('i', '', '上一句'));
+        ul.appendChild(li);
+      });
+      box.appendChild(ul);
+      box.appendChild(h('p', 'xc-pk-tip', '想指定哪个就在消息里说，比如「用 Kimi 检查一下」；想自己选模型和思考强度，到设置里打开天启模式。'));
+      pickEl.appendChild(box); fitPick();
+      return;
+    }
     if (sp.models) {
       var g = h('div', 'xc-pk-g'); g.dataset.g = 'model';
       g.setAttribute('role', 'radiogroup'); g.setAttribute('aria-label', '模型');
       function choose(k) {
-        if (sp.agent === 'harness') { S.hModel = k; ls(LS_HM, k); } else { S.cxModel = k; ls(LS_CXM, k); }
+        S.hModel = k; ls(LS_HM, k);
         renderPick();
         var b = pickEl.querySelector('.xc-pk-o[data-v="' + k + '"]'); if (b) b.focus({ preventScroll: true });
       }
@@ -1401,6 +1413,11 @@
     return { e: e, b: b };
   }
   function sysChip(text, cls) { return h('div', 'xc-sys' + (cls ? ' ' + cls : ''), text); }
+  function byLine(ev, run) {
+    var e = h('div', 'xc-by', modelName(ev.model) + (ev.why === 'named' ? ' · 按你点名' : '') + (ev.from ? ' · ' + modelName(ev.from) + ' 没接上，换了它' : ''));
+    e.dataset.run = run || '';
+    return e;
+  }
   // 两句之间隔了 10 分钟以上，中间写一下时间
   function timeSep(at) {
     at = at || Date.now();
@@ -1427,6 +1444,9 @@
     } else if (ev.t === 'done') {
       if (ev.stopped) e = sysChip('已停止');
       else if (!ev.ok && !S.errRuns[run]) { m = aiMsg(run, 'bad'); m.b.textContent = '这次没做成'; e = m.e; }
+      if (ev.model) S.lastModel = ev.model;
+      // 这一轮实际用的模型写在回答下面（默认模式是小芯挑的；用户点名、换了模型也说一声）
+      if (ev.model && !ev.stopped) { if (e) put(e); e = byLine(ev, run); }
     } else if (ev.t === 'mem') e = sysChip('记住了：' + ev.text, 'mem');
     else if (ev.t === 'move') e = sysChip('学会了新动作：' + ev.name, 'move');
     else if (ev.t === 'bond') e = sysChip('好感度 ' + (ev.d > 0 ? '+' : '') + ev.d + (ev.why ? ' · ' + ev.why : ''), 'bond');

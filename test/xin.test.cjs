@@ -756,14 +756,14 @@ test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3
   } finally { [process.env.XIN_HOME, process.env.CODEX_HOME] = saved; }
 });
 
-test('发文件：send 带 files（只认上传目录里的普通文件）；消息里列出路径（Codex 现在的模型看不了图，不用 -i）；只发文件不说话也行', async () => {
+test('发文件：send 带 files（只认上传目录里的普通文件）；消息里列出路径；默认模式按能不能看图挑模型、思考强度一律最高；只发文件不说话也行', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-files-send-'));
   const bin = path.join(tmp, 'bin'), log = path.join(tmp, 'args.log');
   fs.mkdirSync(bin);
   // 假的 codex：把参数一行一个记下来，再回一句
   fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\ncase "$*" in *--ephemeral*) exit 0;; esac\nfor a in "$@"; do printf "%s\\n" "$a"; done > "' + log + '"\n' +
     'echo \'{"type":"thread.started","thread_id":"th-1"}\'\necho \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"看到了"}}\'\necho \'{"type":"turn.completed","usage":{}}\'\n', { mode: 0o755 });
-  const { work, op } = agentEnv({ PATH: bin + ':' + process.env.PATH });
+  const { work, op, xin } = agentEnv({ PATH: bin + ':' + process.env.PATH });
   const up = path.join(work, 'uploads', '20261106');
   fs.mkdirSync(up, { recursive: true });
   fs.writeFileSync(path.join(up, '003005-ab12-板子.jpg'), 'jpg');
@@ -787,19 +787,127 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   assert.deepStrictEqual(user.files, [{ name: '板子.jpg', path: img, size: 3, image: true }, { name: '说明.pdf', path: pdf, size: 3, image: false }]);
   assert.strictEqual(user.text, '');
   const args = fs.readFileSync(log, 'utf8').split('\n');
-  assert.deepStrictEqual(args.slice(0, 2), ['exec', '--json']);
-  assert.ok(!args.includes('-i'));
-  assert.ok(args.includes('model_reasoning_effort="high"'));   // 没选思考强度：明确带默认 high
+  // 默认模式：前台聊天默认 DeepSeek V4.1 Flash（能看图，图片直接用 -i 给），网页传什么思考强度都不管，一律最高
+  assert.deepStrictEqual(args.slice(0, 4), ['exec', '-i', img, '--json']);
+  assert.ok(args.includes('model="deepseek-v4.1-flash"') && args.includes('model_reasoning_effort="max"'), args.join(' '));
   const prompt = args.join('\n');
-  assert.ok(prompt.includes('看看我发的文件。') && prompt.includes('【用户发来的文件（已经在你电脑上）】') && prompt.includes(img + '（板子.jpg，图片，3 B）') && prompt.includes(pdf + '（说明.pdf，3 B）') && prompt.includes('看不了图片'), prompt.slice(-400));
-  // 换成能看图的模型接着聊：这一轮用它，图片用 -i，对话上记下模型
-  const r2 = op('send', { sid: r.sid, model: 'glm-5.3', effort: 'max', text: '这张呢', files: [{ path: img, name: '板子.jpg' }] });
+  assert.ok(prompt.includes('看看我发的文件。') && prompt.includes('【用户发来的文件（已经在你电脑上）】') && prompt.includes(img + '（板子.jpg，图片，3 B）') && prompt.includes(pdf + '（说明.pdf，3 B）') && prompt.includes('图片已经直接给你看了'), prompt.slice(-400));
+  assert.strictEqual(p.events.find(e => e.t === 'done').model, 'deepseek-v4.1-flash');
+  // 用户点名 GLM-5.3：这一句用它（网页传的 model / effort 不管），图片照样 -i，悄悄告诉它别提换模型；对话上记下最近用的模型
+  const r2 = op('send', { sid: r.sid, model: 'kimi-k3.1-pro', effort: 'low', text: '用 GLM-5.3 看看这张呢', files: [{ path: img, name: '板子.jpg' }] });
   assert.ok(r2.run, JSON.stringify(r2));
+  assert.strictEqual(r2.model, 'glm-5.3');
   for (let i = 0; i < 60; i++) { p = op('poll', { run: r2.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
   const args2 = fs.readFileSync(log, 'utf8').split('\n');
   assert.deepStrictEqual(args2.slice(0, 4), ['exec', 'resume', '-i', img]);
-  assert.ok(args2.includes('model="glm-5.3"') && args2.includes('model_reasoning_effort="max"') && args2.join('\n').includes('图片已经直接给你看了'));
+  assert.ok(args2.includes('model="glm-5.3"') && args2.includes('model_reasoning_effort="max"') && args2.join('\n').includes('图片已经直接给你看了') && args2.join('\n').includes('用户点名换了模型'));
+  assert.deepStrictEqual([p.events.find(e => e.t === 'done').model, p.events.find(e => e.t === 'done').why], ['glm-5.3', 'named']);
   assert.strictEqual(op('sessions').sessions.find(x => x.sid === r.sid).model, 'glm-5.3');
+  // 点名看不了图的 GLM-5.3 Flash 却发了图：路由器不让，换成能看图的（前台默认那个）
+  const r3 = op('send', { sid: r.sid, text: '用 GLM-5.3 Flash 看图', files: [{ path: img, name: '板子.jpg' }] });
+  assert.strictEqual(r3.model, 'deepseek-v4.1-flash');
+  for (let i = 0; i < 60; i++) { p = op('poll', { run: r3.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  // 每一轮都记进运行记录（调候选顺序用）
+  const stats = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  assert.deepStrictEqual(stats.map(x => [x.agent, x.model, x.kind, x.why, x.ok]), [['codex', 'deepseek-v4.1-flash', 'chat', 'chat', true], ['codex', 'glm-5.3', 'chat', 'named', true], ['codex', 'deepseek-v4.1-flash', 'chat', 'chat', true]]);
+});
+
+test('路由器：按类别挑（不是排名）；点名只认能干的（看不了图的不给图）；小芯提议的也要校验；avoid 里的不用；候选全被排除时退回能用的', async () => {
+  const { route, namedModel, ROUTES, AUTO_EFFORT, CODEX_MODELS } = await load('../site/xin/vm-agent.mjs');
+  assert.strictEqual(AUTO_EFFORT, 'max');
+  // 每个类别的候选都是 Codex 里配好的模型
+  for (const k of Object.keys(ROUTES)) for (const id of ROUTES[k]) assert.ok(CODEX_MODELS.some(m => m.id === id), k + ':' + id);
+  assert.deepStrictEqual(route({}), { model: 'deepseek-v4.1-flash', why: 'chat', kind: 'chat', fallbacks: ['glm-5.3', 'kimi-k3.1-pro', 'glm-5.3-flash'], note: '' });
+  assert.strictEqual(route({ kind: 'code' }).model, 'glm-5.3');
+  assert.strictEqual(route({ kind: 'quick' }).model, 'glm-5.3-flash');
+  assert.strictEqual(route({ kind: 'nope' }).kind, 'chat');
+  // 看图：看不了图的 GLM-5.3 Flash 不在候选里，点名它也不给
+  assert.deepStrictEqual(route({ kind: 'quick', images: true }).fallbacks, ['glm-5.3']);
+  assert.strictEqual(route({ kind: 'quick', images: true }).model, 'deepseek-v4.1-flash');
+  const v = route({ want: 'glm-5.3-flash', named: true, images: true });
+  assert.deepStrictEqual([v.model, v.why], ['deepseek-v4.1-flash', 'chat']);
+  assert.match(v.note, /GLM-5.3 Flash 看不了图/);
+  // 点名、提议
+  assert.deepStrictEqual([route({ want: 'kimi-k3.1-pro', named: true }).model, route({ want: 'kimi-k3.1-pro', named: true }).why], ['kimi-k3.1-pro', 'named']);
+  assert.deepStrictEqual([route({ kind: 'code', want: 'deepseek-v4.1-flash' }).model, route({ kind: 'code', want: 'deepseek-v4.1-flash' }).why], ['deepseek-v4.1-flash', 'picked']);
+  assert.match(route({ kind: 'code', want: 'gpt-9' }).note, /没有叫 gpt-9 的模型/);
+  assert.strictEqual(route({ kind: 'code', want: 'gpt-9' }).model, 'glm-5.3');
+  // avoid：检查别人的活时避开被检查的模型；小芯提议的在 avoid 里也不用，用户点名的照用
+  assert.strictEqual(route({ kind: 'review', avoid: ['kimi-k3.1-pro'] }).model, 'glm-5.3');
+  assert.strictEqual(route({ kind: 'review', want: 'kimi-k3.1-pro', avoid: ['kimi-k3.1-pro'] }).model, 'glm-5.3');
+  assert.strictEqual(route({ kind: 'review', want: 'kimi-k3.1-pro', named: true, avoid: ['kimi-k3.1-pro'] }).model, 'kimi-k3.1-pro');
+  assert.strictEqual(route({ kind: 'hard', images: true, avoid: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'] }).model, 'glm-5.3');
+  // 用户点名：要有「用 / 换成 / 让…」或者「…来做」，光提到名字不算
+  for (const [t, want] of [['用 Kimi 检查一下', 'kimi-k3.1-pro'], ['换成GLM-5.3 Flash', 'glm-5.3-flash'], ['这次用glm5.3写', 'glm-5.3'], ['用 GLM 写', 'glm-5.3'],
+    ['让 DeepSeek 来回答', 'deepseek-v4.1-flash'], ['kimi 来做这个', 'kimi-k3.1-pro'], ['改用 deepseek v4.1 flash', 'deepseek-v4.1-flash'], ['交给智谱', 'glm-5.3'],
+    ['Kimi 是什么', null], ['GLM 和 DeepSeek 哪个好', null], ['用定时器做呼吸灯', null], ['', null]])
+    assert.strictEqual(namedModel(t), want, t);
+});
+
+test('换模型重来：模型还没开始干活就失败（限流、挂了）换候选里下一个，红字不留，done 记下用了谁、先试了谁；已经执行过命令的不重来', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-fallback-'));
+  const bin = path.join(tmp, 'bin'), mode = path.join(tmp, 'mode');
+  fs.mkdirSync(bin);
+  // 假 codex：DeepSeek 一律失败（mode=worked 时先执行一条命令再失败），别的模型正常回答
+  fs.writeFileSync(path.join(bin, 'codex'), [
+    '#!/bin/sh',
+    'case "$*" in *--ephemeral*) exit 0;; esac',
+    'echo \'{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53"}\'',
+    'echo \'{"type":"turn.started"}\'',
+    'case "$*" in *model=\\"deepseek-v4.1-flash\\"*)',
+    '  if [ "$(cat ' + mode + ' 2>/dev/null)" = worked ]; then echo \'{"type":"item.started","item":{"id":"c1","type":"command_execution","command":"make","status":"in_progress"}}\'; fi',
+    '  echo \'{"type":"turn.failed","error":{"message":"429 Too Many Requests"}}\'; exit 1;;',
+    'esac',
+    'echo \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"好了"}}\'',
+    'echo \'{"type":"turn.completed","usage":{}}\''
+  ].join('\n'), { mode: 0o755 });
+  const { op, xin } = agentEnv({ PATH: bin + ':' + process.env.PATH });
+  const wait = async run => { let p; for (let i = 0; i < 80; i++) { p = op('poll', { run, off: 0 }); if (p.done) return p; await new Promise(ok => setTimeout(ok, 150)); } return p; };
+  const r = op('send', { agent: 'codex', text: '你好' });
+  let p = await wait(r.run);
+  assert.deepStrictEqual(p.events.map(e => e.t), ['user', 'status', 'text', 'done'], JSON.stringify(p.events));
+  assert.strictEqual(p.events[1].text, 'DeepSeek V4.1 Flash 没接上，换 GLM-5.3 再试…');
+  const d = p.events[3];
+  assert.deepStrictEqual([d.ok, d.model, d.from, d.why], [true, 'glm-5.3', 'deepseek-v4.1-flash', 'chat']);
+  const st = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)).pop();
+  assert.deepStrictEqual([st.model, st.from, st.ok], ['glm-5.3', 'deepseek-v4.1-flash', true]);
+  // 已经开始执行命令了：不换模型重来（免得做两遍），红字照常出来
+  fs.writeFileSync(mode, 'worked');
+  const r2 = op('send', { sid: r.sid, text: '再来' });
+  p = await wait(r2.run);
+  assert.deepStrictEqual(p.events.map(e => e.t), ['user', 'tool', 'err', 'done'], JSON.stringify(p.events));
+  assert.strictEqual(p.events[2].text, '429 Too Many Requests');
+  assert.deepStrictEqual([p.events[3].ok, p.events[3].model, p.events[3].from], [false, 'deepseek-v4.1-flash', undefined]);
+});
+
+test('每日任务用默认模式：Codex 按 daily 类别挑模型、思考强度最高；电脑里没有 codex 就报错，不偷偷换成 Harness', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-daily-codex-'));
+  const bin = path.join(tmp, 'bin'), log = path.join(tmp, 'args.log');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\ncase "$*" in *--ephemeral*) exit 0;; esac\nfor a in "$@"; do printf "%s\\n" "$a"; done > "' + log + '"\n' +
+    'echo \'{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a54"}\'\necho \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"做完了"}}\'\necho \'{"type":"turn.completed","usage":{}}\'\n', { mode: 0o755 });
+  // 有 Harness（假 dsh 在）也不用它
+  const dsh = path.join(bin, 'dsh');
+  fs.writeFileSync(dsh, '#!/bin/sh\necho should-not-run > "' + path.join(tmp, 'dsh-ran') + '"\n', { mode: 0o755 });
+  const home = path.join(tmp, 'home'); fs.mkdirSync(home);
+  fs.writeFileSync(path.join(home, '.profile'), 'PATH="' + bin + ':$PATH"\nexport PATH\n');
+  const { op } = agentEnv({ HOME: home, PATH: bin + ':' + process.env.PATH, XIN_DSH: dsh });
+  op('daily_set', { text: '- 网关签到' });
+  const r = op('daily');
+  assert.deepStrictEqual([r.agent, r.model], ['codex', 'glm-5.3'], JSON.stringify(r));
+  let p;
+  for (let i = 0; i < 60; i++) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  const args = fs.readFileSync(log, 'utf8').split('\n');
+  assert.ok(args.includes('model="glm-5.3"') && args.includes('model_reasoning_effort="max"'), args.join(' '));
+  assert.ok(!fs.existsSync(path.join(tmp, 'dsh-ran')));
+  // 没有 codex：报错（Harness 在也不用）
+  const home2 = path.join(tmp, 'home2'); fs.mkdirSync(home2);
+  const bin2 = path.join(tmp, 'bin2'); fs.mkdirSync(bin2); fs.copyFileSync(dsh, path.join(bin2, 'dsh')); fs.chmodSync(path.join(bin2, 'dsh'), 0o755);
+  fs.writeFileSync(path.join(home2, '.profile'), 'PATH="' + bin2 + ':/usr/bin:/bin"\nexport PATH\n');
+  const e2 = agentEnv({ HOME: home2, PATH: bin2 + ':/usr/bin:/bin', XIN_DSH: path.join(bin2, 'dsh') });
+  e2.op('daily_set', { text: '- 网关签到' });
+  const r2 = e2.op('daily');
+  assert.deepStrictEqual([r2.error, r2.msg], ['no_agent', '电脑里没有 codex，每日任务做不了']);
 });
 
 test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权限、网关 key 用环境变量；事件整理、会话号、接着聊（--session-id）、用量；删对话连它的会话一起删', async () => {
