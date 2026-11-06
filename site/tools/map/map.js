@@ -24,7 +24,7 @@ const getStyle = async (u) => {
   if (!s || s.version !== 8 || !Array.isArray(s.layers) || !s.sources) throw new Error('invalid map style');
   return s;
 };
-const styles = await Promise.allSettled([getStyle('styles/liberty-zh.json'), getStyle('styles/dark-zh.json?v=20261106')]);
+const styles = await Promise.allSettled([getStyle('styles/liberty-zh.json?v=province-20261106'), getStyle('styles/dark-zh.json?v=province-20261106')]);
 const LIGHT = styles[0].value || styles[1].value, DARK = styles[1].value || LIGHT;
 const AMAP = (style, host = 'wprd') => [1, 2, 3, 4].map((i) => `https://${host}0${i}.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scl=1&style=${style}`);   // scl=1：带注记（省会/城市名）；scl=2 是无注记底图
 const AMAP_ATTR = '© 高德地图';

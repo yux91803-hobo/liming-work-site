@@ -2,6 +2,7 @@
 先 npm run dev，再 python3 test/e2e/map_e2e.py [http://localhost:5173]。
 """
 import asyncio, base64, json, os, sys
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from playwright.async_api import async_playwright
 
@@ -37,7 +38,7 @@ class Search:
         await self.wait(query)
         await self.pending.pop(query).fulfill(json=items)
 
-async def page(browser, *, reduced=True, width=1280, theme='light', broken=(), country_gate=None, healthy=True):
+async def page(browser, *, reduced=True, width=1280, theme='light', broken=(), country_gate=None, healthy=True, regions=False):
     ctx = await browser.new_context(viewport={'width': width, 'height': 860}, is_mobile=width < 700, has_touch=width < 700,
                                     reduced_motion='reduce' if reduced else 'no-preference')
     await ctx.add_init_script("localStorage.setItem('lm.theme', %s);localStorage.setItem('wm.layerMig1','1');localStorage.setItem('wm.layer2','vector');" % json.dumps(theme))
@@ -49,6 +50,27 @@ async def page(browser, *, reduced=True, width=1280, theme='light', broken=(), c
     async def style(route):
         name = urlparse(route.request.url).path.rsplit('/', 1)[-1]
         if name in broken: return await route.fulfill(status=503, body='unavailable')
+        if regions:
+            # 使用生产样式与相邻的省名 / 城市点，检查用户实际能看到文字，而不只检查 minzoom 数字。
+            s = json.loads((Path(__file__).parents[2] / 'site/tools/map/styles' / name).read_text())
+            features = []
+            for text, cls, rank, coords in [('四川省', 'state', 2, [103, 31]), ('湖北省', 'state', 2, [112, 31]),
+                    ('陕西省', 'state', 2, [109, 35]), ('山东省', 'state', 2, [118, 37]),
+                    ('西安市', 'city', 1, [109, 35]), ('细节区域', 'state', 6, [105, 34])]:
+                features.append({'type': 'Feature', 'properties': {'name': text, 'name:zh-Hans': text, 'class': cls, 'rank': rank},
+                                 'geometry': {'type': 'Point', 'coordinates': coords}})
+            features.append({'type': 'Feature', 'properties': {'admin_level': 4, 'disputed': 0, 'maritime': 0},
+                             'geometry': {'type': 'LineString', 'coordinates': [[106, 29], [106, 37]]}})
+            layers = []
+            for original in s['layers']:
+                if original['type'] != 'background' and original['id'] not in ('label_state', 'label_state_overview',
+                        'place_state', 'place_state_overview', 'label_city', 'label_city_capital', 'place_city_large', 'boundary_state_overview'):
+                    continue
+                l = dict(original); l.pop('source-layer', None)
+                if 'layout' in l: l['layout'] = {k: v for k, v in l['layout'].items() if not k.startswith('icon-')}
+                layers.append(l)
+            return await route.fulfill(json={'version': 8, 'glyphs': s['glyphs'],
+                'sources': {'openmaptiles': {'type': 'geojson', 'data': {'type': 'FeatureCollection', 'features': features}}}, 'layers': layers})
         return await route.fulfill(json=STYLES['dark' if name.startswith('dark') else 'light'])
     await pg.route('https://**', lambda r: r.fulfill(content_type='image/png', body=PNG))
     await pg.route('**/styles/*.json*', style)
@@ -78,6 +100,18 @@ async def main():
         if os.environ.get('CHROMIUM_PATH'): opts['executable_path'] = os.environ['CHROMIUM_PATH']
         b = await p.chromium.launch(**opts)
         try:
+            for width in (1280, 390):
+                for theme in ('light', 'dark'):
+                    pg, _ = await page(b, width=width, theme=theme, regions=True)
+                    await pg.evaluate('__map.jumpTo({center:[108,33],zoom:3})')
+                    await pg.wait_for_function("__map.isSourceLoaded('openmaptiles')")
+                    state_id = 'label_state_overview' if theme == 'light' else 'place_state_overview'
+                    await pg.wait_for_function("id => __map.queryRenderedFeatures({layers:[id]}).length >= 3", arg=state_id)
+                    names = await pg.evaluate("id => [...new Set(__map.queryRenderedFeatures({layers:[id]}).map(f=>f.properties.name))]", state_id)
+                    borders = await pg.evaluate("__map.queryRenderedFeatures({layers:['boundary_state_overview']}).length")
+                    check('%d %s：默认视角显示省名和省界，省名不被同位置的城市挤掉' % (width, theme),
+                          {'四川省', '湖北省', '陕西省'}.issubset(names) and '细节区域' not in names and borders > 0, (names, borders))
+                    await pg.context.close()
             pg, search = await page(b)
             check('空输入不显示清除按钮；收起的图层不能被键盘聚焦',
                   not await pg.is_visible('#clear') and await pg.evaluate("document.querySelector('#sheet').inert"))
