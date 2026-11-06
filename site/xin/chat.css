@@ -180,11 +180,26 @@
 .xc-mdl[aria-expanded=true] svg{transform:rotate(180deg)}
 .xc-mdl:active{background:var(--sunk)}
 @media (hover:hover){.xc-mdl:hover{background:var(--sunk);color:var(--ink)}}
-.xc-pick{position:absolute;left:52px;bottom:calc(100% - 6px);z-index:5;width:240px;max-width:calc(100% - 64px);max-height:min(70vh,460px);overflow-y:auto;padding:6px;
-  border:1px solid var(--line);border-radius:16px !important;background:var(--panel);box-shadow:0 10px 32px rgba(20,20,19,.16)}
+.xc-pick{position:absolute;left:12px;right:12px;bottom:calc(100% - 6px);z-index:5;max-height:min(70vh,460px);overflow-y:auto;padding:14px 14px 16px;
+  border:1px solid var(--line);border-radius:22px !important;background:var(--panel);box-shadow:0 10px 32px rgba(20,20,19,.16)}
+.xc-pick.models{padding:6px}
 [data-theme=dark] .xc-pick{box-shadow:0 10px 32px rgba(0,0,0,.5)}
-.xc-pk-g + .xc-pk-g{margin-top:4px;padding-top:4px;border-top:1px solid var(--line)}
-.xc-pk-h{margin:0;padding:6px 10px 4px;font:12px var(--sans);color:var(--ink-3)}
+/* 面板上面一行：模型名 + 档位（浅色），能换模型的带 › */
+.xc-pk-t{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;min-height:36px;margin:0 0 12px;padding:0 6px;border-radius:12px !important;font:600 17px var(--sans);color:var(--ink)}
+.xc-pk-t b{font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.xc-pk-t i{font-style:normal;font-weight:500;color:var(--ink-3)}
+.xc-pk-t svg{width:18px;height:18px;flex:none;stroke-width:2.2;color:var(--ink-2)}
+button.xc-pk-t:active{background:var(--sunk)}
+@media (hover:hover){button.xc-pk-t:hover{background:var(--sunk)}}
+/* 档位滑块：一个点一档，填色到选中的那档，选中的是白色圆钮 */
+.xc-eff{position:relative;display:grid;grid-template-columns:repeat(var(--n),1fr);height:52px;padding:0;border-radius:26px !important;background:var(--sunk);touch-action:none;cursor:pointer;overflow:hidden}
+.xc-eff-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:26px !important;background:var(--clay);transition:width .18s}
+.xc-eff-d{position:relative;display:grid;place-items:center;height:100%;border-radius:0 !important}
+.xc-eff-d::before{content:"";width:10px;height:10px;border-radius:50% !important;background:var(--ink-3);opacity:.55;transition:width .18s,height .18s,background .18s,opacity .18s}
+.xc-eff-d.in::before{background:#fff;opacity:.6}
+.xc-eff-d.on::before{width:40px;height:40px;background:#fff;opacity:1;box-shadow:0 1px 4px rgba(20,20,19,.25)}
+.xc-eff-d:focus-visible{outline:none}
+.xc-eff-d:focus-visible::before{box-shadow:0 0 0 3px var(--ring)}
 .xc-pk-o{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:9px 10px;border-radius:10px !important;text-align:left;font:14.5px var(--sans);color:var(--ink)}
 .xc-pk-o svg{width:18px;height:18px;flex:none;stroke-width:2.2;color:var(--clay);visibility:hidden}
 .xc-pk-o[aria-checked=true] svg{visibility:visible}

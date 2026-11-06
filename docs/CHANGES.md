@@ -1,3 +1,12 @@
+# 修改清单 · 2026-11-06（思考强度只给模型真正支持的档位，面板改成滑块）
+
+- 用户要模型选择做成截图里那样（模型名 + 档位，下面一条点状滑块），思考强度要模型真实支持、支持几档就几档，还要实际生效。
+- **查清楚每个模型支持哪几档**（小芯电脑上的网关 `/v1/models` 的 `reasoning_efforts`；网关遇到不支持的档会换成默认 high）：DeepSeek V4.1 Flash、GLM-5.3 Flash、GLM-5.3、Kimi K3.1 Pro 都是 low / high / max，默认 high；DeepSeek 还能关掉思考（`reasoning_can_disable`），GLM、Kimi 不能。Claude Code 的 `--effort` 是 low / medium / high / xhigh / max。
+- **实测生效**（看网关用量记录里每次请求实际的 `reasoning_effort` 和思考 token）：Codex 传 low → 网关 low、思考 0；传 max → max、思考 42。Harness 在补丁里写 `agent-default-model.reasoningEffort` + 模型的 `reasoningEfforts` 对照表：low → low，max → max（思考 24），关（发 none）→ none、思考 0。最后用新的 vm-agent 走真正的 `send` 再验一遍：Harness 关 → none、最高 → max，Codex GLM-5.3 低 → low。测试用的对话和会话都删了。
+- **vm-agent**：`effortSpec(agent, model)` 每个模型的档位和默认；`resolveEffort(agent, model, effort)` 不在档位里的（以前的 auto、空的、别家的档）用默认 high，每一轮都明确带上（Codex `-c model_reasoning_effort`、Claude `--effort`、Harness 补丁）。去掉了以前「自动：像写代码就 max」的猜测。Harness 的补丁每个档一份（`harness-persona.<档>.yml`），同时跑的对话不会互相改掉；预热用 low；每日任务用默认 high。
+- **网页**：模型按钮点开是一块面板：上面一行「模型名 档位（浅色）」，Codex 的带 ›，点了列出三个模型，点一个回来；下面一条滑块，一个点一档（关 / 低 / 中 / 高 / 超高 / 最高里这个模型有的那几个），填色到选中那档、选中的是白色圆钮，点、拖、键盘左右键都行，面板不关；Esc、点外面关。选的档记在浏览器里，换到不支持这一档的模型显示并发送默认高，换回来还是原来那档。
+- 测试：单元（各模型的档位、不支持的档用默认；Harness 补丁里的对照表和这一轮的档、不同档不同文件；Codex 不选也明确带 high、选了带选的）；e2e（三种 AI 的滑块档位和默认、点 / 拖 / 键盘、标题和按钮跟着变、Codex 换模型、换 AI 后档位回落和恢复、发消息带上）。
+
 # 修改清单 · 2026-11-06（Codex 换成本地网关上的 GLM / Kimi，能在设置里切换模型）
 
 - 用户想在 Claude 里用 GLM-5.3 Flash：网关的 Anthropic 接口默认关着（打开后不认缓存、多扣积分），用户选了改用 Codex；后来又要能切换，加上 GLM-5.3 和 Kimi K3.1 Pro。

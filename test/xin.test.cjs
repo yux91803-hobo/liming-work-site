@@ -242,17 +242,19 @@ test('系统提示里列出了 xin 的全部动作', async () => {
   for (const k of Object.keys(ACTS)) assert.ok(p.includes(k + '（'), k);
 });
 
-test('思考强度：自动时写代码的活用 max，聊天不指定；手动指定原样用', async () => {
-  const { resolveEffort } = await load('../site/xin/vm-agent.mjs');
-  for (const t of ['帮我写一个 STM32 点灯的 main.c', '编译报错了：undefined reference', '这段代码有 bug', '```c\nint a;\n```', '把 led.c 改一下', '实现一个 I2C 驱动'])
-    assert.strictEqual(resolveEffort('auto', t), 'max', t);
-  for (const t of ['你好', 'GPIO 的推挽输出是什么意思？', 'APB2 的时钟是多少'])
-    assert.strictEqual(resolveEffort('auto', t), '', t);
-  assert.strictEqual(resolveEffort(undefined, '写代码'), 'max');
-  assert.strictEqual(resolveEffort('high', '写代码'), 'high');
-  assert.strictEqual(resolveEffort('max', '你好'), 'max');
-  assert.strictEqual(resolveEffort('low', '你好'), 'low');
-  assert.strictEqual(resolveEffort('xhigh', '你好'), '');   // 不认识的值当自动
+test('思考强度：只认这个模型真正支持的档位，别的（以前的 auto、空的、别家的档）用默认 high', async () => {
+  const { resolveEffort, effortSpec } = await load('../site/xin/vm-agent.mjs');
+  assert.deepStrictEqual(effortSpec('harness').efforts, ['off', 'low', 'high', 'max']);
+  for (const m of ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']) assert.deepStrictEqual(effortSpec('codex', m).efforts, ['low', 'high', 'max'], m);
+  assert.deepStrictEqual(effortSpec('claude').efforts, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.strictEqual(resolveEffort('harness', null, 'off'), 'off');
+  assert.strictEqual(resolveEffort('harness', null, 'max'), 'max');
+  assert.strictEqual(resolveEffort('codex', 'glm-5.3', 'off'), 'high');      // GLM 不能关思考
+  assert.strictEqual(resolveEffort('codex', 'kimi-k3.1-pro', 'low'), 'low');
+  assert.strictEqual(resolveEffort('codex', 'glm-5.3-flash', 'xhigh'), 'high');
+  assert.strictEqual(resolveEffort('claude', null, 'xhigh'), 'xhigh');
+  assert.strictEqual(resolveEffort('claude', null, 'off'), 'high');
+  for (const e of ['auto', '', undefined, 'MAX']) assert.strictEqual(resolveEffort('codex', 'glm-5.3', e), 'high', String(e));
 });
 
 test('思考强度：Codex 用 -c model_reasoning_effort（续接也带），Claude 用 --effort；不指定就不加', async () => {
@@ -777,15 +779,16 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   const args = fs.readFileSync(log, 'utf8').split('\n');
   assert.deepStrictEqual(args.slice(0, 2), ['exec', '--json']);
   assert.ok(!args.includes('-i'));
+  assert.ok(args.includes('model_reasoning_effort="high"'));   // 没选思考强度：明确带默认 high
   const prompt = args.join('\n');
   assert.ok(prompt.includes('看看我发的文件。') && prompt.includes('【用户发来的文件（已经在你电脑上）】') && prompt.includes(img + '（板子.jpg，图片，3 B）') && prompt.includes(pdf + '（说明.pdf，3 B）') && prompt.includes('看不了图片'), prompt.slice(-400));
   // 换成能看图的模型接着聊：这一轮用它，图片用 -i，对话上记下模型
-  const r2 = op('send', { sid: r.sid, model: 'glm-5.3', text: '这张呢', files: [{ path: img, name: '板子.jpg' }] });
+  const r2 = op('send', { sid: r.sid, model: 'glm-5.3', effort: 'max', text: '这张呢', files: [{ path: img, name: '板子.jpg' }] });
   assert.ok(r2.run, JSON.stringify(r2));
   for (let i = 0; i < 60; i++) { p = op('poll', { run: r2.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
   const args2 = fs.readFileSync(log, 'utf8').split('\n');
   assert.deepStrictEqual(args2.slice(0, 4), ['exec', 'resume', '-i', img]);
-  assert.ok(args2.includes('model="glm-5.3"') && args2.join('\n').includes('图片已经直接给你看了'));
+  assert.ok(args2.includes('model="glm-5.3"') && args2.includes('model_reasoning_effort="max"') && args2.join('\n').includes('图片已经直接给你看了'));
   assert.strictEqual(op('sessions').sessions.find(x => x.sid === r.sid).model, 'glm-5.3');
 });
 
@@ -811,7 +814,7 @@ test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权�
   fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
   assert.ok(op('ping').agents.includes('harness'));
   const poll = async run => { let p; for (let i = 0; i < 60; i++) { p = op('poll', { run, off: 0 }); if (p.done) return p; await new Promise(ok => setTimeout(ok, 150)); } return p; };
-  const r = op('send', { text: '-看看目录' });   // 没指定 AI：默认 Harness
+  const r = op('send', { text: '-看看目录', effort: 'off' });   // 没指定 AI：默认 Harness；思考强度「关」
   assert.strictEqual(r.agent, 'harness');
   const p = await poll(r.run);
   assert.deepStrictEqual(p.events.map(e => e.t), ['user', 'tool', 'tool_end', 'text', 'done'], JSON.stringify(p.events));
@@ -820,9 +823,11 @@ test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权�
   assert.ok(done.ok);
   assert.deepStrictEqual(done.usage, { ctx: 6030, win: 258400, input: 11000, output: 50, total: 11050 });
   const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
-  assert.match(calls[0], /^ARGS \[--profile\] \[headless\] \[--patch\] \[[^\]]+harness-persona\.yml\] \[--json\] \[ -看看目录/);
+  assert.match(calls[0], /^ARGS \[--profile\] \[headless\] \[--patch\] \[[^\]]+harness-persona\.off\.yml\] \[--json\] \[ -看看目录/);
   assert.ok(calls.includes('KEY=gw-key-123 MODE=danger-full-access'), calls.join('\n').slice(-300));
-  const persona = fs.readFileSync(path.join(xin, 'harness-persona.yml'), 'utf8');
+  const persona = fs.readFileSync(path.join(xin, 'harness-persona.off.yml'), 'utf8');
+  // 思考强度：档位对照表（关 = none）+ 这一轮用的档
+  assert.ok(persona.includes('            reasoningEfforts:\n              off: none\n              low: low\n              high: high\n              max: max\n') && persona.includes('    reasoningEffort: off\n'), persona.slice(0, 900));
   assert.ok(persona.includes('- id: system-prompt') && persona.includes('personaPrefix: "你就是小芯'));
   // 线路也在这个补丁里：不靠 ~/.dsh 里的配置
   assert.ok(persona.includes('- id: llm-pi-ai') && persona.includes('apiKeyEnv: XIN_HARNESS_KEY') && persona.includes('baseURL: "http://127.0.0.1:8788/v1"') &&
@@ -830,8 +835,10 @@ test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权�
   const sess = JSON.parse(fs.readFileSync(path.join(xin, 'sessions', r.sid + '.json'), 'utf8'));
   assert.deepStrictEqual([sess.agentSid, sess.started], [SID, true]);
   // 接着聊：--session-id；用量累加
-  const r2 = op('send', { sid: r.sid, text: '再说一句' });
+  const r2 = op('send', { sid: r.sid, text: '再说一句', effort: 'xhigh' });   // 不支持的档：用默认 high
   const p2 = await poll(r2.run);
+  assert.match(fs.readFileSync(log, 'utf8').trim().split('\n').filter(l => l.startsWith('ARGS')).pop(), /harness-persona\.high\.yml/);
+  assert.ok(fs.readFileSync(path.join(xin, 'harness-persona.high.yml'), 'utf8').includes('    reasoningEffort: high\n'));
   assert.strictEqual(fs.readFileSync(log, 'utf8').split('[--session-id] [' + SID + ']').length, 2);   // 第二句才带
   assert.deepStrictEqual(p2.events.pop().usage, { ctx: 6030, win: 258400, input: 22000, output: 100, total: 22100 });
   assert.deepStrictEqual(op('history', { sid: r.sid }).usage.total, 22100);
