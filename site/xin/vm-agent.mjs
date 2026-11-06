@@ -128,11 +128,12 @@ function maybeWarm() {
 }
 function warm() {
   const t0 = Date.now();
-  // 有 Harness 就用它预热（现在小芯用的是它）；它没有「不留会话」的开关，做完把这个会话删掉
-  const h = hasAgent('harness');
+  // 默认模式用 Codex：有 codex 就用它、用前台聊天的默认模型预热（和 Harness 走同一个网关）；没有才用 Harness
+  // （Harness 没有「不留会话」的开关，做完把这个会话删掉）
+  const h = !hasCmd('codex') && hasAgent('harness');
   const child = h
     ? spawn(dshCmd(), ['--profile', 'headless'].concat((() => { try { return ['--patch', writePersona('low')]; } catch { return []; } })(), ['--json', '只回复一个字：1']), { cwd: os.homedir(), stdio: ['ignore', 'pipe', 'ignore'], env: Object.assign({}, process.env, harnessEnv()) })
-    : spawn('codex', ['exec', '--json', '--ephemeral', '--skip-git-repo-check'].concat(codexRoute(), ['-c', 'developer_instructions="只回复一个字：1"'], mcpFlags(), ['1']),
+    : spawn('codex', ['exec', '--json', '--ephemeral', '--skip-git-repo-check'].concat(codexRoute(ROUTES.chat[0]), ['-c', 'developer_instructions="只回复一个字：1"'], mcpFlags(), ['1']),
       { cwd: os.homedir(), stdio: ['ignore', 'ignore', 'ignore'], env: Object.assign({}, process.env, codexKeyEnv()) });
   let out = '';
   if (h) { child.stdout.setEncoding('utf8'); child.stdout.on('data', d => { if (out.length < 4000) out += d; }); }
@@ -550,6 +551,8 @@ export function fromCodex(o, state) {
   const it = o.item;
   if (!it || (o.type !== 'item.started' && o.type !== 'item.completed' && o.type !== 'item.updated')) return out;
   const done = o.type === 'item.completed';
+  // 真的开始干活了（说了话、执行了命令、改了文件、调了插件）：之后失败也不换模型重来，免得同一件事做两遍
+  if (/^(agent_message|command_execution|file_change|mcp_tool_call|web_search)$/.test(it.type || '')) state.worked = true;
   switch (it.type) {
     case 'agent_message': if (done && it.text) out.push({ t: 'text', text: it.text }); break;
     case 'command_execution': {
@@ -698,7 +701,7 @@ function harnessEnv() {
 }
 /* ---------- Codex 的线路 ----------
    和 Harness 一样每一轮自己带：走小芯电脑上的本地网关（responses 协议），不靠 ~/.codex/config.toml 里写的模型和网关。
-   模型能在网页设置里换（CODEX_MODELS 里的几个，默认 glm-5.3-flash），每一轮按发消息时选的用，同一个对话中途换也行。
+   用哪个模型（CODEX_MODELS 里的几个）由下面的路由器每一轮挑（见「默认模式」），同一个对话中途换也行。
    key：~/.xin/codex.key（单独给 Codex 的），没有就用 Harness 那把（~/.xin/harness.key）；起的时候用环境变量 XIN_CODEX_KEY 交给它（线路里写的是 env_key）。
    模型资料：Codex 要每个模型的上限、能不能看图等资料，网关的新模型它不认识；
    照着 ~/.codex/config.toml 里 model_catalog_json 那份资料复制一份到 ~/.xin/codex-models.json，补上这几个模型（照抄 DeepSeek 那条改名字和上限），每轮用 -c 指过去。
@@ -711,6 +714,81 @@ export const CODEX_MODELS = [
   { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', win: 1000000, image: true, efforts: ['off', 'low', 'high', 'max'], def: 'high' }
 ];
 export function codexModel(id) { return CODEX_MODELS.find(m => m.id === id) || CODEX_MODELS[0]; }
+
+/* ---------- 默认模式（Codex 自动）：路由器 ----------
+   网页上「天启模式」关着（默认）时，新对话用 Codex：用户不选模型和思考强度。思考强度一律最高（AUTO_EFFORT），
+   模型由这里挑——模型（小芯）可以提议，路由器负责校验：
+   - 前台聊天（用户直接聊的那个小芯）按 chat 类别：默认 DeepSeek V4.1 Flash（快、能看图）。
+     同一个对话里不按难度来回换模型：换了模型缓存就用不上，又慢又贵。按活挑模型放在派后台任务那一步（kind）。
+   - 用户点名（「用 Kimi」「换成 GLM-5.3」）：只管这一句 / 这个任务（namedModel）。
+   - 校验：不认识的模型不用；要看图的只给能看图的（glm-5.3-flash 看不了图）；avoid 里的不用（刚失败的、被检查的那个）。
+   - 模型还没开始干活就报错（网关限流、模型挂了）：runner 换 fallbacks 里的下一个再试一次；已经执行过命令、说过话的不重试，免得重复做。
+   候选顺序是起步时的猜测，不是排名：按 model-stats.jsonl 里的实际记录（用了谁、多久、成没成）手动调，不让程序自己改。 */
+export const AUTO_EFFORT = 'max';
+export const ROUTES = {
+  chat: ['deepseek-v4.1-flash', 'glm-5.3', 'kimi-k3.1-pro', 'glm-5.3-flash'],   // 前台聊天
+  quick: ['glm-5.3-flash', 'deepseek-v4.1-flash', 'glm-5.3'],                  // 简单杂活：看文件、跑几条命令、整理
+  code: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                   // 写代码、改代码、编译、调试
+  research: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'],               // 查资料、读文档、写长一点的说明
+  hard: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'],                   // 难题：方案设计、疑难 bug、推理
+  vision: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                 // 看图
+  review: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'],                 // 检查别的任务的结果（会避开被检查的那个模型）
+  daily: ['glm-5.3', 'deepseek-v4.1-flash', 'kimi-k3.1-pro']                   // 每日任务
+};
+export const KIND_NAMES = { chat: '聊天', quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务' };
+// 用户点名：「用 / 换成 / 让 … 模型」或者「模型 来做 / 来看 …」。Flash 要排在同名的前面
+const MODEL_ALIAS = [
+  ['glm-5.3-flash', 'glm[\\s-]*(?:5(?:\\.3)?)?[\\s-]*flash|智谱\\s*flash'],
+  ['glm-5.3', 'glm(?:[\\s-]*5(?:\\.3)?)?|智谱'],
+  ['kimi-k3.1-pro', 'kimi(?:[\\s-]*k?3(?:\\.1)?)?(?:[\\s-]*pro)?|月之暗面'],
+  ['deepseek-v4.1-flash', 'deep[\\s-]*seek(?:[\\s-]*v?4(?:\\.1)?)?(?:[\\s-]*flash)?|深度求索']
+].map(([id, src]) => [id,
+  new RegExp('(?:用|换成|换到|换个|改用|切到|切换到|让|交给|使用)\\s*(?:一下|下)?\\s*(?:' + src + ')', 'i'),
+  new RegExp('(?:' + src + ')\\s*(?:来|去)(?:做|写|答|回答|看|检查|查|弄|干|处理|想|算|改|试|跑)', 'i')]);
+export function namedModel(text) {
+  const t = String(text || '').slice(0, 4000);
+  for (const [id, a, b] of MODEL_ALIAS) if (a.test(t) || b.test(t)) return id;
+  return null;
+}
+// o：{kind, want（提议的模型）, named（want 是用户点名的）, images（要看图）, avoid（不要用的模型）}
+// 回 {model, why, kind, fallbacks, note}：why = named（用户点名）/ picked（小芯提议）/ 类别名（按类别挑的）
+export function route(o = {}) {
+  const kind = ROUTES[o.kind] ? o.kind : 'chat', avoid = o.avoid || [];
+  const known = id => CODEX_MODELS.some(m => m.id === id);
+  const fits = id => known(id) && (!o.images || codexModel(id).image);
+  const order = ROUTES[kind].filter(id => fits(id) && !avoid.includes(id));
+  let model = null, why = kind, note = '';
+  if (o.want) {
+    const w = String(o.want);
+    if (fits(w) && (o.named || !avoid.includes(w))) { model = w; why = o.named ? 'named' : 'picked'; }
+    else if (known(w)) note = codexModel(w).name + (o.images && !codexModel(w).image ? ' 看不了图' : ' 这次不合适') + '，换成了别的';
+    else note = '没有叫 ' + w.slice(0, 40) + ' 的模型，按类别挑了一个';
+  }
+  // 候选全被排除了（比如要看图、能看图的又都在 avoid 里）：退回能用的第一个
+  if (!model) model = order[0] || CODEX_MODELS.filter(m => !o.images || m.image).map(m => m.id)[0] || CODEX_MODELS[0].id;
+  return { model, why, kind, fallbacks: order.filter(x => x !== model), note };
+}
+// 实际运行记录：每一轮 / 每个任务用了哪个模型、为什么、多久、成没成（调候选顺序用）。最多留 3000 条
+const STATS_F = () => path.join(BASE, 'model-stats.jsonl');
+function statAdd(rec) {
+  try {
+    mk(BASE);
+    const f = STATS_F();
+    fs.appendFileSync(f, JSON.stringify(rec) + '\n');
+    if (fs.statSync(f).size > 1024 * 1024) { const lines = readText(f).trim().split('\n'); fs.writeFileSync(f, lines.slice(-3000).join('\n') + '\n'); }
+  } catch { /* 记不下来不影响干活 */ }
+}
+export function modelStats(days = 14) {
+  const since = Date.now() - days * 86400e3, out = {};
+  for (const line of readText(STATS_F()).split('\n')) {
+    let r; try { r = JSON.parse(line); } catch { continue; }
+    if (!r || r.at < since || !r.model) continue;
+    const k = r.agent + ':' + r.model, s = out[k] || (out[k] = { agent: r.agent, model: r.model, n: 0, ok: 0, ms: 0, fails: 0, fellBack: 0 });
+    s.n++; if (r.ok) { s.ok++; s.ms += r.ms || 0; } else if (!r.stopped) s.fails++;
+    if (r.from) s.fellBack++;
+  }
+  return Object.values(out).map(s => Object.assign(s, { avgMs: s.ok ? Math.round(s.ms / s.ok) : 0 })).sort((a, b) => b.n - a.n);
+}
 const CODEX_KEY = () => path.join(BASE, 'codex.key');
 const CODEX_CATALOG = () => path.join(BASE, 'codex-models.json');
 function codexCatalog() {
@@ -810,8 +888,11 @@ function runner(run) {
       const tail = stderr.trim().split('\n').slice(-6).join('\n');
       emit(run, { t: 'err', text: why || tail || ('退出码 ' + code) });
     }
-    // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）
-    emit(run, { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) });
+    // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
+    const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
+    if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {});
+    emit(run, doneEv);
+    if (meta.agent !== 'claude') statAdd({ at: Date.now(), agent: meta.agent, model: meta.model || '', kind: meta.kind || 'chat', why: meta.why || '', ok, stopped, ms: Date.now() - t0, from: meta.from || undefined });
     m.ended = Date.now(); writeJ(metaF(run), m);
     if (meta.kind === 'daily') dailyDone(run, meta, ok);
     // 做完提醒：你不在看（关了网页、切到别的应用）才发；你自己停的、每日任务不发
@@ -859,7 +940,11 @@ function runner(run) {
         // Codex JSON 不转发思考增量，Claude 通过 partial messages 报 message_start。
         // 确认任务开始就停止网页重放；之后即使暂时静默也交给 CLI 自己的网络超时与重试。
         if (agentProgress(meta.agent, o)) { got = true; clearTimeout(stallTm); }
-        for (const ev of norm(o, state)) { emit(run, ev); if (ev.t !== 'status') { got = true; clearTimeout(stallTm); } }
+        for (const ev of norm(o, state)) {
+          // 还能换模型重来时，模型的报错先扣下：换了模型做成了，网页上就不留一条红字
+          if (ev.t === 'err' && canSwitch()) { state.heldErr = ev; got = true; clearTimeout(stallTm); continue; }
+          emit(run, ev); if (ev.t !== 'status') { got = true; clearTimeout(stallTm); }
+        }
         // 一拿到 AI 自己的会话号就记下来：中途被停掉，下一句也能接着聊
         if (state.sid && !state.sidSaved) { saveState(); state.sidSaved = true; }
       }
@@ -869,10 +954,23 @@ function runner(run) {
     child.on('close', code => {
       clearTimeout(stallTm);
       if (restarting) { restarting = false; start(); return; }
-      finish(code == null ? 1 : code);
+      const c = code == null ? 1 : code;
+      // 模型还没开始干活就失败了：换候选里的下一个模型再试一次（用户自己停的不换）
+      if ((c !== 0 || state.failed) && canSwitch() && !(readJ(metaF(run), meta) || {}).stopped) {
+        const from = meta.model;
+        state.switched = true; meta.from = from; meta.model = meta.fallbacks[0]; meta.fallbacks = meta.fallbacks.slice(1);
+        const m2 = readJ(metaF(run), meta); Object.assign(m2, { model: meta.model, from, fallbacks: meta.fallbacks }); writeJ(metaF(run), m2);
+        emit(run, { t: 'status', text: codexModel(from).name + ' 没接上，换 ' + codexModel(meta.model).name + ' 再试…' });
+        Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
+        start(); return;
+      }
+      if (state.heldErr) { emit(run, state.heldErr); state.heldErr = null; }
+      finish(c);
     });
     armStall();
   };
+  // 能不能换模型重来：只有 Codex（模型是路由器挑的），还有备选，这一轮还没换过，模型还没真的开始干活
+  const canSwitch = () => meta.agent === 'codex' && !state.switched && !state.worked && Array.isArray(meta.fallbacks) && meta.fallbacks.length > 0;
   start();
   const term = () => { restarting = false; killTree(child); };
   process.on('SIGTERM', term); process.on('SIGINT', term);
@@ -1240,11 +1338,21 @@ const ops = {
     const userEv = { t: 'user', text, at: Date.now() };
     if (ctxLabel) userEv.ctx = ctxLabel;
     if (files.length) userEv.files = files.map(f => ({ name: f.name, path: f.path, size: f.size, image: f.image }));
-    // 模型每一轮明确选择；续聊没带 model 时保留对话里的选择。
-    const cm = s.agent === 'codex' ? codexModel(a.model || s.model) : s.agent === 'harness' ? harnessModel(a.model || s.model) : null;
+    // 模型：Codex（默认模式）每一轮由路由器挑（用户点名就用点名的），思考强度一律最高，网页传来的 model / effort 不管；
+    // Harness（天启模式）按网页选的，续聊没带 model 时保留对话里的选择。
+    let rt = null, cm = null;
+    if (s.agent === 'codex') {
+      const named = namedModel(text);
+      rt = route({ kind: 'chat', want: named, named: !!named, images: files.some(f => f.image) });
+      cm = codexModel(rt.model);
+    } else if (s.agent === 'harness') cm = harnessModel(a.model || s.model);
     if (cm) s.model = cm.id;
-    const run = launch(s, Object.assign({ text: forAgent(said, a.context) + filesPart(files, s.agent, !!(cm && cm.image)), effort: resolveEffort(s.agent, cm ? cm.id : null, a.effort), images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] }, cm ? { model: cm.id } : {}), userEv);
-    return { sid: s.sid, run, agent: s.agent, title: s.title };
+    const effort = s.agent === 'codex' ? AUTO_EFFORT : resolveEffort(s.agent, cm ? cm.id : null, a.effort);
+    // 点名换了模型：悄悄告诉它一声，免得它按设定说「不知道什么模型」
+    const hint = rt && rt.why === 'named' ? '\n（用户点名换了模型，已经换好了，照常回答就行，不用提这件事。）' : '';
+    const run = launch(s, Object.assign({ text: forAgent(said, a.context) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
+      cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}), userEv);
+    return Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, cm ? { model: cm.id } : {});
   },
   daily_get() {
     return { text: readText(DAILY_FILE()), last: readJ(DAILY_LAST()) || null, done: readJ(DAILY_DONE()) || null, today: today() };
@@ -1265,13 +1373,14 @@ const ops = {
     if (done && done.date === today() && !a.force) return { skipped: 'done', done };
     const last = readJ(DAILY_LAST());
     if (last && last.run && fs.existsSync(metaF(last.run)) && !runDone(last.run)) return { skipped: 'running', run: last.run, sid: last.sid };
-    const agent = ['harness', 'codex', 'claude'].find(hasAgent) || null;
-    if (!agent) return { error: 'no_agent', msg: '电脑里没有 Harness、codex、claude' };
+    // 每日任务用默认模式（Codex 自动挑模型、思考强度最高）。Harness 是天启模式，用户想用才用：Codex 用不了就报错，不偷偷换成 Harness
+    if (!hasAgent('codex')) return { error: 'no_agent', msg: '电脑里没有 codex，每日任务做不了' };
+    const agent = 'codex', rt = route({ kind: 'daily' });
     mk(SESS); mk(RUNS);
-    const s = { sid: rid('s'), agent, title: '每日任务 · ' + today().slice(5), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now(), kind: 'daily' };
-    const run = launch(s, { text: forAgent(dailyPrompt(list), ''), effort: resolveEffort(agent, null, ''), kind: 'daily' }, { t: 'user', text: '⏰ 每日任务：按清单做一遍', at: Date.now() });
+    const s = { sid: rid('s'), agent, title: '每日任务 · ' + today().slice(5), agentSid: null, started: false, runs: [], created: Date.now(), updated: Date.now(), kind: 'daily', model: rt.model };
+    const run = launch(s, { text: forAgent(dailyPrompt(list), ''), effort: AUTO_EFFORT, kind: 'daily', model: rt.model, why: rt.why, fallbacks: rt.fallbacks }, { t: 'user', text: '⏰ 每日任务：按清单做一遍', at: Date.now() });
     writeJ(DAILY_LAST(), { date: today(), run, sid: s.sid, at: Date.now(), ok: null });
-    return { sid: s.sid, run, agent };
+    return { sid: s.sid, run, agent, model: rt.model };
   },
   greet() {
     const warming = maybeWarm();
