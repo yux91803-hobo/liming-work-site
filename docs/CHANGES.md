@@ -1,3 +1,22 @@
+# 修改清单 · 2026-11-06（接入 DeepSeek Harness：新对话默认用「Harness」）
+
+- 用户在小芯电脑上装了 DeepSeek Harness（命令 `dsh`），要像 Codex 一样能切换着用，名字叫 Harness，固定用 DeepSeek V4.1 Flash，用 Codex 里那个 key，并把 Codex 里的 key 删掉；目前小芯只用 Harness。
+- **小芯电脑上的配置**（会话里直接做的，不在仓库里）：
+  - Codex 的 key 其实是本地网关（`127.0.0.1:8788`，WorkBuddy）的 key。存到 `~/.xin/harness.key`（权限 600，只有自己能读），不写进任何配置文件。
+  - `~/.dsh/profiles/headless/cordis.patch.yml`：加一条 `workbuddy` 线路（`openai-responses`，`baseURL` 网关，`apiKeyEnv: XIN_HARNESS_KEY`，模型 `deepseek-v4.1-flash`），设成默认模型。
+  - 网站上线后把 `~/.codex/config.toml` 里的 `experimental_bearer_token` 那一行删掉（不留带 key 的备份）。
+- **vm-agent 第三个 AI `harness`**：
+  - `dsh --profile headless --patch <小芯设定> --json [--session-id 会话号] <任务>`；小芯的设定每一轮写进 `~/.xin/harness-persona.yml`（`system-prompt` 的 `personaPrefix`）；环境变量 `XIN_HARNESS_KEY`（从 key 文件读）、`DSH_PERMISSION_MODE=danger-full-access`（和 Codex 一样满权限）。
+  - 事件整理 `fromHarness`：`session` 记会话号，`text` 是回答，`tool_call` / `tool_result` 是执行的命令，`step_end` 的用量攒起来，`error` 和没完成的 `turn_end` 报错；`thinking`、`final` 不显示。
+  - 会话号是 `session-<uuid>`：会话号的校验按 AI 分开（不然 #63 的清理会把它当坏文件整个停掉）。
+  - 用量：最近一步的输入 + 输出算上下文（上限 25.8 万，和 Codex 一样），每轮累加记在对话里；Harness 不报缓存命中，网页那一行就不显示缓存命中。
+  - 删对话、清旧记录也管 Harness：`~/.dsh/sessions/<目录>/session-…/` 和 `storages/session_projcache/sessions/<会话号>.json` 一起删。
+  - 没指定 AI 时默认 Harness；每日任务优先用 Harness；预热也用 Harness（它没有「不留会话」的开关，预热完把那个会话删掉）。
+  - 发图片给 Harness：只把路径写进消息。
+- **网页**：设置里「新对话用」是 Harness / Codex / Claude，默认 Harness；以前存的选择一次性换成 Harness（Codex 的 key 挪走了），之后切换照常记住。
+- 在小芯电脑上实测过：Harness 4 秒回话、执行命令、按小芯的设定自称、`--session-id` 接着聊。测试时留下的两个会话已删。
+- 测试：单元测试（假的 dsh：参数、设定补丁、key 和权限环境变量、事件、会话号、接着聊、用量累加、清理不误判、删对话连它的会话一起删；事件里的出错、没做完；会话号不像样）；e2e（设置三选一、默认 Harness）。单元 306、e2e 310 全过。
+
 # 修改清单 · 2026-11-06（STM32 学习台排查与修复）
 
 - 实际遍历十个外设的五种分页，复现并修复搜索输入节流导致的旧结果跳转：改词、清空时立即废弃旧结果，回车与方向键先同步最新查询；输入法确认不触发跳转，已同步完成的延迟回调不再重画或重置键盘选择。

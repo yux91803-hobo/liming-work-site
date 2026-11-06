@@ -15,7 +15,7 @@
   'use strict';
   var API = '/api/xin/';
   var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort', LS_CTX = 'lm.xin.ctx';
-  var AGENTS = { codex: 'Codex', claude: 'Claude' };
+  var AGENTS = { harness: 'Harness', codex: 'Codex', claude: 'Claude' };
   // 思考强度：自动 = 写代码的活用最高（max），聊天用 AI 自己的默认（规则在 vm-agent.mjs 的 resolveEffort）
   var EFFORTS = { auto: '自动', high: '高', max: '最高' };
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
@@ -35,7 +35,13 @@
   function h(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function sleepMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: AGENTS[ls(LS_AGENT)] ? ls(LS_AGENT) : 'codex', sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto',
+  // 新对话用哪个 AI：默认 Harness。Codex 的 key 挪给 Harness 以后，以前存的选择一次性换成 Harness（之后再切照常记住）
+  function agentPref() {
+    if (ls('lm.xin.agent.v') !== '2') { ls(LS_AGENT, 'harness'); ls('lm.xin.agent.v', '2'); }
+    var a = ls(LS_AGENT);
+    return AGENTS[a] ? a : 'harness';
+  }
+  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto',
     run: '', off: 0, polling: false, mine: {}, errRuns: {}, lastAct: 0, view: 'chat', machine: '', mstate: '', loadSeq: 0, drawer: false, drawerSeq: 0 };
 
   /* ---------- 和页面上的小芯共用机身、眼睛和引脚，避免头像仍然显示旧方眼 ---------- */
@@ -256,7 +262,7 @@
     useEl.hidden = !u;
     if (!u) { useEl.innerHTML = ''; return; }
     var pct = u.win > 0 ? Math.min(100, Math.max(u.ctx > 0 ? 1 : 0, Math.round(u.ctx / u.win * 100))) : -1;
-    var hit = u.input > 0 ? Math.round(u.cached / u.input * 100) : -1;
+    var hit = typeof u.cached === 'number' && u.input > 0 ? Math.round(u.cached / u.input * 100) : -1;   // Harness 不报缓存命中
     var b = h('button', 'xc-use-b'), ctx = h('span', 'xc-use-i xc-use-ctx', '上下文 ');
     b.type = 'button'; b.setAttribute('aria-expanded', S.useMore ? 'true' : 'false'); b.title = S.useMore ? '收起明细' : '看明细';
     if (pct >= 0) {
@@ -267,7 +273,7 @@
     b.appendChild(h('span', 'xc-use-i', '消耗 ' + tok(u.total) + ' token'));
     if (hit >= 0) b.appendChild(h('span', 'xc-use-i', '缓存命中 ' + hit + '%'));
     useEl.innerHTML = ''; useEl.appendChild(b);
-    if (S.useMore) useEl.appendChild(h('div', 'xc-use-more', '上下文 ' + tok(u.ctx) + (u.win > 0 ? ' / ' + tok(u.win) : '') + ' · 输入 ' + tok(u.input) + '（缓存命中 ' + tok(u.cached) + '）· 输出 ' + tok(u.output)));
+    if (S.useMore) useEl.appendChild(h('div', 'xc-use-more', '上下文 ' + tok(u.ctx) + (u.win > 0 ? ' / ' + tok(u.win) : '') + ' · 输入 ' + tok(u.input) + (typeof u.cached === 'number' ? '（缓存命中 ' + tok(u.cached) + '）' : '') + ' · 输出 ' + tok(u.output)));
   }
   function newChat(stay) {
     stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null);
