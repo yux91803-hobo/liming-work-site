@@ -1473,7 +1473,8 @@ function taskFirstText(t, deps) {
   for (const d of deps) {
     parts.push('\n【任务 ' + d.no + '「' + d.title + '」的结果（' + (TASK_STATUS[d.status] || d.status) + '，它的工作目录 ' + d.dir + '）】\n' + cut(d.result ? d.result.text : '', 6000));
   }
-  if (t.tkind === 'review' && deps.length) parts.push('\n你的活是检查上面这些结果：去它的工作目录里看实际的文件、能编译的编译一遍、能跑的跑一遍，看对不对、有没有漏。小问题直接改好并说明改了什么；大问题写清楚，别大改。');
+  if (t.tkind === 'review' && deps.length) parts.push('\n你的活是检查上面这些结果：去它的工作目录里看实际的文件、能编译的编译一遍、能跑的跑一遍，看对不对、有没有漏。小问题直接改好并说明改了什么；大问题写清楚，别大改。' +
+    '要求里的说法本身也可能有错，以芯片参考手册、数据手册为准。STM32 的程序重点核对：时钟是不是真的配到了代码假设的频率；引脚用的复用功能、要不要重映射（AFIO_MAPR，对照数据手册的引脚复用表）；外设和 GPIO 的时钟开没开；中断向量、优先级和标志清除。');
   const f = filesPart(t.files || [], 'codex', codexModel(t.model).image);
   return forAgent(parts.join('\n'), '') + f;
 }
