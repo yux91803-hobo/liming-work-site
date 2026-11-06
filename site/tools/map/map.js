@@ -1,4 +1,5 @@
 import * as mgl from '/vendor/maplibre/maplibre-gl.mjs';
+import { wgs2gcj, gcj2wgs, outOfChina, bboxOf, searchItems } from './geo.mjs';
 
 const $ = (s) => document.querySelector(s);
 const html = document.documentElement;
@@ -10,28 +11,21 @@ const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 /* ---------- 主题 ---------- */
 const mq = matchMedia('(prefers-color-scheme: dark)');
 const isDark = () => { const t = ls('lm.theme') || 'light'; return t === 'dark' || (t === 'auto' && mq.matches); };
-function applyTheme() { html.dataset.theme = isDark() ? 'dark' : 'light'; }
-
-/* ---------- WGS-84 → GCJ-02（高德图层偏移修正） ---------- */
-const PI = Math.PI, A = 6378245.0, EE = 0.00669342162296594323;
-const outOfChina = (lat, lng) => lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
-function tLat(x, y) { let r = -100 + 2 * x + 3 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
-  r += (20 * Math.sin(6 * x * PI) + 20 * Math.sin(2 * x * PI)) * 2 / 3; r += (20 * Math.sin(y * PI) + 40 * Math.sin(y / 3 * PI)) * 2 / 3;
-  r += (160 * Math.sin(y / 12 * PI) + 320 * Math.sin(y * PI / 30)) * 2 / 3; return r; }
-function tLng(x, y) { let r = 300 + x + 2 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
-  r += (20 * Math.sin(6 * x * PI) + 20 * Math.sin(2 * x * PI)) * 2 / 3; r += (20 * Math.sin(x * PI) + 40 * Math.sin(x / 3 * PI)) * 2 / 3;
-  r += (150 * Math.sin(x / 12 * PI) + 300 * Math.sin(x / 30 * PI)) * 2 / 3; return r; }
-function wgs2gcj(lat, lng) {
-  if (outOfChina(lat, lng)) return [lat, lng];
-  let dLat = tLat(lng - 105, lat - 35), dLng = tLng(lng - 105, lat - 35);
-  const rad = lat / 180 * PI; let m = Math.sin(rad); m = 1 - EE * m * m; const s = Math.sqrt(m);
-  dLat = (dLat * 180) / ((A * (1 - EE)) / (m * s) * PI); dLng = (dLng * 180) / (A / s * Math.cos(rad) * PI);
-  return [lat + dLat, lng + dLng];
+function applyTheme() {
+  html.dataset.theme = isDark() ? 'dark' : 'light';
+  $('meta[name="theme-color"]').content = isDark() ? '#0d1117' : '#f5f6f8';
 }
+applyTheme();
 
 /* ---------- 底图 ---------- */
-const getJSON = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(u); return r.json(); });
-const [LIGHT, DARK] = await Promise.all([getJSON('styles/liberty-zh.json'), getJSON('styles/dark-zh.json')]);
+const getJSON = (u) => fetch(u, { signal: AbortSignal.timeout(8000) }).then((r) => { if (!r.ok) throw new Error(u); return r.json(); });
+const getStyle = async (u) => {
+  const s = await getJSON(u);
+  if (!s || s.version !== 8 || !Array.isArray(s.layers) || !s.sources) throw new Error('invalid map style');
+  return s;
+};
+const styles = await Promise.allSettled([getStyle('styles/liberty-zh.json'), getStyle('styles/dark-zh.json?v=20261106')]);
+const LIGHT = styles[0].value || styles[1].value, DARK = styles[1].value || LIGHT;
 const AMAP = (style, host = 'wprd') => [1, 2, 3, 4].map((i) => `https://${host}0${i}.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scl=1&style=${style}`);   // scl=1：带注记（省会/城市名）；scl=2 是无注记底图
 const AMAP_ATTR = '© 高德地图';
 const bg = (c) => ({ id: 'bg', type: 'background', paint: { 'background-color': c } });
@@ -39,6 +33,7 @@ const fade = { 'raster-fade-duration': 250 };
 
 // 卫星图上叠加中文矢量注记
 function satLabels() {
+  if (!LIGHT) return [];
   const keep = /^(label_|water_name|highway-name-major|airport)/;
   return LIGHT.layers.filter((l) => l.type === 'symbol' && keep.test(l.id)).map((l) => {
     const c = structuredClone(l);
@@ -50,18 +45,18 @@ function satLabels() {
 const LAYERS = {
   vector: { gcj: false, style: () => (isDark() ? DARK : LIGHT) },
   amap: { gcj: true, style: () => ({
-    version: 8, glyphs: LIGHT.glyphs,
+    version: 8,
     sources: { amap: { type: 'raster', tiles: AMAP(7), tileSize: 256, maxzoom: 18, attribution: AMAP_ATTR } },
     layers: [bg('#f4f3ef'), { id: 'amap', type: 'raster', source: 'amap', paint: { ...fade, ...(isDark() ? { 'raster-brightness-max': 0.82, 'raster-saturation': -0.2 } : {}) } }] }) },
   sat: { gcj: false, style: () => ({
-    version: 8, glyphs: LIGHT.glyphs, sprite: LIGHT.sprite,
+    version: 8, ...(LIGHT && LIGHT.glyphs ? { glyphs: LIGHT.glyphs } : {}), ...(LIGHT && LIGHT.sprite ? { sprite: LIGHT.sprite } : {}),
     sources: {
       esri: { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 128, maxzoom: 19, attribution: '© Esri' },
-      openmaptiles: LIGHT.sources.openmaptiles
+      ...(LIGHT && LIGHT.sources.openmaptiles ? { openmaptiles: LIGHT.sources.openmaptiles } : {})
     },
     layers: [bg('#0b1a2a'), { id: 'esri', type: 'raster', source: 'esri', paint: fade }, ...satLabels()] }) },
   amapSat: { gcj: true, style: () => ({
-    version: 8, glyphs: LIGHT.glyphs,
+    version: 8,
     sources: {
       s: { type: 'raster', tiles: [1, 2, 3, 4].map((i) => `https://webst0${i}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}`), tileSize: 128, maxzoom: 18, attribution: AMAP_ATTR },
       l: { type: 'raster', tiles: [1, 2, 3, 4].map((i) => `https://wprd0${i}.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scl=1&style=8`), tileSize: 256, maxzoom: 18 }
@@ -72,7 +67,9 @@ const NAMES = { vector: '矢量', amap: '高德', sat: '卫星', amapSat: '高�
 
 /* 一次性迁移：旧版自动回退会把 wm.layer2 永久存成 amap（当时还是无注记的高德），这里清掉，恢复默认矢量 */
 if (!ls('wm.layerMig1')) { if (ls('wm.layer2') === 'amap') ls('wm.layer2', 'vector'); ls('wm.layerMig1', '1'); }
-let curKey = LAYERS[ls('wm.layer2')] ? ls('wm.layer2') : 'vector';
+let curKey = Object.hasOwn(LAYERS, ls('wm.layer2')) ? ls('wm.layer2') : 'vector';
+const styleFallback = curKey === 'vector' && !LIGHT;
+if (styleFallback) curKey = 'amap';
 let gcj = LAYERS[curKey].gcj;
 
 const map = new mgl.Map({
@@ -82,6 +79,14 @@ const map = new mgl.Map({
   maxPitch: 0, cooperativeGestures: false
 });
 window.__map = map;
+let viewTouched = document.activeElement === $('#q') || !!$('#q').value, introTimer = 0, introRunning = false;
+function useMap() {
+  viewTouched = true; clearTimeout(introTimer);
+  if (introRunning) { introRunning = false; map.stop(); }
+}
+document.addEventListener('pointerdown', useMap, { capture: true, passive: true });
+document.addEventListener('keydown', useMap, true);
+map.on('movestart', (e) => { if (e.originalEvent) useMap(); });
 map.addControl(new mgl.AttributionControl({ compact: true }), 'bottom-right');
 map.addControl(new mgl.ScaleControl({ maxWidth: 100, unit: 'metric' }), 'bottom-left');
 
@@ -104,7 +109,7 @@ map.on('style.load', () => { addOverlays(); });
 map.on('click', (e) => {
   $('#q').blur(); hideRes();
   if (popup) { popup.remove(); popup = null; }
-  if (map.getZoom() >= 6) return setSel(null);
+  if (map.getZoom() >= 6 || !map.getLayer('country-hit')) return setSel(null);
   const f = map.queryRenderedFeatures(e.point, { layers: ['country-hit'] })[0];
   if (!f) return setSel(null);
   setSel(f.properties.en);
@@ -124,51 +129,81 @@ function markerEl(cls) { const el = document.createElement('div'); el.className 
 function snapshot() {
   return new Promise((res) => {
     let done = false;
-    map.once('render', () => {
-      done = true;
+    const finish = (img) => {
+      if (done) return;
+      done = true; clearTimeout(timer); map.off('render', capture); res(img);
+    };
+    const capture = () => {
       try {
         const src = map.getCanvas(), k = Math.min(1, 1.5 / (window.devicePixelRatio || 1));
         const c = document.createElement('canvas'); c.width = Math.round(src.width * k); c.height = Math.round(src.height * k);
         c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
         const img = new Image(); img.src = c.toDataURL('image/jpeg', 0.75);
-        (img.decode ? img.decode() : Promise.resolve()).then(() => res(img), () => res(null));
-      } catch (e) { res(null); }
-    });
-    map.triggerRepaint(); setTimeout(() => { if (!done) res(null); }, 300);
+        (img.decode ? img.decode() : Promise.resolve()).then(() => finish(img), () => finish(null));
+      } catch (e) { finish(null); }
+    };
+    const timer = setTimeout(() => finish(null), 300);
+    map.once('render', capture); map.triggerRepaint();
   });
 }
+let layerChange = 0, revealTimer = 0, revealHandler = null, requestedKey = curKey, renderedTheme = html.dataset.theme;
 async function setLayer(key, quiet, persist = true) {   // persist=false：临时切换（自动回退、主题重绘），不写入用户选择
-  if (key === curKey && !quiet) return;
+  if (!Object.hasOwn(LAYERS, key)) return;
+  if (key === 'vector' && !LIGHT) { toast('矢量样式暂不可用，请稍后重试'); return; }
+  requestedKey = key;
+  if (persist) ls('wm.layer2', key);
+  const change = ++layerChange;
   const snap = $('#snap');
-  if (!reduce) { const img = await snapshot(); if (img) { snap.replaceChildren(img); snap.classList.add('on'); } }
+  clearTimeout(revealTimer);
+  if (revealHandler) { map.off('idle', revealHandler); revealHandler = null; }
+  const themeChanged = (key === 'vector' || key === 'amap') && renderedTheme !== html.dataset.theme;
+  if (key === curKey && !quiet && !themeChanged) {
+    snap.classList.remove('on'); if (vecFallback) watchVector(); return;
+  }
+  if (!reduce) {
+    const img = await snapshot();
+    if (change !== layerChange) return;
+    if (img) { snap.replaceChildren(img); snap.classList.add('on'); }
+  }
+  const center = map.getCenter(), nextGCJ = LAYERS[key].gcj;
+  if (gcj !== nextGCJ) {
+    const baseLng = ((center.lng + 180) % 360 + 360) % 360 - 180;
+    const [lat, lng] = gcj ? gcj2wgs(center.lat, baseLng) : wgs2gcj(center.lat, baseLng);
+    map.jumpTo({ center: [lng + center.lng - baseLng, lat] });
+  }
   curKey = key; gcj = LAYERS[key].gcj;
   map.setStyle(LAYERS[key].style(), { diff: false });
+  renderedTheme = html.dataset.theme;
   points.forEach(place);
   document.querySelectorAll('.opt').forEach((b) => b.classList.toggle('on', b.dataset.layer === key));
-  if (persist) ls('wm.layer2', key);
-  const reveal = () => { snap.classList.remove('on'); };
-  map.once('idle', reveal); setTimeout(reveal, 1800);
+  const reveal = () => {
+    if (change !== layerChange) return;
+    snap.classList.remove('on'); clearTimeout(revealTimer);
+    map.off('idle', reveal); revealHandler = null;
+  };
+  revealHandler = reveal; map.on('idle', reveal); revealTimer = setTimeout(reveal, 1800);
   if (!quiet) toast(NAMES[key]);
   watchVector();
 }
 document.querySelectorAll('.opt').forEach((b) => {
   b.classList.toggle('on', b.dataset.layer === curKey);
-  b.addEventListener('click', () => { setTimeout(closeSheet, 200); setLayer(b.dataset.layer); });
+  b.addEventListener('click', () => { closeSheet(); setLayer(b.dataset.layer); });
 });
 
 /* 矢量底图在国内若完全加载不到，临时切到高德（不保存选择，图层面板仍可切回矢量）：
    只要有任意一块 openmaptiles 瓦片加载到，就取消回退；10 秒内一块都没有才切；
    出错只在尚未加载到任何瓦片时计数，约 8 次才切 */
 const VEC_WAIT = 10000, VEC_MAX_ERR = 8;
-let vecErr = 0, vecTimer = null, vecGotTile = false;
+let vecErr = 0, vecTimer = null, vecGotTile = false, vecFallback = false;
 function watchVector() {
-  clearTimeout(vecTimer); vecErr = 0; vecGotTile = false;
+  clearTimeout(vecTimer); vecErr = 0; vecGotTile = false; vecFallback = false;
   if (curKey !== 'vector') return;
   vecTimer = setTimeout(() => { if (curKey === 'vector' && !vecGotTile) fallback(); }, VEC_WAIT);
 }
 function fallback() {
   clearTimeout(vecTimer);
-  if (curKey !== 'vector' || vecGotTile) return;
+  if (curKey !== 'vector' || vecGotTile || vecFallback) return;
+  vecFallback = true;
   setLayer('amap', true, false);
   toast('矢量图加载失败，已临时切换到高德');
 }
@@ -178,26 +213,47 @@ map.on('error', (e) => {
   if (src === 'openmaptiles' || /openfreemap/.test(String(e.error && e.error.message))) { if (++vecErr >= VEC_MAX_ERR) fallback(); }
 });
 map.on('sourcedata', (e) => {
-  if (e.sourceId === 'openmaptiles' && e.tile) { vecGotTile = true; clearTimeout(vecTimer); }
+  if (curKey === 'vector' && e.sourceId === 'openmaptiles' && e.tile && e.tile.state === 'loaded') {
+    vecGotTile = true; clearTimeout(vecTimer);
+  }
 });
 watchVector();
 
 /* 主题变化（工具箱切换或系统切换） */
-function onTheme() { const was = html.dataset.theme; applyTheme(); if (was !== html.dataset.theme && (curKey === 'vector' || curKey === 'amap')) setLayer(curKey, true, false); }
+function onTheme() { const was = html.dataset.theme; applyTheme(); if (was !== html.dataset.theme && (requestedKey === 'vector' || requestedKey === 'amap')) setLayer(requestedKey, true, false); }
 window.addEventListener('storage', (e) => { if (e.key === 'lm.theme') onTheme(); });
 window.addEventListener('message', (e) => { if (e.origin === location.origin && e.data && e.data.type === 'theme') onTheme(); });
 mq.addEventListener && mq.addEventListener('change', onTheme);
 
 /* ---------- 面板 ---------- */
-const openSheet = () => { document.body.classList.add('sheet'); $('#sheet').setAttribute('aria-hidden', 'false'); };
-const closeSheet = () => { document.body.classList.remove('sheet'); $('#sheet').setAttribute('aria-hidden', 'true'); };
+const sheet = $('#sheet'), layersBtn = $('#layersBtn');
+const sheetBackground = ['#map', '#tools', '#top', '#home'].map($);
+const openSheet = () => {
+  hideRes(); document.body.classList.add('sheet'); sheet.inert = false; sheet.setAttribute('aria-hidden', 'false');
+  layersBtn.setAttribute('aria-expanded', 'true'); sheetBackground.forEach(el => { el.inert = true; });
+  (sheet.querySelector('.opt.on') || sheet.querySelector('.opt')).focus({ preventScroll: true });
+};
+const closeSheet = () => {
+  if (!document.body.classList.contains('sheet')) return;
+  document.body.classList.remove('sheet'); sheetBackground.forEach(el => { el.inert = false; });
+  layersBtn.setAttribute('aria-expanded', 'false'); layersBtn.focus({ preventScroll: true });
+  sheet.inert = true; sheet.setAttribute('aria-hidden', 'true');
+};
 $('#layersBtn').addEventListener('click', openSheet);
 $('#scrim').addEventListener('click', closeSheet);
+sheet.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSheet(); }
+  if (e.key === 'Tab') {
+    const opts = [...sheet.querySelectorAll('.opt')], i = opts.indexOf(document.activeElement);
+    e.preventDefault(); opts[(i + (e.shiftKey ? -1 : 1) + opts.length) % opts.length].focus();
+  }
+});
 (() => {
   let y0 = null; const s = $('#sheet');
   s.addEventListener('touchstart', (e) => { y0 = e.touches[0].clientY; }, { passive: true });
   s.addEventListener('touchmove', (e) => { if (y0 === null) return; const d = e.touches[0].clientY - y0; if (d > 0) { s.style.transition = 'none'; s.style.transform = `translateY(${d}px)`; } }, { passive: true });
   s.addEventListener('touchend', (e) => { if (y0 === null) return; const d = e.changedTouches[0].clientY - y0; y0 = null; s.style.transition = ''; s.style.transform = ''; if (d > 60) closeSheet(); });
+  s.addEventListener('touchcancel', () => { y0 = null; s.style.transition = ''; s.style.transform = ''; });
 })();
 
 /* ---------- 提示 ---------- */
@@ -216,30 +272,33 @@ let me = null;
 $('#locate').addEventListener('click', function () {
   const btn = this;
   if (!navigator.geolocation) return toast('设备不支持定位');
-  btn.classList.add('wait');
+  if (btn.classList.contains('wait')) return;
+  hideRes(); q.blur(); btn.classList.add('wait'); btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+  const stopWaiting = () => { btn.classList.remove('wait'); btn.disabled = false; btn.removeAttribute('aria-busy'); };
   navigator.geolocation.getCurrentPosition((pos) => {
-    btn.classList.remove('wait'); btn.classList.add('on');
+    stopWaiting(); btn.classList.add('on');
     const { latitude: lat, longitude: lng } = pos.coords;
     if (!me) { me = { m: new mgl.Marker({ element: markerEl('me') }).setLngLat([lng, lat]).addTo(map) }; points.push(me); }
     me.lat = lat; me.lng = lng;
     map.flyTo({ center: place(me), zoom: Math.max(map.getZoom(), 15), duration: reduce ? 0 : 1800, essential: true });
-  }, (err) => { btn.classList.remove('wait'); toast(err.code === 1 ? '未获得定位权限' : '定位失败'); },
+  }, (err) => { stopWaiting(); toast(err.code === 1 ? '未获得定位权限' : err.code === 3 ? '定位超时，请重试' : '定位失败'); },
   { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 });
 });
 map.on('dragstart', () => $('#locate').classList.remove('on'));
 
 /* ---------- 搜索 ---------- */
 const q = $('#q'), res = $('#results'), form = $('#search');
-let pin = null, ctl = null, countryData = null;
-fetch('/data/countries.json').then((r) => r.json()).then((d) => { countryData = d.features; }).catch(() => {});
-q.addEventListener('input', () => { $('#clear').hidden = !q.value; if (!q.value) hideRes(); });
+let pin = null, ctl = null, countryData = null, searchId = 0;
+const countriesReady = getJSON('/data/countries.json').then((d) => { countryData = d.features; }).catch(() => {});
+q.addEventListener('input', () => { $('#clear').hidden = !q.value; hideRes(); });
 $('#clear').addEventListener('click', () => { q.value = ''; $('#clear').hidden = true; hideRes(); q.focus(); });
-function hideRes() { res.hidden = true; res.innerHTML = ''; }
-function bboxOf(geom) {
-  let w = 180, s = 90, e = -180, n = -90;
-  const walk = (c) => { if (typeof c[0] === 'number') { w = Math.min(w, c[0]); e = Math.max(e, c[0]); s = Math.min(s, c[1]); n = Math.max(n, c[1]); } else c.forEach(walk); };
-  walk(geom.coordinates); return [w, s, e, n];
+function hideRes() {
+  ++searchId;
+  if (ctl) { ctl.abort(); ctl = null; }
+  form.classList.remove('busy'); form.removeAttribute('aria-busy');
+  res.hidden = true; res.replaceChildren(); q.setAttribute('aria-expanded', 'false');
 }
+document.addEventListener('pointerdown', (e) => { if (!$('#top').contains(e.target)) hideRes(); });
 function localMatch(str) {
   if (!countryData) return [];
   const s = str.toLowerCase();
@@ -248,16 +307,26 @@ function localMatch(str) {
   });
 }
 function show(items, note) {
-  res.innerHTML = ''; res.hidden = false;
+  res.replaceChildren(); res.hidden = false; q.setAttribute('aria-expanded', 'true');
   if (!items.length) { res.innerHTML = `<li class="empty">${note || '没有找到'}</li>`; return; }
   items.forEach((it, i) => {
-    const li = document.createElement('li'); li.style.animationDelay = i * 35 + 'ms';
-    li.innerHTML = `<b>${esc(it.name)}</b><small>${esc(it.sub)}</small>`;
-    li.addEventListener('click', () => go(it)); res.appendChild(li);
+    const li = document.createElement('li'), button = document.createElement('button');
+    li.style.animationDelay = i * 35 + 'ms'; button.type = 'button';
+    button.innerHTML = `<b>${esc(it.name)}</b><small>${esc(it.sub)}</small>`;
+    button.addEventListener('click', () => go(it)); li.appendChild(button); res.appendChild(li);
   });
 }
+$('#top').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideRes(); q.focus(); }
+  if (!res.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    const buttons = [...res.querySelectorAll('button')]; if (!buttons.length) return;
+    const i = buttons.indexOf(document.activeElement);
+    const next = i < 0 ? (e.key === 'ArrowDown' ? 0 : buttons.length - 1) : (i + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+    e.preventDefault(); buttons[next].focus();
+  }
+});
 function go(it) {
-  hideRes(); q.blur(); q.value = it.name; $('#clear').hidden = false;
+  useMap(); hideRes(); q.blur(); q.value = it.name; $('#clear').hidden = false; setSel(null);
   if (popup) { popup.remove(); popup = null; }
   if (pin) pin.m.remove(); else { pin = {}; points.push(pin); }
   pin.m = new mgl.Marker({ element: markerEl('pin'), anchor: 'bottom' });
@@ -275,25 +344,27 @@ function go(it) {
   const [w, s, e, n] = it.bbox, sw = disp(s, w), ne = disp(n, e);
   map.fitBounds([[sw[1], sw[0]], [ne[1], ne[0]]], { padding: pad, maxZoom: mz, duration: dur, essential: true });
 }
-form.addEventListener('submit', (e) => {
+form.addEventListener('submit', async (e) => {
   e.preventDefault();
+  hideRes();
   const s = q.value.trim(); if (!s) return;
-  if (ctl) ctl.abort(); ctl = new AbortController();
-  form.classList.add('busy');
-  const timer = setTimeout(() => ctl.abort(), 8000);
+  const id = searchId, controller = new AbortController(); ctl = controller;
+  const current = () => id === searchId && q.value.trim() === s;
+  form.classList.add('busy'); form.setAttribute('aria-busy', 'true');
+  const timer = setTimeout(() => controller.abort(), 8000);
   const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&accept-language=zh-CN,zh,en&q=' + encodeURIComponent(s);
-  fetch(url, { signal: ctl.signal, headers: { Accept: 'application/json' } })
-    .then((r) => { if (!r.ok) throw 0; return r.json(); })
-    .then((data) => {
-      let items = data.map((d) => {
-        const parts = (d.display_name || '').split(/,\s*/), b = d.boundingbox;
-        return { name: d.name || parts[0], sub: parts.slice(1).join(', '), lat: +d.lat, lng: +d.lon, bbox: b ? [+b[2], +b[0], +b[3], +b[1]] : null };
-      });
-      if (!items.length) items = localMatch(s);
-      show(items);
-    })
-    .catch(() => show(localMatch(s), '搜索服务暂不可用'))
-    .finally(() => { clearTimeout(timer); form.classList.remove('busy'); });
+  try {
+    const response = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error('search unavailable');
+    let items = searchItems(await response.json());
+    if (!items.length) { await countriesReady; items = localMatch(s); }
+    if (current()) show(items);
+  } catch {
+    if (current()) { await countriesReady; if (current()) show(localMatch(s), '搜索服务暂不可用'); }
+  } finally {
+    clearTimeout(timer);
+    if (current()) { ctl = null; form.classList.remove('busy'); form.removeAttribute('aria-busy'); }
+  }
 });
 
 /* ---------- 返回（独立打开时） ---------- */
@@ -304,6 +375,11 @@ let readySent = false;
 function ready() {
   if (readySent) return; readySent = true;
   if (embedded) try { parent.postMessage({ type: 'ready' }, location.origin); } catch (e) {}
-  if (!reduce) setTimeout(() => map.flyTo({ center: [108, 33], zoom: 3, duration: 2200, essential: true }), 250);
+  if (!reduce && !viewTouched) introTimer = setTimeout(() => {
+    if (viewTouched) return;
+    introRunning = true; map.once('moveend', () => { introRunning = false; });
+    map.flyTo({ center: [108, 33], zoom: 3, duration: 2200 });
+  }, 250);
 }
 map.once('idle', ready); setTimeout(ready, 4000);
+if (styleFallback) toast('矢量样式加载失败，已临时切换到高德');

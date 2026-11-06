@@ -63,6 +63,7 @@ jobs:
           node scripts/preview.mjs --port 5173 > preview.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://localhost:5173/ > /dev/null && break; sleep 1; done
           python test/e2e/stm32_e2e.py http://localhost:5173
+          python test/e2e/map_e2e.py http://localhost:5173
 
   deploy:
     needs: [check, e2e]
@@ -145,7 +146,7 @@ jobs:
         run: |
           sleep 5
           fail=0
-          for p in / /tools/stm32/ /xin/chat.js /api/xin/me; do
+          for p in / /tools/stm32/ /tools/map/ /tools/map/map.js /tools/map/geo.mjs /xin/chat.js /api/xin/me; do
             code=$(curl -s -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 5 "$BASE$p")
             echo "$code $BASE$p"
             [ "$code" = 200 ] || fail=1

@@ -2,7 +2,7 @@
 <html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#f5f6f8">
 <title>世界地图 · Liming 工具箱</title>
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
@@ -23,15 +23,15 @@
 <header id="top">
   <form id="search" autocomplete="off" role="search">
     <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-    <input id="q" type="search" placeholder="搜索地点" enterkeyhint="search" aria-label="搜索地点">
+    <input id="q" type="search" placeholder="搜索地点" enterkeyhint="search" aria-label="搜索地点" aria-controls="results" aria-expanded="false">
     <button type="button" id="clear" aria-label="清除" hidden><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
   </form>
-  <ul id="results" hidden></ul>
+  <ul id="results" aria-label="搜索结果" hidden></ul>
 </header>
 
 <div id="tools">
   <button id="compass" class="fab" aria-label="指北" hidden><svg viewBox="0 0 24 24" id="needle"><path d="M12 3l3.5 9h-7Z" class="fill red"/><path d="M12 21l-3.5-9h7Z"/></svg></button>
-  <button id="layersBtn" class="fab" aria-label="图层"><svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg></button>
+  <button id="layersBtn" class="fab" aria-label="图层" aria-haspopup="dialog" aria-controls="sheet" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg></button>
   <div class="zoom">
     <button id="zin" class="fab" aria-label="放大"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
     <button id="zout" class="fab" aria-label="缩小"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
@@ -40,7 +40,7 @@
 </div>
 
 <div id="scrim"></div>
-<div id="sheet" aria-hidden="true">
+<div id="sheet" role="dialog" aria-label="地图图层" aria-modal="true" aria-hidden="true" inert>
   <div class="grip"></div>
   <div class="opts">
     <button data-layer="vector" class="opt"><span class="thumb" style="background-image:url(thumbs/vector.jpg)"></span><span>矢量</span></button>
@@ -51,6 +51,6 @@
 </div>
 <div id="toast" role="status"></div>
 
-<script type="module" src="map.js?v=050b64e3"></script>
+<script type="module" src="map.js?v=20261106"></script>
 </body>
 </html>

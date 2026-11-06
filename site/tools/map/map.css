@@ -32,14 +32,17 @@ svg .red{fill:#ff4d4f}
 #q::placeholder{color:var(--sub);opacity:.8}
 #clear{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:var(--sub)}
 #clear svg{width:16px;height:16px}
+#clear[hidden]{display:none}
 #search.busy .i{animation:pulse 1s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.3}}
 #results{list-style:none;margin:8px 0 0;padding:6px;border-radius:16px;box-shadow:var(--sh);max-height:50vh;overflow:auto;transform-origin:top center;animation:pop .35s var(--ease)}
-#results li{padding:10px 12px;border-radius:10px;cursor:pointer;animation:fadeUp .4s var(--ease) backwards;transition:background .2s}
-#results li:hover,#results li:active{background:color-mix(in srgb,var(--acc) 10%,transparent)}
+#results li{border-radius:10px;animation:fadeUp .4s var(--ease) backwards}
+#results li button{display:block;width:100%;padding:10px 12px;border-radius:10px;text-align:left;transition:background .2s}
+#results li button:hover,#results li button:focus-visible{background:color-mix(in srgb,var(--acc) 10%,transparent)}
+button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
 #results b{display:block;font-weight:600;font-size:15px}
 #results small{display:block;color:var(--sub);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#results .empty{color:var(--sub);text-align:center;cursor:default}
+#results .empty{padding:10px 12px;color:var(--sub);text-align:center}
 @keyframes pop{from{opacity:0;transform:scale(.96) translateY(-6px)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}}
 
