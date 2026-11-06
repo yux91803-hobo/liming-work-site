@@ -287,7 +287,7 @@
       items.forEach(function (b, j) { b.classList.toggle('on', j === sel); b.setAttribute('aria-selected', j === sel ? 'true' : 'false'); });
       if (!quiet) items[sel].scrollIntoView({ block: 'nearest' });
     }
-    var runSoon = ui.debounce(run, 60);
+    var runSoon = ui.debounce(function () { if (dirty) run(); }, 60);
     input.addEventListener('input', function () { dirty = true; ui.clear(list); items = []; input.removeAttribute('aria-activedescendant'); runSoon(); });
     input.addEventListener('keydown', function (e) {
       if (e.isComposing || e.keyCode === 229) return;

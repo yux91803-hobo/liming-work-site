@@ -224,6 +224,22 @@ async def stm32_audit_regressions(b):
         pg = await page(b, w, 844, mobile=w == 390)
         await pg.goto(TOOL + '?v=topic&t=gpio'); await pg.wait_for_selector('html.ready')
         await pg.evaluate('STM.app.openSearch()')
+        await pg.evaluate("""(() => {
+          const i = document.querySelector('.search-in'); i.value = 'PA9';
+          i.dispatchEvent(new Event('input', {bubbles:true}));
+          i.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',isComposing:true,keyCode:229,bubbles:true,cancelable:true}));
+        })()""")
+        st = await pg.evaluate("[STM.app.route().t, !!document.querySelector('.search')]")
+        check(f'{w}：输入法确认候选词的回车不会提前跳转', st == ['gpio', True], st)
+        await pg.evaluate("""(() => {
+          const i = document.querySelector('.search-in'); i.value = 'PA9';
+          i.dispatchEvent(new Event('input', {bubbles:true}));
+          i.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowDown',bubbles:true,cancelable:true}));
+        })()""")
+        selected = await pg.get_attribute('.search-in', 'aria-activedescendant')
+        await pg.wait_for_timeout(150)
+        after = await pg.get_attribute('.search-in', 'aria-activedescendant')
+        check(f'{w}：改词后立即方向键选中第二项，延迟查询不会把选择重置', selected == 'search-option-1' and after == selected, (selected, after))
         await pg.fill('.search-in', 'USART1'); await pg.wait_for_selector('.search-it')
         await pg.evaluate("""(() => {
           const i = document.querySelector('.search-in'); i.value = 'PA9';
