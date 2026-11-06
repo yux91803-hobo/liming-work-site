@@ -5,6 +5,55 @@
 - 切换 .h / .c / main.c 同步到路由与地址；打开寄存器前保留正在阅读的页面上下文，查寄存器、看图后返回原文件和滚动位置。离开页面前提交节流中的参数，避免浏览器返回读到旧文件；刷新也保留选中的文件。
 - 更新工具箱和学习台的脚本缓存版本；增加分页优先级与旧链接兼容单元测试，以及电脑 / 手机、独立页 / 工具箱的实际点击、阅读位置和逐层返回回归。
 
+# 修改清单 · 2026-11-06（思考强度只给模型真正支持的档位，面板改成滑块）
+
+- 用户要模型选择做成截图里那样（模型名 + 档位，下面一条点状滑块），思考强度要模型真实支持、支持几档就几档，还要实际生效。
+- **查清楚每个模型支持哪几档**（小芯电脑上的网关 `/v1/models` 的 `reasoning_efforts`；网关遇到不支持的档会换成默认 high）：DeepSeek V4.1 Flash、GLM-5.3 Flash、GLM-5.3、Kimi K3.1 Pro 都是 low / high / max，默认 high；DeepSeek 还能关掉思考（`reasoning_can_disable`），GLM、Kimi 不能。Claude Code 的 `--effort` 是 low / medium / high / xhigh / max。
+- **实测生效**（看网关用量记录里每次请求实际的 `reasoning_effort` 和思考 token）：Codex 传 low → 网关 low、思考 0；传 max → max、思考 42。Harness 在补丁里写 `agent-default-model.reasoningEffort` + 模型的 `reasoningEfforts` 对照表：low → low，max → max（思考 24），关（发 none）→ none、思考 0。最后用新的 vm-agent 走真正的 `send` 再验一遍：Harness 关 → none、最高 → max，Codex GLM-5.3 低 → low。测试用的对话和会话都删了。
+- **vm-agent**：`effortSpec(agent, model)` 每个模型的档位和默认；`resolveEffort(agent, model, effort)` 不在档位里的（以前的 auto、空的、别家的档）用默认 high，每一轮都明确带上（Codex `-c model_reasoning_effort`、Claude `--effort`、Harness 补丁）。去掉了以前「自动：像写代码就 max」的猜测。Harness 的补丁每个档一份（`harness-persona.<档>.yml`），同时跑的对话不会互相改掉；预热用 low；每日任务用默认 high。
+- **网页**：模型按钮点开是一块面板：上面一行「模型名 档位（浅色）」，Codex 的带 ›，点了列出三个模型，点一个回来；下面一条滑块，一个点一档（关 / 低 / 中 / 高 / 超高 / 最高里这个模型有的那几个），填色到选中那档、选中的是白色圆钮，点、拖、键盘左右键都行，面板不关；Esc、点外面关。选的档记在浏览器里，换到不支持这一档的模型显示并发送默认高，换回来还是原来那档。
+- 测试：单元（各模型的档位、不支持的档用默认；Harness 补丁里的对照表和这一轮的档、不同档不同文件；Codex 不选也明确带 high、选了带选的）；e2e（三种 AI 的滑块档位和默认、点 / 拖 / 键盘、标题和按钮跟着变、Codex 换模型、换 AI 后档位回落和恢复、发消息带上）。
+
+# 修改清单 · 2026-11-06（Codex 换成本地网关上的 GLM / Kimi，能在设置里切换模型）
+
+- 用户想在 Claude 里用 GLM-5.3 Flash：网关的 Anthropic 接口默认关着（打开后不认缓存、多扣积分），用户选了改用 Codex；后来又要能切换，加上 GLM-5.3 和 Kimi K3.1 Pro。
+- **小芯电脑上**（会话里做的，不在仓库里；用户同意新建 key）：网关里新建一把 key `xin-codex`，只允许 glm-5.3-flash、glm-5.3、kimi-k3.1-pro，存到 `~/.xin/codex.key`（权限 600）；原来的 `li-cn` 没动；改之前备份了网关的 `settings.json`。
+- **vm-agent**：Codex 的线路每一轮自己带（`-c model_provider=xin-gateway` + `base_url` / `wire_api=responses` / `env_key=XIN_CODEX_KEY` + `model` + `model_context_window`），不靠 `~/.codex/config.toml` 里写的模型和网关；key 先用 `codex.key`，没有就用 `harness.key`；正式跑和预热都带。
+  - 模型表 `CODEX_MODELS`（上限都是 100 万，GLM-5.3 Flash 看不了图）；`send` 带 `model`，不认识的当默认（GLM-5.3 Flash），记在对话上（列表里显示「Codex GLM-5.3」这样）。
+  - Codex 认不出网关的新模型（会报 metadata not found）：照着 `config.toml` 里 `model_catalog_json` 那份资料复制一份到 `~/.xin/codex-models.json`，补上这三个模型（照抄 DeepSeek 那条改名字、上限、能不能看图），每轮 `-c model_catalog_json` 指过去；资料变了或模型表改了才重做。
+  - 看不了图的模型：图片不用 `-i`，只把路径写进消息，并告诉它看不了图要如实说。
+- **网页**：输入框改成 agent 应用那样：上面打字，底下一排「＋」、模型按钮、发送。模型按钮写着这一句用的模型，后面浅色字是思考强度（如「GLM-5.3 Flash 自动」）；点开选模型和思考强度（Codex 三个模型；Harness 固定 DeepSeek V4.1 Flash、不分思考强度；Claude 只选思考强度），选了就关，记在这个浏览器里，每次发消息带上；Codex 对话打开时接着用它上次的模型。
+  - 选哪个 AI 还在设置的「新对话用」里（用户要求：一个对话里不换 AI），去掉了「已经开始的对话不会换」那行小字；思考强度从设置挪到了模型按钮里。
+- 在小芯电脑上实测过：三个模型在 Codex 里都能执行命令、回话（11～18 秒）。
+- 测试：单元测试（线路参数、模型资料、换模型、看图 / 不看图、key 的来源；send 带模型一路传到 codex 参数、记在对话上）；e2e（模型按钮：各 AI 的选项、默认、选了就关、Esc / 点外面关、记住、发消息带上；设置里只剩新对话用、附带、做完提醒）。
+
+# 修改清单 · 2026-11-06（Harness 的线路也由网站每一轮带过去）
+
+- 用户问重装 Harness 会怎样：以前线路（本地网关、deepseek-v4.1-flash、key 的环境变量名）只写在 `~/.dsh/profiles/headless/cordis.patch.yml`，重装清掉 `~/.dsh` 小芯就连不上模型。
+- 现在线路和小芯的设定一起写进网站每一轮带过去的 `--patch` 文件（`~/.xin/harness-persona.yml`：`llm-pi-ai` 的 `xin-gateway` 线路 + `agent-default-model` + `system-prompt`），预热也带；`~/.dsh` 里那份留着不碍事。Harness 重装、升级都不影响小芯，只是 Harness 自己的旧会话接不上。
+- 在小芯电脑上实测过：只靠 `--patch` 里的新线路名就能正常回话。
+- Codex 的 key：`~/.codex/config.toml` 和 8 个旧备份里的 `experimental_bearer_token` 行都抹掉了（备份文件本身保留）。
+- 测试：单元测试检查补丁里有线路和默认模型。
+
+# 修改清单 · 2026-11-06（接入 DeepSeek Harness：新对话默认用「Harness」）
+
+- 用户在小芯电脑上装了 DeepSeek Harness（命令 `dsh`），要像 Codex 一样能切换着用，名字叫 Harness，固定用 DeepSeek V4.1 Flash，用 Codex 里那个 key，并把 Codex 里的 key 删掉；目前小芯只用 Harness。
+- **小芯电脑上的配置**（会话里直接做的，不在仓库里）：
+  - Codex 的 key 其实是本地网关（`127.0.0.1:8788`，WorkBuddy）的 key。存到 `~/.xin/harness.key`（权限 600，只有自己能读），不写进任何配置文件。
+  - `~/.dsh/profiles/headless/cordis.patch.yml`：加一条 `workbuddy` 线路（`openai-responses`，`baseURL` 网关，`apiKeyEnv: XIN_HARNESS_KEY`，模型 `deepseek-v4.1-flash`），设成默认模型。
+  - 网站上线后把 `~/.codex/config.toml` 里的 `experimental_bearer_token` 那一行删掉（不留带 key 的备份）。
+- **vm-agent 第三个 AI `harness`**：
+  - `dsh --profile headless --patch <小芯设定> --json [--session-id 会话号] <任务>`；小芯的设定每一轮写进 `~/.xin/harness-persona.yml`（`system-prompt` 的 `personaPrefix`）；环境变量 `XIN_HARNESS_KEY`（从 key 文件读）、`DSH_PERMISSION_MODE=danger-full-access`（和 Codex 一样满权限）。
+  - 事件整理 `fromHarness`：`session` 记会话号，`text` 是回答，`tool_call` / `tool_result` 是执行的命令，`step_end` 的用量攒起来，`error` 和没完成的 `turn_end` 报错；`thinking`、`final` 不显示。
+  - 会话号是 `session-<uuid>`：会话号的校验按 AI 分开（不然 #63 的清理会把它当坏文件整个停掉）。
+  - 用量：最近一步的输入 + 输出算上下文（上限 25.8 万，和 Codex 一样），每轮累加记在对话里；Harness 不报缓存命中，网页那一行就不显示缓存命中。
+  - 删对话、清旧记录也管 Harness：`~/.dsh/sessions/<目录>/session-…/` 和 `storages/session_projcache/sessions/<会话号>.json` 一起删。
+  - 没指定 AI 时默认 Harness；每日任务优先用 Harness；预热也用 Harness（它没有「不留会话」的开关，预热完把那个会话删掉）。
+  - 发图片给 Harness：只把路径写进消息。
+- **网页**：设置里「新对话用」是 Harness / Codex / Claude，默认 Harness；以前存的选择一次性换成 Harness（Codex 的 key 挪走了），之后切换照常记住。
+- 在小芯电脑上实测过：Harness 4 秒回话、执行命令、按小芯的设定自称、`--session-id` 接着聊。测试时留下的两个会话已删。
+- 测试：单元测试（假的 dsh：参数、设定补丁、key 和权限环境变量、事件、会话号、接着聊、用量累加、清理不误判、删对话连它的会话一起删；事件里的出错、没做完；会话号不像样）；e2e（设置三选一、默认 Harness）。单元 306、e2e 310 全过。
+
 # 修改清单 · 2026-11-06（STM32 学习台排查与修复）
 
 - 实际遍历十个外设的五种分页，复现并修复搜索输入节流导致的旧结果跳转：改词、清空时立即废弃旧结果，回车与方向键先同步最新查询；输入法确认不触发跳转，已同步完成的延迟回调不再重画或重置键盘选择。

@@ -10,6 +10,9 @@ process.env.XIN_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-test-'));
 // 删对话、每日任务会顺手清 Codex / Claude 自己的会话记录：测试里一律指到空的临时目录，不碰本机真的记录
 process.env.CODEX_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-codex-'));
 process.env.CLAUDE_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-claude-'));
+// Harness（dsh）也一样：会话目录指到临时目录；命令指到一个不存在的路径（本机装了 dsh 也不会被测试用到）
+process.env.XIN_DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-dsh-'));
+process.env.XIN_DSH = path.join(process.env.XIN_DSH_HOME, 'no-dsh');
 const load = rel => import(pathToFileURL(path.join(__dirname, rel)).href);
 const PW = 'correct horse battery';
 const AGENT_TEXT = '// fake vm-agent\n';
@@ -239,17 +242,19 @@ test('系统提示里列出了 xin 的全部动作', async () => {
   for (const k of Object.keys(ACTS)) assert.ok(p.includes(k + '（'), k);
 });
 
-test('思考强度：自动时写代码的活用 max，聊天不指定；手动指定原样用', async () => {
-  const { resolveEffort } = await load('../site/xin/vm-agent.mjs');
-  for (const t of ['帮我写一个 STM32 点灯的 main.c', '编译报错了：undefined reference', '这段代码有 bug', '```c\nint a;\n```', '把 led.c 改一下', '实现一个 I2C 驱动'])
-    assert.strictEqual(resolveEffort('auto', t), 'max', t);
-  for (const t of ['你好', 'GPIO 的推挽输出是什么意思？', 'APB2 的时钟是多少'])
-    assert.strictEqual(resolveEffort('auto', t), '', t);
-  assert.strictEqual(resolveEffort(undefined, '写代码'), 'max');
-  assert.strictEqual(resolveEffort('high', '写代码'), 'high');
-  assert.strictEqual(resolveEffort('max', '你好'), 'max');
-  assert.strictEqual(resolveEffort('low', '你好'), 'low');
-  assert.strictEqual(resolveEffort('xhigh', '你好'), '');   // 不认识的值当自动
+test('思考强度：只认这个模型真正支持的档位，别的（以前的 auto、空的、别家的档）用默认 high', async () => {
+  const { resolveEffort, effortSpec } = await load('../site/xin/vm-agent.mjs');
+  assert.deepStrictEqual(effortSpec('harness').efforts, ['off', 'low', 'high', 'max']);
+  for (const m of ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']) assert.deepStrictEqual(effortSpec('codex', m).efforts, ['low', 'high', 'max'], m);
+  assert.deepStrictEqual(effortSpec('claude').efforts, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.strictEqual(resolveEffort('harness', null, 'off'), 'off');
+  assert.strictEqual(resolveEffort('harness', null, 'max'), 'max');
+  assert.strictEqual(resolveEffort('codex', 'glm-5.3', 'off'), 'high');      // GLM 不能关思考
+  assert.strictEqual(resolveEffort('codex', 'kimi-k3.1-pro', 'low'), 'low');
+  assert.strictEqual(resolveEffort('codex', 'glm-5.3-flash', 'xhigh'), 'high');
+  assert.strictEqual(resolveEffort('claude', null, 'xhigh'), 'xhigh');
+  assert.strictEqual(resolveEffort('claude', null, 'off'), 'high');
+  for (const e of ['auto', '', undefined, 'MAX']) assert.strictEqual(resolveEffort('codex', 'glm-5.3', e), 'high', String(e));
 });
 
 test('思考强度：Codex 用 -c model_reasoning_effort（续接也带），Claude 用 --effort；不指定就不加', async () => {
@@ -686,16 +691,62 @@ test('插件：只列用户自己装的（电脑自带的不显示、不让关�
     // 换了 XIN_HOME 要重新载入（BASE 在载入时定好），后面加个参数当成新模块
     const { mcpFlags, agentArgs } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-agent.mjs')).href + '?plug');
     assert.deepStrictEqual(mcpFlags(), ['-c', 'mcp_servers.rea.enabled=true']);
+    // glm-5.3-flash 看不了图：图片不用 -i
     const [, a] = agentArgs('codex', { started: false }, '你好', '', { images: ['/data/workspace/uploads/1/a.png', '/data/workspace/uploads/1/b.jpg'] });
-    assert.deepStrictEqual(a.slice(0, 6), ['exec', '-i', '/data/workspace/uploads/1/a.png', '-i', '/data/workspace/uploads/1/b.jpg', '--json']);
+    assert.deepStrictEqual(a.slice(0, 2), ['exec', '--json']);
+    assert.ok(!a.includes('-i'));
     assert.ok(a.join(' ').includes('-c mcp_servers.rea.enabled=true') && !a.join(' ').includes('instabox'));
     const [, b] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '你好', '', { images: ['/x/a.png'] });
-    assert.deepStrictEqual(b.slice(0, 4), ['exec', 'resume', '-i', '/x/a.png']);
+    assert.deepStrictEqual(b.slice(0, 3), ['exec', 'resume', '--json']);
     assert.deepStrictEqual(b.slice(-2), ['th-1', '你好']);
   } finally { [process.env.XIN_HOME, process.env.CODEX_HOME, process.env.XIN_CODEX_SYS] = saved; }
 });
 
-test('发文件：send 带 files（只认上传目录里的普通文件）；消息里列出路径，图片 Codex 用 -i 看；只发文件不说话也行', async () => {
+test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3-flash，不认识的当默认）；模型资料照抄一份补上这几个模型；看不了图的不用 -i；key 先用 codex.key，没有用 harness.key', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-cxroute-'));
+  const codexHome = path.join(tmp, 'codex'), xinDir = path.join(tmp, 'xin');
+  fs.mkdirSync(codexHome); fs.mkdirSync(xinDir);
+  const src = path.join(codexHome, 'models.json');
+  fs.writeFileSync(src, JSON.stringify({ models: [{ slug: 'gpt-5.5', context_window: 272000, input_modalities: ['text', 'image'] }, { slug: 'deepseek-v4.1-flash', display_name: 'DeepSeek', context_window: 1000000, input_modalities: ['text', 'image'], model_messages: { instructions_template: 'T' } }] }));
+  fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model_catalog_json = "' + src + '"\nmodel = "deepseek-v4.1-flash"\n');
+  fs.writeFileSync(path.join(xinDir, 'harness.key'), 'hk\n');
+  const saved = [process.env.XIN_HOME, process.env.CODEX_HOME];
+  process.env.XIN_HOME = xinDir; process.env.CODEX_HOME = codexHome;
+  try {
+    const { agentArgs, codexKeyEnv, CODEX_MODELS } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-agent.mjs')).href + '?cxroute');
+    const [, a] = agentArgs('codex', { started: false }, '你好', '');
+    const cs = a.filter((x, i) => a[i - 1] === '-c');
+    const cat = path.join(xinDir, 'codex-models.json');
+    for (const want of ['model_provider="xin-gateway"', 'model_providers.xin-gateway.base_url="http://127.0.0.1:8788/v1"', 'model_providers.xin-gateway.wire_api="responses"',
+      'model_providers.xin-gateway.env_key="XIN_CODEX_KEY"', 'model="glm-5.3-flash"', 'model_context_window=1000000', 'model_catalog_json=' + JSON.stringify(cat)])
+      assert.ok(cs.includes(want), want + ' 不在 ' + JSON.stringify(cs));
+    assert.deepStrictEqual(CODEX_MODELS.map(m => m.id), ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']);
+    const list = JSON.parse(fs.readFileSync(cat, 'utf8')).models;
+    assert.deepStrictEqual(list.map(m => m.slug), ['gpt-5.5', 'deepseek-v4.1-flash', 'glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']);
+    const g = list[2];
+    assert.deepStrictEqual([g.display_name, g.context_window, g.max_context_window, g.input_modalities, g.model_messages], ['GLM-5.3 Flash', 1000000, 1000000, ['text'], { instructions_template: 'T' }]);
+    assert.deepStrictEqual([list[3].display_name, list[3].input_modalities, list[4].display_name, list[4].input_modalities], ['GLM-5.3', ['text', 'image'], 'Kimi K3.1 Pro', ['text', 'image']]);
+    // 换模型：能看图的用 -i；不认识的当默认
+    const [, k] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '看图', '', { model: 'kimi-k3.1-pro', images: ['/x/a.png'] });
+    assert.ok(k.includes('model="kimi-k3.1-pro"') && !k.includes('model="glm-5.3-flash"'));
+    assert.deepStrictEqual(k.slice(0, 4), ['exec', 'resume', '-i', '/x/a.png']);
+    const [, f] = agentArgs('codex', { started: false }, '看图', '', { model: 'gpt-9', images: ['/x/a.png'] });
+    assert.ok(f.includes('model="glm-5.3-flash"') && !f.includes('-i'));
+    // 续接也带
+    const [, b] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '再说', '');
+    assert.ok(b.includes('model="glm-5.3-flash"') && b.slice(-2).join() === 'th-1,再说');
+    assert.deepStrictEqual(codexKeyEnv(), { XIN_CODEX_KEY: 'hk' });
+    fs.writeFileSync(path.join(xinDir, 'codex.key'), 'ck\n');
+    assert.deepStrictEqual(codexKeyEnv(), { XIN_CODEX_KEY: 'ck' });
+    // 配置里没写模型资料：不加 model_catalog_json，别的照带
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "x"\n');
+    fs.rmSync(cat);
+    const [, c] = agentArgs('codex', { started: false }, '你好', '');
+    assert.ok(c.includes('model="glm-5.3-flash"') && !c.some(x => x.startsWith('model_catalog_json')));
+  } finally { [process.env.XIN_HOME, process.env.CODEX_HOME] = saved; }
+});
+
+test('发文件：send 带 files（只认上传目录里的普通文件）；消息里列出路径（Codex 现在的模型看不了图，不用 -i）；只发文件不说话也行', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-files-send-'));
   const bin = path.join(tmp, 'bin'), log = path.join(tmp, 'args.log');
   fs.mkdirSync(bin);
@@ -726,9 +777,93 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   assert.deepStrictEqual(user.files, [{ name: '板子.jpg', path: img, size: 3, image: true }, { name: '说明.pdf', path: pdf, size: 3, image: false }]);
   assert.strictEqual(user.text, '');
   const args = fs.readFileSync(log, 'utf8').split('\n');
-  assert.deepStrictEqual(args.slice(0, 3), ['exec', '-i', img]);
+  assert.deepStrictEqual(args.slice(0, 2), ['exec', '--json']);
+  assert.ok(!args.includes('-i'));
+  assert.ok(args.includes('model_reasoning_effort="high"'));   // 没选思考强度：明确带默认 high
   const prompt = args.join('\n');
-  assert.ok(prompt.includes('看看我发的文件。') && prompt.includes('【用户发来的文件（已经在你电脑上）】') && prompt.includes(pdf + '（说明.pdf，3 B）') && prompt.includes('图片已经直接给你看了'), prompt.slice(-400));
+  assert.ok(prompt.includes('看看我发的文件。') && prompt.includes('【用户发来的文件（已经在你电脑上）】') && prompt.includes(img + '（板子.jpg，图片，3 B）') && prompt.includes(pdf + '（说明.pdf，3 B）') && prompt.includes('看不了图片'), prompt.slice(-400));
+  // 换成能看图的模型接着聊：这一轮用它，图片用 -i，对话上记下模型
+  const r2 = op('send', { sid: r.sid, model: 'glm-5.3', effort: 'max', text: '这张呢', files: [{ path: img, name: '板子.jpg' }] });
+  assert.ok(r2.run, JSON.stringify(r2));
+  for (let i = 0; i < 60; i++) { p = op('poll', { run: r2.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  const args2 = fs.readFileSync(log, 'utf8').split('\n');
+  assert.deepStrictEqual(args2.slice(0, 4), ['exec', 'resume', '-i', img]);
+  assert.ok(args2.includes('model="glm-5.3"') && args2.includes('model_reasoning_effort="max"') && args2.join('\n').includes('图片已经直接给你看了'));
+  assert.strictEqual(op('sessions').sessions.find(x => x.sid === r.sid).model, 'glm-5.3');
+});
+
+test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权限、网关 key 用环境变量；事件整理、会话号、接着聊（--session-id）、用量；删对话连它的会话一起删', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-harness-'));
+  const dshHome = path.join(tmp, 'dsh'), log = path.join(tmp, 'calls.log'), dsh = path.join(tmp, 'dsh-bin');
+  const SID = 'session-1de23629-51a4-47e9-8626-be15439b8b66';
+  // 假的 dsh：记下参数和环境，建一个会话目录，按真 dsh 的格式吐事件
+  fs.writeFileSync(dsh, '#!/bin/sh\n{ printf "ARGS"; for a in "$@"; do printf " [%s]" "$a"; done; echo; echo "KEY=$XIN_HARNESS_KEY MODE=$DSH_PERMISSION_MODE"; } >> "' + log + '"\n' +
+    'mkdir -p "$XIN_DSH_HOME/sessions/--w--/' + SID + '" "$XIN_DSH_HOME/storages/session_projcache/sessions"; echo x > "$XIN_DSH_HOME/sessions/--w--/' + SID + '/session.v4.jsonl.zstd"; echo {} > "$XIN_DSH_HOME/storages/session_projcache/sessions/' + SID + '.json"\n' +
+    'echo \'{"type":"session","sessionId":"' + SID + '","cwd":"/w"}\'\n' +
+    'echo \'{"type":"status","phase":"turn_start","turn":1}\'\n' +
+    'echo \'{"type":"thinking","text":"想一想"}\'\n' +
+    'echo \'{"type":"tool_call","callId":"c1","tool":"bash","input":{"command":"ls /w","description":"看看"}}\'\n' +
+    'printf \'%s\\n\' \'{"type":"tool_result","callId":"c1","status":"completed","result":"a\\nb\\n"}\'\n' +
+    'echo \'{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":5000,"outputTokens":20,"totalTokens":5020}}\'\n' +
+    'echo \'{"type":"text","text":"有 a 和 b"}\'\n' +
+    'echo \'{"type":"status","phase":"step_end","turn":1,"step":2,"usage":{"inputTokens":6000,"outputTokens":30,"totalTokens":6030}}\'\n' +
+    'echo \'{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}\'\n' +
+    'echo \'{"type":"final","text":"有 a 和 b"}\'\n', { mode: 0o755 });
+  const { xin, op } = agentEnv({ XIN_DSH: dsh, XIN_DSH_HOME: dshHome });
+  fs.mkdirSync(xin, { recursive: true });
+  fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
+  assert.ok(op('ping').agents.includes('harness'));
+  const poll = async run => { let p; for (let i = 0; i < 60; i++) { p = op('poll', { run, off: 0 }); if (p.done) return p; await new Promise(ok => setTimeout(ok, 150)); } return p; };
+  const r = op('send', { text: '-看看目录', effort: 'off' });   // 没指定 AI：默认 Harness；思考强度「关」
+  assert.strictEqual(r.agent, 'harness');
+  const p = await poll(r.run);
+  assert.deepStrictEqual(p.events.map(e => e.t), ['user', 'tool', 'tool_end', 'text', 'done'], JSON.stringify(p.events));
+  assert.deepStrictEqual([p.events[1].name, p.events[1].detail, p.events[2].ok, p.events[2].out], ['Bash', 'ls /w', true, 'a\nb\n']);
+  const done = p.events[4];
+  assert.ok(done.ok);
+  assert.deepStrictEqual(done.usage, { ctx: 6030, win: 258400, input: 11000, output: 50, total: 11050 });
+  const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
+  assert.match(calls[0], /^ARGS \[--profile\] \[headless\] \[--patch\] \[[^\]]+harness-persona\.off\.yml\] \[--json\] \[ -看看目录/);
+  assert.ok(calls.includes('KEY=gw-key-123 MODE=danger-full-access'), calls.join('\n').slice(-300));
+  const persona = fs.readFileSync(path.join(xin, 'harness-persona.off.yml'), 'utf8');
+  // 思考强度：档位对照表（关 = none）+ 这一轮用的档
+  assert.ok(persona.includes('            reasoningEfforts:\n              off: none\n              low: low\n              high: high\n              max: max\n') && persona.includes('    reasoningEffort: off\n'), persona.slice(0, 900));
+  assert.ok(persona.includes('- id: system-prompt') && persona.includes('personaPrefix: "你就是小芯'));
+  // 线路也在这个补丁里：不靠 ~/.dsh 里的配置
+  assert.ok(persona.includes('- id: llm-pi-ai') && persona.includes('apiKeyEnv: XIN_HARNESS_KEY') && persona.includes('baseURL: "http://127.0.0.1:8788/v1"') &&
+    persona.includes('- id: agent-default-model') && persona.includes('provider: xin-gateway') && persona.includes('model: "deepseek-v4.1-flash"'), persona.slice(0, 600));
+  const sess = JSON.parse(fs.readFileSync(path.join(xin, 'sessions', r.sid + '.json'), 'utf8'));
+  assert.deepStrictEqual([sess.agentSid, sess.started], [SID, true]);
+  // 接着聊：--session-id；用量累加
+  const r2 = op('send', { sid: r.sid, text: '再说一句', effort: 'xhigh' });   // 不支持的档：用默认 high
+  const p2 = await poll(r2.run);
+  assert.match(fs.readFileSync(log, 'utf8').trim().split('\n').filter(l => l.startsWith('ARGS')).pop(), /harness-persona\.high\.yml/);
+  assert.ok(fs.readFileSync(path.join(xin, 'harness-persona.high.yml'), 'utf8').includes('    reasoningEffort: high\n'));
+  assert.strictEqual(fs.readFileSync(log, 'utf8').split('[--session-id] [' + SID + ']').length, 2);   // 第二句才带
+  assert.deepStrictEqual(p2.events.pop().usage, { ctx: 6030, win: 258400, input: 22000, output: 100, total: 22100 });
+  assert.deepStrictEqual(op('history', { sid: r.sid }).usage.total, 22100);
+  // 清旧记录：Harness 的会话号不算坏文件；对话还在，不删
+  assert.deepStrictEqual(op('prune'), { codex: 0, claude: 0, harness: 0, bytes: 0 });
+  // 删对话：连 Harness 的会话目录和缓存一起删
+  assert.ok(op('forget', { sid: r.sid }).ok);
+  assert.ok(!fs.existsSync(path.join(dshHome, 'sessions', '--w--', SID)));
+  assert.ok(!fs.existsSync(path.join(dshHome, 'storages', 'session_projcache', 'sessions', SID + '.json')));
+});
+
+test('Harness 事件整理：出错、没做完都说清楚；会话号格式不对不拿去拼路径', async () => {
+  const { fromHarness } = await load('../site/xin/vm-agent.mjs');
+  const st = {};
+  assert.deepStrictEqual(fromHarness({ type: 'error', message: 'MISSING_CREDENTIAL' }, st), [{ t: 'err', text: 'MISSING_CREDENTIAL' }]);
+  assert.ok(st.failed);
+  const st2 = {};
+  assert.deepStrictEqual(fromHarness({ type: 'status', phase: 'turn_end', reason: { kind: 'aborted' } }, st2), [{ t: 'err', text: '这一轮没做完（aborted）' }]);
+  assert.deepStrictEqual(fromHarness({ type: 'final', text: 'x' }, {}), []);
+  assert.deepStrictEqual(fromHarness({ type: 'thinking', text: 'x' }, {}), []);
+  const { xin, op } = agentEnv();
+  fs.mkdirSync(path.join(xin, 'sessions'), { recursive: true });
+  fs.writeFileSync(path.join(xin, 'sessions', 'sh00000001.json'), JSON.stringify({ sid: 'sh00000001', agent: 'harness', title: 'x', agentSid: '../../x', started: true, runs: [], created: 1, updated: 1 }));
+  assert.strictEqual(op('prune').skipped, 'bad_session_file');
+  assert.strictEqual(op('history', { sid: 'sh00000001' }).usage, null);
 });
 
 test('归档：只是收起来（记录、AI 的会话记录都留着），能取消；对话列表带 archived，归档的排在后面', () => {
@@ -809,7 +944,7 @@ test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对�
 
   assert.ok(op('forget', { sid: 'sc00000001' }).ok);
   assert.deepStrictEqual(exists([fC, path.join(clDir, id(6))]), [false, false]);
-  assert.deepStrictEqual(op('prune'), { codex: 0, claude: 0, bytes: 0 });
+  assert.deepStrictEqual(op('prune'), { codex: 0, claude: 0, harness: 0, bytes: 0 });
 
   // 有一个对话文件读不出来：整个不清，宁可留着
   fs.utimesSync(fNew, old, old);
@@ -821,7 +956,7 @@ test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对�
   // codex 删不掉（版本老、没这个命令）：直接删文件
   fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const size = fs.statSync(fNew).size;
-  assert.deepStrictEqual(op('prune'), { codex: 1, claude: 0, bytes: size });
+  assert.deepStrictEqual(op('prune'), { codex: 1, claude: 0, harness: 0, bytes: size });
   assert.deepStrictEqual(exists([fB, fNew, fMine, cMine]), [true, false, true, true]);
   // 对话的会话号不像样（被改坏了）：不拿它去拼路径
   fs.writeFileSync(path.join(sess, 'sd00000001.json'), JSON.stringify({ sid: 'sd00000001', agent: 'codex', title: 'x', agentSid: '../../etc/passwd', runs: [], created: 1, updated: 1 }));
