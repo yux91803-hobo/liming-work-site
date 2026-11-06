@@ -1645,7 +1645,7 @@ async def main():
         dr = await pf.evaluate("""(() => { const d = document.querySelector('.xc-drawer').getBoundingClientRect(), p = document.querySelector('.xc').getBoundingClientRect();
           return [document.querySelector('.xc').classList.contains('dr-open'), Math.round(d.left - p.left), d.width < p.width, !!document.querySelector('.xc-dr .xc-dr-new'), document.querySelector('.xc-set').hidden,
             getComputedStyle(document.querySelector('.xc-scrim')).opacity, document.querySelector('.xc-list-b').getAttribute('aria-expanded'), !document.querySelector('.xc-body').hidden]; })()""")
-        check('☰ 拉开侧边栏：从面板左边滑出来、比面板窄，后面一层遮罩，聊天还在下面；上面「新对话」，三个入口：记事本、每日任务、小芯的文件；设置收着', tiles == ['小芯的记事本', '每日任务', '小芯的文件'] and 0 <= dr[1] <= 2 and dr[:1] + dr[2:] == [True, True, True, True, '1', 'true', True], (tiles, dr))   # 宽屏面板左边有 2px 边框，侧边栏贴着它
+        check('☰ 拉开侧边栏：从面板左边滑出来、比面板窄，后面一层遮罩，聊天还在下面；上面「新对话」，四个入口：记事本、每日任务、后台任务、小芯的文件；设置收着', tiles == ['小芯的记事本', '每日任务', '后台任务', '小芯的文件'] and 0 <= dr[1] <= 2 and dr[:1] + dr[2:] == [True, True, True, True, '1', 'true', True], (tiles, dr))   # 宽屏面板左边有 2px 边框，侧边栏贴着它
         await pf.click('.xc-sli:nth-child(1) .xc-si-more'); await pf.wait_for_selector('.xc-sa input')
         await pf.fill('.xc-sa input', '点灯程序'); await pf.click('.xc-sa-b:has-text("改名")'); await pf.wait_for_timeout(300)
         t = await pf.text_content('.xc-sli:nth-child(1) .xc-si-t')
