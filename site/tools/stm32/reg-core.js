@@ -73,12 +73,12 @@
   }
 
   function create(DATA) {
-    var GROUPS = [], GBY = {}, REG = {}, GOF = {}, BYNAME = {}, PRE = {};
+    var GROUPS = [], GBY = Object.create(null), REG = Object.create(null), GOF = Object.create(null), BYNAME = Object.create(null), PRE = Object.create(null);
     (DATA && Array.isArray(DATA.groups) ? DATA.groups : []).forEach(function (g) { if (g && typeof g.id === 'string' && Array.isArray(g.regs)) GBY[g.id] = g; });
     ORDER.forEach(function (id) { if (GBY[id]) GROUPS.push(GBY[id]); });
     Object.keys(GBY).forEach(function (id) { if (GROUPS.indexOf(GBY[id]) < 0) GROUPS.push(GBY[id]); });
     GROUPS.forEach(function (g) {
-      BYNAME[g.id] = {};
+      BYNAME[g.id] = Object.create(null);
       g.regs = g.regs.filter(function (r) { return r && typeof r.id === 'string' && Array.isArray(r.fields); });
       g.regs.forEach(function (r) { REG[r.id] = r; GOF[r.id] = g; BYNAME[g.id][r.name] = r; });
     });
@@ -376,9 +376,14 @@
     }
     function i2cCcr(pclkMHz, sclKHz, duty) {
       var f = Number(pclkMHz) * 1e6, s = Number(sclKHz) * 1e3;
-      if (!(f > 0 && s > 0)) return null;
-      var fast = s > 100e3, k = fast ? (duty ? 25 : 3) : 2, ccr = Math.round(f / (k * s));
-      return { fast: fast, duty: fast ? (duty ? 1 : 0) : 0, k: k, ccr: ccr, ok: ccr >= (fast ? 1 : 4) && ccr <= 4095 };
+      if (!(isFinite(f) && isFinite(s) && f > 0 && s > 0)) return null;
+      var fast = s > 100e3, k = fast ? (duty ? 25 : 3) : 2, min = fast ? 1 : 4;
+      // CCR 向上取整，确保实际 SCL 不超过目标频率；标准模式最小为 4。
+      var ccr = Math.max(min, Math.ceil(f / (k * s))), err = '';
+      if (f < (fast ? 4e6 : 2e6) || f > 36e6) err = 'PCLK1 应为 ' + (fast ? '4' : '2') + '～36 MHz';
+      else if (s > 400e3) err = 'STM32F103 的 I²C 最高支持 400 kHz';
+      else if (ccr > 4095) err = 'CCR 超出范围（最大 4095）';
+      return { fast: fast, duty: fast ? (duty ? 1 : 0) : 0, k: k, ccr: ccr, real: f / (k * ccr) / 1e3, ok: !err, err: err };
     }
 
     // 数据自检：常用配置里写死的 hex 与按规则算出的值不一致时列出来（以计算值为准）
@@ -399,7 +404,7 @@
     return {
       meta: DATA && DATA.meta || {}, groups: GROUPS, group: function (id) { return GBY[id] || null; },
       reg: function (id) { return REG[id] || null; }, groupOf: function (r) { return r ? GOF[r.id] : null; },
-      byName: function (gid, name) { return (BYNAME[gid] || {})[name] || null; },
+      byName: function (gid, name) { return BYNAME[gid] && BYNAME[gid][name] || null; },
       P: P, isRep: isRep, naOnly: naOnly, naWhy: naWhy, writable: writable,
       instList: instList, defInst: defInst, findInst: findInst, nRange: nRange, member: member, addrOf: addrOf, regExpr: regExpr,
       initVal: initVal, encode: encode, quickVal: quickVal, condTrue: condTrue, altOn: altOn, layout: layout, info: info, meaning: meaning,

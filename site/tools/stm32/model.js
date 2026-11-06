@@ -44,7 +44,7 @@
     o.af.forEach(add); o.rm.forEach(function (x) { add(x.sig); });
     return o;
   });
-  var pinByN = {}, pinByName = {};
+  var pinByN = Object.create(null), pinByName = Object.create(null);
   pins.forEach(function (p) { pinByN[p.n] = p; pinByName[p.name.toUpperCase()] = p; });
   board.forEach(function (r) { r.pins.forEach(function (n) { if (pinByN[n]) pinByN[n].board.push(r); }); });
   var TYPE_NAME = { I: 'I/O', P: '电源', G: '地', S: '系统', N: '空脚' };
@@ -58,7 +58,7 @@
 
   /* ---------- 图 ---------- */
   function figOk(f) { return f && f.id && (f.src || f.fallback || f.hd); }
-  var figs = [], figById = {};
+  var figs = [], figById = Object.create(null);
   (Array.isArray(W.STM32_MANUAL_FIGS) ? W.STM32_MANUAL_FIGS : []).filter(figOk).forEach(function (f) {
     var o = { id: String(f.id), kind: 'manual', title: String(f.title || f.id), label: f.label ? String(f.label) : '', group: f.group || '其他',
       page: f.page != null ? f.page : null, cands: [asset(f.src), asset(f.fallback), asset(f.hd)].filter(Boolean), w: Number(f.width) || 0, h: Number(f.height) || 0, thumb: asset(f.src) };
@@ -75,7 +75,7 @@
   var sch = (Array.isArray(ASSETS.schematic) ? ASSETS.schematic : []).filter(function (s) { return s && s.src; }).map(function (s) {
     return { id: pageId(s.src), title: String(s.title || pageId(s.src)), group: String(s.group || ''), cands: [asset(s.src), asset(s.fallback)].filter(Boolean), w: Number(s.width) || 0, h: Number(s.height) || 0 };
   });
-  var schById = {}; sch.forEach(function (s) { schById[s.id] = s; });
+  var schById = Object.create(null); sch.forEach(function (s) { schById[s.id] = s; });
   var schGroups = []; sch.forEach(function (s) { if (schGroups.indexOf(s.group) < 0) schGroups.push(s.group); });
   var photo = asset(ASSETS.board);
 
@@ -103,7 +103,7 @@
     }
     return { id: String(pt.id), short: short, title: t, n: n, pages: pt.pages.map(function (p) { return cwSafe(p && p.src); }), chs: chs, at: titles };
   });
-  var partById = {}, chapterById = {};
+  var partById = Object.create(null), chapterById = Object.create(null);
   course.forEach(function (pt) { partById[pt.id] = pt; pt.chs.forEach(function (x) { if (x.id) chapterById[x.id] = x; }); });
 
   /* ---------- 勘误：册 → 页（从 1 起）→ 条目，按严重程度排序 ---------- */
@@ -159,7 +159,7 @@
     t.figs = (d.figs || []).concat(d.teach || []).map(function (id) { return figById[id]; }).filter(Boolean);
     return t;
   });
-  var topicById = {}; topics.forEach(function (t) { topicById[t.id] = t; });
+  var topicById = Object.create(null); topics.forEach(function (t) { topicById[t.id] = t; });
   /* 每个代码片段只归一个外设。原来靠课件章节判断归属，课件删掉后固定在这张表里；
      表里没有的再按寄存器组的关联（NVIC 组也挂着串口中断片段，靠关联会落到 EXTI，所以要写表） */
   var SNIP_OWNER = {

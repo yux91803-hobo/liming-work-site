@@ -65,6 +65,17 @@
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   function debounce(fn, ms) { var t = 0; return function () { var a = arguments, s = this; clearTimeout(t); t = setTimeout(function () { fn.apply(s, a); }, ms); }; }
 
+  // 搜索、寄存器、看图可以叠开；只有最上层可操作，最后一层关闭才恢复页面滚动。
+  var modals = [];
+  function modal(node, on) {
+    var i = modals.indexOf(node);
+    if (i >= 0) modals.splice(i, 1);
+    if (on) modals.push(node); else node.inert = true;
+    modals.forEach(function (n, j) { n.inert = j !== modals.length - 1; });
+    var app = document.getElementById('app'); if (app) app.inert = !!modals.length;
+    document.documentElement.classList.toggle('modal', !!modals.length);
+  }
+
   var toastT = 0;
   function toast(msg) {
     var t = document.getElementById('toast');
@@ -453,6 +464,6 @@
 
   STM.ui = {
     el: el, sv: sv, clear: clear, btn: btn, icon: icon, reduced: reduced, lsGet: lsGet, lsSet: lsSet, debounce: debounce,
-    toast: toast, hlC: hlC, plainCode: plainCode, copyText: copyText, copyBtn: copyBtn, codeBlock: codeBlock, Zoomer: Zoomer
+    toast: toast, hlC: hlC, plainCode: plainCode, copyText: copyText, copyBtn: copyBtn, codeBlock: codeBlock, Zoomer: Zoomer, modal: modal
   };
 })();

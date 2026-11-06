@@ -95,19 +95,15 @@
   function show() {
     open = true; lastFocus = document.activeElement;
     document.getElementById('layers').appendChild(root);
-    document.getElementById('app').inert = true;
-    var sh = document.querySelector('.sheet'); if (sh) sh.inert = true;
-    document.documentElement.classList.add('modal');
+    ui.modal(root, true);
     ui.clear(content); token++;
-    requestAnimationFrame(function () { root.classList.add('on'); try { root.querySelector('.vw-x').focus({ preventScroll: true }); } catch (e) {} });
+    requestAnimationFrame(function () { if (!open) return; root.classList.add('on'); try { root.querySelector('.vw-x').focus({ preventScroll: true }); } catch (e) {} });
   }
   function close() {
     open = false; token++;
     Object.keys(pool).forEach(function (k) { var im = pool[k]; im.onload = im.onerror = null; if (!im.complete) im.removeAttribute('src'); delete pool[k]; });
     root.classList.remove('on');
-    var sh = document.querySelector('.sheet');
-    if (sh) sh.inert = false; else document.getElementById('app').inert = false;
-    if (!sh) document.documentElement.classList.remove('modal');
+    ui.modal(root, false);
     var r = root; setTimeout(function () { if (!open) { r.remove(); ui.clear(content); zoom.clear(); } }, ui.reduced() ? 0 : 220);
     var back = lastFocus; lastFocus = null;
     if (back && back.isConnected) try { back.focus({ preventScroll: true }); } catch (e) {}

@@ -534,6 +534,6 @@
     });
     return d;
   }
-  var byId = {}; MODULES.forEach(function (m) { byId[m.id] = m; });
+  var byId = Object.create(null); MODULES.forEach(function (m) { byId[m.id] = m; });
   STM.modules = { list: MODULES, byId: byId, draw: draw };
 })();
