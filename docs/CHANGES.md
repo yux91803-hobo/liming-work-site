@@ -1,3 +1,11 @@
+# 修改清单 · 2026-11-06（Harness 的线路也由网站每一轮带过去）
+
+- 用户问重装 Harness 会怎样：以前线路（本地网关、deepseek-v4.1-flash、key 的环境变量名）只写在 `~/.dsh/profiles/headless/cordis.patch.yml`，重装清掉 `~/.dsh` 小芯就连不上模型。
+- 现在线路和小芯的设定一起写进网站每一轮带过去的 `--patch` 文件（`~/.xin/harness-persona.yml`：`llm-pi-ai` 的 `xin-gateway` 线路 + `agent-default-model` + `system-prompt`），预热也带；`~/.dsh` 里那份留着不碍事。Harness 重装、升级都不影响小芯，只是 Harness 自己的旧会话接不上。
+- 在小芯电脑上实测过：只靠 `--patch` 里的新线路名就能正常回话。
+- Codex 的 key：`~/.codex/config.toml` 和 8 个旧备份里的 `experimental_bearer_token` 行都抹掉了（备份文件本身保留）。
+- 测试：单元测试检查补丁里有线路和默认模型。
+
 # 修改清单 · 2026-11-06（接入 DeepSeek Harness：新对话默认用「Harness」）
 
 - 用户在小芯电脑上装了 DeepSeek Harness（命令 `dsh`），要像 Codex 一样能切换着用，名字叫 Harness，固定用 DeepSeek V4.1 Flash，用 Codex 里那个 key，并把 Codex 里的 key 删掉；目前小芯只用 Harness。

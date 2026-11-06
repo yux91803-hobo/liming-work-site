@@ -769,6 +769,9 @@ test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权�
   assert.ok(calls.includes('KEY=gw-key-123 MODE=danger-full-access'), calls.join('\n').slice(-300));
   const persona = fs.readFileSync(path.join(xin, 'harness-persona.yml'), 'utf8');
   assert.ok(persona.includes('- id: system-prompt') && persona.includes('personaPrefix: "你就是小芯'));
+  // 线路也在这个补丁里：不靠 ~/.dsh 里的配置
+  assert.ok(persona.includes('- id: llm-pi-ai') && persona.includes('apiKeyEnv: XIN_HARNESS_KEY') && persona.includes('baseURL: "http://127.0.0.1:8788/v1"') &&
+    persona.includes('- id: agent-default-model') && persona.includes('provider: xin-gateway') && persona.includes('model: "deepseek-v4.1-flash"'), persona.slice(0, 600));
   const sess = JSON.parse(fs.readFileSync(path.join(xin, 'sessions', r.sid + '.json'), 'utf8'));
   assert.deepStrictEqual([sess.agentSid, sess.started], [SID, true]);
   // 接着聊：--session-id；用量累加
