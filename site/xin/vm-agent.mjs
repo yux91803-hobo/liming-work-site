@@ -197,7 +197,9 @@ export const TASK_GUIDE = () => [
   '类型（--kind）：quick 简单杂活、code 写代码 / 编译 / 调试、research 查资料读文档、hard 难题（方案设计、疑难 bug）、vision 看图、review 检查别的任务的结果。不写 --model 就按类型自动挑；用户点名要哪个模型就照写 --model（glm-5.3-flash 快但看不了图、glm-5.3、kimi-k3.1-pro、deepseek-v4.1-flash）。用户发来的图片要分身看，就用 --file 带上图片路径。',
   '项目目录（--dir）：改已有的项目写它的完整路径（比如 ' + WORK + '/blink），新项目写一个新文件夹（' + WORK + '/英文名）；不写就给分身一个临时文件夹。同一个目录同时只有一个分身在改，别的排队；最多同时 ' + TASK_MAX + ' 个分身，多的也排队。分身在沙盒里，只能改它自己的目录，也用不了插件（MCP）：要用插件（比如 REA 逆向）、要操作电脑桌面的活，你自己在前台做。',
   '`xin task list` 看这个对话的任务，`xin task show 编号` 看进度、结果和最近执行的命令，`xin task tell 编号 补充的话` 给它补充要求（在做的这一步做完就照办；做完了、停了的会接着做；在等确认的就是回复它），`xin task stop 编号` 停掉。用户问「做得怎么样了」就用这些查，别瞎猜。',
-  '分身做完，结果会自动出现在聊天里（用户看得到），你下一句会收到【后台任务的最新情况】；用户问起就照着说，别重复整段结果。分身在「等你确认」的，把它的问题问用户，用户回复了用 xin task tell 转给它。'
+  '分身做完，结果会自动出现在聊天里（用户看得到），你下一句会收到【后台任务的最新情况】；用户问起就照着说，别重复整段结果。分身在「等你确认」的，把它的问题问用户，用户回复了用 xin task tell 转给它。',
+  '复杂的活可以拆开、让分身们配合：几件互不相干的事分别派（同时最多 ' + TASK_MAX + ' 个，多的排队）；后一步要用前一步的结果，就给后一个加 --after 前一个的编号（前一个做完才开始，结果会交给它；前一个没做成它就不开始）；要烧到板子上的程序、改动大的代码，或者用户说「检查一遍」「让别的分身看看」，派的时候就加 --review，做完会自动再派一个分身用另一个模型检查一遍（也可以自己派 --kind review --after 编号）——别自己先做完再派分身检查。拆得别太碎，一般两三个就够；简单的活别拆、也别检查。',
+  '分身的结果里建议了下一步（比如「还要接上串口打印」），你看情况接着派，或者问用户要不要做。'
 ];
 // 后台分身的设定：小芯的设定 + 「你现在在后台干活」
 export function taskSystemPrompt(t) {
@@ -1471,7 +1473,8 @@ function taskFirstText(t, deps) {
   for (const d of deps) {
     parts.push('\n【任务 ' + d.no + '「' + d.title + '」的结果（' + (TASK_STATUS[d.status] || d.status) + '，它的工作目录 ' + d.dir + '）】\n' + cut(d.result ? d.result.text : '', 6000));
   }
-  if (t.tkind === 'review' && deps.length) parts.push('\n你的活是检查上面这些结果：去它的工作目录里看实际的文件、能编译的编译一遍、能跑的跑一遍，看对不对、有没有漏。小问题直接改好并说明改了什么；大问题写清楚，别大改。');
+  if (t.tkind === 'review' && deps.length) parts.push('\n你的活是检查上面这些结果：去它的工作目录里看实际的文件、能编译的编译一遍、能跑的跑一遍，看对不对、有没有漏。小问题直接改好并说明改了什么；大问题写清楚，别大改。' +
+    '要求里的说法本身也可能有错，以芯片参考手册、数据手册为准。STM32 的程序重点核对：时钟是不是真的配到了代码假设的频率；引脚用的复用功能、要不要重映射（AFIO_MAPR，对照数据手册的引脚复用表）；外设和 GPIO 的时钟开没开；中断向量、优先级和标志清除。');
   const f = filesPart(t.files || [], 'codex', codexModel(t.model).image);
   return forAgent(parts.join('\n'), '') + f;
 }
@@ -1923,7 +1926,14 @@ const ops = {
     // 最近 10 分钟结束的（哪个对话的都算）：网页据此知道别的对话里的任务做完了，让小芯冒个气泡
     const recent = all.filter(t => isFinished(t) && (t.endedAt || 0) > Date.now() - 600e3 && !mine.includes(t));
     const out = Object.assign({ tasks: mine.map(t => taskSummary(t)), active: active.map(t => taskSummary(t)), recent: recent.map(t => taskSummary(t)) }, bgInfo(all));
-    if (a.all) out.stats = modelStats();
+    if (a.all) {
+      // 任务中心：各模型最近 14 天用得怎么样、每个任务是哪个对话派的、每日任务做得怎么样
+      out.stats = modelStats();
+      const titles = {};
+      for (const t of mine) if (t.parent && !(t.parent in titles)) titles[t.parent] = (readJ(sessF(t.parent)) || {}).title || '';
+      out.titles = titles;
+      out.daily = { last: readJ(DAILY_LAST()) || null, done: readJ(DAILY_DONE()) || null, today: today() };
+    }
     return out;
   },
   task_stop(a) { return lockedCall('tasks', 'task_stop', { sid: a.sid, no: a.no }); },
@@ -1956,6 +1966,7 @@ export function parseTaskArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i];
     if (x === '--') { rest.push(...argv.slice(i + 1)); break; }
+    if (x === '--review' || x === '-r') { o.review = true; continue; }   // 做完再派一个分身换模型检查
     const m = /^(?:--([a-z]+)|-([a-z]))(?:=(.*))?$/.exec(x);
     if (!m || !(m[1] || alias[m[2]])) { rest.push(x); continue; }
     const k = m[1] || alias[m[2]], v = m[3] !== undefined ? m[3] : argv[++i];
@@ -1970,7 +1981,8 @@ export function parseTaskArgs(argv) {
 }
 const TASK_HELP = [
   '用法：',
-  "  xin task new --kind code --title 标题 [--model 模型] [--dir 项目目录] [--file 文件] [--after 编号] -- 详细要求",
+  "  xin task new --kind code --title 标题 [--model 模型] [--dir 项目目录] [--file 文件] [--after 编号] [--review] -- 详细要求",
+  '    --after 编号：等那个任务做完再开始（它的结果会交给这个任务）；--review：做完再派一个分身用另一个模型检查一遍',
   "  xin task new --kind code --title 标题 <<'EOF'",
   '  详细要求（写清楚做什么、做到什么程度算完、东西放哪）',
   '  EOF',
@@ -2006,8 +2018,18 @@ function taskCmd(argv) {
     if (r.error) { console.log(r.msg || r.error); return 1; }
     const t = r.task;
     emit(run, { t: 'task', sid: t.sid, no: t.no, title: t.title, kind: t.kind, model: t.model, why: t.why, status: t.status, after: t.after, at: Date.now() });
-    console.log('派出去了：任务 ' + t.no + '「' + t.title + '」（' + KIND_NAMES[t.kind] + '，' + codexModel(t.model).name + '，' + TASK_STATUS[t.status] + '，工作目录 ' + t.dir + '）。' +
-      (t.note ? t.note + '。' : '') + '它在后台做，做完结果会自动出现在聊天里；你不用等，回用户一句就结束这一轮。');
+    let out = '派出去了：任务 ' + t.no + '「' + t.title + '」（' + KIND_NAMES[t.kind] + '，' + codexModel(t.model).name + '，' + TASK_STATUS[t.status] + '，工作目录 ' + t.dir + '）。' + (t.note ? t.note + '。' : '');
+    // --review：再派一个检查任务，等它做完、换个模型、在同一个目录里检查
+    if (o.review && t.kind !== 'review') {
+      const rv = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: 'review', title: ('检查：' + t.title).slice(0, 40), after: [t.no], dir: t.dir,
+        goal: '检查任务 ' + t.no + '「' + t.title + '」做出来的东西对不对、有没有漏。原来的要求：\n' + cut(o.goal, 3000) });
+      if (rv.task) {
+        const v = rv.task;
+        emit(run, { t: 'task', sid: v.sid, no: v.no, title: v.title, kind: v.kind, model: v.model, why: v.why, status: v.status, after: v.after, at: Date.now() });
+        out += '检查任务 ' + v.no + '（' + codexModel(v.model).name + '）等它做完就开始。';
+      } else out += '检查任务没派成：' + (rv.msg || rv.error) + '。';
+    }
+    console.log(out + '它在后台做，做完结果会自动出现在聊天里；你不用等，回用户一句就结束这一轮。');
     return 0;
   }
   if (sub === 'ask') {

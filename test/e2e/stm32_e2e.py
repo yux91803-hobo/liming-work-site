@@ -76,6 +76,9 @@ TASK_CARD_JS = """(() => { const c = document.querySelector('.xc-task'); return 
 TASK_RES_JS = """(() => { const r = document.querySelector('.xc-tres'); return [r.querySelector('.xc-tres-h').textContent, r.querySelector('.xc-md').textContent, r.querySelector('.xc-tres-f span').textContent,
   !!r.querySelector('.xc-path'), document.querySelector('.xc-msgs').lastElementChild === r, document.querySelector('.xc-task .xc-task-st').textContent,
   [...document.querySelectorAll('.xc-task .xc-task-btn')].map(b => b.textContent), document.querySelector('.xc-tstrip').hidden] })()"""
+TASK_CENTER_JS = """(() => { const p = document.querySelector('.xc-sess'); return [[...p.querySelectorAll('.xc-set-h')].map(e => e.textContent), [...p.querySelectorAll('.xc-tl-i b')].map(e => e.textContent),
+  [...p.querySelectorAll('.xc-tl-m')].map(e => e.textContent), [...p.querySelectorAll('.xc-tl-from')].map(e => e.textContent), p.querySelector('.xc-dailyst').textContent,
+  [...p.querySelectorAll('.xc-tv-st li')].map(e => e.textContent)] })()"""
 TASK_SHEET_JS = """(() => { const s = document.querySelector('.xc-sheet'); return [s.querySelector('.xc-sh-hd b').textContent, s.querySelector('.xc-tk-meta').textContent, s.querySelector('.xc-tk-dir a').textContent,
   s.querySelector('.xc-tk-ask').textContent, [...s.querySelectorAll('.xc-tk-cmd code')].map(c => c.textContent), s.querySelector('.xc-tk-cmd pre').textContent.includes('app.hex'),
   [...s.querySelectorAll('.xc-tk-say')].map(e => e.textContent), s.querySelector('.xc-tk-in').placeholder, s.querySelector('.xc-tk-act .xc-btn').textContent] })()"""
@@ -169,6 +172,10 @@ async def xin_mock(pg, authed=False, live=None):
         if op == 'tasks':
             ts = st.get('tasks') or []
             live_ = [t for t in ts if t['status'] in ('queued', 'running')]
+            if args.get('all'):
+                return await ok({'ok': True, 'data': {'tasks': ts, 'active': [t for t in ts if t['status'] in ('queued', 'running', 'waiting')], 'recent': [], 'bg': len(live_),
+                                                      'titles': {'snew000001': '编译一下 blink'}, 'daily': {'last': {'date': '2026-11-06', 'run': 'rdaily00001', 'sid': 'shist00001', 'ok': True}, 'done': None, 'today': '2026-11-06'},
+                                                      'stats': [{'agent': 'codex', 'model': 'glm-5.3', 'n': 4, 'ok': 3, 'ms': 0, 'fails': 1, 'fellBack': 1, 'avgMs': 150000}, {'agent': 'harness', 'model': 'deepseek-v4.1-flash', 'n': 2, 'ok': 2, 'ms': 0, 'fails': 0, 'fellBack': 0, 'avgMs': 20000}]}})
             return await ok({'ok': True, 'data': {'tasks': [t for t in ts if t.get('parent') == args.get('sid')], 'active': [t for t in ts if t['status'] in ('queued', 'running', 'waiting')], 'recent': [], 'bg': len(live_)}})
         if op in ('task_stop', 'task_tell'):
             st[op] = args
@@ -1638,7 +1645,7 @@ async def main():
         dr = await pf.evaluate("""(() => { const d = document.querySelector('.xc-drawer').getBoundingClientRect(), p = document.querySelector('.xc').getBoundingClientRect();
           return [document.querySelector('.xc').classList.contains('dr-open'), Math.round(d.left - p.left), d.width < p.width, !!document.querySelector('.xc-dr .xc-dr-new'), document.querySelector('.xc-set').hidden,
             getComputedStyle(document.querySelector('.xc-scrim')).opacity, document.querySelector('.xc-list-b').getAttribute('aria-expanded'), !document.querySelector('.xc-body').hidden]; })()""")
-        check('☰ 拉开侧边栏：从面板左边滑出来、比面板窄，后面一层遮罩，聊天还在下面；上面「新对话」，三个入口：记事本、每日任务、小芯的文件；设置收着', tiles == ['小芯的记事本', '每日任务', '小芯的文件'] and 0 <= dr[1] <= 2 and dr[:1] + dr[2:] == [True, True, True, True, '1', 'true', True], (tiles, dr))   # 宽屏面板左边有 2px 边框，侧边栏贴着它
+        check('☰ 拉开侧边栏：从面板左边滑出来、比面板窄，后面一层遮罩，聊天还在下面；上面「新对话」，四个入口：记事本、每日任务、后台任务、小芯的文件；设置收着', tiles == ['小芯的记事本', '每日任务', '后台任务', '小芯的文件'] and 0 <= dr[1] <= 2 and dr[:1] + dr[2:] == [True, True, True, True, '1', 'true', True], (tiles, dr))   # 宽屏面板左边有 2px 边框，侧边栏贴着它
         await pf.click('.xc-sli:nth-child(1) .xc-si-more'); await pf.wait_for_selector('.xc-sa input')
         await pf.fill('.xc-sa input', '点灯程序'); await pf.click('.xc-sa-b:has-text("改名")'); await pf.wait_for_timeout(300)
         t = await pf.text_content('.xc-sli:nth-child(1) .xc-si-t')
@@ -1903,6 +1910,19 @@ async def main():
         q2 = await pt.evaluate("[...document.querySelectorAll('.xc-me .xc-bub')].map(b => b.textContent).slice(-2)")
         check('小芯在回上一句：输入框有话按钮是「排队发送」，发了先排着（灰色气泡写「排队中」，能 ✕），这一句回完自动发出去',
               q0 == '排队发送' and q1[:3] == [1, '排队中 · 小芯说完这句就发✕', '停止'] and q1[3] == '' and xt['sent'].get('text') == '再顺便看看那个' and q2 == ['先看看这个', '再顺便看看那个'], (q0, q1, xt['sent'], q2))
+        # 任务中心（侧边栏「后台任务」）：所有对话的任务（还没做完的 / 最近的，写着哪个对话派的）、每日任务、各模型最近 14 天
+        T1.update({'status': 'done'})
+        xt['tasks'].append({'sid': 'stask00002', 'no': 2, 'parent': 'snew000001', 'title': '检查：编译 LED', 'kind': 'review', 'model': 'kimi-k3.1-pro', 'why': 'review', 'status': 'queued',
+                            'created': now, 'startedAt': 0, 'endedAt': 0, 'dir': '/data/workspace/blink', 'after': [1], 'turns': 0, 'question': ''})
+        await pt.click('.xc-list-b'); await pt.wait_for_selector('.xc-tasksb')
+        await pt.click('.xc-tasksb'); await pt.wait_for_selector('.xc-sess .xc-tl-i')
+        tc = await pt.evaluate(TASK_CENTER_JS)
+        check('任务中心：侧边栏「后台任务」打开，还没做完的在上（等任务 1 做完 · 检查 · Kimi）、最近的在下，写着在哪个对话派的；每日任务做得怎么样；各模型最近 14 天（用了几次、成了几次、平均多久、换过几次模型）',
+              tc[0] == ['还没做完的', '最近的', '每日任务', '各模型最近 14 天'] and tc[1] == ['任务 2 · 检查：编译 LED', '任务 1 · 编译 LED'] and tc[2][0] == '等任务 1 做完检查 · Kimi K3.1 Pro'
+              and tc[3] == ['在「编译一下 blink」里派的', '在「编译一下 blink」里派的'] and tc[4].startswith('最近一次：11-06 做完了') and tc[5] == ['GLM-5.3用了 4 次，成了 3 次，平均 3 分钟，换过 1 次模型', 'DeepSeek V4.1 Flash（天启）用了 2 次，成了 2 次，平均 20 秒'], tc)
+        await pt.click('.xc-sess .xc-tl-i[data-tsid=stask00001]'); await pt.wait_for_selector('.xc-sheet .xc-tk-log')
+        check('任务中心里点一个任务：打开它的过程', await pt.evaluate("document.querySelector('.xc-sheet .xc-sh-hd b').textContent") == '任务 1 · 编译 LED')
+        await pt.click('.xc-sh-x'); await pt.wait_for_timeout(200)
         await pt.context.close()
         # 「＋」：发图片和文件（选了马上传，传完才能发，发出去的消息里显示缩略图和文件卡片）；开关插件
         pa = await page(b, 390, 844, mobile=True)
