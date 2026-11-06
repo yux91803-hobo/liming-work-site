@@ -61,6 +61,25 @@ XIN_LIVE = [
     [{'t': 'tool_end', 'id': 'item_1', 'ok': True, 'out': 'blink'}, {'t': 'xin', 'act': 'dance', 'arg': ''}, {'t': 'mem', 'text': '用户在做 blink 点灯'}, {'t': 'text', 'text': '里面有一个 blink 目录。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 4000, 'effort': 'max', 'usage': XIN_USE_LIVE, 'model': 'glm-5.3', 'why': 'chat', 'from': 'deepseek-v4.1-flash'}],
 ]
 
+# 后台任务：前台派分身的一轮（卡片），分身那边的过程
+XIN_LIVE_TASK = [
+    [{'t': 'user', 'text': '编译一下 blink，后台做'}, {'t': 'text', 'text': '交给我的分身去弄啦，好了告诉你～'},
+     {'t': 'task', 'sid': 'stask00001', 'no': 1, 'title': '编译 LED', 'kind': 'code', 'model': 'glm-5.3', 'why': 'code', 'status': 'running', 'after': []}],
+    [{'t': 'done', 'ok': True, 'code': 0, 'ms': 6000, 'model': 'deepseek-v4.1-flash', 'why': 'chat'}],
+]
+XIN_TASK_RUN = [{'t': 'user', 'text': '编译 blink 工程'}, {'t': 'text', 'text': '我先看看工程。'},
+                {'t': 'tool_end', 'id': 'c1', 'name': 'Bash', 'detail': "/bin/bash -lc 'make'", 'ok': True, 'out': 'arm-none-eabi-gcc -c main.c\nbuild/app.hex'},
+                {'t': 'text', 'text': '编好了：`/data/workspace/blink/build/app.hex`'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 95000}]
+TASK_CARD_JS = """(() => { const c = document.querySelector('.xc-task'); return [c.querySelector('.xc-task-h b').textContent, c.querySelector('.xc-task-st').textContent, c.querySelector('.xc-task-m').textContent,
+  c.querySelector('.xc-task-a').textContent, [...c.querySelectorAll('.xc-task-btn')].map(b => b.textContent), c.classList.contains('st-running'),
+  !document.querySelector('.xc-tstrip').hidden, document.querySelector('.xc-tstrip').textContent] })()"""
+TASK_RES_JS = """(() => { const r = document.querySelector('.xc-tres'); return [r.querySelector('.xc-tres-h').textContent, r.querySelector('.xc-md').textContent, r.querySelector('.xc-tres-f span').textContent,
+  !!r.querySelector('.xc-path'), document.querySelector('.xc-msgs').lastElementChild === r, document.querySelector('.xc-task .xc-task-st').textContent,
+  [...document.querySelectorAll('.xc-task .xc-task-btn')].map(b => b.textContent), document.querySelector('.xc-tstrip').hidden] })()"""
+TASK_SHEET_JS = """(() => { const s = document.querySelector('.xc-sheet'); return [s.querySelector('.xc-sh-hd b').textContent, s.querySelector('.xc-tk-meta').textContent, s.querySelector('.xc-tk-dir a').textContent,
+  s.querySelector('.xc-tk-ask').textContent, [...s.querySelectorAll('.xc-tk-cmd code')].map(c => c.textContent), s.querySelector('.xc-tk-cmd pre').textContent.includes('app.hex'),
+  [...s.querySelectorAll('.xc-tk-say')].map(e => e.textContent), s.querySelector('.xc-tk-in').placeholder, s.querySelector('.xc-tk-act .xc-btn').textContent] })()"""
+
 W = '/data/workspace'
 def _ent(name, d=False, size=0): return {'name': name, 'dir': d, 'size': size, 'mtime': 1762214400000}
 XIN_FILES = {
@@ -80,7 +99,7 @@ XIN_LIVE_BOND = [
      {'t': 'bond', 'd': 2, 'why': '你教我新动作', 'score': 54, 'level': 2, 'name': '好朋友', 'next': 80, 'log': []},
      {'t': 'text', 'text': '学会啦！'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 3000}],
 ]
-import base64
+import base64, time
 PUSH_KEY = base64.urlsafe_b64encode(b'\x04' + bytes(range(64))).decode().rstrip('=')
 # 浏览器里的推送换成假的：记下订阅了什么
 FAKE_PUSH = """
@@ -147,6 +166,18 @@ async def xin_mock(pg, authed=False, live=None):
         if op == 'memory_set':
             st['mem'] = args.get('text', '')
             return await ok({'ok': True, 'data': {'ok': True}})
+        if op == 'tasks':
+            ts = st.get('tasks') or []
+            live_ = [t for t in ts if t['status'] in ('queued', 'running')]
+            return await ok({'ok': True, 'data': {'tasks': [t for t in ts if t.get('parent') == args.get('sid')], 'active': [t for t in ts if t['status'] in ('queued', 'running', 'waiting')], 'recent': [], 'bg': len(live_)}})
+        if op in ('task_stop', 'task_tell'):
+            st[op] = args
+            t = next((x for x in st.get('tasks') or [] if x['sid'] == args.get('sid')), None)
+            if t: t['status'] = 'stopped' if op == 'task_stop' else 'queued'
+            return await ok({'ok': True, 'data': {'ok': True, 'msg': '任务 1 接着做了', 'task': t}})
+        if op == 'history' and str(args.get('sid', '')).startswith('stask'):
+            t = next((x for x in st.get('tasks') or [] if x['sid'] == args['sid']), {})
+            return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'task': dict(t, goal='编译 blink 工程'), 'runs': [{'run': 'rtask00001', 'started': 1, 'done': True, 'events': XIN_TASK_RUN}], 'active': None}})
         if op == 'history': st['history_sid'] = args.get('sid')
         if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'claude' if args['sid'] == 'sold000001' else 'codex'}, 'usage': XIN_USE_HIST if args['sid'] == 'shist00001' else None, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': None}})
         if op == 'sessions' and st.get('many'):   # 对话很多：当前的 shist00001 排在第 7 个
@@ -1827,6 +1858,52 @@ async def main():
         st = await pc.evaluate("[document.body.classList.contains('tool-open'), document.querySelector('.xc-ctx').hidden, document.querySelector('.xc-ctx span').textContent]")
         check('附带：关掉学习台以后不带学习台里选的', st[:2] == [False, True], st)
         await pc.context.close()
+        # 后台任务（分身）：前台派出去的卡片跟着轮询更新；做完了聊天最后小芯说结果；看过程、补充要求；有任务在做时输入框上面一条
+        pt = await page(b)
+        xt = await xin_mock(pt, authed=True, live=XIN_LIVE_TASK)
+        now = int(time.time() * 1000)
+        T1 = {'sid': 'stask00001', 'no': 1, 'parent': 'snew000001', 'title': '编译 LED', 'kind': 'code', 'model': 'glm-5.3', 'why': 'code', 'status': 'running', 'created': now - 130000,
+              'startedAt': now - 130000, 'endedAt': 0, 'dir': '/data/workspace/blink', 'after': [], 'turns': 1, 'question': '', 'activity': '在执行：make'}
+        xt['tasks'] = [T1]
+        await pt.add_init_script("localStorage.setItem('lm.xin.agent.v','3');localStorage.setItem('lm.xin.agent','codex')")
+        await pt.goto(BASE + '/#xin'); await pt.wait_for_selector('.xc.show .xc-row textarea'); await pt.wait_for_timeout(300)
+        await pt.fill('.xc-row textarea', '编译一下 blink，后台做'); await pt.keyboard.press('Enter')
+        await pt.wait_for_function(CHAT_DONE, timeout=8000)
+        await pt.wait_for_function("document.querySelector('.xc-task-a') && document.querySelector('.xc-task-a').textContent === '在执行：make'", timeout=8000)
+        cd = await pt.evaluate(TASK_CARD_JS)
+        check('后台任务：派出去的地方一张卡片（任务 1 · 编译 LED、进行中 · 2 分钟、写代码 · GLM-5.3、在干什么、看过程 / 停止）；输入框上面一条「后台 1 个任务在做」',
+              cd == ['任务 1 · 编译 LED', '进行中 · 2 分钟', '写代码 · GLM-5.3', '在执行：make', ['看过程', '停止'], True, True, '后台 1 个任务在做'], cd)
+        T1.update({'status': 'done', 'endedAt': now, 'activity': '', 'result': {'ok': True, 'text': '我编好了：`/data/workspace/blink/build/app.hex`，直接烧录就行。', 'err': '', 'at': now}})
+        await pt.evaluate("LimingXinChat.tasks()")
+        await pt.wait_for_selector('.xc-tres')
+        rs = await pt.evaluate(TASK_RES_JS)
+        check('任务做完：卡片变「做完了」（停止按钮没了）；聊天最后小芯说结果（任务几、做完了、正文里的路径能点、模型和用时、看过程），任务条收起',
+              rs == ['任务 1「编译 LED」做完了', '我编好了：/data/workspace/blink/build/app.hex，直接烧录就行。', 'GLM-5.3 · 用时 2 分钟', True, True, '做完了', ['看过程'], True], rs)
+        await pt.evaluate("LimingXinChat.tasks()"); await pt.wait_for_timeout(400)
+        check('同一次结果只说一次（再轮询不重复）', await pt.evaluate("document.querySelectorAll('.xc-tres').length") == 1)
+        await pt.click('.xc-tres .xc-task-btn'); await pt.wait_for_selector('.xc-sheet .xc-tk-log')
+        tk = await pt.evaluate(TASK_SHEET_JS)
+        check('看过程：一页里写着状态、模型、工作目录（能点开）、要求、每一步说的话和执行的命令（去掉 bash 外壳，点开看输出）；做完的能补充要求让它接着做',
+              tk[:3] == ['任务 1 · 编译 LED', '做完了写代码 · GLM-5.3', '/data/workspace/blink'] and tk[3] == '要求编译 blink 工程' and tk[4] == ['make'] and tk[5]
+              and tk[6] == ['我先看看工程。', '编好了：/data/workspace/blink/build/app.hex'] and tk[7].startswith('补充要求') and tk[8] == '接着做', tk)
+        await pt.fill('.xc-tk-in', '再加个呼吸灯'); await pt.click('.xc-tk-act .xc-btn')
+        await pt.wait_for_function("document.querySelector('.xc-tk-note') && document.querySelector('.xc-tk-note').textContent === '任务 1 接着做了'")
+        check('补充要求直接交给那个任务（不经过前台）', xt.get('task_tell') == {'sid': 'stask00001', 'text': '再加个呼吸灯'}, xt.get('task_tell'))
+        await pt.click('.xc-sh-x'); await pt.wait_for_timeout(300)
+        # 小芯在回上一句时发的话：先排着（灰色气泡「排队中」），回完一起发
+        xt['polls'] = 0
+        await pt.fill('.xc-row textarea', '先看看这个'); await pt.keyboard.press('Enter')
+        await pt.wait_for_function("LimingXinChat.state.run")
+        await pt.fill('.xc-row textarea', '再顺便看看那个')
+        q0 = await pt.evaluate("document.querySelector('.xc-send').getAttribute('aria-label')")
+        await pt.keyboard.press('Enter')
+        q1 = await pt.evaluate("[document.querySelectorAll('.xc-me.queued').length, document.querySelector('.xc-me.queued .xc-qtag').textContent, document.querySelector('.xc-send').getAttribute('aria-label'), document.querySelector('.xc-row textarea').value]")
+        await pt.wait_for_function("!document.querySelector('.xc-me.queued')", timeout=10000)
+        await pt.wait_for_function(CHAT_DONE, timeout=10000)
+        q2 = await pt.evaluate("[...document.querySelectorAll('.xc-me .xc-bub')].map(b => b.textContent).slice(-2)")
+        check('小芯在回上一句：输入框有话按钮是「排队发送」，发了先排着（灰色气泡写「排队中」，能 ✕），这一句回完自动发出去',
+              q0 == '排队发送' and q1[:3] == [1, '排队中 · 小芯说完这句就发✕', '停止'] and q1[3] == '' and xt['sent'].get('text') == '再顺便看看那个' and q2 == ['先看看这个', '再顺便看看那个'], (q0, q1, xt['sent'], q2))
+        await pt.context.close()
         # 「＋」：发图片和文件（选了马上传，传完才能发，发出去的消息里显示缩略图和文件卡片）；开关插件
         pa = await page(b, 390, 844, mobile=True)
         xa = await xin_mock(pa, authed=True)

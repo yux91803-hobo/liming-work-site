@@ -2001,6 +2001,6 @@
     }, function () { if (XIN_HASH.test(location.hash)) { S.enabled = false; open(); } });
     window.addEventListener('hashchange', openFromHash);
   }
-  window.LimingXinChat = { open: open, close: close, ask: quick, played: played, get state() { return S; } };
+  window.LimingXinChat = { open: open, close: close, ask: quick, played: played, tasks: function () { pollTasks(); }, get state() { return S; } };
   boot();
 })();
