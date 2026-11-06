@@ -131,7 +131,7 @@ function warm() {
   // 有 Harness 就用它预热（现在小芯用的是它）；它没有「不留会话」的开关，做完把这个会话删掉
   const h = hasAgent('harness');
   const child = h
-    ? spawn(dshCmd(), ['--profile', 'headless', '--json', '只回复一个字：1'], { cwd: os.homedir(), stdio: ['ignore', 'pipe', 'ignore'], env: Object.assign({}, process.env, harnessEnv()) })
+    ? spawn(dshCmd(), ['--profile', 'headless'].concat((() => { try { return ['--patch', writePersona()]; } catch { return []; } })(), ['--json', '只回复一个字：1']), { cwd: os.homedir(), stdio: ['ignore', 'pipe', 'ignore'], env: Object.assign({}, process.env, harnessEnv()) })
     : spawn('codex', ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '-c', 'developer_instructions="只回复一个字：1"'].concat(mcpFlags(), ['1']),
       { cwd: os.homedir(), stdio: ['ignore', 'ignore', 'ignore'] });
   let out = '';
@@ -642,13 +642,16 @@ function installXin() {
 }
 /* ---------- Harness（DeepSeek Harness，命令 dsh） ----------
    dsh --profile headless --json：一句话一个进程，事件一行一个 JSON（session / status / text / tool_call / tool_result / final）。
-   模型和线路在 ~/.dsh/profiles/headless/cordis.patch.yml：走小芯电脑上的本地网关，固定 deepseek-v4.1-flash；
-   网关的 key 在 ~/.xin/harness.key（只有自己能读），起的时候用环境变量 XIN_HARNESS_KEY 交给它（配置里写的是 apiKeyEnv）。
-   小芯的设定写进一个 --patch 文件（system-prompt 的 personaPrefix），每一轮都带；接着聊用 --session-id。
+   线路（走小芯电脑上的本地网关，固定 deepseek-v4.1-flash）和小芯的设定（system-prompt 的 personaPrefix）都写进一个 --patch 文件，
+   每一轮都带：不靠 ~/.dsh 里的配置，Harness 重装、升级、~/.dsh 被清掉都不影响小芯（只是 Harness 自己的旧会话接不上）。
+   网关的 key 在 ~/.xin/harness.key（只有自己能读），起的时候用环境变量 XIN_HARNESS_KEY 交给它（线路里写的是 apiKeyEnv）。
+   接着聊用 --session-id。
    权限：DSH_PERMISSION_MODE=danger-full-access（和 Codex 的 --dangerously-bypass-approvals-and-sandbox 一样，用户确认过）。 */
 const HARNESS_KEY = () => path.join(BASE, 'harness.key');
 const HARNESS_WIN = 258400;   // 和 Codex 那边一样的上下文上限（网关里的 deepseek-v4.1-flash）
 const HARNESS_PERSONA = () => path.join(BASE, 'harness-persona.yml');
+// 线路：本地网关（WorkBuddy），openai-responses 协议（和 Codex 一样），固定模型
+export const HARNESS_ROUTE = { provider: 'xin-gateway', name: 'WorkBuddy 网关', api: 'openai-responses', baseURL: 'http://127.0.0.1:8788/v1', model: 'deepseek-v4.1-flash', modelName: 'DeepSeek V4.1 Flash' };
 function dshCmd() {
   if (process.env.XIN_DSH) return process.env.XIN_DSH;
   const p = path.join(os.homedir(), '.local', 'bin', 'dsh');
@@ -658,8 +661,16 @@ function hasAgent(agent) { if (agent !== 'harness') return hasCmd(agent); const 
 function writePersona() {
   mk(BASE);
   const t = HARNESS_PERSONA() + '.' + process.pid + '.tmp';
-  // personaPrefix 用 JSON 字符串写：JSON 字符串就是合法的 YAML 双引号字符串
-  fs.writeFileSync(t, '# 小芯的设定（网站每一轮起 Harness 前重写）\n- id: system-prompt\n  config:\n    personaPrefix: ' + JSON.stringify(systemPrompt()) + '\n');
+  // 字符串都用 JSON 写：JSON 字符串就是合法的 YAML 双引号字符串
+  const R = HARNESS_ROUTE, q = JSON.stringify;
+  fs.writeFileSync(t, [
+    '# 小芯用的 Harness：线路和设定（网站每一轮起 Harness 前重写，不用改 ~/.dsh 里的配置）',
+    '- id: llm-pi-ai', '  config:', '    providers:', '      ' + R.provider + ':',
+    '        displayName: ' + q(R.name), '        apiKeyEnv: XIN_HARNESS_KEY', '        api: ' + R.api, '        baseURL: ' + q(R.baseURL),
+    '        models:', '          - id: ' + q(R.model), '            name: ' + q(R.modelName), '            contextWindow: ' + HARNESS_WIN,
+    '- id: agent-default-model', '  config:', '    provider: ' + R.provider, '    model: ' + q(R.model),
+    '- id: system-prompt', '  config:', '    personaPrefix: ' + q(systemPrompt()), ''
+  ].join('\n'));
   fs.renameSync(t, HARNESS_PERSONA());
   return HARNESS_PERSONA();
 }
