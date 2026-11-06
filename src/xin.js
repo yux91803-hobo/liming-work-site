@@ -11,6 +11,7 @@
 //                                       | greet | daily | daily_get | daily_set | rename | archive | forget（对话改名 / 归档 / 删除）| files（小芯的文件：列文件夹、预览）
 //                                       | push_key | push_sub | push_unsub | push_test（做完提醒）| moves（新动作）| bond | bond_play（好感度）
 //                                       | screen {control?}（小芯的屏幕：开桌面、桌面上开终端、要一个短时的桌面链接）| screen_off（作废桌面链接）
+//                                       | tasks {sid?, all?} | task_stop {sid} | task_tell {sid, text}（后台任务：卡片、看过程、停、补充）
 //   GET  /api/xin/file?path=/data/workspace/…   下载小芯电脑里的一个文件（先让 vm-agent 核对在工作目录里，再从 InstaBox 原样转过来）
 // status、wake 直接调 InstaBox 的机器接口（wake：打开网页时把睡着的云电脑叫醒，已经醒着就什么都不做）；其余都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
 // 返回 {ok:true, data} 或 {ok:false, state, msg, retryAfter}：state = waking（云电脑在睡，唤醒中）、cooldown（跑满 8 小时后的冷却）、busy、error。
@@ -20,7 +21,7 @@ const SESSION_SEC = 30 * 86400;
 const AGENT_ASSET = '/xin/vm-agent.mjs';
 const VM_DIR = '/data/home/.xin/agent';
 export const OPS = new Set(['status', 'wake', 'ping', 'send', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
-  'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off']);
+  'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off', 'tasks', 'task_stop', 'task_tell']);
 const SCREEN_W = 1280, SCREEN_H = 800, SCREEN_VIEW_TTL = 1800, SCREEN_CTL_TTL = 900;   // 桌面大小；链接多久内能打开（秒）
 const FILE_MAX = 100 * 1024 * 1024;   // 下载最大 100 MB（和上传一样大：发给小芯的文件也能原样下回来）
 const UPLOAD_MAX = 100 * 1024 * 1024, UPLOAD_DIR = '/data/workspace/uploads';   // 给小芯发文件：一个最大 100 MB（Cloudflare Worker 收请求的上限），放在它工作目录的 uploads/日期/ 下面
@@ -195,9 +196,12 @@ async function call(env, origin, op, args, ctx, now) {
   try {
     const data = await exec(env, origin, m.id, op, args);
     // AI 在等模型回话时云电脑看起来是闲着的：挂一个「有活在干」的租约，别让它半路自己暂停
-    const lease = (method, run) => ib(env, `/v1/machines/${m.id}/activity-leases/xin-${run}`, method === 'PUT' ? { method, body: JSON.stringify({ ttlSeconds: 1800 }) } : { method }).catch(() => null);
+    const lease = (method, id, ttl) => ib(env, `/v1/machines/${m.id}/activity-leases/xin-${id}`, method === 'PUT' ? { method, body: JSON.stringify({ ttlSeconds: ttl || 1800 }) } : { method }).catch(() => null);
     if ((op === 'send' || op === 'daily') && data && data.run && ctx) ctx.waitUntil(lease('PUT', data.run));
     if (op === 'poll' && data && data.done && args && args.run && ctx) ctx.waitUntil(lease('DELETE', args.run));
+    // 后台任务（分身）：vm-agent 说有任务在做就续一个小时（它每 20 分钟提醒一次），都做完了就撤
+    if (data && data.lease === 'renew' && ctx) ctx.waitUntil(lease('PUT', 'tasks', 3600));
+    if (data && data.lease === 'drop' && ctx) ctx.waitUntil(lease('DELETE', 'tasks'));
     return { ok: true, data };
   } catch (e) {
     if (e && e.code === 'machine_not_running') {

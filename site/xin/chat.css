@@ -440,3 +440,69 @@ body.xs-open{overflow:hidden}
 
 @keyframes xcblink{50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.xc,body.xc-open #home{transition:none}.xc-st.wait::before,.xc-sub.busy::before,.xc-typing .xc-bub i{animation:none}}
+
+/* 后台任务（分身）：聊天里的任务卡片、结果、看过程、输入框上面的任务条、排队的消息 */
+.xc-task{align-self:stretch;margin:4px 0 4px 40px;padding:10px 12px;border:1px solid var(--line);border-radius:14px !important;background:var(--sunk);font:13px/1.5 var(--sans);color:var(--ink)}
+.xc-task-h{display:flex;align-items:center;gap:7px;min-width:0}
+.xc-task-h svg,.xc-tstrip svg{width:16px;height:16px;flex:none;color:var(--clay);stroke-width:2}
+.xc-task.st-running .xc-task-h svg,.xc-tstrip.busy svg{animation:xcspin 2.4s linear infinite}
+.xc-task-h b{min-width:0;font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xc-task-s{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-top:5px;font-size:12px;color:var(--ink-3)}
+.xc-task-st{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:999px !important;background:var(--panel);font-size:11.5px;color:var(--ink-2);white-space:nowrap}
+.xc-task-st::before{content:"";width:6px;height:6px;border-radius:50% !important;background:var(--ink-3)}
+.st-running .xc-task-st::before,.xc-task-st.st-running::before{background:var(--clay);animation:xcblink 1.2s ease-in-out infinite}
+.st-waiting .xc-task-st::before,.xc-task-st.st-waiting::before{background:#d9a43a}
+.st-done .xc-task-st::before,.xc-task-st.st-done::before{background:#3f9b5f}
+.st-failed .xc-task-st::before,.xc-task-st.st-failed::before{background:#d9573f}
+.xc-task-a{margin-top:6px;font-size:12.5px;color:var(--ink-2);word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.xc-task-b{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.xc-task-btn{min-height:32px;padding:5px 12px;border:1px solid var(--line-2);border-radius:999px !important;background:var(--panel);font:12.5px var(--sans);color:var(--ink)}
+.xc-task-btn:disabled{opacity:.5}
+@media (hover:hover){.xc-task-btn:not(:disabled):hover{border-color:var(--clay);color:var(--clay)}}
+@keyframes xcspin{to{transform:rotate(360deg)}}
+/* 结果：小芯说的一条，上面一行写任务几、做完没，下面写模型和用时 */
+.xc-tres-h{margin:0 0 6px;font:600 12.5px/1.5 var(--sans);color:var(--clay)}
+.xc-ai.tbad .xc-tres-h,.xc-tres-err,.xc-tk-err{color:#c0503a}
+[data-theme=dark] .xc-ai.tbad .xc-tres-h,[data-theme=dark] .xc-tres-err,[data-theme=dark] .xc-tk-err{color:#f08b70}
+.xc-tres-q{margin:0;font-size:14px}
+.xc-tres-err{margin:6px 0 0;font-size:12.5px;white-space:pre-wrap}
+.xc-tres-f{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font:11.5px var(--sans);color:var(--ink-3)}
+/* 输入框上面的任务条 */
+.xc-tstrip{display:flex;align-items:center;gap:6px;max-width:100%;margin:0 0 8px;padding:5px 12px 5px 9px;border-radius:999px !important;background:var(--clay-soft);font:12.5px var(--sans);color:var(--ink)}
+.xc-tstrip.wait:not(.busy){background:rgba(217,164,58,.18)}
+/* 看过程 */
+.xc-tk{padding-bottom:6px;font:13px/1.55 var(--sans)}
+.xc-tk-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:2px 0 6px;font-size:12px;color:var(--ink-3)}
+.xc-tk-dir{margin:0 0 10px;font-size:12px;color:var(--ink-3);word-break:break-all}
+.xc-tk-dir a{color:var(--clay)}
+.xc-tk-log{display:flex;flex-direction:column;gap:6px}
+.xc-tk-ask{padding:8px 10px;border-radius:10px !important;background:var(--clay-soft)}
+.xc-tk-ask b{display:block;margin-bottom:2px;font-size:11.5px;color:var(--clay)}
+.xc-tk-ask div{white-space:pre-wrap;word-break:break-word}
+.xc-tk-say{padding:0 2px}
+.xc-tk-cmd{border:1px solid var(--line);border-radius:8px !important;background:var(--sunk)}
+.xc-tk-cmd summary,.xc-tk-cmd.now{display:block;padding:6px 10px;cursor:pointer;list-style:none;font:12px/1.45 var(--mono);color:var(--ink-2);word-break:break-all}
+.xc-tk-cmd summary::-webkit-details-marker{display:none}
+.xc-tk-cmd summary::before{content:"✓ ";color:#3f9b5f}
+.xc-tk-cmd.bad summary::before{content:"✗ ";color:#d9573f}
+.xc-tk-cmd.now::before{content:"▶ ";color:var(--clay)}
+.xc-tk-cmd pre{max-height:220px;margin:0;padding:6px 10px 8px;overflow:auto;border-top:1px solid var(--line);font:11.5px/1.45 var(--mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-all}
+.xc-tk-err{font-size:12.5px}
+.xc-tk-done{align-self:center;font-size:11.5px;color:var(--ink-3)}
+.xc-tk-act{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.xc-tk-act .xc-btn{padding:0 18px}
+.xc-tk-q{flex-basis:100%;margin:0;font-weight:600}
+.xc-tk-in{flex:1;min-width:0;min-height:44px;padding:8px 10px;border:1px solid var(--line-2);border-radius:10px !important;background:var(--bg);font:13.5px/1.5 var(--sans);color:var(--ink);resize:vertical}
+.xc-tk-note{flex-basis:100%;margin:0;font-size:12px;color:var(--clay)}
+.xc-tk-note:empty{display:none}
+/* 任务一览 */
+.xc-tl-i{display:flex;flex-direction:column;gap:3px;width:100%;padding:10px 6px;border-bottom:1px solid var(--line);text-align:left;color:var(--ink)}
+.xc-tl-i b{font-size:13.5px;font-weight:600}
+.xc-tl-m{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;color:var(--ink-3)}
+/* 排队的消息：小芯回完这句再发 */
+.xc-me.queued .xc-bub{opacity:.6}
+.xc-qtag{display:flex;align-items:center;gap:6px;margin:3px 4px 0;font:11.5px var(--sans);color:var(--ink-3)}
+.xc-qtag button{padding:0 4px;color:var(--ink-3)}
+.xc.running .xc-send.q{background:var(--clay);color:#fff}
+.xc.running .xc-send.q svg{width:18px;height:18px}
+@media (prefers-reduced-motion:reduce){.xc-task.st-running .xc-task-h svg,.xc-tstrip.busy svg{animation:none}}
