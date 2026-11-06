@@ -168,7 +168,8 @@ function memoryPart(mem) {
   ].join('\n');
 }
 
-export function systemPrompt(mem) {
+// opt.tasks：前台聊天（默认模式）才教它派后台任务；Harness、每日任务、分身自己不派
+export function systemPrompt(mem, opt = {}) {
   if (mem === undefined) mem = readMemory();
   return [
     '你就是小芯：用户网站 liming-work.com 工具箱上那块会走会跳的像素小芯片，也是用户学 STM32 的伙伴。用户在网页上和你聊天。永远用第一人称「我」说话——你就是小芯本人，不是小芯的「大脑」、后台或者别的什么程序，不要用「它」「小芯」来称呼自己。',
@@ -186,9 +187,27 @@ export function systemPrompt(mem) {
     '用户在网页上「小芯的文件」里能看到你电脑里 ' + WORK + ' 下面的文件，能预览、能下载到手机或电脑上。要给用户的东西（代码、.hex、文档）都放在 ' + WORK + ' 下面；回答里提到文件就写完整路径（比如 `' + WORK + '/blink/build/app.hex`），用户点一下就能打开或下载。编译好了一定告诉用户 .hex 的完整路径。',
     '用户在网页上能看你电脑的屏幕（桌面是 DISPLAY=' + screenDisplay() + '，上面「小芯在干什么」那个终端会实时显示你执行的命令），也可能接管过去自己操作。想给用户看点什么（网页、图片、程序界面），可以在桌面上打开，比如 `DISPLAY=' + screenDisplay() + ' chromium 网址 >/dev/null 2>&1 &`，告诉他点聊天框上面的「屏幕」看；别关掉「小芯在干什么」那个终端。',
     '你能自己编新动作：`xin move help` 看怎么写（一串姿势帧），`xin move add 名字 帧` 学会以后网页上的小芯就会做，背包里也有；用户让你学个动作、或者你想表达一个现有动作表达不了的心情时用。已经会的：' + (readMoves().map(m => m.name).join('、') || '还没有') + '。',
-    '你的插件（MCP 工具，比如 rea 逆向）用户能在网页聊天框「＋ → 插件」里开关，关掉的从下一句起就不带（省 token）。用户让你开关插件时用 `xin plugin on 名字` / `xin plugin off 名字`，`xin plugin` 看有哪些、开没开；别自己改 ~/.codex/config.toml 来开关插件。用户还能直接给你发文件和图片：消息后面会附【用户发来的文件】和路径（在 ' + UPLOADS() + ' 下面）。',
-    bondPart(),
-    memoryPart(mem)
+    '你的插件（MCP 工具，比如 rea 逆向）用户能在网页聊天框「＋ → 插件」里开关，关掉的从下一句起就不带（省 token）。用户让你开关插件时用 `xin plugin on 名字` / `xin plugin off 名字`，`xin plugin` 看有哪些、开没开；别自己改 ~/.codex/config.toml 来开关插件。用户还能直接给你发文件和图片：消息后面会附【用户发来的文件】和路径（在 ' + UPLOADS() + ' 下面）。'
+  ].concat(opt.tasks ? TASK_GUIDE() : [], [bondPart(), memoryPart(mem)]).join('\n');
+}
+// 教前台派后台任务（分身）
+export const TASK_GUIDE = () => [
+  '你能派「分身」在后台干活（后台任务）：`xin task new --kind 类型 --title 标题 [--model 模型] [--dir 项目目录] [--file 文件路径]`，详细要求写在 `--` 后面，或者用 `<<\'EOF\'` … `EOF` 从标准输入给（写清楚要做什么、做到什么程度算完、东西放哪）。派出去马上返回任务号，分身在它自己的会话里干，你不用等它：回用户一句（比如「交给我的分身去弄啦，好了告诉你」）就结束这一轮，用户可以接着跟你聊。',
+  '你是前台，用户随时可能接着跟你说话，所以别自己闷头干长活：要跑一串命令、写或改代码、编译调试、查一堆资料、估计要好几分钟的活，派给分身；你自己最多看一两个文件、跑一两条很快的命令，把要求弄清楚就派。闲聊、讲解知识点、看一眼就能答的，自己直接答。用户说「后台做」「让分身做」就一定派；说「直接回答」「你自己弄」就别派。同一件事别派两遍。',
+  '类型（--kind）：quick 简单杂活、code 写代码 / 编译 / 调试、research 查资料读文档、hard 难题（方案设计、疑难 bug）、vision 看图、review 检查别的任务的结果。不写 --model 就按类型自动挑；用户点名要哪个模型就照写 --model（glm-5.3-flash 快但看不了图、glm-5.3、kimi-k3.1-pro、deepseek-v4.1-flash）。用户发来的图片要分身看，就用 --file 带上图片路径。',
+  '项目目录（--dir）：改已有的项目写它的完整路径（比如 ' + WORK + '/blink），新项目写一个新文件夹（' + WORK + '/英文名）；不写就给分身一个临时文件夹。同一个目录同时只有一个分身在改，别的排队；最多同时 ' + TASK_MAX + ' 个分身，多的也排队。分身在沙盒里，只能改它自己的目录，也用不了插件（MCP）：要用插件（比如 REA 逆向）、要操作电脑桌面的活，你自己在前台做。',
+  '`xin task list` 看这个对话的任务，`xin task show 编号` 看进度、结果和最近执行的命令，`xin task tell 编号 补充的话` 给它补充要求（在做的这一步做完就照办；做完了、停了的会接着做；在等确认的就是回复它），`xin task stop 编号` 停掉。用户问「做得怎么样了」就用这些查，别瞎猜。',
+  '分身做完，结果会自动出现在聊天里（用户看得到），你下一句会收到【后台任务的最新情况】；用户问起就照着说，别重复整段结果。分身在「等你确认」的，把它的问题问用户，用户回复了用 xin task tell 转给它。'
+];
+// 后台分身的设定：小芯的设定 + 「你现在在后台干活」
+export function taskSystemPrompt(t) {
+  t = t || {};
+  return systemPrompt() + '\n' + [
+    '【你现在在后台】这一轮你不是在和用户聊天：你是小芯派到后台干活的分身，在做后台任务 ' + t.no + '「' + t.title + '」。用户不在这里看着你，也回答不了你的问题：别问问题，缺信息就按最合理的方式做，最后写清楚你做了哪些假设。上面说的 xin 动作命令（xin dance、xin say 这些）这里用不上，别用；xin remember 可以用。',
+    '你的工作目录是 ' + t.dir + '，只在这里面创建和修改文件' + (TASK_SANDBOX() ? '（你在沙盒里，别的地方写不了；临时文件放 /data/tmp；插件（MCP 工具）在后台用不了）' : '（临时文件放 /data/tmp）') + '。',
+    '不可撤销的事不要自己做：删除用户已有的文件或数据、git push 到 main 或强推、部署上线、花钱、改系统设置。确实需要的话，用 `xin task ask 要用户确认的事（一句话说清楚）` 记下来，然后结束这一轮；用户回复后会接着叫你。',
+    '每一步都确认结果（编译过没有、跑起来对不对），别把没验证过的说成做好了。',
+    '做完以后，最后一条消息是给用户看的结果（会原样出现在用户的聊天里）：用「我」说，先一句话说结论，再说做了什么、怎么确认的、生成的文件放在哪（写完整路径）、还有什么问题或要用户做什么。简洁，别输出太宽的表格。'
   ].join('\n');
 }
 
@@ -396,6 +415,7 @@ export function screenLine(ev, now = Date.now()) {
     default: return '';
   }
 }
+let screenTag = '';
 function screenLog(ev) {
   const line = screenLine(ev);
   if (!line) return;
@@ -408,7 +428,7 @@ function screenLog(ev) {
         fs.writeFileSync(f, tail.subarray(nl + 1));
       }
     } catch { /* 还没有这个文件 */ }
-    fs.appendFileSync(f, line);
+    fs.appendFileSync(f, screenTag ? line.replace(/^(\n?)/, '$1' + AN.dim + screenTag + AN.r) : line);
   } catch { /* 写不了就算了，不影响聊天 */ }
 }
 function screenDisplay() {
@@ -450,10 +470,11 @@ const metaF = run => path.join(RUNS, run + '.json');
 const seenF = run => path.join(RUNS, run + '.seen');   // 网页最近一次来取这一轮的进度（看修改时间）
 // flock 的锁随进程退出自动释放；--close 不让后台 runner 继承锁。锁文件不能删，避免等待者锁住旧 inode。
 // 同一会话的发送、改名、归档、删除和 runner 更新用同一把锁；已有对话按 sid 分别加锁。
+// 后台任务的记录（派、排队、收尾、补充、停）都用同一把锁 tasks，等得久一点
 function lockedCall(key, op, args) {
-  if (key !== 'new' && key !== 'daily' && !okId(key, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
+  if (key !== 'new' && key !== 'daily' && key !== 'tasks' && !okId(key, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
   const dir = path.join(BASE, 'locks'); mk(dir);
-  const r = spawnSync('flock', ['--exclusive', '--timeout', '3', '--conflict-exit-code', '73', '--close',
+  const r = spawnSync('flock', ['--exclusive', '--timeout', key === 'tasks' ? '20' : '3', '--conflict-exit-code', '73', '--close',
     path.join(dir, key + '.lock'), process.execPath, SELF, 'locked', op],
   { encoding: 'utf8', input: JSON.stringify(args || {}), maxBuffer: 2 * 1024 * 1024 });
   if (r.status === 73) return { error: 'busy', msg: '上一句还没做完，请稍后再试' };
@@ -461,7 +482,8 @@ function lockedCall(key, op, args) {
     ? '云电脑缺少 flock，暂时不能安全更新对话' : '暂时不能安全更新对话，请重试' };
   try { return JSON.parse(r.stdout); } catch { return { error: 'lock_failed', msg: '保存对话的结果不完整，请重试' }; }
 }
-function patchSession(sid, changes) { return lockedCall(sid, 'session_patch', { sid, changes }); }
+// 后台任务的记录也是会话文件，但归 tasks 锁管（调度会整份改写它）
+function patchSession(sid, changes) { return lockedCall(isTask(readJ(sessF(sid))) ? 'tasks' : sid, 'session_patch', { sid, changes }); }
 function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
 function emit(run, ev) { fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
 function events(run) {
@@ -839,12 +861,21 @@ export function agentArgs(agent, sess, text, effort, extra) {
   }
   // 小芯的设定用 developer_instructions 每一轮都给（续接以前的对话也带上，改了设定马上生效）；值按 TOML 解析，JSON 字符串正好是合法的 TOML 字符串
   // 图片放在最前面（-i 后面能跟好几个值，紧跟着 -- 开头的选项它才知道结束）；插件开关见 mcpFlags
-  const M = codexModel(extra && extra.model);
+  // extra.role：front（前台聊天，教它派后台任务）/ task（后台分身，sess 就是任务记录）/ daily（每日任务）
+  // 后台分身默认在沙盒里：只能写自己的工作目录、/data/tmp、~/.xin（xin 命令要用）和缓存目录，网络照常；别的照旧完全放权。
+  // 沙盒（bubblewrap）要求列出的目录都存在，不存在的不列。沙盒里调插件（MCP）要人批准、后台没人批，所以分身不带插件
+  const M = codexModel(extra && extra.model), role = (extra && extra.role) || 'front';
   const imgs = M.image ? ((extra && extra.images) || []).reduce((a, p) => a.concat(['-i', p]), []) : [];
-  const common = ['--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox'].concat(codexRoute(M.id), ['-c', 'developer_instructions=' + JSON.stringify(systemPrompt())])
-    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], mcpFlags());
+  const dev = role === 'task' ? taskSystemPrompt(sess) : systemPrompt(undefined, { tasks: role === 'front' });
+  const boxed = role === 'task' && !!(extra && extra.sandbox);
+  const sandbox = boxed
+    ? ['--sandbox', 'workspace-write', '-c', 'sandbox_workspace_write.network_access=true',
+      '-c', 'sandbox_workspace_write.writable_roots=' + JSON.stringify([sess.dir, '/data/tmp', BASE, path.join(os.homedir(), '.cache'), path.join(os.homedir(), '.npm')].filter(p => p && fs.existsSync(p)))]
+    : ['--dangerously-bypass-approvals-and-sandbox'];
+  const common = ['--json', '--skip-git-repo-check'].concat(sandbox, codexRoute(M.id), ['-c', 'developer_instructions=' + JSON.stringify(dev)])
+    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], boxed ? mcpAllOff() : mcpFlags());
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(imgs, common, [sess.agentSid, text])];
-  return ['codex', ['exec'].concat(imgs, common, ['-C', WORK, text])];
+  return ['codex', ['exec'].concat(imgs, common, ['-C', (role === 'task' && sess.dir) || WORK, text])];
 }
 function killTree(c) {
   if (!c || !c.pid) return;
@@ -858,8 +889,11 @@ function runner(run) {
   meta.pid = process.pid; writeJ(metaF(run), meta);
   const sess = readJ(sessF(meta.sid));
   mk(WORK); installXin();
+  const cwd = meta.cwd || WORK; mk(cwd);
+  if (meta.task) screenTag = '[任务 ' + meta.no + '] ';   // 「小芯在干什么」终端里分得清是哪个分身
+  const role = meta.task ? 'task' : meta.kind === 'daily' ? 'daily' : 'front';
   const t0 = Date.now(), state = {};
-  let finished = false, stderr = '', child = null, retried = false, restarting = false, stallTm = 0;
+  let finished = false, stderr = '', child = null, retried = false, restarting = false, stallTm = 0, deadTm = 0;
   const saveState = () => {
     const changes = {};
     if (state.sid) { changes.agentSid = state.sid; changes.started = true; }
@@ -873,7 +907,8 @@ function runner(run) {
     return r.session || readJ(sessF(meta.sid), sess);
   };
   const finish = (code, why) => {
-    if (finished) return; finished = true; clearTimeout(stallTm);
+    if (finished) return; finished = true; clearTimeout(stallTm); clearTimeout(deadTm);
+    if (state.timeout && !why) why = '超过 ' + Math.round(((meta.deadline || 0) - meta.started) / 60e3) + ' 分钟还没做完，停下了';
     // Harness 的用量：这个对话以前的加上这一轮的（只在做完时加一次）
     if (meta.agent === 'harness' && state.hu) {
       const prev = (readJ(sessF(meta.sid), sess) || {}).hUsage || { input: 0, output: 0 };
@@ -883,17 +918,25 @@ function runner(run) {
     const s = saveState();
     const m = readJ(metaF(run), meta);
     const stopped = !!m.stopped;
-    const ok = !stopped && code === 0 && !state.failed;
+    const ok = !stopped && code === 0 && !state.failed && !state.timeout;
     if (!ok && !stopped && !state.errShown) {
       const tail = stderr.trim().split('\n').slice(-6).join('\n');
       emit(run, { t: 'err', text: why || tail || ('退出码 ' + code) });
     }
+    // 前台这一句带上了哪些任务结果：做成了就记下前台已经知道了（没做成下一句再带）。在 done 之前记，免得用户紧接着发的下一句又带一遍
+    if (ok && !meta.task && Array.isArray(meta.injected) && meta.injected.length) lockedCall('tasks', 'task_seen', { sids: meta.injected });
     // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
     const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
     if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {});
     emit(run, doneEv);
     if (meta.agent !== 'claude') statAdd({ at: Date.now(), agent: meta.agent, model: meta.model || '', kind: meta.kind || 'chat', why: meta.why || '', ok, stopped, ms: Date.now() - t0, from: meta.from || undefined });
     m.ended = Date.now(); writeJ(metaF(run), m);
+    if (meta.task) {
+      // 后台任务：结果先存进任务记录（接着做、等确认还是收尾、排下一个），要推送的在锁外发
+      const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model });
+      if (r && r.notify) { setTimeout(() => process.exit(0), 20000).unref(); pushAll(r.notify).catch(() => {}); }
+      return;
+    }
     if (meta.kind === 'daily') dailyDone(run, meta, ok);
     // 做完提醒：你不在看（关了网页、切到别的应用）才发；你自己停的、每日任务不发
     else if (!stopped && unwatched(run)) {
@@ -908,7 +951,7 @@ function runner(run) {
     // 每次都重新读会话：重来时 AI 的会话号可能已经有了，要接着那个会话
     let patch = null;
     if (meta.agent === 'harness') { try { patch = writePersona(meta.effort, meta.model); } catch { /* 写不了就用 Harness 自己的设定 */ } }
-    const [cmd, args] = agentArgs(meta.agent, readJ(sessF(meta.sid), sess), meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model });
+    const [cmd, args] = agentArgs(meta.agent, readJ(sessF(meta.sid), sess), meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model, role, sandbox: !!meta.sandbox });
     let got = false, buf = '';
     const armStall = () => {
       clearTimeout(stallTm);
@@ -924,7 +967,7 @@ function runner(run) {
     try {
       // 自己一个进程组：卡住或停掉时连它起的子进程一起杀，不然子进程攥着输出管道，这边永远等不到它结束
       child = spawn(cmd, args, {
-        cwd: WORK, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+        cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
         env: Object.assign({}, process.env, meta.agent === 'harness' ? harnessEnv() : meta.agent === 'codex' ? codexKeyEnv() : {}, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
       });
     } catch (e) { finish(127, '启动 ' + cmd + ' 失败：' + e.message); return; }
@@ -970,7 +1013,9 @@ function runner(run) {
     armStall();
   };
   // 能不能换模型重来：只有 Codex（模型是路由器挑的），还有备选，这一轮还没换过，模型还没真的开始干活
-  const canSwitch = () => meta.agent === 'codex' && !state.switched && !state.worked && Array.isArray(meta.fallbacks) && meta.fallbacks.length > 0;
+  const canSwitch = () => meta.agent === 'codex' && !state.switched && !state.worked && !state.timeout && Array.isArray(meta.fallbacks) && meta.fallbacks.length > 0;
+  // 后台任务到点没做完：停下（算没做成）
+  if (meta.deadline) deadTm = setTimeout(() => { state.timeout = true; restarting = false; emit(run, { t: 'status', text: '到时间了，先停下' }); killTree(child); }, Math.max(1000, meta.deadline - Date.now()));
   start();
   const term = () => { restarting = false; killTree(child); };
   process.on('SIGTERM', term); process.on('SIGINT', term);
@@ -1131,6 +1176,12 @@ function harnessPurgeInstalled() {
   const p = readJ(path.join(DSH_HOME(), 'profiles', 'headless', 'package.json'), {});
   return !!(p.dependencies && p.dependencies['dsh-purge-community']);
 }
+// 后台分身：插件全关（自己装的、电脑自带的都关）
+export function mcpAllOff() {
+  const out = [];
+  for (const n of new Set([...mcpUser(), ...mcpBuiltin()])) if (PLUGIN_RE.test(n)) out.push('-c', 'mcp_servers.' + n + '.enabled=false');
+  return out;
+}
 export function mcpFlags() {
   const st = pluginState(), have = mcpUser(), out = [];
   for (const n of Object.keys(st)) if (PLUGIN_RE.test(n) && have.has(n) && typeof st[n] === 'boolean') out.push('-c', 'mcp_servers.' + n + '.enabled=' + st[n]);
@@ -1272,20 +1323,24 @@ function launch(s, m, userEv) {
   emit(run, userEv);
   s.runs.push(run); s.updated = Date.now(); writeJ(sessF(s.sid), s);
   rememberAgentSession(s.agent, s.agentSid);
-  const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir() });
+  // 前台在自己的命令里派任务时，别把它那边的 Codex 内部变量、这一轮的编号带给后台的 runner
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && !/^CODEX_(?!HOME$)/.test(k)));
+  const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir(), env });
   const mm = readJ(metaF(run)); if (mm && !mm.pid) { mm.pid = child.pid; writeJ(metaF(run), mm); }
   child.unref();
   return run;
 }
 function lastRun(s) { return s && s.runs && s.runs.length ? s.runs[s.runs.length - 1] : null; }
 function runDone(run) {
-  const evs = events(run);
-  if (evs.some(e => e.t === 'done')) return true;
   const m = readJ(metaF(run));
-  // 后台进程没了却没写 done（云电脑重启、被杀）：补一条
-  if (m && Date.now() - m.started > 15000 && !alive(m.pid)) {
+  if (m && m.ended) return true;
+  // done 总是最后一条：只看文件尾巴（后台任务的记录可能很长）
+  if (readTail(runF(run), 8192).includes('"t":"done"')) return true;
+  // 后台进程没了却没写 done（云电脑重启、被杀）：补一条，记下是断掉的（后台任务据此决定要不要接着做）
+  if (m && Date.now() - m.started > (Number(process.env.XIN_DEAD_MS) || 15000) && !alive(m.pid)) {
     emit(run, { t: 'err', text: '这一轮中途断了（云电脑重启或进程被杀）' });
     emit(run, { t: 'done', ok: false, code: -1, ms: Date.now() - m.started });
+    m.died = true; m.ended = Date.now(); writeJ(metaF(run), m);
     return true;
   }
   return false;
@@ -1293,6 +1348,302 @@ function runDone(run) {
 function summary(s) {
   const r = lastRun(s);
   return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null, archived: !!s.archived, model: s.model || null };
+}
+
+/* ---------- 后台任务（分身） ----------
+   默认模式下，前台的小芯（用户直接聊的那个）遇到要花时间的活，用 `xin task new …` 派一个分身在后台干，马上回用户一句、结束这一轮，
+   用户可以接着聊；分身做完，结果先存进任务记录，再交回所属对话：网页上出一张结果卡片、没在看就推送，前台下一句自动带上结果摘要。
+   - 任务也是一个「对话」（sessions/<sid>.json，kind:'task'），有自己的 Codex 会话和一轮轮记录，复用 launch / runner / poll / history；
+     对话列表里不显示。编号 no 从 1 往上数（用户、前台说「任务 3」）。
+   - 状态：queued 排队 → running 在做 → done 做完 / failed 没做成 / stopped 停了；waiting 等用户确认（分身 xin task ask、或中途断了两次）。
+   - 调度：同时最多 TASK_MAX 个；同一个项目目录同时只跑一个（不会两个分身改同一份文件）；--after 的等前置任务做完（前置没做成就不开始）。
+   - 每个任务一个工作目录（--dir 指定 WORK 里的项目，没指定就 WORK/tasks/编号-标题），默认在 Codex 沙盒里跑：
+     只能写自己的目录、/data/tmp、~/.xin（xin 命令要用）和缓存目录，网络照常；不可撤销的事让它 xin task ask 等用户确认。
+   - 超时（默认 60 分钟，最多 180）停掉，算没做成。电脑重启、进程被杀：下次有人来看（网页、每日任务）时接着做一次，
+     提醒它先查现状、别重复有副作用的事；再断就等用户决定。
+   - 所有任务记录的读改写都在同一把锁（tasks）里做；推送在锁外发。 */
+const TASK_MAX = Number(process.env.XIN_TASK_MAX) || 2;
+const TASK_MIN = 60, TASK_MIN_MAX = 180;
+export const TASK_KINDS = ['quick', 'code', 'research', 'hard', 'vision', 'review'];
+export const TASK_STATUS = { queued: '排队中', running: '进行中', waiting: '等你确认', done: '做完了', failed: '没做成', stopped: '已停止' };
+const TASK_SANDBOX = () => process.env.XIN_TASK_SANDBOX !== '0';
+const TASKS_DIR = () => path.join(WORK, 'tasks');
+const TASK_SEQ = () => path.join(BASE, 'task-seq.json');
+const RESUME_TEXT = '（刚才电脑暂停或重启，这一轮中途断了。先检查现在的状态——看看文件、编译结果、还在不在跑的进程——已经做过的有副作用的事别再做一遍，然后接着把任务做完。）';
+const isTask = s => !!s && s.kind === 'task';
+const isFinished = t => t.status === 'done' || t.status === 'failed' || t.status === 'stopped';
+function listTasks() {
+  let names = []; try { names = fs.readdirSync(SESS); } catch { return []; }
+  return names.filter(f => /^s[0-9a-z]+\.json$/.test(f)).map(f => readJ(path.join(SESS, f))).filter(isTask).sort((a, b) => a.no - b.no);
+}
+function findTask(a, all) {
+  all = all || listTasks();
+  if (a && okId(a.sid, 's')) return all.find(t => t.sid === a.sid) || null;
+  const no = Number(a && a.no);
+  return Number.isInteger(no) && no > 0 ? all.find(t => t.no === no) || null : null;
+}
+function saveTask(t) { t.updated = Date.now(); mk(SESS); writeJ(sessF(t.sid), t); }
+// 文件尾巴里最近的事件（不整份读：后台任务的记录可能很长）
+function tailEvents(run, n = 32768) {
+  const out = [];
+  for (const line of readTail(runF(run), n).split('\n')) { if (!line) continue; try { out.push(JSON.parse(line)); } catch { /* 读到的第一行可能是半截 */ } }
+  return out;
+}
+// 任务现在在干什么（卡片上一行小字）
+function taskActivity(run) {
+  const evs = tailEvents(run, 16384);
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.t === 'tool') return '在执行：' + bareCmd(e.detail || e.name || '').replace(/\s+/g, ' ').slice(0, 90);
+    if (e.t === 'tool_end') return e.ok ? '执行完：' + bareCmd(e.detail || e.name || '').replace(/\s+/g, ' ').slice(0, 80) : '有一步没成功，在想办法';
+    if (e.t === 'text') return plainText(e.text, 90);
+    if (e.t === 'status' && e.text && !/^Model metadata/i.test(e.text)) return String(e.text).slice(0, 90);
+  }
+  return '';
+}
+export function taskSummary(t, full) {
+  const r = lastRun(t);
+  const out = { sid: t.sid, no: t.no, parent: t.parent || null, title: t.title, kind: t.tkind, model: t.model, why: t.why || '', status: t.status,
+    created: t.created, startedAt: t.startedAt || 0, endedAt: t.endedAt || 0, dir: t.dir, after: t.after || [], turns: (t.runs || []).length, question: t.question || '' };
+  if (t.status === 'running' && r) out.activity = taskActivity(r);
+  if (t.result) out.result = { ok: !!t.result.ok, text: full ? t.result.text : cut(t.result.text, 2000), err: t.result.err || '', at: t.result.at || 0 };
+  if (t.inbox && t.inbox.length) out.inbox = t.inbox.length;
+  if (t.note) out.note = t.note;
+  if (full) out.goal = t.goal;
+  return out;
+}
+// 项目目录：只能在 WORK 里面（软链接指到外面的也不行），不能是 WORK 本身；没指定就 WORK/tasks/编号-标题
+function taskDir(no, title, want) {
+  const work = path.resolve(WORK);
+  let realWork = work; try { realWork = fs.realpathSync(work); } catch { /* 还没建 */ }
+  const inside = (p, w) => p.startsWith(w + '/');
+  if (want) {
+    const p = path.resolve(work, String(want));
+    if (!inside(p, work)) return { error: '项目目录要在 ' + work + ' 里面' };
+    mk(p);
+    let real = p; try { real = fs.realpathSync(p); } catch { /* 刚建 */ }
+    if (!inside(real, realWork)) return { error: '项目目录要在 ' + work + ' 里面（软链接指到外面了）' };
+    return { dir: p };
+  }
+  const slug = String(title || '').replace(/[^\w一-龥]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
+  const p = path.join(TASKS_DIR(), no + (slug ? '-' + slug : ''));
+  mk(p);
+  return { dir: p };
+}
+const overlaps = (a, b) => !!a && !!b && (a === b || a.startsWith(b + '/') || b.startsWith(a + '/'));
+// 派任务（在 tasks 锁里）：a = {parent, kind, title, goal, model, named, dir, files, after, minutes}
+function taskNew(a) {
+  const goal = String(a.goal || '').trim().slice(0, 12000);
+  if (!goal) return { error: 'empty', msg: '要写清楚让分身做什么（xin task new --title 标题 -- 要求，或者从标准输入给）' };
+  const kind = TASK_KINDS.includes(a.kind) ? a.kind : 'code';
+  const title = (String(a.title || '').replace(/\s+/g, ' ').trim() || goal.replace(/\s+/g, ' ')).slice(0, 40);
+  const all = listTasks();
+  const after = [...new Set((Array.isArray(a.after) ? a.after : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+  for (const n of after) if (!all.some(t => t.no === n)) return { error: 'no_task', msg: '没有任务 ' + n };
+  // 文件：只认 WORK 里的普通文件（用户发来的图片、项目里的文件）
+  const files = [];
+  for (const f of (Array.isArray(a.files) ? a.files : []).slice(0, 10)) {
+    const p = path.resolve(WORK, String(f));
+    let real = '', st = null; try { real = fs.realpathSync(p); st = fs.statSync(real); } catch { return { error: 'no_file', msg: '找不到文件：' + f }; }
+    let realWork = path.resolve(WORK); try { realWork = fs.realpathSync(realWork); } catch { /* 没建 */ }
+    if (!real.startsWith(realWork + '/') || !st.isFile()) return { error: 'bad_file', msg: '文件要在 ' + WORK + ' 里面：' + f };
+    files.push({ path: p, name: path.basename(p), size: st.size, image: IMG_RE.test(p) });
+  }
+  // 检查别的任务：避开被检查的那个模型（换个模型看，才看得出问题）
+  const avoid = kind === 'review' ? after.map(n => (all.find(t => t.no === n) || {}).model).filter(Boolean) : [];
+  const rt = route({ kind: files.some(f => f.image) ? (kind === 'review' ? 'review' : 'vision') : kind, want: a.model || null, named: !!a.named, images: files.some(f => f.image), avoid });
+  const seq = (readJ(TASK_SEQ(), {}) || {}).n || all.reduce((m, t) => Math.max(m, t.no || 0), 0);
+  const no = seq + 1;
+  const d = taskDir(no, title, a.dir);
+  if (d.error) return { error: 'bad_dir', msg: d.error };
+  writeJ(TASK_SEQ(), { n: no });
+  const minutes = Math.min(TASK_MIN_MAX, Math.max(5, Math.round(Number(a.minutes) || TASK_MIN)));
+  const t = { sid: rid('s'), kind: 'task', no, parent: okId(a.parent, 's') ? a.parent : null, agent: 'codex', title, goal, tkind: kind,
+    model: rt.model, why: rt.why, fallbacks: rt.fallbacks, note: rt.note || '', files, dir: d.dir, after, minutes,
+    status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
+  saveTask(t);
+  scheduleNow();
+  return { task: taskSummary(readJ(sessF(t.sid)) || t) };
+}
+// 第一轮给分身的话：任务要求、前置任务的结果、用户给的文件
+function taskFirstText(t, deps) {
+  const parts = ['【后台任务 ' + t.no + '：' + t.title + '】', t.goal];
+  for (const d of deps) {
+    parts.push('\n【任务 ' + d.no + '「' + d.title + '」的结果（' + (TASK_STATUS[d.status] || d.status) + '，它的工作目录 ' + d.dir + '）】\n' + cut(d.result ? d.result.text : '', 6000));
+  }
+  if (t.tkind === 'review' && deps.length) parts.push('\n你的活是检查上面这些结果：去它的工作目录里看实际的文件、能编译的编译一遍、能跑的跑一遍，看对不对、有没有漏。小问题直接改好并说明改了什么；大问题写清楚，别大改。');
+  const f = filesPart(t.files || [], 'codex', codexModel(t.model).image);
+  return forAgent(parts.join('\n'), '') + f;
+}
+function startTask(t, all) {
+  const deps = (t.after || []).map(n => all.find(x => x.no === n)).filter(Boolean);
+  const first = !(t.runs && t.runs.length);
+  const text = first ? taskFirstText(t, deps) : forAgent(t.next || '接着做。', '');
+  const userText = first ? t.goal : String(t.nextShow || t.next || '接着做');
+  const cm = codexModel(t.model);
+  Object.assign(t, { status: 'running', question: '', next: null, nextShow: null, startedAt: t.startedAt || Date.now() });
+  launch(t, { text, effort: AUTO_EFFORT, kind: 'task', task: true, no: t.no, model: t.model, why: t.why, fallbacks: first ? t.fallbacks || [] : [],
+    images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.dir, sandbox: TASK_SANDBOX(),
+    deadline: Date.now() + (Number(process.env.XIN_TASK_TIMEOUT_MS) || (t.minutes || TASK_MIN) * 60e3) }, { t: 'user', text: userText, at: Date.now() });
+}
+function failTask(t, why) {
+  Object.assign(t, { status: 'failed', result: { ok: false, text: why, at: Date.now() }, endedAt: Date.now(), frontSeen: false });
+  saveTask(t);
+}
+// 排队的能开始就开始（在 tasks 锁里）
+function scheduleNow() {
+  const all = listTasks();
+  let running = all.filter(t => t.status === 'running').length;
+  for (const t of all.filter(t => t.status === 'queued').sort((a, b) => (a.queuedAt || a.created) - (b.queuedAt || b.created))) {
+    if (running >= TASK_MAX) break;
+    const deps = (t.after || []).map(n => all.find(x => x.no === n));
+    const bad = deps.filter(d => !d || d.status === 'failed' || d.status === 'stopped');
+    if (bad.length) { failTask(t, '前置任务' + bad.map(d => d ? ' ' + d.no : '').join('、') + ' 没做成，这个任务没开始。'); continue; }
+    if (deps.some(d => d.status !== 'done')) continue;
+    if (all.some(x => x !== t && x.status === 'running' && overlaps(x.dir, t.dir))) continue;
+    startTask(t, all); running++;
+  }
+}
+const taskPush = (t, title, body) => ({ title, body: plainText(body, 120) || '点开看看', tag: 'xin-task-' + t.no, sid: t.parent || '', url: t.parent ? '/#xin=' + t.parent : '/#xin' });
+// 一轮做完（runner 调，在 tasks 锁里）：先把结果存进任务记录，再决定接着做、等用户，还是收尾；要推送的交回 runner 在锁外发
+function taskFinish(a) {
+  const t = readJ(sessF(a.sid));
+  if (!isTask(t)) return {};
+  if (a.model) t.model = a.model;
+  const evs = tailEvents(a.run, 65536);
+  const last = evs.filter(e => e.t === 'text').pop(), err = evs.filter(e => e.t === 'err').pop();
+  let notify = null;
+  if (t.status === 'stopped') t.endedAt = t.endedAt || Date.now();                              // 用户停的：结果已经写好了
+  else if (!a.stopped && !a.timeout && !a.died && t.inbox && t.inbox.length) {                  // 干活时用户补充了话：接着做
+    t.next = '用户在你干活时补充了：\n' + t.inbox.map(x => '- ' + x.text).join('\n') + '\n按补充的要求接着做（已经做对的不用重做）。';
+    t.nextShow = t.inbox.map(x => x.text).join('\n');
+    Object.assign(t, { inbox: [], status: 'queued', queuedAt: Date.now() });
+  } else if (t.status === 'waiting') {                                                             // 分身问了要用户确认的事
+    Object.assign(t, { endedAt: Date.now(), frontSeen: false });
+    notify = taskPush(t, '任务 ' + t.no + ' 在等你确认', t.question);
+  } else if (a.died) {                                                                              // 电脑重启、进程被杀
+    if ((t.resumes || 0) < 1) Object.assign(t, { resumes: (t.resumes || 0) + 1, next: RESUME_TEXT, nextShow: '（中途断了，接着做）', status: 'queued', queuedAt: Date.now() });
+    else {
+      Object.assign(t, { status: 'waiting', question: '这个任务中途断了两次（电脑暂停或重启），要接着做吗？', endedAt: Date.now(), frontSeen: false });
+      notify = taskPush(t, '任务 ' + t.no + ' 中途断了', t.question);
+    }
+  } else {
+    const ok = !!a.ok && !a.stopped && !a.timeout;
+    t.status = a.stopped ? 'stopped' : ok ? 'done' : 'failed';
+    t.result = { ok, text: cut((last && last.text) || (a.timeout ? '超过 ' + t.minutes + ' 分钟还没做完，停下了。' : ok ? '做完了。' : '没做成。'), 8000),
+      err: ok ? '' : String(a.timeout ? '超时（' + t.minutes + ' 分钟）' : (err && err.text) || '').slice(0, 600), at: Date.now() };
+    Object.assign(t, { endedAt: Date.now(), frontSeen: false });
+    if (!a.stopped) notify = taskPush(t, (ok ? '后台任务做完了：' : '后台任务没做成：') + t.title, t.result.text);
+  }
+  saveTask(t);
+  scheduleNow();
+  return notify && unwatchedConv(t.parent) ? { notify } : {};
+}
+// 用户（或前台）给任务补充要求：在做就等这一步做完接着做；还没开始就并进要求；做完了、停了、在等确认就接着做
+function taskTell(a) {
+  const t = findTask(a);
+  if (!t) return { error: 'no_task', msg: '找不到这个任务' };
+  const text = String(a.text || '').trim().slice(0, 4000) || '接着做';
+  if (t.status === 'running') {
+    t.inbox = (t.inbox || []).concat([{ text, at: Date.now() }]); saveTask(t);
+    return { ok: true, msg: '记下了：任务 ' + t.no + ' 这一步做完就按你说的接着做', task: taskSummary(t) };
+  }
+  if (t.status === 'queued' && !(t.runs && t.runs.length)) {
+    t.goal += '\n补充：' + text; saveTask(t);
+    return { ok: true, msg: '任务 ' + t.no + ' 还没开始，补充的要求并进去了', task: taskSummary(t) };
+  }
+  if (t.status === 'queued') { t.next = (t.next ? t.next + '\n' : '') + '用户又说：' + text; t.nextShow = (t.nextShow ? t.nextShow + '\n' : '') + text; saveTask(t); return { ok: true, msg: '记下了', task: taskSummary(t) }; }
+  const waiting = t.status === 'waiting';
+  Object.assign(t, { next: (waiting ? '用户回复：' : '用户又说：') + text + (waiting && t.question ? '\n（你之前问的是：' + t.question + '）' : ''), nextShow: text,
+    status: 'queued', queuedAt: Date.now(), question: '', frontSeen: true });
+  if (waiting && /中途断了/.test(t.question || '')) t.resumes = 0;
+  saveTask(t);
+  scheduleNow();
+  return { ok: true, msg: '任务 ' + t.no + ' 接着做了', task: taskSummary(readJ(sessF(t.sid)) || t) };
+}
+function taskStop(a) {
+  const t = findTask(a);
+  if (!t) return { error: 'no_task', msg: '找不到这个任务' };
+  if (isFinished(t)) return { ok: true, already: true, task: taskSummary(t) };
+  const wasRunning = t.status === 'running';
+  Object.assign(t, { status: 'stopped', result: { ok: false, text: wasRunning ? '做到一半被停下了。' : '还没做完就停了。', at: Date.now() }, endedAt: Date.now(), inbox: [], frontSeen: false });
+  saveTask(t);
+  const r = lastRun(t), m = r && readJ(metaF(r));
+  if (wasRunning && m && !runDone(r)) { m.stopped = true; writeJ(metaF(r), m); try { process.kill(-m.pid, 'SIGTERM'); } catch { try { process.kill(m.pid, 'SIGTERM'); } catch { /* 已经没了 */ } } }
+  scheduleNow();
+  return { ok: true, task: taskSummary(t) };
+}
+// 分身遇到要用户确认的事：记下问题，这一轮结束后任务停在「等你确认」
+function taskAsk(a) {
+  const t = findTask(a);
+  if (!t) return { error: 'no_task', msg: '找不到这个任务' };
+  const q = String(a.question || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+  if (!q) return { error: 'empty', msg: '用法：xin task ask 要用户确认的事（一句话说清楚）' };
+  Object.assign(t, { status: 'waiting', question: q }); saveTask(t);
+  return { ok: true };
+}
+function taskSeen(a) { for (const sid of (Array.isArray(a.sids) ? a.sids : [])) { const t = findTask({ sid }); if (t && !t.frontSeen) { t.frontSeen = true; saveTask(t); } } return { ok: true }; }
+// 收拾（在 tasks 锁里）：进程没了的接着做或等用户；做完却没收尾的补上；再排一次队
+function taskTick() {
+  const out = [];
+  for (const t of listTasks().filter(x => x.status === 'running')) {
+    const r = lastRun(t), m = r && readJ(metaF(r));
+    if (!r || !m || !runDone(r)) continue;
+    const m2 = readJ(metaF(r)) || m;
+    if (m2.died) { const x = taskFinish({ sid: t.sid, run: r, died: true }); if (x.notify) out.push(x.notify); }
+    else if (Date.now() - (m2.ended || 0) > 60e3) {
+      const d = tailEvents(r, 8192).filter(e => e.t === 'done').pop() || {};
+      const x = taskFinish({ sid: t.sid, run: r, ok: !!d.ok, stopped: !!d.stopped, model: m2.model });
+      if (x.notify) out.push(x.notify);
+    }
+  }
+  scheduleNow();
+  return { notify: out };
+}
+// 不在锁里：要不要收拾（有在跑的已经结束、或者排队的可能能开始了）
+function taskNeedsTick(all) {
+  const running = all.filter(t => t.status === 'running');
+  if (running.some(t => { const r = lastRun(t); return !r || runDone(r); })) return true;
+  return all.some(t => t.status === 'queued') && running.length < TASK_MAX;
+}
+function tickTasks() {
+  const all = listTasks();
+  if (!taskNeedsTick(all)) return;
+  const r = lockedCall('tasks', 'task_tick', {});
+  for (const n of (r && r.notify) || []) pushLater(n);
+}
+// 推送放到后台进程里发（不让网页那次请求等推送服务）
+function pushLater(msg) {
+  try { spawn(process.execPath, [SELF, 'pushq', JSON.stringify(msg)], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref(); } catch { /* 发不了就算了 */ }
+}
+// 网页最近有没有在看这个对话（tasks 轮询会碰一下）：在看就不推送，卡片自己会更新
+const convSeenF = sid => path.join(RUNS, 'conv-' + sid + '.seen');
+function unwatchedConv(sid) { if (!sid) return true; let t = 0; try { t = fs.statSync(convSeenF(sid)).mtimeMs; } catch { /* 没看过 */ } return Date.now() - t > 15000; }
+// 前台下一句带上的后台任务情况：做完 / 没做成 / 停了但前台还不知道的写结果，等确认的写问题，进行中、排队的写一句
+export function taskNotes(sid, all) {
+  const mine = (all || listTasks()).filter(t => t.parent === sid);
+  const lines = [], seen = [];
+  for (const t of mine) {
+    const head = '- 任务 ' + t.no + '「' + t.title + '」';
+    if (isFinished(t) && !t.frontSeen) { lines.push(head + (TASK_STATUS[t.status] || t.status) + '：' + cut(t.result ? t.result.text : '', 1500).replace(/\n{2,}/g, '\n')); seen.push(t.sid); }
+    else if (t.status === 'waiting') { lines.push(head + '在等用户确认：' + t.question); if (!t.frontSeen) seen.push(t.sid); }
+    else if (t.status === 'running') lines.push(head + '进行中（' + Math.max(1, Math.round((Date.now() - (t.startedAt || t.created)) / 60e3)) + ' 分钟）');
+    else if (t.status === 'queued') lines.push(head + '排队中' + (t.after && t.after.length ? '（等任务 ' + t.after.join('、') + ' 做完）' : ''));
+  }
+  return { text: lines.length ? '\n\n【后台任务的最新情况（用户在网页上也看得到结果卡片；问起就照这个说，要细节用 xin task show 编号）】\n' + lines.join('\n') : '', seen };
+}
+// 网站该不该替电脑续「有活在干」的租约（任务在后台跑，等模型回话时电脑看起来像闲着）：有任务就每 20 分钟续一次，没了就撤
+const LEASE_F = () => path.join(BASE, 'tasks-lease.json');
+function leaseHint(bg) {
+  const l = readJ(LEASE_F(), {}) || {};
+  if (bg > 0 && (!l.on || Date.now() - (l.at || 0) > 20 * 60e3)) { mk(BASE); writeJ(LEASE_F(), { on: true, at: Date.now() }); return 'renew'; }
+  if (!bg && l.on) { writeJ(LEASE_F(), { on: false, at: Date.now() }); return 'drop'; }
+  return null;
+}
+function bgInfo(all) {
+  const bg = (all || listTasks()).filter(t => t.status === 'running' || t.status === 'queued').length;
+  const lease = leaseHint(bg);
+  return lease ? { bg, lease } : { bg };
 }
 const ops = {
   memory() {
@@ -1350,9 +1701,12 @@ const ops = {
     const effort = s.agent === 'codex' ? AUTO_EFFORT : resolveEffort(s.agent, cm ? cm.id : null, a.effort);
     // 点名换了模型：悄悄告诉它一声，免得它按设定说「不知道什么模型」
     const hint = rt && rt.why === 'named' ? '\n（用户点名换了模型，已经换好了，照常回答就行，不用提这件事。）' : '';
-    const run = launch(s, Object.assign({ text: forAgent(said, a.context) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
-      cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}), userEv);
-    return Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, cm ? { model: cm.id } : {});
+    // 默认模式：带上这个对话的后台任务情况（做完的结果前台还不知道的、在等确认的、在做的）
+    const all = s.agent === 'codex' ? listTasks() : [];
+    const tn = s.agent === 'codex' ? taskNotes(s.sid, all) : { text: '', seen: [] };
+    const run = launch(s, Object.assign({ text: forAgent(said, a.context) + filesPart(files, s.agent, !!(cm && cm.image)) + hint + tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
+      cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
+    return Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
   },
   daily_get() {
     return { text: readText(DAILY_FILE()), last: readJ(DAILY_LAST()) || null, done: readJ(DAILY_DONE()) || null, today: today() };
@@ -1367,6 +1721,7 @@ const ops = {
   },
   daily(a) {
     try { pruneLogs(); } catch { /* 清不了不影响每日任务 */ }
+    try { tickTasks(); } catch { /* 收拾不了不影响每日任务 */ }
     const list = readText(DAILY_FILE()).trim();
     if (!list) return { skipped: 'empty' };
     const done = readJ(DAILY_DONE());
@@ -1387,7 +1742,9 @@ const ops = {
     const g = getNext();
     let bond = null;
     try { bondAdd('visit', 1, '今天来看我了'); bond = bondInfo(); } catch { /* 记不下来就不带 */ }
-    return Object.assign({ warming, bond, moves: readMoves() }, g || {});
+    let bg = {};
+    try { tickTasks(); bg = bgInfo(); } catch { /* 收拾不了就算了 */ }
+    return Object.assign({ warming, bond, moves: readMoves() }, bg, g || {});
   },
   moves() { return { moves: readMoves() }; },
   bond() { return bondInfo(); },
@@ -1470,11 +1827,17 @@ const ops = {
     if (!s) return { ok: true, already: true };
     const r = lastRun(s);
     if (r && !runDone(r)) return { error: 'busy', msg: '这个对话还在进行中，先停下来再删' };
+    if (isTask(s)) return { error: 'bad_sid', msg: '后台任务跟着它的对话一起删' };
+    // 这个对话派出去的后台任务还在排队、在做：先停掉再删（等确认的、做完的跟着一起删）
+    const busyTasks = listTasks().filter(t => t.parent === a.sid && (t.status === 'running' || t.status === 'queued'));
+    if (busyTasks.length) return { error: 'busy', msg: '这个对话还有后台任务在做（任务 ' + busyTasks.map(t => t.no).join('、') + '），先停掉再删' };
     for (const run of s.runs || []) for (const f of [runF(run), metaF(run), seenF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
     fs.unlinkSync(sessF(a.sid));
+    try { fs.unlinkSync(convSeenF(a.sid)); } catch { /* 没有 */ }
     // AI 自己那份会话记录也删掉；顺手把别的没有对应对话的旧记录清一清
     let freed = 0, pruned = null;
-    try { freed = dropLogs(s.agent, s.agentSid); } catch { /* 删不掉就留着，不影响网站这边 */ }
+    try { freed = (lockedCall('tasks', 'task_drop', { parent: a.sid }).bytes || 0); } catch { /* 删不掉就留着 */ }
+    try { freed += dropLogs(s.agent, s.agentSid); } catch { /* 删不掉就留着，不影响网站这边 */ }
     try { pruned = pruneLogs(); } catch { /* 同上 */ }
     return { ok: true, freed: freed + (pruned ? pruned.bytes : 0) };
   },
@@ -1531,7 +1894,7 @@ const ops = {
   },
   sessions() {
     mk(SESS);
-    const list = fs.readdirSync(SESS).filter(f => /^s[0-9a-z]+\.json$/.test(f)).map(f => readJ(path.join(SESS, f))).filter(Boolean);
+    const list = fs.readdirSync(SESS).filter(f => /^s[0-9a-z]+\.json$/.test(f)).map(f => readJ(path.join(SESS, f))).filter(s => s && !isTask(s));
     list.sort((x, y) => (y.updated || 0) - (x.updated || 0));
     // 没归档的、归档的各给最近 60 个（归档的多了也不会把正在用的挤出去）
     return { sessions: list.filter(s => !s.archived).slice(0, 60).concat(list.filter(s => s.archived).slice(0, 60)).map(summary) };
@@ -1541,15 +1904,164 @@ const ops = {
     const s = readJ(sessF(a.sid));
     if (!s) return { error: 'no_session', msg: '找不到这个对话' };
     const runs = (s.runs || []).slice(-30);
-    const out = runs.map(r => { const d = runDone(r), evs = events(r); return { run: r, events: evs, done: d }; });
+    // started：每一轮什么时候开始的（后台任务的结果卡片按时间插在这些轮之间）
+    const out = runs.map(r => { const d = runDone(r), evs = events(r); return { run: r, events: evs, done: d, started: (readJ(metaF(r)) || {}).started || 0 }; });
     const last = out[out.length - 1];
-    // started：这一轮什么时候开始的（网页重新打开面板时，「思考中 · N 秒」接着算，不从 0 开始）
-    return { session: summary(s), usage: sessionUsage(s), runs: out, active: last && !last.done ? { run: last.run, off: last.events.length, started: (readJ(metaF(last.run)) || {}).started || 0 } : null };
+    // active.started：网页重新打开面板时，「思考中 · N 秒」接着算，不从 0 开始
+    const res = { session: summary(s), usage: sessionUsage(s), runs: out, active: last && !last.done ? { run: last.run, off: last.events.length, started: last.started } : null };
+    if (isTask(s)) res.task = taskSummary(s, true);                                   // 看一个后台任务的过程
+    else if (s.agent === 'codex') res.tasks = listTasks().filter(t => t.parent === s.sid).map(t => taskSummary(t));   // 这个对话派出去的任务
+    return res;
+  },
+  // 后台任务：这个对话的（sid）或者全部的（all），外加所有还没做完的；网页轮询它更新任务卡片，顺便收拾（接着做断掉的、排队）
+  tasks(a = {}) {
+    try { tickTasks(); } catch { /* 收拾不了就先看现状 */ }
+    const all = listTasks();
+    if (okId(a.sid, 's')) { mk(RUNS); try { fs.writeFileSync(convSeenF(a.sid), ''); } catch { /* 记不下来就当没在看 */ } }
+    const mine = a.all ? all.slice(-60) : okId(a.sid, 's') ? all.filter(t => t.parent === a.sid) : [];
+    const active = all.filter(t => !isFinished(t));
+    // 最近 10 分钟结束的（哪个对话的都算）：网页据此知道别的对话里的任务做完了，让小芯冒个气泡
+    const recent = all.filter(t => isFinished(t) && (t.endedAt || 0) > Date.now() - 600e3 && !mine.includes(t));
+    const out = Object.assign({ tasks: mine.map(t => taskSummary(t)), active: active.map(t => taskSummary(t)), recent: recent.map(t => taskSummary(t)) }, bgInfo(all));
+    if (a.all) out.stats = modelStats();
+    return out;
+  },
+  task_stop(a) { return lockedCall('tasks', 'task_stop', { sid: a.sid, no: a.no }); },
+  task_tell(a) { return lockedCall('tasks', 'task_tell', { sid: a.sid, no: a.no, text: a.text }); }
+};
+// 只在 tasks 锁里跑的（main 里分派）
+const iops = {
+  task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick,
+  task_drop(a) {
+    let bytes = 0;
+    for (const t of listTasks().filter(x => x.parent === a.parent && (x.status !== 'running' && x.status !== 'queued'))) {
+      for (const run of t.runs || []) for (const f of [runF(run), metaF(run), seenF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
+      try { fs.unlinkSync(sessF(t.sid)); } catch { /* 没有 */ }
+      try { bytes += dropLogs('codex', t.agentSid); } catch { /* 删不掉就留着 */ }
+    }
+    return { ok: true, bytes };
   }
 };
 
+/* ---------- xin task：前台派分身、看进度、补充、停；分身请用户确认 ----------
+   xin task new [--kind 类型] [--title 标题] [--model 模型] [--dir 项目目录] [--file 文件]… [--after 编号,编号] [--minutes 分钟] [-- 要求…]
+     （要求也可以从标准输入给：xin task new --title 标题 <<'EOF' … EOF）
+   xin task list | show 编号 | tell 编号 补充的话 | stop 编号 | ask 要用户确认的事（只在分身里用） */
+function readStdin() {
+  try { const st = fs.fstatSync(0); if (!st.isFIFO() && !st.isFile()) return ''; return fs.readFileSync(0, 'utf8'); } catch { return ''; }
+}
+export function parseTaskArgs(argv) {
+  const o = { files: [], after: [] }, rest = [];
+  const alias = { k: 'kind', t: 'title', m: 'model', d: 'dir', f: 'file', a: 'after' };
+  for (let i = 0; i < argv.length; i++) {
+    const x = argv[i];
+    if (x === '--') { rest.push(...argv.slice(i + 1)); break; }
+    const m = /^(?:--([a-z]+)|-([a-z]))(?:=(.*))?$/.exec(x);
+    if (!m || !(m[1] || alias[m[2]])) { rest.push(x); continue; }
+    const k = m[1] || alias[m[2]], v = m[3] !== undefined ? m[3] : argv[++i];
+    if (v === undefined) return { error: '--' + k + ' 后面要写值' };
+    if (k === 'file') o.files.push(v);
+    else if (k === 'after') o.after.push(...String(v).split(/[,，、\s]+/).filter(Boolean).map(Number));
+    else if (['kind', 'title', 'model', 'dir', 'minutes'].includes(k)) o[k] = v;
+    else return { error: '不认识的选项：--' + k };
+  }
+  o.goal = rest.join(' ').trim();
+  return o;
+}
+const TASK_HELP = [
+  '用法：',
+  "  xin task new --kind code --title 标题 [--model 模型] [--dir 项目目录] [--file 文件] [--after 编号] -- 详细要求",
+  "  xin task new --kind code --title 标题 <<'EOF'",
+  '  详细要求（写清楚做什么、做到什么程度算完、东西放哪）',
+  '  EOF',
+  '  xin task list            这个对话的后台任务',
+  '  xin task show 编号        进度、结果、最近执行的命令',
+  '  xin task tell 编号 话     补充要求 / 回复它的问题 / 让它接着做',
+  '  xin task stop 编号        停掉',
+  '类型：' + TASK_KINDS.map(k => k + '（' + KIND_NAMES[k] + '）').join('、') + '；模型：' + CODEX_MODELS.map(m => m.id).join('、')
+].join('\n');
+function taskLine(t) {
+  const mins = n => Math.max(1, Math.round(n / 60e3)) + ' 分钟';
+  const st = t.status === 'running' ? '进行中 ' + mins(Date.now() - (t.startedAt || t.created)) : (TASK_STATUS[t.status] || t.status);
+  return '任务 ' + t.no + '「' + t.title + '」' + st + '（' + KIND_NAMES[t.tkind || t.kind] + '，' + codexModel(t.model).name + '）' + (t.question ? '：等你确认「' + t.question + '」' : '');
+}
+function taskCmd(argv) {
+  const sub = argv[0] || '', run = process.env.XIN_RUN;
+  const meta = okId(run, 'r') ? readJ(metaF(run)) : null;
+  if (!sub || sub === 'help' || sub === '-h' || sub === '--help') { console.log(TASK_HELP); return sub ? 0 : 2; }
+  if (sub === 'new') {
+    if (!meta) { console.log('现在不在对话里，派不了任务'); return 1; }
+    if (meta.task) { console.log('分身里不能再派分身：要拆开做的话，在最后的总结里写清楚建议怎么拆'); return 1; }
+    if (meta.kind === 'daily') { console.log('每日任务里不派分身，自己做完'); return 1; }
+    const o = parseTaskArgs(argv.slice(1));
+    if (o.error) { console.log(o.error + '\n' + TASK_HELP); return 2; }
+    if (!o.goal) o.goal = readStdin().trim();
+    if (!o.goal) { console.log('要写清楚让分身做什么\n' + TASK_HELP); return 2; }
+    if (o.kind && !TASK_KINDS.includes(o.kind)) { console.log('类型只能是：' + TASK_KINDS.join(' / ')); return 2; }
+    if (o.model && !CODEX_MODELS.some(m => m.id === o.model)) { console.log('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).join('、') + '）'); return 2; }
+    // 用户这一句点名的就是这个模型：当成用户点名（检查任务也照用）
+    const said = (events(run).find(e => e.t === 'user') || {}).text || '';
+    const named = !!o.model && namedModel(said) === o.model;
+    const r = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: o.kind, title: o.title, goal: o.goal, model: o.model, named, dir: o.dir, files: o.files, after: o.after, minutes: o.minutes });
+    if (r.error) { console.log(r.msg || r.error); return 1; }
+    const t = r.task;
+    emit(run, { t: 'task', sid: t.sid, no: t.no, title: t.title, kind: t.kind, model: t.model, why: t.why, status: t.status, after: t.after, at: Date.now() });
+    console.log('派出去了：任务 ' + t.no + '「' + t.title + '」（' + KIND_NAMES[t.kind] + '，' + codexModel(t.model).name + '，' + TASK_STATUS[t.status] + '，工作目录 ' + t.dir + '）。' +
+      (t.note ? t.note + '。' : '') + '它在后台做，做完结果会自动出现在聊天里；你不用等，回用户一句就结束这一轮。');
+    return 0;
+  }
+  if (sub === 'ask') {
+    if (!meta || !meta.task) { console.log('xin task ask 只在后台任务里用（要问用户就直接在回答里问）'); return 1; }
+    const r = lockedCall('tasks', 'task_ask', { sid: meta.sid, question: argv.slice(1).join(' ') });
+    if (r.error) { console.log(r.msg || r.error); return r.error === 'empty' ? 2 : 1; }
+    console.log('记下了。现在结束这一轮（最后一条消息说清楚做到哪了、要用户确认什么）；用户回复后会接着叫你。');
+    return 0;
+  }
+  const all = listTasks();
+  if (sub === 'list') {
+    const parent = meta && !meta.task ? meta.sid : null;
+    const mine = all.filter(t => t.parent === parent), others = all.filter(t => t.parent !== parent && !isFinished(t));
+    if (!mine.length && !others.length) { console.log('还没有后台任务'); return 0; }
+    if (mine.length) console.log(mine.slice(-20).map(taskLine).join('\n'));
+    if (others.length) console.log((mine.length ? '\n' : '') + '别的对话里还没做完的：\n' + others.map(taskLine).join('\n'));
+    return 0;
+  }
+  const t = findTask({ no: argv[1] }, all);
+  if (!t) { console.log(argv[1] ? '没有任务 ' + argv[1] : TASK_HELP); return 1; }
+  if (sub === 'show') {
+    const lines = [taskLine(t), '工作目录：' + t.dir, '要求：' + cut(t.goal, 1500)];
+    const r = lastRun(t);
+    if (r) {
+      const cmds = tailEvents(r, 65536).filter(e => e.t === 'tool_end').slice(-6).map(e => '  ' + (e.ok ? '✓ ' : '✗ ') + bareCmd(e.detail || e.name || '').replace(/\s+/g, ' ').slice(0, 160));
+      if (cmds.length) lines.push('最近执行的命令：\n' + cmds.join('\n'));
+      if (t.status === 'running') lines.push('现在：' + (taskActivity(r) || '在想'));
+    }
+    if (t.inbox && t.inbox.length) lines.push('等这一步做完再告诉它的：' + t.inbox.map(x => x.text).join(' / '));
+    if (t.result) lines.push('结果：' + cut(t.result.text, 3000) + (t.result.err ? '\n出错：' + t.result.err : ''));
+    console.log(lines.join('\n'));
+    return 0;
+  }
+  // 分身在沙盒里：从它那里起别的任务会把沙盒带过去，所以分身只能看，不能补充、停别的任务
+  if ((sub === 'tell' || sub === 'stop') && meta && meta.task) { console.log('分身里不能补充、停别的任务'); return 1; }
+  if (sub === 'tell') {
+    const text = argv.slice(2).join(' ').trim() || readStdin().trim();
+    if (!text) { console.log('用法：xin task tell 编号 补充的话'); return 2; }
+    const r = lockedCall('tasks', 'task_tell', { no: t.no, text });
+    console.log(r.error ? r.msg || r.error : r.msg);
+    return r.error ? 1 : 0;
+  }
+  if (sub === 'stop') {
+    const r = lockedCall('tasks', 'task_stop', { no: t.no });
+    console.log(r.error ? r.msg || r.error : r.already ? '任务 ' + t.no + ' 已经结束了' : '停了：任务 ' + t.no);
+    return r.error ? 1 : 0;
+  }
+  console.log(TASK_HELP);
+  return 2;
+}
+
 function xinCmd(argv) {
   const act = argv[0], arg = argv.slice(1).join(' ').trim();
+  if (act === 'task') return taskCmd(argv.slice(1));
   if (act === 'plugin') {   // 插件开关：xin plugin（列出来）、xin plugin on 名字、xin plugin off 名字；下一句开始生效
     const sub = argv[1] || '', name = argv[2] || '';
     if (sub === 'on' || sub === 'off') {
@@ -1615,7 +2127,7 @@ function xinCmd(argv) {
     return 0;
   }
   if (!act || act === '-h' || act === '--help' || !ACTS[act]) {
-    console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记事本里（xin remember 一句话）\n  next     下次见面的开场白（xin next 一句话）\n  move     编新动作、做新动作（xin move help）\n  bond     好感度（xin bond +1 理由）');
+    console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记事本里（xin remember 一句话）\n  next     下次见面的开场白（xin next 一句话）\n  move     编新动作、做新动作（xin move help）\n  bond     好感度（xin bond +1 理由）\n  task     后台任务：派分身、看进度、补充、停（xin task help）');
     return act && act !== '-h' && act !== '--help' ? 2 : 0;
   }
   const run = process.env.XIN_RUN;
@@ -1633,7 +2145,9 @@ function main() {
   if (op === 'run') { runner(process.argv[3]); return; }
   if (op === 'warm') { warm(); return; }
   if (op === 'xin') { process.exitCode = xinCmd(process.argv.slice(3)); return; }
-  if (!Object.prototype.hasOwnProperty.call(ops, op) && !(locked && op === 'session_patch')) {
+  if (op === 'pushq') { let m = null; try { m = JSON.parse(process.argv[3] || ''); } catch { /* 坏的就不发 */ } if (m) pushAll(m).catch(() => {}); return; }
+  const internal = locked && Object.prototype.hasOwnProperty.call(iops, op);
+  if (!Object.prototype.hasOwnProperty.call(ops, op) && !(locked && op === 'session_patch') && !internal) {
     process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return;
   }
   let args = {};
@@ -1645,6 +2159,10 @@ function main() {
     for (const k of ['agentSid', 'started', 'ctxWin', 'hUsage']) if (Object.prototype.hasOwnProperty.call(args.changes || {}, k)) s[k] = args.changes[k];
     s.updated = Date.now(); writeJ(sessF(args.sid), s); rememberAgentSession(s.agent, s.agentSid);
     process.stdout.write(JSON.stringify({ session: s })); return;
+  }
+  if (internal) {
+    let res; try { res = iops[op](args); } catch (e) { res = { error: 'internal', msg: String(e && e.message || e) }; }
+    process.stdout.write(JSON.stringify(res || {})); return;
   }
   if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
   const key = op === 'daily' ? 'daily' : ['send', 'rename', 'archive', 'forget'].includes(op)

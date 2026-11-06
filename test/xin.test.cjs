@@ -317,17 +317,37 @@ test('wake：睡着的叫醒（resume），关机的开机（start），醒着�
   }
 });
 
-test('Codex 每一轮都带小芯的设定（developer_instructions），续接对话也带；第一句不再拼设定', async () => {
-  const { agentArgs, systemPrompt } = await load('../site/xin/vm-agent.mjs');
+test('Codex 每一轮都带小芯的设定（developer_instructions），续接对话也带；第一句不再拼设定；前台教派分身，每日任务、分身自己不教；分身在沙盒里', async () => {
+  const { agentArgs, systemPrompt, taskSystemPrompt } = await load('../site/xin/vm-agent.mjs');
+  const dev = a => JSON.parse(a[a.findIndex(x => x.startsWith('developer_instructions='))].slice('developer_instructions='.length));
   for (const sess of [{ started: false, agentSid: null }, { started: true, agentSid: 'th-1' }]) {
     const [, a] = agentArgs('codex', sess, '你好', '');
     const i = a.findIndex(x => x.startsWith('developer_instructions='));
     assert.ok(i > 0 && a[i - 1] === '-c');
-    assert.strictEqual(JSON.parse(a[i].slice('developer_instructions='.length)), systemPrompt());
+    assert.strictEqual(dev(a), systemPrompt(undefined, { tasks: true }));
     assert.strictEqual(a[a.length - 1], '你好');
+    assert.ok(a.includes('--dangerously-bypass-approvals-and-sandbox') && !a.includes('--sandbox'));
   }
   const p = systemPrompt();
   assert.ok(p.includes('你就是小芯') && p.includes('第一人称') && p.includes('自己的电脑') && p.includes('不要说出'));
+  assert.ok(!p.includes('xin task new') && systemPrompt(undefined, { tasks: true }).includes('xin task new'));
+  const [, d] = agentArgs('codex', { started: false }, '每日', '', { role: 'daily' });
+  assert.ok(!dev(d).includes('xin task new'));
+  // 分身：自己的设定（在后台、别问问题、只改自己的目录、不可撤销的先 xin task ask），沙盒（只能写自己的目录等），-C 自己的目录
+  const task = { kind: 'task', no: 7, title: '编译 LED', dir: fs.mkdtempSync(path.join(os.tmpdir(), 'xin-taskdir-')), started: false };
+  const [, t] = agentArgs('codex', task, '做', '', { role: 'task', sandbox: true });
+  assert.strictEqual(dev(t), taskSystemPrompt(task));
+  assert.ok(dev(t).includes('后台任务 7「编译 LED」') && dev(t).includes('xin task ask') && dev(t).includes(task.dir) && !dev(t).includes('xin task new'));
+  assert.ok(!t.includes('--dangerously-bypass-approvals-and-sandbox') && t[t.indexOf('--sandbox') + 1] === 'workspace-write' && t.includes('sandbox_workspace_write.network_access=true'));
+  // 可写目录：自己的目录、~/.xin（xin 命令要用）……沙盒要求都存在，不存在的不列
+  const roots = JSON.parse(t.find(x => x.startsWith('sandbox_workspace_write.writable_roots=')).split('=').slice(1).join('='));
+  assert.ok(roots[0] === task.dir && roots.includes(process.env.XIN_HOME) && roots.every(p => fs.existsSync(p)), roots);
+  // 沙盒里插件要人批准，后台没人批：分身的插件全关
+  assert.ok(!t.some(x => /^mcp_servers\.[^.]+\.enabled=true$/.test(x)));
+  assert.deepStrictEqual(t.slice(-3), ['-C', task.dir, '做']);
+  // 关掉沙盒（XIN_TASK_SANDBOX=0 时 runner 传 sandbox:false）：照旧完全放权
+  const [, t2] = agentArgs('codex', task, '做', '', { role: 'task', sandbox: false });
+  assert.ok(t2.includes('--dangerously-bypass-approvals-and-sandbox') && !t2.includes('--sandbox'));
 });
 
 test('记事本：remember 记一条（带日期、去掉换行），没有文件时先写标题', async () => {
@@ -908,6 +928,199 @@ test('每日任务用默认模式：Codex 按 daily 类别挑模型、思考强�
   e2.op('daily_set', { text: '- 网关签到' });
   const r2 = e2.op('daily');
   assert.deepStrictEqual([r2.error, r2.msg], ['no_agent', '电脑里没有 codex，每日任务做不了']);
+});
+
+/* ---------- 后台任务（分身） ---------- */
+// 假 codex：前台说 TEST_DISPATCH 就派一个任务；分身（设定里有【你现在在后台】）有 task-wait 文件就一直等，要确认的先 xin task ask
+function fakeTaskCodex(dir) {
+  const bin = path.join(dir, 'bin'), log = path.join(dir, 'log');
+  fs.mkdirSync(bin, { recursive: true }); fs.mkdirSync(log, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'codex'), [
+    '#!/bin/sh',
+    'case "$*" in *--ephemeral*) exit 0;; esac',
+    'L="' + log + '"',
+    'n=$(cat "$L/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$L/n"',
+    'for a in "$@"; do printf "%s\\n" "$a"; done > "$L/args.$n"; pwd > "$L/cwd.$n"',
+    'printf \'{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-%012d"}\\n\' $n',
+    'echo \'{"type":"turn.started"}\'',
+    'case "$*" in',
+    '  *【你现在在后台】*)',
+    '    while [ -f "$L/task-wait" ]; do sleep 0.1; done',
+    '    case "$*" in *要确认*) xin task ask 要删掉旧的 build 目录吗 > "$L/ask-out";; esac',
+    '    echo \'{"type":"item.completed","item":{"id":"c1","type":"command_execution","command":"make","aggregated_output":"ok","exit_code":0,"status":"completed"}}\'',
+    '    echo \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"编好了：/data/workspace/blink/build/app.hex"}}\';;',
+    '  *TEST_DISPATCH*)',
+    '    xin task new --kind code --title "编译 LED" -- 编译 blink 工程 > "$L/xin-out" 2>&1',
+    '    echo \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"交给分身去弄啦"}}\';;',
+    '  *) echo \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"好的"}}\';;',
+    'esac',
+    'echo \'{"type":"turn.completed","usage":{}}\''
+  ].join('\n'), { mode: 0o755 });
+  return { bin, log, args: () => fs.readdirSync(log).filter(f => /^args\.\d+$/.test(f)).sort((a, b) => a.split('.')[1] - b.split('.')[1]).map(f => fs.readFileSync(path.join(log, f), 'utf8')) };
+}
+async function until(fn, ms = 15000, what = '') {
+  const t0 = Date.now(); let v;
+  while (Date.now() - t0 < ms) { v = fn(); if (v) return v; await new Promise(ok => setTimeout(ok, 120)); }
+  throw new Error('等不到：' + what + ' ' + JSON.stringify(v));
+}
+
+test('后台任务：前台派分身马上回话；分身在自己的目录、沙盒里按 code 类挑模型干完；结果先存再交回对话（卡片、history），前台下一句带上结果、只带一次；对话列表里没有任务', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task-'));
+  const fc = fakeTaskCodex(tmp);
+  const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH });
+  const r = op('send', { agent: 'codex', text: '请 TEST_DISPATCH 一下' });
+  const front = await until(() => { const p = op('poll', { run: r.run, off: 0 }); return p.done && p; }, 15000, '前台这一轮');
+  const card = front.events.find(e => e.t === 'task');
+  assert.ok(card && card.no === 1 && card.title === '编译 LED' && card.kind === 'code' && card.model === 'glm-5.3', JSON.stringify(front.events));
+  assert.deepStrictEqual(front.events.filter(e => e.t === 'text').map(e => e.text), ['交给分身去弄啦']);
+  assert.match(fs.readFileSync(path.join(fc.log, 'xin-out'), 'utf8'), /^派出去了：任务 1「编译 LED」（写代码，GLM-5.3，/);
+  const done = await until(() => { const d = op('tasks', { sid: r.sid }); return d.tasks[0] && d.tasks[0].status === 'done' && d; }, 15000, '任务做完');
+  const t = done.tasks[0];
+  assert.deepStrictEqual([t.no, t.parent, t.kind, t.model, t.why, t.result.ok, t.result.text], [1, r.sid, 'code', 'glm-5.3', 'code', true, '编好了：/data/workspace/blink/build/app.hex']);
+  assert.strictEqual(t.dir, path.join(work, 'tasks', '1-编译-LED'));
+  assert.strictEqual(done.bg, 0);
+  // 分身那一轮：在自己的目录里、沙盒、思考强度最高、设定是分身的
+  const all = fc.args(), ta = all.find(a => a.includes('【你现在在后台】')).split('\n');
+  assert.ok(ta.includes('--sandbox') && ta.includes('workspace-write') && !ta.includes('--dangerously-bypass-approvals-and-sandbox') && ta.includes('model="glm-5.3"') && ta.includes('model_reasoning_effort="max"'));
+  assert.strictEqual(ta[ta.indexOf('-C') + 1], t.dir);
+  const cwds = fs.readdirSync(fc.log).filter(f => f.startsWith('cwd.')).map(f => fs.readFileSync(path.join(fc.log, f), 'utf8').trim());
+  assert.ok(cwds.includes(t.dir), cwds.join());
+  // 对话列表里没有任务；对话的 history 带着任务；任务自己的 history 能看过程
+  assert.deepStrictEqual(op('sessions').sessions.map(x => x.sid), [r.sid]);
+  const h = op('history', { sid: r.sid });
+  assert.deepStrictEqual(h.tasks.map(x => [x.no, x.status]), [[1, 'done']]);
+  assert.ok(h.runs[0].started > 0);
+  const th = op('history', { sid: t.sid });
+  assert.ok(th.task && th.task.goal === '编译 blink 工程' && th.runs[0].events[0].text === '编译 blink 工程' && th.runs[0].events.some(e => e.t === 'tool_end' && e.detail === 'make'), JSON.stringify(th).slice(0, 400));
+  // 前台下一句带上结果；做成了以后就不再带
+  const r2 = op('send', { sid: r.sid, text: '怎么样了' });
+  await until(() => op('poll', { run: r2.run, off: 0 }).done, 15000, '前台第二句');
+  const p2 = fc.args().pop();
+  assert.ok(p2.includes('【后台任务的最新情况（') && p2.includes('任务 1「编译 LED」做完了：编好了：/data/workspace/blink/build/app.hex'), p2.slice(-500));
+  const r3 = op('send', { sid: r.sid, text: '好' });
+  await until(() => op('poll', { run: r3.run, off: 0 }).done, 15000, '前台第三句');
+  const p3 = fc.args().pop();
+  assert.ok(!p3.includes('【后台任务的最新情况（') && !p3.includes('任务 1「编译 LED」做完了'), p3.slice(-300));
+  // 运行记录里也有分身那一轮
+  const stats = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  assert.ok(stats.some(x => x.kind === 'task' && x.model === 'glm-5.3' && x.ok));
+  // 有任务在做时不让删对话；都做完了删对话连任务一起删
+  assert.strictEqual(op('forget', { sid: r.sid }).ok, true);
+  assert.strictEqual(fs.existsSync(path.join(xin, 'sessions', t.sid + '.json')), false);
+});
+
+test('后台任务：同时最多两个；同一个项目目录排队；补充要求等这一步做完接着做；停掉的不再做；分身要确认就停在「等你确认」，回复了接着做', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task2-'));
+  const fc = fakeTaskCodex(tmp);
+  const { op, work, xin, home } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH });
+  const r = op('send', { agent: 'codex', text: '你好' });
+  await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
+  const { execFileSync } = require('node:child_process');
+  const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
+  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_WORK: work, XIN_RUN: r.run, PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
+  const xinTask = (...a) => { try { return execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString(); } catch (e) { return String(e.stdout || '') + String(e.stderr || ''); } };
+  fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
+  assert.match(xinTask('new', '--title', 'A', '--dir', path.join(work, 'blink'), '--', '改 blink'), /任务 1「A」/);
+  assert.match(xinTask('new', '-t', 'B', '-d', 'blink', '-k', 'quick', '--', '再改 blink'), /任务 2「B」（杂活，GLM-5.3 Flash/);
+  assert.match(xinTask('new', '--title', 'C', '--kind', 'research', '--model', 'deepseek-v4.1-flash', '--', '查资料'), /任务 3「C」（查资料，DeepSeek V4.1 Flash/);
+  const st = () => Object.fromEntries(op('tasks', { sid: r.sid }).tasks.map(t => [t.title, t.status]));
+  await until(() => { const s = st(); return s.A === 'running' && s.C === 'running' && s; }, 15000, 'A、C 在做');
+  assert.deepStrictEqual(st(), { A: 'running', B: 'queued', C: 'running' });   // B 和 A 同一个目录，等着
+  assert.strictEqual(op('tasks', { sid: r.sid }).bg, 3);
+  // 不认识的模型、类型、目录在外面：不派
+  assert.match(xinTask('new', '--title', 'X', '--model', 'gpt-9', '--', 'x'), /没有这个模型/);
+  assert.match(xinTask('new', '--title', 'X', '--kind', 'nope', '--', 'x'), /类型只能是/);
+  assert.match(xinTask('new', '--title', 'X', '--dir', '/etc', '--', 'x'), /项目目录要在/);
+  // 补充要求：A 在做，记下来
+  assert.match(xinTask('tell', '1', '再加个呼吸灯'), /任务 1 这一步做完就按你说的接着做/);
+  // 停掉 C
+  assert.match(xinTask('stop', '3'), /停了：任务 3/);
+  await until(() => st().C === 'stopped', 10000, 'C 停了');
+  const c = op('tasks', { sid: r.sid }).tasks.find(t => t.title === 'C');
+  assert.deepStrictEqual([c.result.ok, c.result.text], [false, '做到一半被停下了。']);
+  // 放行：A 做完这一步 → 按补充接着做一轮 → 做完；B 接着开始、做完
+  fs.unlinkSync(path.join(fc.log, 'task-wait'));
+  await until(() => { const s = st(); return s.A === 'done' && s.B === 'done' && s; }, 20000, 'A、B 做完');
+  const a = op('history', { sid: op('tasks', { sid: r.sid }).tasks.find(t => t.title === 'A').sid });
+  assert.deepStrictEqual(a.runs.map(x => x.events[0].text), ['改 blink', '再加个呼吸灯']);
+  assert.ok(fc.args().some(x => x.includes('用户在你干活时补充了') && x.includes('- 再加个呼吸灯')));
+  // 要确认的：停在等你确认（带问题）；回复了接着做
+  assert.match(xinTask('new', '--title', 'D', '--', '清理 build，要确认'), /任务 4「D」/);
+  const d = await until(() => { const x = op('tasks', { sid: r.sid }).tasks.find(t => t.title === 'D'); return x && x.status === 'waiting' && x; }, 15000, 'D 等确认');
+  assert.strictEqual(d.question, '要删掉旧的 build 目录吗');
+  const r2 = op('send', { sid: r.sid, text: '嗯' });
+  await until(() => op('poll', { run: r2.run, off: 0 }).done, 15000, '前台');
+  assert.ok(fc.args().pop().includes('任务 4「D」在等用户确认：要删掉旧的 build 目录吗'));
+  assert.match(xinTask('tell', '4', '删吧'), /任务 4 接着做了/);
+  await until(() => op('tasks', { sid: r.sid }).tasks.find(t => t.title === 'D').status === 'done', 15000, 'D 做完');
+  assert.ok(fc.args().some(x => x.includes('用户回复：删吧') && x.includes('（你之前问的是：要删掉旧的 build 目录吗）')));
+  // 分身里不能再派分身、不能停别的任务；xin task list / show
+  assert.match(xinTask('list'), /任务 1「A」做完了（写代码，GLM-5.3）[\s\S]*任务 3「C」已停止/);
+  assert.match(xinTask('show', '1'), /工作目录：.*blink[\s\S]*最近执行的命令：\n  ✓ make[\s\S]*结果：编好了/);
+});
+
+test('后台任务：到时间没做完停下（算没做成）；runner 中途被杀，下次有人来看时接着做一次（提醒它先查现状），再断就等用户', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task3-'));
+  const fc = fakeTaskCodex(tmp);
+  const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '300' });
+  const r = op('send', { agent: 'codex', text: '你好' });
+  await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
+  const { execFileSync } = require('node:child_process');
+  const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
+  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_WORK: work, XIN_RUN: r.run, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '300', PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
+  const xinTask = (...a) => execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString();
+  fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
+  xinTask('new', '--title', '慢活', '--', '慢慢做');
+  const t = await until(() => { const x = op('tasks', { sid: r.sid }).tasks[0]; return x && x.status === 'failed' && x; }, 15000, '超时');
+  assert.match(t.result.err, /^超时（60 分钟）$/);
+  // 被杀：把分身那一轮的 runner 和它起的 codex 一起杀掉（模拟电脑重启）
+  xinTask('new', '--title', '会断的', '--', '做');
+  const t2 = await until(() => { const x = op('tasks', { sid: r.sid }).tasks.find(y => y.title === '会断的'); return x && x.status === 'running' && x; }, 15000, '在做');
+  const sess = JSON.parse(fs.readFileSync(path.join(xin, 'sessions', t2.sid + '.json'), 'utf8'));
+  const meta = JSON.parse(fs.readFileSync(path.join(xin, 'runs', sess.runs[0] + '.json'), 'utf8'));
+  await until(() => { const m = JSON.parse(fs.readFileSync(path.join(xin, 'runs', sess.runs[0] + '.json'), 'utf8')); return m.pid; }, 5000, 'pid');
+  const m2 = JSON.parse(fs.readFileSync(path.join(xin, 'runs', sess.runs[0] + '.json'), 'utf8'));
+  try { process.kill(m2.pid, 'SIGKILL'); } catch { /* 已经没了 */ }
+  try { execFileSync('pkill', ['-9', '-f', fc.bin + '/codex']); } catch { /* 没有 */ }
+  fs.unlinkSync(path.join(fc.log, 'task-wait'));
+  await new Promise(ok => setTimeout(ok, 500));
+  const t3 = await until(() => { const x = op('tasks', { sid: r.sid }).tasks.find(y => y.title === '会断的'); return x && x.status === 'done' && x; }, 15000, '接着做完');
+  const h = op('history', { sid: t3.sid });
+  assert.deepStrictEqual(h.runs.map(x => x.events[0].text), ['做', '（中途断了，接着做）']);
+  assert.ok(h.runs[0].events.some(e => e.t === 'err' && /中途断了/.test(e.text)));
+  assert.ok(fc.args().some(x => x.includes('刚才电脑暂停或重启，这一轮中途断了')));
+  assert.ok(meta.sandbox === true && meta.deadline > meta.started);
+});
+
+test('后台任务的租约：vm-agent 说有任务在做就续一个小时，都做完了就撤；新加的 op Worker 都放行', async () => {
+  const m = await fresh(), env = mkEnv(), ck = await login(m, env);
+  for (const op of ['tasks', 'task_stop', 'task_tell']) assert.ok(m.OPS.has(op), op);
+  const ib = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify({ tasks: [], active: [], bg: 1, lease: 'renew' }), stderr: '', exitCode: 0 } },
+      { body: { stdout: JSON.stringify({ tasks: [], active: [], bg: 0, lease: 'drop' }), stderr: '', exitCode: 0 } }],
+    'PUT /v1/machines/m_abc/activity-leases/xin-tasks': [{ body: {} }],
+    'DELETE /v1/machines/m_abc/activity-leases/xin-tasks': [{ body: {} }]
+  });
+  try {
+    for (let i = 0; i < 2; i++) {
+      const waits = [];
+      await m.handleXin(req('/api/xin/call', { body: { op: 'tasks', args: { sid: 'sabc123' } }, headers: { cookie: ck } }), env, { waitUntil: p => waits.push(p) });
+      await Promise.all(waits);
+    }
+    const put = ib.calls.find(c => c.key === 'PUT /v1/machines/m_abc/activity-leases/xin-tasks');
+    assert.deepStrictEqual(JSON.parse(put.body), { ttlSeconds: 3600 });
+    assert.ok(ib.calls.some(c => c.key === 'DELETE /v1/machines/m_abc/activity-leases/xin-tasks'));
+  } finally { ib.restore(); }
+});
+
+test('xin task 的参数：长短选项、--after 逗号分隔、-- 后面是要求；缺值报错', async () => {
+  const { parseTaskArgs } = await load('../site/xin/vm-agent.mjs');
+  assert.deepStrictEqual(parseTaskArgs(['--kind', 'code', '-t', '编译', '--file', 'a.png', '-f', 'b.png', '--after', '3,4', '--', '编', '译']),
+    { files: ['a.png', 'b.png'], after: [3, 4], kind: 'code', title: '编译', goal: '编 译' });
+  assert.deepStrictEqual(parseTaskArgs(['--model=kimi-k3.1-pro', '查', '资料']).model, 'kimi-k3.1-pro');
+  assert.strictEqual(parseTaskArgs(['--title']).error, '--title 后面要写值');
+  assert.strictEqual(parseTaskArgs(['--nope', 'x']).error, '不认识的选项：--nope');
 });
 
 test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权限、网关 key 用环境变量；事件整理、会话号、接着聊（--session-id）、用量；删对话连它的会话一起删', async () => {
