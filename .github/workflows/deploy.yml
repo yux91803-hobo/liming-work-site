@@ -57,7 +57,11 @@ jobs:
       - name: 安装浏览器
         run: |
           pip install playwright==1.64.1
-          python -m playwright install --with-deps chromium
+          if command -v google-chrome >/dev/null 2>&1; then
+            echo "CHROMIUM_PATH=$(command -v google-chrome)" >> "$GITHUB_ENV"
+          else
+            python -m playwright install --with-deps chromium
+          fi
       - name: 浏览器端到端测试（电脑、手机宽度：点击、翻页、返回、模拟器）
         run: |
           node scripts/preview.mjs --port 5173 > preview.log 2>&1 &
