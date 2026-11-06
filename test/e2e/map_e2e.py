@@ -201,9 +201,12 @@ async def main():
             await pg.wait_for_function("!!__map.getSource('esri')")
             state = await pg.evaluate("[document.querySelector('.opt.on').dataset.layer,localStorage.getItem('wm.layer2'),!!__map.getSource('esri')]")
             check('连续切图层：旧截图晚完成也不能覆盖最后一次选择', state == ['sat', 'sat', True], state)
-            await pg.evaluate("""Image.prototype.decode=function(){return new Promise(r=>setTimeout(r,100))};
-              document.querySelector('[data-layer=amap]').click();localStorage.setItem('lm.theme','dark');postMessage({type:'theme'},location.origin);""")
-            await pg.wait_for_timeout(400)
+            # 明确模拟主题消息稍晚到达、截图等待满 300ms；断言应等待实际完成，不能依赖固定的 400ms。
+            await pg.evaluate("""Image.prototype.decode=function(){return new Promise(()=>{})};
+              addEventListener('message', e=>{if(e.data && e.data.delayForTest){e.stopImmediatePropagation();
+                setTimeout(()=>dispatchEvent(new MessageEvent('message',{origin:location.origin,data:{type:'theme'}})),250)}},true);
+              document.querySelector('[data-layer=amap]').click();localStorage.setItem('lm.theme','dark');postMessage({type:'theme',delayForTest:true},location.origin);""")
+            await pg.wait_for_function("document.querySelector('.opt.on').dataset.layer === 'amap' && document.documentElement.dataset.theme === 'dark' && !!__map.getSource('amap')", timeout=5000)
             state = await pg.evaluate("[document.querySelector('.opt.on').dataset.layer,localStorage.getItem('wm.layer2'),document.documentElement.dataset.theme,document.querySelector('meta[name=theme-color]').content]")
             check('切层同时换主题，保留选择并同步浏览器主题色', state == ['amap', 'amap', 'dark', '#0d1117'], state)
             await pg.wait_for_timeout(1800)
