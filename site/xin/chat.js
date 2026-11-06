@@ -418,6 +418,7 @@
     };
     item('', 'mem', '小芯的记事本', loadMemory);
     item('xc-dailyb', 'daily', '每日任务', loadDaily);
+    item('xc-tasksb', 'gear', '后台任务', loadTasksView);
     item('xc-filesb', 'files', '小芯的文件', function () { loadFiles(WORK, 'sess'); });
     sc.appendChild(nav);
     var dh = h('p', 'xc-dr-h', '最近的对话');
@@ -849,6 +850,63 @@
     })();
   }
 
+  /* ---------- 后台任务中心（侧边栏「后台任务」）----------
+     所有对话派出去的分身：还没做完的在上面，最近做完的在下面（写着是哪个对话派的），点一个看过程；
+     每日任务做得怎么样；各模型最近 14 天用得怎么样（用了几次、成了几次、平均多久、换过几次模型）——路由器的候选顺序按这个手动调。
+     有任务在做时 5 秒刷新一次。 */
+  function loadTasksView() {
+    clearTimeout(S.tvTm);
+    if (S.view !== 'tasks') { S.view = 'tasks'; render(); sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '正在读取…')); }
+    call('tasks', { all: true }, 60000).then(function (d) {
+      if (d && d.error) throw new Error(d.msg || d.error);
+      if (S.view !== 'tasks') return;
+      S.bg = d.bg || 0; S.tactive = d.active || [];
+      setTasks(d.tasks || [], true); renderStrip();
+      var top = sessEl.scrollTop;
+      sessEl.innerHTML = '';
+      sessEl.appendChild(backBtn(true));
+      sessEl.appendChild(h('p', 'xc-hint', '默认模式下，要花时间的活小芯会派分身在后台做（同时最多 2 个），你可以接着聊；做完了结果会回到派它的那个对话里。点一个任务看它的过程。'));
+      var all = (d.tasks || []).slice().reverse(), titles = d.titles || {};
+      var live = all.filter(function (t) { return tLive(t) || t.status === 'waiting'; }), done = all.filter(function (t) { return !tLive(t) && t.status !== 'waiting'; });
+      function row(t) {
+        var b = h('button', 'xc-tl-i'); b.type = 'button'; b.dataset.tsid = t.sid;
+        b.appendChild(h('b', '', '任务 ' + t.no + ' · ' + t.title));
+        var m = h('span', 'xc-tl-m'); m.appendChild(h('span', 'xc-task-st st-' + t.status, tStatText(t)));
+        m.appendChild(document.createTextNode([TKIND[t.kind], modelName(t.model)].filter(Boolean).join(' · ')));
+        b.appendChild(m);
+        var from = t.parent && titles[t.parent];
+        if (from) b.appendChild(h('span', 'xc-tl-from', '在「' + from + '」里派的'));
+        b.addEventListener('click', function () { openTask(t.sid); });
+        return b;
+      }
+      function sec(name, arr) { if (!arr.length) return; sessEl.appendChild(h('p', 'xc-set-h xc-tv-h', name)); arr.forEach(function (t) { sessEl.appendChild(row(t)); }); }
+      sec('还没做完的', live);
+      sec('最近的', done.slice(0, 30));
+      if (!all.length) sessEl.appendChild(h('p', 'xc-hint', '还没有后台任务。'));
+      // 每日任务
+      var dl = d.daily && d.daily.last, dst = h('p', 'xc-dailyst');
+      dst.appendChild(document.createTextNode('最近一次：' + (dl && dl.date ? dl.date.slice(5) + ' ' + (dl.ok === null ? '正在做…' : dl.ok ? '做完了' : '没做成') : '还没做过') + '　'));
+      if (dl && dl.sid) { var lk = h('button', 'xc-link xc-inl', '看看'); lk.type = 'button'; lk.addEventListener('click', function () { openSession(dl.sid); }); dst.appendChild(lk); }
+      sessEl.appendChild(h('p', 'xc-set-h xc-tv-h', '每日任务'));
+      sessEl.appendChild(dst);
+      // 各模型最近 14 天
+      var st = (d.stats || []).filter(function (x) { return x.n > 0; });
+      if (st.length) {
+        sessEl.appendChild(h('p', 'xc-set-h xc-tv-h', '各模型最近 14 天'));
+        var ul = h('ul', 'xc-tv-st');
+        st.forEach(function (x) {
+          var li = h('li');
+          li.appendChild(h('b', '', modelName(x.model) + (x.agent === 'harness' ? '（天启）' : '')));
+          li.appendChild(h('span', '', '用了 ' + x.n + ' 次，成了 ' + x.ok + ' 次' + (x.avgMs ? '，平均 ' + dur(x.avgMs) : '') + (x.fellBack ? '，换过 ' + x.fellBack + ' 次模型' : '')));
+          ul.appendChild(li);
+        });
+        sessEl.appendChild(ul);
+      }
+      sessEl.scrollTop = top;
+      if (live.some(tLive)) S.tvTm = setTimeout(function () { if (S.view === 'tasks' && S.open) loadTasksView(); }, 5000);
+    }).catch(function (e) { if (S.view !== 'tasks') return; sessEl.innerHTML = ''; sessEl.appendChild(backBtn(true)); sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
+  }
+
   /* ---------- 小芯的记事本：它的长期记忆，能看能改 ---------- */
   /* ---------- 每日任务：网站后台每天定时叫醒小芯的电脑，让它按这份清单做一遍 ---------- */
   function loadDaily() {
@@ -1259,6 +1317,7 @@
     box.appendChild(act);
     box.scrollTop = atEnd ? box.scrollHeight : top;
   }
+  function openTaskCenter() { open(); setDrawer(false); loadTasksView(); }
   // 后台任务一览：所有没做完的（哪个对话的都算）和这个对话最近的
   function openTaskList() {
     S.sheetTask = '';
@@ -1280,6 +1339,9 @@
     if (act.length) { box.appendChild(h('p', 'xc-set-h', '还没做完的')); act.forEach(function (t) { box.appendChild(row(t)); }); }
     if (mine.length) { box.appendChild(h('p', 'xc-set-h', '这个对话的')); mine.forEach(function (t) { box.appendChild(row(t)); }); }
     if (!act.length && !mine.length) box.appendChild(h('p', 'xc-hint', '还没有后台任务。默认模式下，要花时间的活小芯会派分身在后台做，你可以接着聊。'));
+    var all = h('button', 'xc-link xc-tl-all', '全部任务和各模型的统计 →'); all.type = 'button';
+    all.addEventListener('click', function () { setSheet(false); loadTasksView(); });
+    box.appendChild(all);
     sheetEl.appendChild(box);
     setSheet(true);
   }
@@ -1968,7 +2030,10 @@
       if (g && g.moves) setMoves(g.moves);
       if (g && g.bond) setBond(g.bond);
       if (g && g.bg) { S.bg = g.bg; pollTasksSoon(500); }   // 后台有任务在做：看看进度（做完了小芯会冒气泡）
-      if (!g || !g.id || !g.text || ls(GREETED) === g.id) return;
+      if (!g || !g.id || !g.text || ls(GREETED) === g.id) {
+        if (g && g.bg) setTimeout(function () { var x = xin(); if (x && x.say && x.mode !== 'away' && !x.asking && !S.open) x.say('我的分身还在后台忙着（' + g.bg + ' 个任务），好了告诉你', 6000, openTaskCenter); }, 2500);
+        return;
+      }
       var tries = 0;
       (function show() {
         var x = xin();

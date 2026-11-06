@@ -1092,6 +1092,42 @@ test('后台任务：到时间没做完停下（算没做成）；runner 中途�
   assert.ok(meta.sandbox === true && meta.deadline > meta.started);
 });
 
+test('分身配合：--review 做完再派一个分身换个模型、在同一个目录检查（拿到前一个的结果）；--after 等前一个做完；任务中心拿得到全部任务、各模型的统计、对话名字和每日任务', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task4-'));
+  const fc = fakeTaskCodex(tmp);
+  const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH });
+  const r = op('send', { agent: 'codex', text: '你好' });
+  await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
+  const { execFileSync } = require('node:child_process');
+  const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
+  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_WORK: work, XIN_RUN: r.run, PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
+  const xinTask = (...a) => execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString();
+  fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
+  const out = xinTask('new', '--kind', 'code', '--title', '点灯', '--dir', 'pb5', '--review', '--', '写 PB5 点灯并编译');
+  assert.match(out, /任务 1「点灯」（写代码，GLM-5.3，[\s\S]*检查任务 2（Kimi K3.1 Pro）等它做完就开始/);
+  assert.match(xinTask('new', '--kind', 'research', '--title', '接着查', '--after', '1', '--', '在点灯基础上查串口'), /任务 3「接着查」/);
+  const ts = () => op('tasks', { sid: r.sid }).tasks;
+  let list = await until(() => { const x = ts(); return x.length === 3 && x[0].status === 'running' && x; }, 15000, '任务 1 在做');
+  assert.deepStrictEqual(list.map(t => [t.no, t.kind, t.status, t.after]), [[1, 'code', 'running', []], [2, 'review', 'queued', [1]], [3, 'research', 'queued', [1]]]);
+  assert.strictEqual(list[1].dir, list[0].dir);
+  assert.notStrictEqual(list[1].model, list[0].model);   // 换个模型检查
+  // 前台这一轮带了两张卡片
+  const evs = op('poll', { run: r.run, off: 0 }).events.filter(e => e.t === 'task');
+  assert.deepStrictEqual(evs.map(e => [e.no, e.kind]), [[1, 'code'], [2, 'review'], [3, 'research']]);
+  fs.unlinkSync(path.join(fc.log, 'task-wait'));
+  list = await until(() => { const x = ts(); return x.every(t => t.status === 'done') && x; }, 20000, '都做完');
+  // 检查的那个分身拿到了前一个的结果和「检查」的要求；用的是另一个模型
+  const rv = fc.args().find(a => a.includes('【后台任务 2：检查：点灯】'));
+  assert.ok(rv && rv.includes('【任务 1「点灯」的结果（做完了') && rv.includes('你的活是检查上面这些结果') && rv.includes('model="kimi-k3.1-pro"'), (rv || '').slice(0, 300));
+  assert.ok(list[2].startedAt >= list[0].endedAt, '任务 3 等任务 1 做完才开始');
+  // 任务中心：全部任务、对话名字、统计、每日任务
+  const all = op('tasks', { all: true });
+  assert.deepStrictEqual(all.tasks.map(t => t.no), [1, 2, 3]);
+  assert.strictEqual(all.titles[r.sid], '你好');
+  assert.ok(all.stats.some(x => x.model === 'glm-5.3' && x.n >= 1 && x.ok >= 1) && all.stats.some(x => x.model === 'kimi-k3.1-pro'));
+  assert.ok(all.daily && 'last' in all.daily && all.daily.today);
+});
+
 test('后台任务的租约：vm-agent 说有任务在做就续一个小时，都做完了就撤；新加的 op Worker 都放行', async () => {
   const m = await fresh(), env = mkEnv(), ck = await login(m, env);
   for (const op of ['tasks', 'task_stop', 'task_tell']) assert.ok(m.OPS.has(op), op);
@@ -1119,6 +1155,7 @@ test('xin task 的参数：长短选项、--after 逗号分隔、-- 后面是要
   assert.deepStrictEqual(parseTaskArgs(['--kind', 'code', '-t', '编译', '--file', 'a.png', '-f', 'b.png', '--after', '3,4', '--', '编', '译']),
     { files: ['a.png', 'b.png'], after: [3, 4], kind: 'code', title: '编译', goal: '编 译' });
   assert.deepStrictEqual(parseTaskArgs(['--model=kimi-k3.1-pro', '查', '资料']).model, 'kimi-k3.1-pro');
+  assert.deepStrictEqual(parseTaskArgs(['--review', '-t', '点灯', '--', '写']), { files: [], after: [], review: true, title: '点灯', goal: '写' });
   assert.strictEqual(parseTaskArgs(['--title']).error, '--title 后面要写值');
   assert.strictEqual(parseTaskArgs(['--nope', 'x']).error, '不认识的选项：--nope');
 });
