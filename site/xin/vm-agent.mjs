@@ -132,8 +132,8 @@ function warm() {
   const h = hasAgent('harness');
   const child = h
     ? spawn(dshCmd(), ['--profile', 'headless'].concat((() => { try { return ['--patch', writePersona()]; } catch { return []; } })(), ['--json', '只回复一个字：1']), { cwd: os.homedir(), stdio: ['ignore', 'pipe', 'ignore'], env: Object.assign({}, process.env, harnessEnv()) })
-    : spawn('codex', ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '-c', 'developer_instructions="只回复一个字：1"'].concat(mcpFlags(), ['1']),
-      { cwd: os.homedir(), stdio: ['ignore', 'ignore', 'ignore'] });
+    : spawn('codex', ['exec', '--json', '--ephemeral', '--skip-git-repo-check'].concat(codexRoute(), ['-c', 'developer_instructions="只回复一个字：1"'], mcpFlags(), ['1']),
+      { cwd: os.homedir(), stdio: ['ignore', 'ignore', 'ignore'], env: Object.assign({}, process.env, codexKeyEnv()) });
   let out = '';
   if (h) { child.stdout.setEncoding('utf8'); child.stdout.on('data', d => { if (out.length < 4000) out += d; }); }
   const kill = setTimeout(() => { try { child.kill('SIGTERM'); } catch { /* 已经退了 */ } }, 200e3);
@@ -680,6 +680,47 @@ function harnessEnv() {
   if (key) env.XIN_HARNESS_KEY = key;
   return env;
 }
+/* ---------- Codex 的线路 ----------
+   和 Harness 一样每一轮自己带：走小芯电脑上的本地网关（responses 协议），固定 glm-5.3-flash，不靠 ~/.codex/config.toml 里写的模型和网关。
+   key：~/.xin/codex.key（单独给 Codex 的），没有就用 Harness 那把（~/.xin/harness.key）；起的时候用环境变量 XIN_CODEX_KEY 交给它（线路里写的是 env_key）。
+   模型资料：Codex 要每个模型的上限、能不能看图等资料，网关的新模型它不认识；
+   照着 ~/.codex/config.toml 里 model_catalog_json 那份资料复制一份到 ~/.xin/codex-models.json，补上这个模型（照抄 DeepSeek 那条改名字和上限），每轮用 -c 指过去。
+   glm-5.3-flash 看不了图：图片不用 -i 给，只在消息里写路径。 */
+export const CODEX_ROUTE = { provider: 'xin-gateway', name: 'WorkBuddy 网关', baseURL: 'http://127.0.0.1:8788/v1', wire: 'responses', model: 'glm-5.3-flash', modelName: 'GLM-5.3 Flash', win: 1000000, image: false };
+const CODEX_KEY = () => path.join(BASE, 'codex.key');
+const CODEX_CATALOG = () => path.join(BASE, 'codex-models.json');
+function codexCatalog() {
+  try {
+    const m = /^\s*model_catalog_json\s*=\s*"([^"]+)"/m.exec(readText(path.join(CODEX_HOME(), 'config.toml')));
+    if (!m) return null;
+    const src = m[1].replace(/^~(?=\/)/, os.homedir()), out = CODEX_CATALOG();
+    const st = fs.statSync(src);
+    try { if (fs.statSync(out).mtimeMs >= st.mtimeMs && (readJ(out + '.for') || {}).model === CODEX_ROUTE.model) return out; } catch { /* 还没有，现做 */ }
+    const cat = JSON.parse(fs.readFileSync(src, 'utf8'));
+    const list = Array.isArray(cat.models) ? cat.models : null;
+    if (!list || !list.length) return null;
+    const R = CODEX_ROUTE;
+    const base = list.find(x => x && x.slug === 'deepseek-v4.1-flash') || list.find(x => x && x.context_window) || list[0];
+    const e = Object.assign(JSON.parse(JSON.stringify(base)), { slug: R.model, display_name: R.modelName, context_window: R.win, max_context_window: R.win, auto_compact_token_limit: Math.round(R.win * 0.9) });
+    if ('input_modalities' in e) e.input_modalities = R.image ? ['text', 'image'] : ['text'];
+    mk(BASE);
+    const t = out + '.' + process.pid + '.tmp';
+    fs.writeFileSync(t, JSON.stringify(Object.assign({}, cat, { models: list.filter(x => !x || x.slug !== R.model).concat([e]) })));
+    fs.renameSync(t, out);
+    writeJ(out + '.for', { model: R.model, src });
+    return out;
+  } catch { return null; }
+}
+export function codexRoute() {
+  const R = CODEX_ROUTE, q = JSON.stringify, P = 'model_providers.' + R.provider + '.';
+  const cat = codexCatalog();
+  return ['-c', 'model_provider=' + q(R.provider), '-c', P + 'name=' + q(R.name), '-c', P + 'base_url=' + q(R.baseURL), '-c', P + 'wire_api=' + q(R.wire),
+    '-c', P + 'env_key="XIN_CODEX_KEY"', '-c', 'model=' + q(R.model), '-c', 'model_context_window=' + R.win].concat(cat ? ['-c', 'model_catalog_json=' + q(cat)] : []);
+}
+export function codexKeyEnv() {
+  const key = (readText(CODEX_KEY()) || readText(HARNESS_KEY())).trim();
+  return key ? { XIN_CODEX_KEY: key } : {};
+}
 export function agentArgs(agent, sess, text, effort, extra) {
   if (agent === 'harness') {
     // 文字放最后当任务；以 - 开头会被当成选项，前面垫个空格
@@ -693,8 +734,8 @@ export function agentArgs(agent, sess, text, effort, extra) {
   }
   // 小芯的设定用 developer_instructions 每一轮都给（续接以前的对话也带上，改了设定马上生效）；值按 TOML 解析，JSON 字符串正好是合法的 TOML 字符串
   // 图片放在最前面（-i 后面能跟好几个值，紧跟着 -- 开头的选项它才知道结束）；插件开关见 mcpFlags
-  const imgs = ((extra && extra.images) || []).reduce((a, p) => a.concat(['-i', p]), []);
-  const common = ['--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '-c', 'developer_instructions=' + JSON.stringify(systemPrompt())]
+  const imgs = CODEX_ROUTE.image ? ((extra && extra.images) || []).reduce((a, p) => a.concat(['-i', p]), []) : [];
+  const common = ['--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox'].concat(codexRoute(), ['-c', 'developer_instructions=' + JSON.stringify(systemPrompt())])
     .concat(effort ? ['-c', 'model_reasoning_effort="' + effort + '"'] : [], mcpFlags());
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(imgs, common, [sess.agentSid, text])];
   return ['codex', ['exec'].concat(imgs, common, ['-C', WORK, text])];
@@ -775,7 +816,7 @@ function runner(run) {
       // 自己一个进程组：卡住或停掉时连它起的子进程一起杀，不然子进程攥着输出管道，这边永远等不到它结束
       child = spawn(cmd, args, {
         cwd: WORK, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
-        env: Object.assign({}, process.env, meta.agent === 'harness' ? harnessEnv() : {}, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
+        env: Object.assign({}, process.env, meta.agent === 'harness' ? harnessEnv() : meta.agent === 'codex' ? codexKeyEnv() : {}, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
       });
     } catch (e) { finish(127, '启动 ' + cmd + ' 失败：' + e.message); return; }
     child.on('error', e => finish(127, e.code === 'ENOENT' ? '云电脑里没有 ' + cmd + ' 命令' : '启动 ' + cmd + ' 失败：' + e.message));
@@ -991,7 +1032,7 @@ function mergeParked() {
   }
   return done.reduce((a, d) => a.concat(d.names), []);
 }
-function codexEnv() { return Object.assign({}, process.env, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin') }); }
+export function codexEnv() { return Object.assign({}, process.env, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin') }); }
 
 /* ---------- 用户发来的文件 ----------
    网页把文件传到 WORK/uploads/日期/ 下面（网站 Worker 直接写进这台电脑），发消息时带上路径。这里核对一遍：
@@ -1019,7 +1060,7 @@ function sizeText(n) { return n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n /
 export function filesPart(files, agent) {
   if (!files || !files.length) return '';
   return '\n\n【用户发来的文件（已经在你电脑上）】\n' + files.map(f => '- ' + f.path + '（' + f.name + '，' + (f.image ? '图片，' : '') + sizeText(f.size) + '）').join('\n') +
-    (files.some(f => f.image) && agent !== 'harness' ? (agent === 'codex' ? '\n图片已经直接给你看了。' : '\n图片用 Read 工具打开就能看。') : '');
+    (files.some(f => f.image) && agent !== 'harness' ? (agent === 'codex' ? (CODEX_ROUTE.image ? '\n图片已经直接给你看了。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。') : '\n图片用 Read 工具打开就能看。') : '');
 }
 
 /* ---------- 一个对话的用量 ----------
@@ -1161,7 +1202,7 @@ const ops = {
     const userEv = { t: 'user', text, at: Date.now() };
     if (ctxLabel) userEv.ctx = ctxLabel;
     if (files.length) userEv.files = files.map(f => ({ name: f.name, path: f.path, size: f.size, image: f.image }));
-    const run = launch(s, { text: forAgent(said, a.context) + filesPart(files, s.agent), effort: resolveEffort(a.effort, said), images: s.agent === 'codex' ? files.filter(f => f.image).map(f => f.path) : [] }, userEv);
+    const run = launch(s, { text: forAgent(said, a.context) + filesPart(files, s.agent), effort: resolveEffort(a.effort, said), images: s.agent === 'codex' && CODEX_ROUTE.image ? files.filter(f => f.image).map(f => f.path) : [] }, userEv);
     return { sid: s.sid, run, agent: s.agent, title: s.title };
   },
   daily_get() {
