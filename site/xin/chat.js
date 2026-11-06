@@ -14,10 +14,12 @@
 (function () {
   'use strict';
   var API = '/api/xin/';
-  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort', LS_CTX = 'lm.xin.ctx';
+  var LS_SID = 'lm.xin.sid', LS_AGENT = 'lm.xin.agent', LS_DRAFT = 'lm.xin.draft', LS_EFF = 'lm.xin.effort', LS_CTX = 'lm.xin.ctx', LS_CXM = 'lm.xin.cxmodel';
   var AGENTS = { harness: 'Harness', codex: 'Codex', claude: 'Claude' };
   // 思考强度：自动 = 写代码的活用最高（max），聊天用 AI 自己的默认（规则在 vm-agent.mjs 的 resolveEffort）
   var EFFORTS = { auto: '自动', high: '高', max: '最高' };
+  // Codex 用哪个模型（小芯电脑上的网关里的）：每一轮按这里选的，已经开始的 Codex 对话下一句也换
+  var CX_MODELS = { 'glm-5.3-flash': 'GLM-5.3 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro' };
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
   var WORK = '/data/workspace';
 
@@ -36,12 +38,13 @@
   function sleepMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   // 新对话用哪个 AI：默认 Harness。Codex 的 key 挪给 Harness 以后，以前存的选择一次性换成 Harness（之后再切照常记住）
+  function cxPref() { var m = ls(LS_CXM); return CX_MODELS[m] ? m : 'glm-5.3-flash'; }
   function agentPref() {
     if (ls('lm.xin.agent.v') !== '2') { ls(LS_AGENT, 'harness'); ls('lm.xin.agent.v', '2'); }
     var a = ls(LS_AGENT);
     return AGENTS[a] ? a : 'harness';
   }
-  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto',
+  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: EFFORTS[ls(LS_EFF)] ? ls(LS_EFF) : 'auto', cxModel: cxPref(),
     run: '', off: 0, polling: false, mine: {}, errRuns: {}, lastAct: 0, view: 'chat', machine: '', mstate: '', loadSeq: 0, drawer: false, drawerSeq: 0 };
 
   /* ---------- 和页面上的小芯共用机身、眼睛和引脚，避免头像仍然显示旧方眼 ---------- */
@@ -80,7 +83,7 @@
   }
 
   /* ---------- 面板 ---------- */
-  var root, list, statusEl, input, sendBtn, titleEl, sessEl, loginEl, foot, drawerEl, useEl, sheetEl, menuEl, fileEl, attsEl;
+  var root, list, statusEl, input, sendBtn, titleEl, sessEl, loginEl, foot, drawerEl, useEl, sheetEl, menuEl, fileEl, attsEl, pickEl, mdlBtn;
   function build() {
     root = h('section', 'xc'); root.id = 'xinChat'; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', '和小芯聊天'); root.hidden = true;
     root.innerHTML =
@@ -111,12 +114,15 @@
           '<button type="button" class="xc-mi xc-mi-file" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5l6-6"/></svg><b>图片或文件</b></button>' +
           '<button type="button" class="xc-mi xc-mi-plug" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg><b>插件</b></button>' +
         '</div>' +
+        // 模型、思考强度（新对话还能选 AI）：输入框底下那颗按钮点开
+        '<div class="xc-pick" role="menu" aria-label="模型和思考强度" hidden></div>' +
         '<input type="file" class="xc-file" multiple hidden>' +
         '<div class="xc-atts" hidden></div>' +
         '<div class="xc-ctx" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5l6-6"/></svg><span></span><button type="button" aria-label="这次不带">✕</button></div>' +
         '<div class="xc-row">' +
           '<button type="button" class="xc-plus" aria-label="发图片、文件或开关插件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>' +
           '<textarea rows="1" placeholder="和小芯说点什么…" aria-label="消息" enterkeyhint="' + (touch ? 'enter' : 'send') + '"></textarea>' +
+          '<button type="button" class="xc-mdl" aria-haspopup="menu" aria-expanded="false"><span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>' +
           '<button type="submit" class="xc-send" aria-label="发送"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6 11l6-6 6 6"/></svg></button>' +
         '</div>' +
         // 这个对话的用量：上下文、消耗的 token、缓存命中率（点一下看明细）
@@ -129,14 +135,19 @@
     sessEl = root.querySelector('.xc-sess'); loginEl = root.querySelector('.xc-login'); foot = root.querySelector('.xc-ft'); drawerEl = root.querySelector('.xc-dr');
     useEl = root.querySelector('.xc-use');
     sheetEl = root.querySelector('.xc-sheet'); menuEl = root.querySelector('.xc-menu'); fileEl = root.querySelector('.xc-file'); attsEl = root.querySelector('.xc-atts');
-    root.querySelector('.xc-plus').addEventListener('click', function () { setMenu(menuEl.hidden); });
+    pickEl = root.querySelector('.xc-pick'); mdlBtn = root.querySelector('.xc-mdl');
+    root.querySelector('.xc-plus').addEventListener('click', function () { setPick(false); setMenu(menuEl.hidden); });
+    mdlBtn.addEventListener('click', function () { setMenu(false); setPick(pickEl.hidden); });
     root.querySelector('.xc-mi-file').addEventListener('click', function () { setMenu(false); fileEl.value = ''; fileEl.click(); });
     root.querySelector('.xc-mi-plug').addEventListener('click', function () { setMenu(false); openPlugins(); });
     fileEl.addEventListener('change', function () { addFiles(fileEl.files); fileEl.value = ''; });
     // 粘贴图片、把文件拖进面板：也当附件
     root.addEventListener('dragover', function (e) { if (e.dataTransfer && [].indexOf.call(e.dataTransfer.types || [], 'Files') >= 0 && S.view === 'chat' && S.authed) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
     root.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length && S.view === 'chat' && S.authed) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
-    document.addEventListener('pointerdown', function (e) { if (menuEl && !menuEl.hidden && !e.target.closest('.xc-menu, .xc-plus')) setMenu(false); }, true);
+    document.addEventListener('pointerdown', function (e) {
+      if (menuEl && !menuEl.hidden && !e.target.closest('.xc-menu, .xc-plus')) setMenu(false);
+      if (pickEl && !pickEl.hidden && !e.target.closest('.xc-pick, .xc-mdl')) setPick(false);
+    }, true);
     useEl.addEventListener('click', function () { S.useMore = !S.useMore; renderUsage(); });
     root.querySelector('.xc-scrim').addEventListener('click', function () { if (S.sheet) setSheet(false); else setDrawer(false); });
     root.querySelector('.xc-list-b').setAttribute('aria-expanded', 'false');
@@ -161,6 +172,7 @@
     root.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || (scrEl && !scrEl.hidden)) return;
       if (menuEl && !menuEl.hidden) { setMenu(false); return; }
+      if (pickEl && !pickEl.hidden) { setPick(false); return; }
       if (S.sheet) setSheet(false); else if (S.drawer) setDrawer(false); else close();
     });
     list.addEventListener('click', function (e) {
@@ -197,6 +209,7 @@
     root.querySelector('.xc-list-b').hidden = root.querySelector('.xc-new-b').hidden = root.querySelector('.xc-scr-b').hidden = login || off;
     if ((login || off) && S.drawer) setDrawer(false);
     root.classList.toggle('running', !!S.run);
+    renderPick();
     sendBtn.setAttribute('aria-label', S.run ? '停止' : '发送');
     sendBtn.disabled = !S.run && attsBusy();
     sendBtn.innerHTML = S.run ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" class="fill"/></svg>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>';
@@ -276,7 +289,7 @@
     if (S.useMore) useEl.appendChild(h('div', 'xc-use-more', '上下文 ' + tok(u.ctx) + (u.win > 0 ? ' / ' + tok(u.win) : '') + ' · 输入 ' + tok(u.input) + (typeof u.cached === 'number' ? '（缓存命中 ' + tok(u.cached) + '）' : '') + ' · 输出 ' + tok(u.output)));
   }
   function newChat(stay) {
-    stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null);
+    stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null); S.cxModel = cxPref(); setPick(false);
     if (!stay) { S.view = 'chat'; setDrawer(false); }
     clearList(); S.histFor = ''; welcome(); render();
   }
@@ -308,6 +321,7 @@
       if (my !== S.loadSeq) return;
       clearList();
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid;
+      S.cxModel = CX_MODELS[d.session.model] ? d.session.model : cxPref();   // Codex 对话：接着用它上次的模型
       d.runs.forEach(function (r) { r.events.forEach(function (ev) { draw(ev, true, r.run); }); });
       setUsage(d.usage);
       if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Math.min(Date.now(), d.active.started || Date.now()); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
@@ -410,7 +424,7 @@
   function sessItem(s) {
     var li = h('li', 'xc-sli'), b = h('button', 'xc-si'); b.type = 'button';
     b.appendChild(h('span', 'xc-si-t', s.title || '（无标题）'));
-    b.appendChild(h('span', 'xc-si-m', (AGENTS[s.agent] || s.agent) + ' · ' + s.turns + ' 轮 · ' + when(s.updated) + (s.active ? ' · 进行中' : '')));
+    b.appendChild(h('span', 'xc-si-m', (AGENTS[s.agent] || s.agent) + (s.model && CX_MODELS[s.model] ? ' ' + CX_MODELS[s.model] : '') + ' · ' + s.turns + ' 轮 · ' + when(s.updated) + (s.active ? ' · 进行中' : '')));
     if (s.sid === S.sid) { b.classList.add('cur'); b.setAttribute('aria-current', 'true'); }
     b.addEventListener('click', function () { openSession(s.sid); });
     var more = h('button', 'xc-si-more'); more.type = 'button'; more.setAttribute('aria-label', '改名、归档或删除'); more.setAttribute('aria-expanded', 'false');
@@ -554,7 +568,7 @@
     if (root && S.open && !touch) root.querySelector('.xc-scr-b').focus();
   }
 
-  /* ---------- 设置：新对话用哪个 AI、思考强度、做完提醒 ---------- */
+  /* ---------- 设置：新对话用哪个 AI、附带正在看的页面、做完提醒（模型、思考强度在输入框底下） ---------- */
   function toggleRow(cls, title, desc) {
     var row = h('div', 'xc-tg ' + cls), txt = h('div', 'xc-tg-t'), b = h('button', 'xc-sw'), note = h('p', 'xc-tg-n');
     txt.appendChild(h('b', '', title)); if (desc) txt.appendChild(h('span', '', desc));   // 说明小字：没有就不放
@@ -562,7 +576,7 @@
     row.appendChild(txt); row.appendChild(b); row.appendChild(note);
     return { row: row, btn: b, set: function (on) { b.setAttribute('aria-checked', on ? 'true' : 'false'); }, note: function (t) { note.textContent = t || ''; } };
   }
-  // 一排选项（单选）：新对话用哪个 AI、思考强度
+  // 一排选项（单选）：新对话用哪个 AI
   function segRow(cls, title, desc, opts, cur, key, onPick) {
     var row = h('div', 'xc-tg ' + cls), txt = h('div', 'xc-tg-t'), seg = h('div', 'xc-segs');
     txt.appendChild(h('b', '', title)); if (desc) txt.appendChild(h('span', '', desc));   // 说明小字：没有就不放
@@ -582,8 +596,7 @@
   function settings() {
     var box = h('div', 'xc-set');
     box.appendChild(h('p', 'xc-set-h', '设置'));
-    box.appendChild(segRow('xc-agent', '新对话用', '已经开始的对话不会换', AGENTS, S.agent, 'agent', function (k) { S.agent = k; ls(LS_AGENT, k); }));
-    box.appendChild(segRow('xc-effort', '思考强度', '自动：写代码、编译、调试时用最高', EFFORTS, S.effort, 'effort', function (k) { S.effort = k; ls(LS_EFF, k); }));
+    box.appendChild(segRow('xc-agent', '新对话用', '', AGENTS, S.agent, 'agent', function (k) { S.agent = k; ls(LS_AGENT, k); renderPick(); }));
     // 附带：发消息时带上学习台里正在看的页面、选中的文字、写的代码。关掉就都不带（记在这个浏览器里）
     var ctx = toggleRow('xc-ctxauto', '附带正在看的页面', '');
     ctx.set(ls(LS_CTX) !== '0');
@@ -872,6 +885,48 @@
     return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
   }
 
+  /* ---------- 模型和思考强度：输入框底下的按钮 ----------
+     按钮上写着这一句会用的模型和思考强度（浅色）；点开一个小菜单选。AI 在设置里选，这里跟着这个对话的 AI 走。
+     Harness 固定 DeepSeek V4.1 Flash、不分思考强度；Claude 不选模型。选了记在这个浏览器里，Codex 对话打开时用它上次的模型。 */
+  var HARNESS_MODEL = 'DeepSeek V4.1 Flash';
+  function curAgent() { return S.sid ? (S.sessAgent || S.agent) : S.agent; }
+  function renderPick() {
+    if (!mdlBtn) return;
+    var a = curAgent();
+    var t = a === 'codex' ? CX_MODELS[S.cxModel] : a === 'harness' ? HARNESS_MODEL : (AGENTS[a] || a), e = a === 'harness' ? '' : EFFORTS[S.effort];
+    var sp = mdlBtn.firstChild; sp.textContent = t;
+    if (e) sp.appendChild(h('i', '', e));
+    mdlBtn.setAttribute('aria-label', '模型和思考强度：' + t + (e ? ' ' + e : ''));
+    if (!pickEl.hidden) buildPick();
+  }
+  function setPick(on) {
+    if (!pickEl) return;
+    pickEl.hidden = !on;
+    mdlBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    if (on) buildPick();
+  }
+  function buildPick() {
+    pickEl.textContent = '';
+    var a = curAgent();
+    function group(key, title, opts, cur, onPick) {
+      var g = h('div', 'xc-pk-g'); g.dataset.g = key;
+      g.appendChild(h('p', 'xc-pk-h', title));
+      Object.keys(opts).forEach(function (k) {
+        var b = h('button', 'xc-pk-o'); b.type = 'button'; b.setAttribute('role', 'menuitemradio'); b.dataset.v = k;
+        b.setAttribute('aria-checked', k === cur ? 'true' : 'false');
+        b.appendChild(h('span', '', opts[k]));
+        b.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>');
+        if (onPick) b.addEventListener('click', function () { onPick(k); renderPick(); });
+        else b.disabled = true;
+        g.appendChild(b);
+      });
+      pickEl.appendChild(g);
+    }
+    if (a === 'codex') group('model', '模型', CX_MODELS, S.cxModel, function (k) { S.cxModel = k; ls(LS_CXM, k); setPick(false); });
+    else if (a === 'harness') group('model', '模型', { fixed: HARNESS_MODEL }, 'fixed', null);
+    if (a !== 'harness') group('effort', '思考强度', EFFORTS, S.effort, function (k) { S.effort = k; ls(LS_EFF, k); setPick(false); });
+  }
+
   /* ---------- 「＋」菜单、插件 ---------- */
   function setMenu(on) {
     if (!menuEl) return;
@@ -1036,7 +1091,7 @@
     S.lastText = ''; S.doing = 'think'; S.note = null; S.waitSend = '';
     typing(true); renderHead(); toBottom(true);
     var x = xin(); if (x) x.ai('think');
-    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,
+    call('send', { sid: S.sid || undefined, agent: S.sid ? undefined : S.agent, text: text, effort: S.effort, model: S.cxModel, context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,
       files: files.length ? files.map(function (f) { return { path: f.path, name: f.name }; }) : undefined }, 90000, function (w) { S.waitSend = w.state; progress(); }).then(function (d) {
       if (c && c.sel) S.sel = null;      // 选中的内容用过一次就不再带
       refreshCtx();

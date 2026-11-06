@@ -149,9 +149,9 @@
 .xc-ctx span{flex:1;min-width:0;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.4;word-break:break-all}
 .xc-ctx button{flex:none;width:24px;height:24px;border-radius:6px !important;color:var(--ink-3)}
 .xc-ctx button:hover{color:var(--clay)}
-.xc-row{display:flex;align-items:flex-end;gap:6px;padding:4px;border:1px solid var(--line-2);border-radius:22px !important;background:var(--bg);cursor:text;transition:border-color .15s,box-shadow .15s}
+.xc-row{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;padding:4px;border:1px solid var(--line-2);border-radius:22px !important;background:var(--bg);cursor:text;transition:border-color .15s,box-shadow .15s}
 .xc-row:focus-within{border-color:var(--clay);box-shadow:0 0 0 3px var(--ring)}
-.xc-row textarea{flex:1;min-width:0;min-height:34px;max-height:150px;padding:7px 0;border:0;background:none;color:var(--ink);
+.xc-row textarea{order:-1;flex:1 1 100%;min-width:0;min-height:34px;max-height:150px;padding:7px 10px 3px;border:0;background:none;color:var(--ink);
   font:14.5px/1.45 var(--sans);resize:none;outline:none}
 .xc-row textarea::placeholder{color:var(--ink-3)}
 @media (pointer:coarse){.xc-row textarea,.xc-login input{font-size:16px}}   /* iOS：小于 16px 聚焦时会放大页面 */
@@ -170,6 +170,28 @@
 .xc-mi b{font-size:15px;font-weight:500}
 .xc-mi:active{background:var(--sunk)}
 @media (hover:hover){.xc-mi:hover{background:var(--sunk)}}
+/* 输入框底下一排：「＋」、模型和思考强度（强度浅色）、发送（像 agent 应用那样，字在上面） */
+.xc-mdl{display:flex;align-items:center;gap:2px;min-width:0;max-width:calc(100% - 90px);height:32px;margin-right:auto;padding:0 8px 0 10px;border-radius:16px !important;
+  font:13.5px var(--sans);color:var(--ink);transition:background .15s}
+.xc-mdl span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.xc-mdl span i{margin-left:6px;font-style:normal;color:var(--ink-3)}
+.xc-mdl svg{width:16px;height:16px;flex:none;stroke-width:2;transition:transform .15s}
+.xc-mdl[aria-expanded=true]{background:var(--sunk);color:var(--ink)}
+.xc-mdl[aria-expanded=true] svg{transform:rotate(180deg)}
+.xc-mdl:active{background:var(--sunk)}
+@media (hover:hover){.xc-mdl:hover{background:var(--sunk);color:var(--ink)}}
+.xc-pick{position:absolute;left:52px;bottom:calc(100% - 6px);z-index:5;width:240px;max-width:calc(100% - 64px);max-height:min(70vh,460px);overflow-y:auto;padding:6px;
+  border:1px solid var(--line);border-radius:16px !important;background:var(--panel);box-shadow:0 10px 32px rgba(20,20,19,.16)}
+[data-theme=dark] .xc-pick{box-shadow:0 10px 32px rgba(0,0,0,.5)}
+.xc-pk-g + .xc-pk-g{margin-top:4px;padding-top:4px;border-top:1px solid var(--line)}
+.xc-pk-h{margin:0;padding:6px 10px 4px;font:12px var(--sans);color:var(--ink-3)}
+.xc-pk-o{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:9px 10px;border-radius:10px !important;text-align:left;font:14.5px var(--sans);color:var(--ink)}
+.xc-pk-o svg{width:18px;height:18px;flex:none;stroke-width:2.2;color:var(--clay);visibility:hidden}
+.xc-pk-o[aria-checked=true] svg{visibility:visible}
+.xc-pk-o[aria-checked=true]{font-weight:600}
+.xc-pk-o:disabled{color:var(--ink);opacity:1;cursor:default}
+.xc-pk-o:not(:disabled):active{background:var(--sunk)}
+@media (hover:hover){.xc-pk-o:not(:disabled):hover{background:var(--sunk)}}
 /* 要发的附件：输入框上面一排，能横着滑 */
 .xc-atts{display:flex;gap:8px;margin:0 0 8px;padding:2px 0 4px;overflow-x:auto;scrollbar-width:none}
 .xc-atts::-webkit-scrollbar{display:none}

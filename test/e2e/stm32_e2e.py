@@ -1250,16 +1250,45 @@ async def main():
         await pg.fill('.xc-login input', 'pw-ok-123456'); await pg.click('.xc-login .xc-btn')
         await pg.wait_for_selector('.xc-hello'); await pg.wait_for_timeout(200)
         check('没登录不叫醒云电脑，登录以后马上叫醒', 'wake' not in ops_before and 'wake' in xs['ops'], (ops_before, xs['ops']))
-        st = await pg.evaluate("[!!document.querySelector('.xc-hello .xc-av'), [...document.querySelectorAll('.xc-hello .xc-chip')].map(b => b.textContent), !!document.querySelector('.xc-ft .xc-ag'), document.querySelector('.xc-sub').textContent]")
-        check('登录以后：欢迎页（小芯头像和一句话，没有建议按钮），输入框那里没有选 AI / 思考强度的按钮（挪进设置了），标题下面写着在线',
-              await pg.is_visible('.xc-row textarea') and st == [True, [], False, '在线'] and not await pg.evaluate("!!document.querySelector('.xc-hello button')"), st)
+        st = await pg.evaluate("[!!document.querySelector('.xc-hello .xc-av'), [...document.querySelectorAll('.xc-hello .xc-chip')].map(b => b.textContent), document.querySelector('.xc-row .xc-mdl').textContent, document.querySelector('.xc-sub').textContent]")
+        check('登录以后：欢迎页（小芯头像和一句话，没有建议按钮），输入框底下的按钮写着这一句用的模型（默认 Harness 的 DeepSeek V4.1 Flash），标题下面写着在线',
+              await pg.is_visible('.xc-row textarea') and st == [True, [], 'DeepSeek V4.1 Flash', '在线'] and not await pg.evaluate("!!document.querySelector('.xc-hello button')"), st)
+        PK = "(() => { const g = k => { const e = document.querySelector('.xc-pk-g[data-g=' + k + ']'); return e ? [[...e.querySelectorAll('.xc-pk-o')].map(b => b.textContent), (e.querySelector('[aria-checked=true]') || {}).textContent || ''] : null }; return [g('agent'), g('model'), g('effort'), document.querySelector('.xc-mdl span').firstChild.textContent, (document.querySelector('.xc-mdl span i') || {}).textContent || ''] })()"
+        await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
+        st = await pg.evaluate(PK)
+        check('输入框底下的模型按钮：Harness 的模型固定 DeepSeek V4.1 Flash、不分思考强度；菜单里不选 AI',
+              st == [None, [['DeepSeek V4.1 Flash'], 'DeepSeek V4.1 Flash'], None, 'DeepSeek V4.1 Flash', '']
+              and await pg.evaluate("document.querySelector('.xc-pk-g[data-g=model] .xc-pk-o').disabled"), st)
+        await pg.keyboard.press('Escape'); await pg.wait_for_timeout(100)
+        st0 = [await pg.evaluate("document.querySelector('.xc-pick').hidden"), await pg.is_visible('.xc-row textarea')]
         await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-set-b')
         await pg.click('.xc-set-b'); await pg.wait_for_selector('.xc-set')
-        st = await pg.evaluate("[document.querySelector('.xc-agent [aria-checked=true]').dataset.agent, document.querySelector('.xc-effort [aria-checked=true]').dataset.effort]")
-        opts = await pg.evaluate("[...document.querySelectorAll('.xc-agent [data-agent]')].map(b => b.textContent)")
-        await pg.click('.xc-agent [data-agent=claude]'); await pg.click('.xc-effort [data-effort=max]')
-        st2 = await pg.evaluate("[localStorage.getItem('lm.xin.agent'), localStorage.getItem('lm.xin.effort'), document.querySelector('.xc-agent [aria-checked=true]').dataset.agent]")
-        check('设置：新对话用哪个 AI（Harness / Codex / Claude，默认 Harness）、思考强度（默认自动），点了记住', st == ['harness', 'auto'] and opts == ['Harness', 'Codex', 'Claude'] and st2 == ['claude', 'max', 'claude'], (st, st2))
+        st = await pg.evaluate("[document.querySelector('.xc-agent [aria-checked=true]').dataset.agent, [...document.querySelectorAll('.xc-agent [data-agent]')].map(b => b.textContent), !!document.querySelector('.xc-agent .xc-tg-t span'), !!document.querySelector('.xc-set .xc-effort, .xc-set .xc-cxmodel')]")
+        await pg.click('.xc-agent [data-agent=codex]'); await pg.wait_for_timeout(100)
+        check('设置里「新对话用」（Harness / Codex / Claude，默认 Harness，没有小字）；思考强度、模型不在设置里；菜单按 Esc 关、面板不关',
+              st == ['harness', ['Harness', 'Codex', 'Claude'], False, False] and st0 == [True, True], (st, st0))
+        await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')")
+        await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
+        st = await pg.evaluate(PK)
+        check('选了 Codex：模型 GLM-5.3 Flash / GLM-5.3 / Kimi K3.1 Pro（默认 GLM-5.3 Flash）和思考强度（默认自动），按钮写「GLM-5.3 Flash 自动」（强度浅色）',
+              st == [None, [['GLM-5.3 Flash', 'GLM-5.3', 'Kimi K3.1 Pro'], 'GLM-5.3 Flash'], [['自动', '高', '最高'], '自动'], 'GLM-5.3 Flash', '自动'], st)
+        await pg.click('.xc-pk-g[data-g=model] [data-v="kimi-k3.1-pro"]'); await pg.wait_for_timeout(100)
+        st = [await pg.is_visible('.xc-pick'), await pg.evaluate("document.querySelector('.xc-mdl').textContent")]
+        await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-set-b')
+        if await pg.evaluate("document.querySelector('.xc-set').hidden"): await pg.click('.xc-set-b')
+        await pg.wait_for_selector('.xc-set'); await pg.click('.xc-agent [data-agent=claude]')
+        await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')")
+        await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
+        st2 = await pg.evaluate(PK)
+        await pg.click('.xc-pk-g[data-g=effort] [data-v=max]'); await pg.wait_for_timeout(100)
+        st3 = await pg.evaluate("[localStorage.getItem('lm.xin.agent'), localStorage.getItem('lm.xin.effort'), localStorage.getItem('lm.xin.cxmodel'), document.querySelector('.xc-mdl').textContent, document.querySelector('.xc-pick').hidden]")
+        await pg.click('.xc-mdl'); await pg.click('.xc-msgs', position={'x': 10, 'y': 10}); await pg.wait_for_timeout(100)
+        check('选了模型、思考强度菜单就关；Claude 不选模型；都记在这个浏览器里；点外面菜单也关',
+              st == [False, 'Kimi K3.1 Pro自动'] and st2[1] is None and st2[2] == [['自动', '高', '最高'], '自动'] and st3 == ['claude', 'max', 'kimi-k3.1-pro', 'Claude最高', True]
+              and await pg.evaluate("document.querySelector('.xc-pick').hidden"), (st, st2, st3))
+        await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-set-b')
+        if await pg.evaluate("document.querySelector('.xc-set').hidden"): await pg.click('.xc-set-b')
+        await pg.wait_for_selector('.xc-set')
         await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')"); await pg.wait_for_selector('.xc-hello')
         check('新对话还没有用量：输入框底下那一行不显示', not await pg.is_visible('.xc-use'))
         await pg.fill('.xc-row textarea', '看看工作目录'); await pg.keyboard.press('Enter')
@@ -1268,7 +1297,7 @@ async def main():
           document.querySelector('.xc-sub').textContent, document.querySelector('.xc-msgs').textContent.includes('Model metadata'), document.querySelector('.xc-msgs').textContent.includes('ls /data/workspace'),
           !!document.querySelector('.xc-tool'), document.querySelector('.xc-msgs').lastElementChild.classList.contains('xc-typing')]""")
         check('发出去：设置里选的 AI 和强度传给后台；只有自己的一句和小芯的第一句，它执行的命令、无关警告都不显示，最后冒「正在输入」写着在电脑上忙；小芯坐到电脑前敲代码',
-              xs['sent'] == {'agent': 'claude', 'text': '看看工作目录', 'effort': 'max'} and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
+              xs['sent'] == {'agent': 'claude', 'text': '看看工作目录', 'effort': 'max', 'model': 'kimi-k3.1-pro'} and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
         await pg.wait_for_function(CHAT_DONE, timeout=8000); await pg.wait_for_timeout(200)
         st = await pg.evaluate("""[LimingXin.aiState, LimingXin.mode, document.querySelector('.xc').classList.contains('running'), localStorage.getItem('lm.xin.sid'),
           [...document.querySelectorAll('.xc-ai .xc-bub')].map(b => b.textContent), [...document.querySelectorAll('.xc-sys')].map(e => e.textContent),
@@ -1537,7 +1566,7 @@ async def main():
         await pv.click('.xc-set-b'); await pv.wait_for_selector('.xc-set')
         rows = await pv.evaluate("[...document.querySelectorAll('.xc-tg-t b')].map(b => b.textContent)")
         await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false' && !document.querySelector('.xc-push .xc-sw').disabled")
-        check('设置：新对话用、思考强度、附带正在看的页面、做完提醒（没有「朗读回答」了），做完提醒默认关着', rows == ['新对话用', '思考强度', '附带正在看的页面', '做完提醒'], rows)
+        check('设置：新对话用、附带正在看的页面、做完提醒（模型、思考强度在输入框底下；没有「朗读回答」了），做完提醒默认关着', rows == ['新对话用', '附带正在看的页面', '做完提醒'], rows)
         c0 = await pv.evaluate("document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked')")
         await pv.click('.xc-ctxauto .xc-sw')
         c1 = await pv.evaluate("[document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked'), localStorage.getItem('lm.xin.ctx')]")
