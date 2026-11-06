@@ -219,10 +219,94 @@ async def drag_xin_into(pg, card_id):
             await pg.wait_for_timeout(100)
     raise RuntimeError('拖了 4 次都没把小芯拖进 ' + card_id)
 
+async def stm32_audit_regressions(b):
+    for w in [1280, 390]:
+        pg = await page(b, w, 844, mobile=w == 390)
+        await pg.goto(TOOL + '?v=topic&t=gpio'); await pg.wait_for_selector('html.ready')
+        await pg.evaluate('STM.app.openSearch()')
+        await pg.fill('.search-in', 'USART1'); await pg.wait_for_selector('.search-it')
+        await pg.evaluate("""(() => {
+          const i = document.querySelector('.search-in'); i.value = 'PA9';
+          i.dispatchEvent(new Event('input', {bubbles:true}));
+          i.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true}));
+        })()""")
+        st = await pg.evaluate("[STM.app.route().v, STM.app.route().pin === String(STM.model.pinByName.PA9.n), !document.querySelector('.search')]")
+        check(f'{w}：搜索改词后立即回车，打开新词 PA9 对应引脚', st == ['home', True, True], st)
+        await pg.evaluate('STM.app.openSearch()')
+        await pg.fill('.search-in', 'USART1'); await pg.wait_for_selector('.search-it')
+        await pg.evaluate("""(() => {
+          const i = document.querySelector('.search-in'); i.value = '';
+          i.dispatchEvent(new Event('input', {bubbles:true}));
+          i.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true}));
+        })()""")
+        st = await pg.evaluate("[STM.app.route().v, !!document.querySelector('.search'), document.querySelectorAll('.search-it').length]")
+        check(f'{w}：清空搜索后立即回车，不会打开旧结果', st == ['home', True, 0], st)
+        await pg.fill('.search-in', 'GPIO')
+        await pg.wait_for_selector('.search-it')
+        st = await pg.evaluate("(() => { const i = document.querySelector('.search-in'); return [i.getAttribute('role'), !!document.getElementById(i.getAttribute('aria-activedescendant'))]; })()")
+        await pg.keyboard.press('Tab')
+        cancel = await pg.evaluate("document.activeElement.classList.contains('search-x')")
+        await pg.keyboard.press('Escape')
+        check(f'{w}：搜索能用 Tab 到取消并按 Esc 关闭，读屏能找到当前结果', st == ['combobox', True] and cancel and not await pg.locator('.search').count(), (st, cancel))
+
+        await pg.goto(TOOL + '?v=topic&t=gpio&reg=GPIO_CRL&val=0x44444443'); await pg.wait_for_selector('.sheet.on')
+        await pg.evaluate('STM.app.openSearch()')
+        nested = await pg.evaluate("[document.getElementById('app').inert,document.querySelector('.sheet').inert,document.querySelector('.search').inert]")
+        await pg.keyboard.press('Escape')
+        after = await pg.evaluate("[document.documentElement.classList.contains('modal'),document.getElementById('app').inert,document.querySelector('.sheet').inert]")
+        check(f'{w}：寄存器上打开搜索只允许操作搜索，关闭后寄存器仍锁住背景', nested == [True, True, False] and after == [True, True, False], (nested, after))
+
+        await pg.evaluate("STM.app.navigate({sch:'board-08'})"); await wait_img(pg)
+        await pg.evaluate('STM.app.openSearch()'); await pg.keyboard.press('Escape')
+        st = await pg.evaluate("[document.documentElement.classList.contains('modal'),document.getElementById('app').inert,document.querySelector('.sheet').inert,document.querySelector('.viewer').inert]")
+        check(f'{w}：寄存器、看图、搜索叠开，关搜索后只恢复看图', st == [True, True, True, False], st)
+        # 一次导航退出两层，淡出中的 DOM 不应继续锁住页面。
+        await pg.evaluate("STM.app.navigate({v:'topic',t:'usart'})")
+        await pg.wait_for_function("!STM.app.route().reg && !STM.app.route().sch")
+        st = await pg.evaluate("[document.documentElement.classList.contains('modal'),document.getElementById('app').inert]")
+        check(f'{w}：同时关寄存器和看图后立即恢复页面操作', st == [False, False], st)
+
+        await pg.goto(TOOL + '?v=topic&t=gpio&reg=GPIO_CRL&val=0x44444443'); await pg.wait_for_selector('.sheet.on')
+        await pg.evaluate("window.__hexBefore = document.querySelector('.hexin input'); window.__hexValue = __hexBefore.value")
+        colors = []
+        for theme in ['dark', 'light']:
+            await pg.evaluate("t => { localStorage.setItem('lm.theme',t); window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:window.parent,data:{type:'theme'}})); }", theme)
+            colors.append(await pg.evaluate("""(() => {
+              const wanted = STM.model.topicById.gpio.hue[document.documentElement.dataset.theme === 'dark' ? 1 : 0];
+              return [getComputedStyle(document.querySelector('.sheet-p')).getPropertyValue('--h').trim() === wanted,
+                getComputedStyle(document.querySelector('.nav-t[data-t=gpio]')).getPropertyValue('--h').trim() === wanted,
+                document.querySelector('.hexin input') === __hexBefore && __hexBefore.value === __hexValue];
+            })()"""))
+        check(f'{w}：切换浅深色即时更新外设和寄存器配色，并保留正在算的值', colors == [[True]*3, [True]*3], colors)
+
+        await pg.goto(TOOL + '?v=topic&t=i2c&reg=I2C_CCR'); await pg.wait_for_selector('.sheet.on')
+        await pg.locator('.fxin input').nth(1).fill('350')
+        initial = await pg.inner_text('.fxout')
+        await pg.click('.sh-fx .pill.solid')
+        val = int((await pg.input_value('.hexin input')).replace(' ', ''), 16)
+        await pg.fill('.hexin input', '0xC023')
+        duty = await pg.inner_text('.fxout')
+        check(f'{w}：I2C 350 kHz 取 CCR=35 避免超速，改 DUTY 后同步重算', val == 0x8023 and '342.857' in initial and '288 kHz' in duty and 'CCR = 5' in duty, (initial, val, duty))
+        await pg.locator('.fxin input').nth(1).fill('800')
+        blocked = await pg.is_disabled('.sh-fx .pill.solid') and '400 kHz' in await pg.inner_text('.fxout')
+        await pg.locator('.fxin input').nth(1).fill('100')
+        await pg.locator('.fxin input').nth(0).fill('72')
+        blocked_clock = await pg.is_disabled('.sh-fx .pill.solid') and '36 MHz' in await pg.inner_text('.fxout')
+        check(f'{w}：I2C 超出总线或 PCLK1 上限时禁止写入并解释原因', blocked and blocked_clock, (blocked, blocked_clock))
+        await pg.context.close()
+
+    pg = await page(b)
+    for query in ['reg=constructor', 'reg=toString', 'reg=hasOwnProperty', 'm=constructor', 'fig=constructor']:
+        await pg.goto(TOOL + '?' + query); await pg.wait_for_selector('html.ready')
+        check('异常地址仍能加载学习台：' + query, await pg.locator('#main').inner_text() != '')
+    await pg.context.close()
+
 async def main():
     async with async_playwright() as p:
         exe = os.environ.get('CHROMIUM_PATH')
         b = await p.chromium.launch(**({'executable_path': exe} if exe else {}))
+
+        await stm32_audit_regressions(b)
 
         # ---------- 1. 独立打开：首页 → 主题 → 寄存器 → 返回 ----------
         pg = await page(b)

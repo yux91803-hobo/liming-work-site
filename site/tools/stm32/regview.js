@@ -100,15 +100,13 @@
   function show() {
     open = true; lastFocus = document.activeElement;
     document.getElementById('layers').appendChild(root);
-    document.getElementById('app').inert = true;
-    document.documentElement.classList.add('modal');
-    requestAnimationFrame(function () { root.classList.add('on'); try { panel.querySelector('.sh-x').focus({ preventScroll: true }); } catch (e) {} });
+    ui.modal(root, true);
+    requestAnimationFrame(function () { if (!open) return; root.classList.add('on'); try { panel.querySelector('.sh-x').focus({ preventScroll: true }); } catch (e) {} });
   }
   function close() {
     open = false; c = null;
     root.classList.remove('on');
-    document.getElementById('app').inert = false;
-    document.documentElement.classList.remove('modal');
+    ui.modal(root, false);
     var r = root;
     setTimeout(function () { if (!open && r.parentNode) r.remove(); }, ui.reduced() ? 0 : 260);
     var back = lastFocus; lastFocus = null;
@@ -202,6 +200,7 @@
     renderQuick();
     renderWarn();
     renderCode();
+    if (nodes.syncFx) nodes.syncFx();
     renderedV = v;
   }
 
@@ -419,6 +418,7 @@
 
   /* 公式助手：波特率（USART_BRR）、I2C 时钟（I2C_CCR） */
   function renderFx() {
+    nodes.syncFx = null;
     var box = nodes.fx, r = c.r; ui.clear(box);
     if (r.formula !== 'baud' && r.formula !== 'i2c_ccr') { box.hidden = true; return; }
     box.hidden = false;
@@ -447,7 +447,7 @@
     } else {
       var pc = num('PCLK1', 36, 'MHz'), scl = num('SCL', 100, 'kHz');
       var calcC = function () { var du = R.P(r).byName.DUTY; return R.i2cCcr(pc.value, scl.value, du ? C.fget(c.st.v, du) : 0); };
-      var showC = function () { var k = calcC(); out.textContent = !k ? '' : (k.fast ? '快速模式（F/S = 1，DUTY = ' + k.duty + '）' : '标准模式（F/S = 0）') + '：CCR = PCLK1 ÷ (' + k.k + ' × fSCL) = ' + k.ccr + (k.ok ? '' : '，超出范围'); go.disabled = !k || !k.ok; };
+      var showC = function () { var k = calcC(); out.textContent = !k ? '' : k.err || (k.fast ? '快速模式（F/S = 1，DUTY = ' + k.duty + '）' : '标准模式（F/S = 0）') + '：CCR = ' + k.ccr + '，实际 SCL ' + Number(k.real.toFixed(3)) + ' kHz（向上取整，保证不超过目标频率）'; go.disabled = !k || !k.ok; };
       pc.addEventListener('input', showC); scl.addEventListener('input', showC);
       go.addEventListener('click', function () {
         var k = calcC(), p = R.P(r); if (!k || !k.ok) return;
@@ -455,7 +455,7 @@
         if (p.byName['F/S']) { c.st.v = C.fset(c.st.v, p.byName['F/S'], k.fast ? 1 : 0); c.st.touched['F/S'] = true; }
         c.st.quick = -1; changed(); ui.toast('已写入 CCR');
       });
-      showC();
+      nodes.syncFx = showC; showC();
     }
     row.appendChild(go); box.appendChild(row); box.appendChild(out);
   }

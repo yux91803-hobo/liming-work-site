@@ -75,3 +75,42 @@ test('TIM_CCER cases follow the peer CCMR register (output vs input capture)', (
   const inp = R.info({ r: ccer, inst, peer: () => 1 }, f, 0);   // CC1S=01 → 输入
   assert.notDeepEqual(out.vals, inp.vals);
 });
+
+test('unknown register and group names never resolve inherited object properties', () => {
+  for (const id of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'unknown']) {
+    assert.equal(R.reg(id), null);
+    assert.equal(R.group(id), null);
+    assert.equal(R.byName(id, 'constructor'), null);
+    assert.equal(R.byName('gpio', id), null);
+  }
+  assert.equal(R.byName('gpio', 'GPIOx_CRL'), R.reg('GPIO_CRL'));
+});
+
+test('I2C CCR rounds up instead of exceeding the requested bus speed', () => {
+  const c = R.i2cCcr(36, 350, 0);
+  assert.equal(c.ccr, 35);
+  assert.equal(c.ok, true);
+  assert.ok(Math.abs(c.real - 342.857142857) < 1e-6);
+  for (const clock of [2, 4, 8, 24, 36]) for (const duty of [0, 1]) {
+    for (let speed = 1; speed <= 400; speed++) {
+      const k = R.i2cCcr(clock, speed, duty);
+      if (!k.ok) continue;
+      assert.ok(Number.isInteger(k.ccr) && k.ccr <= 4095 && k.ccr >= (k.fast ? 1 : 4));
+      assert.ok(k.real <= speed + 1e-9, `${clock} MHz / ${speed} kHz / DUTY=${duty}`);
+    }
+  }
+});
+
+test('I2C frequency limits match STM32F103 standard and fast modes', () => {
+  assert.equal(R.i2cCcr(2, 100, 0).ok, true);
+  assert.equal(R.i2cCcr(4, 400, 1).ok, true);
+  for (const [clock, speed] of [[1, 100], [3, 400], [37, 100], [36, 401], [36, 800], [36, 0.01]]) {
+    const k = R.i2cCcr(clock, speed, 0);
+    assert.equal(k.ok, false, `${clock} MHz / ${speed} kHz`);
+    assert.ok(k.err);
+  }
+  for (const value of ['', 'NaN', 'Infinity', -1, 0]) {
+    assert.equal(R.i2cCcr(value, 100, 0), null);
+    assert.equal(R.i2cCcr(36, value, 0), null);
+  }
+});

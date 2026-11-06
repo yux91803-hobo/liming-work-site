@@ -17,6 +17,7 @@
   function applyTheme() {
     var t = ui.lsGet('lm.theme') || 'light', dark = t === 'dark' || (t === 'auto' && mq && mq.matches);
     html.setAttribute('data-theme', dark ? 'dark' : 'light');
+    M.topics.forEach(function (t) { html.style.setProperty('--stm-' + t.id, t.hue[dark ? 1 : 0]); });
     var m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', dark ? '#1f1e1d' : '#faf9f5');
   }
   applyTheme();
@@ -132,7 +133,7 @@
   /* ---------- 布局：侧栏（宽屏）/ 顶栏（窄屏） ---------- */
   var side = document.getElementById('side'), bar = document.getElementById('bar'), main = document.getElementById('main');
   var NAV = [['home', '首页', 'chip'], ['board', '开发板', 'board'], ['lab', '编程思维', 'idea'], ['think', '硬件原理', 'bolt']];
-  function hue(t) { return t ? t.hue[html.getAttribute('data-theme') === 'dark' ? 1 : 0] : ''; }
+  function hue(t) { return t ? 'var(--stm-' + t.id + ')' : ''; }
   function link(route, cls, label) {
     var a = el('a', cls); a.href = urlOf(resolve(route));
     a.addEventListener('click', function (e) { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button > 0) return; e.preventDefault(); navigate(route); });
@@ -229,6 +230,7 @@
     var box = el('div', 'search'), panel = el('div', 'search-p'), row = el('div', 'search-row'), input = el('input', 'search-in'), list = el('div', 'search-list');
     var hint = el('p', 'search-hint');
     box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); box.setAttribute('aria-label', '搜索');
+    input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('aria-expanded', 'true');
     input.type = 'text'; input.placeholder = '引脚、寄存器、外设、模块…'; input.setAttribute('aria-label', '搜索');
     input.setAttribute('autocomplete', 'off'); input.setAttribute('autocapitalize', 'characters'); input.setAttribute('spellcheck', 'false'); input.setAttribute('enterkeyhint', 'search');
     list.id = 'search-list'; list.setAttribute('role', 'listbox'); input.setAttribute('aria-controls', list.id);
@@ -236,24 +238,26 @@
     var x = ui.btn('search-x', '取消'); x.addEventListener('click', close); row.appendChild(x);
     panel.appendChild(row); panel.appendChild(hint); panel.appendChild(list); box.appendChild(panel);
     box.addEventListener('mousedown', function (e) { if (e.target === box) close(); });
-    var open_ = false, lastFocus = null, sel = 0, items = [];
+    var open_ = false, lastFocus = null, sel = 0, items = [], query = '', dirty = false;
     function open() {
       if (open_) { input.focus(); input.select(); return; }
       open_ = true; lastFocus = document.activeElement;
       document.getElementById('layers').appendChild(box);
-      requestAnimationFrame(function () { box.classList.add('on'); });
+      ui.modal(box, true);
+      requestAnimationFrame(function () { if (open_) box.classList.add('on'); });
       input.value = ''; run(); input.focus();
-      html.classList.add('modal');
     }
     function close() {
       if (!open_) return;
-      open_ = false; box.classList.remove('on'); box.remove(); html.classList.remove('modal');
+      open_ = false; box.classList.remove('on'); ui.modal(box, false); box.remove();
       if (lastFocus && lastFocus.isConnected) try { lastFocus.focus({ preventScroll: true }); } catch (e) {}
     }
     function pick(it) { close(); navigate(it.route); }
     function run() {
+      if (!open_) return;
       ui.clear(list); items = []; sel = 0;
-      var q = input.value.trim();
+      input.removeAttribute('aria-activedescendant');
+      var q = input.value.trim(); query = q; dirty = false;
       if (!q) { hint.textContent = '试试：PA9、BRR、串口、定时器 PWM、GPIOA_CRL'; return; }
       var found = core.search(M.buildIndex(), q);
       hint.textContent = found.length ? '' : '没找到「' + q + '」。换个写法试试，比如引脚名 PA9、寄存器名 USART_BRR 或外设名。';
@@ -265,6 +269,7 @@
         g.appendChild(h);
         hits.slice(0, 8).forEach(function (it) {
           var b = el('button', 'search-it'); b.type = 'button'; b.setAttribute('role', 'option');
+          b.tabIndex = -1; b.id = 'search-option-' + items.length;
           b.appendChild(el('b', it.kind === 'reg' || it.kind === 'pin' ? 'mono' : null, it.title));
           if (it.detail) b.appendChild(el('span', null, it.detail));
           b.addEventListener('click', function () { pick(it); });
@@ -278,19 +283,24 @@
     function focusItem(i, quiet) {
       if (!items.length) return;
       sel = Math.max(0, Math.min(items.length - 1, i));
+      input.setAttribute('aria-activedescendant', items[sel].id);
       items.forEach(function (b, j) { b.classList.toggle('on', j === sel); b.setAttribute('aria-selected', j === sel ? 'true' : 'false'); });
       if (!quiet) items[sel].scrollIntoView({ block: 'nearest' });
     }
-    input.addEventListener('input', ui.debounce(run, 60));
+    var runSoon = ui.debounce(run, 60);
+    input.addEventListener('input', function () { dirty = true; ui.clear(list); items = []; input.removeAttribute('aria-activedescendant'); runSoon(); });
     input.addEventListener('keydown', function (e) {
       if (e.isComposing || e.keyCode === 229) return;
+      if (/^(ArrowDown|ArrowUp|Enter)$/.test(e.key) && (dirty || query !== input.value.trim())) run();
       if (e.key === 'ArrowDown') { e.preventDefault(); focusItem(sel + 1); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); focusItem(sel - 1); }
       else if (e.key === 'Enter') { e.preventDefault(); if (items[sel]) items[sel].click(); }
       else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
     });
     box.addEventListener('keydown', function (e) {
-      if (e.key === 'Tab') { e.preventDefault(); input.focus(); }
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+      if (e.key === 'Tab') { e.preventDefault(); (document.activeElement === input ? x : input).focus(); }
     });
     return { open: open, close: close, isOpen: function () { return open_; } };
   })();
