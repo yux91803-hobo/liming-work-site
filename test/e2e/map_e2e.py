@@ -246,6 +246,10 @@ async def main():
             await touch('touchCancel')
             await pg.wait_for_function("document.body.classList.contains('sheet') && document.querySelector('#sheet').style.transform === ''", timeout=3000)
             check('手机图层下滑被系统取消后，面板复位而不留半截', await pg.evaluate("document.body.classList.contains('sheet') && document.querySelector('#sheet').style.transform === ''"))
+            # 复位动画及合成层完成后重取把手坐标，下一次触摸才能落在当前面板上。
+            await pg.wait_for_function("getComputedStyle(document.querySelector('#sheet')).transform === 'none'", timeout=3000)
+            await pg.evaluate('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+            grip = await pg.locator('.grip').bounding_box(); x, y = grip['x'] + 15, grip['y'] + 2
             await touch('touchStart'); await touch('touchMove', 80)
             await pg.wait_for_function("document.querySelector('#sheet').style.transform === 'translateY(80px)'", timeout=3000)
             await touch('touchEnd')
