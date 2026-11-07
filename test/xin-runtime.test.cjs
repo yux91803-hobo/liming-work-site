@@ -289,3 +289,36 @@ test('实际启动分身时把用户原话与前台转述分别交给模型',asy
   const args=JSON.parse(fs.readFileSync(log,'utf8')),prompt=args.at(-1);
   assert.match(prompt,/前台转述：PB5 默认映射/);assert.match(prompt,/用户原话：TIM3_CH2 到 PB5/);assert.match(prompt,/独立核对前台转述是否准确/);
 });
+
+test('系统 SIGTERM 保留后台断点并续接，用户停止不被自动重启', async t => {
+  const f=fixture(t);fs.unlinkSync(path.join(f.control,'sessions',f.task.sid+'.json'));
+  const bin=path.join(f.root,'bin');fs.mkdirSync(bin);f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_CODEX_TRANSPORT='exec';
+  fs.writeFileSync(path.join(bin,'codex'),'#!/bin/sh\nprintf \'%s\\n\' \'{"type":"thread.started","thread_id":"graceful-fixture"}\'\nif [ ! -f .checkpoint ]; then printf ONCE > .checkpoint; sleep 30; fi\nprintf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message","text":"recovered"}}\' \'{"type":"turn.completed"}\'\n',{mode:0o755});
+  let observed;
+  const wait=async fn=>{const deadline=Date.now()+30000;while(Date.now()<deadline){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,100));}throw Error('fixture did not reach checkpoint: '+JSON.stringify(observed));};
+  const start=async dir=>{
+    fs.mkdirSync(dir,{recursive:true});const a=f.call('task_new',{kind:'research',dir,goal:'fixture',title:'graceful fixture'}).task;
+    const s=await wait(()=>{const v=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',a.sid+'.json'))),m=JSON.parse(fs.readFileSync(path.join(f.control,'runs',v.runs.at(-1)+'.json')));observed={phase:'start',status:v.status,modelSession:!!v.agentSid,child:!!m.childPid};return v.agentSid&&m.childIdentity&&v.workspace&&fs.existsSync(path.join(v.workspace.work,'.checkpoint'))?v:null;});
+    return {sid:s.sid,meta:JSON.parse(fs.readFileSync(path.join(f.control,'runs',s.runs.at(-1)+'.json')))};
+  };
+  const a=await start(path.join(f.root,'resume'));
+  process.kill(a.meta.pid,'SIGTERM');
+  const done=await wait(()=>{f.call('tasks',{});const s=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',a.sid+'.json')));observed={phase:'resume',status:s.status,turns:s.runs.length,resumes:s.resumes};return s.status==='done'?s:null;});
+  assert.equal(done.runs.length,2);assert.equal(done.resumes,1);assert.equal(fs.readFileSync(path.join(done.dir,'.checkpoint'),'utf8'),'ONCE');
+  const b=await start(path.join(f.root,'stop'));
+  f.call('task_stop',{sid:b.sid});
+  const stopped=await wait(()=>{f.call('tasks',{});const s=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',b.sid+'.json')));return s.status==='stopped'?s:null;});
+  assert.equal(stopped.runs.length,1);assert.equal(stopped.resumes,0);
+});
+
+test('完成事件可见时统计已保存，收尾重试去重且以最终停止状态记账', t => {
+  const f=fixture(t),run='rruntime001',meta=path.join(f.control,'runs',run+'.json');
+  const m=JSON.parse(fs.readFileSync(meta));m.stopped=true;fs.writeFileSync(meta,JSON.stringify(m));
+  const stat={at:Date.now(),agent:'codex',model:'deepseek-v4.1-flash',ok:true,ms:10};
+  const completed=f.call('run_complete',{run,stat,done:{t:'done',ok:true}});
+  assert.equal(completed.done.ok,false);assert.equal(completed.done.stopped,true);
+  const stats=()=>fs.readFileSync(path.join(f.control,'model-stats.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(stats().length,1);assert.equal(stats()[0].run,run);assert.equal(stats()[0].ok,false);assert.equal(stats()[0].stopped,true);
+  assert.ok(fs.readFileSync(path.join(f.control,'runs',run+'.jsonl'),'utf8').includes('"t":"done"'));
+  f.call('run_complete',{run,stat,done:{t:'done',ok:true}});f.call('run_stat',{...stat,run});assert.equal(stats().length,1);
+});

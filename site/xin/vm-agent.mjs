@@ -868,8 +868,9 @@ function statAdd(rec) {
   try {
     mk(BASE);
     const f = STATS_F();
+    if (rec.run && readText(f).split('\n').some(line => { try { return JSON.parse(line).run === rec.run; } catch { return false; } })) return;
     fs.appendFileSync(f, JSON.stringify(rec) + '\n');
-    if (fs.statSync(f).size > 1024 * 1024) { const lines = readText(f).trim().split('\n'); fs.writeFileSync(f, lines.slice(-3000).join('\n') + '\n'); }
+    if (fs.statSync(f).size > 1024 * 1024) { const lines = readText(f).trim().split('\n'), tmp=f+'.'+process.pid+'.tmp'; fs.writeFileSync(tmp, lines.slice(-3000).join('\n') + '\n');fs.renameSync(tmp,f); }
   } catch { /* 记不下来不影响干活 */ }
 }
 export function modelStats(days = 14) {
@@ -1013,10 +1014,10 @@ function runner(run) {
     // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
     const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
     if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {});
-    const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv});
+    const stat=meta.agent !== 'claude' ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0))}}:{}) } : null;
+    const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv,stat});
     if(completion.error){finished=false;setTimeout(()=>finish(code,why),1000);return;}
     if(completion.done){Object.assign(doneEv,completion.done);ok=doneEv.ok;stopped=doneEv.stopped;}
-    if (meta.agent !== 'claude') statAdd({ at: Date.now(), agent: meta.agent, model: meta.model || '', kind: meta.routeKind || meta.kind || 'chat', why: meta.why || '', ok, stopped, ms: Date.now() - t0, from: meta.from || undefined, ...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0))}}:{}) });
     if (meta.task) {
       // 后台任务：结果先存进任务记录（接着做、等确认还是收尾、排下一个），要推送的在锁外发
       const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model });
@@ -1136,7 +1137,6 @@ function runner(run) {
   const canSwitch = () => meta.agent === 'codex' && !state.switched && !state.worked && !state.timeout && Array.isArray(meta.fallbacks) && meta.fallbacks.length > 0;
   // 后台任务到点没做完：停下（算没做成）
   if (meta.deadline) deadTm = setTimeout(() => { state.timeout = true; restarting = false; emit(run, { t: 'status', text: '到时间了，先停下' }); killTree(child); }, Math.max(1000, meta.deadline - Date.now()));
-  start();
   bridgeTm = setInterval(async () => {
     try {
       runtime.drainBridge(sess.workspace, a => {
@@ -1155,8 +1155,17 @@ function runner(run) {
     } catch { /* pending input stays durable and is retried */ }
     finally { steering = false; }
   }, 300);
-  const term = () => { restarting = false; killTree(child); };
-  process.on('SIGTERM', term); process.on('SIGINT', term);
+  const term = external => {
+    restarting = false;
+    // Host shutdown sends SIGTERM too. Only an explicit stop owns the stopped flag;
+    // otherwise leave this run unfinished so the supervisor recovers its checkpoint.
+    if (external && meta.task && !state.timeout && !readJ(metaF(run), meta)?.stopped) {
+      finished = true; killTree(child); process.exit(143);
+    }
+    killTree(child);
+  };
+  process.on('SIGTERM', () => term(true)); process.on('SIGINT', () => term(false));
+  start();
 }
 
 function agentProgress(agent, o) {
@@ -2329,11 +2338,13 @@ const ops = {
 };
 // 只在 tasks 锁里跑的（main 里分派）
 const iops = {
+  run_stat(a){statAdd(a);return {ok:true};},
   controller_ack(a){const f=path.join(BASE,'controller-event.json'),s=readJ(f);if(s?.version===a.version){s.acknowledged=true;writeJ(f,s);}return {ok:true};},
   run_complete(a){
     const m=readJ(metaF(a.run));if(!m)return {error:'no_run'};
     if(m.ended){const done=tailEvents(a.run).filter(e=>e.t==='done').pop();return {done,already:true};}
     const done={...a.done,stopped:!!m.stopped,ok:!!a.done?.ok&&!m.stopped};
+    if(a.stat){const stat={...a.stat,run:a.run,ok:done.ok,stopped:done.stopped};const saved=taskLockHeld()?iops.run_stat(stat):lockedCall('tasks','run_stat',stat);if(saved.error)return saved;}
     if(done.ok&&!m.task&&m.injected?.length)lockedCall('tasks','task_seen',{sids:m.injected});
     emit(a.run,done);m.ended=Date.now();writeJ(metaF(a.run),m);
     const pending=(m.steers||[]).filter(x=>x.state==='pending'||x.state==='next');
