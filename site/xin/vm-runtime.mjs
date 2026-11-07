@@ -128,15 +128,20 @@ function validBuildArtifact(file){
 export function compileWorkspace(t) {
   if(!stm32Task(t)) return null;
   let plan;try{plan=buildPlan(t);}catch(e){return {ok:false,output:e.message};}
-  const started=BigInt(Date.now())*1000000n;let output='';
+  // Filesystem timestamps can lag Date.now() by a clock tick. Compare actual
+  // before/after identity, timestamps and content; unchanged old/future-dated files are not evidence.
+  const stamp=file=>{const s=fs.statSync(file,{bigint:true});return [s.dev,s.ino,s.size,s.mtimeNs,s.ctimeNs].join(':');};
+  let before;try{before=Object.fromEntries(Object.entries(inventory(t.workspace.work)).filter(([n])=>plan.artifacts?plan.artifacts.includes(n):/\.(?:hex|elf|bin)$/i.test(n)).map(([n,hash])=>[n,{hash,stamp:stamp(path.join(t.workspace.work,n))}]));}catch(e){return {ok:false,output:e.message};}
+  let output='';
   for(const [command,args] of plan.commands){
     const c=containerCommand(t,command,args),result=spawnSync(c.command,c.args,{cwd:t.workspace.work,env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:60000,maxBuffer:2*1024*1024});
     output=((output+'\n'+(result.stdout||'')+'\n'+(result.stderr||'')+(result.error?'\n'+result.error.message:''))).slice(-10000);
     if(result.status!==0)return {ok:false,output};
   }
-  let names;try{names=Object.keys(inventory(t.workspace.work));}catch(e){return {ok:false,output:output+'\n'+e.message};}
+  let after;try{after=inventory(t.workspace.work);}catch(e){return {ok:false,output:output+'\n'+e.message};}
+  const names=Object.keys(after);
   const candidates=plan.artifacts||names.filter(n=>/\.(?:hex|elf|bin)$/i.test(n));
-  const artifacts=candidates.filter(n=>{const file=path.join(t.workspace.work,n);try{return names.includes(n)&&fs.statSync(file,{bigint:true}).mtimeNs>=started&&validBuildArtifact(file);}catch{return false;}});
+  const artifacts=candidates.filter(n=>{const file=path.join(t.workspace.work,n),old=before[n];try{return names.includes(n)&&(!old||old.stamp!==stamp(file)||old.hash!==after[n])&&validBuildArtifact(file);}catch{return false;}});
   const ok=artifacts.length>0&&(!plan.artifacts||artifacts.length===plan.artifacts.length);
   return {ok,digest:ok?sourceDigest(t.workspace.work):null,artifacts,system:plan.system,output:output+(ok?'':'\n没有生成本次构建的新 ARM ELF / 有效 HEX / 非空 BIN 产物，不能使用旧文件作为编译证据。')};
 }

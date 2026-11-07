@@ -78,7 +78,7 @@ async def main():
         print('PASS closing an idle page does not wake the VM just to clear presence',flush=True)
         await idle.context.close()
         # Late send results/errors and late history must stay with their originating conversation.
-        for scenario in ('new_success','switch_success','switch_error','newer_send'):
+        for scenario in ('new_success','switch_success','switch_error','switch_queue','newer_send'):
             tab=await ui.page(browser);mock=await ui.xin_mock(tab,authed=True);mock['hold']=True
             await tab.add_init_script("localStorage.setItem('lm.xin.sid','sorigin001')")
             started=asyncio.Event();release=asyncio.Event();second=asyncio.Event();release_second=asyncio.Event()
@@ -94,6 +94,9 @@ async def main():
             await tab.route('**/api/xin/call',delayed)
             await tab.goto(ui.BASE+'/#xin');await tab.wait_for_function('LimingXinChat.state.sid==="sorigin001" && !LimingXinChat.state.loadingConversation')
             await tab.locator('.xc-row textarea').fill('message from A');await tab.locator('.xc-send').click();await started.wait()
+            if scenario=='switch_queue':
+                await tab.locator('.xc-row textarea').fill('queued message from A');await tab.locator('.xc-send').click()
+                await tab.wait_for_selector('.xc-me.queued')
             if scenario.startswith('switch'):
                 await tab.evaluate("location.hash='xin=shist00001'")
                 await tab.wait_for_function('LimingXinChat.state.sid==="shist00001" && !LimingXinChat.state.loadingConversation')
@@ -109,6 +112,10 @@ async def main():
             await tab.evaluate('() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
             assert await tab.evaluate('LimingXinChat.state.sid')==expected,scenario
             assert not await tab.evaluate('LimingXinChat.state.run'),scenario
+            if scenario=='switch_queue':
+                assert not second.is_set(),scenario
+                assert await tab.evaluate("JSON.parse(localStorage.getItem('lm.xin.queue.sorigin001')||'[]').some(q=>q.text==='queued message from A')"),scenario
+                assert not await tab.evaluate("(LimingXinChat.state.queue||[]).some(q=>q.text==='queued message from A')"),scenario
             if scenario=='newer_send':
                 assert await tab.evaluate('LimingXinChat.state.sending')
                 release_second.set();await tab.wait_for_function('LimingXinChat.state.run==="rsecond001"')

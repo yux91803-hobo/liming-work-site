@@ -416,6 +416,7 @@ test('受控构建验证任意新产物，拒绝旧 HEX、非 ARM ELF 及输出�
  cp.spawnSync=(cmd,args)=>{assert.equal(cmd,'/usr/bin/sudo');assert.ok(args.includes('/usr/bin/make'));assert.ok(args.includes(work));generate();return {status:0,stdout:'build',stderr:''};};syncBuiltinESMExports();
  try{
   assert.equal(r.compileWorkspace(f.task).ok,false,'old valid HEX is not build evidence');
+  fs.utimesSync(artifact,new Date(Date.now()+60000),new Date(Date.now()+60000));assert.equal(r.compileWorkspace(f.task).ok,false,'future-dated unchanged HEX is not build evidence');
   generate=()=>fs.writeFileSync(artifact,hex);let built=r.compileWorkspace(f.task);assert.equal(built.ok,true);assert.ok(built.artifacts.includes('Release/custom.hex'));
   fs.unlinkSync(artifact);const elf=path.join(work,'Release/custom.elf');generate=()=>{const b=Buffer.alloc(52);b.set([127,69,76,70,1,1,1]);b.writeUInt16LE(62,18);fs.writeFileSync(elf,b);};assert.equal(r.compileWorkspace(f.task).ok,false);
   generate=()=>{const b=Buffer.alloc(52);b.set([127,69,76,70,1,1,1]);b.writeUInt16LE(40,18);fs.writeFileSync(elf,b);};assert.equal(r.compileWorkspace(f.task).ok,true);

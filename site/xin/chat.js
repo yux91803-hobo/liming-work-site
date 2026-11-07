@@ -253,7 +253,7 @@
     render(); grow(); refreshCtx();
     if (!S.enabled) return;
     if (!S.authed) { if (!touch) loginEl.pw.focus(); return; }
-    if (S.histFor !== (S.sid || '') || !list.childNodes.length) loadCurrent();
+    if (!S.loadingConversation && (S.histFor !== (S.sid || '') || !list.childNodes.length)) loadCurrent();
     if (S.bg > 0) pollTasksSoon(300);
     if (!touch) input.focus();
   }
@@ -372,6 +372,15 @@
       if (/找不到/.test(e.message)) { newChat(); return; }
       list.appendChild(h('p', 'xc-hint', '读不出来：' + e.message));
     });
+  }
+  function openConversation(sid) {
+    if (sid && sid !== S.sid) {
+      if (!root) build();
+      if (S.authed) openSession(sid);
+      else { detachConversation(); S.sid = sid; S.histFor = ''; }
+      ls(LS_SID, sid);
+    }
+    open();
   }
   /* ---------- 侧边栏 ----------
      上面：小芯和好感度、「新对话」；中间：记事本 / 每日任务 / 小芯的文件三个入口，下面是最近的对话；最下面：设置（点开）、退出登录。
@@ -706,8 +715,7 @@
   if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', function (e) {
     var d = e.data || {};
     if (d.type !== 'xin-open' || !S.enabled) return;
-    if (d.sid && /^s[0-9a-z]{6,24}$/.test(d.sid) && d.sid !== S.sid) { S.sid = d.sid; ls(LS_SID, d.sid); S.histFor = ''; }
-    open();
+    openConversation(d.sid && /^s[0-9a-z]{6,24}$/.test(d.sid) ? d.sid : '');
   });
 
   /* ---------- 对话改名 / 删除：点对话后面的 ⋯ ---------- */
@@ -2132,8 +2140,7 @@
   function openFromHash() {
     var m = XIN_HASH.exec(location.hash);
     if (!m) return;
-    if (m[1] && m[1].slice(1) !== S.sid) { S.sid = m[1].slice(1); ls(LS_SID, S.sid); S.histFor = ''; }
-    open();
+    openConversation(m[1] ? m[1].slice(1) : '');
   }
   function boot() {
     watchDoc(document);
