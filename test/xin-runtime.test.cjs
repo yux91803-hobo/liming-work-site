@@ -136,11 +136,12 @@ test('所有 Codex 角色关闭原生分身，配置在容器转换后仍生效'
 
 test('任务命令桥只处理本任务的记忆和提问，不接受任意操作', async t => {
   const f = fixture(t), r = await load(); f.task.workspace = r.prepareWorkspace(f.task, f.control);
-  const io = f.task.workspace.io, name = 'a'.repeat(24) + '.request';
+  const io = f.task.workspace.io, name = require('node:crypto').randomBytes(12).toString('hex') + '.request';
   fs.writeFileSync(path.join(io, name), JSON.stringify({ op: 'remember', text: 'test' }));
   const seen = []; r.drainBridge(f.task.workspace, a => { seen.push(a); return 'ok'; });
   assert.deepEqual(seen, [{ op: 'remember', text: 'test' }]);
   assert.equal(fs.readFileSync(path.join(io, name.replace('.request', '.reply')), 'utf8'), 'ok');
+  fs.unlinkSync(path.join(io,name.replace('.request','.reply')));
   const bad = spawnSync(process.execPath, [path.join(f.task.workspace.home, 'bin/xin'), 'task', 'new', 'bad'], { env: { ...f.env, XIN_TASK_IO: io }, encoding: 'utf8' });
   assert.equal(bad.status, 1); assert.match(bad.stderr, /只允许/);
 });
