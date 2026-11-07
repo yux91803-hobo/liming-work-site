@@ -317,7 +317,7 @@ async def stm32_operation_regressions(b):
             await pg.go_back(); await f.wait_for_function('!STM.app.route().reg')
             after = await f.evaluate('({file:document.querySelector(".ftab.on").textContent,y:scrollY,cf:STM.app.route().cf,sec:STM.app.route().sec})')
             check(prefix + '：main.c 查寄存器再看图，逐层返回保留文件与阅读位置', source and sheet and before['cf'] == 'main.c' and after['file'] == after['cf'] == 'main.c' and after['sec'] == 'code' and abs(after['y'] - before['y']) <= 2, (before, source, sheet, after))
-            await pg.wait_for_function('new URLSearchParams(location.search).get("cf") === "main.c"')
+            await pg.wait_for_function('(() => { const q=new URLSearchParams(location.search); return q.get("cf")==="main.c" && !q.has("reg") && !q.has("sch"); })()')
             await pg.reload(); f = await tool_frame(pg) if embedded else pg
             await f.wait_for_selector('html.ready')
             check(prefix + '：刷新仍打开刚选择的代码文件', await f.locator('.ftab.on').inner_text() == 'main.c')
