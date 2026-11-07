@@ -1137,7 +1137,6 @@ function runner(run) {
   const canSwitch = () => meta.agent === 'codex' && !state.switched && !state.worked && !state.timeout && Array.isArray(meta.fallbacks) && meta.fallbacks.length > 0;
   // 后台任务到点没做完：停下（算没做成）
   if (meta.deadline) deadTm = setTimeout(() => { state.timeout = true; restarting = false; emit(run, { t: 'status', text: '到时间了，先停下' }); killTree(child); }, Math.max(1000, meta.deadline - Date.now()));
-  start();
   bridgeTm = setInterval(async () => {
     try {
       runtime.drainBridge(sess.workspace, a => {
@@ -1166,6 +1165,7 @@ function runner(run) {
     killTree(child);
   };
   process.on('SIGTERM', () => term(true)); process.on('SIGINT', () => term(false));
+  start();
 }
 
 function agentProgress(agent, o) {
