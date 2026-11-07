@@ -8,6 +8,12 @@ test('Antigravity 额度同时受五小时和周限额约束，持久记录真�
  assert.deepEqual(r.AGY_SETTINGS.permissions.deny,['command(*)','read_file(*)','write_file(*)','execute_url(*)','mcp(*)']);assert.equal(r.AGY_SETTINGS.useG1Credits,false);
  const exhausted=r.antigravityQuota(input(0,1),now),late=r.antigravityQuota(input(.9,1),now+1000);assert.equal(r.mergeAntigravityQuota(exhausted,late,now+1000).retryAt,five);assert.equal(r.mergeAntigravityQuota(exhausted,late,five+1).blocked,false);
 });
+test('CLI 续接返回整段累计用量：按持久水位记增量，重启和重复响应不重复计费',async t=>{
+ const r=await load(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'xin-agy-budget-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const file=dir+'/budget.json',first=r.requestBudget(file,128,{tokens:10000}),a={input_tokens:2212,output_tokens:2431,cache_read_tokens:0,total_tokens:4643};first();assert.deepEqual(first.recordCumulativeUsage('antigravity','own',a),a);
+ const resumed=r.requestBudget(file,128,{tokens:10000}),b={input_tokens:12190,output_tokens:4829,cache_read_tokens:0,total_tokens:17019};const delta=resumed.recordCumulativeUsage('antigravity','own',b);assert.equal(delta.input_tokens,9978);assert.equal(delta.output_tokens,2398);assert.equal(delta.total_tokens,12376);
+ resumed.recordCumulativeUsage('antigravity','own',b);assert.equal(JSON.parse(fs.readFileSync(file)).total,17019);assert.equal(resumed(),false);assert.throws(()=>resumed.recordCumulativeUsage('antigravity','own',a),/倒退/);
+});
 function fixture(t,mode='ok'){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-agy-test-')),control=root+'/control',profile=root+'/profile',bin=root+'/bin',log=root+'/calls.jsonl';for(const p of [control+'/sessions',control+'/runs',profile,bin])fs.mkdirSync(p,{recursive:true});
  const preload=root+'/preload.cjs';fs.writeFileSync(preload,'require("node:os").homedir=()=>'+JSON.stringify(profile)+';require("node:module").syncBuiltinESMExports();');

@@ -38,7 +38,7 @@ Antigravity 客户端在控制器私有目录运行，不从任务项目加载�
 
 ## 预算
 
-现有模型保持 max；Antigravity 按用户指定固定 Flash High。每项工作默认最多 128 次推理请求及 150 万已报告输入加输出 token，跨续接与后台完成推理累计；可由控制器配置 XIN_TASK_REQUEST_LIMIT / XIN_TASK_TOKEN_LIMIT。Antigravity 最多 48 个控制器动作，其每次 CLI 调用和已报告 token 计入预算，CLI 内部检索的模型请求数没有单独报告。缓存输入另记，不重复加到总数。没有提供 usage 的响应记为未知，不当作零消耗；这不是人民币费用限额或供应商账单。
+现有模型保持 max；Antigravity 按用户指定固定 Flash High。每项工作默认最多 128 次推理请求及 150 万已报告 token，跨续接与后台完成推理累计；可由控制器配置 XIN_TASK_REQUEST_LIMIT / XIN_TASK_TOKEN_LIMIT。Antigravity 最多 48 个控制器动作，其每次 CLI 调用和已报告 token 计入预算，CLI 内部检索的模型请求数没有单独报告。CLI 续接返回整段会话累计用量，以持久水位只计新增部分，重复响应和重启不重复累计；预算使用供应商 total_tokens，缓存输入另记、不再次相加。没有提供 usage 的响应记为未知，不当作零消耗；这不是人民币费用限额或供应商账单。
 
 ## 网页成品
 

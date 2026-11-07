@@ -1612,6 +1612,7 @@ function claudeUsage(id, win) {
 }
 export function sessionUsage(s) {
   try {
+    if(isTask(s)&&s.antigravityConversation){const b=readJ(path.join(BASE,'budgets',s.sid+'.json'));if(b?.total)return {input:b.input||0,output:b.output||0,cached:b.cached||0,total:b.total,ctx:s.frontUsage?.ctx||0,win:1000000};}
     if (s?.agent === 'codex' && s.frontUsage) return s.frontUsage;
     if (!s || !okAgentSid(s.agent, s.agentSid) || !s.started) return null;
     if (s.agent === 'harness') return s.hUsage && s.hUsage.total ? s.hUsage : null;

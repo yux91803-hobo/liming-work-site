@@ -280,6 +280,16 @@ export function requestBudget(file,limit=128,options={}) {
   };
   const take=()=>{const b=read();if((b.used||0)>=limit||options.tokens>0&&(b.total||0)>=options.tokens)return false;save({...b,used:(b.used||0)+1,tokenLimit:options.tokens||null});return true;};
   take.recordUsage=u=>{const b=read();if(!u){save({...b,unknownUsage:(b.unknownUsage||0)+1});return;}const input=Math.max(0,Number(u.input_tokens)||0),output=Math.max(0,Number(u.output_tokens)||0),cached=Math.max(0,Number(u.input_tokens_details?.cached_tokens)||0);save({...b,input:(b.input||0)+input,output:(b.output||0)+output,cached:(b.cached||0)+cached,total:(b.total||0)+input+output});};
+  take.recordCumulativeUsage=(provider,id,u)=>{
+    const b=read(),key=provider+':'+id,previous=b.providerUsage?.[key]||{},next={};
+    u={...u,total_tokens:u?.total_tokens??((Number(u?.input_tokens)||0)+(Number(u?.output_tokens)||0))};
+    for(const k of ['input_tokens','output_tokens','cache_read_tokens','total_tokens']){next[k]=Math.max(0,Number(u?.[k])||0);if(next[k]<(previous[k]||0))throw Error('供应商累计用量倒退，未重复记账');}
+    const delta=Object.fromEntries(Object.keys(next).map(k=>[k,next[k]-(previous[k]||0)]));
+    // Antigravity's result usage covers the WHOLE resumed conversation. Store
+    // the watermark with the budget, so both later turns and restarts use deltas.
+    save({...b,input:(b.input||0)+delta.input_tokens,output:(b.output||0)+delta.output_tokens,cached:(b.cached||0)+delta.cache_read_tokens,total:(b.total||0)+delta.total_tokens,providerUsage:{...b.providerUsage,[key]:next}});
+    return delta;
+  };
   return take;
 }
 export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudget}) {
@@ -643,7 +653,7 @@ export async function antigravityWork(t,options) {
     const args=['-p',prompt,'--agent','xin-confined-worker','--model',AGY_MODEL,'--effort','high','--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
     const r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(s?.state==='DONE'&&['search_web','read_url_content'].includes(name))report({type:'item.completed',item:{id:'web-'+turn+'-'+s.step_index,type:'web_search',query:s.tool_info?.parameters?.query||s.tool_info?.parameters?.url||name}});});
     const result=r.result;if(r.model!==AGY_MODEL)throw Error('Antigravity 实际模型与固定模型不一致');
-    if(result?.usage){options.budget.recordUsage?.({...result.usage,input_tokens_details:{cached_tokens:result.usage.cache_read_tokens||0}});report({type:'xin.usage',usage:result.usage});}
+    if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);report({type:'xin.usage',usage:delta});}
     else options.budget.recordUsage?.(null);
     if(r.code!==0||result?.status!=='SUCCESS'){
       try{quota=await readAntigravityQuota(binary,clientDir);options.quota(quota);}catch{}
