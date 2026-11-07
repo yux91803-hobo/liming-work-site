@@ -33,6 +33,8 @@ test('普通资料任务真正选择固定 Flash High，前台模型和网关密
 });
 test('额度耗尽可在查过资料后转交其它入口，倒计时期间不重复请求 agy，到期才再探测',async t=>{
  const f=fixture(t,'quota'),task=f.call('task_new',{kind:'research',goal:'quota continuation'}).task,done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-3.8-flash-high');assert.equal(fs.readFileSync(f.root+'/fallback.log','utf8').trim(),'codex');
+ const authors=JSON.parse(fs.readFileSync(f.control+'/sessions/'+task.sid+'.json')).actualModels;assert.ok(authors.includes('gemini-3.8-flash-high'));assert.ok(authors.includes(done.actualModel));
+ const review=f.call('task_new',{kind:'review',goal:'independent audit',model:'gemini-3.8-flash-high',named:true,after:[task.no]});assert.equal(review.error,'independent_review_model');
  const state=JSON.parse(fs.readFileSync(f.control+'/antigravity-quota.json'));assert.equal(state.blocked,true);assert.ok(state.retryAt>Date.now());const count=fs.readFileSync(f.log,'utf8').trim().split('\n').length;
  const next=f.call('task_new',{kind:'research',goal:'cooldown task'}).task;assert.notEqual(next.model,'gemini-3.8-flash-high');await f.wait(next.sid);assert.equal(fs.readFileSync(f.log,'utf8').trim().split('\n').length,count);
  state.retryAt=Date.now()-1;fs.writeFileSync(f.control+'/antigravity-quota.json',JSON.stringify(state));const retry=f.call('task_new',{kind:'research',goal:'expired quota'}).task;assert.equal(retry.model,'gemini-3.8-flash-high');await f.wait(retry.sid);assert.ok(fs.readFileSync(f.log,'utf8').trim().split('\n').length>count);

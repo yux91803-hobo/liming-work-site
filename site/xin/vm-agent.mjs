@@ -1216,7 +1216,7 @@ function runner(run) {
         state.switched = true; meta.from = from; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);meta.effort=AUTO_EFFORT;
         patchRun(run,{model:meta.model,effort:meta.effort,from,fallbacks:meta.fallbacks});
         if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
-        if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
+        if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
         emit(run, { t: 'status', text: from===runtime.AGY_MODEL?'原执行入口暂不可用，保留现有文件继续处理。':codexModel(from).name + ' 没接上，换 ' + codexModel(meta.model).name + ' 再试…' });
         Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
         start(); return;
@@ -2670,7 +2670,7 @@ const iops = {
   handoff_start:handoffStart,handoff_finish:handoffFinish,
   front_immediate:frontImmediate,
   task_stage(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run||!['working','checking'].includes(a.stage))return {error:'stale'};t.stage=a.stage;saveTask(t);return {ok:true};},
-  task_model(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run)return {error:'stale'};if(t.model===runtime.AGY_MODEL){t.agentSid=null;t.started=false;}t.model=t.actualModel=a.model;saveTask(t);return {ok:true};},
+  task_model(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run)return {error:'stale'};if(a.worked&&t.model!==a.model)t.actualModels=[...new Set([...(t.actualModels||[]),t.model])];if(t.model===runtime.AGY_MODEL){t.agentSid=null;t.started=false;}t.model=t.actualModel=a.model;saveTask(t);return {ok:true};},
   agy_quota(a){const f=path.join(BASE,'antigravity-quota.json');writeJ(f,runtime.mergeAntigravityQuota(readJ(f),a.quota));return {ok:true};},
   agy_conversation(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run||!UUID_RE.test(a.id||''))return {error:'stale'};t.antigravityConversation=a.id;saveTask(t);return {ok:true};},
   run_stat(a){statAdd(a);return {ok:true};},
