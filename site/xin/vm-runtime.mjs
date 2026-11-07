@@ -535,10 +535,13 @@ export function appServer(cmd, configArgs, options) {
 // Foreground is an inference-only client, NOT a CLI with a filtered shell.
 // Function arguments are data; no eval, shell, MCP, filesystem or browser tool exists here.
 export const FRONT_MODEL = 'deepseek-v4.1-flash';
-export function frontCommand(argv) {
+// acts: the mascot's display actions. bond/next/move only touch the page mascot and small personal data files.
+export function frontCommand(argv, acts = []) {
   if (!Array.isArray(argv) || argv.length > 128 || argv.some(x => typeof x !== 'string' || x.length > 60000)) return false;
   if (argv[0] !== 'xin') return false;
-  return ['remember','recall'].includes(argv[1]) && argv.length >= 3 || argv[1] === 'task' && ['new','list','show','tell','stop'].includes(argv[2]);
+  if (['remember','recall','bond','next','move'].includes(argv[1])) return argv.length >= 3;
+  if (argv[1] === 'task') return ['new','list','show','tell','stop'].includes(argv[2]);
+  return acts.includes(argv[1]);
 }
 export async function frontTurn(o) {
   const abort = new AbortController();
@@ -547,16 +550,19 @@ export async function frontTurn(o) {
   o.signal?.addEventListener('abort',cancel,{once:true});
   if(o.signal?.aborted)cancel();
   const timer = setTimeout(() => {expired=true;abort.abort();}, o.ms || 25000);
-  const input = o.input.slice();
-  let steps = 0;
+  const input = o.input.slice(), max = o.steps || 3;
+  // Expressions (mascot actions, bond, greeting, moves) never consume the work-step budget; they get their
+  // own small cap, and the total number of model rounds stays bounded.
+  const expression = argv => Array.isArray(argv) && argv[0] === 'xin' && (['bond','next','move'].includes(argv[1]) || (o.acts||[]).includes(argv[1]));
+  let steps = 0, rounds = 0, expressed = 0;
   try {
-    while (steps < (o.steps || 3)) {
+    while (steps < max && rounds++ < max + 2) {
       if(o.takeBudget&&!o.takeBudget())throw Error('本项工作的推理预算已用完，保留现有结果');
       const response = await (o.fetch || fetch)(o.baseURL.replace(/\/$/,'') + '/responses', {
         method:'POST', signal:abort.signal,
         headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},
         body:JSON.stringify({model:FRONT_MODEL, stream:false, reasoning:{effort:'max'}, instructions:o.instructions, input,
-          max_output_tokens:1800, tools:[{type:'function',name:'xin',description:'只调度工作、查看真实进度、转达用户回复、记事。argv 是参数数组，不是 shell；新建或转达后本轮立即结束。',
+          max_output_tokens:1800, tools:[{type:'function',name:'xin',description:'调度工作、查看真实进度、转达用户回复、记事；也能做表情动作、调整好感度、留下次见面的开场白。argv 是参数数组，不是 shell；新建或转达工作后本轮立即结束。',
             parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true},...(o.handoff?[{type:'function',name:'finish_event',description:'对内部完成事件作最终决定：向用户交付真实结果或保持安静。',strict:true,parameters:{type:'object',properties:{action:{type:'string',enum:['deliver','silent']},text:{type:'string'}},required:['action','text'],additionalProperties:false}}]:[])]})
       });
       if (!response.ok) throw new Error('前台连接失败（HTTP '+response.status+'）');
@@ -565,21 +571,29 @@ export async function frontTurn(o) {
       if (data.error || data.status === 'failed' || data.status === 'incomplete') throw new Error('前台未完成回复');
       o.usage?.(data.usage);
       const output = data.output || [], calls = output.filter(x => x.type === 'function_call');
+      const said = output.filter(x => x.type === 'message').flatMap(x => x.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('\n');
+      const parsed = calls.map(call => { try { return JSON.parse(call.arguments); } catch { return null; } });
+      // Text plus expressions only: perform them and answer now, without another model round.
+      if (said && !o.handoff && calls.length && calls.every((c, i) => c.name === 'xin' && expression(parsed[i]?.argv))) {
+        for (const [i, call] of calls.entries()) if (++expressed <= 2 && frontCommand(parsed[i].argv, o.acts)) await o.command(parsed[i].argv, call.call_id);
+        return said;
+      }
       if (!calls.length) {
-        const text = output.filter(x => x.type === 'message').flatMap(x => x.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('\n');
+        const text = said;
         if (!text) throw new Error('前台没有返回文字');
         if(o.handoff){const r=await o.deliver({action:'deliver',text});if(r.error)throw Error(r.msg||r.error);return '';}
         return text;
       }
       input.push(...output);
-      for (const call of calls) {
-        if (++steps > (o.steps || 3)) return await o.fallback();
-        let args; try { args = JSON.parse(call.arguments); } catch {}
-        const result = o.handoff&&call.name==='finish_event'&&['deliver','silent'].includes(args?.action)
+      for (const [i, call] of calls.entries()) {
+        const args = parsed[i], free = call.name === 'xin' && expression(args?.argv);
+        if (!free && ++steps > max) return await o.fallback();
+        const result = free && ++expressed > 2 ? {error:'这一轮的表情动作已经够了，直接回复用户。'}
+          : o.handoff&&call.name==='finish_event'&&['deliver','silent'].includes(args?.action)
           ? await o.deliver(args)
-          : call.name === 'xin' && frontCommand(args?.argv)
+          : call.name === 'xin' && frontCommand(args?.argv, o.acts)
           ? await o.command(args.argv, call.call_id)
-          : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop 和 xin remember。'};
+          : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop、xin remember/recall 和小芯自己的表情、好感度、开场白、动作。'};
         if (result.terminal) return result.text;
         input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)});
       }
