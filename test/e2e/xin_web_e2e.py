@@ -53,6 +53,32 @@ async def main():
             print('PASS isolated web preview ' + scenario, flush=True)
             await context.close()
 
+        page = await ui.page(browser)
+        state = await ui.xin_mock(page, authed=True)
+        now = int(time.time()*1000)
+        task = {'sid':'staskweb001','no':1,'parent':'snew000001','title':'奶龙互动网页','kind':'code','model':'kimi-k3.1-pro','status':'done','created':now,'endedAt':now,'dir':'/data/workspace/demo','turns':1,'web':True,'result':{'ok':True,'text':'我画好了。[打开预览]('+URL+')','at':now},'preview':{'ready':True,'url':URL},'delivery':{'state':'pending'}}
+        state['tasks'] = [task]
+        await page.add_init_script("localStorage.setItem('lm.xin.sid','snew000001')")
+        async def history(route):
+            body = route.request.post_data_json or {}
+            if body.get('op') != 'history': return await route.fallback()
+            events = [] if task['delivery']['state'] == 'pending' else [{'t':'text','text':task['result']['text'],'taskResult':{'sid':task['sid'],'status':'done','at':now,'endedAt':now}}]
+            await route.fulfill(json={'ok':True,'data':{'session':{'sid':'snew000001','agent':'codex'},'tasks':[task],'runs':[{'run':'rhandoff001','started':now+1,'done':True,'events':events}],'active':None}})
+        await page.route('**/api/xin/call', history)
+        await page.goto(ui.BASE + '/#xin')
+        await page.wait_for_function(ui.CHAT_DONE)
+        assert await page.locator('.xc-tres').count() == 0
+        task['delivery']['state'] = 'delivered'
+        await page.evaluate('LimingXinChat.tasks()')
+        await page.wait_for_selector('.xc-tres')
+        assert await page.locator('.xc-tres').count() == 1
+        await page.reload()
+        await page.wait_for_function(ui.CHAT_DONE)
+        assert await page.locator('.xc-tres').count() == 1
+        assert await page.locator('.xc-preview').count() == 1
+        await page.context.close()
+        print('PASS pending handoff waits for delivery; reload merges one result with its saved message', flush=True)
+
         shots = os.environ.get('XIN_WEB_SCREENSHOTS')
         if shots: Path(shots).mkdir(parents=True, exist_ok=True)
         for width in (1280, 768, 1024, 390):

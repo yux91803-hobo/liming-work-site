@@ -440,14 +440,14 @@ test('前台指定模型只影响后台；结构化桥拒绝跨对话操作，�
   const saved=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',r.task.sid+'.json')));
   assert.equal(saved.requestedModel,'kimi-k3.1-pro');assert.equal(saved.requestedNamed,true);
 });
-test('前台超预算自动保存原话为后台工作，停止后不再派活',async t=>{
+test('前台超预算保留原话，未确定的要求不擅自派活，停止后也不派活',async t=>{
   const f=fixture(t), sid='sfronttest02', run='rfronttest02';
   fs.writeFileSync(path.join(f.control,'sessions',sid+'.json'),JSON.stringify({sid,agent:'codex',runs:[run]}));
   const file=path.join(f.control,'runs',run+'.json');
   const m={run,sid,agent:'codex',model:'deepseek-v4.1-flash',text:'检查电路图',started:Date.now()};
   fs.writeFileSync(file,JSON.stringify(m));fs.writeFileSync(path.join(f.control,'runs',run+'.jsonl'),JSON.stringify({t:'user',text:m.text})+'\n');
-  const r=f.call('front_fallback',{run});assert.equal(r.terminal,true);
-  assert.match(JSON.parse(fs.readFileSync(path.join(f.control,'sessions',r.task.sid+'.json'))).goal,/检查电路图/);
+  const r=f.call('front_fallback',{run});assert.equal(r.error,'front_timeout');
+  assert.match(fs.readFileSync(path.join(f.control,'runs',run+'.jsonl'),'utf8'),/检查电路图/);assert.equal(f.call('tasks',{all:true}).tasks.length,1);
   fs.writeFileSync(file,JSON.stringify({...m,stopped:true}));assert.ok(f.call('front_fallback',{run}).error);
 });
 test('前台对 ask 的回复用 tell 续接同一工作，不重复 new；跨对话依赖拒绝',async t=>{

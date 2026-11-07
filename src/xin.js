@@ -116,12 +116,12 @@ async function agentScript(env, origin) {
   if (!r.ok) throw { status: 500, code: 'no_agent', msg: '网站里缺 vm-agent.mjs' };
   let text = await r.text();
   const dependencies = [];
-  if (text.includes("from './vm-runtime.mjs'")) {
-    const dep = await env.ASSETS.fetch(new Request(origin + '/xin/vm-runtime.mjs'));
-    if (!dep.ok) throw { status: 500, code: 'no_runtime', msg: '网站里缺 vm-runtime.mjs' };
+  for(const file of ['vm-runtime.mjs','vm-state.mjs','vm-handoff.mjs'])if (text.includes("from './"+file+"'")) {
+    const dep = await env.ASSETS.fetch(new Request(origin + '/xin/'+file));
+    if (!dep.ok) throw { status: 500, code: 'no_runtime', msg: '网站里缺 '+file };
     const body = await dep.text(), digest = hex(await crypto.subtle.digest('SHA-256', enc.encode(body))).slice(0, 12);
-    const name = 'vm-runtime-' + digest + '.mjs';
-    text = text.replace("from './vm-runtime.mjs'", "from './" + name + "'");
+    const name = file.replace('.mjs','-') + digest + '.mjs';
+    text = text.replace("from './"+file+"'", "from './" + name + "'");
     dependencies.push({ text: body, path: VM_DIR + '/' + name });
   }
   const h = hex(await crypto.subtle.digest('SHA-256', enc.encode(text))).slice(0, 12);

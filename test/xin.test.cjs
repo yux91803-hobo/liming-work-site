@@ -954,7 +954,7 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   assert.ok(card && card.no === 1 && card.title === '编译 LED' && card.kind === 'code' && card.model === 'glm-5.3', JSON.stringify(front.events));
   assert.deepStrictEqual(front.events.filter(e => e.t === 'text').map(e => e.text), ['好，我这就去弄。']);
   assert.ok(!fs.existsSync(path.join(fc.log,'xin-out')), '前台不执行 shell');
-  const done = await until(() => { const d = op('tasks', { sid: r.sid }); return d.tasks[0] && d.tasks[0].status === 'done' && d; }, 15000, '任务做完');
+  const done = await until(() => { const d = op('tasks', { sid: r.sid }); return d.tasks[0] && d.tasks[0].status === 'done' && d.tasks[0].delivery?.state==='delivered' && d; }, 15000, '任务做完并自动交付');
   const t = done.tasks[0];
   assert.deepStrictEqual([t.no, t.parent, t.kind, t.model, t.why, t.result.ok, t.result.text], [1, r.sid, 'code', 'glm-5.3', 'code', true, '编好了：/data/workspace/blink/build/app.hex']);
   assert.strictEqual(t.dir, path.join(work, 'tasks', '1-编译-LED'));
@@ -976,7 +976,8 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   // 前台下一句带上结果；做成了以后就不再带
   const r2 = op('send', { sid: r.sid, text: '怎么样了' });
   const second = await until(() => {const p=op('poll', { run: r2.run, off: 0 });return p.done&&p;}, 15000, '前台第二句');
-  assert.ok(second.events.some(e=>e.t==='text'&&e.text.includes('编好了：/data/workspace/blink/build/app.hex')),JSON.stringify(second.events));
+  assert.ok(h.runs.flatMap(r=>r.events).some(e=>e.t==='text'&&e.taskResult&&e.text.includes('编好了：/data/workspace/blink/build/app.hex')),'完成后主动交付真实结果');
+  const p2=JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop());assert.ok(p2.input.some(e=>e.role==='assistant'&&e.content.includes('编好了：/data/workspace/blink/build/app.hex')),'后续聊天保留已交付的真实结果');
   const r3 = op('send', { sid: r.sid, text: '好' });
   await until(() => op('poll', { run: r3.run, off: 0 }).done, 15000, '前台第三句');
   const p3 = JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input.at(-1).content;

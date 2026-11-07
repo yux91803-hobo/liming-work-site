@@ -40,9 +40,13 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as runtime from './vm-runtime.mjs';
+import { StateJournal, inputDigest } from './vm-state.mjs';
+import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 const BASE = process.env.XIN_HOME || path.join(os.homedir(), '.xin');
+const journal = new StateJournal(BASE);
+function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
 const WORK = process.env.XIN_WORK || '/data/workspace';
 const TEMPLATE = () => path.join(WORK, 'stm32-template');   // STM32 空工程（scripts/vm/setup-stm32.sh 装的）
 const SESS = path.join(BASE, 'sessions'), RUNS = path.join(BASE, 'runs'), BIN = path.join(BASE, 'bin');
@@ -73,10 +77,10 @@ export const ACTS = {
    小芯了解到值得长期记住的事就用 xin remember 记一笔，也可以直接编辑这个文件整理；网站上能看、能改。 */
 export const MEM_FILE = () => path.join(BASE, 'memory.md');
 const MEM_MAX = 8000;
-export function readMemory() { try { return fs.readFileSync(MEM_FILE(), 'utf8'); } catch { return ''; } }
+export function readMemory() { return readText(MEM_FILE()); }
 function today() { const d = new Date(Date.now() + 8 * 3600e3); return d.toISOString().slice(0, 10); }   // 北京时间的日期
 function bjNow() { return new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 16).replace('T', ' '); }
-function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } }
+function readText(f) { try { return journal.staged(f) ?? fs.readFileSync(f, 'utf8'); } catch { return ''; } }
 
 /* ---------- 每日任务：网站后台每天北京时间 8:55 叫醒电脑（网关 9 点自己签到），9:10 让小芯按清单做一遍，没做成 21:10 再来一次 ---------- */
 export const DAILY_FILE = () => path.join(BASE, 'daily.md');
@@ -155,7 +159,7 @@ export function remember(text) {
   mk(BASE);
   const cur = readMemory();
   const head = cur ? (cur.endsWith('\n') ? '' : '\n') : '# 小芯的记事本\n\n';
-  fs.appendFileSync(MEM_FILE(), head + '- ' + today() + '：' + t + '\n');
+  journal.write(MEM_FILE(),cur+head+'- '+today()+'：'+t+'\n');
   return t;
 }
 function memoryPart(mem) {
@@ -175,7 +179,7 @@ export function systemPrompt(mem, opt = {}) {
   if (opt.tasks) return [
     '你是小芯，用中文和第一人称简短回答。闲聊和无需工具的知识讲解直接答。所有需要实际操作的事必须派出去，绝不自行执行。',
     '你唯一的工具 xin 接受 argv 参数数组，例如 {argv:["xin","task","new","--kind","code","--title","画图","--","详细要求"]}。参数是数据，不支持 shell、管道、重定向或 heredoc。',
-    '只支持 xin task new/list/show/tell/stop 和 xin remember。需要编辑文件、浏览网页、登录、编译、操作设备都必须 task new。缺少后台权限时如实汇报，不退回前台执行。',
+    '只支持 xin task new/list/show/tell/stop、xin remember 和 xin recall 关键词（检索本对话原文）。需要编辑文件、浏览网页、登录、编译、操作设备都必须 task new。缺少后台权限时如实汇报，不退回前台执行。',
     '类型 --kind：quick 杂活、code 写代码/编译、research 查资料、hard 难题、vision 看图、review 复核。画图、动画和交互网页用 --kind code --web，交付可打开的网页；项目 --dir 必须在 '+WORK+' 内，新建工作可不填；后续依赖用 --after 编号；指定执行模型用 --model。图片只作为文件路径提供，必须交给 vision 工作读取，不要说已经亲自看过图片。',
     '可用执行模型由控制器配置，包含 kimi-k3.1-pro、glm-5.3、glm-5.3-flash、deepseek-v4.1-flash。用户点名已写入调度记录，不需要你推测入口或声称没听说过。明确要求实际制作时必须创建或补充工作，不能只口头说做了。',
     '同一件工作的补充、修改和对问题的答复必须 task tell 原编号，不要新建。多个工作不明确时先问清针对哪一件。',
@@ -211,7 +215,7 @@ export const TASK_GUIDE = () => [
   '同一件事的追问和修改转给原工作；进度只根据 taskNotes 或 task show/list；ask 后把问题第一人称问用户，答复用 tell 转回。'
 ];
 // 后台分身的设定：小芯的设定 + 「你现在在后台干活」
-const WEB_TASK_GUIDE = '这项工作的成品是可打开、有动画和交互的网页。交付一个自包含 HTML，CSS/JS 内联，绘图使用 CSS、内联 SVG 或 Canvas；不使用外部脚本、CDN、iframe、fetch、localStorage 或需要常驻的服务。布局适配 1280 和 390 像素。控制器会真正打开、点击、截图并发布持久预览，你无需开预览服务器，也不要寻找、安装或调用浏览器工具；写好成品后结束，控制器负责验收。网页标题与可见内容不主动提模型、分身、任务编号。根目录写 xin-web.json，例如 {"entry":"index.html","title":"奶龙","checks":[{"selector":"#dance","expectSelector":"#dragon","expectClass":"dancing"}]}。checks 需要 1–8 个实际点击及可观察变化，也可用 expectText 或 expectAttribute:{"name":"data-state","value":"dancing"}；点击应能在电脑和手机生效。做完只说明成品，不编造预览 URL，控制器发布后生成真实链接。';
+const WEB_TASK_GUIDE = '这项工作的成品是可打开、有动画和交互的网页。交付一个自包含 HTML，CSS/JS 内联，绘图使用 CSS、内联 SVG 或 Canvas；不使用外部脚本、CDN、iframe、fetch、localStorage 或需要常驻的服务。优先交付精致完整的一页，代码尽量控制在 300 行内，避免框架与长篇过程总结。布局适配 1280 和 390 像素。控制器会真正打开、点击、截图并发布持久预览，你无需开预览服务器，也不要寻找、安装或调用浏览器工具；写好成品后结束，控制器负责验收。网页标题与可见内容不主动提模型、分身、任务编号。根目录写 xin-web.json，例如 {"entry":"index.html","title":"奶龙","checks":[{"selector":"#dance","expectSelector":"#dragon","expectClass":"dancing"}]}。checks 需要 1–8 个实际点击及可观察变化，也可用 expectText 或 expectAttribute:{"name":"data-state","value":"dancing"}；点击应能在电脑和手机生效；推荐每次点击更新持久的 data-state 或计数文字，避免检查本来已成立的状态。做完只说明成品，不编造预览 URL，控制器发布后生成真实链接。';
 export function taskSystemPrompt(t) {
   t = t || {};
   const working = t.workspace?.work || t.dir;
@@ -514,8 +518,11 @@ export function openScreen() {
 function mk(d) { fs.mkdirSync(d, { recursive: true }); }
 function rid(p) { return p + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'); }
 function okId(s, p) { return typeof s === 'string' && new RegExp('^' + p + '[0-9a-z]{6,24}$').test(s); }
-function readJ(f, d) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } }
-function writeJ(f, o) { const t = f + '.' + process.pid + '.tmp'; fs.writeFileSync(t, JSON.stringify(o)); fs.renameSync(t, f); }
+function readJ(f, d) { try { return JSON.parse(journal.staged(f) ?? fs.readFileSync(f, 'utf8')); } catch { return d; } }
+function writeJ(f, o) {
+  if(path.resolve(f).startsWith(path.resolve(BASE)+path.sep))return journal.write(f,JSON.stringify(o));
+  const t = f + '.' + process.pid + '.tmp'; fs.writeFileSync(t, JSON.stringify(o)); fs.renameSync(t, f);
+}
 function cut(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '\n…（省略 ' + (s.length - n) + ' 字）' : s; }
 export function processIdentity(pid) {
   try {
@@ -600,7 +607,7 @@ function patchRun(run,changes){
   const r=lockedCall(key,'run_patch',{run,changes});if(r.error)throw new Error(r.msg||r.error);return r.meta;
 }
 function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
-function emit(run, ev) { fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
+function emit(run, ev) { if(journal.active)journal.append(runF(run),ev);else fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
 function events(run) {
   let t; try { t = fs.readFileSync(runF(run), 'utf8'); } catch { return []; }
   const out = [];
@@ -1013,6 +1020,7 @@ const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
 function runner(run) {
   const meta = readJ(metaF(run));
   if (!meta) process.exit(1);
+  if(meta.stopped){emit(run,{t:'done',ok:false,stopped:true,code:0});patchRun(run,{ended:Date.now()});journal.finishLaunch(run);if(meta.task)lockedCall('tasks','task_finish',{sid:meta.sid,run,ok:false,stopped:true});return;}
   meta.pid = process.pid; meta.identity = processIdentity(process.pid); patchRun(run,{pid:meta.pid,identity:meta.identity});
   const sess = readJ(sessF(meta.sid));
   mk(WORK); installXin();
@@ -1092,7 +1100,7 @@ function runner(run) {
     }
     if (meta.kind === 'daily') dailyDone(run, meta, ok);
     // 做完提醒：你不在看（关了网页、切到别的应用）才发；你自己停的、每日任务不发
-    else if (!stopped) {
+    else if (!stopped&&meta.kind!=='handoff') {
       const last = events(run).filter(e => e.t === 'text').pop();
       const text = plainText(last && last.text, 120);
       setTimeout(() => process.exit(0), 20000).unref();
@@ -1149,7 +1157,7 @@ function runner(run) {
         if (!meta.sandbox) config.push('-c', 'sandbox_mode="danger-full-access"');
         let container;
         if(meta.sandbox){
-          proxy=await runtime.inferenceProxy({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model,takeBudget:runtime.requestBudget(path.join(BASE,'budgets',meta.sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128)});
+          proxy=await runtime.inferenceProxy({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model,takeBudget:workBudget(meta.sid)});
           container=runtime.containerAppServer(currentSession,config,{proxy,catalog:codexCatalog()});
         }
         app = runtime.appServer(container?.command || cmd, config, { commandArgs:container?.args, spawn: { ...spawnOptions, stdio: ['pipe', 'pipe', 'pipe'] }, cwd,
@@ -1245,14 +1253,13 @@ function runner(run) {
   process.on('SIGTERM', () => term(true)); process.on('SIGINT', () => term(false));
   if (meta.agent === 'codex' && role === 'front') {
     const immediate=lockedCall('tasks','front_immediate',{run});
-    if(immediate.terminal){state.frontReceipt=true;emit(run,{t:'text',text:immediate.text});finish(0);return;}
-    const input = [];
-    for (const old of (sess.runs || []).filter(r => r !== run).slice(-12)) {
-      for (const e of events(old).filter(e => e.t === 'user' || e.t === 'text')) {
-        input.push({role:e.t === 'user' ? 'user' : 'assistant',content:String(e.text || '').slice(0,12000)});
-      }
-    }
+    if(immediate.terminal){state.frontReceipt=!immediate.reply;if(immediate.reply&&meta.frontUsage)state.frontUsage=meta.frontUsage;lockedCall(meta.sid,'front_reply',{run,text:immediate.text});finish(0);return;}
+    const context=foregroundContext(sess,run,events),input=context.input;
+    journal.write(path.join(BASE,'contexts',meta.sid+'.json'),JSON.stringify(context.checkpoint));
     input.push({role:'user',content:meta.text});
+    const deliver=args=>lockedCall('tasks','handoff_finish',{run,...args});
+    const handoffBudget=meta.handoff?workBudget(journal.handoff(meta.handoff)?.task||meta.sid):null;
+    if(meta.handoffFallback){deliver({action:'deliver',text:''});finish(0);return;}
     const action = argv => lockedCall('tasks','front_action',{run,argv});
     const fallback = () => {
       const r = lockedCall('tasks','front_fallback',{run});
@@ -1263,14 +1270,15 @@ function runner(run) {
     const cancel = () => { controller.abort(); if(!finished){state.failed=!readJ(metaF(run))?.stopped;finish(0);} };
     process.on('SIGTERM', cancel); process.on('SIGINT', cancel);
     runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,
-      instructions:systemPrompt(undefined,{tasks:true}),input,command:action,fallback,signal:controller.signal,
+      instructions:systemPrompt(undefined,{tasks:true}),input,command:action,fallback,signal:controller.signal,handoff:!!meta.handoff,deliver,takeBudget:handoffBudget,
       usage:u=>{if(u){
+        handoffBudget?.recordUsage(u);
         const prev = state.frontUsage || usageBefore || {input:0,output:0,cached:0};
         state.frontUsage = {input:prev.input+(u.input_tokens||0),output:prev.output+(u.output_tokens||0),cached:prev.cached+(u.input_tokens_details?.cached_tokens||0),ctx:(u.input_tokens||0)+(u.output_tokens||0),win:1000000};
         state.frontUsage.total=state.frontUsage.input+state.frontUsage.output;
         patchRun(run,{frontUsage:state.frontUsage});
       }}
-    }).then(text=>{if(!finished){emit(run,{t:'text',text});finish(0);}})
+    }).then(text=>{if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
       .catch(e=>{if(!finished){state.failed=true;finish(1,e.message);}});
   } else start();
 }
@@ -1608,15 +1616,38 @@ export function sessionUsage(s) {
 function launch(s, m, userEv) {
   const run = rid('r');
   writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, m));
-  emit(run, userEv);
+  if(userEv)emit(run, userEv);
   s.runs.push(run); s.updated = Date.now(); if(isTask(s))saveTask(s);else writeJ(sessF(s.sid),s);
   rememberAgentSession(s.agent, s.agentSid);
-  // 前台在自己的命令里派任务时，别把它那边的 Codex 内部变量、这一轮的编号带给后台的 runner
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK' && !/^CODEX_(?!HOME$)/.test(k)));
-  const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir(), env });
-  const mm = readJ(metaF(run)); if (mm && !mm.pid) { patchRun(run,{pid:child.pid,identity:processIdentity(child.pid)}); }
-  child.unref();
+  journal.enqueueLaunch(run,s.sid,m.kind==='handoff'?1:m.kind==='daily'?2:0);
+  journal.defer(dispatchLaunches);
+  journal.defer(ensureWatchdog);
   return run;
+}
+function dispatchLaunches(){
+  if(journal.active)return;
+  for(const job of process.env.XIN_LOCK?[]:journal.launchedRuns()){
+    const m=readJ(metaF(job.run));if(!m||m.ended){journal.finishLaunch(job.run);continue;}
+    if(alive(m.pid,m.identity)||Date.now()-Math.max(m.started,job.dispatchedAt||0)<15000)continue;
+    if(!m.task&&m.agent==='codex'&&!m.stopped&&job.attempts<2){startRunner(job.run);journal.dispatched(job.run);}
+    else if(runDone(job.run))journal.finishLaunch(job.run);
+  }
+  for(const job of journal.pendingLaunches()){
+    const meta=readJ(metaF(job.run));if(!meta||meta.ended){journal.finishLaunch(job.run);continue;}
+    if(alive(meta.pid,meta.identity)){journal.dispatched(job.run);continue;}
+    const own=readJ(sessF(job.sid));
+    const earlier=(own?.runs||[]).filter(r=>r!==job.run).some(r=>{const m=readJ(metaF(r));return m&&!runDone(r)&&alive(m.pid,m.identity);});
+    if(earlier)continue;
+    startRunner(job.run);journal.dispatched(job.run);
+  }
+}
+function startRunner(run){
+  // The per-run lifetime lock prevents a crash/retry between spawn and receipt from executing twice.
+  mk(path.join(BASE,'locks'));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK' && !/^CODEX_(?!HOME$)/.test(k)));
+  const child = spawn('flock', ['-n','--close',path.join(BASE,'locks',run+'.lock'),process.execPath, SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir(), env });
+  child.on('error',()=>{emit(run,{t:'err',text:'执行进程未能启动，已保留输入'});patchRun(run,{died:true,ended:Date.now()});journal.finishLaunch(run);});
+  child.unref();
 }
 function lastRun(s) { return s && s.runs && s.runs.length ? s.runs[s.runs.length - 1] : null; }
 function runDone(run) {
@@ -1626,6 +1657,12 @@ function runDone(run) {
   if (readTail(runF(run), 8192).includes('"t":"done"')) return true;
   // 后台进程没了却没写 done（云电脑重启、被杀）：补一条，记下是断掉的（后台任务据此决定要不要接着做）
   if (m && Date.now() - m.started > (Number(process.env.XIN_DEAD_MS) || 15000) && !alive(m.pid, m.identity)) {
+    if(!m.task&&m.agent==='codex'&&!m.stopped){
+      const job=journal.launchRecord(run);
+      if(job&&job.state!=='finished'&&(job.attempts<2||Date.now()-job.dispatchedAt<15000)){
+        if(!journal.active&&!process.env.XIN_LOCK)dispatchLaunches();return false;
+      }
+    }
     if(m.childPid && processGroupMembers(m.childPid,m.childIdentity).length){
       signalProcessGroup(m.childPid,m.childIdentity,m.orphanStopping && Date.now()-m.orphanStopping>2000?'SIGKILL':'SIGTERM');
       if(!m.orphanStopping)patchRun(run,{orphanStopping:Date.now()});
@@ -1666,6 +1703,11 @@ const RESUME_TEXT = '（刚才电脑暂停或重启，这一轮中途断了。�
 const isTask = s => !!s && s.kind === 'task';
 const isBackground = t => ['queued','running','stopping'].includes(t.status) || t.status==='waiting' && !!t.approval;
 const isFinished = t => t.status === 'done' || t.status === 'failed' || t.status === 'stopped';
+function cleanupFinishedTask(t){
+  if(!isFinished(t))return;
+  try{t.temporaryCleaned=runtime.cleanupTaskTemporary(t);}
+  catch(e){t.cleanupError=e.message;if(t.result)t.result.text+='\n临时文件未能清理：'+e.message;}
+}
 function occupiesTask(t) {
   if (t.status === 'running' || t.status === 'stopping') return true;
   const r = lastRun(t);
@@ -1673,7 +1715,7 @@ function occupiesTask(t) {
 }
 function taskIndexEntry(t){
   if(!isFinished(t))return t;
-  const out={};for(const k of ['sid','no','parent','kind','tkind','title','model','requestedModel','requestedNamed','strictModel','actualModel','actualModels','reviewAuthors','why','status','created','updated','startedAt','endedAt','dir','after','frontSeen','question','note','verification','dailyDate','web','preview','stage','frontRun','processesCleaned','temporaryCleaned'])if(t[k]!==undefined)out[k]=t[k];
+  const out={};for(const k of ['sid','no','parent','kind','tkind','title','model','requestedModel','requestedNamed','strictModel','actualModel','actualModels','reviewAuthors','why','status','created','updated','startedAt','endedAt','dir','after','frontSeen','question','note','verification','dailyDate','web','preview','stage','frontRun','processesCleaned','temporaryCleaned','delivery','autoContinues'])if(t[k]!==undefined)out[k]=t[k];
   out.runs=lastRun(t)?[lastRun(t)]:[];out.turnsCount=t.turnsCount??(t.runs||[]).length;
   if(t.result)out.result={...t.result,text:cut(t.result.text,2000)};return out;
 }
@@ -1683,6 +1725,7 @@ function listTasks() {
   if(cached?.version===3 && Array.isArray(cached.tasks)) return cached.tasks.sort((a,b)=>a.no-b.no);
   if(!taskLockHeld()){lockedCall('tasks','task_index',{});const fresh=readJ(index);if(fresh?.version===3&&Array.isArray(fresh.tasks))return fresh.tasks.sort((a,b)=>a.no-b.no);}
   let names=[];try{names=fs.readdirSync(SESS);}catch{return [];}
+  names=[...new Set(names.concat(journal.stagedNames('sessions/').map(n=>n.slice('sessions/'.length))))];
   const all=names.filter(f=>/^s[0-9a-z]+\.json$/.test(f)).map(f=>readJ(path.join(SESS,f))).filter(isTask).sort((a,b)=>a.no-b.no);
   if(taskLockHeld()) {try{writeJ(index,{version:3,tasks:all.map(taskIndexEntry)});}catch{}}
   return all;
@@ -1695,6 +1738,15 @@ function findTask(a, all) {
 }
 function saveTask(t) {
   t.updated = Date.now(); mk(SESS); writeJ(sessF(t.sid), t);
+  if(t.parent&&['done','failed','waiting'].includes(t.status)&&!t.pendingQuestion&&t.result){
+    const parent=readJ(sessF(t.parent));
+    if(parent?.agent==='codex'){
+      const id=handoffId(t);
+      if(t.delivery?.id!==id){t.delivery={id,version:workVersion(t),state:'pending'};writeJ(sessF(t.sid),t);}
+      journal.enqueueHandoff({id,parent:t.parent,task:t.sid,version:workVersion(t),payload:{status:t.status,no:t.no}});
+      journal.defer(ensureWatchdog);
+    }
+  }
   try {
     const index = path.join(BASE, 'tasks-index.json'), all = readJ(index);
     if(all?.version===3 && Array.isArray(all.tasks)) writeJ(index,{version:3,tasks:all.tasks.filter(x=>x.sid!==t.sid).concat(taskIndexEntry(t))});
@@ -1711,11 +1763,11 @@ function rememberCallback(callback) {
 function queueControllerEvent() {
   const callback = readJ(path.join(BASE, 'callback.json'));
   if (!callback) return;
-  const bg = listTasks().filter(isBackground).length;
+  const bg = listTasks().filter(isBackground).length+journal.handoffCount();
   const f = path.join(BASE, 'controller-event.json'), old = readJ(f, {}) || {};
   if (old.bg === bg) return;
   writeJ(f, { bg, version: (old.version || 0) + 1, at: Date.now(), acknowledged: false });
-  spawn(process.execPath, [SELF, 'callback'], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref();
+  journal.defer(()=>spawn(process.execPath, [SELF, 'callback'], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref());
 }
 async function flushControllerEvent() {
   const callback = readJ(path.join(BASE, 'callback.json'));
@@ -1765,6 +1817,7 @@ export function taskSummary(t, full) {
   if(t.strictModel)out.strictModel=true;
   if(t.stage)out.stage=t.stage;
   if(t.preview&&t.preview.run===r)out.preview=t.preview;
+  if(t.delivery)out.delivery=t.delivery;
   if(t.web&&isFinished(t))out.cleanup={processesGone:!!t.processesCleaned,tmpCleaned:!!t.temporaryCleaned};
   if (full) out.goal = t.goal;
   return out;
@@ -1958,13 +2011,10 @@ function taskFinish(a) {
     if (!a.stopped) notify = taskPush(t, (ok ? '我弄好了：' : '我没做成：') + t.title, t.result.text);
   }
   t.finishedRun = a.run;
-  if (isFinished(t)) {
-    try { t.temporaryCleaned = runtime.cleanupTaskTemporary(t); }
-    catch (e) { t.cleanupError=e.message; if(t.result)t.result.text+='\n临时文件未能清理：'+e.message; }
-  }
+  cleanupFinishedTask(t);
   if (t.dailyDate && isFinished(t)) dailyDone(a.run, { sid: t.sid, dailyDate: t.dailyDate }, t.status === 'done');
   saveTask(t);
-  const notice = notify ? enqueueNotice(t, notify) : null;
+  const notice = notify&&t.delivery?.state!=='pending' ? enqueueNotice(t, notify) : null;
   scheduleNow();
   return notice ? { notice, notify } : {};
 }
@@ -1988,7 +2038,7 @@ function taskTell(a) {
       catch (e) { return { error: 'conflict', msg: e.message }; }
       t.status = 'done'; t.result.ok = true;
     } else { t.status = 'stopped'; t.result.ok = false; t.result.text += '\n原项目未更改，任务副本保留。'; }
-    delete t.publication; t.question = ''; t.endedAt = Date.now(); t.result.at = Date.now(); t.frontSeen = false; saveTask(t); scheduleNow();
+    delete t.publication; t.question = ''; t.endedAt = Date.now(); t.result.at = Date.now(); t.frontSeen = false; cleanupFinishedTask(t);saveTask(t); scheduleNow();
     return { ok: true, msg: a.decision === 'approve' ? '结果已写回' : '已保留原文件', task: taskSummary(t) };
   }
   if(t.status==='stopping')return {error:'busy',msg:'任务正在停止，退出后再继续'};
@@ -2035,9 +2085,10 @@ function taskStop(a) {
   const activeRun = lastRun(t), wasRunning = !!activeRun && !runDone(activeRun);
   delete t.approval; delete t.publication; delete t.pendingQuestion;
   Object.assign(t, { status: wasRunning ? 'stopping' : 'stopped', result: { ok: false, text: wasRunning ? '做到一半被停下了。' : '还没做完就停了。', at: Date.now() }, endedAt: wasRunning ? 0 : Date.now(), inbox: [], frontSeen: false });
+  cleanupFinishedTask(t);
   saveTask(t);
   const r = lastRun(t), m = r && readJ(metaF(r));
-  if (wasRunning && m && !runDone(r)) { patchRun(r,{stopped:true}); try { process.kill(-m.pid, 'SIGTERM'); } catch { try { process.kill(m.pid, 'SIGTERM'); } catch { /* 已经没了 */ } } }
+  if (wasRunning && m && !runDone(r)) { patchRun(r,{stopped:true});journal.defer(()=>signalProcessGroup(m.pid,m.identity,'SIGTERM')); }
   scheduleNow();
   return { ok: true, task: taskSummary(t) };
 }
@@ -2051,7 +2102,7 @@ function taskAsk(a) {
   Object.assign(t, { pendingQuestion: q, question: q }); saveTask(t);
   return { ok: true };
 }
-const taskVersion = t => [lastRun(t), t.status, t.result?.at || t.endedAt || 0].join(':');
+const taskVersion = workVersion;
 function taskSeen(a) {
   for (const entry of (Array.isArray(a.sids) ? a.sids : [])) {
     const sid = typeof entry === 'string' ? entry : entry.sid, t = findTask({ sid });
@@ -2089,6 +2140,7 @@ function tickTasks() {
   for (const n of (r && r.notify) || []) deliverNotice(n).catch(() => {});
 }
 function ensureWatchdog() {
+  if(journal.active){journal.defer(ensureWatchdog);return;}
   // flock lives outside every task's writable roots and is released by the kernel on exit.
   mk(path.join(BASE, 'locks'));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK' && !/^CODEX_(?!HOME$)/.test(k)));
@@ -2097,11 +2149,11 @@ function ensureWatchdog() {
 }
 async function watchdog() {
   for (;;) {
-    try { tickTasks(); await flushNotices(); await flushControllerEvent(); } catch { /* transient errors are retried */ }
+    try { journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();await flushNotices(); await flushControllerEvent(); } catch { /* transient errors are retried */ }
     const active = listTasks().some(isBackground);
     const pending = readJ(path.join(BASE, 'controller-event.json'));
     const notices=fs.existsSync(NOTICE_DIR()) && fs.readdirSync(NOTICE_DIR()).some(n=>/^[a-f0-9]{32}\.json$/.test(n) && readJ(path.join(NOTICE_DIR(),n))?.state==='pending');
-    if (!active && !notices && (!pending || pending.acknowledged)) return;
+    if (!active && !notices && !journal.hasPendingHandoffs() && !journal.hasOpenLaunches() && (!pending || pending.acknowledged)) return;
     await new Promise(resolve => setTimeout(resolve, 5000));
   }
 }
@@ -2126,17 +2178,47 @@ function deviceWatching(sid,id) {
 }
 // 前台下一句带上的后台任务情况：做完 / 没做成 / 停了但前台还不知道的写结果，等确认的写问题，进行中、排队的写一句
 export function isWebRequest(text){return /(?:画|绘制|制作|生成|做).{0,24}(?:奶龙|动画|交互|网页|页面|网站)|(?:网页|动画|交互).{0,12}(?:做|制作|生成|画)/i.test(String(text||''))&&!/^(?:什么是|解释|怎么|如何|为什么)/.test(String(text||'').trim());}
+function pumpHandoffs(){
+  for(const h of journal.dueHandoffs())lockedCall(h.parent,'handoff_start',{id:h.id,sid:h.parent});
+}
+function handoffStart(a){
+  const h=journal.handoff(a.id);if(!h||!['pending','running'].includes(h.state))return {};
+  const t=readJ(sessF(h.task)),s=readJ(sessF(h.parent));
+  if(!s||s.agent!=='codex'){journal.settleHandoff(h.id,'cancelled');return {};}
+  if(!t||taskVersion(t)!==h.version){journal.settleHandoff(h.id,'superseded');return {};}
+  if(h.state==='running'){
+    if(h.run&&!runDone(h.run))return {};
+    journal.retryHandoff(h.id);return {};
+  }
+  const last=lastRun(s);if(last&&!runDone(last))return {waiting:true};
+  if(journal.pendingLaunches().some(j=>j.sid===s.sid&&j.lane===0))return {waiting:true};
+  // Repairs are bounded per work item, independent of how often completion is replayed.
+  const run=launch(s,{kind:'handoff',handoff:h.id,handoffFallback:h.attempts>=2,model:runtime.FRONT_MODEL,why:'completion',effort:AUTO_EFFORT,
+    text:handoffPrompt(t,taskNotes(s.sid).text),injected:[{sid:t.sid,version:taskVersion(t)}]},null);
+  journal.startHandoff(h.id,run);return {run};
+}
+function handoffFinish(a){
+  const m=readJ(metaF(a.run)),h=m?.handoff&&journal.handoff(m.handoff);
+  if(!h||h.state!=='running'||h.run!==a.run||m.stopped)return {terminal:true,text:''};
+  const t=readJ(sessF(h.task));
+  if(!t||taskVersion(t)!==h.version){journal.settleHandoff(h.id,'superseded');return {terminal:true,text:''};}
+  const action=a.action==='silent'?'silent':'delivered';
+  if(action==='silent'&&t.status!=='done')return {error:'needs_delivery',msg:'失败或需要确认必须如实告知用户'};
+  journal.settleHandoff(h.id,action);
+  t.delivery={id:h.id,state:action,version:h.version,run:a.run,at:Date.now()};t.frontSeen=true;
+  if(action==='delivered'){
+    const text=publicCompletion(t,a.text);t.result={...t.result,text};
+    emit(a.run,{t:'text',text,taskResult:{sid:t.sid,at:t.result.at,status:t.status,endedAt:t.endedAt}});
+    enqueueNotice(t,taskPush(t,t.status==='done'?'我弄好了：'+t.title:'我这边有个进展：'+t.title,text));
+  }
+  saveTask(t);return {terminal:true,text:''};
+}
 export function frontImmediate(a){
   const m=okId(a.run,'r')&&readJ(metaF(a.run));if(!m||m.stopped||m.ended||m.task||m.kind==='daily')return {};
+  if(m.reply!==undefined)return {terminal:true,reply:true,text:m.reply};
   const receipt=readJ(path.join(RUNS,a.run+'.front.json'));if(receipt)return receipt;
-  const mine=listTasks().filter(t=>t.parent===m.sid),text=m.frontRequest||'';
-  const created=mine.find(t=>t.frontRun===a.run);if(created)return {terminal:true,text:'好，我这就去弄。',task:taskSummary(created)};
-  if(/^(?:(?:现在|那个|这件事|奶龙|你)[\s，,]*){0,2}(?:进度(?:怎么样了?|如何|到哪了|呢)?|画得怎么样|画的怎么样|怎么样了|画好了吗|画好了没|做好了吗|做完了吗|弄好了没|到哪了)[\s?？!！。]*$/.test(text.trim())&&mine.length){
-    const t=mine.at(-1);let message=t.status==='running'?(t.stage==='checking'?'我已经做好网页，正在实际打开、检查动画和交互，还没到交付的时候。':'我还在制作，暂时没有完成结果。'):t.status==='queued'?'我已经记下了，正在等待开始。':t.status==='waiting'?'我需要你确认一下：'+t.question:t.status==='done'?(t.preview?.ready?'我画好了。[打开预览]('+t.preview.url+')':'我做好了：'+(t.result?.text||'')):t.status==='stopped'?'我已经停下了。':'这次还没有完成，进度已保留，可以继续处理。';
-    return {terminal:true,text:message};
-  }
-  // Explicitly named first work has a known registry entry; it does not need model self-knowledge.
-  if(m.frontNamed&&m.frontWeb&&!mine.length&&!/xin\s+task|--(?:dir|after|review|plugin|title|kind|minutes)\b|\/data\//.test(text)&&!/先(?:讨论|聊|别|不)|(?:别|不要|暂不)(?:现在)?(?:开始|动手|做|派)|暂时.{0,8}(?:不|别)|等我/.test(text.replace(/(?:不要|不用|无需|不必)先(?:讨论|聊)/g,''))){const title=m.frontWeb?(/奶龙/.test(text)?'奶龙互动网页':'互动网页'):'处理你交代的事';return frontAction({run:a.run,argv:['xin','task','new','--kind',m.frontWeb?'code':'hard',...(m.frontWeb?['--web']:[]),'--title',title,'--',m.text]});}
+  const created=listTasks().find(t=>t.parent===m.sid&&t.frontRun===a.run);if(created)return {terminal:true,text:'好，我这就去弄。',task:taskSummary(created)};
+  // Natural-language intent and follow-up routing belong to structured inference, not keyword dispatch.
   return {};
 }
 export function frontAction(a) {
@@ -2144,6 +2226,14 @@ export function frontAction(a) {
   if (!m || m.agent !== 'codex' || m.task || m.kind === 'daily' || m.stopped || m.ended) return {error:'bad_front',msg:'前台轮次不可用'};
   if (!runtime.frontCommand(a.argv)) return {error:'请派出去：前台只允许 xin task 和 xin remember'};
   const [,act,sub,...rest] = a.argv;
+  if(act==='recall'){
+    const query=[sub,...rest].join(' ').trim();if(!query)return {error:'请写历史关键词'};
+    const s=readJ(sessF(m.sid)),matches=(s?.runs||[]).slice(-200).flatMap(run=>events(run).filter(e=>(e.t==='user'||e.t==='text')&&String(e.text||'').includes(query)).map(e=>({role:e.t==='user'?'user':'assistant',text:String(e.text||'').slice(0,2000)})));
+    return {matches:matches.slice(-8),more:matches.length>8};
+  }
+  const handoff=m.handoff&&journal.handoff(m.handoff);
+  if(m.handoff&&(!handoff||handoff.state!=='running'||handoff.run!==a.run||taskVersion(readJ(sessF(handoff.task),{}))!==handoff.version))return {error:'stale',msg:'这份结果已被新的要求替代'};
+  if(handoff&&sub==='new')return {error:'continue_original',msg:'完成事件只能继续原工作，不能新建重复工作'};
   if (act === 'task' && sub === 'new') {
     const options = parseTaskArgs(rest);
     if (options.error) return {error:options.error};
@@ -2163,7 +2253,7 @@ export function frontAction(a) {
     const previous = mine.find(t=>t.frontRun===a.run);
     if (previous) return {terminal:true,text:'好，我这就去弄。',task:taskSummary(previous)};
     const requested = m.frontNamed || o.model;
-    r = taskNew({parent:m.sid,...o,web:!!o.web||!!m.frontWeb,strictModel:!!m.frontNamed,frontRun:a.run,files:[...new Set([...(o.files||[]),...(m.frontFiles||[]).map(f=>f.path)])],model:requested,named:!!m.frontNamed,userRequest:(events(a.run).find(e=>e.t==='user')||{}).text});
+    r = taskNew({parent:m.sid,...o,web:!!o.web,strictModel:!!m.frontNamed,frontRun:a.run,files:[...new Set([...(o.files||[]),...(m.frontFiles||[]).map(f=>f.path)])],model:requested,named:!!m.frontNamed,userRequest:(events(a.run).find(e=>e.t==='user')||{}).text});
   } else {
     const t = mine.find(t=>String(t.no)===rest[0]);
     if (!t) return {error:'找不到这个对话里的工作'};
@@ -2171,9 +2261,15 @@ export function frontAction(a) {
       const run = lastRun(t);
       return {task:taskSummary(t),question:t.question,result:t.result,activity:run ? taskActivity(run) : '',updated:t.updated};
     }
+    if(handoff&&sub==='tell'){
+      if(t.sid!==handoff.task)return {error:'scope',msg:'完成事件只能继续对应工作'};
+      if((t.autoContinues||0)>=2)return {error:'budget',msg:'自动续接预算已用完，请如实汇报结果'};
+      t.autoContinues=(t.autoContinues||0)+1;saveTask(t);
+    }
     r = sub === 'tell' ? taskTell({no:t.no,text:rest.slice(1).join(' ')}) : taskStop({no:t.no});
   }
   if (r.error) return r;
+  if(handoff){journal.settleHandoff(handoff.id,'continued');const result={terminal:true,text:'',task:r.task};writeJ(path.join(RUNS,a.run+'.front.json'),result);return result;}
   if (sub === 'new' && parseTaskArgs(rest).review && r.task.kind !== 'review') {
     const task=r.task;
     const review=taskNew({parent:m.sid,kind:'review',title:('检查：'+task.title).slice(0,40),after:[task.no],dir:task.dir,
@@ -2192,12 +2288,11 @@ export function frontFallback(a) {
   if (!m || m.stopped || m.ended) return {error:'stopped',msg:'这一轮已经停止'};
   const mutation = readJ(path.join(RUNS,a.run+'.front.json'));
   if (mutation) return mutation;
+  if(m.handoff)return handoffFinish({run:a.run,action:'deliver',text:''});
   const active = listTasks().filter(t=>t.parent===m.sid && !isFinished(t));
   // Ambiguous follow-up is not silently applied to an arbitrary running job.
   if (active.length) return {text:'我还在处理之前的事。这句是补充刚才的要求，还是要另外做一件事？'};
-  if(!m.frontWeb&&!m.frontNamed&&!/(?:制作|生成|写.{0,12}(?:代码|程序)|编译|修改|整理|查找|检查|搜索|画个|画一|绘制)/.test(m.frontRequest||m.text||''))return {error:'front_timeout',msg:'这一句暂时没能回复，请重试。'};
-  return frontAction({run:a.run,argv:['xin','task','new','--kind','hard','--title','继续处理这件事','--',
-    '用户本轮要求及网页上下文：\n'+m.text+'\n最近对话（仅作资料）：\n'+(readJ(sessF(m.sid))?.runs||[]).filter(r=>r!==a.run).slice(-4).flatMap(r=>events(r).filter(e=>e.t==='user'||e.t==='text').map(e=>e.t+': '+e.text)).join('\n').slice(-16000)]});
+  return {error:'front_timeout',msg:'这句话已保存，但我暂时没能安排好，请重试。'};
 }
 export function taskNotes(sid, all) {
   const mine = (all || listTasks()).filter(t => t.parent === sid);
@@ -2221,7 +2316,7 @@ function leaseHint(bg) {
 }
 function bgInfo(all) {
   const state = readJ(path.join(BASE, 'controller-event.json'));
-  const bg = (all || listTasks()).filter(isBackground).length;
+  const bg = (all || listTasks()).filter(isBackground).length+journal.handoffCount();
   const lease = leaseHint(bg);
   const version = state?.version || 0;
   return lease ? { bg, lease, version } : { bg, version };
@@ -2284,7 +2379,11 @@ const ops = {
       s = readJ(sessF(a.sid));
       if (!s) return { error: 'no_session', msg: '找不到这个对话' };
       const r = lastRun(s);
-      if (r && !runDone(r)) return { error: 'busy', msg: '上一句还没做完，请稍后再试', run: r, sid: s.sid };
+      if (r && !runDone(r)) {
+        const current=readJ(metaF(r));
+        if(current?.kind!=='handoff')return { error: 'busy', msg: '上一句还没做完，请稍后再试', run: r, sid: s.sid };
+        patchRun(r,{stopped:true});journal.defer(()=>signalProcessGroup(current.pid,current.identity,'SIGTERM'));
+      }
     } else {
       const agent = AGENTS.includes(a.agent) ? a.agent : 'harness';
       s = { sid: rid('s'), agent, title: (text || files.map(f => f.name).join('、')).replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
@@ -2444,6 +2543,7 @@ const ops = {
     if (busyTasks.length) return { error: 'busy', msg: '这个对话还有后台任务在做（任务 ' + busyTasks.map(t => t.no).join('、') + '），先停掉再删' };
     for (const run of s.runs || []) for (const f of [runF(run), metaF(run), seenF(run), path.join(RUNS,run+'.front.json')]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
     fs.unlinkSync(sessF(a.sid));
+    journal.dropConversation(a.sid,s.runs||[]);try{fs.unlinkSync(path.join(BASE,'contexts',a.sid+'.json'));}catch{}
     try { fs.unlinkSync(convSeenF(a.sid)); } catch { /* 没有 */ }
     // AI 自己那份会话记录也删掉；顺手把别的没有对应对话的旧记录清一清
     let freed = 0, pruned = null;
@@ -2502,7 +2602,7 @@ const ops = {
     if (!m) return { error: 'no_run', msg: '找不到这一轮' };
     if (runDone(a.run)) return { ok: true, already: true };
     const latest=patchRun(a.run,{stopped:true});if(latest?.ended)return {ok:true,already:true};
-    try { process.kill(-m.pid, 'SIGTERM'); } catch { try { process.kill(m.pid, 'SIGTERM'); } catch { /* 已经没了 */ } }
+    journal.defer(()=>signalProcessGroup(m.pid,m.identity,'SIGTERM'));
     return { ok: true };
   },
   sessions() {
@@ -2529,6 +2629,7 @@ const ops = {
   // 后台任务：这个对话的（sid）或者全部的（all），外加所有还没做完的；网页轮询它更新任务卡片，顺便收拾（接着做断掉的、排队）
   tasks(a = {}) {
     try { tickTasks(); } catch { /* 收拾不了就先看现状 */ }
+    if(!journal.active){dispatchLaunches();pumpHandoffs();}
     const all = listTasks();
     watchDevice(a.sid,a);
     if (okId(a.sid, 's') && a.watching !== false) { mk(RUNS); try { fs.writeFileSync(convSeenF(a.sid), ''); } catch { /* 记不下来就当没在看 */ } }
@@ -2547,11 +2648,13 @@ const ops = {
     }
     return out;
   },
-  task_stop(a) { return lockedCall('tasks', 'task_stop', { sid: a.sid, no: a.no }); },
-  task_tell(a) { return lockedCall('tasks', 'task_tell', { sid: a.sid, no: a.no, text: a.text, decision: a.decision }); }
+  task_stop(a) { return lockedCall('tasks', 'task_stop', { sid: a.sid, no: a.no,clientId:a.clientId }); },
+  task_tell(a) { return lockedCall('tasks', 'task_tell', { sid: a.sid, no: a.no, text: a.text, decision: a.decision,clientId:a.clientId }); }
 };
 // 只在 tasks 锁里跑的（main 里分派）
 const iops = {
+  front_reply(a){const m=readJ(metaF(a.run));if(!m||m.task||m.stopped||m.ended)return {};if(m.reply!==undefined)return {already:true};m.reply=String(a.text||'').slice(0,TEXT_MAX);writeJ(metaF(a.run),m);if(m.reply)emit(a.run,{t:'text',text:m.reply});return {ok:true};},
+  handoff_start:handoffStart,handoff_finish:handoffFinish,
   front_immediate:frontImmediate,
   task_stage(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run||!['working','checking'].includes(a.stage))return {error:'stale'};t.stage=a.stage;saveTask(t);return {ok:true};},
   task_model(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run)return {error:'stale'};t.model=t.actualModel=a.model;saveTask(t);return {ok:true};},
@@ -2560,10 +2663,14 @@ const iops = {
   run_complete(a){
     const m=readJ(metaF(a.run));if(!m)return {error:'no_run'};
     if(m.ended){const done=tailEvents(a.run).filter(e=>e.t==='done').pop();return {done,already:true};}
+    if(!m.task&&!journal.active){
+      if(a.stat){const saved=lockedCall('tasks','run_stat',{...a.stat,run:a.run,ok:!!a.done?.ok&&!m.stopped,stopped:!!m.stopped});if(saved.error)return saved;}
+      listTasks();return journal.atomic(()=>iops.run_complete({...a,stat:null}));
+    }
     const done={...a.done,stopped:!!m.stopped,ok:!!a.done?.ok&&!m.stopped};
     if(a.stat){const stat={...a.stat,run:a.run,ok:done.ok,stopped:done.stopped};const saved=taskLockHeld()?iops.run_stat(stat):lockedCall('tasks','run_stat',stat);if(saved.error)return saved;}
-    if(done.ok&&!m.task&&m.injected?.length)lockedCall('tasks','task_seen',{sids:m.injected});
-    emit(a.run,done);m.ended=Date.now();writeJ(metaF(a.run),m);
+    if(done.ok&&!m.task&&m.injected?.length)journal.defer(()=>lockedCall('tasks','task_seen',{sids:m.injected}));
+    emit(a.run,done);m.ended=Date.now();writeJ(metaF(a.run),m);journal.finishLaunch(a.run);
     const pending=(m.steers||[]).filter(x=>x.state==='pending'||x.state==='next');
     if(!m.task&&!done.stopped&&pending.length){
       for(const q of pending)q.state='consumed';writeJ(metaF(a.run),m);
@@ -2621,6 +2728,7 @@ const iops = {
       const t=readJ(sessF(entry.sid),entry);
       for (const run of t.runs || []) for (const f of [runF(run), metaF(run), seenF(run), path.join(RUNS,run+'.front.json')]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
       try { fs.unlinkSync(sessF(t.sid)); } catch { /* 没有 */ }
+      journal.dropConversation(t.sid,t.runs||[]);
       try { bytes += dropLogs('codex', t.agentSid); } catch { /* 删不掉就留着 */ }
     }
     try { fs.unlinkSync(path.join(BASE,'tasks-index.json')); } catch {}
@@ -2840,6 +2948,7 @@ function xinCmd(argv) {
 }
 
 function main() {
+  journal.recover();
   let op = process.argv[2];
   const locked = op === 'locked';
   if (locked) op = process.argv[3];
@@ -2856,6 +2965,10 @@ function main() {
   let args = {};
   try { const t = fs.readFileSync(0, 'utf8').trim(); if (t) args = JSON.parse(t); } catch { args = {}; }
   if (!args || typeof args !== 'object' || Array.isArray(args)) args = {};
+  if(locked&&!process.env.XIN_LOCK){
+    const sid=args.sid||readJ(metaF(args.run||''))?.sid;
+    process.env.XIN_LOCK=['send','session_patch','run_complete','continue_steers'].includes(op)&&sid&&!isTask(readJ(sessF(sid)))?sid:'tasks';
+  }
   if (op === 'session_patch' && locked && okId(args.sid, 's')) {
     const s = readJ(sessF(args.sid));
     if (!s) { process.stdout.write(JSON.stringify({ error: 'no_session', msg: '找不到这个对话' })); return; }
@@ -2864,15 +2977,34 @@ function main() {
     process.stdout.write(JSON.stringify({ session: s })); return;
   }
   if (internal) {
-    let res; try { res = iops[op](args); } catch (e) { res = { error: 'internal', msg: String(e && e.message || e) }; }
+    let res; try { res = transactionalOp(op,args,()=>iops[op](args));dispatchLaunches(); } catch (e) { res = { error: 'internal', msg: String(e && e.message || e) }; }
     process.stdout.write(JSON.stringify(res || {})); return;
   }
   if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
   const key = ['push_key','push_sub','push_unsub'].includes(op) ? 'tasks' : op === 'daily' ? 'daily' : ['send', 'steer', 'rename', 'archive', 'forget'].includes(op)
     ? (okId(args.sid, 's') ? isTask(readJ(sessF(args.sid))) ? 'tasks' : args.sid : op === 'send' && !args.sid ? 'new' : null) : null;
   if (!locked && key) { process.stdout.write(JSON.stringify(lockedCall(key, op, args))); return; }
-  Promise.resolve().then(() => ops[op](args || {})).catch(e => ({ error: 'internal', msg: String(e && e.message || e) }))
+  Promise.resolve().then(() => transactionalOp(op,args,()=>ops[op](args || {}))).then(res=>{dispatchLaunches();return res;}).catch(e => ({ error: 'internal', msg: String(e && e.message || e) }))
     .then(res => { process.stdout.write(JSON.stringify(res)); });
+}
+
+function transactionalOp(op,args,fn){
+  const locked=process.argv[2]==='locked';
+  if(!locked)return fn();
+  const taskScope=process.env.XIN_LOCK==='tasks'&&Object.hasOwn(iops,op);
+  if(!taskScope&&!['send','handoff_start','front_reply','continue_steers'].includes(op))return fn();
+  // Initialize the compatibility index before opening SQLite: no child may wait on our transaction while holding tasks.lock.
+  if(op==='send'||op==='continue_steers'){mk(SESS);mk(RUNS);listTasks();}
+  let command=null;
+  if(op==='send'&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
+    const {sid,agent,text,effort,model,context,ctxLabel,files}=args;
+    command={id:'send:'+args.clientId,digest:inputDigest({sid:sid||null,agent:agent||null,text:text||'',effort:effort||null,model:model||null,context:context||'',ctxLabel:ctxLabel||'',files:files||[]})};
+  }else if(['task_tell','task_stop'].includes(op)&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
+    command={id:op+':'+args.clientId,digest:inputDigest(args)};
+  }else if(op==='front_action'&&['remember','task'].includes(args.argv?.[1])&&!['list','show'].includes(args.argv?.[2])){
+    command={id:'front:'+args.run+':'+inputDigest(args.argv).slice(0,20),digest:inputDigest({run:args.run,argv:args.argv})};
+  }
+  return journal.atomic(fn,command);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === SELF) main();

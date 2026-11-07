@@ -172,14 +172,18 @@ async def main():
             if state in ('queued','running') and ('画好了' in progress or '%' in progress):
                 raise RuntimeError('Progress claimed completion or an invented percentage')
             print('PASS named Kimi web receipt, unchanged DeepSeek chat and truthful progress', flush=True)
-            limit = time.monotonic() + 900
+            limit = time.monotonic() + 1500
             while True:
                 web = (await call('history', {'sid': web_sid}))['task']
-                if web['status'] == 'done': break
+                if web['status'] == 'done' and web.get('delivery', {}).get('state') == 'delivered': break
                 if web['status'] in ('failed','stopped','waiting') or time.monotonic() > limit:
                     raise RuntimeError('Real Kimi web work did not complete: ' + web['status'])
                 await asyncio.sleep(5)
             preview = web.get('preview') or {}
+            saved_front = await call('history', {'sid': alternate_sid})
+            deliveries = [e for r in saved_front['runs'] for e in r['events'] if e.get('taskResult', {}).get('sid') == web_sid]
+            if len(deliveries) != 1 or '我画好了' not in deliveries[0].get('text', ''):
+                raise RuntimeError('Completion was not delivered exactly once without another user prompt')
             if web.get('actualModel') != 'kimi-k3.1-pro' or not preview.get('ready') or not preview.get('checks'):
                 raise RuntimeError('Real Kimi web artifact or browser evidence missing')
             if not all((web.get('cleanup') or {}).get(k) for k in ('processesGone','tmpCleaned')):

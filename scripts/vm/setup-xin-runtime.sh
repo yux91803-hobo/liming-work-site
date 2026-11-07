@@ -9,6 +9,7 @@ if [ ! -x /usr/bin/bwrap ]; then
   sudo -n apt-get update
   sudo -n apt-get install -y bubblewrap
 fi
+node --input-type=module -e 'import {DatabaseSync} from "node:sqlite"; const db=new DatabaseSync(":memory:"); db.close();'
 codex --version
 /usr/bin/bwrap --version
 if [ ! -x /usr/lib/chromium/chromium ]; then

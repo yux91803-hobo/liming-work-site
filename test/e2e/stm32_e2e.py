@@ -1903,7 +1903,8 @@ async def main():
               and tk[6] == ['我先看看工程。', '编好了：/data/workspace/blink/build/app.hex'] and tk[7].startswith('补充要求') and tk[8] == '接着做', tk)
         await pt.fill('.xc-tk-in', '再加个呼吸灯'); await pt.click('.xc-tk-act .xc-btn')
         await pt.wait_for_function("document.querySelector('.xc-tk-note') && document.querySelector('.xc-tk-note').textContent === '任务 1 接着做了'")
-        check('补充要求直接交给那个任务（不经过前台）', xt.get('task_tell') == {'sid': 'stask00001', 'text': '再加个呼吸灯'}, xt.get('task_tell'))
+        tell = xt.get('task_tell') or {}
+        check('补充要求直接交给那个任务（不经过前台），并携带稳定重试标识', tell.get('sid') == 'stask00001' and tell.get('text') == '再加个呼吸灯' and len(tell.get('clientId', '')) == 36 and 'decision' not in tell, tell)
         await pt.click('.xc-sh-x'); await pt.wait_for_timeout(300)
         # 小芯在回上一句时发的话：先排着（灰色气泡「排队中」），回完一起发
         xt['polls'] = 0

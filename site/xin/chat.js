@@ -65,6 +65,7 @@
   }
   // 调云电脑：正在唤醒 / InstaBox 忙就等一会儿再试（最多 maxWait 毫秒），状态写在面板上
   function call(op, args, maxWait, onWait, current) {
+    if(op==='task_tell'||op==='task_stop'){args=args||{};if(!args.clientId)args.clientId=crypto.randomUUID();}
     var t0 = Date.now();
     function once() {
       return req('call', { op: op, args: args || {} }).then(function (d) {
@@ -359,7 +360,7 @@
         r.events.forEach(function (ev) { draw(ev, true, r.run); });
       });
       ended.forEach(drawTaskResult);
-      if ((d.tasks || []).some(tLive)) pollTasksSoon(1500);
+      if ((d.tasks || []).some(function(t){return tLive(t)||t.delivery?.state==='pending';})) pollTasksSoon(1500);
       setUsage(d.usage);
       if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Math.min(Date.now(), d.active.started || Date.now()); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
       restoreQueue(); if (!d.active) flushQueue();
@@ -1168,6 +1169,7 @@
   // 结果：做完 / 没做成 / 停了 / 在等你确认时，小芯在聊天里说一条（同一次结果只说一次）
   function resKey(t) { return t.sid + '@' + (t.status === 'waiting' ? 'w' + (t.endedAt || '') : (t.result && t.result.at) || t.endedAt || ''); }
   function drawTaskResult(t) {
+    if(t.delivery&&['pending','silent','continued'].includes(t.delivery.state))return null;
     var key = resKey(t);
     if (list.querySelector('[data-tres="' + key + '"]')) return null;
     var m = aiMsg('task-' + t.sid, t.status === 'failed' || t.status === 'stopped' ? 'tbad' : '');
@@ -1191,7 +1193,8 @@
     (arr || []).forEach(function (t) {
       var old = S.tinfo[t.sid];
       S.tinfo[t.sid] = t;
-      if (live && old && old.status !== t.status && !tLive(t) && (tLive(old) || old.status === 'waiting')) changed.push(t);
+      if(live&&old&&t.delivery?.state==='delivered'&&old.delivery?.state!=='delivered')changed.push(t);
+      else if (live && old && old.status !== t.status && !tLive(t) && (tLive(old) || old.status === 'waiting')&&(!t.delivery||t.delivery.state==='delivered')) changed.push(t);
     });
     paintCards();
     changed.forEach(function (t) {
@@ -1208,7 +1211,7 @@
   }
   var tpTm = 0;
   function pollTasksSoon(ms) { clearTimeout(tpTm); tpTm = setTimeout(pollTasks, ms == null ? 300 : ms); }
-  function convLive() { return Object.keys(S.tinfo).some(function (k) { var t = S.tinfo[k]; return t.parent === S.sid && tLive(t); }); }
+  function convLive() { return Object.keys(S.tinfo).some(function (k) { var t = S.tinfo[k]; return t.parent === S.sid && (tLive(t)||t.delivery?.state==='pending'); }); }
   function pollTasks() {
     clearTimeout(tpTm);
     if (!S.enabled || !S.authed) return;
@@ -1892,7 +1895,14 @@
       if (ev.text) e.appendChild(h('div', 'xc-bub', ev.text));
       if (ev.ctx) e.appendChild(h('div', 'xc-ctxm', '附带：' + ev.ctx));
     } else if (ev.t === 'text') {
+      if(ev.taskResult){
+        var tr=ev.taskResult,key=tr.sid+'@'+(tr.status==='waiting'?'w'+(tr.endedAt||''):tr.at||'');
+        if(list.querySelector('[data-tres="'+key+'"]'))return null;
+        var task=S.tinfo[tr.sid];
+        if(task&&task.status===tr.status&&resKey(task)===key&&task.delivery?.state==='delivered')return drawTaskResult(task);
+      }
       m = aiMsg(run); var body = md(ev.text); m.b.appendChild(body);
+      if(ev.taskResult)m.e.dataset.tres=key;
       if (body.querySelector('.xc-code, .xc-tbl')) m.e.classList.add('wide');
       e = m.e;
     } else if (ev.t === 'err') {

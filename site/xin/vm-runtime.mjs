@@ -271,14 +271,16 @@ export function confinedMcp(t, base, server) {
 
 // The task receives a short-lived inference-only credential, never the reusable gateway key.
 // The controller pins the model and endpoint and caps request size, concurrency and total requests.
-export function requestBudget(file,limit=128) {
+export function requestBudget(file,limit=128,options={}) {
   limit=Math.min(512,Math.max(1,Math.floor(limit)));
-  return ()=>{
-    let used=0;try{used=JSON.parse(fs.readFileSync(file,'utf8')).used||0;}catch{}
-    if(used>=limit)return false;
+  const read=()=>{try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch{return {};}};
+  const save=value=>{
     mkdir(path.dirname(file));const tmp=file+'.'+process.pid+'.tmp';
-    fs.writeFileSync(tmp,JSON.stringify({used:used+1,limit,updated:Date.now()}),{mode:0o600});fs.renameSync(tmp,file);return true;
+    fs.writeFileSync(tmp,JSON.stringify({...value,limit,updated:Date.now()}),{mode:0o600});fs.renameSync(tmp,file);
   };
+  const take=()=>{const b=read();if((b.used||0)>=limit||options.tokens>0&&(b.total||0)>=options.tokens)return false;save({...b,used:(b.used||0)+1,tokenLimit:options.tokens||null});return true;};
+  take.recordUsage=u=>{const b=read();if(!u){save({...b,unknownUsage:(b.unknownUsage||0)+1});return;}const input=Math.max(0,Number(u.input_tokens)||0),output=Math.max(0,Number(u.output_tokens)||0),cached=Math.max(0,Number(u.input_tokens_details?.cached_tokens)||0);save({...b,input:(b.input||0)+input,output:(b.output||0)+output,cached:(b.cached||0)+cached,total:(b.total||0)+input+output});};
+  return take;
 }
 export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudget}) {
   const token=crypto.randomBytes(32).toString('hex'), clients=new Set(); let total=0,active=0,closed=false;
@@ -297,7 +299,10 @@ export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudg
       total++;
       const response=await fetch(baseURL.replace(/\/$/,'')+'/responses',{method:'POST',headers:{authorization:'Bearer '+key,'content-type':'application/json',accept:req.headers.accept||'text/event-stream'},body:JSON.stringify(body),signal:abort.signal});
       res.writeHead(response.status,{'content-type':response.headers.get('content-type')||'application/json','cache-control':'no-store'});
-      if(response.body) for await(const chunk of response.body){if(res.destroyed)break;res.write(chunk);}
+      let buffer='',accounted=false;const decoder=new TextDecoder(),json=(response.headers.get('content-type')||'').includes('application/json');
+      const account=data=>{const u=data.response?.usage||data.usage;if(u&&!accounted){takeBudget?.recordUsage?.(u);accounted=true;}};
+      if(response.body) for await(const chunk of response.body){if(res.destroyed)break;res.write(chunk);buffer+=decoder.decode(chunk,{stream:true});if(!json){let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);if(line.startsWith('data:'))try{account(JSON.parse(line.slice(5).trim()));}catch{}}}if(buffer.length>2*1024*1024)buffer='';}
+      if(json)try{account(JSON.parse(buffer));}catch{}if(!accounted)takeBudget?.recordUsage?.(null);
       res.end();
     }catch {if(!res.headersSent) reject(502,'task inference connection failed');else res.end();}
     finally{active--;clients.delete(abort);}
@@ -427,7 +432,7 @@ export const FRONT_MODEL = 'deepseek-v4.1-flash';
 export function frontCommand(argv) {
   if (!Array.isArray(argv) || argv.length > 128 || argv.some(x => typeof x !== 'string' || x.length > 60000)) return false;
   if (argv[0] !== 'xin') return false;
-  return argv[1] === 'remember' && argv.length >= 3 || argv[1] === 'task' && ['new','list','show','tell','stop'].includes(argv[2]);
+  return ['remember','recall'].includes(argv[1]) && argv.length >= 3 || argv[1] === 'task' && ['new','list','show','tell','stop'].includes(argv[2]);
 }
 export async function frontTurn(o) {
   const abort = new AbortController();
@@ -440,12 +445,13 @@ export async function frontTurn(o) {
   let steps = 0;
   try {
     while (steps < (o.steps || 3)) {
+      if(o.takeBudget&&!o.takeBudget())throw Error('本项工作的推理预算已用完，保留现有结果');
       const response = await (o.fetch || fetch)(o.baseURL.replace(/\/$/,'') + '/responses', {
         method:'POST', signal:abort.signal,
         headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},
         body:JSON.stringify({model:FRONT_MODEL, stream:false, reasoning:{effort:'max'}, instructions:o.instructions, input,
           max_output_tokens:1800, tools:[{type:'function',name:'xin',description:'只调度工作、查看真实进度、转达用户回复、记事。argv 是参数数组，不是 shell；新建或转达后本轮立即结束。',
-            parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true}]})
+            parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true},...(o.handoff?[{type:'function',name:'finish_event',description:'对内部完成事件作最终决定：向用户交付真实结果或保持安静。',strict:true,parameters:{type:'object',properties:{action:{type:'string',enum:['deliver','silent']},text:{type:'string'}},required:['action','text'],additionalProperties:false}}]:[])]})
       });
       if (!response.ok) throw new Error('前台连接失败（HTTP '+response.status+'）');
       const data = await response.json();
@@ -456,13 +462,16 @@ export async function frontTurn(o) {
       if (!calls.length) {
         const text = output.filter(x => x.type === 'message').flatMap(x => x.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('\n');
         if (!text) throw new Error('前台没有返回文字');
+        if(o.handoff){const r=await o.deliver({action:'deliver',text});if(r.error)throw Error(r.msg||r.error);return '';}
         return text;
       }
       input.push(...output);
       for (const call of calls) {
         if (++steps > (o.steps || 3)) return await o.fallback();
         let args; try { args = JSON.parse(call.arguments); } catch {}
-        const result = call.name === 'xin' && frontCommand(args?.argv)
+        const result = o.handoff&&call.name==='finish_event'&&['deliver','silent'].includes(args?.action)
+          ? await o.deliver(args)
+          : call.name === 'xin' && frontCommand(args?.argv)
           ? await o.command(args.argv, call.call_id)
           : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop 和 xin remember。'};
         if (result.terminal) return result.text;

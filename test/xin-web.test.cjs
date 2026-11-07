@@ -30,18 +30,28 @@ test('预览快照绑定已检查 HTML，临时目录清理和修改原稿不影
  assert.equal(f.r.cleanupTaskTemporary({...f.task,status:'done'}),true);assert.equal(fs.readFileSync(a.real,'utf8'),html);assert.match(preview.url,/^\/xin\/preview.html\?id=[a-f0-9]{32}$/);
  assert.ok(f.r.previewAsset(f.control,{id:'../escape'}).error);assert.ok(f.r.previewAsset(f.control,{id:preview.id,file:'manifest.json'}).error);
 });
-test('奶龙点名直接生成一次后台 Kimi 工作，前台始终 DeepSeek 且不允许模型回退',async t=>{
- const f=fixture(t),{run}=f.front(),a=f.call('front_immediate',{run});assert.equal(a.terminal,true);assert.equal(a.text,'好，我这就去弄。');assert.equal(a.task.model,'kimi-k3.1-pro');assert.equal(a.task.web,true);assert.equal(a.task.strictModel,true);
+test('待写回网页收到允许或拒绝后都清理 tmp；允许后的快照继续可读',async t=>{
+ for(const decision of ['approve','deny']){
+  const f=await web(t),m=f.r.webManifest(f.task),shot=f.task.workspace.tmp+'/shot.png';fs.writeFileSync(shot,Buffer.from('89504e470d0a1a0a00000000','hex'));
+  Object.assign(f.task,{status:'waiting',publication:{pending:true},processesCleaned:true,result:{ok:false,text:'prepared'}});f.save();
+  fs.writeFileSync(f.control+'/runs/rwebholder01.json',JSON.stringify({sid:f.task.sid,ended:true,webCheck:{trusted:true,ok:true,digest:m.digest,screenshot:shot,viewports:[{width:1280,checks:1},{width:390,checks:1}]}}));
+  const r=f.call('task_tell',{sid:f.task.sid,decision});assert.equal(r.task.status,decision==='approve'?'done':'stopped');assert.deepEqual(r.task.cleanup,{processesGone:true,tmpCleaned:true});assert.deepEqual(fs.readdirSync(f.task.workspace.tmp),[]);
+  const listed=f.call('tasks',{all:true}).tasks.find(x=>x.sid===f.task.sid);assert.deepEqual(listed.cleanup,r.task.cleanup);
+  if(decision==='approve')assert.equal(fs.readFileSync(f.r.previewAsset(f.control,{id:r.task.preview.id}).real,'utf8'),html);else assert.equal(r.task.preview,undefined);
+ }
+});
+test('奶龙由结构化语义派工创建一次后台 Kimi 工作，前台保持 DeepSeek',async t=>{
+ const f=fixture(t),{run}=f.front();assert.equal(f.call('front_immediate',{run}).terminal,undefined);const a=f.call('front_action',{run,argv:['xin','task','new','--kind','code','--web','--title','奶龙互动网页','--','画奶龙互动网页']});assert.equal(a.terminal,true);assert.equal(a.text,'好，我这就去弄。');assert.equal(a.task.model,'kimi-k3.1-pro');assert.equal(a.task.web,true);assert.equal(a.task.strictModel,true);
  const record=JSON.parse(fs.readFileSync(f.control+'/sessions/'+a.task.sid+'.json'));assert.deepEqual(record.fallbacks,[]);assert.equal(record.requestedModel,'kimi-k3.1-pro');assert.equal(JSON.parse(fs.readFileSync(f.control+'/runs/'+run+'.json')).model,'deepseek-v4.1-flash');
  assert.equal(f.call('front_immediate',{run}).task.sid,a.task.sid);assert.equal(f.call('tasks',{all:true}).tasks.filter(t=>t.parent==='swebfront01').length,1);
 });
 test('明确先讨论或只点模型名，不会被快速接单路径变成实际工作',async t=>{
  const f=fixture(t),{run}=f.front('你让 Kimi 画奶龙，但我们先讨论再动手');assert.equal(f.call('front_immediate',{run}).terminal,undefined);assert.equal(f.call('tasks',{all:true}).tasks.length,1);
 });
-test('快速接单尊重暂不动手与显式调度参数，不误解不要先讨论',async t=>{
+test('否定句、明确目录和直接制作都交给语义调度，关键词不擅自执行',async t=>{
  const f=fixture(t);
  for(const text of ['让 Kimi 画奶龙，不要现在开始','让 Kimi 画奶龙，xin task new --title exact --dir /data/workspace/demo -- 画奶龙']){const {run}=f.front(text);assert.equal(f.call('front_immediate',{run}).terminal,undefined);}
- const {run}=f.front('让 Kimi 画奶龙，不要先讨论，直接制作');assert.equal(f.call('front_immediate',{run}).terminal,true);
+ const {run}=f.front('让 Kimi 画奶龙，不要先讨论，直接制作');assert.equal(f.call('front_immediate',{run}).terminal,undefined);assert.equal(f.call('tasks',{all:true}).tasks.length,1);
 });
 test('指定入口连续报错仅重试同一个 Kimi，不静默回退其它可用模型',async t=>{
  const f=fixture(t);fs.unlinkSync(f.control+'/sessions/'+f.task.sid+'.json');const bin=f.root+'/bin',log=f.root+'/models.jsonl';fs.mkdirSync(bin);f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_TASK_SANDBOX='0';
@@ -50,17 +60,17 @@ test('指定入口连续报错仅重试同一个 Kimi，不静默回退其它可
  const deadline=Date.now()+15000;let h;while(Date.now()<deadline){h=f.call('history',{sid:task.sid}).task;if(['failed','done','waiting'].includes(h.status))break;await new Promise(ok=>setTimeout(ok,60));}
  assert.equal(h.status,'failed',JSON.stringify(h));assert.equal(h.actualModel,'kimi-k3.1-pro');assert.equal(h.requestedModel,'kimi-k3.1-pro');assert.deepEqual(fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse),['kimi-k3.1-pro','kimi-k3.1-pro']);
 });
-test('进度按真实检查阶段回答，不凭空报已完成或泄露内部模型',async t=>{
+test('进度查询工具返回真实检查阶段，交给前台解释',async t=>{
  const f=fixture(t),{run,sid}=f.front('现在进度怎么样');f.task.parent=sid;f.task.stage='checking';f.task.web=true;f.save();
- const r=f.call('front_immediate',{run});assert.equal(r.terminal,true);assert.match(r.text,/实际打开|检查/);assert.doesNotMatch(r.text,/Kimi|GLM|DeepSeek|分身|任务\s*\d|\d+%/);
+ assert.equal(f.call('front_immediate',{run}).terminal,undefined);const r=f.call('front_action',{run,argv:['xin','task','show','1']});assert.equal(r.task.stage,'checking');assert.match(r.task.activity,/检查/);assert.equal(r.task.preview,undefined);
 });
 test('带有补充要求的进度句继续交前台理解，不被快捷状态答复吞掉',async t=>{
  const f=fixture(t),{run,sid}=f.front('现在进度怎么样？把奶龙背景改成蓝色');f.task.parent=sid;f.save();assert.equal(f.call('front_immediate',{run}).terminal,undefined);
 });
-test('普通聊天超时不制造后台任务，明确工作仍保留原话交给后台',async t=>{
+test('聊天和工作语义调度超时均保留原话，不制造未确定的后台任务',async t=>{
  const f=fixture(t),{run}=f.front('你好');const file=f.control+'/runs/'+run+'.json',m=JSON.parse(fs.readFileSync(file));delete m.frontNamed;m.frontWeb=false;fs.writeFileSync(file,JSON.stringify(m));
  assert.equal(f.call('front_fallback',{run}).error,'front_timeout');assert.equal(f.call('tasks',{all:true}).tasks.length,1);
- m.frontRequest='检查电路图';m.text=m.frontRequest;fs.writeFileSync(file,JSON.stringify(m));assert.equal(f.call('front_fallback',{run}).terminal,true);
+ m.frontRequest='检查电路图';m.text=m.frontRequest;fs.writeFileSync(file,JSON.stringify(m));assert.equal(f.call('front_fallback',{run}).error,'front_timeout');assert.equal(f.call('tasks',{all:true}).tasks.length,1);
 });
 test('网页上下文里提及 STM32 不强制固件构建，原始固件工程仍保留强制核验',async t=>{
  const f=await web(t);f.task.goal='画 STM32 的交互网页';assert.equal(f.r.stm32Task(f.task),false);f.task.workspace.stm32=true;assert.equal(f.r.stm32Task(f.task),true);
