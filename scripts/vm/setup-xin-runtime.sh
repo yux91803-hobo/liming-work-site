@@ -18,5 +18,5 @@ if [ ! -x /usr/lib/chromium/chromium ]; then
 fi
 python3 -c 'import os, signal; assert hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"), "需要 Python 3.9+ 和支持 pidfd 的 Linux，才能安全清理失去组长的任务进程"'
 # Verify the actual VM namespace policy; user namespaces alone do not support procfs on every image.
-sudo -n env -i PATH=/usr/bin:/bin /usr/bin/bwrap --ro-bind / / --unshare-pid --unshare-ipc --proc /proc \
+sudo -n env -i PATH=/usr/bin:/bin /usr/bin/bwrap --ro-bind / / --unshare-pid --unshare-ipc --unshare-net --proc /proc \
   -- /usr/bin/setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --bounding-set=-all --no-new-privs /usr/bin/true

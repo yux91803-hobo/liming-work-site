@@ -1164,7 +1164,8 @@ function runner(run) {
         if (!meta.sandbox) config.push('-c', 'sandbox_mode="danger-full-access"');
         let container;
         if(meta.sandbox){
-          proxy=await runtime.inferenceProxy({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model,takeBudget:workBudget(meta.sid)});
+          // Private network: the container reaches only the pinned inference proxy and public-web egress.
+          proxy=await runtime.taskNetwork(currentSession.workspace,{baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model,takeBudget:workBudget(meta.sid)});
           container=runtime.containerAppServer(currentSession,config,{proxy,catalog:codexCatalog()});
         }
         app = runtime.appServer(container?.command || cmd, config, { commandArgs:container?.args, spawn: { ...spawnOptions, stdio: ['pipe', 'pipe', 'pipe'] }, cwd,

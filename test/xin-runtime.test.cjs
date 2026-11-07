@@ -202,6 +202,82 @@ test('推理代理只接受本轮凭证、固定模型和 responses 路径，结
   assert.equal(hits,1);p.close();await assert.rejects(post(p.baseURL+'/responses',p.token,'task-model'));
 });
 
+test('后台容器使用独立网络；只有显式转发的控制器套接字能进入，出网走代理', async t => {
+  const f = fixture(t), r = await load(); f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  const plain = r.containerCommand(f.task, '/usr/bin/make', ['-C', f.task.workspace.work]).args;
+  assert.ok(plain.includes('--unshare-net'));
+  assert.ok(!plain.some(a => /PROXY=|_proxy/.test(a)), '编译和网页验收不联网');
+  assert.deepEqual(plain.slice(-3), ['/usr/bin/make', '-C', f.task.workspace.work]);
+  const dir = path.join(path.dirname(f.task.workspace.io), 'net');
+  const forward = [[r.TASK_PORTS.egress, path.join(dir, 'egress.sock')], [r.TASK_PORTS.inference, path.join(dir, 'inference.sock')]];
+  fs.mkdirSync(dir, { recursive: true });
+  const boxed = r.containerCommand(f.task, '/usr/local/bin/codex', ['app-server'], {}, [], { forward, egress: true }).args;
+  assert.ok(boxed.includes('--unshare-net'));
+  const ro = boxed.findIndex((a, i) => a === '--ro-bind' && boxed[i + 1] === dir);
+  assert.ok(ro > 0, '套接字目录只读挂入');
+  assert.ok(!boxed.some((a, i) => a === '--bind' && boxed[i + 1] === dir), '任务不能替换控制器套接字');
+  const env = Object.fromEntries(boxed.flatMap((a, i) => a === '--setenv' ? [[boxed[i + 1], boxed[i + 2]]] : []));
+  assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:' + r.TASK_PORTS.egress);
+  assert.match(env.NO_PROXY, /127\.0\.0\.1/);
+  const e = boxed.indexOf('-e');
+  assert.equal(boxed[e + 1], r.TASK_FORWARDER);
+  assert.deepEqual(JSON.parse(boxed[e + 3]), forward);
+  assert.deepEqual(boxed.slice(e + 4), ['/usr/local/bin/codex', 'app-server']);
+});
+
+test('出网代理只放行公网地址的指定端口，拒绝本机、内网和云元数据地址', async t => {
+  const http = require('node:http'), net = require('node:net'), r = await load();
+  for (const ip of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', 'localhost'])
+    assert.equal(r.publicAddress(ip), false, ip);
+  for (const ip of ['93.184.216.34', '1.1.1.1', '2606:4700:4700::1111']) assert.equal(r.publicAddress(ip), true, ip);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-egress-test-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const target = http.createServer((req, res) => res.end('reached ' + req.headers.host));
+  await new Promise(ok => target.listen(0, '127.0.0.1', ok)); t.after(() => target.close());
+  const port = target.address().port;
+  const strict = await r.egressProxy({ socketPath: path.join(root, 'strict.sock'), ports: [port] }); t.after(() => strict.close());
+  const loose = await r.egressProxy({ socketPath: path.join(root, 'loose.sock'), ports: [port], allowAddress: ip => ip === '127.0.0.1',
+    lookup: async () => [{ address: '127.0.0.1' }] }); t.after(() => loose.close());
+  const connect = (socket, dest) => new Promise(ok => { const c = net.connect(socket); let out = ''; c.on('data', d => { out += d; if (out.includes('\r\n\r\n')) { c.destroy(); ok(out.split('\r\n')[0]); } }); c.on('error', () => ok('error')); c.write('CONNECT ' + dest + ' HTTP/1.1\r\nHost: ' + dest + '\r\n\r\n'); });
+  const get = (socket, url) => new Promise(ok => http.get({ socketPath: socket, path: url, headers: { host: new URL(url).host } }, res => { let b = ''; res.on('data', d => b += d); res.on('end', () => ok([res.statusCode, b])); }).on('error', () => ok([0, ''])));
+  assert.match(await connect(strict.socket, '127.0.0.1:' + port), / 403 /);
+  assert.match(await connect(strict.socket, '169.254.169.254:' + port), / 403 /);
+  assert.equal((await get(strict.socket, 'http://127.0.0.1:' + port + '/'))[0], 403);
+  assert.match(await connect(loose.socket, 'example.test:22'), / 403 /, '只放行指定端口');
+  assert.match(await connect(loose.socket, 'example.test:' + port), / 200 /);
+  assert.deepEqual(await get(loose.socket, 'http://example.test:' + port + '/x'), [200, 'reached example.test:' + port]);
+  assert.equal((fs.statSync(strict.socket).mode & 0o777), 0o600);
+});
+
+test('容器内转发器把固定端口接到控制器套接字后才启动任务进程', async t => {
+  const http = require('node:http'), net = require('node:net'), r = await load();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-forward-test-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const upstream = http.createServer((req, res) => res.end('via socket ' + req.url));
+  const socket = path.join(root, 'up.sock'); await new Promise(ok => upstream.listen(socket, ok)); t.after(() => upstream.close());
+  const free = await new Promise(ok => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => ok(p)); }); });
+  const client = `fetch('http://127.0.0.1:${free}/ping').then(r=>r.text()).then(t=>{console.log(t);process.exit(7);})`;
+  // Async spawn: the upstream server lives in this process and must keep serving.
+  const child = require('node:child_process').spawn(process.execPath, ['-e', r.TASK_FORWARDER, '--', JSON.stringify([[free, socket]]), process.execPath, '-e', client]);
+  let out = ''; child.stdout.on('data', d => out += d);
+  const code = await new Promise(ok => child.on('close', ok));
+  assert.equal(out.trim(), 'via socket /ping');
+  assert.equal(code, 7, '任务进程的退出码原样返回');
+});
+
+test('任务网络的推理代理走套接字，仍校验本轮凭证和固定模型', async t => {
+  const http = require('node:http'), r = await load(), f = fixture(t); f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  let hits = 0; const gateway = http.createServer((req, res) => { hits++; res.end('{"ok":true}'); });
+  await new Promise(ok => gateway.listen(0, '127.0.0.1', ok)); t.after(() => gateway.close());
+  const n = await r.taskNetwork(f.task.workspace, { baseURL: 'http://127.0.0.1:' + gateway.address().port + '/v1', key: 'k', model: 'task-model', maxRequests: 4 }); t.after(() => n.close());
+  assert.equal(n.baseURL, 'http://127.0.0.1:' + r.TASK_PORTS.inference + '/v1');
+  const sock = n.network.forward.find(([p]) => p === r.TASK_PORTS.inference)[1];
+  const post = (token, model) => new Promise(ok => { const q = http.request({ socketPath: sock, method: 'POST', path: '/v1/responses', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' } }, res => { res.resume(); res.on('end', () => ok(res.statusCode)); }); q.on('error', e => ok(e.code)); q.end(JSON.stringify({ model })); });
+  assert.equal(await post('wrong', 'task-model'), 401);
+  assert.equal(await post(n.token, 'other'), 403);
+  assert.equal(await post(n.token, 'task-model'), 200);
+  assert.equal(hits, 1);
+  n.close(); assert.equal(await post(n.token, 'task-model'), 'ENOENT', '本轮结束后套接字立即撤销');
+});
+
 test('写回删除必须给明确决定，普通文字不能批准；允许后保留备份',async t=>{
   const f=fixture(t),r=await load();
   fs.writeFileSync(path.join(f.task.dir,'old.txt'),'original');
