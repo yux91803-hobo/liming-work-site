@@ -65,6 +65,18 @@ async def main():
         assert st['task_tell']['text']=='main' and 'decision' not in st['task_tell']
         print('PASS native input question accepts a typed answer', flush=True)
         await pg.context.close()
+        idle=await ui.page(browser)
+        idle_state=await ui.xin_mock(idle,authed=True)
+        await idle.add_init_script("localStorage.setItem('lm.xin.sid','snew000001')")
+        await idle.goto(ui.BASE+'/#xin')
+        await idle.wait_for_function(ui.CHAT_DONE)
+        await idle.wait_for_timeout(1200)
+        before=idle_state['ops'].count('tasks')
+        await idle.evaluate("dispatchEvent(new Event('pagehide'))")
+        await idle.wait_for_timeout(400)
+        assert idle_state['ops'].count('tasks')==before
+        print('PASS closing an idle page does not wake the VM just to clear presence',flush=True)
+        await idle.context.close()
         screenshots = os.environ.get('XIN_SCREENSHOTS')
         if screenshots:
             Path(screenshots).mkdir(parents=True, exist_ok=True)

@@ -2114,7 +2114,7 @@
     window.addEventListener('hashchange', openFromHash);
   }
   window.addEventListener('pagehide',function(){
-    if(S.authed&&S.sid)fetch(API+'call',{method:'POST',credentials:'same-origin',keepalive:true,headers:{'Content-Type':'application/json','X-Xin':'1'},body:JSON.stringify({op:'tasks',args:{sid:S.sid,deviceId:S.deviceId,tabId:S.tabId,watching:false}})}).catch(function(){});
+    if(S.authed&&S.sid&&(S.run||S.bg>0))fetch(API+'call',{method:'POST',credentials:'same-origin',keepalive:true,headers:{'Content-Type':'application/json','X-Xin':'1'},body:JSON.stringify({op:'tasks',args:{sid:S.sid,deviceId:S.deviceId,tabId:S.tabId,watching:false}})}).catch(function(){});
   });
   window.LimingXinChat = { open: open, close: close, ask: quick, played: played, tasks: function () { pollTasks(); }, get state() { return S; } };
   boot();
