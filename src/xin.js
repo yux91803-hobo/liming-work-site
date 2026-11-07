@@ -20,7 +20,7 @@ const COOKIE = '__Host-xin';
 const SESSION_SEC = 30 * 86400;
 const AGENT_ASSET = '/xin/vm-agent.mjs';
 const VM_DIR = '/data/home/.xin/agent';
-export const OPS = new Set(['status', 'wake', 'ping', 'send', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
+export const OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
   'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off', 'tasks', 'task_stop', 'task_tell']);
 const SCREEN_W = 1280, SCREEN_H = 800, SCREEN_VIEW_TTL = 1800, SCREEN_CTL_TTL = 900;   // 桌面大小；链接多久内能打开（秒）
 const FILE_MAX = 100 * 1024 * 1024;   // 下载最大 100 MB（和上传一样大：发给小芯的文件也能原样下回来）
@@ -58,6 +58,15 @@ async function makeCookie(env, now) {
   const exp = Math.floor(now / 1000) + SESSION_SEC;
   const sig = await crypto.subtle.sign('HMAC', await signKey(env), enc.encode('v1.' + exp));
   return 'v1.' + exp + '.' + b64url(sig);
+}
+async function callbackToken(env) {
+  return b64url(await crypto.subtle.sign('HMAC', await signKey(env), enc.encode('xin-task-callback-v1')));
+}
+function supervisor(env) { return env.XIN_TASK_SUPERVISOR?.get(env.XIN_TASK_SUPERVISOR.idFromName('xin-tasks')); }
+async function recordTasks(env, state) {
+  const stub = supervisor(env); if (!stub) return;
+  const r = await stub.fetch('https://xin.internal/state', { method: 'POST', body: JSON.stringify(state) });
+  if (!r.ok) throw new Error('后台任务监督状态没有保存');
 }
 function readCookie(req) {
   const c = req.headers.get('cookie') || '';
@@ -103,9 +112,18 @@ async function agentScript(env, origin) {
   if (agentCache) return agentCache;
   const r = await env.ASSETS.fetch(new Request(origin + AGENT_ASSET));
   if (!r.ok) throw { status: 500, code: 'no_agent', msg: '网站里缺 vm-agent.mjs' };
-  const text = await r.text();
+  let text = await r.text();
+  const dependencies = [];
+  if (text.includes("from './vm-runtime.mjs'")) {
+    const dep = await env.ASSETS.fetch(new Request(origin + '/xin/vm-runtime.mjs'));
+    if (!dep.ok) throw { status: 500, code: 'no_runtime', msg: '网站里缺 vm-runtime.mjs' };
+    const body = await dep.text(), digest = hex(await crypto.subtle.digest('SHA-256', enc.encode(body))).slice(0, 12);
+    const name = 'vm-runtime-' + digest + '.mjs';
+    text = text.replace("from './vm-runtime.mjs'", "from './" + name + "'");
+    dependencies.push({ text: body, path: VM_DIR + '/' + name });
+  }
   const h = hex(await crypto.subtle.digest('SHA-256', enc.encode(text))).slice(0, 12);
-  agentCache = { text, path: `${VM_DIR}/vm-agent-${h}.mjs` };
+  agentCache = { text, path: `${VM_DIR}/vm-agent-${h}.mjs`, dependencies };
   return agentCache;
 }
 function uuid() { return crypto.randomUUID(); }
@@ -139,6 +157,10 @@ async function exec(env, origin, id, op, args, retried) {
   if (res.exitCode !== 0) {
     // 脚本还没传上去，或者改过了（文件名带内容的哈希）：传一份再跑
     if (!retried && /Cannot find module|ERR_MODULE_NOT_FOUND/.test(res.stderr || '')) {
+      for (const dependency of agent.dependencies) {
+        const d = await ib(env, `/v1/machines/${id}/files?path=${encodeURIComponent(dependency.path)}&parents=true&mode=0644`, { method: 'PUT', body: dependency.text, headers: { 'Content-Type': 'application/octet-stream' } });
+        if (!d.ok) throw await ibErr(d);
+      }
       const u = await ib(env, `/v1/machines/${id}/files?path=${encodeURIComponent(agent.path)}&parents=true&mode=0755`, { method: 'PUT', body: agent.text, headers: { 'Content-Type': 'application/octet-stream' } });
       if (!u.ok) throw await ibErr(u);
       return exec(env, origin, id, op, args, true);
@@ -194,6 +216,7 @@ async function call(env, origin, op, args, ctx, now) {
     return { ok: true, data: { name: d.name, state: d.state, cooldownUntil: d.cooldownUntil || null } };
   }
   try {
+    if (supervisor(env) && ['send', 'daily'].includes(op)) args = { ...(args || {}), _callback: { url: origin + '/api/xin/task-event', token: await callbackToken(env) } };
     const data = await exec(env, origin, m.id, op, args);
     // AI 在等模型回话时云电脑看起来是闲着的：挂一个「有活在干」的租约，别让它半路自己暂停
     const lease = (method, id, ttl) => ib(env, `/v1/machines/${m.id}/activity-leases/xin-${id}`, method === 'PUT' ? { method, body: JSON.stringify({ ttlSeconds: ttl || 1800 }) } : { method }).catch(() => null);
@@ -202,6 +225,9 @@ async function call(env, origin, op, args, ctx, now) {
     // 后台任务（分身）：vm-agent 说有任务在做就续一个小时（它每 20 分钟提醒一次），都做完了就撤
     if (data && data.lease === 'renew' && ctx) ctx.waitUntil(lease('PUT', 'tasks', 3600));
     if (data && data.lease === 'drop' && ctx) ctx.waitUntil(lease('DELETE', 'tasks'));
+    if (supervisor(env) && data && Number.isInteger(data.bg)) {
+      await recordTasks(env, { bg: data.bg, ...(data.version != null ? { version: data.version } : {}), machine: m.id, observedAt: Date.now() });
+    }
     return { ok: true, data };
   } catch (e) {
     if (e && e.code === 'machine_not_running') {
@@ -284,6 +310,17 @@ async function upload(req, env, ctx, url, now) {
 export async function handleXin(req, env, ctx, now = Date.now()) {
   const url = new URL(req.url);
   const p = url.pathname.replace(/^\/api\/xin\/?/, '');
+  if (p === 'task-event' && req.method === 'POST') {
+    if (!enabled(env) || !supervisor(env)) return json({ error: 'disabled' }, 404);
+    const token = (req.headers.get('authorization') || '').replace(/^Bearer /, '');
+    if (!sameBytes(enc.encode(token), enc.encode(await callbackToken(env)))) return json({ error: 'unauthorized' }, 401);
+    const text = await req.text(); if (text.length > 4096) return json({ error: 'too_large' }, 413);
+    let state; try { state = JSON.parse(text); } catch { return json({ error: 'bad_json' }, 400); }
+    if (!Number.isInteger(state.bg) || state.bg < 0 || state.bg > 100 || !Number.isSafeInteger(state.version) || state.version < 0) return json({ error: 'bad_state' }, 400);
+    const m = await machine(env, now);
+    await recordTasks(env, { bg: state.bg, version: state.version, machine: m.id, observedAt: now });
+    return json({ ok: true });
+  }
   if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, env, now) });
   if (p === 'file' && req.method === 'GET') return download(req, env, ctx, url, now);
   if (p === 'upload' && req.method === 'POST') return upload(req, env, ctx, url, now);
@@ -337,9 +374,18 @@ export async function runCron(cron, env, ctx, opt = {}) {
 // 测试用：清掉缓存
 export function _reset() { keyCache = null; machineCache = null; agentCache = null; }
 
-// 后台监督器的持久化基础；本阶段尚未接入现有聊天链路。
+// Durable alarms keep running after a browser closes or the VM restarts. No alarms remain when idle.
 export class XinTaskSupervisor {
   constructor(state, env) { this.state = state; this.env = env; }
+  async releaseLease(current) {
+    const response = current.machine && await ib(this.env, `/v1/machines/${current.machine}/activity-leases/xin-tasks`, { method: 'DELETE' }).catch(() => null);
+    const latest = await this.state.storage.get('tasks') || current;
+    if (latest.bg > 0) return; // a task may have started while the network request was in flight
+    latest.leaseCleanup = !!current.machine && (!response || !response.ok && response.status !== 404);
+    await this.state.storage.put('tasks', latest);
+    if (latest.leaseCleanup) await this.state.storage.setAlarm(Date.now() + 60000);
+    else await this.state.storage.deleteAlarm();
+  }
   async fetch(req) {
     const incoming = await req.json(), current = await this.state.storage.get('tasks') || {};
     if (incoming.version != null && current.version != null && (incoming.version < current.version || incoming.version === current.version && incoming.bg !== current.bg)) return json({ ok: true, stale: true });
@@ -349,14 +395,14 @@ export class XinTaskSupervisor {
     await this.state.storage.put('tasks', next);
     if (next.bg > 0) await this.state.storage.setAlarm(Date.now() + 60000);
     else {
-      await this.state.storage.deleteAlarm();
-      if (next.machine) await ib(this.env, `/v1/machines/${next.machine}/activity-leases/xin-tasks`, { method: 'DELETE' });
+      await this.releaseLease(next);
     }
     return json({ ok: true });
   }
   async alarm() {
     const current = await this.state.storage.get('tasks');
-    if (!current || current.bg <= 0) return;
+    if (!current) return;
+    if (current.bg <= 0) { if (current.leaseCleanup) await this.releaseLease(current); return; }
     let delay = 60000;
     try {
       const status = await ib(this.env, '/v1/machines/' + current.machine);
@@ -370,7 +416,7 @@ export class XinTaskSupervisor {
           const latest = await this.state.storage.get('tasks') || current;
           const next = response.data.version != null && latest.version > response.data.version ? latest : { ...latest, bg, version: response.data.version ?? latest.version, observedAt: Date.now() };
           await this.state.storage.put('tasks', next);
-          if (next.bg === 0) { await this.state.storage.deleteAlarm(); await ib(this.env, `/v1/machines/${current.machine}/activity-leases/xin-tasks`, { method: 'DELETE' }); return; }
+          if (next.bg === 0) { await this.releaseLease(next); return; }
           const lease = await ib(this.env, `/v1/machines/${current.machine}/activity-leases/xin-tasks`, { method: 'PUT', body: JSON.stringify({ ttlSeconds: 3600 }) });
           if (!lease.ok) throw await ibErr(lease);
         }

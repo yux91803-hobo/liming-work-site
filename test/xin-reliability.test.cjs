@@ -1,5 +1,6 @@
 // 临时配置、假的 CLI；不读取或清理开发机的真实 AI 会话。
 const test = require('node:test');
+process.env.XIN_CODEX_TRANSPORT = 'exec';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');

@@ -8,3 +8,6 @@ screens/
 videos/
 *.mp4
 *.webm
+
+__pycache__/
+*.pyc
