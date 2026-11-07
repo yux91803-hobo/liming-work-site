@@ -1701,7 +1701,7 @@ function startTask(t, all) {
   const first = !(t.runs && t.runs.length);
   t.deadline = t.deadline || Date.now() + (Number(process.env.XIN_TASK_TIMEOUT_MS) || (t.minutes || TASK_MIN) * 60e3);
   // The author might have fallen back to a different model after the review was queued.
-  if (t.tkind === 'review') {
+  if (t.tkind === 'review' && t.why !== 'named') {
     const rt = route({ kind: 'review', images: (t.files || []).some(f => f.image), avoid: deps.map(d => d.model) });
     t.model = rt.model; t.fallbacks = rt.fallbacks; t.why = rt.why;
   }
@@ -2179,7 +2179,7 @@ const ops = {
     if (r && !runDone(r)) return { error: 'busy', msg: '这个对话还在进行中，先停下来再删' };
     if (isTask(s)) return { error: 'bad_sid', msg: '后台任务跟着它的对话一起删' };
     // 这个对话派出去的后台任务还在排队、在做：先停掉再删（等确认的、做完的跟着一起删）
-    const busyTasks = listTasks().filter(t => t.parent === a.sid && (t.status === 'running' || t.status === 'queued'));
+    const busyTasks = listTasks().filter(t => t.parent === a.sid && (occupiesTask(t) || t.status === 'queued'));
     if (busyTasks.length) return { error: 'busy', msg: '这个对话还有后台任务在做（任务 ' + busyTasks.map(t => t.no).join('、') + '），先停掉再删' };
     for (const run of s.runs || []) for (const f of [runF(run), metaF(run), seenF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
     fs.unlinkSync(sessF(a.sid));
@@ -2331,11 +2331,13 @@ const iops = {
   },
   task_drop(a) {
     let bytes = 0;
-    for (const t of listTasks().filter(x => x.parent === a.parent && (x.status !== 'running' && x.status !== 'queued'))) {
+    for (const t of listTasks().filter(x => x.parent === a.parent && !occupiesTask(x) && x.status !== 'queued')) {
       for (const run of t.runs || []) for (const f of [runF(run), metaF(run), seenF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
       try { fs.unlinkSync(sessF(t.sid)); } catch { /* 没有 */ }
       try { bytes += dropLogs('codex', t.agentSid); } catch { /* 删不掉就留着 */ }
     }
+    try { fs.unlinkSync(path.join(BASE,'tasks-index.json')); } catch {}
+    queueControllerEvent();
     return { ok: true, bytes };
   }
 };

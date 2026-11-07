@@ -182,3 +182,11 @@ test('写回删除必须给明确决定，普通文字不能批准；允许后�
   const task=f.read();assert.equal(task.status,'done');assert.equal(fs.existsSync(path.join(f.task.dir,'old.txt')),false);
   assert.equal(fs.readFileSync(path.join(task.publicationReceipt.backup,'old.txt'),'utf8'),'original');
 });
+
+test('停止尚未退出或原生问题仍占用进程时，不能删除所属对话',t=>{
+  const f=fixture(t),sid='sparent001';f.task.parent=sid;f.task.status='stopping';f.save();
+  fs.writeFileSync(path.join(f.control,'sessions',sid+'.json'),JSON.stringify({sid,agent:'codex',runs:[]}));
+  assert.equal(f.call('forget',{sid}).error,'busy');assert.ok(fs.existsSync(path.join(f.control,'sessions',sid+'.json')));
+  f.task.status='waiting';f.task.approval={kind:'input',id:'input-1'};f.save();
+  assert.equal(f.call('forget',{sid}).error,'busy');assert.equal(f.read().approval.id,'input-1');
+});
