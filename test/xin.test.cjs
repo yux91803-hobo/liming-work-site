@@ -1141,7 +1141,7 @@ test('xin task 的参数：长短选项、--after 逗号分隔、-- 后面是要
   assert.strictEqual(parseTaskArgs(['--nope', 'x']).error, '不认识的选项：--nope');
 });
 
-test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权限、网关 key 用环境变量；事件整理、会话号、接着聊（--session-id）、用量；删对话连它的会话一起删', async () => {
+test('Harness（天启）：dsh headless --json 起，带天启自己的设定（--patch）、满权限、网关 key 用环境变量；事件整理、会话号、接着聊（--session-id）、用量；删对话连它的会话一起删', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-harness-'));
   const dshHome = path.join(tmp, 'dsh'), log = path.join(tmp, 'calls.log'), dsh = path.join(tmp, 'dsh-bin');
   const SID = 'session-1de23629-51a4-47e9-8626-be15439b8b66';
@@ -1163,6 +1163,8 @@ test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权�
   fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
   assert.ok(op('ping').agents.includes('harness'));
   const poll = async run => { let p; for (let i = 0; i < 60; i++) { p = op('poll', { run, off: 0 }); if (p.done) return p; await new Promise(ok => setTimeout(ok, 150)); } return p; };
+  const stale = path.join(xin, 'harness-persona.glm-5.3.high.yml');   // 旧版设定副本里带着小芯的记事本
+  fs.writeFileSync(stale, '    personaPrefix: "你就是小芯…<<<记事本\\n- 旧记录\\n记事本>>>"\n');
   const r = op('send', { text: '-看看目录', effort: 'off' });   // 没指定 AI：默认 Harness；思考强度「关」
   assert.strictEqual(r.agent, 'harness');
   const p = await poll(r.run);
@@ -1177,7 +1179,12 @@ test('Harness：dsh headless --json 起，带小芯设定（--patch）、满权�
   const persona = fs.readFileSync(path.join(xin, 'harness-persona.deepseek-v4.1-flash.off.yml'), 'utf8');
   // 思考强度：档位对照表（关 = none）+ 这一轮用的档
   assert.ok(persona.includes('            reasoningEfforts:\n              off: none\n              low: low\n              high: high\n              max: max\n') && persona.includes('    reasoningEffort: off\n'), persona.slice(0, 900));
-  assert.ok(persona.includes('- id: system-prompt') && persona.includes('personaPrefix: "你就是小芯'));
+  // 天启是独立功能：自己的设定，不带小芯的记事本、好感度；聊天不加小芯的好感；每句附的是天启的提醒
+  assert.ok(persona.includes('- id: system-prompt') && persona.includes('personaPrefix: "你是「天启」'));
+  assert.ok(!persona.includes('<<<记事本') && !persona.includes('xin bond') && !persona.includes('xin remember') && !persona.includes('你和用户现在的关系'), persona.slice(0, 400));
+  assert.equal(op('bond').score, 0);
+  assert.ok(!fs.existsSync(stale), '带小芯记事本的旧设定副本已清理');
+  assert.ok(calls.join('\n').includes('你是天启，不是小芯') && !calls.join('\n').includes('你就是小芯'), calls.join('\n').slice(0, 300));
   // 线路也在这个补丁里：不靠 ~/.dsh 里的配置
   assert.ok(persona.includes('- id: llm-pi-ai') && persona.includes('apiKeyEnv: XIN_HARNESS_KEY') && persona.includes('baseURL: "http://127.0.0.1:8788/v1"') &&
     persona.includes('- id: agent-default-model') && persona.includes('provider: xin-gateway') && persona.includes('model: "deepseek-v4.1-flash"'), persona.slice(0, 600));
@@ -1770,4 +1777,40 @@ test('小芯的屏幕：screen.log 每一类事件写成好读的一行（命令
   const r = op('screen');
   assert.strictEqual(r.error, 'no_terminal');
   assert.ok(fs.readFileSync(path.join(xin, 'screen.log'), 'utf8').includes('小芯的屏幕'));
+});
+
+test('天启独立：天启里的 xin 命令不写小芯的记事本、好感度、开场白、动作，也不派后台任务', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-tianqi-')), xin = path.join(home, 'xin'), run = 'rtianqi0001';
+  fs.mkdirSync(path.join(xin, 'runs'), { recursive: true });
+  fs.writeFileSync(path.join(xin, 'runs', run + '.json'), JSON.stringify({ run, sid: 'stianqi0001', agent: 'harness', started: Date.now() }));
+  fs.writeFileSync(path.join(xin, 'runs', run + '.jsonl'), '');
+  const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
+  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_WORK: path.join(home, 'work'), XIN_RUN: run });
+  for (const argv of [['remember', '天启记的'], ['bond', '+2', '理由'], ['next', '明天见'], ['move', 'add', '挥手', '[{"armR":"wave"}]'], ['dance'], ['task', 'new', '--', '做点事']]) {
+    const r = require('node:child_process').spawnSync(process.execPath, [agent, 'xin', ...argv], { env, encoding: 'utf8' });
+    assert.strictEqual(r.status, 1, argv.join(' '));
+    assert.match(r.stdout, /天启模式是独立功能/);
+  }
+  for (const f of ['memory.md', 'bond.json', 'next.json', 'moves.json', 'tasks-index.json']) assert.ok(!fs.existsSync(path.join(xin, f)), f);
+  assert.strictEqual(fs.readFileSync(path.join(xin, 'runs', run + '.jsonl'), 'utf8'), '');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('记事本超过上限：保留开头和最新的记录，只省略中间', async () => {
+  const { memoryView, systemPrompt } = await load('../site/xin/vm-agent.mjs');
+  const lines = ['# 小芯的记事本', '', '- 称呼：小李'].concat(Array.from({ length: 1000 }, (_, i) => '- 2026-11-' + String(i).padStart(4, '0') + '：第 ' + i + ' 条记录'));
+  const v = memoryView(lines.join('\n'));
+  assert.ok(v.length < 8200, v.length);
+  assert.ok(v.includes('- 称呼：小李') && v.includes('第 999 条记录') && v.includes('中间较早的内容太长'));
+  assert.ok(!v.includes('第 500 条记录'));
+  assert.strictEqual(memoryView('- 短的'), '- 短的');
+  assert.ok(systemPrompt(lines.join('\n')).includes('第 999 条记录'));
+});
+
+test('默认模式前台：设定带关系等级（不带会变的分数，保持缓存），并教它偶尔用表情、好感度、开场白', async () => {
+  const { systemPrompt, bondInfo } = await load('../site/xin/vm-agent.mjs');
+  const p = systemPrompt('', { tasks: true });
+  assert.ok(p.includes('你和用户现在的关系：' + bondInfo().name));
+  assert.ok(!/好感度 \d/.test(p));
+  assert.ok(p.includes('["xin","bond","+1","理由"]') && p.includes('["xin","next","一句话"]') && p.includes('["xin","dance"]'));
 });

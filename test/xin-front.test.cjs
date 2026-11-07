@@ -15,6 +15,12 @@ test('前台白名单只接受参数数组；shell/浏览器/文件/其它 xin �
   for(const a of [['bash','-c','xin task list'],['curl','https://x'],['xin','plugin','on','rea'],['xin','task','ask','问题'],['xin task list'],['/bin/sh','-c','echo hi']]) assert.equal(frontCommand(a),false);
   for(const a of [['xin','task','new','--','写代码'],['xin','task','list'],['xin','task','show','1'],['xin','task','tell','1','颜色改红'],['xin','task','stop','1'],['xin','remember','偏好']]) assert.equal(frontCommand(a),true);
 });
+test('前台可以用小芯自己的表情、好感度、开场白和动作；其它 xin 子命令仍拒绝',async()=>{
+  const {frontCommand}=await load(),acts=['dance','say','happy'];
+  for(const a of [['xin','dance'],['xin','say','搞定啦'],['xin','bond','+1','被夸了'],['xin','next','明天见'],['xin','move','打招呼'],['xin','recall','PWM']]) assert.equal(frontCommand(a,acts),true,a.join(' '));
+  assert.equal(frontCommand(['xin','dance']),false,'没有给动作表时不放行');
+  for(const a of [['xin','plugin','on','rea'],['xin','rm','-rf','/'],['xin','bond'],['xin','next'],['xin','task','ask','x'],['xin','say;rm','x']]) assert.equal(frontCommand(a,acts),false,a.join(' '));
+});
 test('模型伪造工具、shell 调用都不执行，预算耗尽交回控制器',async()=>{
   const {frontTurn}=await load();let fallback=0,hits=0;
   const o=options(()=>({output:[call(['bash','-c','touch /tmp/never'],'shell')]}));
@@ -54,4 +60,19 @@ test('用户停止不触发预算派活，也不等待过期才结束',async()=>
   o.fetch=(url,init)=>new Promise((ok,no)=>{init.signal.addEventListener('abort',()=>no(new Error('user stopped')));controller.abort();});
   o.fallback=()=>assert.fail('停止不能派活');
   await assert.rejects(frontTurn(o),/user stopped/);
+});
+test('表情动作不占派活步数；同一次回复里有文字就直接答，不多问一轮；每轮最多两次表情',async()=>{
+  const {frontTurn}=await load(),acts=['dance','say'];
+  // Expressions first, then the work call: with a one-step work budget the task is still dispatched.
+  let round=0,seen=[];const o=options(()=>({output:round++===0?[call(['xin','dance'])]:[call(['xin','task','new','--','画图'])]}));
+  o.steps=1;o.acts=acts;o.command=async a=>{seen.push(a[1]);return a[1]==='task'?{terminal:true,text:'好，我这就去弄。'}:{text:'小芯收到：dance'};};
+  assert.equal(await frontTurn(o),'好，我这就去弄。');assert.deepEqual(seen,['dance','task']);
+  // Text alongside expressions: one model round only.
+  let hits=0;const o2=options({output:[{type:'message',content:[{type:'output_text',text:'夸得我好开心！'}]},call(['xin','dance']),call(['xin','say','嘿嘿'])]});
+  const f2=o2.fetch;o2.fetch=(...a)=>{hits++;return f2(...a);};o2.acts=acts;const done=[];o2.command=async a=>{done.push(a[1]);return {text:'ok'};};
+  assert.equal(await frontTurn(o2),'夸得我好开心！');assert.equal(hits,1);assert.deepEqual(done,['dance','say']);
+  // A third expression in one turn is refused without running.
+  let r3=0;const o3=options(()=>r3++===0?{output:[call(['xin','dance']),call(['xin','say','a']),call(['xin','dance'])]}:message('好的'));
+  o3.acts=acts;let ran=0;o3.command=async()=>{ran++;return {text:'ok'};};
+  assert.equal(await frontTurn(o3),'好的');assert.equal(ran,2);
 });
