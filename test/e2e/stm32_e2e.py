@@ -186,7 +186,7 @@ async def xin_mock(pg, authed=False, live=None):
             t = next((x for x in st.get('tasks') or [] if x['sid'] == args['sid']), {})
             return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'task': dict(t, goal='编译 blink 工程'), 'runs': [{'run': 'rtask00001', 'started': 1, 'done': True, 'events': XIN_TASK_RUN}], 'active': None}})
         if op == 'history': st['history_sid'] = args.get('sid')
-        if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'claude' if args['sid'] == 'sold000001' else 'codex'}, 'usage': XIN_USE_HIST if args['sid'] == 'shist00001' else None, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': None}})
+        if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'claude' if args['sid'] == 'sold000001' else 'codex'}, 'usage': XIN_USE_HIST if args['sid'] == 'shist00001' else None, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': st.get('active')}})
         if op == 'sessions' and st.get('many'):   # 对话很多：当前的 shist00001 排在第 7 个
             return await ok({'ok': True, 'data': {'sessions': [{'sid': 's%09d' % i if i != 6 else 'shist00001', 'agent': 'codex', 'title': '对话 %d' % (i + 1), 'turns': 1, 'updated': 0} for i in range(st['many'])]}})
         if op == 'sessions': return await ok({'ok': True, 'data': {'sessions': [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0},
@@ -226,6 +226,9 @@ async def xin_mock(pg, authed=False, live=None):
         if op == 'forget':
             st['forgot'] = args
             return await ok({'ok': True, 'data': {'ok': True}})
+        if op == 'steer':
+            st['steer'] = args
+            return await ok({'ok': True, 'data': {'ok': True, 'state': 'pending', 'id': args.get('clientId')}})
         if op == 'send':
             # send_waking：前几次说电脑在睡（网页隔 1 秒再发）；send_delay：送到小芯电脑要多久
             # send_busy：模拟上一句还在跑（多标签），回软错误，网页应恢复输入、不要当成发送成功
@@ -241,6 +244,8 @@ async def xin_mock(pg, authed=False, live=None):
             st['sent'] = args
             return await ok({'ok': True, 'data': {'sid': 'snew000001', 'run': 'rlive00001', 'agent': args.get('agent') or 'codex'}})
         if op == 'poll':
+            if st.get('hold'):
+                return await ok({'ok': True, 'data': {'events': [], 'off': args.get('off', 0), 'done': False}})
             i = min(st['polls'], len(live) - 1); st['polls'] += 1
             evs = live[i] if st['polls'] <= len(live) else []
             return await ok({'ok': True, 'data': {'events': evs, 'off': args.get('off', 0) + len(evs), 'done': st['polls'] >= len(live)}})
@@ -312,7 +317,7 @@ async def stm32_operation_regressions(b):
             await pg.go_back(); await f.wait_for_function('!STM.app.route().reg')
             after = await f.evaluate('({file:document.querySelector(".ftab.on").textContent,y:scrollY,cf:STM.app.route().cf,sec:STM.app.route().sec})')
             check(prefix + '：main.c 查寄存器再看图，逐层返回保留文件与阅读位置', source and sheet and before['cf'] == 'main.c' and after['file'] == after['cf'] == 'main.c' and after['sec'] == 'code' and abs(after['y'] - before['y']) <= 2, (before, source, sheet, after))
-            await pg.wait_for_function('new URLSearchParams(location.search).get("cf") === "main.c"')
+            await pg.wait_for_function('(() => { const q=new URLSearchParams(location.search); return q.get("cf")==="main.c" && !q.has("reg") && !q.has("sch"); })()')
             await pg.reload(); f = await tool_frame(pg) if embedded else pg
             await f.wait_for_selector('html.ready')
             check(prefix + '：刷新仍打开刚选择的代码文件', await f.locator('.ftab.on').inner_text() == 'main.c')
@@ -1485,7 +1490,7 @@ async def main():
           document.querySelector('.xc-sub').textContent, document.querySelector('.xc-msgs').textContent.includes('Model metadata'), document.querySelector('.xc-msgs').textContent.includes('ls /data/workspace'),
           !!document.querySelector('.xc-tool'), document.querySelector('.xc-msgs').lastElementChild.classList.contains('xc-typing')]""")
         check('发出去：默认模式传 Codex、思考强度最高、不带模型（小芯电脑上挑）；只有自己的一句和小芯的第一句，它执行的命令、无关警告都不显示，最后冒「正在输入」写着在电脑上忙；小芯坐到电脑前敲代码',
-              xs['sent'] == {'agent': 'codex', 'text': '看看工作目录', 'effort': 'max'} and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
+              {k:v for k,v in xs['sent'].items() if k != 'clientId'} == {'agent': 'codex', 'text': '看看工作目录', 'effort': 'max'} and bool(xs['sent'].get('clientId')) and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
         await pg.wait_for_function(CHAT_DONE, timeout=8000)
         # 荡秋千 / 跳跃时 xin dance 会先排队，落地后才开始；不要在空中动作尚未结束时读取最终姿态。
         await pg.wait_for_function("LimingXin.mode === 'play'", timeout=20000)
@@ -2029,4 +2034,5 @@ async def main():
     print('本站资源失败：%d' % len(local_fail)); [print('  ' + e[:300]) for e in local_fail[:20]]
     return all(r[1] for r in results) and not real and not local_fail
 
-sys.exit(0 if asyncio.run(main()) else 1)
+if __name__ == '__main__':
+    sys.exit(0 if asyncio.run(main()) else 1)

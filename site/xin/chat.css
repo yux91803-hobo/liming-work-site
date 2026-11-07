@@ -503,6 +503,7 @@ body.xs-open{overflow:hidden}
 .xc-me.queued .xc-bub{opacity:.6}
 .xc-qtag{display:flex;align-items:center;gap:6px;margin:3px 4px 0;font:11.5px var(--sans);color:var(--ink-3)}
 .xc-qtag button{padding:0 4px;color:var(--ink-3)}
+.xc-qsteer{margin:3px 4px 0;padding:3px 7px;border:1px solid var(--line);border-radius:6px;color:var(--ink-2);font:11.5px var(--sans);cursor:pointer}
 .xc.running .xc-send.q{background:var(--clay);color:#fff}
 .xc.running .xc-send.q svg{width:18px;height:18px}
 @media (prefers-reduced-motion:reduce){.xc-task.st-running .xc-task-h svg,.xc-tstrip.busy svg{animation:none}}

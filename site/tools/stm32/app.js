@@ -127,15 +127,17 @@
 
   /* 地址同步节流：单次操作下一帧，连续操作最多每 300ms 一次（浏览器对 replaceState 有频率上限） */
   var urlT = 0, urlLast = 0;
+  function syncUrlNow() {
+    if (urlT) clearTimeout(urlT);
+    urlT = 0; urlLast = Date.now();
+    var r = cur();
+    try { if (location.pathname + location.search !== urlOf(r)) history.replaceState(embedded ? history.state : { stm: idx, r: r }, '', urlOf(r)); } catch (e) {}
+    toShell({ type: 'route', params: core.params(r) });
+  }
   function syncUrlSoon() {
     if (urlT) return;
     var wait = Math.max(0, 300 - (Date.now() - urlLast));
-    urlT = setTimeout(function () {
-      urlT = 0; urlLast = Date.now();
-      var r = cur();
-      try { if (location.pathname + location.search !== urlOf(r)) history.replaceState(embedded ? history.state : { stm: idx, r: r }, '', urlOf(r)); } catch (e) {}
-      toShell({ type: 'route', params: core.params(r) });
-    }, wait);
+    urlT = setTimeout(syncUrlNow, wait);
   }
 
   /* ---------- 布局：侧栏（宽屏）/ 顶栏（窄屏） ---------- */
@@ -230,8 +232,9 @@
     STM.viewer.sync(r);
     shown = r;
     if (o.restore) window.scrollTo(0, scrolls[idx] || 0);
+    // Structural navigation must reach the shell before a refresh can restore an old overlay.
+    if (o.soft) syncUrlSoon(); else syncUrlNow();
     notifyDepth();
-    syncUrlSoon();
   }
 
   /* ---------- 全局搜索 ---------- */

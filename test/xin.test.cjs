@@ -1,5 +1,6 @@
 // 小芯聊天：Worker 登录 / 转发 InstaBox，以及 vm-agent 把 Claude Code / Codex 的输出整理成事件
 const test = require('node:test');
+process.env.XIN_CODEX_TRANSPORT = 'exec'; // Legacy adapter remains covered; app-server has separate protocol tests.
 const assert = require('node:assert');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -335,16 +336,19 @@ test('Codex 每一轮都带小芯的设定（developer_instructions），续接�
   assert.ok(!dev(d).includes('xin task new'));
   // 分身：自己的设定（在后台、别问问题、只改自己的目录、不可撤销的先 xin task ask），沙盒（只能写自己的目录等），-C 自己的目录
   const task = { kind: 'task', no: 7, title: '编译 LED', dir: fs.mkdtempSync(path.join(os.tmpdir(), 'xin-taskdir-')), started: false };
+  task.sid = 'sprofiletest';
+  task.workspace = (await load('../site/xin/vm-runtime.mjs')).prepareWorkspace(task, process.env.XIN_HOME);
   const [, t] = agentArgs('codex', task, '做', '', { role: 'task', sandbox: true });
   assert.strictEqual(dev(t), taskSystemPrompt(task));
-  assert.ok(dev(t).includes('后台任务 7「编译 LED」') && dev(t).includes('xin task ask') && dev(t).includes(task.dir) && !dev(t).includes('xin task new'));
-  assert.ok(!t.includes('--dangerously-bypass-approvals-and-sandbox') && t[t.indexOf('--sandbox') + 1] === 'workspace-write' && t.includes('sandbox_workspace_write.network_access=true'));
-  // 可写目录：自己的目录、~/.xin（xin 命令要用）……沙盒要求都存在，不存在的不列
-  const roots = JSON.parse(t.find(x => x.startsWith('sandbox_workspace_write.writable_roots=')).split('=').slice(1).join('='));
-  assert.ok(roots[0] === task.dir && roots.includes(process.env.XIN_HOME) && roots.every(p => fs.existsSync(p)), roots);
+  assert.ok(dev(t).includes('后台任务 7「编译 LED」') && dev(t).includes('xin task ask') && dev(t).includes(task.workspace.work) && !dev(t).includes('xin task new'));
+  assert.ok(!t.includes('--dangerously-bypass-approvals-and-sandbox') && t.includes('default_permissions="xin-task"'));
+  const profile = t.find(x => x.startsWith('permissions.xin-task.filesystem='));
+  assert.ok(profile.includes(JSON.stringify(task.workspace.work) + '="write"'));
+  assert.ok(profile.includes(JSON.stringify(process.env.XIN_HOME) + '="deny"'));
+  assert.ok(!profile.includes(JSON.stringify(process.env.XIN_HOME) + '="write"'));
   // 沙盒里插件要人批准，后台没人批：分身的插件全关
   assert.ok(!t.some(x => /^mcp_servers\.[^.]+\.enabled=true$/.test(x)));
-  assert.deepStrictEqual(t.slice(-3), ['-C', task.dir, '做']);
+  assert.deepStrictEqual(t.slice(-3), ['-C', task.workspace.work, '做']);
   // 关掉沙盒（XIN_TASK_SANDBOX=0 时 runner 传 sandbox:false）：照旧完全放权
   const [, t2] = agentArgs('codex', task, '做', '', { role: 'task', sandbox: false });
   assert.ok(t2.includes('--dangerously-bypass-approvals-and-sandbox') && !t2.includes('--sandbox'));
@@ -485,7 +489,7 @@ test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做�
   assert.strictEqual(op('daily').skipped, 'done');
   assert.strictEqual(op('daily_get').done.run, r.run);
   assert.strictEqual(op('greet').text, '今天签到好啦');
-  const sess = op('sessions').sessions.find(s => s.sid === r.sid);
+  const sess = op('tasks', { all: true }).tasks.find(s => s.sid === r.sid);
   assert.match(sess.title, /^每日任务 · \d\d-\d\d$/);
 });
 
@@ -939,8 +943,10 @@ function fakeTaskCodex(dir) {
     '#!/bin/sh',
     'case "$*" in *--ephemeral*) exit 0;; esac',
     'L="' + log + '"',
+    'exec 9>"$L/seq.lock"; flock 9',
     'n=$(cat "$L/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$L/n"',
     'for a in "$@"; do printf "%s\\n" "$a"; done > "$L/args.$n"; pwd > "$L/cwd.$n"',
+    'flock -u 9; exec 9>&-',
     'printf \'{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-%012d"}\\n\' $n',
     'echo \'{"type":"turn.started"}\'',
     'case "$*" in',
@@ -981,10 +987,11 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   assert.strictEqual(done.bg, 0);
   // 分身那一轮：在自己的目录里、沙盒、思考强度最高、设定是分身的
   const all = fc.args(), ta = all.find(a => a.includes('【你现在在后台】')).split('\n');
-  assert.ok(ta.includes('--sandbox') && ta.includes('workspace-write') && !ta.includes('--dangerously-bypass-approvals-and-sandbox') && ta.includes('model="glm-5.3"') && ta.includes('model_reasoning_effort="max"'));
-  assert.strictEqual(ta[ta.indexOf('-C') + 1], t.dir);
+  assert.ok(ta.includes('default_permissions="xin-task"') && ta.some(x => x.startsWith('permissions.xin-task.filesystem=')) && !ta.includes('--dangerously-bypass-approvals-and-sandbox') && ta.includes('model="glm-5.3"') && ta.includes('model_reasoning_effort="max"'));
+  assert.notStrictEqual(ta[ta.indexOf('-C') + 1], t.dir);
+  assert.ok(ta[ta.indexOf('-C') + 1].includes('xin-task-'));
   const cwds = fs.readdirSync(fc.log).filter(f => f.startsWith('cwd.')).map(f => fs.readFileSync(path.join(fc.log, f), 'utf8').trim());
-  assert.ok(cwds.includes(t.dir), cwds.join());
+  assert.ok(cwds.some(d => d.includes('xin-task-') && d.endsWith('/work')), cwds.join());
   // 对话列表里没有任务；对话的 history 带着任务；任务自己的 history 能看过程
   assert.deepStrictEqual(op('sessions').sessions.map(x => x.sid), [r.sid]);
   const h = op('history', { sid: r.sid });
@@ -1003,7 +1010,7 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   assert.ok(!p3.includes('【后台任务的最新情况（') && !p3.includes('任务 1「编译 LED」做完了'), p3.slice(-300));
   // 运行记录里也有分身那一轮
   const stats = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
-  assert.ok(stats.some(x => x.kind === 'task' && x.model === 'glm-5.3' && x.ok));
+  assert.ok(stats.some(x => x.kind === 'code' && x.model === 'glm-5.3' && x.ok));
   // 有任务在做时不让删对话；都做完了删对话连任务一起删
   assert.strictEqual(op('forget', { sid: r.sid }).ok, true);
   assert.strictEqual(fs.existsSync(path.join(xin, 'sessions', t.sid + '.json')), false);
@@ -1153,9 +1160,9 @@ test('后台任务的租约：vm-agent 说有任务在做就续一个小时，�
 test('xin task 的参数：长短选项、--after 逗号分隔、-- 后面是要求；缺值报错', async () => {
   const { parseTaskArgs } = await load('../site/xin/vm-agent.mjs');
   assert.deepStrictEqual(parseTaskArgs(['--kind', 'code', '-t', '编译', '--file', 'a.png', '-f', 'b.png', '--after', '3,4', '--', '编', '译']),
-    { files: ['a.png', 'b.png'], after: [3, 4], kind: 'code', title: '编译', goal: '编 译' });
+    { files: ['a.png', 'b.png'], after: [3, 4], plugins: [], kind: 'code', title: '编译', goal: '编 译' });
   assert.deepStrictEqual(parseTaskArgs(['--model=kimi-k3.1-pro', '查', '资料']).model, 'kimi-k3.1-pro');
-  assert.deepStrictEqual(parseTaskArgs(['--review', '-t', '点灯', '--', '写']), { files: [], after: [], review: true, title: '点灯', goal: '写' });
+  assert.deepStrictEqual(parseTaskArgs(['--review', '-t', '点灯', '--', '写']), { files: [], after: [], plugins: [], review: true, title: '点灯', goal: '写' });
   assert.strictEqual(parseTaskArgs(['--title']).error, '--title 后面要写值');
   assert.strictEqual(parseTaskArgs(['--nope', 'x']).error, '不认识的选项：--nope');
 });
@@ -1521,10 +1528,10 @@ test('做完提醒：网页没在看时做完就推送（解得开、带标题�
     const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: path.join(home, 'work'), XIN_PUSH_INSECURE: '1', PATH: bin + ':' + process.env.PATH });
     const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
     const br = fakeBrowser();
-    assert.strictEqual(op('push_sub', { sub: { endpoint: `http://127.0.0.1:${port}/push/a`, keys: br.keys } }).ok, true);
+    assert.strictEqual(op('push_sub', { deviceId:'test-device-1', sub: { endpoint: `http://127.0.0.1:${port}/push/a`, keys: br.keys } }).ok, true);
     const wait = async (run, watch) => {
       for (let i = 0; i < 80; i++) {
-        const p = watch ? op('poll', { run, off: 0 }) : JSON.parse(fs.readFileSync(path.join(home, 'xin', 'runs', run + '.jsonl'), 'utf8').trim().split('\n').pop());
+        const p = watch ? op('poll', { run, off: 0, deviceId:'test-device-1',tabId:'test-tab-1',watching:true }) : JSON.parse(fs.readFileSync(path.join(home, 'xin', 'runs', run + '.jsonl'), 'utf8').trim().split('\n').pop());
         if (watch ? p.done : p.t === 'done') return;
         await new Promise(s => setTimeout(s, 150));
       }
