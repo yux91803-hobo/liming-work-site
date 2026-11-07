@@ -1,4 +1,4 @@
-"""Production smoke: browser login → real dispatch → concurrent chat → closed browser → durable task result.
+"""Production smoke: real dispatch/chat, durable completion, conversation isolation and Kimi web delivery.
 Credentials come only from Actions Secrets. Never emit response bodies, cookies, screenshots or model traces.
 """
 import asyncio
@@ -19,6 +19,7 @@ async def main():
     directory = '/data/workspace/.xin-live-smoke/' + marker
     sid = None
     alternate_sid = None
+    web_sid = None
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
         context = await browser.new_context(viewport={'width': 1280, 'height': 860})
@@ -137,6 +138,80 @@ async def main():
                 print('PASS real delayed response stays in its original conversation while the new conversation completes',flush=True)
             finally:
                 release.set()
+            # Canonical user scenario. Use the current isolated conversation, with no existing work.
+            started = time.monotonic()
+            await page.locator('.xc-row textarea').fill('你让 Kimi 去画个奶龙。做成可爱的动画互动网页：黄色圆滚滚的小恐龙、大眼睛，可以点按钮跳舞和挥手，适合手机。不使用任何外部资源。请直接制作，不要先讨论。')
+            await page.locator('.xc-send').click()
+            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=30000)
+            ack_seconds = time.monotonic() - started
+            reply = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text()
+            if ack_seconds > 20 or '我' not in reply or any(x in reply.lower() for x in ('kimi','deepseek','分身','任务编号')):
+                raise RuntimeError('Named web work did not receive a prompt first-person receipt')
+            ts = (await call('tasks', {'sid': alternate_sid}))['tasks']
+            web = [t for t in ts if t.get('parent') == alternate_sid and t.get('web')]
+            if len(web) != 1 or web[0].get('requestedModel') != 'kimi-k3.1-pro' or not web[0].get('strictModel'):
+                raise RuntimeError('Kimi web dispatch was missing, duplicated or not pinned')
+            web_sid = web[0]['sid']
+            if web[0]['status'] not in ('queued','running'):
+                raise RuntimeError('Expected active Kimi work during concurrent foreground test')
+            front_marker = 'web-front-' + uuid.uuid4().hex[:12]
+            await page.locator('.xc-row textarea').fill('只回复 ' + front_marker + '，不要执行命令、派任务或等待正在做的事。')
+            await page.locator('.xc-send').click()
+            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
+            if front_marker not in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text():
+                raise RuntimeError('Concurrent real foreground reply missing during Kimi work')
+            front = await call('history', {'sid': alternate_sid})
+            done = [e for r in front['runs'] for e in r['events'] if e.get('t') == 'done']
+            if not done or done[-1].get('model') != 'deepseek-v4.1-flash':
+                raise RuntimeError('Foreground changed model during named background work')
+            await page.locator('.xc-row textarea').fill('现在进度怎么样')
+            await page.locator('.xc-send').click()
+            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=30000)
+            progress = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text()
+            state = (await call('history', {'sid': web_sid}))['task']['status']
+            if state in ('queued','running') and ('画好了' in progress or '%' in progress):
+                raise RuntimeError('Progress claimed completion or an invented percentage')
+            print('PASS named Kimi web receipt, unchanged DeepSeek chat and truthful progress', flush=True)
+            limit = time.monotonic() + 900
+            while True:
+                web = (await call('history', {'sid': web_sid}))['task']
+                if web['status'] == 'done': break
+                if web['status'] in ('failed','stopped','waiting') or time.monotonic() > limit:
+                    raise RuntimeError('Real Kimi web work did not complete: ' + web['status'])
+                await asyncio.sleep(5)
+            preview = web.get('preview') or {}
+            if web.get('actualModel') != 'kimi-k3.1-pro' or not preview.get('ready') or not preview.get('checks'):
+                raise RuntimeError('Real Kimi web artifact or browser evidence missing')
+            if not all((web.get('cleanup') or {}).get(k) for k in ('processesGone','tmpCleaned')):
+                raise RuntimeError('Temporary processes/files were not cleaned before delivery')
+            result = web['result']['text']
+            if '我画好了' not in result or any(x in result.lower() for x in ('kimi','deepseek','分身','任务编号')):
+                raise RuntimeError('Web completion did not use the required public voice')
+            await page.evaluate('LimingXinChat.tasks()')
+            await page.wait_for_selector('.xc-preview', timeout=15000)
+            async with page.expect_popup() as opened:
+                await page.locator('.xc-preview').last.click()
+            art = await opened.value
+            art.on('pageerror', lambda e: errors.append(type(e).__name__))
+            await art.wait_for_selector('#frame:not([hidden])', timeout=180000)
+            frame = art.frame_locator('#frame')
+            for check in preview['checks']:
+                await frame.locator(check['selector']).click()
+                target = frame.locator(check['expectSelector'])
+                if 'expectText' in check and check['expectText'] not in await target.inner_text():
+                    raise RuntimeError('Delivered artwork click text failed')
+                if 'expectClass' in check and check['expectClass'] not in (await target.get_attribute('class') or '').split():
+                    raise RuntimeError('Delivered artwork click state failed')
+                if 'expectAttribute' in check:
+                    expected = check['expectAttribute']
+                    if await target.get_attribute(expected['name']) != expected['value']:
+                        raise RuntimeError('Delivered artwork attribute failed')
+            if await frame.locator('body').evaluate('() => self.origin') != 'null':
+                raise RuntimeError('Delivered artwork escaped its opaque sandbox')
+            if errors: raise RuntimeError('Browser JavaScript errors')
+            print('PASS real Kimi animated web preview, actual clicks and complete temporary cleanup', flush=True)
+            print('PREVIEW_URL ' + BASE + preview['url'], flush=True)
+            await art.close()
         finally:
             # Forget only this run's own conversation. Leave its small result artifact for diagnosis.
             for owned_sid in [s for s in (sid,alternate_sid) if s]:
@@ -146,7 +221,7 @@ async def main():
                         await call('stop', {'run': h['active']['run']})
                     ts = (await call('tasks', {'sid': owned_sid})).get('tasks', [])
                     for t in ts:
-                        if t.get('title') == marker and t.get('dir') == directory and t['status'] in ('running','queued','waiting','stopping'):
+                        if ((t.get('title') == marker and t.get('dir') == directory) or t['sid'] == web_sid) and t['status'] in ('running','queued','waiting','stopping'):
                             await call('task_stop', {'sid': t['sid']})
                     await call('forget', {'sid': owned_sid})
                 except Exception:

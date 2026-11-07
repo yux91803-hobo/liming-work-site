@@ -975,9 +975,8 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   assert.ok(th.task && th.task.goal === '编译 blink 工程' && th.runs[0].events[0].text === '编译 blink 工程' && th.runs[0].events.some(e => e.t === 'tool_end' && e.detail === 'make'), JSON.stringify(th).slice(0, 400));
   // 前台下一句带上结果；做成了以后就不再带
   const r2 = op('send', { sid: r.sid, text: '怎么样了' });
-  await until(() => op('poll', { run: r2.run, off: 0 }).done, 15000, '前台第二句');
-  const p2 = JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input.at(-1).content;
-  assert.ok(p2.includes('【后台任务的最新情况（') && p2.includes('任务 1「编译 LED」做完了：编好了：/data/workspace/blink/build/app.hex'), p2.slice(-500));
+  const second = await until(() => {const p=op('poll', { run: r2.run, off: 0 });return p.done&&p;}, 15000, '前台第二句');
+  assert.ok(second.events.some(e=>e.t==='text'&&e.text.includes('编好了：/data/workspace/blink/build/app.hex')),JSON.stringify(second.events));
   const r3 = op('send', { sid: r.sid, text: '好' });
   await until(() => op('poll', { run: r3.run, off: 0 }).done, 15000, '前台第三句');
   const p3 = JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input.at(-1).content;

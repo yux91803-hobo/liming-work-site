@@ -73,6 +73,7 @@ export function publicationPlan(t, controller) {
 
 export function stm32Task(t) {
   if(!t.workspace || !['code','review'].includes(t.tkind)) return false;
+  if(t.web){try{return !!t.workspace.stm32||detectStm32(t.workspace.work,Object.keys(inventory(t.workspace.work)));}catch{return true;}}
   if(t.workspace.stm32||/stm32|arm-none-eabi|cortex-m\d/i.test((t.goal||'')+' '+(t.userRequest||'')))return true;
   try{return detectStm32(t.workspace.work,Object.keys(inventory(t.workspace.work)));}catch{return true;} // Invalid trees must fail controlled validation, not bypass it.
 }
@@ -395,8 +396,7 @@ export function appServer(cmd, configArgs, options) {
           else if (p.turn?.status === 'interrupted') emit({ type: 'turn.failed', error: { message: '已中断' } });
           else emit({ type: 'turn.completed', usage: {} });
           options.complete?.(p.turn?.status === 'completed' ? 0 : 1); child.stdin.end();
-          try { if (options.spawn.detached) process.kill(-child.pid,'SIGTERM'); else child.kill('SIGTERM'); } catch {}
-          if (options.spawn.detached) setTimeout(()=>{ try { process.kill(-child.pid,'SIGKILL'); } catch {} },1500).unref();
+          if(options.stop)options.stop(child);else child.kill('SIGTERM');
         }
       }
     }
@@ -485,4 +485,94 @@ export function cleanupTaskTemporary(t) {
   if (t.workspace.tmp !== tmp || fs.realpathSync(root) !== root) throw new Error('临时目录归属不符，未清理');
   fs.rmSync(tmp,{recursive:true,force:true});mkdir(tmp);
   return true;
+}
+
+// Preview documents execute in an opaque origin. The owner session and API are never exposed to them.
+export const WEB_PREVIEW_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+export function webManifest(t) {
+  const root=t.workspace.work, names=inventory(root);
+  const config=JSON.parse(fs.readFileSync(path.join(root,'xin-web.json'),'utf8'));
+  if(typeof config.entry!=='string'||!/^[-a-zA-Z0-9_/ .]+\.html?$/.test(config.entry)||path.isAbsolute(config.entry)||config.entry.split('/').includes('..'))throw Error('xin-web.json 的 entry 必须是副本内的 HTML 文件');
+  if(!Object.hasOwn(names,config.entry))throw Error('预览入口不存在');
+  const file=path.resolve(root,config.entry);if(!under(file,root))throw Error('预览入口越界');
+  const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);let html;
+  try{const s=fs.fstatSync(fd);if(!s.isFile()||s.size>512*1024)throw Error('预览 HTML 必须是 512 KB 内的普通文件');html=fs.readFileSync(fd,'utf8');}finally{fs.closeSync(fd);}
+  if(!/<html\b/i.test(html)||!/<body\b/i.test(html))throw Error('请交付完整 HTML 文档');
+  // Self-contained output keeps the preview independent of temporary servers and third-party CDNs.
+  if(/<(?:script|iframe|frame|embed)\b[^>]*\bsrc\s*=|<link\b[^>]*\bhref\s*=/i.test(html))throw Error('预览须自包含：CSS/JS 内联，不引用外部资源或临时端口');
+  for(const a of html.matchAll(/<(?:img|source|video|audio)\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi))if(!/^(?:data:|blob:)/i.test(a[1]??a[2]??a[3]))throw Error('图片和音视频须嵌入 data URI，不能依赖临时服务');
+  const checks=config.checks;
+  if(!Array.isArray(checks)||!checks.length||checks.length>8)throw Error('xin-web.json 需要 1–8 个真实点击检查');
+  for(const c of checks){
+    if(!c||typeof c.selector!=='string'||!c.selector||c.selector.length>200||typeof c.expectSelector!=='string'||!c.expectSelector||c.expectSelector.length>200)throw Error('点击检查缺少 selector / expectSelector');
+    if(!['expectText','expectClass','expectAttribute'].some(k=>Object.hasOwn(c,k)))throw Error('点击检查必须说明点击后的可观察变化');
+    if(c.expectText!==undefined&&(typeof c.expectText!=='string'||!c.expectText||c.expectText.length>200))throw Error('expectText 无效');
+    if(c.expectClass!==undefined&&(typeof c.expectClass!=='string'||!/^[-_a-zA-Z0-9]{1,80}$/.test(c.expectClass)))throw Error('expectClass 无效');
+    if(c.expectAttribute!==undefined&&(!c.expectAttribute||! /^(?:data-[a-z0-9-]+|aria-[a-z-]+)$/.test(c.expectAttribute.name)||typeof c.expectAttribute.value!=='string'||c.expectAttribute.value.length>200))throw Error('expectAttribute 无效');
+  }
+  return {entry:config.entry,title:String(config.title||t.title||'我的作品').slice(0,80),checks,html,digest:crypto.createHash('sha256').update(html).digest('hex')};
+}
+const WEB_BROWSER_CHECK=String.raw`
+import fs from 'node:fs';import path from 'node:path';import http from 'node:http';import {spawn} from 'node:child_process';
+const [file,tmp,configText,csp]=process.argv.slice(1),config=JSON.parse(configText),html=fs.readFileSync(file);
+const profile=fs.mkdtempSync(path.join(tmp,'web-browser-'));let chrome,ws,server,requestId=0,chromeError='';const pending=new Map(),errors=[];
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+function rpc(method,params={}){return new Promise((resolve,reject)=>{const id=++requestId;const timer=setTimeout(()=>{pending.delete(id);reject(Error('浏览器检查超时：'+method));},5000);pending.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params}));});}
+async function evaluate(expression){const r=await rpc('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error('页面脚本执行失败');return r.result.value;}
+let result,code=1;
+try{
+ server=http.createServer((q,r)=>{if(q.url==='/favicon.ico'){r.writeHead(204);r.end();return;}if(q.url!=='/'){r.writeHead(404);r.end();return;}r.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp});r.end(html);});
+ await new Promise(ok=>server.listen(0,'127.0.0.1',ok));const origin='http://127.0.0.1:'+server.address().port;
+ chrome=spawn('/usr/lib/chromium/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--disable-component-update','--disable-extensions','--disable-sync','--no-first-run','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe']});chrome.stderr.setEncoding('utf8');chrome.stderr.on('data',s=>{chromeError=(chromeError+s).slice(-1000);});
+ const portFile=path.join(profile,'DevToolsActivePort');for(let i=0;i<160&&!fs.existsSync(portFile);i++){if(chrome.exitCode!==null)throw Error('Chromium 启动失败：'+chromeError);await pause(25);}if(!fs.existsSync(portFile))throw Error('Chromium 没有就绪：'+chromeError);
+ const port=fs.readFileSync(portFile,'utf8').split('\n')[0],pages=await (await fetch('http://127.0.0.1:'+port+'/json/list')).json();const page=pages.find(p=>p.type==='page');
+ ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((ok,no)=>{ws.addEventListener('open',ok,{once:true});ws.addEventListener('error',no,{once:true});});
+ ws.addEventListener('message',event=>{const m=JSON.parse(event.data);if(m.id){const p=pending.get(m.id);if(p){pending.delete(m.id);clearTimeout(p.timer);if(m.error)p.reject(Error(m.error.message));else p.resolve(m.result);}}else if(m.method==='Runtime.exceptionThrown')errors.push('页面 JavaScript 报错');else if(m.method==='Runtime.consoleAPICalled'&&m.params.type==='error')errors.push('页面报告错误');else if(m.method==='Log.entryAdded'&&m.params.entry.level==='error')errors.push(String(m.params.entry.text).slice(0,150));});
+ await rpc('Page.enable');await rpc('Runtime.enable');await rpc('Log.enable');
+ const viewports=[];
+ for(const width of [1280,390]){
+  errors.length=0;await rpc('Emulation.setDeviceMetricsOverride',{width,height:800,deviceScaleFactor:1,mobile:false});await rpc('Page.navigate',{url:origin+'/'});
+  let ready=false;for(let i=0;i<100;i++){if(await evaluate('document.readyState === "complete" && !!document.body')){ready=true;break;}await pause(30);}if(!ready)throw Error('预览未加载完成');await pause(250);
+  const visible=await evaluate('({title:document.title,ok:[...document.body.querySelectorAll("*")].some(e=>{const r=e.getBoundingClientRect();return r.width>10&&r.height>10}),overflow:document.documentElement.scrollWidth>innerWidth})');
+  if(!visible.ok||!visible.title||visible.overflow)throw Error(width+' 像素预览为空、缺标题或横向溢出');
+  for(const c of config.checks){
+   const inspect='(()=>{const c='+JSON.stringify(c)+',e=document.querySelector(c.expectSelector);return e?{text:c.expectText===undefined?null:e.textContent,cls:c.expectClass===undefined?null:e.classList.contains(c.expectClass),attr:c.expectAttribute===undefined?null:e.getAttribute(c.expectAttribute.name)}:null;})()';
+   const before=await evaluate(inspect);
+   const point=await evaluate('(()=>{const e=document.querySelector('+JSON.stringify(c.selector)+');if(!e)return null;e.scrollIntoView({block:"center"});const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.x+r.width/2,y:r.y+r.height/2}:null;})()');if(!point)throw Error('找不到可点击的元素：'+c.selector);
+   await rpc('Input.dispatchMouseEvent',{type:'mouseMoved',...point});await rpc('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});await rpc('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});await pause(120);
+   const actual=await evaluate('(()=>{const c='+JSON.stringify(c)+',e=document.querySelector(c.expectSelector);return !!e&&(c.expectText===undefined||e.textContent.includes(c.expectText))&&(c.expectClass===undefined||e.classList.contains(c.expectClass))&&(c.expectAttribute===undefined||e.getAttribute(c.expectAttribute.name)===c.expectAttribute.value);})()');if(!actual)throw Error('点击后没有得到预期变化：'+c.selector);
+   if(JSON.stringify(before)===JSON.stringify(await evaluate(inspect)))throw Error('点击没有产生可观察变化：'+c.selector);
+  }
+  if(errors.length)throw Error(errors.join('；'));
+  viewports.push({width,checks:config.checks.length});
+ }
+ const shot=await rpc('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(tmp,'xin-web-preview.png'),Buffer.from(shot.data,'base64'));
+ result={ok:true,viewports};code=0;
+}catch(e){result={ok:false,error:String(e.message).slice(0,1000)};}finally{for(const p of pending.values())clearTimeout(p.timer);ws?.close();chrome?.kill('SIGKILL');server?.closeAllConnections();server?.close();}
+process.stdout.write(JSON.stringify(result)+'\n',()=>process.exit(code));
+`;
+export function checkWebWorkspace(t) {
+  let manifest;try{manifest=webManifest(t);}catch(e){return {ok:false,error:e.message};}
+  const args=['--signal=KILL','22',process.execPath,'--input-type=module','-e',WEB_BROWSER_CHECK,path.join(t.workspace.work,manifest.entry),t.workspace.tmp,JSON.stringify({checks:manifest.checks}),WEB_PREVIEW_CSP];
+  const c=containerCommand(t,'/usr/bin/timeout',args),r=spawnSync(c.command,c.args,{cwd:t.workspace.work,env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:28000,maxBuffer:2*1024*1024});
+  let result;try{result=JSON.parse(r.stdout.trim());}catch{return {ok:false,error:'浏览器预览检查未完成：'+String(r.stderr||r.error?.message||'').slice(-700)};}
+  return {...result,ok:r.status===0&&!!result.ok,entry:manifest.entry,title:manifest.title,digest:manifest.digest,screenshot:path.join(t.workspace.tmp,'xin-web-preview.png')};
+}
+export function publishWebPreview(t,controller,check) {
+  const m=webManifest(t);if(!check?.ok||m.digest!==check.digest)throw Error('网页需要在最终修改后通过浏览器检查');
+  const id=crypto.randomBytes(16).toString('hex'),root=path.join(controller,'previews'),staging=path.join(root,'.'+id),dest=path.join(root,id);mkdir(root);fs.mkdirSync(staging,{mode:0o700});
+  try{
+    fs.writeFileSync(path.join(staging,'index.html'),m.html,{mode:0o400,flag:'wx'});
+    const shot=fs.openSync(check.screenshot,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);let screenshot;try{screenshot=fs.readFileSync(shot);}finally{fs.closeSync(shot);}
+    if(!screenshot.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw Error('缺少真实预览截图');fs.writeFileSync(path.join(staging,'preview.png'),screenshot,{mode:0o400,flag:'wx'});
+    const meta={id,sid:t.sid,parent:t.parent,run:lastRunId(t),title:m.title,at:Date.now(),files:{'index.html':{mime:'text/html; charset=utf-8',size:Buffer.byteLength(m.html),sha256:m.digest},'preview.png':{mime:'image/png',size:screenshot.length,sha256:crypto.createHash('sha256').update(screenshot).digest('hex')}},viewports:check.viewports};
+    fs.writeFileSync(path.join(staging,'manifest.json'),JSON.stringify(meta),{mode:0o400,flag:'wx'});fs.renameSync(staging,dest);
+    return {id,title:m.title,url:'/xin/preview.html?id='+id,ready:true,run:meta.run,at:meta.at,viewports:check.viewports,checks:m.checks};
+  }catch(e){fs.rmSync(staging,{recursive:true,force:true});throw e;}
+}
+const lastRunId=t=>(t.runs||[]).at(-1)||null;
+export function previewAsset(controller,a) {
+  if(!/^[a-f0-9]{32}$/.test(a.id||'')||!['index.html','preview.png'].includes(a.file||'index.html'))return {error:'bad_preview',msg:'预览地址不正确'};
+  const dir=path.join(controller,'previews',a.id),file=a.file||'index.html';
+  try{const m=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8')),entry=m.files[file],real=path.join(dir,file);if(!entry||m.id!==a.id||fs.lstatSync(dir).isSymbolicLink()||!fs.lstatSync(real).isFile())throw Error('bad file');return {real,...entry,title:m.title,parent:m.parent};}catch{return {error:'not_found',msg:'找不到这个预览'};}
 }

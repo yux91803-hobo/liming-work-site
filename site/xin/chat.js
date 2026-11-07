@@ -1156,8 +1156,13 @@
     var v = h('button', 'xc-task-btn', t.status === 'waiting' ? '回复它' : '看过程'); v.type = 'button';
     v.addEventListener('click', function () { openTask(t.sid); });
     ft.appendChild(v);
+    var preview=previewLink(t);if(preview)ft.appendChild(preview);
     if (tLive(t)) { var x = h('button', 'xc-task-btn', '停止'); x.type = 'button'; x.addEventListener('click', function () { stopTask(t.sid, x); }); ft.appendChild(x); }
     e.appendChild(ft);
+  }
+  function previewLink(t){
+    if(!t.preview||!t.preview.ready||!/^\/xin\/preview\.html\?id=[a-f0-9]{32}$/.test(t.preview.url||''))return null;
+    var a=h('a','xc-task-btn xc-preview','打开预览');a.href=t.preview.url;a.target='_blank';a.rel='noopener';return a;
   }
   function paintCards() { if (list) [].forEach.call(list.querySelectorAll('.xc-task'), function (e) { var t = S.tinfo[e.dataset.tsid]; if (t) paintCard(e, t); }); }
   // 结果：做完 / 没做成 / 停了 / 在等你确认时，小芯在聊天里说一条（同一次结果只说一次）
@@ -1176,6 +1181,7 @@
     var b = h('button', 'xc-task-btn', t.status === 'waiting' ? '回复它' : '看过程'); b.type = 'button';
     b.addEventListener('click', function () { openTask(t.sid); });
     ft.appendChild(b); m.b.appendChild(ft);
+    var preview=previewLink(t);if(preview)ft.appendChild(preview);
     if (m.b.querySelector('.xc-code, .xc-tbl')) m.e.classList.add('wide');
     return put(m.e);
   }
@@ -1286,6 +1292,7 @@
     meta.appendChild(h('span', 'xc-task-st st-' + t.status, tStatText(t)));
     meta.appendChild(h('span', '', [TKIND[t.kind], t.turns > 1 ? t.turns + ' 轮' : ''].filter(Boolean).join(' · ')));
     box.appendChild(meta);
+    var preview=previewLink(t);if(preview)box.appendChild(preview);
     if (t.dir) {
       var dl = h('p', 'xc-tk-dir'); dl.appendChild(document.createTextNode('工作目录 '));
       var a = h('a', 'xc-path', t.dir); a.href = '#'; a.setAttribute('data-path', t.dir);
@@ -2081,6 +2088,7 @@
         return /^\/data\/workspace(\/[\w.+@%~=-]+)*\/?$/.test(inner) ? pathLink(inner, '<code>' + esc(inner) + '</code>') : '<code>' + esc(seg.slice(1, -1)) + '</code>';
       }
       return esc(seg)
+        .replace(/\[([^\[\]]{1,80})\]\((\/xin\/preview\.html\?id=[a-f0-9]{32})\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
         .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
         .replace(/(https?:\/\/[^\s<>()（）]+[^\s<>()（）.,;:!?。，；：！？'"])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
         .replace(PATH_RE, function (m, pre, p) { var t = p.replace(/[.]+$/, ''); return pre + pathLink(t, t) + p.slice(t.length); });

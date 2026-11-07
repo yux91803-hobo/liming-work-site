@@ -73,6 +73,7 @@ jobs:
           python test/e2e/stm32_e2e.py http://localhost:5173
           python test/e2e/map_e2e.py http://localhost:5173
           python test/e2e/xin_runtime_e2e.py http://localhost:5173
+          python test/e2e/xin_web_e2e.py http://localhost:5173
 
   deploy:
     needs: [check, e2e]
@@ -193,10 +194,10 @@ jobs:
             python -m playwright install --with-deps chromium
           fi
 
-      - name: 正式站登录、真实模型、后台任务和文件下载
+      - name: 正式站登录、真实模型、后台任务、奶龙网页和文件下载
         id: live_xin
         if: steps.smoke.outcome == 'success' && env.TARGET == 'production'
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           XIN_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
         run: python scripts/test-xin-live.py
