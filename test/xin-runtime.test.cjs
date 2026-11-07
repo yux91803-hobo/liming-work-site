@@ -423,3 +423,58 @@ test('受控构建验证任意新产物，拒绝旧 HEX、非 ARM ELF 及输出�
   fs.unlinkSync(elf);const outside=path.join(f.control,'secret.hex');fs.writeFileSync(outside,hex);generate=()=>fs.symlinkSync(outside,artifact);built=r.compileWorkspace(f.task);assert.equal(built.ok,false);assert.match(built.output,/软链接/);assert.equal(fs.readFileSync(outside,'utf8'),hex);
  }finally{cp.spawnSync=real;syncBuiltinESMExports();}
 });
+
+test('前台指定模型只影响后台；结构化桥拒绝跨对话操作，预算派活去重', async t => {
+  const f=fixture(t), sid='sfronttest01', run='rfronttest01';
+  const meta={run,sid,agent:'codex',model:'deepseek-v4.1-flash',frontNamed:'kimi-k3.1-pro',text:'让 Kimi 去画一个 SVG',started:Date.now()};
+  fs.writeFileSync(path.join(f.control,'sessions',sid+'.json'),JSON.stringify({sid,agent:'codex',runs:[run]}));
+  fs.writeFileSync(path.join(f.control,'runs',run+'.json'),JSON.stringify(meta));
+  fs.writeFileSync(path.join(f.control,'runs',run+'.jsonl'),JSON.stringify({t:'user',text:meta.text})+'\n');
+  assert.ok(f.call('front_action',{run,argv:['sh','-c','pwd']}).error);
+  assert.ok(f.call('front_action',{run,argv:['xin','task','tell','1','change']}).error);
+  const r=f.call('front_action',{run,argv:['xin','task','new','--kind','code','--model','glm-5.3','--','画 SVG']});
+  assert.equal(r.terminal,true);assert.equal(r.task.model,'kimi-k3.1-pro');assert.equal(r.task.why,'named');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.control,'runs',run+'.json'))).model,'deepseek-v4.1-flash');
+  const fallback=f.call('front_fallback',{run});assert.equal(fallback.task.sid,r.task.sid);
+  assert.equal(f.call('front_action',{run,argv:['xin','task','new','--','duplicate']}).task.sid,r.task.sid);
+  const saved=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',r.task.sid+'.json')));
+  assert.equal(saved.requestedModel,'kimi-k3.1-pro');assert.equal(saved.requestedNamed,true);
+});
+test('前台超预算自动保存原话为后台工作，停止后不再派活',async t=>{
+  const f=fixture(t), sid='sfronttest02', run='rfronttest02';
+  fs.writeFileSync(path.join(f.control,'sessions',sid+'.json'),JSON.stringify({sid,agent:'codex',runs:[run]}));
+  const file=path.join(f.control,'runs',run+'.json');
+  const m={run,sid,agent:'codex',model:'deepseek-v4.1-flash',text:'检查电路图',started:Date.now()};
+  fs.writeFileSync(file,JSON.stringify(m));fs.writeFileSync(path.join(f.control,'runs',run+'.jsonl'),JSON.stringify({t:'user',text:m.text})+'\n');
+  const r=f.call('front_fallback',{run});assert.equal(r.terminal,true);
+  assert.match(JSON.parse(fs.readFileSync(path.join(f.control,'sessions',r.task.sid+'.json'))).goal,/检查电路图/);
+  fs.writeFileSync(file,JSON.stringify({...m,stopped:true}));assert.ok(f.call('front_fallback',{run}).error);
+});
+test('前台对 ask 的回复用 tell 续接同一工作，不重复 new；跨对话依赖拒绝',async t=>{
+  const f=fixture(t),sid='sfronttest03',run='rfronttest03';
+  fs.writeFileSync(path.join(f.control,'sessions',sid+'.json'),JSON.stringify({sid,agent:'codex',runs:[run]}));
+  const put=run=>{fs.writeFileSync(path.join(f.control,'runs',run+'.json'),JSON.stringify({run,sid,agent:'codex',text:'补充要求',started:Date.now()}));fs.writeFileSync(path.join(f.control,'runs',run+'.jsonl'),JSON.stringify({t:'user',text:'补充要求'})+'\n');};
+  put(run);
+  assert.ok(f.call('front_action',{run,argv:['xin','task','new','--after','1','--','不应创建']}).error);
+  const created=f.call('front_action',{run,argv:['xin','task','new','--','绘图']}).task;
+  const file=path.join(f.control,'sessions',created.sid+'.json'),task=JSON.parse(fs.readFileSync(file));
+  task.status='waiting';task.question='要用红色吗？';fs.writeFileSync(file,JSON.stringify(task));
+  const follow='rfronttell03';put(follow);
+  const r=f.call('front_action',{run:follow,argv:['xin','task','tell',String(task.no),'是，用红色']});
+  assert.equal(r.task.sid,task.sid);assert.equal(r.terminal,true);
+  const saved=JSON.parse(fs.readFileSync(file));assert.equal(saved.question,'');assert.match(saved.next,/是，用红色/);
+});
+test('只清理本任务私有 tmp；等待期间保留，项目输出与其它目录不碰',async t=>{
+  const f=fixture(t),r=await load();f.task.workspace=r.prepareWorkspace(f.task,f.control);
+  const tmp=f.task.workspace.tmp;fs.writeFileSync(path.join(tmp,'secret'),'fixture');fs.writeFileSync(path.join(f.task.workspace.work,'output.txt'),'keep');
+  assert.equal(r.cleanupTaskTemporary({...f.task,status:'waiting'}),false);assert.ok(fs.existsSync(path.join(tmp,'secret')));
+  assert.equal(r.cleanupTaskTemporary({...f.task,status:'done'}),true);assert.deepEqual(fs.readdirSync(tmp),[]);assert.ok(fs.existsSync(path.join(f.task.workspace.work,'output.txt')));
+  assert.throws(()=>r.cleanupTaskTemporary({...f.task,status:'done',workspace:{...f.task.workspace,tmp:f.root}}),/归属/);
+});
+test('真实完成推送以第一人称给用户，内部模型记录仍保留',async t=>{
+  const f=fixture(t);f.task.parent='sfrontnotice';f.task.title='画 SVG';f.save();
+  fs.writeFileSync(path.join(f.control,'runs','rruntime001.jsonl'),JSON.stringify({t:'text',text:'我画好了。'})+'\n');
+  const out=f.call('task_finish',{sid:f.task.sid,run:'rruntime001',ok:true,model:'glm-5.3'});
+  assert.equal(out.notify.title,'我弄好了：画 SVG');assert.equal(out.notify.body,'我画好了。');
+  assert.equal(f.read().actualModel,'glm-5.3');
+});

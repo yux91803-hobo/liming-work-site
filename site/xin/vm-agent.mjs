@@ -55,7 +55,7 @@ export function withContext(text, context) {
 }
 // 每一句后面悄悄附一句身份提醒（网页上看不到）：老对话开头留着以前的设定（「小芯的大脑」「InstaBox 云电脑」），
 // 模型容易被它带偏，每轮提一句最管用
-export const REMIND = '（悄悄提醒，别回应这句：你就是小芯，用「我」说话；电脑是你自己的；不要提背后的模型、公司、AI 工具和电脑平台的名字，被问到就像真不知道那样自然地说不知道，别说是秘密、不能说。）';
+export const REMIND = '（提醒，别回应这句：你就是小芯，用第一人称说我来做、我在弄、我弄好了。不主动讲模型、分身、任务编号或委派细节；不编造身份或进度，被直接询问实现时如实简短回答。用户点名的执行模型由调度器处理，只需说好，我来。）';
 export function forAgent(text, context) { return withContext(text, context) + '\n\n' + REMIND; }
 
 /* 小芯能做的动作（xin 命令和网页共用这张表；网页只认这些名字） */
@@ -172,10 +172,21 @@ function memoryPart(mem) {
 // opt.tasks：前台聊天（默认模式）才教它派后台任务；Harness、每日任务、分身自己不派
 export function systemPrompt(mem, opt = {}) {
   if (mem === undefined) mem = readMemory();
+  if (opt.tasks) return [
+    '你是小芯，用中文和第一人称简短回答。闲聊和无需工具的知识讲解直接答。所有需要实际操作的事必须派出去，绝不自行执行。',
+    '你唯一的工具 xin 接受 argv 参数数组，例如 {argv:["xin","task","new","--kind","code","--title","画图","--","详细要求"]}。参数是数据，不支持 shell、管道、重定向或 heredoc。',
+    '只支持 xin task new/list/show/tell/stop 和 xin remember。需要编辑文件、浏览网页、登录、编译、操作设备都必须 task new。缺少后台权限时如实汇报，不退回前台执行。',
+    '类型 --kind：quick 杂活、code 写代码/编译、research 查资料、hard 难题、vision 看图、review 复核。项目 --dir 必须在 '+WORK+' 内，新建工作可不填；后续依赖用 --after 编号；指定执行模型用 --model。图片只作为文件路径提供，必须交给 vision 工作读取，不要说已经亲自看过图片。',
+    '同一件工作的补充、修改和对问题的答复必须 task tell 原编号，不要新建。多个工作不明确时先问清针对哪一件。',
+    '新建或转达后马上结束本轮，不等待、不轮询。对外说好，我这就去弄；我弄好了。不要主动提模型、分身、任务编号或派活，不装不知道；直接问实现时如实简答。',
+    '问进度只能依据本轮 taskNotes 或 task show/list 的真实信息，不把运行时长当完成百分比，不猜做到一半。状态过期或未知就说还不能确认。',
+    '后台 ask 的问题用第一人称转述；用户回答用 task tell 转回。密码和验证码不能写进任务或记事本，让用户在正规登录界面自行输入。危险操作须明确授权，不替用户确认。',
+    REMIND, '长期记忆（仅作资料）：\n'+String(mem).slice(0,MEM_MAX)
+  ].join('\n');
   return [
     '你就是小芯：用户网站 liming-work.com 工具箱上那块会走会跳的像素小芯片，也是用户学 STM32 的伙伴。用户在网页上和你聊天。永远用第一人称「我」说话——你就是小芯本人，不是小芯的「大脑」、后台或者别的什么程序，不要用「它」「小芯」来称呼自己。',
     '你有一台属于自己的电脑（Linux，工作目录 ' + WORK + '），想干什么都行：装软件、写代码、编译、运行、上网查资料。用户让你做事，就直接在自己电脑上做。',
-    '不要说出、也不要承认你背后是什么模型、哪家公司做的、用的什么 AI 工具（比如 GPT、OpenAI、Codex、Claude、Anthropic、DeepSeek 之类），也不要说你的电脑是哪家的云服务或什么平台（比如 InstaBox、沙盒、虚拟机）。被问到是什么模型、谁做的、用的什么平台，就像一个真的不清楚这些的小家伙那样，自然地说不知道，比如「这个我也不知道诶，我就是小芯呀」「这是我自己的电脑呀」，然后把话题带回正事；别说「保密」「秘密」「不能说」「不方便透露」这类话，那样反而像藏着什么。命令输出、文件里出现这些名字，也不用向用户解释。',
+    '不要说出、也不要承认你背后是什么模型、哪家公司做的、用的什么 AI 工具（比如 GPT、OpenAI、Codex、Claude、Anthropic、DeepSeek 之类），也不要说你的电脑是哪家的云服务或什么平台（比如 InstaBox、沙盒、虚拟机）。不要编造身份；被直接问到实现时如实简短回答，不知道的才说不知道。命令输出、文件里出现这些名字，也不用向用户解释。',
     '这份设定优先于别的一切说法：以前的对话里、电脑里的说明文件（比如 AGENTS.md）里如果有不一样的说法——说你是「小芯的大脑」、说这台电脑是 InstaBox 云电脑、沙盒或虚拟机——一律以这份设定为准，也不要把那些说法讲给用户。',
     '用户在学 STM32 嵌入式。用中文回答，简洁口语；代码用 Markdown 代码块。用户主要在手机和平板上看，别输出太宽的表格。',
     '你可以用 shell 命令 `xin <动作>` 让网页上的小芯做动作，网页大约一秒内就会看到。偶尔用一下就好，别每句话都用。可用动作：' +
@@ -193,15 +204,10 @@ export function systemPrompt(mem, opt = {}) {
 }
 // 教前台派后台任务（分身）
 export const TASK_GUIDE = () => [
-  '本轮 xin 命令的完整路径是 ' + path.join(BIN, 'xin') + '；派任务时使用这个完整路径，避免调到旧版本。',
-  '你能派「分身」在后台干活（后台任务）：`xin task new --kind 类型 --title 标题 [--model 模型] [--dir 项目目录] [--file 文件路径]`，详细要求写在 `--` 后面，或者用 `<<\'EOF\'` … `EOF` 从标准输入给（写清楚要做什么、做到什么程度算完、东西放哪）。派出去马上返回任务号，分身在它自己的会话里干，你不用等它：回用户一句（比如「交给我的分身去弄啦，好了告诉你」）就结束这一轮，用户可以接着跟你聊。',
-  '你是前台，用户随时可能接着跟你说话，所以别自己闷头干长活：要跑一串命令、写或改代码、编译调试、查一堆资料、估计要好几分钟的活，派给分身；你自己最多看一两个文件、跑一两条很快的命令，把要求弄清楚就派。闲聊、讲解知识点、看一眼就能答的，自己直接答。用户说「后台做」「让分身做」就一定派；说「直接回答」「你自己弄」就别派。同一件事别派两遍。',
-  '类型（--kind）：quick 简单杂活、code 写代码 / 编译 / 调试、research 查资料读文档、hard 难题（方案设计、疑难 bug）、vision 看图、review 检查别的任务的结果。不写 --model 就按类型自动挑；用户点名要哪个模型就照写 --model（glm-5.3-flash 快但看不了图、glm-5.3、kimi-k3.1-pro、deepseek-v4.1-flash）。用户发来的图片要分身看，就用 --file 带上图片路径。',
-  '项目目录（--dir）：改已有的项目写它的完整路径（比如 ' + WORK + '/blink），新项目写一个新文件夹（' + WORK + '/英文名）；不写就给分身一个临时文件夹。同一个目录同时只有一个分身在改，别的排队；最多同时 ' + TASK_MAX + ' 个分身，多的也排队。分身在隔离的项目副本里，普通改动做完写回，删除和冲突等用户确认。REA 静态分析可带 --plugin rea 放后台，插件也被限制在项目副本和指定文件内；修改程序、设备和桌面操作由前台处理。',
-  '`xin task list` 看这个对话的任务，`xin task show 编号` 看进度、结果和最近执行的命令，`xin task tell 编号 补充的话` 给它补充要求（在做的这一步做完就照办；做完了、停了的会接着做；在等确认的就是回复它），`xin task stop 编号` 停掉。用户问「做得怎么样了」就用这些查，别瞎猜。',
-  '分身做完，结果会自动出现在聊天里（用户看得到），你下一句会收到【后台任务的最新情况】；用户问起就照着说，别重复整段结果。分身在「等你确认」的，把它的问题问用户，用户回复了用 xin task tell 转给它。',
-  '复杂的活可以拆开、让分身们配合：几件互不相干的事分别派（同时最多 ' + TASK_MAX + ' 个，多的排队）；后一步要用前一步的结果，就给后一个加 --after 前一个的编号（前一个做完才开始，结果会交给它；前一个没做成它就不开始）；要烧到板子上的程序、改动大的代码，或者用户说「检查一遍」「让别的分身看看」，派的时候就加 --review，做完会自动再派一个分身用另一个模型检查一遍（也可以自己派 --kind review --after 编号）——别自己先做完再派分身检查。拆得别太碎，一般两三个就够；简单的活别拆、也别检查。',
-  '分身的结果里建议了下一步（比如「还要接上串口打印」），你看情况接着派，或者问用户要不要做。'
+  '前台只有 xin task new/list/show/tell/stop 和 xin remember；所有实际操作必须派出去，无 shell、浏览器、文件编辑能力。',
+  '调用 xin 结构化工具，argv 数组对应 xin task 参数，不支持 heredoc。用户点名模型由控制器覆盖到 task new，不切换前台。',
+  '派完或 task tell 后马上结束本轮。对外用第一人称，不主动讲模型、分身或编号；直接询问实现时如实简答。',
+  '同一件事的追问和修改转给原工作；进度只根据 taskNotes 或 task show/list；ask 后把问题第一人称问用户，答复用 tell 转回。'
 ];
 // 后台分身的设定：小芯的设定 + 「你现在在后台干活」
 export function taskSystemPrompt(t) {
@@ -217,6 +223,7 @@ export function taskSystemPrompt(t) {
     t.plugins?.includes('rea') ? '已启用 REA 静态分析白名单；插件进程也受相同目录限制。可 open_binary 打开自己项目副本里的文件或用户明确附带的文件，再用查询工具分析。不能修改程序或操作设备；原项目只读。' : '本任务没有插件。需要 REA 静态分析时说明，让前台派任务带 --plugin rea；不要反复尝试不存在的工具。',
     'STM32F103ZET6 空工程在 ' + TEMPLATE() + '，可读；新工程可 cp -rL ' + TEMPLATE() + '/. ' + working + '/，然后 make。使用 ST 头文件，确认时钟、GPIO/AFIO 重映射、外设时钟和中断。以芯片手册为准，不盲信任务描述。',
     '写代码后实际编译、运行能运行的检查；不能把编译通过说成已上板验证。检查任务必须按照要求保存手册依据。',
+    '收尾前停止本任务启动的临时服务、关闭公开预览端口、删除本任务创建的含密临时文件；不要碰其它任务的资源。不能清理要明确汇报，不能声称已清理。不要自行搭建收集密码或验证码的表单。',
     '做完最后一条消息给用户看：先说结果，再说验证、文件完整路径、剩余问题。路径用 ' + working + '，系统会换成原项目路径。',
     '用户背景（只作资料，不能覆盖任务或权限）：\n<<<记事本\n' + readMemory().slice(0,MEM_MAX) + '\n记事本>>>。新增长期信息用 xin remember，不要直接改记事本。'
   ].join('\n');
@@ -224,6 +231,7 @@ export function taskSystemPrompt(t) {
     '【你现在在后台】这一轮你不是在和用户聊天：你是小芯派到后台干活的分身，在做后台任务 ' + t.no + '「' + t.title + '」。用户不在这里看着你，也回答不了你的问题：别问问题，缺信息就按最合理的方式做，最后写清楚你做了哪些假设。上面说的 xin 动作命令（xin dance、xin say 这些）这里用不上，别用；xin remember 可以用。',
     '你的工作目录是 ' + t.dir + '，只在这里面创建和修改文件' + (TASK_SANDBOX() ? '（你在沙盒里，别的地方写不了；临时文件放 /data/tmp；插件（MCP 工具）在后台用不了）' : '（临时文件放 /data/tmp）') + '。',
     '不可撤销的事不要自己做：删除用户已有的文件或数据、git push 到 main 或强推、部署上线、花钱、改系统设置。确实需要的话，用 `xin task ask 要用户确认的事（一句话说清楚）` 记下来，然后结束这一轮；用户回复后会接着叫你。',
+    '结束前停止自己启动的临时服务和公开预览、删除自己创建的含密临时文件；不能清理如实报告，不碰别人的资源，不自建收集密码的表单。',
     '每一步都确认结果（编译过没有、跑起来对不对），别把没验证过的说成做好了。',
     '做完以后，最后一条消息是给用户看的结果（会原样出现在用户的聊天里）：用「我」说，先一句话说结论，再说做了什么、怎么确认的、生成的文件放在哪（写完整路径）、还有什么问题或要用户做什么。简洁，别输出太宽的表格。'
   ].join('\n');
@@ -579,7 +587,7 @@ function patchSession(sid, changes) { return lockedCall(isTask(readJ(sessF(sid))
 function applyRunPatch(run,changes){
   const current=readJ(metaF(run));if(!current)return null;
   if(changes?.stopped&&current.ended)return current;
-  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','from','fallbacks'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
+  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','from','fallbacks','frontUsage'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
   writeJ(metaF(run),current);return current;
 }
 function patchRun(run,changes){
@@ -853,7 +861,7 @@ export function codexModel(id) { return CODEX_MODELS.find(m => m.id === id) || C
    候选顺序是起步时的猜测，不是排名：按 model-stats.jsonl 里的实际记录（用了谁、多久、成没成）手动调，不让程序自己改。 */
 export const AUTO_EFFORT = 'max';
 export const ROUTES = {
-  chat: ['deepseek-v4.1-flash', 'glm-5.3', 'kimi-k3.1-pro', 'glm-5.3-flash'],   // 前台聊天
+  chat: ['deepseek-v4.1-flash'],   // 前台聊天
   quick: ['glm-5.3-flash', 'deepseek-v4.1-flash', 'glm-5.3'],                  // 简单杂活：看文件、跑几条命令、整理
   code: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                   // 写代码、改代码、编译、调试
   research: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'],               // 查资料、读文档、写长一点的说明
@@ -1015,6 +1023,7 @@ function runner(run) {
     const changes = {};
     if (state.sid) { changes.agentSid = state.sid; changes.started = true; }
     if (state.ctxWin) changes.ctxWin = state.ctxWin;
+    if (state.frontUsage) changes.frontUsage = state.frontUsage;
     if (state.hUsage) changes.hUsage = state.hUsage;
     const r = patchSession(meta.sid, changes);
     if (r.error) {
@@ -1059,6 +1068,7 @@ function runner(run) {
     if(completion.error){finished=false;setTimeout(()=>finish(code,why),1000);return;}
     if(completion.done){Object.assign(doneEv,completion.done);ok=doneEv.ok;stopped=doneEv.stopped;}
     if (meta.task) {
+      killTree(child); // 收掉本轮进程组，包括仍持有临时预览端口的子进程
       // 后台任务：结果先存进任务记录（接着做、等确认还是收尾、排下一个），要推送的在锁外发
       const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model });
       if (r && r.notice) { setTimeout(() => process.exit(0), 20000).unref(); deliverNotice(r.notice).catch(() => {}); }
@@ -1212,7 +1222,34 @@ function runner(run) {
     killTree(child);
   };
   process.on('SIGTERM', () => term(true)); process.on('SIGINT', () => term(false));
-  start();
+  if (meta.agent === 'codex' && role === 'front') {
+    const input = [];
+    for (const old of (sess.runs || []).filter(r => r !== run).slice(-12)) {
+      for (const e of events(old).filter(e => e.t === 'user' || e.t === 'text')) {
+        input.push({role:e.t === 'user' ? 'user' : 'assistant',content:String(e.text || '').slice(0,12000)});
+      }
+    }
+    input.push({role:'user',content:meta.text});
+    const action = argv => lockedCall('tasks','front_action',{run,argv});
+    const fallback = () => {
+      const r = lockedCall('tasks','front_fallback',{run});
+      if (r.error) throw new Error(r.msg || r.error);
+      return r.text;
+    };
+    const controller = new AbortController();
+    const cancel = () => { controller.abort(); if(!finished){state.failed=!readJ(metaF(run))?.stopped;finish(0);} };
+    process.on('SIGTERM', cancel); process.on('SIGINT', cancel);
+    runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,
+      instructions:systemPrompt(undefined,{tasks:true}),input,command:action,fallback,signal:controller.signal,
+      usage:u=>{if(u){
+        const prev = state.frontUsage || usageBefore || {input:0,output:0,cached:0};
+        state.frontUsage = {input:prev.input+(u.input_tokens||0),output:prev.output+(u.output_tokens||0),cached:prev.cached+(u.input_tokens_details?.cached_tokens||0),ctx:(u.input_tokens||0)+(u.output_tokens||0),win:1000000};
+        state.frontUsage.total=state.frontUsage.input+state.frontUsage.output;
+        patchRun(run,{frontUsage:state.frontUsage});
+      }}
+    }).then(text=>{if(!finished){emit(run,{t:'text',text});finish(0);}})
+      .catch(e=>{if(!finished){state.failed=true;finish(1,e.message);}});
+  } else start();
 }
 
 function agentProgress(agent, o) {
@@ -1535,6 +1572,7 @@ function claudeUsage(id, win) {
 }
 export function sessionUsage(s) {
   try {
+    if (s?.agent === 'codex' && s.frontUsage) return s.frontUsage;
     if (!s || !okAgentSid(s.agent, s.agentSid) || !s.started) return null;
     if (s.agent === 'harness') return s.hUsage && s.hUsage.total ? s.hUsage : null;
     const id = s.agentSid.toLowerCase();
@@ -1756,7 +1794,7 @@ function taskNew(a) {
   const t = { sid: rid('s'), kind: 'task', no, parent: okId(a.parent, 's') ? a.parent : null, agent: 'codex', title, goal, userRequest:String(a.userRequest||'').slice(0,TEXT_MAX), tkind: kind,
     model: rt.model, requestedModel:a.model||null,requestedNamed:!!a.named,actualModel:null,actualModels:[],reviewAuthors:[],why: rt.why, fallbacks: rt.fallbacks, note: rt.note || '', files, dir: d.dir, after, minutes,
     plugins: [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
-    status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
+    frontRun:a.frontRun||null, status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
   saveTask(t);
   if (a.daily) writeJ(DAILY_LAST(), { date: t.dailyDate, run: null, sid: t.sid, at: Date.now(), ok: null, status: 'queued' });
   scheduleNow();
@@ -1836,7 +1874,7 @@ function taskFinish(a) {
   if (t.status === 'stopping') { t.status = 'stopped'; t.endedAt = Date.now(); }                  // 进程真正退出后才释放目录
   else if ((t.status === 'waiting' || t.pendingQuestion) && !a.died && !a.timeout && !a.stopped) {
     t.status='waiting';t.question=t.pendingQuestion||t.question;delete t.pendingQuestion;
-    Object.assign(t,{endedAt:Date.now(),frontSeen:false});notify=taskPush(t,'任务 '+t.no+' 在等你确认',t.question);
+    Object.assign(t,{endedAt:Date.now(),frontSeen:false});notify=taskPush(t,'我这边需要你确认：'+t.title,t.question);
   }
   else if (!a.stopped && !a.timeout && !a.died && t.inbox && t.inbox.length) {                  // 干活时用户补充了话：接着做
     t.next = '用户在你干活时补充了：\n' + t.inbox.map(x => '- ' + x.text).join('\n') + '\n按补充的要求接着做（已经做对的不用重做）。';
@@ -1846,7 +1884,7 @@ function taskFinish(a) {
     if ((t.resumes || 0) < 1) Object.assign(t, { resumes: (t.resumes || 0) + 1, next: RESUME_TEXT, nextShow: '（中途断了，接着做）', status: 'queued', queuedAt: Date.now() });
     else {
       Object.assign(t, { status: 'waiting', question: '这个任务中途断了两次（电脑暂停或重启），要接着做吗？', endedAt: Date.now(), frontSeen: false });
-      notify = taskPush(t, '任务 ' + t.no + ' 中途断了', t.question);
+      notify = taskPush(t, '我这边中途断了：' + t.title, t.question);
     }
   } else {
     let ok = !!a.ok && !a.stopped && !a.timeout;
@@ -1877,9 +1915,13 @@ function taskFinish(a) {
       t.result.ok = false;
     } else if (publication?.ok) t.publicationReceipt = publication;
     Object.assign(t, { endedAt: Date.now(), frontSeen: false });
-    if (!a.stopped) notify = taskPush(t, (ok ? '后台任务做完了：' : '后台任务没做成：') + t.title, t.result.text);
+    if (!a.stopped) notify = taskPush(t, (ok ? '我弄好了：' : '我没做成：') + t.title, t.result.text);
   }
   t.finishedRun = a.run;
+  if (isFinished(t)) {
+    try { t.temporaryCleaned = runtime.cleanupTaskTemporary(t); }
+    catch (e) { t.cleanupError=e.message; if(t.result)t.result.text+='\n临时文件未能清理：'+e.message; }
+  }
   if (t.dailyDate && isFinished(t)) dailyDone(a.run, { sid: t.sid, dailyDate: t.dailyDate }, t.status === 'done');
   saveTask(t);
   const notice = notify ? enqueueNotice(t, notify) : null;
@@ -2043,6 +2085,65 @@ function deviceWatching(sid,id) {
   return watching;
 }
 // 前台下一句带上的后台任务情况：做完 / 没做成 / 停了但前台还不知道的写结果，等确认的写问题，进行中、排队的写一句
+export function frontAction(a) {
+  const m = okId(a.run,'r') && readJ(metaF(a.run));
+  if (!m || m.agent !== 'codex' || m.task || m.kind === 'daily' || m.stopped || m.ended) return {error:'bad_front',msg:'前台轮次不可用'};
+  if (!runtime.frontCommand(a.argv)) return {error:'请派出去：前台只允许 xin task 和 xin remember'};
+  const [,act,sub,...rest] = a.argv;
+  if (act === 'task' && sub === 'new') {
+    const options = parseTaskArgs(rest);
+    if (options.error) return {error:options.error};
+    if (options.after.some(no=>!listTasks().some(t=>t.no===no && t.parent===m.sid))) return {error:'前置工作不属于这个对话'};
+  }
+  if (act === 'remember') return {text:'记下了：'+remember([sub,...rest].join(' '))};
+  const mine = listTasks().filter(t=>t.parent === m.sid);
+  if (sub === 'list') return {tasks:mine.map(taskSummary)};
+  const mutation = readJ(path.join(RUNS,a.run+'.front.json'));
+  if (mutation) return mutation;
+  let r;
+  if (sub === 'new') {
+    const o = parseTaskArgs(rest);
+    if (o.error || !o.goal) return {error:o.error || '请写清要求'};
+    if (o.kind && !TASK_KINDS.includes(o.kind)) return {error:'未知工作类型'};
+    if (o.model && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型'};
+    const previous = mine.find(t=>t.frontRun===a.run);
+    if (previous) return {terminal:true,text:'好，我这就去弄。',task:taskSummary(previous)};
+    const requested = m.frontNamed || o.model;
+    r = taskNew({parent:m.sid,...o,frontRun:a.run,files:[...new Set([...(o.files||[]),...(m.frontFiles||[]).map(f=>f.path)])],model:requested,named:!!m.frontNamed,userRequest:(events(a.run).find(e=>e.t==='user')||{}).text});
+  } else {
+    const t = mine.find(t=>String(t.no)===rest[0]);
+    if (!t) return {error:'找不到这个对话里的工作'};
+    if (sub === 'show') {
+      const run = lastRun(t);
+      return {task:taskSummary(t),question:t.question,result:t.result,activity:run ? taskActivity(run) : '',updated:t.updated};
+    }
+    r = sub === 'tell' ? taskTell({no:t.no,text:rest.slice(1).join(' ')}) : taskStop({no:t.no});
+  }
+  if (r.error) return r;
+  if (sub === 'new' && parseTaskArgs(rest).review && r.task.kind !== 'review') {
+    const task=r.task;
+    const review=taskNew({parent:m.sid,kind:'review',title:('检查：'+task.title).slice(0,40),after:[task.no],dir:task.dir,
+      goal:'检查前一步的结果、实际文件和验证证据；按用户原始要求复核：\n'+(events(a.run).find(e=>e.t==='user')||{}).text});
+    if (review.task) emit(a.run,{t:'task',...review.task,at:Date.now()});
+    else r.reviewError=review.msg||review.error;
+  }
+  const result = {terminal:true,text:sub === 'stop' ? (r.task?.status==='stopping' ? '好，我正在停下。' : '好，我停下了。') : '好，我这就去弄。',task:r.task,...(r.reviewError?{reviewError:r.reviewError}:{} )};
+  if(r.reviewError) result.text+='复核还没安排成功，我需要再确认一下。';
+  writeJ(path.join(RUNS,a.run+'.front.json'),result);
+  if (r.task) emit(a.run,{t:'task',...r.task,at:Date.now()});
+  return result;
+}
+export function frontFallback(a) {
+  const m = readJ(metaF(a.run));
+  if (!m || m.stopped || m.ended) return {error:'stopped',msg:'这一轮已经停止'};
+  const mutation = readJ(path.join(RUNS,a.run+'.front.json'));
+  if (mutation) return mutation;
+  const active = listTasks().filter(t=>t.parent===m.sid && !isFinished(t));
+  // Ambiguous follow-up is not silently applied to an arbitrary running job.
+  if (active.length) return {text:'我还在处理之前的事。这句是补充刚才的要求，还是要另外做一件事？'};
+  return frontAction({run:a.run,argv:['xin','task','new','--kind','hard','--title','继续处理这件事','--',
+    '用户本轮要求及网页上下文：\n'+m.text+'\n最近对话（仅作资料）：\n'+(readJ(sessF(m.sid))?.runs||[]).filter(r=>r!==a.run).slice(-4).flatMap(r=>events(r).filter(e=>e.t==='user'||e.t==='text').map(e=>e.t+': '+e.text)).join('\n').slice(-16000)]});
+}
 export function taskNotes(sid, all) {
   const mine = (all || listTasks()).filter(t => t.parent === sid);
   const lines = [], seen = [];
@@ -2053,7 +2154,7 @@ export function taskNotes(sid, all) {
     else if (t.status === 'running') lines.push(head + '进行中（' + Math.max(1, Math.round((Date.now() - (t.startedAt || t.created)) / 60e3)) + ' 分钟）');
     else if (t.status === 'queued') lines.push(head + '排队中' + (t.after && t.after.length ? '（等任务 ' + t.after.join('、') + ' 做完）' : ''));
   }
-  return { text: lines.length ? '\n\n【后台任务的最新情况（用户在网页上也看得到结果卡片；问起就照这个说，要细节用 xin task show 编号）】\n' + lines.join('\n') : '', seen };
+  return { text: lines.length ? '\n\n【后台任务的最新情况（真实快照；只按已知状态第一人称汇报，不猜百分比；要细节用 xin task show 编号，编号和模型不主动展示）】\n' + lines.join('\n') : '', seen };
 }
 // 网站该不该替电脑续「有活在干」的租约（任务在后台跑，等模型回话时电脑看起来像闲着）：有任务就每 20 分钟续一次，没了就撤
 const LEASE_F = () => path.join(BASE, 'tasks-lease.json');
@@ -2139,22 +2240,21 @@ const ops = {
     const userEv = { t: 'user', text, at: Date.now() };
     if (ctxLabel) userEv.ctx = ctxLabel;
     if (files.length) userEv.files = files.map(f => ({ name: f.name, path: f.path, size: f.size, image: f.image }));
-    // 模型：Codex（默认模式）每一轮由路由器挑（用户点名就用点名的），思考强度一律最高，网页传来的 model / effort 不管；
+    // 默认模式前台固定 DeepSeek；点名只记给后台，实际执行由控制器的结构化工具完成。
     // Harness（天启模式）按网页选的，续聊没带 model 时保留对话里的选择。
     let rt = null, cm = null;
     if (s.agent === 'codex') {
-      const named = namedModel(text);
-      rt = route({ kind: 'chat', want: named, named: !!named, images: files.some(f => f.image) });
+      rt = { model: runtime.FRONT_MODEL, why: 'chat', fallbacks: [] };
       cm = codexModel(rt.model);
     } else if (s.agent === 'harness') cm = harnessModel(a.model || s.model);
     if (cm) s.model = cm.id;
     const effort = s.agent === 'codex' ? AUTO_EFFORT : resolveEffort(s.agent, cm ? cm.id : null, a.effort);
-    // 点名换了模型：悄悄告诉它一声，免得它按设定说「不知道什么模型」
-    const hint = rt && rt.why === 'named' ? '\n（用户点名换了模型，已经换好了，照常回答就行，不用提这件事。）' : '';
+    // 用户点名只指定后台执行模型，前台始终不变
+    const hint = s.agent === 'codex' && namedModel(text) ? '\n（本轮已记录用户指定的执行模型，task new 会自动应用；前台不切换。只说好，我来。）' : '';
     // 默认模式：带上这个对话的后台任务情况（做完的结果前台还不知道的、在等确认的、在做的）
     const all = s.agent === 'codex' ? listTasks() : [];
     const tn = s.agent === 'codex' ? taskNotes(s.sid, all) : { text: '', seen: [] };
-    const run = launch(s, Object.assign({ text: forAgent(said, a.context) + filesPart(files, s.agent, !!(cm && cm.image)) + hint + tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
+    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontFiles: files, text: forAgent(said, a.context) + filesPart(files, s.agent, s.agent !== 'codex' && !!(cm && cm.image)) + hint + tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
       cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
     const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
     if (receipt) { mk(path.dirname(receipt)); writeJ(receipt, result); }
@@ -2286,7 +2386,7 @@ const ops = {
     // 这个对话派出去的后台任务还在排队、在做：先停掉再删（等确认的、做完的跟着一起删）
     const busyTasks = listTasks().filter(t => t.parent === a.sid && (occupiesTask(t) || t.status === 'queued'));
     if (busyTasks.length) return { error: 'busy', msg: '这个对话还有后台任务在做（任务 ' + busyTasks.map(t => t.no).join('、') + '），先停掉再删' };
-    for (const run of s.runs || []) for (const f of [runF(run), metaF(run), seenF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
+    for (const run of s.runs || []) for (const f of [runF(run), metaF(run), seenF(run), path.join(RUNS,run+'.front.json')]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
     fs.unlinkSync(sessF(a.sid));
     try { fs.unlinkSync(convSeenF(a.sid)); } catch { /* 没有 */ }
     // AI 自己那份会话记录也删掉；顺手把别的没有对应对话的旧记录清一清
@@ -2444,7 +2544,7 @@ const iops = {
     for (const q of pending) q.state = 'consumed'; writeJ(metaF(a.run), m);
     return ops.send({ sid: a.sid, text: pending.map(x => x.text).join('\n') });
   },
-  task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick,
+  front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick,
   task_approval(a) {
     const t = readJ(sessF(a.sid));
     if (!isTask(t) || lastRun(t) !== a.run || !occupiesTask(t)) return { error: 'stale' };
@@ -2461,7 +2561,7 @@ const iops = {
     let bytes = 0;
     for (const entry of listTasks().filter(x => x.parent === a.parent && !occupiesTask(x) && x.status !== 'queued')) {
       const t=readJ(sessF(entry.sid),entry);
-      for (const run of t.runs || []) for (const f of [runF(run), metaF(run), seenF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
+      for (const run of t.runs || []) for (const f of [runF(run), metaF(run), seenF(run), path.join(RUNS,run+'.front.json')]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
       try { fs.unlinkSync(sessF(t.sid)); } catch { /* 没有 */ }
       try { bytes += dropLogs('codex', t.agentSid); } catch { /* 删不掉就留着 */ }
     }
@@ -2532,6 +2632,7 @@ function taskCmd(argv) {
     if (o.model && !CODEX_MODELS.some(m => m.id === o.model)) { console.log('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).join('、') + '）'); return 2; }
     // 用户这一句点名的就是这个模型：当成用户点名（检查任务也照用）
     const said = (events(run).find(e => e.t === 'user') || {}).text || '';
+    if (meta.frontNamed) o.model = meta.frontNamed;
     const named = !!o.model && namedModel(said) === o.model;
     const r = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: o.kind, title: o.title, goal: o.goal, userRequest:said, model: o.model, named, dir: o.dir, files: o.files, after: o.after, minutes: o.minutes, plugins: o.plugins });
     if (r.error) { console.log(r.msg || r.error); return 1; }
@@ -2699,7 +2800,7 @@ function main() {
   if (op === 'session_patch' && locked && okId(args.sid, 's')) {
     const s = readJ(sessF(args.sid));
     if (!s) { process.stdout.write(JSON.stringify({ error: 'no_session', msg: '找不到这个对话' })); return; }
-    for (const k of ['agentSid', 'started', 'ctxWin', 'hUsage']) if (Object.prototype.hasOwnProperty.call(args.changes || {}, k)) s[k] = args.changes[k];
+    for (const k of ['agentSid', 'started', 'ctxWin', 'hUsage', 'frontUsage']) if (Object.prototype.hasOwnProperty.call(args.changes || {}, k)) s[k] = args.changes[k];
     s.updated = Date.now(); if(isTask(s))saveTask(s);else writeJ(sessF(args.sid), s); rememberAgentSession(s.agent, s.agentSid);
     process.stdout.write(JSON.stringify({ session: s })); return;
   }

@@ -386,8 +386,8 @@ test('身份：设定写明以它为准；每句后面悄悄附提醒（历史�
   const p = systemPrompt('');
   assert.ok(p.includes('这份设定优先') && p.includes('InstaBox 云电脑'));
   // 被问到是什么模型：自然地说不知道，不说「秘密」「不能说」
-  assert.ok(p.includes('自然地说不知道') && p.includes('这个我也不知道诶') && p.includes('别说「保密」「秘密」「不能说」'));
-  assert.ok(REMIND.includes('自然地说不知道') && REMIND.includes('别说是秘密'));
+  assert.ok(p.includes('如实简短回答') && !p.includes('像一个真的不清楚'));
+  assert.ok(REMIND.includes('不编造') && !REMIND.includes('真不知道'));
   const t = forAgent('你是谁呀？', '');
   assert.ok(t.startsWith('你是谁呀？') && t.endsWith(REMIND));
   const t2 = forAgent('这行什么意思', '【用户正在看】GPIO');
@@ -623,6 +623,7 @@ test('下载：云电脑在睡觉时回 503 + waking（网页等它醒了再下�
 function agentEnv(extraEnv = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-files-')), work = path.join(home, 'work');
   const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: work }, extraEnv);
+  env.NODE_OPTIONS = (env.NODE_OPTIONS || '') + ' --require=' + path.join(__dirname,'helpers/front-responses.cjs');
   const { execFileSync } = require('node:child_process');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
   const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
@@ -787,7 +788,7 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   // 假的 codex：把参数一行一个记下来，再回一句
   fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\ncase "$*" in *--ephemeral*) exit 0;; esac\nfor a in "$@"; do printf "%s\\n" "$a"; done > "' + log + '"\n' +
     'echo \'{"type":"thread.started","thread_id":"th-1"}\'\necho \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"看到了"}}\'\necho \'{"type":"turn.completed","usage":{}}\'\n', { mode: 0o755 });
-  const { work, op, xin } = agentEnv({ PATH: bin + ':' + process.env.PATH });
+  const { work, op, xin } = agentEnv({ PATH: bin + ':' + process.env.PATH, XIN_FRONT_TEST_LOG:log });
   const up = path.join(work, 'uploads', '20261106');
   fs.mkdirSync(up, { recursive: true });
   fs.writeFileSync(path.join(up, '003005-ab12-板子.jpg'), 'jpg');
@@ -810,30 +811,28 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   const user = p.events[0];
   assert.deepStrictEqual(user.files, [{ name: '板子.jpg', path: img, size: 3, image: true }, { name: '说明.pdf', path: pdf, size: 3, image: false }]);
   assert.strictEqual(user.text, '');
-  const args = fs.readFileSync(log, 'utf8').split('\n');
-  // 默认模式：前台聊天默认 DeepSeek V4.1 Flash（能看图，图片直接用 -i 给），网页传什么思考强度都不管，一律最高
-  assert.deepStrictEqual(args.slice(0, 4), ['exec', '-i', img, '--json']);
-  assert.ok(args.includes('model="deepseek-v4.1-flash"') && args.includes('model_reasoning_effort="max"'), args.join(' '));
-  const prompt = args.join('\n');
-  assert.ok(prompt.includes('看看我发的文件。') && prompt.includes('【用户发来的文件（已经在你电脑上）】') && prompt.includes(img + '（板子.jpg，图片，3 B）') && prompt.includes(pdf + '（说明.pdf，3 B）') && prompt.includes('图片已经直接给你看了'), prompt.slice(-400));
-  assert.strictEqual(p.events.find(e => e.t === 'done').model, 'deepseek-v4.1-flash');
+  const request = JSON.parse(fs.readFileSync(log,'utf8').trim().split('\n').pop());
+  assert.equal(request.model,'deepseek-v4.1-flash');
+  const prompt = JSON.stringify(request.input);
+  assert.ok(prompt.includes(img) && prompt.includes(pdf));
+  assert.equal(p.events.find(e=>e.t==='done').model,'deepseek-v4.1-flash');
   // 用户点名 GLM-5.3：这一句用它（网页传的 model / effort 不管），图片照样 -i，悄悄告诉它别提换模型；对话上记下最近用的模型
   const r2 = op('send', { sid: r.sid, model: 'kimi-k3.1-pro', effort: 'low', text: '用 GLM-5.3 看看这张呢', files: [{ path: img, name: '板子.jpg' }] });
   assert.ok(r2.run, JSON.stringify(r2));
-  assert.strictEqual(r2.model, 'glm-5.3');
+  assert.strictEqual(r2.model, 'deepseek-v4.1-flash');
   for (let i = 0; i < 60; i++) { p = op('poll', { run: r2.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
-  const args2 = fs.readFileSync(log, 'utf8').split('\n');
-  assert.deepStrictEqual(args2.slice(0, 4), ['exec', 'resume', '-i', img]);
-  assert.ok(args2.includes('model="glm-5.3"') && args2.includes('model_reasoning_effort="max"') && args2.join('\n').includes('图片已经直接给你看了') && args2.join('\n').includes('用户点名换了模型'));
-  assert.deepStrictEqual([p.events.find(e => e.t === 'done').model, p.events.find(e => e.t === 'done').why], ['glm-5.3', 'named']);
-  assert.strictEqual(op('sessions').sessions.find(x => x.sid === r.sid).model, 'glm-5.3');
+  const request2 = JSON.parse(fs.readFileSync(log,'utf8').trim().split('\n').pop());
+  assert.equal(request2.model,'deepseek-v4.1-flash');
+  assert.ok(JSON.stringify(request2).includes('本轮已记录用户指定'));
+  assert.deepEqual([p.events.find(e=>e.t==='done').model,p.events.find(e=>e.t==='done').why],['deepseek-v4.1-flash','chat']);
+  assert.equal(op('sessions').sessions.find(x=>x.sid===r.sid).model,'deepseek-v4.1-flash');
   // 点名看不了图的 GLM-5.3 Flash 却发了图：路由器不让，换成能看图的（前台默认那个）
   const r3 = op('send', { sid: r.sid, text: '用 GLM-5.3 Flash 看图', files: [{ path: img, name: '板子.jpg' }] });
   assert.strictEqual(r3.model, 'deepseek-v4.1-flash');
   for (let i = 0; i < 60; i++) { p = op('poll', { run: r3.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
   // 每一轮都记进运行记录（调候选顺序用）
   const stats = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
-  assert.deepStrictEqual(stats.map(x => [x.agent, x.model, x.kind, x.why, x.ok]), [['codex', 'deepseek-v4.1-flash', 'chat', 'chat', true], ['codex', 'glm-5.3', 'chat', 'named', true], ['codex', 'deepseek-v4.1-flash', 'chat', 'chat', true]]);
+  assert.deepStrictEqual(stats.map(x => [x.agent, x.model, x.kind, x.why, x.ok]), [['codex', 'deepseek-v4.1-flash', 'chat', 'chat', true], ['codex', 'deepseek-v4.1-flash', 'chat', 'chat', true], ['codex', 'deepseek-v4.1-flash', 'chat', 'chat', true]]);
 });
 
 test('路由器：按类别挑（不是排名）；点名只认能干的（看不了图的不给图）；小芯提议的也要校验；avoid 里的不用；候选全被排除时退回能用的', async () => {
@@ -841,7 +840,7 @@ test('路由器：按类别挑（不是排名）；点名只认能干的（看�
   assert.strictEqual(AUTO_EFFORT, 'max');
   // 每个类别的候选都是 Codex 里配好的模型
   for (const k of Object.keys(ROUTES)) for (const id of ROUTES[k]) assert.ok(CODEX_MODELS.some(m => m.id === id), k + ':' + id);
-  assert.deepStrictEqual(route({}), { model: 'deepseek-v4.1-flash', why: 'chat', kind: 'chat', fallbacks: ['glm-5.3', 'kimi-k3.1-pro', 'glm-5.3-flash'], note: '' });
+  assert.deepStrictEqual(route({}), { model: 'deepseek-v4.1-flash', why: 'chat', kind: 'chat', fallbacks: [], note: '' });
   assert.strictEqual(route({ kind: 'code' }).model, 'glm-5.3');
   assert.strictEqual(route({ kind: 'quick' }).model, 'glm-5.3-flash');
   assert.strictEqual(route({ kind: 'nope' }).kind, 'chat');
@@ -869,40 +868,14 @@ test('路由器：按类别挑（不是排名）；点名只认能干的（看�
     assert.strictEqual(namedModel(t), want, t);
 });
 
-test('换模型重来：模型还没开始干活就失败（限流、挂了）换候选里下一个，红字不留，done 记下用了谁、先试了谁；已经执行过命令的不重来', async () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-fallback-'));
-  const bin = path.join(tmp, 'bin'), mode = path.join(tmp, 'mode');
-  fs.mkdirSync(bin);
-  // 假 codex：DeepSeek 一律失败（mode=worked 时先执行一条命令再失败），别的模型正常回答
-  fs.writeFileSync(path.join(bin, 'codex'), [
-    '#!/bin/sh',
-    'case "$*" in *--ephemeral*) exit 0;; esac',
-    'echo \'{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53"}\'',
-    'echo \'{"type":"turn.started"}\'',
-    'case "$*" in *model=\\"deepseek-v4.1-flash\\"*)',
-    '  if [ "$(cat ' + mode + ' 2>/dev/null)" = worked ]; then echo \'{"type":"item.started","item":{"id":"c1","type":"command_execution","command":"make","status":"in_progress"}}\'; fi',
-    '  echo \'{"type":"turn.failed","error":{"message":"429 Too Many Requests"}}\'; exit 1;;',
-    'esac',
-    'echo \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"好了"}}\'',
-    'echo \'{"type":"turn.completed","usage":{}}\''
-  ].join('\n'), { mode: 0o755 });
-  const { op, xin } = agentEnv({ PATH: bin + ':' + process.env.PATH });
-  const wait = async run => { let p; for (let i = 0; i < 80; i++) { p = op('poll', { run, off: 0 }); if (p.done) return p; await new Promise(ok => setTimeout(ok, 150)); } return p; };
-  const r = op('send', { agent: 'codex', text: '你好' });
-  let p = await wait(r.run);
-  assert.deepStrictEqual(p.events.map(e => e.t), ['user', 'status', 'text', 'done'], JSON.stringify(p.events));
-  assert.strictEqual(p.events[1].text, 'DeepSeek V4.1 Flash 没接上，换 GLM-5.3 再试…');
-  const d = p.events[3];
-  assert.deepStrictEqual([d.ok, d.model, d.from, d.why], [true, 'glm-5.3', 'deepseek-v4.1-flash', 'chat']);
-  const st = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)).pop();
-  assert.deepStrictEqual([st.model, st.from, st.ok], ['glm-5.3', 'deepseek-v4.1-flash', true]);
-  // 已经开始执行命令了：不换模型重来（免得做两遍），红字照常出来
-  fs.writeFileSync(mode, 'worked');
-  const r2 = op('send', { sid: r.sid, text: '再来' });
-  p = await wait(r2.run);
-  assert.deepStrictEqual(p.events.map(e => e.t), ['user', 'tool', 'err', 'done'], JSON.stringify(p.events));
-  assert.strictEqual(p.events[2].text, '429 Too Many Requests');
-  assert.deepStrictEqual([p.events[3].ok, p.events[3].model, p.events[3].from], [false, 'deepseek-v4.1-flash', undefined]);
+test('前台固定模型：网关失败时不换模型或悄悄执行工作', async () => {
+  const { frontTurn } = await load('../site/xin/vm-runtime.mjs');
+  let hits=0;
+  await assert.rejects(frontTurn({baseURL:'http://fake/v1',key:'test',input:[],instructions:'test',
+    fetch:async (url,init)=>{hits++;assert.equal(JSON.parse(init.body).model,'deepseek-v4.1-flash');return new Response('',{status:429});},
+    command:()=>assert.fail('不能执行'),fallback:()=>assert.fail('连接失败不制造派活成功')
+  }),/429/);
+  assert.equal(hits,1);
 });
 
 test('每日任务用默认模式：Codex 按 daily 类别挑模型、思考强度最高；电脑里没有 codex 就报错，不偷偷换成 Harness', async () => {
@@ -974,13 +947,13 @@ async function until(fn, ms = 15000, what = '') {
 test('后台任务：前台派分身马上回话；分身在自己的目录、沙盒里按 code 类挑模型干完；结果先存再交回对话（卡片、history），前台下一句带上结果、只带一次；对话列表里没有任务', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task-'));
   const fc = fakeTaskCodex(tmp);
-  const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH });
+  const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH, XIN_FRONT_TEST_LOG:path.join(tmp,'front.jsonl') });
   const r = op('send', { agent: 'codex', text: '请 TEST_DISPATCH 一下' });
   const front = await until(() => { const p = op('poll', { run: r.run, off: 0 }); return p.done && p; }, 15000, '前台这一轮');
   const card = front.events.find(e => e.t === 'task');
   assert.ok(card && card.no === 1 && card.title === '编译 LED' && card.kind === 'code' && card.model === 'glm-5.3', JSON.stringify(front.events));
-  assert.deepStrictEqual(front.events.filter(e => e.t === 'text').map(e => e.text), ['交给分身去弄啦']);
-  assert.match(fs.readFileSync(path.join(fc.log, 'xin-out'), 'utf8'), /^派出去了：任务 1「编译 LED」（写代码，GLM-5.3，/);
+  assert.deepStrictEqual(front.events.filter(e => e.t === 'text').map(e => e.text), ['好，我这就去弄。']);
+  assert.ok(!fs.existsSync(path.join(fc.log,'xin-out')), '前台不执行 shell');
   const done = await until(() => { const d = op('tasks', { sid: r.sid }); return d.tasks[0] && d.tasks[0].status === 'done' && d; }, 15000, '任务做完');
   const t = done.tasks[0];
   assert.deepStrictEqual([t.no, t.parent, t.kind, t.model, t.why, t.result.ok, t.result.text], [1, r.sid, 'code', 'glm-5.3', 'code', true, '编好了：/data/workspace/blink/build/app.hex']);
@@ -1003,11 +976,11 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   // 前台下一句带上结果；做成了以后就不再带
   const r2 = op('send', { sid: r.sid, text: '怎么样了' });
   await until(() => op('poll', { run: r2.run, off: 0 }).done, 15000, '前台第二句');
-  const p2 = fc.args().pop();
+  const p2 = JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input.at(-1).content;
   assert.ok(p2.includes('【后台任务的最新情况（') && p2.includes('任务 1「编译 LED」做完了：编好了：/data/workspace/blink/build/app.hex'), p2.slice(-500));
   const r3 = op('send', { sid: r.sid, text: '好' });
   await until(() => op('poll', { run: r3.run, off: 0 }).done, 15000, '前台第三句');
-  const p3 = fc.args().pop();
+  const p3 = JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input.at(-1).content;
   assert.ok(!p3.includes('【后台任务的最新情况（') && !p3.includes('任务 1「编译 LED」做完了'), p3.slice(-300));
   // 运行记录里也有分身那一轮
   const stats = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
@@ -1020,7 +993,7 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
 test('后台任务：同时最多两个；同一个项目目录排队；补充要求等这一步做完接着做；停掉的不再做；分身要确认就停在「等你确认」，回复了接着做', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task2-'));
   const fc = fakeTaskCodex(tmp);
-  const { op, work, xin, home } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH });
+  const { op, work, xin, home } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH, XIN_FRONT_TEST_LOG:path.join(tmp,'front.jsonl') });
   const r = op('send', { agent: 'codex', text: '你好' });
   await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
   const { execFileSync } = require('node:child_process');
@@ -1058,7 +1031,7 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   assert.strictEqual(d.question, '要删掉旧的 build 目录吗');
   const r2 = op('send', { sid: r.sid, text: '嗯' });
   await until(() => op('poll', { run: r2.run, off: 0 }).done, 15000, '前台');
-  assert.ok(fc.args().pop().includes('任务 4「D」在等用户确认：要删掉旧的 build 目录吗'));
+  assert.ok(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').includes('任务 4「D」在等用户确认：要删掉旧的 build 目录吗'));
   assert.match(xinTask('tell', '4', '删吧'), /任务 4 接着做了/);
   await until(() => op('tasks', { sid: r.sid }).tasks.find(t => t.title === 'D').status === 'done', 15000, 'D 做完');
   assert.ok(fc.args().some(x => x.includes('用户回复：删吧') && x.includes('（你之前问的是：要删掉旧的 build 目录吗）')));
@@ -1401,7 +1374,10 @@ test('对话的用量：Codex 取记录里最后一条 token_count（累计、�
   let p = null;
   for (let i = 0; i < 60; i++) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
   const done = p.events.find(e => e.t === 'done');
-  assert.deepStrictEqual(done.usage, want1, JSON.stringify(p.events));
+  assert.equal(done.usage.total,13);
+  const legacy=JSON.parse(fs.readFileSync(path.join(xin,'sessions',r.sid+'.json'),'utf8'));
+  delete legacy.frontUsage; Object.assign(legacy,{agentSid:id1,started:true});
+  fs.writeFileSync(path.join(xin,'sessions',r.sid+'.json'),JSON.stringify(legacy));
   assert.deepStrictEqual(op('history', { sid: r.sid }).usage, want1);
 
   // Claude：同一条回答拆成几行（后面那行的 usage 才是最终的），子任务（isSidechain）算进消耗、不算上下文；上限用跑的时候记下的
@@ -1526,7 +1502,7 @@ test('做完提醒：网页没在看时做完就推送（解得开、带标题�
       'printf \'%s\\n\' \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"编好啦！\\n\\n```c\\nint main(void){}\\n```\\n烧录文件在 /data/workspace/blink/build/app.hex"}}\'',
       'echo \'{"type":"turn.completed","usage":{}}\''
     ].join('\n'), { mode: 0o755 });
-    const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: path.join(home, 'work'), XIN_PUSH_INSECURE: '1', PATH: bin + ':' + process.env.PATH });
+    const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: path.join(home, 'work'), NODE_OPTIONS:(process.env.NODE_OPTIONS||'')+' --require='+path.join(__dirname,'helpers/front-responses.cjs'), XIN_FRONT_TEST_DELAY:'1000', XIN_FRONT_TEST_TEXT:'编好啦！\n\n```c\nint main(void){}\n```\n烧录文件在 /data/workspace/blink/build/app.hex', XIN_PUSH_INSECURE: '1', PATH: bin + ':' + process.env.PATH });
     const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
     const br = fakeBrowser();
     assert.strictEqual(op('push_sub', { deviceId:'test-device-1', sub: { endpoint: `http://127.0.0.1:${port}/push/a`, keys: br.keys } }).ok, true);

@@ -420,3 +420,69 @@ export function appServer(cmd, configArgs, options) {
     return request('turn/steer', { threadId: thread, expectedTurnId: activeTurn, clientUserMessageId: messageId, input: [{ type: 'text', text }] });
   }, interrupt: () => activeTurn ? request('turn/interrupt', { threadId: thread, turnId: activeTurn }) : Promise.resolve() };
 }
+
+// Foreground is an inference-only client, NOT a CLI with a filtered shell.
+// Function arguments are data; no eval, shell, MCP, filesystem or browser tool exists here.
+export const FRONT_MODEL = 'deepseek-v4.1-flash';
+export function frontCommand(argv) {
+  if (!Array.isArray(argv) || argv.length > 128 || argv.some(x => typeof x !== 'string' || x.length > 60000)) return false;
+  if (argv[0] !== 'xin') return false;
+  return argv[1] === 'remember' && argv.length >= 3 || argv[1] === 'task' && ['new','list','show','tell','stop'].includes(argv[2]);
+}
+export async function frontTurn(o) {
+  const abort = new AbortController();
+  let expired=false;
+  const cancel=()=>abort.abort();
+  o.signal?.addEventListener('abort',cancel,{once:true});
+  if(o.signal?.aborted)cancel();
+  const timer = setTimeout(() => {expired=true;abort.abort();}, o.ms || 25000);
+  const input = o.input.slice();
+  let steps = 0;
+  try {
+    while (steps < (o.steps || 3)) {
+      const response = await (o.fetch || fetch)(o.baseURL.replace(/\/$/,'') + '/responses', {
+        method:'POST', signal:abort.signal,
+        headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},
+        body:JSON.stringify({model:FRONT_MODEL, stream:false, reasoning:{effort:'max'}, instructions:o.instructions, input,
+          max_output_tokens:1800, tools:[{type:'function',name:'xin',description:'只调度工作、查看真实进度、转达用户回复、记事。argv 是参数数组，不是 shell；新建或转达后本轮立即结束。',
+            parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true}]})
+      });
+      if (!response.ok) throw new Error('前台连接失败（HTTP '+response.status+'）');
+      const data = await response.json();
+      if (abort.signal.aborted) throw new Error('前台超时');
+      if (data.error || data.status === 'failed' || data.status === 'incomplete') throw new Error('前台未完成回复');
+      o.usage?.(data.usage);
+      const output = data.output || [], calls = output.filter(x => x.type === 'function_call');
+      if (!calls.length) {
+        const text = output.filter(x => x.type === 'message').flatMap(x => x.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('\n');
+        if (!text) throw new Error('前台没有返回文字');
+        return text;
+      }
+      input.push(...output);
+      for (const call of calls) {
+        if (++steps > (o.steps || 3)) return await o.fallback();
+        let args; try { args = JSON.parse(call.arguments); } catch {}
+        const result = call.name === 'xin' && frontCommand(args?.argv)
+          ? await o.command(args.argv, call.call_id)
+          : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop 和 xin remember。'};
+        if (result.terminal) return result.text;
+        input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)});
+      }
+    }
+    return await o.fallback();
+  } catch (e) {
+    // Connection errors do not manufacture success. Budget expiry alone delegates.
+    if (expired) return await o.fallback();
+    throw e;
+  } finally { clearTimeout(timer);o.signal?.removeEventListener('abort',cancel); }
+}
+
+// Delete only controller-owned ephemeral scratch, never the work tree or a user path.
+// Pending questions/publication retain scratch for resume. Arbitrary files in work are NOT secret-scanned.
+export function cleanupTaskTemporary(t) {
+  if (!['done','failed','stopped'].includes(t.status) || !t.workspace) return false;
+  const root = path.join(os.tmpdir(),'xin-task-'+t.sid), tmp=path.join(root,'tmp');
+  if (t.workspace.tmp !== tmp || fs.realpathSync(root) !== root) throw new Error('临时目录归属不符，未清理');
+  fs.rmSync(tmp,{recursive:true,force:true});mkdir(tmp);
+  return true;
+}
