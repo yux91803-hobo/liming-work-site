@@ -13,8 +13,12 @@ export class StateJournal {
     fs.mkdirSync(this.root,{recursive:true,mode:0o700});
     const file=path.join(this.root,'workflow.sqlite');
     if(fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw Error('状态库不能是软链接');
-    const d=this.connection=new DatabaseSync(file);fs.chmodSync(file,0o600);
-    d.exec(`PRAGMA busy_timeout=15000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+    const d=new DatabaseSync(file);fs.chmodSync(file,0o600);
+    d.exec('PRAGMA busy_timeout=15000');
+    // Concurrent first opens race on WAL setup and schema creation, which can report busy without
+    // waiting. Every statement below is idempotent: retry briefly, and cache the connection only once ready.
+    for(let attempt=0;;attempt++)try{
+    d.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS documents (name TEXT PRIMARY KEY, body TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, dirty INTEGER NOT NULL DEFAULT 1);
       CREATE TABLE IF NOT EXISTS appends (id TEXT PRIMARY KEY, name TEXT NOT NULL, body TEXT NOT NULL, projected INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, digest TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL);
@@ -25,7 +29,12 @@ export class StateJournal {
       CREATE INDEX IF NOT EXISTS pending_handoffs ON handoffs(state,nextAt,parent);`);
     if(!d.prepare('PRAGMA table_info(launches)').all().some(c=>c.name==='attempts'))d.exec('ALTER TABLE launches ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
     if(!d.prepare('PRAGMA table_info(launches)').all().some(c=>c.name==='dispatchedAt'))d.exec('ALTER TABLE launches ADD COLUMN dispatchedAt INTEGER NOT NULL DEFAULT 0');
-    return d;
+    break;
+    }catch(e){
+      if(![5,6].includes(e.errcode)&&!/duplicate column/.test(e.message)||attempt>=60){d.close();throw e;}
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10+attempt*5);
+    }
+    return this.connection=d;
   }
   name(file){const n=path.relative(this.root,path.resolve(file));if(!n||n.startsWith('..')||path.isAbsolute(n))throw Error('状态投影越界');return n;}
   staged(file){if(!this.active)return;try{return this.overlay.get(this.name(file));}catch{return;}}

@@ -1,4 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');
+const {stopOwned}=require('./helpers/stop-owned.cjs');
 const agent=path.join(__dirname,'../site/xin/vm-agent.mjs'),load=()=>import('../site/xin/vm-runtime.mjs');
 test('Antigravity 额度同时受五小时和周限额约束，持久记录真实恢复时间',async()=>{
  const r=await load(),now=Date.parse('2026-11-07T12:00:00Z'),five=now+3600000,week=now+7*86400000;
@@ -21,7 +22,7 @@ function fixture(t,mode='ok'){
  fs.writeFileSync(bin+'/codex','#!'+process.execPath+'\n'+`const fs=require('node:fs');fs.appendFileSync(${JSON.stringify(root+'/fallback.log')},'codex\\n');console.log(JSON.stringify({type:'turn.started'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'保留原进度后完成'}}));`,{mode:0o755});
  const env={...process.env,PATH:bin+':'+process.env.PATH,NODE_OPTIONS:'--require='+preload,XIN_HOME:control,XIN_WORK:root+'/work',CODEX_HOME:profile+'/.codex',XIN_AGY_HOME:profile,XIN_ANTIGRAVITY_BIN:agy,XIN_CODEX_TRANSPORT:'exec',XIN_TASK_SANDBOX:'0',XIN_CODEX_KEY:'must-not-reach-agy'};
  const call=(op,args={})=>{const r=spawnSync(process.execPath,[agent,'locked',op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
- t.after(async()=>{const m=await import('../site/xin/vm-agent.mjs');for(const n of fs.readdirSync('/proc').filter(n=>/^\d+$/.test(n))){try{if(fs.readFileSync('/proc/'+n+'/environ','utf8').split('\0').includes('XIN_HOME='+control))m.signalProcessGroup(Number(n),m.processIdentity(Number(n)),'SIGKILL');}catch{}}fs.rmSync(root,{recursive:true,force:true});});
+ t.after(()=>stopOwned(control,root));
  const wait=async sid=>{let task;for(let i=0;i<100;i++){task=call('history',{sid}).task;if(['done','failed','waiting'].includes(task.status))return task;await new Promise(r=>setTimeout(r,50));}assert.fail(JSON.stringify(task));};
  return {root,control,log,call,wait};
 }
