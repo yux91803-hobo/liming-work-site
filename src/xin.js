@@ -26,6 +26,8 @@ const SCREEN_W = 1280, SCREEN_H = 800, SCREEN_VIEW_TTL = 1800, SCREEN_CTL_TTL = 
 const FILE_MAX = 100 * 1024 * 1024;   // 下载最大 100 MB（和上传一样大：发给小芯的文件也能原样下回来）
 const UPLOAD_MAX = 100 * 1024 * 1024, UPLOAD_DIR = '/data/workspace/uploads';   // 给小芯发文件：一个最大 100 MB（Cloudflare Worker 收请求的上限），放在它工作目录的 uploads/日期/ 下面
 const IMG_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+// Same policy is exercised by the controller's browser check in vm-runtime.mjs.
+const WEB_PREVIEW_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 const HDRS = { 'Content-Type': 'application/json; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
 const enc = new TextEncoder();
@@ -114,12 +116,12 @@ async function agentScript(env, origin) {
   if (!r.ok) throw { status: 500, code: 'no_agent', msg: '网站里缺 vm-agent.mjs' };
   let text = await r.text();
   const dependencies = [];
-  if (text.includes("from './vm-runtime.mjs'")) {
-    const dep = await env.ASSETS.fetch(new Request(origin + '/xin/vm-runtime.mjs'));
-    if (!dep.ok) throw { status: 500, code: 'no_runtime', msg: '网站里缺 vm-runtime.mjs' };
+  for(const file of ['vm-runtime.mjs','vm-state.mjs','vm-handoff.mjs'])if (text.includes("from './"+file+"'")) {
+    const dep = await env.ASSETS.fetch(new Request(origin + '/xin/'+file));
+    if (!dep.ok) throw { status: 500, code: 'no_runtime', msg: '网站里缺 '+file };
     const body = await dep.text(), digest = hex(await crypto.subtle.digest('SHA-256', enc.encode(body))).slice(0, 12);
-    const name = 'vm-runtime-' + digest + '.mjs';
-    text = text.replace("from './vm-runtime.mjs'", "from './" + name + "'");
+    const name = file.replace('.mjs','-') + digest + '.mjs';
+    text = text.replace("from './"+file+"'", "from './" + name + "'");
     dependencies.push({ text: body, path: VM_DIR + '/' + name });
   }
   const h = hex(await crypto.subtle.digest('SHA-256', enc.encode(text))).slice(0, 12);
@@ -310,6 +312,22 @@ async function upload(req, env, ctx, url, now) {
 export async function handleXin(req, env, ctx, now = Date.now()) {
   const url = new URL(req.url);
   const p = url.pathname.replace(/^\/api\/xin\/?/, '');
+  if(p.startsWith('preview/')){
+    if(req.method!=='GET')return json({error:'method'},405);
+    if(!(await authed(req,env,now)))return json({error:'unauthorized',msg:'请先登录小芯聊天，再打开预览'},401);
+    const match=/^preview\/([a-f0-9]{32})\/(index\.html|preview\.png)$/.exec(p);
+    if(!match)return json({error:'bad_preview',msg:'预览地址不正确'},400);
+    const r=await call(env,url.origin,'preview_asset',{id:match[1],file:match[2]},ctx,now);
+    if(!r.ok)return json(r,503,r.retryAfter?{'Retry-After':String(r.retryAfter)}:undefined);
+    const d=r.data||{};if(d.error)return json({error:d.error,msg:d.msg},d.error==='not_found'?404:400);
+    const expected='/data/home/.xin/previews/'+match[1]+'/'+match[2];
+    if(d.real!==expected||!Number.isInteger(d.size)||d.size<1||d.size>2*1024*1024||!/^[a-f0-9]{64}$/.test(d.sha256||''))return json({error:'bad_preview',msg:'预览记录不完整'},502);
+    const m=await machine(env,now),asset=await fetch(API+'/v1/machines/'+m.id+'/files/content?path='+encodeURIComponent(d.real),{headers:{'X-API-Key':env.INSTABOX_API_KEY}});
+    if(!asset.ok)return json({error:'preview_unavailable',msg:'预览暂时未能读取，请重试'},502);
+    const bytes=await asset.arrayBuffer();if(bytes.byteLength!==d.size||hex(await crypto.subtle.digest('SHA-256',bytes))!==d.sha256)return json({error:'preview_changed',msg:'预览文件校验失败'},502);
+    const download=url.searchParams.get('download')==='1',html=match[2]==='index.html';
+    return new Response(bytes,{headers:{'Content-Type':download?'application/octet-stream':html?'text/html; charset=utf-8':'image/png','Content-Disposition':download?'attachment; filename="xiaoxin.html"':'inline','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer','Content-Security-Policy':WEB_PREVIEW_CSP}});
+  }
   if (p === 'task-event' && req.method === 'POST') {
     if (!enabled(env) || !supervisor(env)) return json({ error: 'disabled' }, 404);
     const token = (req.headers.get('authorization') || '').replace(/^Bearer /, '');

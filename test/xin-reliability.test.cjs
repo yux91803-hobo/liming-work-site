@@ -11,6 +11,7 @@ const ID = '11111111-2222-4333-8444-555555555555', SID = 'sreliable001';
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const PRELOAD = `
+require(${JSON.stringify(path.join(__dirname,'helpers/front-responses.cjs'))});
 const fs = require('node:fs'), path = require('node:path');
 require('node:os').homedir = () => process.env.XIN_TEST_PROFILE;
 require('node:module').syncBuiltinESMExports();
@@ -110,7 +111,17 @@ function fixture(t, extra = {}) {
   const barrier = ops => Object.assign(env, { XIN_TEST_BARRIER_TARGET: session,
     XIN_TEST_BARRIER_OPS: ops.join(','), XIN_TEST_BARRIER_DIR: path.join(dir, 'barrier') });
   t.after(async () => { await pause(50); fs.rmSync(dir, { recursive: true, force: true }); });
-  return { dir, env, session, op, asyncOp, wait, seed, barrier };
+  // CLI lifecycle coverage belongs to the daily/background executor, not the now tool-less front.
+  const cliSend = () => {
+    const run='rclitest001';
+    fs.mkdirSync(path.join(env.XIN_HOME,'runs'),{recursive:true});
+    fs.writeFileSync(session,JSON.stringify({sid:SID,agent:'codex',title:'CLI executor',runs:[run],created:1,updated:1}));
+    fs.writeFileSync(path.join(env.XIN_HOME,'runs',run+'.json'),JSON.stringify({run,sid:SID,agent:'codex',kind:'daily',text:'CLI test',started:Date.now(),model:'deepseek-v4.1-flash',fallbacks:[]}));
+    fs.writeFileSync(path.join(env.XIN_HOME,'runs',run+'.jsonl'),JSON.stringify({t:'user',text:'CLI test'})+'\n');
+    spawn(process.execPath,[AGENT,'run',run],{env,detached:true,stdio:'ignore'}).unref();
+    return {run,sid:SID};
+  };
+  return { dir, env, session, op, asyncOp, wait, seed, barrier, cliSend };
 }
 
 function oldLog(env, agent, id = ID) {
@@ -131,7 +142,7 @@ test('清理不碰独立 codex exec / Claude SDK 的旧记录，坏的归属登�
 });
 
 for (const agent of ['codex', 'claude']) test(agent + '：网页新会话登记归属，仍关联的保留，已失联的旧记录才清理', async t => {
-  const f = fixture(t), sent = f.op('send', { agent, text: 'test ownership' }); await f.wait(sent.run);
+  const f = fixture(t), sent = agent==='codex' ? f.cliSend() : f.op('send', { agent, text: 'test ownership' }); await f.wait(sent.run);
   const sessionFile = path.join(f.env.XIN_HOME, 'sessions', sent.sid + '.json');
   const s = JSON.parse(fs.readFileSync(sessionFile, 'utf8')), marker = path.join(f.env.XIN_HOME, 'agent-sessions', agent + '-' + s.agentSid + '.json');
   assert.deepEqual(JSON.parse(fs.readFileSync(marker, 'utf8')), { agent, id: s.agentSid });
@@ -193,7 +204,7 @@ test('锁持有进程被杀后由系统释放，后续发送不用人工删除�
 
 for (const agent of ['codex', 'claude']) test(agent + ' 思考进展持续超过初始等待时间，不会误重连', async t => {
   const f = fixture(t, { XIN_TEST_MODE: 'thinking', XIN_STALL_MS: '800' });
-  const r = f.op('send', { agent, text: 'think' }), events = await f.wait(r.run);
+  const r = agent==='codex' ? f.cliSend() : f.op('send', { agent, text: 'think' }), events = await f.wait(r.run);
   assert.equal(fs.readFileSync(path.join(f.dir, 'launches'), 'utf8').trim().split('\n').length, 1);
   assert.equal(events.some(e => e.t === 'status' && /重新连/.test(e.text)), false);
   assert.equal(events.find(e => e.t === 'done').ok, true);
@@ -201,7 +212,7 @@ for (const agent of ['codex', 'claude']) test(agent + ' 思考进展持续超过
 
 for (const agent of ['codex', 'claude']) test(agent + ' 已开始处理后长时间不输出事件，也不会被网页重放任务', async t => {
   const f = fixture(t, { XIN_TEST_MODE: 'silent-thinking', XIN_STALL_MS: '800' });
-  const r = f.op('send', { agent, text: 'silent reasoning' }), events = await f.wait(r.run);
+  const r = agent==='codex' ? f.cliSend() : f.op('send', { agent, text: 'silent reasoning' }), events = await f.wait(r.run);
   assert.equal(fs.readFileSync(path.join(f.dir, 'launches'), 'utf8').trim().split('\n').length, 1);
   assert.equal(events.some(e => e.t === 'status' && /重新连/.test(e.text)), false);
   assert.equal(events.find(e => e.t === 'done').ok, true);
@@ -209,7 +220,7 @@ for (const agent of ['codex', 'claude']) test(agent + ' 已开始处理后长时
 
 test('只有初始化、一直没有模型进展的连接仍自动重试一次', async t => {
   const f = fixture(t, { XIN_TEST_MODE: 'cold', XIN_STALL_MS: '800' });
-  const r = f.op('send', { agent: 'codex', text: 'cold' }), events = await f.wait(r.run);
+  const r = f.cliSend(), events = await f.wait(r.run);
   assert.equal(fs.readFileSync(path.join(f.dir, 'launches'), 'utf8').trim().split('\n').length, 2);
   assert.equal(events.filter(e => e.t === 'status' && /重新连/.test(e.text)).length, 1);
   assert.equal(events.find(e => e.t === 'done').ok, true);

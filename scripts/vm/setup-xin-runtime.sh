@@ -9,8 +9,13 @@ if [ ! -x /usr/bin/bwrap ]; then
   sudo -n apt-get update
   sudo -n apt-get install -y bubblewrap
 fi
+node --input-type=module -e 'import {DatabaseSync} from "node:sqlite"; const db=new DatabaseSync(":memory:"); db.close();'
 codex --version
 /usr/bin/bwrap --version
+if [ ! -x /usr/lib/chromium/chromium ]; then
+  sudo -n apt-get update
+  sudo -n apt-get install -y chromium
+fi
 python3 -c 'import os, signal; assert hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"), "需要 Python 3.9+ 和支持 pidfd 的 Linux，才能安全清理失去组长的任务进程"'
 # Verify the actual VM namespace policy; user namespaces alone do not support procfs on every image.
 sudo -n env -i PATH=/usr/bin:/bin /usr/bin/bwrap --ro-bind / / --unshare-pid --unshare-ipc --proc /proc \

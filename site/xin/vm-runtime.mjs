@@ -73,6 +73,7 @@ export function publicationPlan(t, controller) {
 
 export function stm32Task(t) {
   if(!t.workspace || !['code','review'].includes(t.tkind)) return false;
+  if(t.web){try{return !!t.workspace.stm32||detectStm32(t.workspace.work,Object.keys(inventory(t.workspace.work)));}catch{return true;}}
   if(t.workspace.stm32||/stm32|arm-none-eabi|cortex-m\d/i.test((t.goal||'')+' '+(t.userRequest||'')))return true;
   try{return detectStm32(t.workspace.work,Object.keys(inventory(t.workspace.work)));}catch{return true;} // Invalid trees must fail controlled validation, not bypass it.
 }
@@ -270,14 +271,26 @@ export function confinedMcp(t, base, server) {
 
 // The task receives a short-lived inference-only credential, never the reusable gateway key.
 // The controller pins the model and endpoint and caps request size, concurrency and total requests.
-export function requestBudget(file,limit=128) {
+export function requestBudget(file,limit=128,options={}) {
   limit=Math.min(512,Math.max(1,Math.floor(limit)));
-  return ()=>{
-    let used=0;try{used=JSON.parse(fs.readFileSync(file,'utf8')).used||0;}catch{}
-    if(used>=limit)return false;
+  const read=()=>{try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch{return {};}};
+  const save=value=>{
     mkdir(path.dirname(file));const tmp=file+'.'+process.pid+'.tmp';
-    fs.writeFileSync(tmp,JSON.stringify({used:used+1,limit,updated:Date.now()}),{mode:0o600});fs.renameSync(tmp,file);return true;
+    fs.writeFileSync(tmp,JSON.stringify({...value,limit,updated:Date.now()}),{mode:0o600});fs.renameSync(tmp,file);
   };
+  const take=()=>{const b=read();if((b.used||0)>=limit||options.tokens>0&&(b.total||0)>=options.tokens)return false;save({...b,used:(b.used||0)+1,tokenLimit:options.tokens||null});return true;};
+  take.recordUsage=u=>{const b=read();if(!u){save({...b,unknownUsage:(b.unknownUsage||0)+1});return;}const input=Math.max(0,Number(u.input_tokens)||0),output=Math.max(0,Number(u.output_tokens)||0),cached=Math.max(0,Number(u.input_tokens_details?.cached_tokens)||0);save({...b,input:(b.input||0)+input,output:(b.output||0)+output,cached:(b.cached||0)+cached,total:(b.total||0)+input+output});};
+  take.recordCumulativeUsage=(provider,id,u)=>{
+    const b=read(),key=provider+':'+id,previous=b.providerUsage?.[key]||{},next={};
+    u={...u,total_tokens:u?.total_tokens??((Number(u?.input_tokens)||0)+(Number(u?.output_tokens)||0))};
+    for(const k of ['input_tokens','output_tokens','cache_read_tokens','total_tokens']){next[k]=Math.max(0,Number(u?.[k])||0);if(next[k]<(previous[k]||0))throw Error('供应商累计用量倒退，未重复记账');}
+    const delta=Object.fromEntries(Object.keys(next).map(k=>[k,next[k]-(previous[k]||0)]));
+    // Antigravity's result usage covers the WHOLE resumed conversation. Store
+    // the watermark with the budget, so both later turns and restarts use deltas.
+    save({...b,input:(b.input||0)+delta.input_tokens,output:(b.output||0)+delta.output_tokens,cached:(b.cached||0)+delta.cache_read_tokens,total:(b.total||0)+delta.total_tokens,providerUsage:{...b.providerUsage,[key]:next}});
+    return delta;
+  };
+  return take;
 }
 export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudget}) {
   const token=crypto.randomBytes(32).toString('hex'), clients=new Set(); let total=0,active=0,closed=false;
@@ -296,7 +309,10 @@ export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudg
       total++;
       const response=await fetch(baseURL.replace(/\/$/,'')+'/responses',{method:'POST',headers:{authorization:'Bearer '+key,'content-type':'application/json',accept:req.headers.accept||'text/event-stream'},body:JSON.stringify(body),signal:abort.signal});
       res.writeHead(response.status,{'content-type':response.headers.get('content-type')||'application/json','cache-control':'no-store'});
-      if(response.body) for await(const chunk of response.body){if(res.destroyed)break;res.write(chunk);}
+      let buffer='',accounted=false;const decoder=new TextDecoder(),json=(response.headers.get('content-type')||'').includes('application/json');
+      const account=data=>{const u=data.response?.usage||data.usage;if(u&&!accounted){takeBudget?.recordUsage?.(u);accounted=true;}};
+      if(response.body) for await(const chunk of response.body){if(res.destroyed)break;res.write(chunk);buffer+=decoder.decode(chunk,{stream:true});if(!json){let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);if(line.startsWith('data:'))try{account(JSON.parse(line.slice(5).trim()));}catch{}}}if(buffer.length>2*1024*1024)buffer='';}
+      if(json)try{account(JSON.parse(buffer));}catch{}if(!accounted)takeBudget?.recordUsage?.(null);
       res.end();
     }catch {if(!res.headersSent) reject(502,'task inference connection failed');else res.end();}
     finally{active--;clients.delete(abort);}
@@ -395,8 +411,7 @@ export function appServer(cmd, configArgs, options) {
           else if (p.turn?.status === 'interrupted') emit({ type: 'turn.failed', error: { message: '已中断' } });
           else emit({ type: 'turn.completed', usage: {} });
           options.complete?.(p.turn?.status === 'completed' ? 0 : 1); child.stdin.end();
-          try { if (options.spawn.detached) process.kill(-child.pid,'SIGTERM'); else child.kill('SIGTERM'); } catch {}
-          if (options.spawn.detached) setTimeout(()=>{ try { process.kill(-child.pid,'SIGKILL'); } catch {} },1500).unref();
+          if(options.stop)options.stop(child);else child.kill('SIGTERM');
         }
       }
     }
@@ -419,4 +434,247 @@ export function appServer(cmd, configArgs, options) {
     if (!activeTurn) throw new Error('当前轮次已结束');
     return request('turn/steer', { threadId: thread, expectedTurnId: activeTurn, clientUserMessageId: messageId, input: [{ type: 'text', text }] });
   }, interrupt: () => activeTurn ? request('turn/interrupt', { threadId: thread, turnId: activeTurn }) : Promise.resolve() };
+}
+
+// Foreground is an inference-only client, NOT a CLI with a filtered shell.
+// Function arguments are data; no eval, shell, MCP, filesystem or browser tool exists here.
+export const FRONT_MODEL = 'deepseek-v4.1-flash';
+export function frontCommand(argv) {
+  if (!Array.isArray(argv) || argv.length > 128 || argv.some(x => typeof x !== 'string' || x.length > 60000)) return false;
+  if (argv[0] !== 'xin') return false;
+  return ['remember','recall'].includes(argv[1]) && argv.length >= 3 || argv[1] === 'task' && ['new','list','show','tell','stop'].includes(argv[2]);
+}
+export async function frontTurn(o) {
+  const abort = new AbortController();
+  let expired=false;
+  const cancel=()=>abort.abort();
+  o.signal?.addEventListener('abort',cancel,{once:true});
+  if(o.signal?.aborted)cancel();
+  const timer = setTimeout(() => {expired=true;abort.abort();}, o.ms || 25000);
+  const input = o.input.slice();
+  let steps = 0;
+  try {
+    while (steps < (o.steps || 3)) {
+      if(o.takeBudget&&!o.takeBudget())throw Error('本项工作的推理预算已用完，保留现有结果');
+      const response = await (o.fetch || fetch)(o.baseURL.replace(/\/$/,'') + '/responses', {
+        method:'POST', signal:abort.signal,
+        headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},
+        body:JSON.stringify({model:FRONT_MODEL, stream:false, reasoning:{effort:'max'}, instructions:o.instructions, input,
+          max_output_tokens:1800, tools:[{type:'function',name:'xin',description:'只调度工作、查看真实进度、转达用户回复、记事。argv 是参数数组，不是 shell；新建或转达后本轮立即结束。',
+            parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true},...(o.handoff?[{type:'function',name:'finish_event',description:'对内部完成事件作最终决定：向用户交付真实结果或保持安静。',strict:true,parameters:{type:'object',properties:{action:{type:'string',enum:['deliver','silent']},text:{type:'string'}},required:['action','text'],additionalProperties:false}}]:[])]})
+      });
+      if (!response.ok) throw new Error('前台连接失败（HTTP '+response.status+'）');
+      const data = await response.json();
+      if (abort.signal.aborted) throw new Error('前台超时');
+      if (data.error || data.status === 'failed' || data.status === 'incomplete') throw new Error('前台未完成回复');
+      o.usage?.(data.usage);
+      const output = data.output || [], calls = output.filter(x => x.type === 'function_call');
+      if (!calls.length) {
+        const text = output.filter(x => x.type === 'message').flatMap(x => x.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('\n');
+        if (!text) throw new Error('前台没有返回文字');
+        if(o.handoff){const r=await o.deliver({action:'deliver',text});if(r.error)throw Error(r.msg||r.error);return '';}
+        return text;
+      }
+      input.push(...output);
+      for (const call of calls) {
+        if (++steps > (o.steps || 3)) return await o.fallback();
+        let args; try { args = JSON.parse(call.arguments); } catch {}
+        const result = o.handoff&&call.name==='finish_event'&&['deliver','silent'].includes(args?.action)
+          ? await o.deliver(args)
+          : call.name === 'xin' && frontCommand(args?.argv)
+          ? await o.command(args.argv, call.call_id)
+          : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop 和 xin remember。'};
+        if (result.terminal) return result.text;
+        input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)});
+      }
+    }
+    return await o.fallback();
+  } catch (e) {
+    // Connection errors do not manufacture success. Budget expiry alone delegates.
+    if (expired) return await o.fallback();
+    throw e;
+  } finally { clearTimeout(timer);o.signal?.removeEventListener('abort',cancel); }
+}
+
+// Delete only controller-owned ephemeral scratch, never the work tree or a user path.
+// Pending questions/publication retain scratch for resume. Arbitrary files in work are NOT secret-scanned.
+export function cleanupTaskTemporary(t) {
+  if (!['done','failed','stopped'].includes(t.status) || !t.workspace) return false;
+  const root = path.join(os.tmpdir(),'xin-task-'+t.sid), tmp=path.join(root,'tmp');
+  if (t.workspace.tmp !== tmp || fs.realpathSync(root) !== root) throw new Error('临时目录归属不符，未清理');
+  fs.rmSync(tmp,{recursive:true,force:true});mkdir(tmp);
+  return true;
+}
+
+// Preview documents execute in an opaque origin. The owner session and API are never exposed to them.
+export const WEB_PREVIEW_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+export function webManifest(t) {
+  const root=t.workspace.work, names=inventory(root);
+  const config=JSON.parse(fs.readFileSync(path.join(root,'xin-web.json'),'utf8'));
+  if(typeof config.entry!=='string'||!/^[-a-zA-Z0-9_/ .]+\.html?$/.test(config.entry)||path.isAbsolute(config.entry)||config.entry.split('/').includes('..'))throw Error('xin-web.json 的 entry 必须是副本内的 HTML 文件');
+  if(!Object.hasOwn(names,config.entry))throw Error('预览入口不存在');
+  const file=path.resolve(root,config.entry);if(!under(file,root))throw Error('预览入口越界');
+  const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);let html;
+  try{const s=fs.fstatSync(fd);if(!s.isFile()||s.size>512*1024)throw Error('预览 HTML 必须是 512 KB 内的普通文件');html=fs.readFileSync(fd,'utf8');}finally{fs.closeSync(fd);}
+  if(!/<html\b/i.test(html)||!/<body\b/i.test(html))throw Error('请交付完整 HTML 文档');
+  // Self-contained output keeps the preview independent of temporary servers and third-party CDNs.
+  if(/<(?:script|iframe|frame|embed)\b[^>]*\bsrc\s*=|<link\b[^>]*\bhref\s*=/i.test(html))throw Error('预览须自包含：CSS/JS 内联，不引用外部资源或临时端口');
+  for(const a of html.matchAll(/<(?:img|source|video|audio)\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi))if(!/^(?:data:|blob:)/i.test(a[1]??a[2]??a[3]))throw Error('图片和音视频须嵌入 data URI，不能依赖临时服务');
+  const checks=config.checks;
+  if(!Array.isArray(checks)||!checks.length||checks.length>8)throw Error('xin-web.json 需要 1–8 个真实点击检查');
+  for(const c of checks){
+    if(!c||typeof c.selector!=='string'||!c.selector||c.selector.length>200||typeof c.expectSelector!=='string'||!c.expectSelector||c.expectSelector.length>200)throw Error('点击检查缺少 selector / expectSelector');
+    if(!['expectText','expectClass','expectAttribute'].some(k=>Object.hasOwn(c,k)))throw Error('点击检查必须说明点击后的可观察变化');
+    if(c.expectText!==undefined&&(typeof c.expectText!=='string'||!c.expectText||c.expectText.length>200))throw Error('expectText 无效');
+    if(c.expectClass!==undefined&&(typeof c.expectClass!=='string'||!/^[-_a-zA-Z0-9]{1,80}$/.test(c.expectClass)))throw Error('expectClass 无效');
+    if(c.expectAttribute!==undefined&&(!c.expectAttribute||! /^(?:data-[a-z0-9-]+|aria-[a-z-]+)$/.test(c.expectAttribute.name)||typeof c.expectAttribute.value!=='string'||c.expectAttribute.value.length>200))throw Error('expectAttribute 无效');
+  }
+  return {entry:config.entry,title:String(config.title||t.title||'我的作品').slice(0,80),checks,html,digest:crypto.createHash('sha256').update(html).digest('hex')};
+}
+const WEB_BROWSER_CHECK=String.raw`
+import fs from 'node:fs';import path from 'node:path';import http from 'node:http';import {spawn} from 'node:child_process';
+const [file,tmp,configText,csp]=process.argv.slice(1),config=JSON.parse(configText),html=fs.readFileSync(file);
+const profile=fs.mkdtempSync(path.join(tmp,'web-browser-'));let chrome,ws,server,requestId=0,chromeError='';const pending=new Map(),errors=[];
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+function rpc(method,params={}){return new Promise((resolve,reject)=>{const id=++requestId;const timer=setTimeout(()=>{pending.delete(id);reject(Error('浏览器检查超时：'+method));},5000);pending.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params}));});}
+async function evaluate(expression){const r=await rpc('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error('页面脚本执行失败');return r.result.value;}
+let result,code=1;
+try{
+ server=http.createServer((q,r)=>{if(q.url==='/favicon.ico'){r.writeHead(204);r.end();return;}if(q.url!=='/'){r.writeHead(404);r.end();return;}r.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp});r.end(html);});
+ await new Promise(ok=>server.listen(0,'127.0.0.1',ok));const origin='http://127.0.0.1:'+server.address().port;
+ chrome=spawn('/usr/lib/chromium/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--disable-component-update','--disable-extensions','--disable-sync','--no-first-run','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe']});chrome.stderr.setEncoding('utf8');chrome.stderr.on('data',s=>{chromeError=(chromeError+s).slice(-1000);});
+ const portFile=path.join(profile,'DevToolsActivePort');for(let i=0;i<160&&!fs.existsSync(portFile);i++){if(chrome.exitCode!==null)throw Error('Chromium 启动失败：'+chromeError);await pause(25);}if(!fs.existsSync(portFile))throw Error('Chromium 没有就绪：'+chromeError);
+ const port=fs.readFileSync(portFile,'utf8').split('\n')[0],pages=await (await fetch('http://127.0.0.1:'+port+'/json/list')).json();const page=pages.find(p=>p.type==='page');
+ ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((ok,no)=>{ws.addEventListener('open',ok,{once:true});ws.addEventListener('error',no,{once:true});});
+ ws.addEventListener('message',event=>{const m=JSON.parse(event.data);if(m.id){const p=pending.get(m.id);if(p){pending.delete(m.id);clearTimeout(p.timer);if(m.error)p.reject(Error(m.error.message));else p.resolve(m.result);}}else if(m.method==='Runtime.exceptionThrown')errors.push('页面 JavaScript 报错');else if(m.method==='Runtime.consoleAPICalled'&&m.params.type==='error')errors.push('页面报告错误');else if(m.method==='Log.entryAdded'&&m.params.entry.level==='error')errors.push(String(m.params.entry.text).slice(0,150));});
+ await rpc('Page.enable');await rpc('Runtime.enable');await rpc('Log.enable');
+ const viewports=[];
+ for(const width of [1280,390]){
+  errors.length=0;await rpc('Emulation.setDeviceMetricsOverride',{width,height:800,deviceScaleFactor:1,mobile:false});await rpc('Page.navigate',{url:origin+'/'});
+  let ready=false;for(let i=0;i<100;i++){if(await evaluate('document.readyState === "complete" && !!document.body')){ready=true;break;}await pause(30);}if(!ready)throw Error('预览未加载完成');await pause(250);
+  const visible=await evaluate('({title:document.title,ok:[...document.body.querySelectorAll("*")].some(e=>{const r=e.getBoundingClientRect();return r.width>10&&r.height>10}),overflow:document.documentElement.scrollWidth>innerWidth})');
+  if(!visible.ok||!visible.title||visible.overflow)throw Error(width+' 像素预览为空、缺标题或横向溢出');
+  for(const c of config.checks){
+   const inspect='(()=>{const c='+JSON.stringify(c)+',e=document.querySelector(c.expectSelector);return e?{text:c.expectText===undefined?null:e.textContent,cls:c.expectClass===undefined?null:e.classList.contains(c.expectClass),attr:c.expectAttribute===undefined?null:e.getAttribute(c.expectAttribute.name)}:null;})()';
+   const before=await evaluate(inspect);
+   const point=await evaluate('(()=>{const e=document.querySelector('+JSON.stringify(c.selector)+');if(!e)return null;e.scrollIntoView({block:"center"});const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.x+r.width/2,y:r.y+r.height/2}:null;})()');if(!point)throw Error('找不到可点击的元素：'+c.selector);
+   await rpc('Input.dispatchMouseEvent',{type:'mouseMoved',...point});await rpc('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});await rpc('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});await pause(120);
+   const actual=await evaluate('(()=>{const c='+JSON.stringify(c)+',e=document.querySelector(c.expectSelector);return !!e&&(c.expectText===undefined||e.textContent.includes(c.expectText))&&(c.expectClass===undefined||e.classList.contains(c.expectClass))&&(c.expectAttribute===undefined||e.getAttribute(c.expectAttribute.name)===c.expectAttribute.value);})()');if(!actual)throw Error('点击后没有得到预期变化：'+c.selector);
+   if(JSON.stringify(before)===JSON.stringify(await evaluate(inspect)))throw Error('点击没有产生可观察变化：'+c.selector);
+  }
+  if(errors.length)throw Error(errors.join('；'));
+  viewports.push({width,checks:config.checks.length});
+ }
+ const shot=await rpc('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(tmp,'xin-web-preview.png'),Buffer.from(shot.data,'base64'));
+ result={ok:true,viewports};code=0;
+}catch(e){result={ok:false,error:String(e.message).slice(0,1000)};}finally{for(const p of pending.values())clearTimeout(p.timer);ws?.close();chrome?.kill('SIGKILL');server?.closeAllConnections();server?.close();}
+process.stdout.write(JSON.stringify(result)+'\n',()=>process.exit(code));
+`;
+export function checkWebWorkspace(t) {
+  let manifest;try{manifest=webManifest(t);}catch(e){return {ok:false,error:e.message};}
+  const args=['--signal=KILL','22',process.execPath,'--input-type=module','-e',WEB_BROWSER_CHECK,path.join(t.workspace.work,manifest.entry),t.workspace.tmp,JSON.stringify({checks:manifest.checks}),WEB_PREVIEW_CSP];
+  const c=containerCommand(t,'/usr/bin/timeout',args),r=spawnSync(c.command,c.args,{cwd:t.workspace.work,env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:28000,maxBuffer:2*1024*1024});
+  let result;try{result=JSON.parse(r.stdout.trim());}catch{return {ok:false,error:'浏览器预览检查未完成：'+String(r.stderr||r.error?.message||'').slice(-700)};}
+  return {...result,ok:r.status===0&&!!result.ok,entry:manifest.entry,title:manifest.title,digest:manifest.digest,screenshot:path.join(t.workspace.tmp,'xin-web-preview.png')};
+}
+export function publishWebPreview(t,controller,check) {
+  const m=webManifest(t);if(!check?.ok||m.digest!==check.digest)throw Error('网页需要在最终修改后通过浏览器检查');
+  const id=crypto.randomBytes(16).toString('hex'),root=path.join(controller,'previews'),staging=path.join(root,'.'+id),dest=path.join(root,id);mkdir(root);fs.mkdirSync(staging,{mode:0o700});
+  try{
+    fs.writeFileSync(path.join(staging,'index.html'),m.html,{mode:0o400,flag:'wx'});
+    const shot=fs.openSync(check.screenshot,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);let screenshot;try{screenshot=fs.readFileSync(shot);}finally{fs.closeSync(shot);}
+    if(!screenshot.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw Error('缺少真实预览截图');fs.writeFileSync(path.join(staging,'preview.png'),screenshot,{mode:0o400,flag:'wx'});
+    const meta={id,sid:t.sid,parent:t.parent,run:lastRunId(t),title:m.title,at:Date.now(),files:{'index.html':{mime:'text/html; charset=utf-8',size:Buffer.byteLength(m.html),sha256:m.digest},'preview.png':{mime:'image/png',size:screenshot.length,sha256:crypto.createHash('sha256').update(screenshot).digest('hex')}},viewports:check.viewports};
+    fs.writeFileSync(path.join(staging,'manifest.json'),JSON.stringify(meta),{mode:0o400,flag:'wx'});fs.renameSync(staging,dest);
+    return {id,title:m.title,url:'/xin/preview.html?id='+id,ready:true,run:meta.run,at:meta.at,viewports:check.viewports,checks:m.checks};
+  }catch(e){fs.rmSync(staging,{recursive:true,force:true});throw e;}
+}
+const lastRunId=t=>(t.runs||[]).at(-1)||null;
+export function previewAsset(controller,a) {
+  if(!/^[a-f0-9]{32}$/.test(a.id||'')||!['index.html','preview.png'].includes(a.file||'index.html'))return {error:'bad_preview',msg:'预览地址不正确'};
+  const dir=path.join(controller,'previews',a.id),file=a.file||'index.html';
+  try{const m=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8')),entry=m.files[file],real=path.join(dir,file);if(!entry||m.id!==a.id||fs.lstatSync(dir).isSymbolicLink()||!fs.lstatSync(real).isFile())throw Error('bad file');return {real,...entry,title:m.title,parent:m.parent};}catch{return {error:'not_found',msg:'找不到这个预览'};}
+}
+
+// Antigravity keeps its login in the controller profile. Its model receives no
+// native file/terminal/MCP permission; requested commands run through bwrap here.
+export const AGY_MODEL='gemini-3.8-flash-high';
+export function antigravityBinary(home=process.env.XIN_AGY_HOME||os.homedir()) {
+  return [process.env.XIN_ANTIGRAVITY_BIN,path.join(home,'.local/bin/agy'),path.join(home,'.gemini/bin/agy')].find(p=>p&&fs.existsSync(p))||null;
+}
+export function antigravityQuota(result,now=Date.now()) {
+  const groups=result?.command?.data?.groups;
+  if(!Array.isArray(groups))throw Error('Antigravity 没有返回可核对的额度信息');
+  const buckets=groups.filter(g=>(g.buckets||[]).some(b=>/^gemini-/.test(b.id||''))).flatMap(g=>g.buckets).map(b=>({id:b.id,remaining:Number(b.remaining_fraction),resetAt:Date.parse(b.reset_time)}));
+  if(!buckets.length||buckets.some(b=>!Number.isFinite(b.remaining)||b.remaining<0||b.remaining>1||!Number.isFinite(b.resetAt)))throw Error('Antigravity 额度字段不完整');
+  const exhausted=buckets.filter(b=>b.remaining<=0);
+  return {model:AGY_MODEL,checkedAt:now,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};
+}
+export const AGY_SETTINGS={toolPermission:'request-review',allowNonWorkspaceAccess:false,useG1Credits:false,permissions:{deny:['command(*)','read_file(*)','write_file(*)','execute_url(*)','mcp(*)'],allow:['read_url(*)']}};
+export function mergeAntigravityQuota(old,next,now=Date.now()) {
+  if(!old?.blocked||old.retryAt<=now)return next;
+  // A slower successful query must not erase a concurrent quota exhaustion.
+  const buckets=next.buckets.map(b=>{const prior=old.buckets?.find(p=>p.id===b.id&&p.remaining<=0&&p.resetAt>now);return prior?{...b,remaining:0,resetAt:Math.max(b.resetAt,prior.resetAt)}:b;});
+  const exhausted=buckets.filter(b=>b.remaining<=0);return {...next,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};
+}
+const AGY_SCHEMA={type:'object',properties:{action:{type:'string',enum:['shell','final','ask','remember']},command:{type:'string'},text:{type:'string'}},required:['action','command','text'],additionalProperties:false};
+function agyProcess(binary,args,cwd,onEvent=()=>{}) {
+  return new Promise((resolve,reject)=>{
+    const child=spawn(binary,args,{cwd,stdio:['ignore','pipe','pipe'],env:{HOME:process.env.XIN_AGY_HOME||os.homedir(),PATH:process.env.PATH||'/usr/local/bin:/usr/bin:/bin',LANG:'C.UTF-8'}});
+    let buf='',stderr='',result=null,model=null,bytes=0;
+    const timer=setTimeout(()=>child.kill('SIGKILL'),260000);timer.unref();
+    child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
+    child.stdout.on('data',s=>{bytes+=Buffer.byteLength(s);if(bytes>4*1024*1024){child.kill('SIGKILL');return;}buf+=s;let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);try{const o=JSON.parse(line);if(o.event==='init')model=o.init?.model;if(o.event==='result')result=o.result;onEvent(o);}catch{}}});
+    child.stderr.on('data',s=>{stderr=(stderr+s).slice(-4000);});
+    child.on('error',e=>{clearTimeout(timer);reject(e);});
+    child.on('close',code=>{clearTimeout(timer);resolve({code,result,model,stderr});});
+  });
+}
+export async function readAntigravityQuota(binary,cwd) {
+  const r=await agyProcess(binary,['-p','/usage','--output-format','stream-json','--print-timeout','25s'],cwd);
+  if(r.code!==0)throw Error('Antigravity 额度查询失败');return antigravityQuota(r.result);
+}
+export async function antigravityWork(t,options) {
+  const binary=antigravityBinary();if(!binary)throw Error('Antigravity 命令不可用');
+  if(!t.workspace)throw Error('Antigravity 只接收隔离的项目副本');
+  const report=o=>process.stdout.write(JSON.stringify(o)+'\n');
+  if(options.quotaState?.blocked&&options.quotaState.retryAt>Date.now()){report({type:'error',message:'Antigravity 额度仍在倒计时，按已记录的恢复时间等待。'});return 75;}
+  const clientDir=options.clientDir;if(!clientDir||under(clientDir,t.workspace.work))throw Error('Antigravity 客户端目录必须由控制器单独持有');
+  let quota;try{quota=await readAntigravityQuota(binary,clientDir);options.quota(quota);}catch{quota=null;}
+  if(quota?.blocked){report({type:'error',message:'Antigravity 额度暂不可用，已记录服务端恢复时间。'});return 75;}
+  if(!quota)throw Error('暂时无法核对 Antigravity 额度，保留任务交给其他执行入口');
+  const home=process.env.XIN_AGY_HOME||os.homedir(),agents=path.join(home,'.gemini/config/agents');mkdir(agents);
+  const agent=path.join(agents,'xin-confined-worker.md'),body='---\nname: xin-confined-worker\ndescription: Xiaoxin controlled background worker.\nmainAgent: true\nsubagent: false\ntools:\n  - search_web\n  - read_url_content\n  - finish\n---\nReturn structured actions to the external controller. File and shell operations are unavailable as native tools. Never delegate or schedule.\n';
+  if(!fs.existsSync(agent)||fs.readFileSync(agent,'utf8')!==body){const temp=agent+'.'+process.pid;fs.writeFileSync(temp,body,{mode:0o600,flag:'wx'});fs.renameSync(temp,agent);}
+  let conversation=t.antigravityConversation||null,prompt=options.instructions+'\n\n'+options.text+'\n\n每次返回 JSON：action=shell 时把要执行的完整 bash 命令放 command；控制器在隔离副本执行并把输出交回。写文件也用 shell 动作，不调用原生文件或终端工具。完成用 final，缺必要信息用 ask，长期记忆用 remember；text 用中文。不得再派代理。控制器已准备好 bash、Python、Node 和副本，命令默认目录是 '+t.workspace.work+'，无需探测环境或帮助命令。新网页优先直接用一次 shell 写 index.html 和 xin-web.json，不开服务、不自行找预览工具。前台转述中额外添加的功能若与自包含网页规则冲突，以用户原话和控制器规则为准；不要使用 localStorage。';
+  report({type:'turn.started'});
+  for(let turn=0;turn<48;turn++){
+    if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
+    const args=['-p',prompt,'--agent','xin-confined-worker','--model',AGY_MODEL,'--effort','high','--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
+    const r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(s?.state==='DONE'&&['search_web','read_url_content'].includes(name))report({type:'item.completed',item:{id:'web-'+turn+'-'+s.step_index,type:'web_search',query:s.tool_info?.parameters?.query||s.tool_info?.parameters?.url||name}});});
+    const result=r.result;if(r.model!==AGY_MODEL)throw Error('Antigravity 实际模型与固定模型不一致');
+    if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);report({type:'xin.usage',usage:delta});}
+    else options.budget.recordUsage?.(null);
+    if(r.code!==0||result?.status!=='SUCCESS'){
+      try{quota=await readAntigravityQuota(binary,clientDir);options.quota(quota);}catch{}
+      if(quota?.blocked||/quota|rate.limit|resource.exhausted/i.test(JSON.stringify(result||{})+' '+r.stderr)){report({type:'error',message:'Antigravity 额度已用尽，已保留当前文件和额度记录。'});return 75;}
+      throw Error('Antigravity 本轮未完成，已保留进度');
+    }
+    conversation=result.conversation_id||conversation;if(conversation)options.conversation(conversation);
+    let a=result.structured_output;try{a=a||JSON.parse(result.response);}catch{throw Error('Antigravity 未返回可执行的结构化动作');}
+    if(!a||!AGY_SCHEMA.properties.action.enum.includes(a.action)||typeof a.command!=='string'||typeof a.text!=='string')throw Error('Antigravity 动作字段无效');
+    if(a.action==='final'||a.action==='ask'){
+      if(a.action==='ask')options.ask(a.text);
+      report({type:'item.completed',item:{type:'agent_message',text:a.text}});
+      try{options.quota(await readAntigravityQuota(binary,clientDir));}catch{}return 0;
+    }
+    if(a.action==='remember'){options.remember(a.text);prompt='已记录。请继续当前工作。';continue;}
+    if(!a.command.trim()||Buffer.byteLength(a.command)>256*1024)throw Error('Antigravity 命令为空或过长');
+    const id='agy-'+turn;report({type:'item.started',item:{id,type:'command_execution',command:a.command}});
+    const c=containerCommand(t,'/bin/bash',['-lc',a.command]);
+    const resultCommand=await new Promise(resolve=>{const ch=spawn(c.command,c.args,{cwd:t.workspace.work,stdio:['ignore','pipe','pipe'],env:{PATH:'/usr/bin:/bin'}});let out='';const collect=s=>{out=(out+s).slice(-64000);};ch.stdout.on('data',collect);ch.stderr.on('data',collect);const timer=setTimeout(()=>{ch.kill('SIGKILL');},60000);timer.unref();ch.on('error',e=>{clearTimeout(timer);resolve({code:127,out:e.message});});ch.on('close',code=>{clearTimeout(timer);resolve({code:code??1,out});});});
+    report({type:'item.completed',item:{id,type:'command_execution',command:a.command,exit_code:resultCommand.code,aggregated_output:resultCommand.out}});
+    prompt='控制器执行结果（仅副本；不要重复已成功的操作）：\n'+JSON.stringify(resultCommand)+'\n请继续下一步，完成则返回 final。';
+  }
+  throw Error('Antigravity 达到本轮动作上限，进度已保留');
 }
