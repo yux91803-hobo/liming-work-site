@@ -1155,8 +1155,16 @@ function runner(run) {
     } catch { /* pending input stays durable and is retried */ }
     finally { steering = false; }
   }, 300);
-  const term = () => { restarting = false; killTree(child); };
-  process.on('SIGTERM', term); process.on('SIGINT', term);
+  const term = external => {
+    restarting = false;
+    // Host shutdown sends SIGTERM too. Only an explicit stop owns the stopped flag;
+    // otherwise leave this run unfinished so the supervisor recovers its checkpoint.
+    if (external && meta.task && !state.timeout && !readJ(metaF(run), meta)?.stopped) {
+      finished = true; killTree(child); process.exit(143);
+    }
+    killTree(child);
+  };
+  process.on('SIGTERM', () => term(true)); process.on('SIGINT', () => term(false));
 }
 
 function agentProgress(agent, o) {

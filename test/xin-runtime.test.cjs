@@ -289,3 +289,23 @@ test('实际启动分身时把用户原话与前台转述分别交给模型',asy
   const args=JSON.parse(fs.readFileSync(log,'utf8')),prompt=args.at(-1);
   assert.match(prompt,/前台转述：PB5 默认映射/);assert.match(prompt,/用户原话：TIM3_CH2 到 PB5/);assert.match(prompt,/独立核对前台转述是否准确/);
 });
+
+test('系统 SIGTERM 保留后台断点并续接，用户停止不被自动重启', async t => {
+  const f=fixture(t);fs.unlinkSync(path.join(f.control,'sessions',f.task.sid+'.json'));
+  const bin=path.join(f.root,'bin');fs.mkdirSync(bin);f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_CODEX_TRANSPORT='exec';
+  fs.writeFileSync(path.join(bin,'codex'),'#!/bin/sh\nprintf \'%s\\n\' \'{"type":"thread.started","thread_id":"graceful-fixture"}\'\nif [ ! -f .checkpoint ]; then printf ONCE > .checkpoint; sleep 30; fi\nprintf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message","text":"recovered"}}\' \'{"type":"turn.completed"}\'\n',{mode:0o755});
+  const wait=async fn=>{for(let i=0;i<100;i++){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,100));}throw Error('fixture did not reach checkpoint');};
+  const start=async dir=>{
+    fs.mkdirSync(dir,{recursive:true});const a=f.call('task_new',{kind:'research',dir,goal:'fixture',title:'graceful fixture'}).task;
+    const s=await wait(()=>{const v=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',a.sid+'.json')));return v.workspace&&fs.existsSync(path.join(v.workspace.work,'.checkpoint'))?v:null;});
+    return {sid:s.sid,meta:JSON.parse(fs.readFileSync(path.join(f.control,'runs',s.runs.at(-1)+'.json')))};
+  };
+  const a=await start(path.join(f.root,'resume'));
+  process.kill(a.meta.pid,'SIGTERM');
+  const done=await wait(()=>{f.call('tasks',{});const s=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',a.sid+'.json')));return s.status==='done'?s:null;});
+  assert.equal(done.runs.length,2);assert.equal(done.resumes,1);assert.equal(fs.readFileSync(path.join(done.dir,'.checkpoint'),'utf8'),'ONCE');
+  const b=await start(path.join(f.root,'stop'));
+  f.call('task_stop',{sid:b.sid});
+  const stopped=await wait(()=>{f.call('tasks',{});const s=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',b.sid+'.json')));return s.status==='stopped'?s:null;});
+  assert.equal(stopped.runs.length,1);assert.equal(stopped.resumes,0);
+});
