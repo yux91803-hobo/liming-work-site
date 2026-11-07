@@ -1229,6 +1229,9 @@ async def main():
           return [row.querySelector('.frow-h b').textContent, r.top >= b.top && r.bottom <= b.bottom, getComputedStyle(row.querySelector('.frow-h b'), '::after').content, row.querySelector('.fv.on b').textContent]; })()""")
         check('点右边的位：左边滚到那个字段并选中，名字变色、不写「已改」，当前值标在列表里', st[0] == 'BS11' and st[1] and st[2] in ('none', 'normal', '') and st[3] == '1', st)
         # 宽屏：右边一栏自己能往下滑（代码、作用看得全），左边不跟着动
+        # 固定为需要滚动的桌面高度，避免不同 Chromium / 字体下内容恰好放得下。
+        await pg.set_viewport_size({'width': 1280, 'height': 560})
+        await pg.wait_for_function("document.querySelector('.sh-r').scrollHeight > document.querySelector('.sh-r').clientHeight")
         rs = await pg.evaluate("""(() => { const R = document.querySelector('.sh-r'), L = document.querySelector('.sh-l'); const l0 = L.scrollTop;
           R.scrollTop = 9999; return [R.scrollHeight > R.clientHeight, R.scrollTop > 0, L.scrollTop === l0, getComputedStyle(R).overflowY]; })()""")
         check('电脑 / 平板：寄存器面板右边一栏能单独往下滑', rs[1] and rs[2] and rs[3] == 'auto', rs)

@@ -465,7 +465,20 @@ function okId(s, p) { return typeof s === 'string' && new RegExp('^' + p + '[0-9
 function readJ(f, d) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } }
 function writeJ(f, o) { const t = f + '.' + process.pid + '.tmp'; fs.writeFileSync(t, JSON.stringify(o)); fs.renameSync(t, f); }
 function cut(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '\n…（省略 ' + (s.length - n) + ' 字）' : s; }
-function alive(pid) { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
+export function processIdentity(pid) {
+  try {
+    const stat = fs.readFileSync('/proc/' + Number(pid) + '/stat', 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return { start: fields[19], state: fields[0], boot: readText('/proc/sys/kernel/random/boot_id').trim() };
+  } catch { return null; }
+}
+function alive(pid, expected) {
+  if (!pid) return false;
+  const current = processIdentity(pid);
+  if (current && (current.state === 'Z' || current.state === 'X')) return false;
+  if (expected && current && (expected.start !== current.start || expected.boot !== current.boot)) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
 const sessF = sid => path.join(SESS, sid + '.json');
 const runF = run => path.join(RUNS, run + '.jsonl');
 const metaF = run => path.join(RUNS, run + '.json');
@@ -888,7 +901,7 @@ const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
 function runner(run) {
   const meta = readJ(metaF(run));
   if (!meta) process.exit(1);
-  meta.pid = process.pid; writeJ(metaF(run), meta);
+  meta.pid = process.pid; meta.identity = processIdentity(process.pid); writeJ(metaF(run), meta);
   const sess = readJ(sessF(meta.sid));
   mk(WORK); installXin();
   const cwd = meta.cwd || WORK; mk(cwd);
@@ -1328,7 +1341,7 @@ function launch(s, m, userEv) {
   // 前台在自己的命令里派任务时，别把它那边的 Codex 内部变量、这一轮的编号带给后台的 runner
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && !/^CODEX_(?!HOME$)/.test(k)));
   const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir(), env });
-  const mm = readJ(metaF(run)); if (mm && !mm.pid) { mm.pid = child.pid; writeJ(metaF(run), mm); }
+  const mm = readJ(metaF(run)); if (mm && !mm.pid) { mm.pid = child.pid; mm.identity = processIdentity(child.pid); writeJ(metaF(run), mm); }
   child.unref();
   return run;
 }
@@ -1339,7 +1352,7 @@ function runDone(run) {
   // done 总是最后一条：只看文件尾巴（后台任务的记录可能很长）
   if (readTail(runF(run), 8192).includes('"t":"done"')) return true;
   // 后台进程没了却没写 done（云电脑重启、被杀）：补一条，记下是断掉的（后台任务据此决定要不要接着做）
-  if (m && Date.now() - m.started > (Number(process.env.XIN_DEAD_MS) || 15000) && !alive(m.pid)) {
+  if (m && Date.now() - m.started > (Number(process.env.XIN_DEAD_MS) || 15000) && !alive(m.pid, m.identity)) {
     emit(run, { t: 'err', text: '这一轮中途断了（云电脑重启或进程被杀）' });
     emit(run, { t: 'done', ok: false, code: -1, ms: Date.now() - m.started });
     m.died = true; m.ended = Date.now(); writeJ(metaF(run), m);
