@@ -12,9 +12,9 @@ T=${STM32_TEMPLATE:-/data/workspace/stm32-template}
 ST=https://raw.githubusercontent.com/STMicroelectronics/cmsis_device_f1/v4.3.5
 ARM=https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include
 
-if ! command -v arm-none-eabi-gcc >/dev/null 2>&1 || [ ! -d /usr/lib/arm-none-eabi/newlib ]; then
+if ! command -v arm-none-eabi-gcc >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1 || ! command -v cmake >/dev/null 2>&1 || [ ! -d /usr/lib/arm-none-eabi/newlib ]; then
   sudo apt-get update -q
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc-arm-none-eabi libnewlib-arm-none-eabi binutils-arm-none-eabi make
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc-arm-none-eabi libnewlib-arm-none-eabi binutils-arm-none-eabi make cmake
 fi
 
 mkdir -p "$T/inc"

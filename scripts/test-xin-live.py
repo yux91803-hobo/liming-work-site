@@ -18,6 +18,7 @@ async def main():
     marker = 'xin-smoke-' + uuid.uuid4().hex[:24]
     directory = '/data/workspace/.xin-live-smoke/' + marker
     sid = None
+    alternate_sid = None
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
         context = await browser.new_context(viewport={'width': 1280, 'height': 860})
@@ -59,7 +60,7 @@ async def main():
             await page.locator('.xc-row textarea').fill('只回复 ' + reply_marker + '，不要执行命令，也不要等待后台。')
             await page.locator('.xc-send').click()
             await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=180000)
-            if reply_marker not in await page.locator('.xc-msgs').inner_text():
+            if not any(reply_marker in text for text in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()):
                 raise RuntimeError('Foreground reply missing')
             print('PASS foreground real-model reply during background work', flush=True)
             # Close the page: completion must be recovered through the API and supervisor, without a browser polling loop.
@@ -83,18 +84,71 @@ async def main():
             if errors:
                 raise RuntimeError('Browser JavaScript errors')
             print('PASS closed-page completion, published file download and stable single-turn result', flush=True)
+            # Hold an actual server response while switching to a new conversation.
+            # The API call and both model turns are real; only network delivery to the page is delayed.
+            page = await context.new_page()
+            page.on('pageerror', lambda e: errors.append(type(e).__name__))
+            await page.goto(BASE + '/#xin', wait_until='domcontentloaded')
+            await page.wait_for_function('(sid) => LimingXinChat.state.authed && LimingXinChat.state.sid===sid && LimingXinChat.state.histFor===sid && !LimingXinChat.state.loadingConversation', arg=sid, timeout=60000)
+            first_marker='generation-original-'+uuid.uuid4().hex[:12]
+            second_marker='generation-current-'+uuid.uuid4().hex[:12]
+            entered=asyncio.Event();release=asyncio.Event();held={}
+            async def hold_send(route):
+                body=route.request.post_data_json or {}
+                if body.get('op')=='send' and first_marker in body.get('args',{}).get('text',''):
+                    response=await route.fetch(timeout=90000)
+                    data=await response.json()
+                    if not data.get('ok') or not data.get('data',{}).get('run'):
+                        entered.set()
+                        return await route.fulfill(response=response)
+                    held['run']=data['data']['run'];entered.set()
+                    await release.wait()
+                    return await route.fulfill(response=response)
+                await route.continue_()
+            await page.route('**/api/xin/call',hold_send)
+            try:
+                await page.locator('.xc-row textarea').fill('只回复 '+first_marker+'，不要执行命令、派任务或记忆。')
+                await page.locator('.xc-send').click()
+                await asyncio.wait_for(entered.wait(),120)
+                if not held.get('run'):raise RuntimeError('Real delayed-send fixture did not receive a run')
+                await page.locator('.xc-new-b').click()
+                release.set()
+                await page.evaluate('() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+                if await page.evaluate('Boolean(LimingXinChat.state.sid || LimingXinChat.state.run || LimingXinChat.state.sending)'):
+                    raise RuntimeError('Late real response replaced the new conversation')
+                await page.locator('.xc-row textarea').fill('只回复 '+second_marker+'，不要执行命令、派任务或记忆。')
+                await page.locator('.xc-send').click()
+                await page.wait_for_function('LimingXinChat.state.sid && !LimingXinChat.state.run && !LimingXinChat.state.sending',timeout=180000)
+                alternate_sid=await page.evaluate('LimingXinChat.state.sid')
+                text=await page.locator('.xc-msgs').inner_text()
+                if alternate_sid==sid or second_marker not in text or first_marker in text:
+                    raise RuntimeError('Conversation isolation failed after a real delayed send')
+                if not any(second_marker in text for text in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()):
+                    raise RuntimeError('New conversation real-model reply missing')
+                limit=time.monotonic()+120
+                while True:
+                    old=await call('history',{'sid':sid})
+                    if not old.get('active'):break
+                    if time.monotonic()>limit:raise RuntimeError('Original real turn did not finish')
+                    await asyncio.sleep(2)
+                events=[e for run in old['runs'] if run['run']==held['run'] for e in run['events'] if e.get('t')=='text']
+                if not any(first_marker in e.get('text','') for e in events):raise RuntimeError('Original conversation reply was lost')
+                if errors:raise RuntimeError('Browser JavaScript errors')
+                print('PASS real delayed response stays in its original conversation while the new conversation completes',flush=True)
+            finally:
+                release.set()
         finally:
             # Forget only this run's own conversation. Leave its small result artifact for diagnosis.
-            if sid:
+            for owned_sid in [s for s in (sid,alternate_sid) if s]:
                 try:
-                    h = await call('history', {'sid': sid})
+                    h = await call('history', {'sid': owned_sid})
                     if h.get('active'):
                         await call('stop', {'run': h['active']['run']})
-                    ts = (await call('tasks', {'sid': sid})).get('tasks', [])
+                    ts = (await call('tasks', {'sid': owned_sid})).get('tasks', [])
                     for t in ts:
                         if t.get('title') == marker and t.get('dir') == directory and t['status'] in ('running','queued','waiting','stopping'):
                             await call('task_stop', {'sid': t['sid']})
-                    await call('forget', {'sid': sid})
+                    await call('forget', {'sid': owned_sid})
                 except Exception:
                     print('Smoke records retained for diagnosis', flush=True)
             await browser.close()

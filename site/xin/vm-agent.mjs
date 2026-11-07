@@ -510,7 +510,7 @@ export function processIdentity(pid) {
   try {
     const stat = fs.readFileSync('/proc/' + Number(pid) + '/stat', 'utf8');
     const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-    return { start: fields[19], state: fields[0], boot: readText('/proc/sys/kernel/random/boot_id').trim() };
+    return { start: fields[19], state: fields[0], group:Number(fields[2]),session:Number(fields[3]),boot: readText('/proc/sys/kernel/random/boot_id').trim() };
   } catch { return null; }
 }
 function alive(pid, expected) {
@@ -519,6 +519,42 @@ function alive(pid, expected) {
   if (current && (current.state === 'Z' || current.state === 'X')) return false;
   if (expected && current && (expected.start !== current.start || expected.boot !== current.boot)) return false;
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+export function processGroupMembers(pid,expected){
+  if(!expected?.start||expected.boot!==readText('/proc/sys/kernel/random/boot_id').trim())return [];
+  const leader=processIdentity(pid);if(leader&&(leader.start!==expected.start||leader.boot!==expected.boot))return [];
+  const group=expected.group||pid,session=expected.session||pid;
+  if(group!==pid)return leader&&alive(pid,expected)?[{pid,identity:leader}]:[];
+  const members=[];
+  for(const name of fs.readdirSync('/proc').filter(n=>/^\d+$/.test(n))){const id=Number(name),identity=processIdentity(id);if(identity&&!['Z','X'].includes(identity.state)&&identity.session===session&&BigInt(identity.start)>=BigInt(expected.start))members.push({pid:id,identity});}
+  return members;
+}
+const SIGNAL_PROCESSES=String.raw`import os,sys,json,signal
+q=json.loads(sys.argv[1]);boot=open('/proc/sys/kernel/random/boot_id').read().strip();opened=[];denied=[]
+for item in q['members']:
+ fd=None
+ try:
+  pid=int(item['pid']);expected=item['identity'];fd=os.pidfd_open(pid,0)
+  stat=open('/proc/'+str(pid)+'/stat').read();parts=stat[stat.rfind(')')+2:].split()
+  if boot!=expected['boot'] or parts[19]!=expected['start']:os.close(fd);continue
+  opened.append((fd,item));fd=None
+ except PermissionError:
+  denied.append(item)
+  if fd is not None:os.close(fd)
+ except (OSError,ValueError):
+  if fd is not None:os.close(fd)
+for fd,item in opened:
+ try:signal.pidfd_send_signal(fd,signal.SIGKILL if q['signal']=='SIGKILL' else signal.SIGTERM)
+ except PermissionError:denied.append(item)
+ except ProcessLookupError:pass
+ finally:os.close(fd)
+print(json.dumps({'denied':denied}))`;
+export function signalProcessGroup(pid,expected,signal='SIGTERM'){
+  const members=processGroupMembers(pid,expected);if(!members.length)return;
+  const input=JSON.stringify({members,signal});
+  const r=spawnSync('python3',['-c',SIGNAL_PROCESSES,input],{encoding:'utf8',timeout:5000});
+  let denied;try{denied=JSON.parse(r.stdout).denied;}catch{return;}
+  if(denied?.length)spawnSync('/usr/bin/sudo',['-n','/usr/bin/python3','-c',SIGNAL_PROCESSES,JSON.stringify({members:denied,signal})],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:5000});
 }
 const sessF = sid => path.join(SESS, sid + '.json');
 const runF = run => path.join(RUNS, run + '.jsonl');
@@ -854,14 +890,18 @@ export function route(o = {}) {
   let model = null, why = kind, note = '';
   if (o.want) {
     const w = String(o.want);
-    if (fits(w) && (o.named || !avoid.includes(w))) { model = w; why = o.named ? 'named' : 'picked'; }
+    if(kind==='review'&&o.named&&avoid.includes(w))return {model:null,why:'named',kind,fallbacks:[],error:'independent_review_model',note:'指定模型是被复核任务的实际作者，不能作为独立复核模型，请选择其他模型。'};
+    if (fits(w) && (o.named && kind!=='review' || !avoid.includes(w))) { model = w; why = o.named ? 'named' : 'picked'; }
     else if (known(w)) note = codexModel(w).name + (o.images && !codexModel(w).image ? ' 看不了图' : ' 这次不合适') + '，换成了别的';
     else note = '没有叫 ' + w.slice(0, 40) + ' 的模型，按类别挑了一个';
   }
   // 候选全被排除了（比如要看图、能看图的又都在 avoid 里）：退回能用的第一个
-  if (!model) model = order[0] || CODEX_MODELS.filter(m => !o.images || m.image).map(m => m.id)[0] || CODEX_MODELS[0].id;
+  if (!model) model = order[0] || (kind==='review'?null:CODEX_MODELS.filter(m => !o.images || m.image).map(m => m.id)[0] || CODEX_MODELS[0].id);
+  if(!model)return {model:null,why,kind,fallbacks:[],error:'no_independent_model',note:'没有可用的独立复核模型；可用候选均属于实际作者或不支持当前附件。'};
   return { model, why, kind, fallbacks: order.filter(x => x !== model), note };
 }
+function authorModels(deps){return [...new Set(deps.flatMap(d=>(d.actualModels&&d.actualModels.length?d.actualModels:[d.actualModel||d.model])).filter(Boolean))];}
+function reviewAuthors(t){return [...new Set((t.reviewAuthors||[]).concat(authorModels((t.after||[]).map(no=>findTask({no})).filter(Boolean))))];}
 // 实际运行记录：每一轮 / 每个任务用了哪个模型、为什么、多久、成没成（调候选顺序用）。最多留 3000 条
 const STATS_F = () => path.join(BASE, 'model-stats.jsonl');
 function statAdd(rec) {
@@ -953,9 +993,9 @@ export function agentArgs(agent, sess, text, effort, extra) {
 }
 function killTree(c) {
   if (!c || !c.pid) return;
-  try { process.kill(-c.pid, 'SIGTERM'); } catch { try { c.kill('SIGTERM'); } catch { /* 已经退了 */ } }
-  const identity = processIdentity(c.pid);
-  setTimeout(() => { if (alive(c.pid, identity)) { try { process.kill(-c.pid, 'SIGKILL'); } catch {} } }, 2000).unref();
+  const identity=c.xinIdentity||processIdentity(c.pid);
+  signalProcessGroup(c.pid,identity);
+  setTimeout(()=>signalProcessGroup(c.pid,identity,'SIGKILL'),2000).unref();
 }
 // 只重试尚未开始工作的 CLI：开始处理后可能长时间不输出，网络超时由 CLI 自己处理，避免重复投递同一轮。
 const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
@@ -999,11 +1039,11 @@ function runner(run) {
     let stopped = !!m.stopped;
     let ok = !stopped && code === 0 && !state.failed && !state.timeout;
     if(ok && meta.task && !s.pendingQuestion && !s.approval && s.workspace && runtime.stm32Task(s)) {
-      emit(run,{t:'tool',id:'xin-build',name:'编译核验',detail:'控制器在隔离副本执行 make -B，并检查 build/app.hex'});
+      emit(run,{t:'tool',id:'xin-build',name:'编译核验',detail:'控制器在隔离副本执行受控构建，并检查本次新生成的固件产物'});
       let build;try{build=runtime.compileWorkspace(s);}catch(e){build={ok:false,output:e.message};}
       m=patchRun(run,{compileTrusted:true,compileOk:!!build?.ok,compileDigest:build?.digest});
       stopped=!!m.stopped;ok=ok&&!stopped;
-      emit(run,{t:'tool_end',id:'xin-build',name:'编译核验',detail:'make -B / build/app.hex',ok:!!build?.ok,out:build?.output||''});
+      emit(run,{t:'tool_end',id:'xin-build',name:'编译核验',detail:'受控构建 / '+(build?.artifacts||[]).join('、'),ok:!!build?.ok,out:build?.output||''});
     }
     if (!ok && !stopped && !state.errShown) {
       const tail = stderr.trim().split('\n').slice(-6).join('\n');
@@ -1040,6 +1080,7 @@ function runner(run) {
     let patch = null;
     if (meta.agent === 'harness') { try { patch = writePersona(meta.effort, meta.model); } catch { /* 写不了就用 Harness 自己的设定 */ } }
     const currentSession = readJ(sessF(meta.sid), sess);
+    if(currentSession.tkind==='review'&&reviewAuthors(currentSession).includes(meta.model)){finish(127,'独立复核模型与实际作者相同，已拒绝启动。');return;}
     let invocation;
     try { invocation = agentArgs(meta.agent, currentSession, meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model, role, sandbox: !!meta.sandbox }); }
     catch (e) { finish(127, e.message); return; }
@@ -1095,7 +1136,8 @@ function runner(run) {
         });
         child = app.child;
       } else child = spawn(cmd, args, spawnOptions);
-      patchRun(run,{childPid:child.pid,childIdentity:processIdentity(child.pid)});
+      child.xinIdentity=processIdentity(child.pid);
+      patchRun(run,{childPid:child.pid,childIdentity:child.xinIdentity});
     } catch (e) { proxy?.close(); proxy=null; finish(127, '启动 ' + cmd + ' 失败：' + e.message); return; }
     child.on('error', e => finish(127, e.code === 'ENOENT' ? '云电脑里没有 ' + cmd + ' 命令' : '启动 ' + cmd + ' 失败：' + e.message));
     child.stdout.setEncoding('utf8');
@@ -1122,19 +1164,24 @@ function runner(run) {
       // 模型还没开始干活就失败了：换候选里的下一个模型再试一次（用户自己停的不换）
       if ((c !== 0 || state.failed) && canSwitch() && !(readJ(metaF(run), meta) || {}).stopped) {
         const from = meta.model;
-        state.switched = true; meta.from = from; meta.model = meta.fallbacks[0]; meta.fallbacks = meta.fallbacks.slice(1);
+        const candidates=safeFallbacks();
+        if(!candidates.length){finish(c,'独立复核候选已改变，未回退到实际作者模型。');return;}
+        state.switched = true; meta.from = from; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);
         patchRun(run,{model:meta.model,from,fallbacks:meta.fallbacks});
+        if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
         emit(run, { t: 'status', text: codexModel(from).name + ' 没接上，换 ' + codexModel(meta.model).name + ' 再试…' });
         Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
         start(); return;
       }
       if (state.heldErr) { emit(run, state.heldErr); state.heldErr = null; }
-      finish(c);
+      const reviewFailure=sess.tkind==='review'&&(c!==0||state.failed)&&!state.worked&&!state.timeout&&!state.switched&&!safeFallbacks().length;
+      finish(c,reviewFailure?'独立复核候选已耗尽，未回退到实际作者模型。':undefined);
     });
     armStall();
   };
   // 能不能换模型重来：只有 Codex（模型是路由器挑的），还有备选，这一轮还没换过，模型还没真的开始干活
-  const canSwitch = () => meta.agent === 'codex' && !state.switched && !state.worked && !state.timeout && Array.isArray(meta.fallbacks) && meta.fallbacks.length > 0;
+  const safeFallbacks=()=>{const current=readJ(sessF(meta.sid),sess),avoid=current.tkind==='review'?reviewAuthors(current):[];return (meta.fallbacks||[]).filter(id=>!avoid.includes(id)&&CODEX_MODELS.some(m=>m.id===id&&(!(meta.images||[]).length||m.image)));};
+  const canSwitch = () => meta.agent === 'codex' && !state.switched && !state.worked && !state.timeout && safeFallbacks().length > 0;
   // 后台任务到点没做完：停下（算没做成）
   if (meta.deadline) deadTm = setTimeout(() => { state.timeout = true; restarting = false; emit(run, { t: 'status', text: '到时间了，先停下' }); killTree(child); }, Math.max(1000, meta.deadline - Date.now()));
   bridgeTm = setInterval(async () => {
@@ -1518,10 +1565,10 @@ function runDone(run) {
   if (readTail(runF(run), 8192).includes('"t":"done"')) return true;
   // 后台进程没了却没写 done（云电脑重启、被杀）：补一条，记下是断掉的（后台任务据此决定要不要接着做）
   if (m && Date.now() - m.started > (Number(process.env.XIN_DEAD_MS) || 15000) && !alive(m.pid, m.identity)) {
-    if(m.childPid && alive(m.childPid,m.childIdentity)){
-      try{process.kill(-m.childPid,m.orphanStopping && Date.now()-m.orphanStopping>2000?'SIGKILL':'SIGTERM');}catch{}
+    if(m.childPid && processGroupMembers(m.childPid,m.childIdentity).length){
+      signalProcessGroup(m.childPid,m.childIdentity,m.orphanStopping && Date.now()-m.orphanStopping>2000?'SIGKILL':'SIGTERM');
       if(!m.orphanStopping)patchRun(run,{orphanStopping:Date.now()});
-      if(alive(m.childPid,m.childIdentity)) return false;
+      if(processGroupMembers(m.childPid,m.childIdentity).length) return false;
     }
     emit(run, { t: 'err', text: '这一轮中途断了（云电脑重启或进程被杀）' });
     emit(run, { t: 'done', ok: false, code: -1, ms: Date.now() - m.started });
@@ -1565,7 +1612,7 @@ function occupiesTask(t) {
 }
 function taskIndexEntry(t){
   if(!isFinished(t))return t;
-  const out={};for(const k of ['sid','no','parent','kind','tkind','title','model','why','status','created','updated','startedAt','endedAt','dir','after','frontSeen','question','note','verification','dailyDate'])if(t[k]!==undefined)out[k]=t[k];
+  const out={};for(const k of ['sid','no','parent','kind','tkind','title','model','requestedModel','requestedNamed','actualModel','actualModels','reviewAuthors','why','status','created','updated','startedAt','endedAt','dir','after','frontSeen','question','note','verification','dailyDate'])if(t[k]!==undefined)out[k]=t[k];
   out.runs=lastRun(t)?[lastRun(t)]:[];out.turnsCount=t.turnsCount??(t.runs||[]).length;
   if(t.result)out.result={...t.result,text:cut(t.result.text,2000)};return out;
 }
@@ -1644,6 +1691,7 @@ function taskActivity(run) {
 export function taskSummary(t, full) {
   const r = lastRun(t);
   const out = { sid: t.sid, no: t.no, parent: t.parent || null, title: t.title, kind: t.tkind, model: t.model, why: t.why || '', status: t.status,
+    requestedModel:t.requestedModel||null,actualModel:t.actualModel||((t.runs||[]).length?t.model:null),independent:t.tkind==='review'?!!(t.reviewAuthors?.length)&&!t.reviewAuthors.includes(t.actualModel||t.model):undefined,
     created: t.created, startedAt: t.startedAt || 0, endedAt: t.endedAt || 0, dir: t.dir, after: t.after || [], turns: t.turnsCount ?? (t.runs || []).length, question: t.question || '' };
   if (t.status === 'running' && r) out.activity = taskActivity(r);
   if (t.result) out.result = { ok: !!t.result.ok, text: full ? t.result.text : cut(t.result.text, 2000), err: t.result.err || '', at: t.result.at || 0 };
@@ -1695,8 +1743,9 @@ function taskNew(a) {
     files.push({ path: p, name: path.basename(p), size: st.size, image: IMG_RE.test(p) });
   }
   // 检查别的任务：避开被检查的那个模型（换个模型看，才看得出问题）
-  const avoid = kind === 'review' ? after.map(n => (all.find(t => t.no === n) || {}).model).filter(Boolean) : [];
+  const avoid = kind === 'review' ? authorModels(after.map(n=>all.find(t=>t.no===n)).filter(d=>d?.status==='done')) : [];
   const rt = route({ kind: files.some(f => f.image) ? (kind === 'review' ? 'review' : 'vision') : kind, want: a.model || null, named: !!a.named, images: files.some(f => f.image), avoid });
+  if(rt.error)return {error:rt.error,msg:rt.note};
   const seq = (readJ(TASK_SEQ(), {}) || {}).n || all.reduce((m, t) => Math.max(m, t.no || 0), 0);
   const no = seq + 1;
   if (a.daily) mk(WORK);
@@ -1705,7 +1754,7 @@ function taskNew(a) {
   writeJ(TASK_SEQ(), { n: no });
   const minutes = Math.min(TASK_MIN_MAX, Math.max(5, Math.round(Number(a.minutes) || TASK_MIN)));
   const t = { sid: rid('s'), kind: 'task', no, parent: okId(a.parent, 's') ? a.parent : null, agent: 'codex', title, goal, userRequest:String(a.userRequest||'').slice(0,TEXT_MAX), tkind: kind,
-    model: rt.model, why: rt.why, fallbacks: rt.fallbacks, note: rt.note || '', files, dir: d.dir, after, minutes,
+    model: rt.model, requestedModel:a.model||null,requestedNamed:!!a.named,actualModel:null,actualModels:[],reviewAuthors:[],why: rt.why, fallbacks: rt.fallbacks, note: rt.note || '', files, dir: d.dir, after, minutes,
     plugins: [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
     status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
   saveTask(t);
@@ -1723,7 +1772,7 @@ function taskFirstText(t, deps) {
   }
   if (t.tkind === 'review' && deps.length) parts.push('\n你的活是检查上面这些结果：在你自己的项目副本里看实际文件、能编译的编译一遍、能跑的跑一遍，看对不对、有没有漏。小问题直接改好并说明改了什么；大问题写清楚，别大改。' +
     '要求里的说法本身也可能有错，以芯片参考手册、数据手册为准。STM32 的程序重点核对：时钟是不是真的配到了代码假设的频率；引脚用的复用功能、要不要重映射（AFIO_MAPR，对照数据手册的引脚复用表）；外设和 GPIO 的时钟开没开；中断向量、优先级和标志清除。');
-  if (t.tkind === 'review') parts.push('STM32 工程必须在最终改动后成功 make，并写 xin-review.json：{"verdict":"pass","checks":[{"id":"clock","status":"pass","reference":"RM0008 的具体章节或寄存器","evidence":"main.c:行号，以及实际配置和推导"}]}。checks 必须覆盖 clock、pinmap、peripheral_clock、interrupt；不涉及的项用 not_applicable，并说明依据。没有上板就明确写未上板验证，不得把编译通过说成硬件测试通过。');
+  if (t.tkind === 'review') parts.push('STM32 工程必须在最终改动后成功执行 make 或 CMake 构建；多个入口时在根目录 xin-build.json 指定 system、directory，可用 artifacts 指定相对根目录的产物路径。并写 xin-review.json：{"verdict":"pass","checks":[{"id":"clock","status":"pass","reference":"RM0008 的具体章节或寄存器","evidence":"源码文件:行号，以及实际配置和推导"}]}。checks 必须覆盖 clock、pinmap、peripheral_clock、interrupt；不涉及的项用 not_applicable，并说明依据。没有上板就明确写未上板验证，不得把编译通过说成硬件测试通过。');
   const f = filesPart(t.files || [], 'codex', codexModel(t.model).image);
   return forAgent(parts.join('\n'), '') + f;
 }
@@ -1733,8 +1782,11 @@ function startTask(t, all) {
   delete t.verification;
   t.deadline = t.deadline || Date.now() + (Number(process.env.XIN_TASK_TIMEOUT_MS) || (t.minutes || TASK_MIN) * 60e3);
   // The author might have fallen back to a different model after the review was queued.
-  if (t.tkind === 'review' && t.why !== 'named') {
-    const rt = route({ kind: 'review', images: (t.files || []).some(f => f.image), avoid: deps.map(d => d.model) });
+  if (t.tkind === 'review') {
+    t.reviewAuthors=[...new Set((first?[]:t.reviewAuthors||[]).concat(authorModels(deps)))];
+    if(deps.some(d=>!authorModels([d]).length)){t.status='waiting';t.question='作者实际模型未知，不能验证独立复核，请补全作者信息。';saveTask(t);return false;}
+    const rt = route({ kind: 'review',want:t.requestedModel||(t.why==='named'?t.model:null),named:t.requestedNamed??t.why==='named', images: (t.files || []).some(f => f.image), avoid:t.reviewAuthors });
+    if(rt.error){t.status='waiting';t.question=rt.note;t.endedAt=Date.now();t.frontSeen=false;saveTask(t);return false;}
     t.model = rt.model; t.fallbacks = rt.fallbacks; t.why = rt.why;
   }
   try { if (!t.dailyDate) t.workspace = runtime.prepareWorkspace(t, BASE); }
@@ -1742,7 +1794,7 @@ function startTask(t, all) {
   const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps) : forAgent(t.next || '接着做。', '');
   const userText = first ? t.goal : String(t.nextShow || t.next || '接着做');
   const cm = codexModel(t.model);
-  Object.assign(t, { status: 'running', question: '', next: null, nextShow: null, startedAt: t.startedAt || Date.now() });
+  Object.assign(t, { status: 'running', actualModel:t.model,question: '', next: null, nextShow: null, startedAt: t.startedAt || Date.now() });
   const run = launch(t, { text, effort: AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first ? t.fallbacks || [] : [],
     images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || WORK, sandbox: !t.dailyDate && TASK_SANDBOX(),
     deadline: t.deadline }, { t: 'user', text: userText, at: Date.now() });
@@ -1772,23 +1824,24 @@ function taskFinish(a) {
   const t = readJ(sessF(a.sid));
   // A late exit from a cancelled/replaced turn must never complete the new turn.
   if (!isTask(t) || lastRun(t) !== a.run || t.finishedRun === a.run || (t.status !== 'running' && t.status !== 'waiting' && t.status !== 'stopping')) return {};
-  if (a.model) t.model = a.model;
   const evs = tailEvents(a.run, 65536);
   const runMeta = readJ(metaF(a.run), {});
+  const actual=a.model||runMeta.model||t.actualModel||t.model;
+  if(actual){t.model=t.actualModel=actual;t.actualModels=[...new Set((t.actualModels||[]).concat(actual))];}
   if (a.timeout || a.died || a.stopped) delete t.approval;
   const pending = (runMeta.steers || []).filter(x => x.state === 'pending' || x.state === 'next');
   if (pending.length) t.inbox = (t.inbox || []).concat(pending.map(x => ({ text: x.text, at: x.at })));
   const last = evs.filter(e => e.t === 'text').pop(), err = evs.filter(e => e.t === 'err').pop();
   let notify = null;
   if (t.status === 'stopping') { t.status = 'stopped'; t.endedAt = Date.now(); }                  // 进程真正退出后才释放目录
+  else if ((t.status === 'waiting' || t.pendingQuestion) && !a.died && !a.timeout && !a.stopped) {
+    t.status='waiting';t.question=t.pendingQuestion||t.question;delete t.pendingQuestion;
+    Object.assign(t,{endedAt:Date.now(),frontSeen:false});notify=taskPush(t,'任务 '+t.no+' 在等你确认',t.question);
+  }
   else if (!a.stopped && !a.timeout && !a.died && t.inbox && t.inbox.length) {                  // 干活时用户补充了话：接着做
     t.next = '用户在你干活时补充了：\n' + t.inbox.map(x => '- ' + x.text).join('\n') + '\n按补充的要求接着做（已经做对的不用重做）。';
     t.nextShow = t.inbox.map(x => x.text).join('\n');
     Object.assign(t, { inbox: [], status: 'queued', queuedAt: Date.now() });
-  } else if ((t.status === 'waiting' || t.pendingQuestion) && !a.died && !a.timeout && !a.stopped) {                                         // 分身问了要用户确认的事
-    t.status = 'waiting'; t.question = t.pendingQuestion || t.question; delete t.pendingQuestion;
-    Object.assign(t, { endedAt: Date.now(), frontSeen: false });
-    notify = taskPush(t, '任务 ' + t.no + ' 在等你确认', t.question);
   } else if (a.died) {                                                                              // 电脑重启、进程被杀
     if ((t.resumes || 0) < 1) Object.assign(t, { resumes: (t.resumes || 0) + 1, next: RESUME_TEXT, nextShow: '（中途断了，接着做）', status: 'queued', queuedAt: Date.now() });
     else {
@@ -1858,6 +1911,7 @@ function taskTell(a) {
   }
   if(t.status==='stopping')return {error:'busy',msg:'任务正在停止，退出后再继续'};
   const text = String(a.text || '').trim().slice(0, 4000) || '接着做';
+  if(t.tkind==='review'&&t.status==='waiting'){const requested=namedModel(text);if(requested){t.requestedModel=requested;t.requestedNamed=true;}}
   if (t.status === 'running') {
     const r = lastRun(t), m = r && readJ(metaF(r));
     if (m?.transport === 'app-server' && !t.pendingQuestion) {
@@ -1865,7 +1919,9 @@ function taskTell(a) {
       writeJ(metaF(r), m);
       return { ok: true, msg: '已送入当前任务', task: taskSummary(t) };
     }
-    t.inbox = (t.inbox || []).concat([{ text, at: Date.now() }]); saveTask(t);
+    t.inbox = (t.inbox || []).concat([{ text, at: Date.now() }]);
+    if(t.pendingQuestion){delete t.pendingQuestion;t.question='';}
+    saveTask(t);
     return { ok: true, msg: '记下了：任务 ' + t.no + ' 这一步做完就按你说的接着做', task: taskSummary(t) };
   }
   if (t.status === 'queued' && !(t.runs && t.runs.length)) {
@@ -1877,7 +1933,9 @@ function taskTell(a) {
   if (isFinished(t)) { if(t.status==='done') { t.workspace = null; t.started = false; t.agentSid = null; } t.deadline = null; t.validationRetries = 0; delete t.publicationError; }
   const active = lastRun(t);
   if (active && !runDone(active)) {
-    t.inbox = (t.inbox || []).concat([{ text, at: Date.now() }]); saveTask(t);
+    t.inbox = (t.inbox || []).concat([{ text, at: Date.now() }]);
+    if(t.pendingQuestion||t.status==='waiting'){delete t.pendingQuestion;t.question='';t.status='running';}
+    saveTask(t);
     return { ok: true, msg: '已收到，当前进程退出后接着做', task: taskSummary(t) };
   }
   Object.assign(t, { next: (waiting ? '用户回复：' : '用户又说：') + text + (waiting && t.question ? '\n（你之前问的是：' + t.question + '）' : ''), nextShow: text,
@@ -2338,6 +2396,7 @@ const ops = {
 };
 // 只在 tasks 锁里跑的（main 里分派）
 const iops = {
+  task_model(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run)return {error:'stale'};t.model=t.actualModel=a.model;saveTask(t);return {ok:true};},
   run_stat(a){statAdd(a);return {ok:true};},
   controller_ack(a){const f=path.join(BASE,'controller-event.json'),s=readJ(f);if(s?.version===a.version){s.acknowledged=true;writeJ(f,s);}return {ok:true};},
   run_complete(a){

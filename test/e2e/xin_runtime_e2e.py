@@ -77,6 +77,70 @@ async def main():
         assert idle_state['ops'].count('tasks')==before
         print('PASS closing an idle page does not wake the VM just to clear presence',flush=True)
         await idle.context.close()
+        # Late send results/errors and late history must stay with their originating conversation.
+        for scenario in ('new_success','switch_success','switch_error','switch_queue','newer_send'):
+            tab=await ui.page(browser);mock=await ui.xin_mock(tab,authed=True);mock['hold']=True
+            await tab.add_init_script("localStorage.setItem('lm.xin.sid','sorigin001')")
+            started=asyncio.Event();release=asyncio.Event();second=asyncio.Event();release_second=asyncio.Event()
+            async def delayed(route):
+                import json
+                body=json.loads(route.request.post_data or '{}')
+                if body.get('op')!='send':return await route.fallback()
+                args=body.get('args') or {};is_first=args.get('text')=='message from A'
+                if is_first:started.set();await release.wait()
+                else:second.set();await release_second.wait()
+                data={'error':'fixture_failure','msg':'A send failed'} if scenario=='switch_error' and is_first else {'sid':'sorigin001' if is_first else 'ssecond001','run':'rorigin001' if is_first else 'rsecond001','agent':'codex'}
+                await route.fulfill(status=200,content_type='application/json',body=json.dumps({'ok':True,'data':data}))
+            await tab.route('**/api/xin/call',delayed)
+            await tab.goto(ui.BASE+'/#xin');await tab.wait_for_function('LimingXinChat.state.sid==="sorigin001" && !LimingXinChat.state.loadingConversation')
+            await tab.locator('.xc-row textarea').fill('message from A');await tab.locator('.xc-send').click();await started.wait()
+            if scenario=='switch_queue':
+                await tab.locator('.xc-row textarea').fill('queued message from A');await tab.locator('.xc-send').click()
+                await tab.wait_for_selector('.xc-me.queued')
+            if scenario.startswith('switch'):
+                await tab.evaluate("location.hash='xin=shist00001'")
+                await tab.wait_for_function('LimingXinChat.state.sid==="shist00001" && !LimingXinChat.state.loadingConversation')
+                expected='shist00001'
+            else:
+                await tab.locator('.xc-new-b').click();expected=''
+            await tab.locator('.xc-row textarea').fill('draft belonging to B')
+            if scenario=='newer_send':
+                await tab.locator('.xc-row textarea').fill('message from B');await tab.locator('.xc-send').click();await second.wait()
+            async with tab.expect_response(lambda r:r.url.endswith('/api/xin/call') and r.request.post_data_json.get('op')=='send'):
+                release.set()
+            if scenario=='switch_error':await tab.wait_for_function("Object.keys(localStorage).some(k=>k.startsWith('lm.xin.unsent.'))")
+            await tab.evaluate('() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+            assert await tab.evaluate('LimingXinChat.state.sid')==expected,scenario
+            assert not await tab.evaluate('LimingXinChat.state.run'),scenario
+            if scenario=='switch_queue':
+                assert not second.is_set(),scenario
+                assert await tab.evaluate("JSON.parse(localStorage.getItem('lm.xin.queue.sorigin001')||'[]').some(q=>q.text==='queued message from A')"),scenario
+                assert not await tab.evaluate("(LimingXinChat.state.queue||[]).some(q=>q.text==='queued message from A')"),scenario
+            if scenario=='newer_send':
+                assert await tab.evaluate('LimingXinChat.state.sending')
+                release_second.set();await tab.wait_for_function('LimingXinChat.state.run==="rsecond001"')
+                assert await tab.evaluate('LimingXinChat.state.sid')=='ssecond001'
+            else:
+                assert await tab.locator('.xc-row textarea').input_value()=='draft belonging to B'
+                assert not await tab.evaluate('LimingXinChat.state.sending')
+            print('PASS conversation generation '+scenario,flush=True)
+            await tab.context.close()
+        tab=await ui.page(browser);await ui.xin_mock(tab,authed=True)
+        entered=asyncio.Event();gate=asyncio.Event()
+        async def late_history(route):
+            import json
+            body=json.loads(route.request.post_data or '{}')
+            if body.get('op')=='history' and body.get('args',{}).get('sid')=='slatehistory01':
+                entered.set();await gate.wait()
+            return await route.fallback()
+        await tab.route('**/api/xin/call',late_history)
+        await tab.goto(ui.BASE+'/#xin');await tab.evaluate("location.hash='xin=slatehistory01'");await entered.wait()
+        await tab.locator('.xc-new-b').click();gate.set()
+        await tab.wait_for_timeout(150)
+        assert await tab.evaluate('!LimingXinChat.state.sid && !LimingXinChat.state.run')
+        assert await tab.locator('.xc-hello').count()==1
+        print('PASS new chat invalidates a late history response',flush=True)
+        await tab.context.close()
         screenshots = os.environ.get('XIN_SCREENSHOTS')
         if screenshots:
             Path(screenshots).mkdir(parents=True, exist_ok=True)

@@ -47,7 +47,7 @@
   function modelName(id) { return CX_MODELS[id] || HM_MODELS[id] || id || ''; }
   function deviceId(){var id=ls('lm.xin.device');if(!id||!/^[A-Za-z0-9_-]{8,80}$/.test(id)){id=crypto.randomUUID();ls('lm.xin.device',id);}return id;}
   var S = { deviceId:deviceId(), tabId:crypto.randomUUID(), enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: ls(LS_EFF) || 'high', hModel: hmPref(), lastModel: '',
-    run: '', off: 0, polling: false, mine: {}, errRuns: {}, lastAct: 0, view: 'chat', machine: '', mstate: '', loadSeq: 0, drawer: false, drawerSeq: 0 };
+    run: '', off: 0, polling: false, mine: {}, errRuns: {}, lastAct: 0, view: 'chat', machine: '', mstate: '', loadSeq: 0, convSeq: 0, drawer: false, drawerSeq: 0 };
 
   /* ---------- 和页面上的小芯共用机身、眼睛和引脚，避免头像仍然显示旧方眼 ---------- */
   function avatar(cls) {
@@ -64,16 +64,16 @@
     });
   }
   // 调云电脑：正在唤醒 / InstaBox 忙就等一会儿再试（最多 maxWait 毫秒），状态写在面板上
-  function call(op, args, maxWait, onWait) {
+  function call(op, args, maxWait, onWait, current) {
     var t0 = Date.now();
     function once() {
       return req('call', { op: op, args: args || {} }).then(function (d) {
         if (d._status === 401) { S.authed = false; syncBag(); render(); throw new Error('要先登录'); }
         if (d._status !== 200) throw new Error(d.msg || d.error || ('出错了（' + d._status + '）'));
-        if (d.ok) { if (op !== 'status') setStatus(''); return d.data; }
+        if (d.ok) { if (op !== 'status' && (!current || current())) setStatus(''); return d.data; }
         if ((d.state === 'waking' || d.state === 'busy') && Date.now() - t0 < (maxWait || 0)) {
-          if (onWait) onWait(d); else setStatus(d.msg || '唤醒中…', 'wait');   // 发消息时写在「正在输入」旁边，不再另外冒状态栏
-          var x = xin(); if (x && op === 'send') x.ai('think');
+          if (!current || current()) { if (onWait) onWait(d); else setStatus(d.msg || '唤醒中…', 'wait'); }
+          var x = xin(); if (x && op === 'send' && (!current || current())) x.ai('think');
           return sleepMs((d.retryAfter || 3) * 1000).then(once);
         }
         var err = new Error(d.state === 'cooldown' ? '云电脑连续跑满了时长，在冷却，大约 ' + Math.ceil((d.retryAfter || 60) / 60) + ' 分钟后再试' : (d.msg || '云电脑出错了'));
@@ -230,7 +230,7 @@
     if (!sendBtn) return;
     var q = !!(S.run || S.sending) && hasDraft(), stopMode = !!S.run && !q;
     sendBtn.setAttribute('aria-label', stopMode ? '停止' : q ? '排队发送' : '发送');
-    sendBtn.disabled = !stopMode && attsBusy();
+    sendBtn.disabled = !!S.loadingConversation || !stopMode && attsBusy();
     sendBtn.classList.toggle('q', q);
     var want = stopMode ? 'stop' : 'send';
     if (sendBtn.dataset.k !== want) {
@@ -253,7 +253,7 @@
     render(); grow(); refreshCtx();
     if (!S.enabled) return;
     if (!S.authed) { if (!touch) loginEl.pw.focus(); return; }
-    if (S.histFor !== (S.sid || '') || !list.childNodes.length) loadCurrent();
+    if (!S.loadingConversation && (S.histFor !== (S.sid || '') || !list.childNodes.length)) loadCurrent();
     if (S.bg > 0) pollTasksSoon(300);
     if (!touch) input.focus();
   }
@@ -312,7 +312,7 @@
     if (S.useMore) useEl.appendChild(h('div', 'xc-use-more', '上下文 ' + tok(u.ctx) + (u.win > 0 ? ' / ' + tok(u.win) : '') + ' · 输入 ' + tok(u.input) + (typeof u.cached === 'number' ? '（缓存命中 ' + tok(u.cached) + '）' : '') + ' · 输出 ' + tok(u.output)));
   }
   function newChat(stay) {
-    if ((S.queue || []).length) saveQueue();
+    detachConversation();
     stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null); S.hModel = hmPref(); S.lastModel = ''; S.queue = []; setPick(false);
     if (!stay) { S.view = 'chat'; setDrawer(false); }
     clearList(); S.histFor = ''; welcome(); render();
@@ -337,12 +337,14 @@
     }, function (e) { setStatus(e.message, 'bad'); });
   }
   function openSession(sid) {
-    var my = ++S.loadSeq;
-    if ((S.queue || []).length) saveQueue();
+    detachConversation();var my=S.loadSeq,generation=S.convSeq;
+    S.sid=sid;S.sessAgent='';S.loadingConversation=true;
     // 先清掉「这一轮还在跑」：重读期间那一轮可能已经做完了，以历史里说的为准（还在跑就从那里接着取）
     stopPolling(); S.run = ''; S.off = 0; S.queue = []; S.view = 'chat'; setDrawer(false); clearList(); render();
     list.appendChild(h('p', 'xc-hint xc-loading', '正在读取对话…'));
-    call('history', { sid: sid }, 60000).then(function (d) {
+    return call('history', { sid: sid }, 60000, null, function(){return generation===S.convSeq;}).then(function (d) {
+      if(generation!==S.convSeq)return;
+      S.loadingConversation=false;renderSendBtn();
       if (my !== S.loadSeq) return;
       clearList();
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid;
@@ -363,11 +365,22 @@
       restoreQueue(); if (!d.active) flushQueue();
       render(); toBottom(true);
     }, function (e) {
+      if(generation!==S.convSeq)return;
+      S.loadingConversation=false;renderSendBtn();
       if (my !== S.loadSeq) return;
       clearList();
       if (/找不到/.test(e.message)) { newChat(); return; }
       list.appendChild(h('p', 'xc-hint', '读不出来：' + e.message));
     });
+  }
+  function openConversation(sid) {
+    if (sid && sid !== S.sid) {
+      if (!root) build();
+      if (S.authed) openSession(sid);
+      else { detachConversation(); S.sid = sid; S.histFor = ''; }
+      ls(LS_SID, sid);
+    }
+    open();
   }
   /* ---------- 侧边栏 ----------
      上面：小芯和好感度、「新对话」；中间：记事本 / 每日任务 / 小芯的文件三个入口，下面是最近的对话；最下面：设置（点开）、退出登录。
@@ -414,6 +427,8 @@
     var nb = h('button', 'xc-dr-new'); nb.type = 'button'; nb.innerHTML = svgIcon('plus') + '<span>新对话</span>';
     nb.addEventListener('click', function () { newChat(); if (!touch) input.focus(); });
     sc.appendChild(nb);
+    var unsent=[];try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k.indexOf('lm.xin.unsent.')===0){var v=JSON.parse(ls(k)||'null');if(v)unsent.push({key:k,value:v});}}}catch{}
+    if(unsent.length){sc.appendChild(h('p','xc-dr-h','未发送的消息'));unsent.slice(0,20).forEach(function(item){var b=h('button','xc-memb',String(item.value.text||'附件消息').slice(0,40));b.type='button';b.addEventListener('click',function(){var v=item.value,p=v.sid?openSession(v.sid):newChat(),generation=S.convSeq;Promise.resolve(p).then(function(){if(generation!==S.convSeq)return;input.value=v.text||'';S.atts=v.atts||[];S.retrySend=v;ls(LS_DRAFT,input.value||null);ls(item.key,null);renderAtts();grow();render();input.focus();});});sc.appendChild(b);});}
     var nav = h('nav', 'xc-nav'); nav.setAttribute('aria-label', '小芯的东西');
     var item = function (cls, icon, label, fn) {
       var b = h('button', 'xc-memb' + (cls ? ' ' + cls : '')); b.type = 'button';
@@ -700,8 +715,7 @@
   if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', function (e) {
     var d = e.data || {};
     if (d.type !== 'xin-open' || !S.enabled) return;
-    if (d.sid && /^s[0-9a-z]{6,24}$/.test(d.sid) && d.sid !== S.sid) { S.sid = d.sid; ls(LS_SID, d.sid); S.histFor = ''; }
-    open();
+    openConversation(d.sid && /^s[0-9a-z]{6,24}$/.test(d.sid) ? d.sid : '');
   });
 
   /* ---------- 对话改名 / 删除：点对话后面的 ⋯ ---------- */
@@ -1365,6 +1379,24 @@
     var q = (S.queueFlight || []).concat(S.queue || []);
     ls('lm.xin.queue.' + (S.sid || 'pending'), q.length ? JSON.stringify(q.map(function (v) { return { id: v.id, text: v.text, atts: v.atts }; })) : null);
   }
+  function detachConversation(){
+    if(S.sendFlight)S.sendFlight.snapshot=(S.queueFlight||[]).concat(S.queue||[]).map(function(v){return {id:v.id,text:v.text,atts:v.atts};});
+    if((S.queue||[]).length||(S.queueFlight||[]).length)saveQueue();
+    S.convSeq++;S.loadSeq++;S.sending=false;S.waitSend='';S.queueFlight=[];S.sendFlight=null;S.retrySend=null;S.loadingConversation=false;
+  }
+  function settleDetachedSend(f,d,error){
+    var key='lm.xin.queue.'+(f.sid||'pending'),accepted=f.queued||[],snapshot=f.snapshot||[];
+    try{
+      var saved=JSON.parse(ls(key)||'[]'),owned=snapshot.map(function(v){return v.id;});
+      if(d){
+        var remaining=saved.filter(function(v){return (f.sid?accepted:owned).indexOf(v.id)<0;});ls(key,remaining.length?JSON.stringify(remaining):null);
+        if(!f.sid){var dest='lm.xin.queue.'+d.sid,prior=JSON.parse(ls(dest)||'[]');snapshot.filter(function(v){return accepted.indexOf(v.id)<0;}).forEach(function(v){if(!prior.some(function(x){return x.id===v.id;}))prior.push(v);});ls(dest,prior.length?JSON.stringify(prior):null);}
+      }else if(!f.sid){
+        var remaining=saved.filter(function(v){return owned.indexOf(v.id)<0;});ls(key,remaining.length?JSON.stringify(remaining):null);
+        snapshot.concat(accepted.length?[]:[{id:f.id,text:f.text,atts:f.atts,payload:f.payload}]).forEach(function(v){ls('lm.xin.unsent.'+v.id,JSON.stringify({id:v.id,text:v.text,atts:v.atts,payload:v.id===f.id?f.payload:v.payload,sid:'',error:error.message}));});
+      }else if(!accepted.length)ls('lm.xin.unsent.'+f.id,JSON.stringify({id:f.id,text:f.text,atts:f.atts,payload:f.payload,sid:f.sid,error:error.message}));
+    }catch{}
+  }
   function restoreQueue() {
     if (S.queue.length) return;
     try { var q = JSON.parse(ls('lm.xin.queue.' + (S.sid || 'pending')) || '[]'); q.forEach(function (v) { queueMsg(v.text, v); }); } catch (e) { /* invalid local data is ignored */ }
@@ -1396,12 +1428,14 @@
       steer.addEventListener('click', function () {
         if (!S.run) { flushQueue(); return; }
         steer.disabled = true;
-        call('steer', { sid: S.sid, run: S.run, text: text, clientId: q.id }, 30000).then(function (r) {
+        var generation=S.convSeq,run=S.run,sid=S.sid;
+        call('steer', { sid: sid, run: run, text: text, clientId: q.id }, 30000,null,function(){return generation===S.convSeq;}).then(function (r) {
           if (r.error) throw new Error(r.msg || r.error);
+          if(generation!==S.convSeq){settleDetachedSend({sid:sid,queued:[q.id]}, {sid:sid});return;}
           S.queue = S.queue.filter(function (v) { return v !== q; }); saveQueue();
           e.classList.remove('queued'); tag.textContent = '已送入当前任务'; steer.remove();
           if (r.next && r.run) { S.run = r.run; S.off = 0; startPolling(); }
-        }).catch(function (error) { steer.disabled = false; tag.firstChild.textContent = '尚未补充：' + error.message; });
+        }).catch(function (error) { if(generation!==S.convSeq)return;steer.disabled = false; tag.firstChild.textContent = '尚未补充：' + error.message; });
       });
       e.appendChild(steer);
     }
@@ -1568,9 +1602,12 @@
   function send(given, prep) {
     var text = prep ? prep.text : given != null ? String(given).trim() : input.value.trim();
     var atts = prep ? prep.atts : given != null ? [] : (S.atts || []).filter(function (a) { return a.state === 'ok'; });
-    if ((!text && !atts.length) || S.run || S.sending) return false;
+    if ((!text && !atts.length) || S.run || S.sending || S.loadingConversation) return false;
     if (given == null && !prep && attsBusy()) { setStatus('文件还没传完，传完再发', 'wait'); setTimeout(function () { setStatus(''); }, 2500); return false; }
     S.sending = true;
+    var retry=S.retrySend&&S.retrySend.text===text&&JSON.stringify(S.retrySend.atts||[])===JSON.stringify(atts)?S.retrySend:null;
+    S.retrySend=null;
+    var generation=S.convSeq,flight={generation:generation,sid:S.sid,id:prep&&prep.queued?prep.queued[0].id:retry?retry.id:crypto.randomUUID(),text:text,atts:atts,queued:prep&&prep.queued?prep.queued.map(function(v){return v.id;}):[]};S.sendFlight=flight;
     if (list.querySelector('.xc-hello')) clearList();
     var c = curCtx();
     var files = atts.map(function (a) { return { name: a.name, path: a.path, size: a.size, image: a.image, url: a.url }; });
@@ -1582,14 +1619,16 @@
     S.lastText = ''; S.doing = 'think'; S.note = null; S.waitSend = '';
     typing(true); renderHead(); toBottom(true);
     var x = xin(); if (x) x.ai('think');
-    call('send', { sid: S.sid || undefined, clientId: prep && prep.queued ? prep.queued[0].id : crypto.randomUUID(), agent: S.sid ? undefined : S.agent, text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,
-      files: files.length ? files.map(function (f) { return { path: f.path, name: f.name }; }) : undefined }, 90000, function (w) { S.waitSend = w.state; progress(); }).then(function (d) {
+    flight.payload=retry&&retry.payload||{ sid: flight.sid || undefined, clientId: flight.id, agent: flight.sid ? undefined : S.agent, text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,files:files.length?files.map(function(f){return {path:f.path,name:f.name};}):undefined};
+    call('send', flight.payload, 90000, function (w) { if(generation===S.convSeq){S.waitSend = w.state; progress();} },function(){return generation===S.convSeq;}).then(function (d) {
       // vm-agent 的软错误也包在 ok:true 的 data 里（busy / empty / no_session…），不能当发送成功
       if (d && d.error) {
         var er = new Error(d.msg || d.error);
         er.code = d.error; er.run = d.run; er.sid = d.sid;
         throw er;   // 交给后面的 catch（不能写在 then 的第二个参数里，那边接不住这里的 throw）
       }
+      if(generation!==S.convSeq){settleDetachedSend(flight,d);return;}
+      S.sendFlight=null;
       if (c && c.sel) S.sel = null;      // 选中的内容用过一次就不再带
       refreshCtx();
       // 送到了：小芯的电脑收到这句、AI 开始干活，从这一刻开始算「思考中」的时间
@@ -1601,6 +1640,8 @@
       if (d.bg != null) S.bg = d.bg;
       S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); render(); typing(true); startPolling();
     }).catch(function (e) {
+      if(generation!==S.convSeq){settleDetachedSend(flight,null,e);return;}
+      S.sendFlight=null;
       S.sending = false; S.waitSend = ''; pending.remove(); typing(false); renderHead();
       if (prep && prep.queued) { S.queueFlight = []; prep.queued.forEach(function (v) { queueMsg(v.text, v); }); saveQueue(); }
       if (!(prep && prep.queued) && !input.value) { input.value = text; ls(LS_DRAFT, text); grow(); }
@@ -1722,7 +1763,8 @@
   function stop() {
     if (!S.run) return;
     // 停完（或者其实早就做完了）再取一次进度：拿到「做完」，停止键才会变回发送
-    call('stop', { run: S.run }, 20000).then(function () { if (S.run && !S.polling) startPolling(); }, function (e) { setStatus('停不下来：' + e.message, 'bad'); });
+    var generation=S.convSeq,run=S.run;
+    call('stop', { run: run }, 20000,null,function(){return generation===S.convSeq;}).then(function () { if(generation===S.convSeq&&run===S.run&&!S.polling)startPolling(); }, function (e) { if(generation===S.convSeq)setStatus('停不下来：' + e.message, 'bad'); });
   }
 
   /* ---------- 轮询这一轮的新事件 ---------- */
@@ -1733,9 +1775,9 @@
     clearTimeout(pollTm);
     if (!S.polling || !S.run) return;
     if (document.hidden) { pollTm = setTimeout(poll, 1500); return; }
-    var run = S.run;
-    call('poll', { run: run, off: S.off, deviceId:S.deviceId, tabId:S.tabId, watching:!!(S.open && S.view==='chat' && !document.hidden && document.hasFocus()) }, 0).then(function (d) {
-      if (run !== S.run) return;
+    var run = S.run,generation=S.convSeq;
+    call('poll', { run: run, off: S.off, deviceId:S.deviceId, tabId:S.tabId, watching:!!(S.open && S.view==='chat' && !document.hidden && document.hasFocus()) }, 0,null,function(){return generation===S.convSeq&&run===S.run;}).then(function (d) {
+      if (run !== S.run || generation!==S.convSeq) return;
       d.events.forEach(function (ev) { if (!(ev.t === 'user' && S.mine[run])) draw(ev, false, run); react(ev); if (ev.t === 'done' && ev.usage) setUsage(ev.usage); });
       S.off = d.off;
       if (d.events.length) toBottom();
@@ -1749,6 +1791,7 @@
       progress();
       pollTm = setTimeout(poll, d.events.length ? 700 : 1300);
     }, function (e) {
+      if (run !== S.run || generation!==S.convSeq) return;
       if (e.state === 'cooldown') { setStatus(e.message, 'bad'); pollTm = setTimeout(poll, Math.max(30, e.retryAfter || 60) * 1000); return; }
       if (/要先登录/.test(e.message)) { stopPolling(); return; }
       setStatus(e.state === 'waking' ? '唤醒中…' : '连不上云电脑，正在重试：' + e.message, 'wait');
@@ -2097,8 +2140,7 @@
   function openFromHash() {
     var m = XIN_HASH.exec(location.hash);
     if (!m) return;
-    if (m[1] && m[1].slice(1) !== S.sid) { S.sid = m[1].slice(1); ls(LS_SID, S.sid); S.histFor = ''; }
-    open();
+    openConversation(m[1] ? m[1].slice(1) : '');
   }
   function boot() {
     watchDoc(document);

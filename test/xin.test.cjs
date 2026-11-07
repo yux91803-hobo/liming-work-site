@@ -856,10 +856,11 @@ test('路由器：按类别挑（不是排名）；点名只认能干的（看�
   assert.deepStrictEqual([route({ kind: 'code', want: 'deepseek-v4.1-flash' }).model, route({ kind: 'code', want: 'deepseek-v4.1-flash' }).why], ['deepseek-v4.1-flash', 'picked']);
   assert.match(route({ kind: 'code', want: 'gpt-9' }).note, /没有叫 gpt-9 的模型/);
   assert.strictEqual(route({ kind: 'code', want: 'gpt-9' }).model, 'glm-5.3');
-  // avoid：检查别人的活时避开被检查的模型；小芯提议的在 avoid 里也不用，用户点名的照用
+  // 复核不能使用实际作者，即使点名也不能绕过；普通任务仍尊重点名。
   assert.strictEqual(route({ kind: 'review', avoid: ['kimi-k3.1-pro'] }).model, 'glm-5.3');
   assert.strictEqual(route({ kind: 'review', want: 'kimi-k3.1-pro', avoid: ['kimi-k3.1-pro'] }).model, 'glm-5.3');
-  assert.strictEqual(route({ kind: 'review', want: 'kimi-k3.1-pro', named: true, avoid: ['kimi-k3.1-pro'] }).model, 'kimi-k3.1-pro');
+  assert.strictEqual(route({ kind: 'review', want: 'kimi-k3.1-pro', named: true, avoid: ['kimi-k3.1-pro'] }).error, 'independent_review_model');
+  assert.strictEqual(route({kind:'code',want:'kimi-k3.1-pro',named:true,avoid:['kimi-k3.1-pro']}).model,'kimi-k3.1-pro');
   assert.strictEqual(route({ kind: 'hard', images: true, avoid: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'] }).model, 'glm-5.3');
   // 用户点名：要有「用 / 换成 / 让…」或者「…来做」，光提到名字不算
   for (const [t, want] of [['用 Kimi 检查一下', 'kimi-k3.1-pro'], ['换成GLM-5.3 Flash', 'glm-5.3-flash'], ['这次用glm5.3写', 'glm-5.3'], ['用 GLM 写', 'glm-5.3'],

@@ -30,7 +30,7 @@ export function inventory(root) {
 }
 
 export function prepareWorkspace(t, controller) {
-  if (t.workspace && fs.existsSync(t.workspace.work) && fs.existsSync(t.workspace.manifest)) return t.workspace;
+  if (t.workspace && fs.existsSync(t.workspace.work) && fs.existsSync(t.workspace.manifest)) {if(t.workspace.stm32===undefined)t.workspace.stm32=detectStm32(t.dir,Object.keys(inventory(t.dir)));return t.workspace;}
   const root = path.join(os.tmpdir(), 'xin-task-' + t.sid);
   const work = path.join(root, 'work'), io = path.join(root, 'io'), home = path.join(root, 'home');
   mkdir(work); mkdir(io); mkdir(home); mkdir(path.join(home, 'bin')); mkdir(path.join(root, 'tmp'));
@@ -58,7 +58,7 @@ console.log(fs.readFileSync(reply,'utf8'));fs.unlinkSync(reply);
 `;
   fs.writeFileSync(path.join(home, 'bin', 'xin'), bridge, { mode: 0o755 });
   fs.writeFileSync(path.join(home, 'shell-env.sh'), 'export PATH=' + JSON.stringify(path.join(home, 'bin')) + ':"$PATH"\n');
-  return { work, io, home, tmp: path.join(root, 'tmp'), manifest };
+  return { work, io, home, tmp: path.join(root, 'tmp'), manifest,stm32:detectStm32(t.dir,Object.keys(before)) };
 }
 
 export function publicationPlan(t, controller) {
@@ -73,23 +73,83 @@ export function publicationPlan(t, controller) {
 
 export function stm32Task(t) {
   if(!t.workspace || !['code','review'].includes(t.tkind)) return false;
-  const main=path.join(t.workspace.work,'main.c'),make=path.join(t.workspace.work,'Makefile');
-  return fs.existsSync(main)&&fs.existsSync(make)&&/stm32|arm-none-eabi|cortex-m3/i.test(fs.readFileSync(main,'utf8')+fs.readFileSync(make,'utf8'));
+  if(t.workspace.stm32||/stm32|arm-none-eabi|cortex-m\d/i.test((t.goal||'')+' '+(t.userRequest||'')))return true;
+  try{return detectStm32(t.workspace.work,Object.keys(inventory(t.workspace.work)));}catch{return true;} // Invalid trees must fail controlled validation, not bypass it.
+}
+function detectStm32(root,names){
+  if(names.some(n=>/\.ioc$|(?:^|\/)[^/]*stm32[^/]*\.(?:c|h|s|ld)$/i.test(n)))return true;
+  for(const n of names.filter(n=>/\.(?:c|h|cpp|hpp|cmake|ini|rs|toml)$|(?:^|\/)(?:Makefile|GNUmakefile|CMakeLists\.txt|xin-build\.json|\.cproject|\.project)$/i.test(n))){
+    const fd=fs.openSync(path.join(root,n),fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const b=Buffer.alloc(65536),length=fs.readSync(fd,b,0,b.length,0);if(/stm32|arm-none-eabi|cortex-m\d/i.test(b.toString('utf8',0,length)))return true;}finally{fs.closeSync(fd);}
+  }return false;
+}
+export function buildPlan(t){
+  const root=t.workspace.work,names=Object.keys(inventory(root));let config={};
+  if(names.includes('xin-build.json'))config=JSON.parse(fs.readFileSync(path.join(root,'xin-build.json'),'utf8'));
+  const relative=p=>{if(typeof p!=='string'||path.isAbsolute(p)||p.split(/[\\/]/).includes('..'))throw Error('构建路径必须留在任务副本内');const full=path.resolve(root,p);if(!under(full,root))throw Error('构建路径越界');return full;};
+  let directory=config.directory===undefined?null:relative(config.directory),system=config.system;
+  if(system!==undefined&&!['make','cmake'].includes(system))throw Error('xin-build.json 只支持 make 或 cmake');
+  if(!directory){
+    if(names.some(n=>/^(?:GNUmakefile|[Mm]akefile)$/.test(n))){directory=root;system=system||'make';}
+    else if(names.includes('CMakeLists.txt')){directory=root;system=system||'cmake';}
+    else{
+      const entries=names.filter(n=>/(?:^|\/)(?:GNUmakefile|[Mm]akefile|CMakeLists\.txt)$/.test(n)&&!/(?:^|\/)(?:build|out|Debug|Release|node_modules)(?:\/|$)/i.test(n));
+      const dirs=[...new Set(entries.map(n=>path.dirname(n)))];
+      if(dirs.length!==1)throw Error('STM32 工程缺少唯一构建入口，请用 xin-build.json 指定 system 和 directory');
+      directory=relative(dirs[0]);system=system||(/CMakeLists\.txt$/.test(entries[0])?'cmake':'make');
+    }
+  }
+  const local=path.relative(root,directory);const has=n=>names.includes((local?local+'/':'')+n);
+  system=system||(has('Makefile')||has('makefile')||has('GNUmakefile')?'make':has('CMakeLists.txt')?'cmake':null);
+  if(!system)throw Error('指定目录没有受支持的 STM32 构建入口');
+  let artifacts=null;
+  if(config.artifacts!==undefined){if(!Array.isArray(config.artifacts)||!config.artifacts.length||config.artifacts.length>32)throw Error('artifacts 必须是非空输出路径数组');artifacts=config.artifacts.map(p=>path.relative(root,relative(p)));}
+  const configure=['-S',directory,'-B',path.join(directory,'build')];
+  if(config.preset!==undefined){if(typeof config.preset!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(config.preset))throw Error('CMake preset 名称无效');configure.push('--preset',config.preset);}
+  const toolchains=names.filter(n=>/(?:^|\/)(?:gcc-)?arm-none-eabi\.cmake$/i.test(n));
+  const toolchain=config.toolchain!==undefined?relative(config.toolchain):toolchains.length===1?relative(toolchains[0]):null;
+  if(toolchain)configure.push('-DCMAKE_TOOLCHAIN_FILE='+toolchain);
+  const commands=system==='make'? [['/usr/bin/make',['-B','-C',directory]]]:[['/usr/bin/cmake',configure],['/usr/bin/cmake',['--build',path.join(directory,'build'),'--clean-first']]];
+  return {directory,system,artifacts,commands};
+}
+function validBuildArtifact(file){
+  const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{
+    const st=fs.fstatSync(fd);if(!st.isFile()||!st.size||st.size>32*1024*1024)return false;
+    const b=Buffer.alloc(st.size);if(fs.readSync(fd,b,0,b.length,0)!==b.length)return false;
+    if(/\.elf$/i.test(file))return b.length>=52&&b.subarray(0,4).equals(Buffer.from([127,69,76,70]))&&b[4]===1&&b[5]===1&&b[6]===1&&b.readUInt16LE(18)===40;
+    if(/\.hex$/i.test(file)){
+      let data=false,eof=false;for(const line of b.toString('ascii').trim().split(/\r?\n/)){
+        if(!/^:(?:[0-9a-f]{2})+$/i.test(line)||eof)return false;const record=Buffer.from(line.slice(1),'hex');
+        if(record.length!==record[0]+5||record.reduce((a,v)=>a+v,0)%256)return false;
+        if(record[3]===0&&record[0])data=true;if(record[3]===1)eof=true;
+      }return data&&eof;
+    }return /\.bin$/i.test(file);
+  }finally{fs.closeSync(fd);}
 }
 export function compileWorkspace(t) {
   if(!stm32Task(t)) return null;
-  const hexFile=path.join(t.workspace.work,'build/app.hex');
-  if(fs.existsSync(hexFile)) fs.unlinkSync(hexFile); // only the private generated artifact, never the user's original
-  const c=containerCommand(t,'/usr/bin/make',['-B']);
-  const result=spawnSync(c.command,c.args,{cwd:t.workspace.work,env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:60000,maxBuffer:2*1024*1024});
-  const ok=result.status===0 && fs.existsSync(hexFile) && /^:[0-9a-f]+$/im.test(fs.readFileSync(hexFile,'utf8'));
-  return {ok,digest:ok?sourceDigest(t.workspace.work):null,output:((result.stdout||'')+'\n'+(result.stderr||'')+(result.error?'\n'+result.error.message:'')).slice(-10000)};
+  let plan;try{plan=buildPlan(t);}catch(e){return {ok:false,output:e.message};}
+  // Filesystem timestamps can lag Date.now() by a clock tick. Compare actual
+  // before/after identity, timestamps and content; unchanged old/future-dated files are not evidence.
+  const stamp=file=>{const s=fs.statSync(file,{bigint:true});return [s.dev,s.ino,s.size,s.mtimeNs,s.ctimeNs].join(':');};
+  let before;try{before=Object.fromEntries(Object.entries(inventory(t.workspace.work)).filter(([n])=>plan.artifacts?plan.artifacts.includes(n):/\.(?:hex|elf|bin)$/i.test(n)).map(([n,hash])=>[n,{hash,stamp:stamp(path.join(t.workspace.work,n))}]));}catch(e){return {ok:false,output:e.message};}
+  let output='';
+  for(const [command,args] of plan.commands){
+    const c=containerCommand(t,command,args),result=spawnSync(c.command,c.args,{cwd:t.workspace.work,env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:60000,maxBuffer:2*1024*1024});
+    output=((output+'\n'+(result.stdout||'')+'\n'+(result.stderr||'')+(result.error?'\n'+result.error.message:''))).slice(-10000);
+    if(result.status!==0)return {ok:false,output};
+  }
+  let after;try{after=inventory(t.workspace.work);}catch(e){return {ok:false,output:output+'\n'+e.message};}
+  const names=Object.keys(after);
+  const candidates=plan.artifacts||names.filter(n=>/\.(?:hex|elf|bin)$/i.test(n));
+  const artifacts=candidates.filter(n=>{const file=path.join(t.workspace.work,n),old=before[n];try{return names.includes(n)&&(!old||old.stamp!==stamp(file)||old.hash!==after[n])&&validBuildArtifact(file);}catch{return false;}});
+  const ok=artifacts.length>0&&(!plan.artifacts||artifacts.length===plan.artifacts.length);
+  return {ok,digest:ok?sourceDigest(t.workspace.work):null,artifacts,system:plan.system,output:output+(ok?'':'\n没有生成本次构建的新 ARM ELF / 有效 HEX / 非空 BIN 产物，不能使用旧文件作为编译证据。')};
 }
 export function validateTask(t, controller, meta) {
   const plan = publicationPlan(t, controller);
   if (!stm32Task(t)) return { applicable: false };
-  if (!meta.compileTrusted || !meta.compileOk || meta.compileDigest !== sourceDigest(t.workspace.work)) return { error: 'STM32 程序必须在最终改动后成功执行 make，并确认生成的文件；现在没有针对最终源码的成功编译记录。' };
-  if(t.tkind==='code' && !plan.changes.some(n=>/\.[chs]$/i.test(n))) return {error:'STM32 实现任务没有源码改动，不能把只编译模板当成完成。请完成要求的程序后重新 make。'};
+  if (!meta.compileTrusted || !meta.compileOk || meta.compileDigest !== sourceDigest(t.workspace.work)) return { error: 'STM32 程序必须在最终改动后通过受控 make / CMake 构建并生成新的有效产物；现在没有针对最终源码的成功编译记录。' };
+  if(t.tkind==='code' && !plan.changes.some(n=>/\.(?:c|h|s|cpp|hpp)$/i.test(n))) return {error:'STM32 实现任务没有源码改动，不能把只编译模板当成完成。请完成要求的程序后重新构建。'};
   const report = path.join(t.workspace.work, 'xin-review.json');
   if (t.tkind === 'review') {
     let data; try { data = JSON.parse(fs.readFileSync(report,'utf8')); } catch { return { error: '请生成 xin-review.json：verdict="pass"，checks 数组逐项写出 clock、pinmap、peripheral_clock、interrupt 的 id、status（pass/not_applicable）、reference（手册章节）和 evidence（源码文件:行号及判断依据）。' }; }
@@ -105,7 +165,7 @@ export function validateTask(t, controller, meta) {
 }
 export function sourceDigest(root) {
   const files = inventory(root);
-  return crypto.createHash('sha256').update(JSON.stringify(Object.entries(files).filter(([n])=>/\.(?:c|h|s|ld|mk)$|(?:^|\/)Makefile$/i.test(n)).sort(([a],[b])=>a.localeCompare(b)))).digest('hex');
+  return crypto.createHash('sha256').update(JSON.stringify(Object.entries(files).filter(([n])=>/\.(?:c|h|s|cpp|hpp|ld|mk|cmake|ioc)$|(?:^|\/)(?:Makefile|GNUmakefile|CMakeLists\.txt|CMakePresets\.json|xin-build\.json)$/i.test(n)).sort(([a],[b])=>a.localeCompare(b)))).digest('hex');
 }
 
 export function publishWorkspace(t, controller, approved = false) {
@@ -265,20 +325,24 @@ export function drainBridge(workspace, handle) {
     // Resolve every operation through the pinned directory inode, even if its path is replaced.
     const root='/proc/self/fd/'+directory;
     for(const name of fs.readdirSync(root).filter(n=>/^[a-f0-9]{24}\.request$/.test(n)).slice(0,32)){
-      const request=path.join(root,name),reply=path.join(root,name.replace(/\.request$/,'.reply'));let input,output;
+      const request=path.join(root,name),reply=path.join(root,name.replace(/\.request$/,'.reply'));let input,output,temporary;
       try{
         input=fs.openSync(request,C.O_RDONLY|C.O_NOFOLLOW|C.O_NONBLOCK);
         const stat=fs.fstatSync(input);if(!stat.isFile()||stat.size>4096)continue;
         const data=Buffer.alloc(4097),length=fs.readSync(input,data,0,data.length,0);
         if(length>4096)continue;
         const a=JSON.parse(data.subarray(0,length).toString('utf8'));
-        // Reserve the reply before executing a bridge operation. Never overwrite or follow an entry.
-        output=fs.openSync(reply,C.O_WRONLY|C.O_CREAT|C.O_EXCL|C.O_NOFOLLOW,0o600);
+        try{fs.lstatSync(reply);continue;}catch(e){if(e.code!=='ENOENT')throw e;}
+        // Publish only a complete reply. Both temporary creation and final link refuse existing entries.
+        temporary=path.join(root,'.reply-'+crypto.randomBytes(16).toString('hex'));
+        output=fs.openSync(temporary,C.O_WRONLY|C.O_CREAT|C.O_EXCL|C.O_NOFOLLOW,0o600);
         fs.writeFileSync(output,String(handle(a)).slice(0,1500));
+        fs.linkSync(temporary,reply);
       }catch{ /* malformed requests and occupied reply names fail closed */ }
       finally{
         if(input!==undefined)fs.closeSync(input);
         if(output!==undefined)fs.closeSync(output);
+        if(temporary)try{fs.unlinkSync(temporary);}catch{}
         try{fs.unlinkSync(request);}catch{}
       }
     }

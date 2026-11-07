@@ -15,7 +15,24 @@ function fixture(t) {
   const preload = path.join(root, 'preload.cjs');
   fs.writeFileSync(preload, `require('node:os').homedir=()=>${JSON.stringify(path.join(root, 'profile'))};require('node:module').syncBuiltinESMExports();`);
   env.NODE_OPTIONS = '--require=' + preload;
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(async () => {
+    // Detached runners/watchdogs must exit before removing their preload and state.
+    const r = await import(pathToFileURL(agent).href);
+    const owned = () => fs.readdirSync('/proc').filter(n => /^\d+$/.test(n) && Number(n) !== process.pid).flatMap(n => {
+      try {
+        if (!fs.readFileSync('/proc/' + n + '/environ', 'utf8').split('\0').includes('XIN_HOME=' + env.XIN_HOME)) return [];
+        const identity = r.processIdentity(Number(n));
+        return identity && !['Z', 'X'].includes(identity.state) ? [{ pid: Number(n), identity }] : [];
+      } catch { return []; }
+    });
+    const deadline = Date.now() + 5000;
+    while (owned().length && Date.now() < deadline) {
+      for (const p of owned()) r.signalProcessGroup(p.pid, p.identity, 'SIGKILL');
+      await new Promise(ok => setTimeout(ok, 30));
+    }
+    assert.equal(owned().length, 0, 'fixture processes must exit before removing their state');
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   const call = (op, args) => {
     const r = spawnSync(process.execPath, [agent, 'locked', op], { env, input: JSON.stringify(args), encoding: 'utf8', timeout: 15000 });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
@@ -322,4 +339,87 @@ test('完成事件可见时统计已保存，收尾重试去重且以最终停�
   assert.equal(stats().length,1);assert.equal(stats()[0].run,run);assert.equal(stats()[0].ok,false);assert.equal(stats()[0].stopped,true);
   assert.ok(fs.readFileSync(path.join(f.control,'runs',run+'.jsonl'),'utf8').includes('"t":"done"'));
   f.call('run_complete',{run,stat,done:{t:'done',ok:true}});f.call('run_stat',{...stat,run});assert.equal(stats().length,1);
+});
+
+test('提问后快速回复会清掉对应 pendingQuestion，下一轮完成不再重复等待',async t=>{
+ const f=fixture(t),bin=path.join(f.root,'bin');fs.mkdirSync(bin);f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_CODEX_TRANSPORT='exec';
+ fs.writeFileSync(path.join(bin,'codex'),'#!/bin/sh\necho \'{"type":"thread.started","thread_id":"answer-fixture"}\'\necho \'{"type":"item.completed","item":{"type":"agent_message","text":"answer handled"}}\'\necho \'{"type":"turn.completed"}\'\n',{mode:0o755});
+ f.call('task_ask',{sid:f.task.sid,question:'是否继续？'});f.call('task_tell',{sid:f.task.sid,text:'继续'});
+ assert.equal(f.read().pendingQuestion,undefined);assert.equal(f.read().question,'');
+ fs.appendFileSync(path.join(f.control,'runs/rruntime001.jsonl'),JSON.stringify({t:'done',ok:true})+'\n');
+ f.call('task_finish',{sid:f.task.sid,run:'rruntime001',ok:true});
+ const deadline=Date.now()+15000;let task;
+ while(Date.now()<deadline){f.call('tasks',{});task=f.read();if(['done','failed','waiting'].includes(task.status))break;await new Promise(r=>setTimeout(r,100));}
+ assert.equal(task.status,'done',JSON.stringify(task));assert.equal(task.runs.length,2);assert.equal(task.pendingQuestion,undefined);
+});
+test('答复之后出现的新问题不能被旧 inbox 吞掉',t=>{
+ const f=fixture(t);f.call('task_ask',{sid:f.task.sid,question:'旧问题'});f.call('task_tell',{sid:f.task.sid,text:'旧问题的答复'});f.call('task_ask',{sid:f.task.sid,question:'新问题'});
+ f.call('task_finish',{sid:f.task.sid,run:'rruntime001',ok:true});const s=f.read();assert.equal(s.status,'waiting');assert.equal(s.question,'新问题');assert.equal(s.inbox[0].text,'旧问题的答复');
+});
+
+test('独立复核不忽略 avoid，点名作者及耗尽全部视觉候选均明确拒绝',async()=>{
+ const {route,CODEX_MODELS}=await import(pathToFileURL(agent).href);
+ const visual=CODEX_MODELS.filter(m=>m.image).map(m=>m.id);
+ const none=route({kind:'review',images:true,avoid:visual});assert.equal(none.model,null);assert.equal(none.error,'no_independent_model');
+ const same=route({kind:'review',want:'deepseek-v4.1-flash',named:true,avoid:['deepseek-v4.1-flash']});assert.equal(same.model,null);assert.equal(same.error,'independent_review_model');assert.match(same.note,/实际作者/);
+});
+test('原任务 fallback 与复核 fallback 组合：requestedModel 保持原值，actualModel 避开实际作者',async t=>{
+ const f=fixture(t);fs.unlinkSync(path.join(f.control,'sessions',f.task.sid+'.json'));const bin=path.join(f.root,'bin');fs.mkdirSync(bin);f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_CODEX_TRANSPORT='exec';const log=path.join(f.root,'models.jsonl');
+ fs.writeFileSync(path.join(bin,'codex'),'#!'+process.execPath+'\n'+`const fs=require('node:fs');const a=process.argv.slice(2),v=a.find(s=>s.startsWith('model='));if(!v){console.log('[]');process.exit(0);}const model=JSON.parse(v.slice(6)),role=a.join(' ').includes('REVIEW_CASE')?'review':'author';fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({role,model})+'\\n');if(role==='author'&&model==='glm-5.3'||role==='review'&&model==='deepseek-v4.1-flash'){setTimeout(()=>{console.log(JSON.stringify({type:'error',message:'provider unavailable'}));process.exit(1);},300);}else{console.log(JSON.stringify({type:'thread.started',thread_id:role+'-fixture'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'done'}}));console.log(JSON.stringify({type:'turn.completed'}));}` ,{mode:0o755});
+ const a=f.call('task_new',{kind:'research',goal:'AUTHOR_CASE',dir:f.task.dir,model:'glm-5.3',named:true}).task;
+ const review=f.call('task_new',{kind:'review',goal:'REVIEW_CASE',after:[a.no],dir:f.task.dir,model:'deepseek-v4.1-flash',named:true}).task;
+ const deadline=Date.now()+20000;let ah,rh;
+ while(Date.now()<deadline){f.call('tasks',{});ah=f.call('history',{sid:a.sid}).task;rh=f.call('history',{sid:review.sid}).task;if(['done','failed','waiting'].includes(rh.status))break;await new Promise(r=>setTimeout(r,100));}
+ ah=f.call('history',{sid:a.sid}).task;rh=f.call('history',{sid:review.sid}).task;
+ assert.equal(ah.status,'done',JSON.stringify(ah));assert.equal(rh.status,'done',JSON.stringify(rh));
+ assert.equal(ah.requestedModel,'glm-5.3');assert.equal(ah.actualModel,'kimi-k3.1-pro');assert.equal(rh.requestedModel,'deepseek-v4.1-flash');assert.equal(rh.actualModel,'glm-5.3');assert.equal(rh.independent,true);
+ const attempts=fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);assert.deepEqual(attempts.filter(x=>x.role==='review').map(x=>x.model),['deepseek-v4.1-flash','glm-5.3']);
+ const bad=f.call('task_new',{kind:'review',goal:'same author',after:[a.no],dir:f.task.dir,model:ah.actualModel,named:true});assert.equal(bad.error,'independent_review_model');
+});
+
+test('组长退出后，单独存活且忽略 TERM 的孙进程仍会被清理，换进程组也不释放目录',async t=>{
+ const {spawn}=require('node:child_process'),{once}=require('node:events'),r=await import(pathToFileURL(agent).href);
+ for(const separate of [false,true]){
+  const f=fixture(t),pidFile=path.join(f.root,'grandchild'),release=path.join(f.root,'release');let identity,leader;
+  const script=`import os,sys,time,signal\np=os.fork()\nif p==0:\n ${separate?'os.setpgid(0,0)':'pass'}\n signal.signal(signal.SIGTERM,signal.SIG_IGN)\n open(sys.argv[1],'w').write(str(os.getpid()))\n while True:time.sleep(1)\nelse:\n while not os.path.exists(sys.argv[2]):time.sleep(.01)\n`;
+  leader=spawn('python3',['-c',script,pidFile,release],{detached:true,stdio:'ignore'});t.after(()=>{if(identity)r.signalProcessGroup(leader.pid,identity,'SIGKILL');});
+  const wait=async fn=>{const end=Date.now()+10000;while(Date.now()<end){const v=fn();if(v)return v;await new Promise(ok=>setTimeout(ok,30));}throw Error('process fixture timeout');};
+  await wait(()=>fs.existsSync(pidFile));identity=r.processIdentity(leader.pid);assert.ok(identity);
+  const exited=once(leader,'exit');fs.writeFileSync(release,'1');await exited;
+  assert.equal(r.processIdentity(leader.pid),null);assert.equal(r.processGroupMembers(leader.pid,identity).length,1);
+  const meta={sid:f.task.sid,task:true,pid:leader.pid,identity,childPid:leader.pid,childIdentity:identity,started:Date.now()-20000};fs.writeFileSync(path.join(f.control,'runs/rruntime001.json'),JSON.stringify(meta));
+  assert.ok(f.call('history',{sid:f.task.sid}).active,'must retain occupancy while a TERM-resistant descendant lives');
+  await new Promise(ok=>setTimeout(ok,2100));await wait(()=>!f.call('history',{sid:f.task.sid}).active);
+  assert.equal(r.processGroupMembers(leader.pid,identity).length,0);assert.equal(JSON.parse(fs.readFileSync(path.join(f.control,'runs/rruntime001.json'))).died,true);
+  assert.deepEqual(r.processGroupMembers(process.pid,{...r.processIdentity(process.pid),boot:'wrong-boot'}),[]);
+ }
+});
+test('嵌套 Core/Src STM32 工程、CMake 和显式构建目录均被识别，删除标记不能绕过',async t=>{
+ const f=fixture(t),r=await load(),firmware=path.join(f.task.dir,'firmware');fs.mkdirSync(path.join(firmware,'Core/Src'),{recursive:true});fs.writeFileSync(path.join(firmware,'Core/Src/main.c'),'#include "stm32f1xx_hal.h"');fs.writeFileSync(path.join(firmware,'Makefile'),'all:; arm-none-eabi-gcc');
+ f.task.workspace=r.prepareWorkspace(f.task,f.control);assert.equal(r.stm32Task(f.task),true);let p=r.buildPlan(f.task);assert.equal(p.directory,path.join(f.task.workspace.work,'firmware'));assert.equal(p.system,'make');
+ fs.unlinkSync(path.join(f.task.workspace.work,'firmware/Makefile'));fs.writeFileSync(path.join(f.task.workspace.work,'firmware/CMakeLists.txt'),'project(stm32 C ASM)');p=r.buildPlan(f.task);assert.equal(p.system,'cmake');assert.equal(p.commands.length,2);
+ fs.writeFileSync(path.join(f.task.workspace.work,'xin-build.json'),JSON.stringify({system:'cmake',directory:'firmware',artifacts:['firmware/Release/custom.elf']}));p=r.buildPlan(f.task);assert.deepEqual(p.artifacts,['firmware/Release/custom.elf']);
+ fs.rmSync(path.join(f.task.workspace.work,'firmware'),{recursive:true});fs.unlinkSync(path.join(f.task.workspace.work,'xin-build.json'));assert.equal(r.stm32Task(f.task),true);assert.ok(r.compileWorkspace(f.task).output.includes('构建入口'));
+});
+test('多个 STM32 构建入口与越界构建配置不能静默选择或跳过',async t=>{
+ const f=fixture(t),r=await load();f.task.goal='STM32 build';f.task.workspace=r.prepareWorkspace(f.task,f.control);
+ for(const d of ['one','two']){fs.mkdirSync(path.join(f.task.workspace.work,d));fs.writeFileSync(path.join(f.task.workspace.work,d,'Makefile'),'all:');}
+ assert.equal(r.stm32Task(f.task),true);assert.throws(()=>r.buildPlan(f.task),/唯一构建入口/);
+ fs.writeFileSync(path.join(f.task.workspace.work,'xin-build.json'),JSON.stringify({directory:'../control',system:'make'}));assert.throws(()=>r.buildPlan(f.task),/副本内/);
+ fs.writeFileSync(path.join(f.task.workspace.work,'xin-build.json'),JSON.stringify({directory:'one',system:'make',artifacts:['../../secret.hex']}));assert.throws(()=>r.buildPlan(f.task),/副本内/);
+});
+
+test('受控构建验证任意新产物，拒绝旧 HEX、非 ARM ELF 及输出软链接',async t=>{
+ const f=fixture(t),r=await load(),cp=require('node:child_process'),{syncBuiltinESMExports}=require('node:module');f.task.goal='STM32 build';fs.writeFileSync(path.join(f.task.dir,'Makefile'),'all:');f.task.workspace=r.prepareWorkspace(f.task,f.control);
+ const work=f.task.workspace.work,artifact=path.join(work,'Release/custom.hex');fs.mkdirSync(path.dirname(artifact));const hex=':0100000001FE\n:00000001FF\n';fs.writeFileSync(artifact,hex);fs.utimesSync(artifact,new Date(2000,0,1),new Date(2000,0,1));
+ const real=cp.spawnSync;let generate=()=>{};
+ cp.spawnSync=(cmd,args)=>{assert.equal(cmd,'/usr/bin/sudo');assert.ok(args.includes('/usr/bin/make'));assert.ok(args.includes(work));generate();return {status:0,stdout:'build',stderr:''};};syncBuiltinESMExports();
+ try{
+  assert.equal(r.compileWorkspace(f.task).ok,false,'old valid HEX is not build evidence');
+  fs.utimesSync(artifact,new Date(Date.now()+60000),new Date(Date.now()+60000));assert.equal(r.compileWorkspace(f.task).ok,false,'future-dated unchanged HEX is not build evidence');
+  generate=()=>fs.writeFileSync(artifact,hex);let built=r.compileWorkspace(f.task);assert.equal(built.ok,true);assert.ok(built.artifacts.includes('Release/custom.hex'));
+  fs.unlinkSync(artifact);const elf=path.join(work,'Release/custom.elf');generate=()=>{const b=Buffer.alloc(52);b.set([127,69,76,70,1,1,1]);b.writeUInt16LE(62,18);fs.writeFileSync(elf,b);};assert.equal(r.compileWorkspace(f.task).ok,false);
+  generate=()=>{const b=Buffer.alloc(52);b.set([127,69,76,70,1,1,1]);b.writeUInt16LE(40,18);fs.writeFileSync(elf,b);};assert.equal(r.compileWorkspace(f.task).ok,true);
+  fs.unlinkSync(elf);const outside=path.join(f.control,'secret.hex');fs.writeFileSync(outside,hex);generate=()=>fs.symlinkSync(outside,artifact);built=r.compileWorkspace(f.task);assert.equal(built.ok,false);assert.match(built.output,/软链接/);assert.equal(fs.readFileSync(outside,'utf8'),hex);
+ }finally{cp.spawnSync=real;syncBuiltinESMExports();}
 });
