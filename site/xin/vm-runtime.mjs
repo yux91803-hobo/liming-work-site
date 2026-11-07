@@ -259,16 +259,31 @@ export function containerAppServer(t, config, options) {
 
 export function drainBridge(workspace, handle) {
   if (!workspace) return;
-  for (const name of fs.readdirSync(workspace.io).filter(n => /^[a-f0-9]{24}\.request$/.test(n)).slice(0, 32)) {
-    const p = path.join(workspace.io, name);
-    try {
-      if (!fs.lstatSync(p).isFile() || fs.lstatSync(p).isSymbolicLink() || fs.statSync(p).size > 4096) { fs.unlinkSync(p); continue; }
-      const a = JSON.parse(fs.readFileSync(p, 'utf8'));
-      const reply = handle(a);
-      fs.unlinkSync(p);
-      fs.writeFileSync(p.replace(/\.request$/, '.reply'), String(reply).slice(0, 1500));
-    } catch { try { fs.unlinkSync(p); } catch {} }
-  }
+  const C=fs.constants;let directory;
+  try {
+    directory=fs.openSync(workspace.io,C.O_RDONLY|C.O_DIRECTORY|C.O_NOFOLLOW);
+    // Resolve every operation through the pinned directory inode, even if its path is replaced.
+    const root='/proc/self/fd/'+directory;
+    for(const name of fs.readdirSync(root).filter(n=>/^[a-f0-9]{24}\.request$/.test(n)).slice(0,32)){
+      const request=path.join(root,name),reply=path.join(root,name.replace(/\.request$/,'.reply'));let input,output;
+      try{
+        input=fs.openSync(request,C.O_RDONLY|C.O_NOFOLLOW|C.O_NONBLOCK);
+        const stat=fs.fstatSync(input);if(!stat.isFile()||stat.size>4096)continue;
+        const data=Buffer.alloc(4097),length=fs.readSync(input,data,0,data.length,0);
+        if(length>4096)continue;
+        const a=JSON.parse(data.subarray(0,length).toString('utf8'));
+        // Reserve the reply before executing a bridge operation. Never overwrite or follow an entry.
+        output=fs.openSync(reply,C.O_WRONLY|C.O_CREAT|C.O_EXCL|C.O_NOFOLLOW,0o600);
+        fs.writeFileSync(output,String(handle(a)).slice(0,1500));
+      }catch{ /* malformed requests and occupied reply names fail closed */ }
+      finally{
+        if(input!==undefined)fs.closeSync(input);
+        if(output!==undefined)fs.closeSync(output);
+        try{fs.unlinkSync(request);}catch{}
+      }
+    }
+  }catch{ /* a replaced or unavailable bridge directory cannot grant controller access */ }
+  finally{if(directory!==undefined)fs.closeSync(directory);}
 }
 
 // JSON-RPC adapter. A server lives for the active turn, accepts steering and emits the existing event format.
