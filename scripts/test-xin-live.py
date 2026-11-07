@@ -211,7 +211,11 @@ async def main():
             await art.wait_for_selector('#frame:not([hidden])', timeout=180000)
             frame = art.frame_locator('#frame')
             for check in preview['checks']:
-                await frame.locator(check['selector']).click()
+                # Model-made artwork often animates forever; Playwright's "stable" wait would never end.
+                # Click like a person (and like the controller's own CDP check): visible, then click its centre.
+                control = frame.locator(check['selector'])
+                await control.wait_for(state='visible', timeout=15000)
+                await control.click(force=True)
                 target = frame.locator(check['expectSelector'])
                 if 'expectText' in check and check['expectText'] not in await target.inner_text():
                     raise RuntimeError('Delivered artwork click text failed')
