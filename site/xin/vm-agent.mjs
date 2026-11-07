@@ -944,7 +944,8 @@ export function agentArgs(agent, sess, text, effort, extra) {
   const sandbox = boxed
     ? runtime.permissionArgs(sess, BASE, [...new Set((sess.files || []).map(f=>f.path).concat((extra && extra.images) || []))])
     : ['--dangerously-bypass-approvals-and-sandbox'];
-  const common = ['--json', '--skip-git-repo-check'].concat(sandbox, codexRoute(M.id), ['-c', 'developer_instructions=' + JSON.stringify(dev)])
+  // Native agents bypass our task tree, queue and budget accounting; dispatch only through xin task.
+  const common = ['--json', '--skip-git-repo-check'].concat(sandbox, codexRoute(M.id), ['-c', 'features.multi_agent=false', '-c', 'features.multi_agent_v2=false', '-c', 'developer_instructions=' + JSON.stringify(dev)])
     .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], boxed ? taskMcpFlags(sess) : ['-c', 'shell_environment_policy.set.BASH_ENV=' + JSON.stringify(path.join(BASE, 'shell-env.sh'))].concat(mcpFlags()));
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(imgs, common, [sess.agentSid, text])];
   return ['codex', ['exec'].concat(imgs, common, ['-C', (role === 'task' && (sess.workspace?.work || sess.dir)) || WORK, text])];

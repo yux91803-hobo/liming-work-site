@@ -122,6 +122,18 @@ test('STM32 检查要求针对最终源码编译，并写齐四项手册依据',
 });
 
 
+test('所有 Codex 角色关闭原生分身，配置在容器转换后仍生效', async t => {
+  const f=fixture(t),r=await load();f.task.workspace=r.prepareWorkspace(f.task,f.control);
+  const {agentArgs}=await import(pathToFileURL(agent).href);
+  for(const role of ['front','daily','task']){
+    const [,args]=agentArgs('codex',f.task,'test','max',{role,sandbox:role==='task'});
+    const config=[];for(let i=0;i<args.length;i++)if(args[i]==='-c')config.push('-c',args[++i]);
+    const effective=role==='task'?r.containerAppServer(f.task,config,{proxy:{baseURL:'http://127.0.0.1:1/v1',token:'test-token'}}).args:config;
+    assert.ok(effective.includes('features.multi_agent=false'),role);
+    assert.ok(effective.includes('features.multi_agent_v2=false'),role);
+  }
+});
+
 test('任务命令桥只处理本任务的记忆和提问，不接受任意操作', async t => {
   const f = fixture(t), r = await load(); f.task.workspace = r.prepareWorkspace(f.task, f.control);
   const io = f.task.workspace.io, name = 'a'.repeat(24) + '.request';
