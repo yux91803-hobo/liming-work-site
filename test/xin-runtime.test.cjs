@@ -309,3 +309,15 @@ test('系统 SIGTERM 保留后台断点并续接，用户停止不被自动重�
   const stopped=await wait(()=>{f.call('tasks',{});const s=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',b.sid+'.json')));return s.status==='stopped'?s:null;});
   assert.equal(stopped.runs.length,1);assert.equal(stopped.resumes,0);
 });
+
+test('完成事件可见时统计已保存，收尾重试去重且以最终停止状态记账', t => {
+  const f=fixture(t),run='rruntime001',meta=path.join(f.control,'runs',run+'.json');
+  const m=JSON.parse(fs.readFileSync(meta));m.stopped=true;fs.writeFileSync(meta,JSON.stringify(m));
+  const stat={at:Date.now(),agent:'codex',model:'deepseek-v4.1-flash',ok:true,ms:10};
+  const completed=f.call('run_complete',{run,stat,done:{t:'done',ok:true}});
+  assert.equal(completed.done.ok,false);assert.equal(completed.done.stopped,true);
+  const stats=()=>fs.readFileSync(path.join(f.control,'model-stats.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(stats().length,1);assert.equal(stats()[0].run,run);assert.equal(stats()[0].ok,false);assert.equal(stats()[0].stopped,true);
+  assert.ok(fs.readFileSync(path.join(f.control,'runs',run+'.jsonl'),'utf8').includes('"t":"done"'));
+  f.call('run_complete',{run,stat,done:{t:'done',ok:true}});f.call('run_stat',{...stat,run});assert.equal(stats().length,1);
+});
