@@ -22,3 +22,23 @@ test('删除指定对话同时清除日志索引与回执，恢复时不重建�
  const {root,j}=await fixture(t);for(const sid of ['sdelete01','skeep001'])j.atomic(()=>{j.write(root+'/sessions/'+sid+'.json',JSON.stringify({sid}));j.write(root+'/contexts/'+sid+'.json','{"excerpt":"private"}');return {sid};},{id:sid,digest:sid});
  fs.unlinkSync(root+'/sessions/sdelete01.json');j.dropConversation('sdelete01');j.recover();assert.equal(fs.existsSync(root+'/sessions/sdelete01.json'),false);assert.equal(j.db.prepare('SELECT COUNT(*) AS n FROM commands WHERE id=?').get('sdelete01').n,0);assert.equal(j.db.prepare('SELECT COUNT(*) AS n FROM documents WHERE name=?').get('contexts/sdelete01.json').n,0);assert.equal(JSON.parse(fs.readFileSync(root+'/sessions/skeep001.json')).sid,'skeep001');
 });
+test('多个进程同时首次打开新的状态库：初始化遇忙重试，全部成功',async t=>{
+ const {spawn}=require('node:child_process');
+ for(let round=0;round<3;round++){
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-state-race-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const source=`import {StateJournal} from ${JSON.stringify(moduleUrl)};const j=new StateJournal(${JSON.stringify(root)});j.recover();j.enqueueLaunch('r'+process.pid,'srace0001');j.close();`;
+  const codes=await Promise.all(Array.from({length:8},()=>new Promise(ok=>{const c=spawn(process.execPath,['--input-type=module','-e',source],{stdio:['ignore','ignore','pipe']});let err='';c.stderr.on('data',d=>err+=d);c.on('close',code=>ok([code,err.replace(/.*ExperimentalWarning.*\n?|.*trace-warnings.*\n?/g,'').trim()]));})));
+  for(const [code,err] of codes)assert.equal(code,0,err);
+  const {StateJournal}=await import(moduleUrl);const j=new StateJournal(root);assert.equal(j.pendingLaunches().length,8);j.close();
+ }
+});
+test('另一连接正持有写锁时打开状态库：等锁释放后初始化成功，不立刻报 database is locked',async t=>{
+ const {spawn}=require('node:child_process'),{DatabaseSync}=require('node:sqlite');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-state-lock-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const holder=new DatabaseSync(path.join(root,'workflow.sqlite'));holder.exec('CREATE TABLE x(a); BEGIN IMMEDIATE; INSERT INTO x VALUES(1)');
+ const source=`import {StateJournal} from ${JSON.stringify(moduleUrl)};const j=new StateJournal(${JSON.stringify(root)});j.recover();console.log('ready');j.close();`;
+ const child=spawn(process.execPath,['--input-type=module','-e',source],{stdio:['ignore','pipe','pipe']});let out='',err='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);
+ setTimeout(()=>{holder.exec('COMMIT');holder.close();},400);
+ const code=await new Promise(ok=>child.on('close',ok));
+ assert.equal(code,0,err);assert.equal(out.trim(),'ready');
+});

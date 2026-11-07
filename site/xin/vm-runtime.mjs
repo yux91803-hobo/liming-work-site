@@ -4,6 +4,8 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import http from 'node:http';
+import net from 'node:net';
+import dns from 'node:dns';
 import { spawn, spawnSync } from 'node:child_process';
 
 const mkdir = p => fs.mkdirSync(p, { recursive: true });
@@ -214,7 +216,8 @@ export function permissionArgs(t, base, files = [], readRoots = []) {
   const tomlMap = o => '{' + Object.entries(o).map(([k,v]) => JSON.stringify(k) + '=' + JSON.stringify(v)).join(',') + '}';
   const env = { PATH: path.join(w.home, 'bin') + ':/usr/local/bin:/usr/bin:/bin', HOME: w.home, TMPDIR: w.tmp, LANG: 'C.UTF-8', XIN_TASK_IO: w.io, BASH_ENV: path.join(w.home, 'shell-env.sh') };
   return ['-c', 'default_permissions="xin-task"', '-c', 'permissions.xin-task.filesystem=' + tomlMap(filesystem),
-    '-c', 'permissions.xin-task.network.enabled=true', '-c', 'shell_environment_policy.inherit="none"',
+    // Fallback exec transport only: its commands share the host network, so they get none at all.
+    '-c', 'permissions.xin-task.network.enabled=false', '-c', 'shell_environment_policy.inherit="none"',
     '-c', 'shell_environment_policy.set=' + tomlMap(env)];
 }
 
@@ -243,25 +246,117 @@ export function mcpTransport(t, base, server) {
   return { command, args: transport.args || [], env, cwd: w.work, roots };
 }
 
-export function containerCommand(t, command, args, env = {}, roots = []) {
-  const w=t.workspace, mounts=[];
-  for (const p of ['/usr','/bin','/sbin','/lib','/lib64','/opt','/data/opt','/etc/ssl','/etc/alternatives','/etc/ld.so.cache',
+// Task containers get a private network namespace: only their own loopback exists, so the desktop
+// (VNC/X11), the model gateway and every other host service are unreachable. Controller services
+// enter through Unix sockets mounted read-only; TASK_FORWARDER maps fixed loopback ports to them.
+export const TASK_PORTS = { inference: 18080, egress: 18081 };
+export const TASK_FORWARDER = String.raw`const net=require('node:net'),os=require('node:os'),{spawn}=require('node:child_process');
+const [spec,command,...args]=process.argv.slice(1),forward=JSON.parse(spec);let child=null,waiting=forward.length;
+const start=()=>{child=spawn(command,args,{stdio:'inherit'});child.on('error',e=>{console.error('任务进程未能启动：'+e.message);process.exit(127);});
+ child.on('exit',(code,signal)=>process.exit(code==null?128+(os.constants.signals[signal]||1):code));};
+for(const s of ['SIGTERM','SIGINT','SIGHUP'])process.on(s,()=>child?child.kill(s):process.exit(143));
+for(const [port,socket] of forward){
+ const server=net.createServer(client=>{const upstream=net.connect(socket),close=()=>{client.destroy();upstream.destroy();};
+  for(const x of [client,upstream]){x.on('error',close);x.on('close',close);}client.pipe(upstream);upstream.pipe(client);});
+ server.on('error',e=>{console.error('任务网络转发未能启动：'+e.message);process.exit(1);});
+ server.listen(port,'127.0.0.1',()=>{if(--waiting===0)start();});
+}
+if(!waiting)start();`;
+export function containerCommand(t, command, args, env = {}, roots = [], network = null) {
+  const w=t.workspace, mounts=[], forward=network?.forward||[];
+  const readOnly=['/usr','/bin','/sbin','/lib','/lib64','/opt','/data/opt','/etc/ssl','/etc/alternatives','/etc/ld.so.cache',
     '/etc/java-21-openjdk','/etc/fonts','/etc/passwd','/etc/group','/etc/nsswitch.conf','/etc/hosts','/etc/resolv.conf',t.dir,
-    path.join(process.env.XIN_WORK || '/data/workspace','stm32-template'),...roots,...(t.files||[]).map(f=>f.path)])
-    if (fs.existsSync(p)) mounts.push('--ro-bind',p,p);
+    path.join(process.env.XIN_WORK || '/data/workspace','stm32-template'),...roots,...(t.files||[]).map(f=>f.path)];
+  const node=forward.length?fs.realpathSync(process.execPath):null;
+  if(node&&!readOnly.some(p=>under(node,p)))readOnly.push(node);
+  for (const p of readOnly) if (fs.existsSync(p)) mounts.push('--ro-bind',p,p);
   for (const p of [w.work,w.home,w.tmp,w.io]) mounts.push('--bind',p,p);
+  // The socket directory is controller-owned and read-only inside: a task cannot replace a socket.
+  for (const dir of new Set(forward.map(([,socket])=>path.dirname(socket)))) mounts.push('--ro-bind',dir,dir);
   // Bootstrap namespaces with privilege, then drop uid, groups and all capabilities before any model code.
   // env -i also keeps the namespace's init process free of controller credentials.
   const parents=new Set(['/etc','/data','/run']);
   for(let i=0;i<mounts.length;i+=3){let p=path.dirname(mounts[i+1]);while(p!=='/'){parents.add(p);p=path.dirname(p);}}
   const dirs=[...parents].sort((a,b)=>a.length-b.length).flatMap(p=>['--perms','0755','--dir',p]);
-  const a=['-n','/usr/bin/env','-i','PATH=/usr/bin:/bin','/usr/bin/bwrap','--unshare-pid','--unshare-ipc','--unshare-uts',
+  const a=['-n','/usr/bin/env','-i','PATH=/usr/bin:/bin','/usr/bin/bwrap','--unshare-pid','--unshare-ipc','--unshare-uts','--unshare-net',
     '--die-with-parent','--clearenv',...dirs,...mounts,'--dev','/dev','--proc','/proc','--tmpfs','/tmp','--dir','/run','--chdir',w.work];
+  const proxy='http://127.0.0.1:'+TASK_PORTS.egress, local='127.0.0.1,localhost,::1';
+  const egress=network?.egress?{HTTP_PROXY:proxy,HTTPS_PROXY:proxy,http_proxy:proxy,https_proxy:proxy,NO_PROXY:local,no_proxy:local}:{};
   const safe={HOME:w.home,TMPDIR:w.tmp,PATH:path.join(w.home,'bin')+':/usr/local/bin:/usr/bin:/bin',LANG:'C.UTF-8',
-    XIN_TASK_IO:w.io,BASH_ENV:path.join(w.home,'shell-env.sh'),...env};
+    XIN_TASK_IO:w.io,BASH_ENV:path.join(w.home,'shell-env.sh'),...egress,...env};
   for(const [k,v] of Object.entries(safe)) a.push('--setenv',k,v);
+  const inner=forward.length?[node,'-e',TASK_FORWARDER,'--',JSON.stringify(forward),command,...args]:[command,...args];
   return {command:'/usr/bin/sudo',args:a.concat(['--','/usr/bin/setpriv','--reuid='+process.getuid(),'--regid='+process.getgid(),
-    '--clear-groups','--bounding-set=-all','--inh-caps=-all','--ambient-caps=-all','--no-new-privs',command,...args])};
+    '--clear-groups','--bounding-set=-all','--inh-caps=-all','--ambient-caps=-all','--no-new-privs',...inner])};
+}
+
+// Outbound access for task containers: plain HTTP and CONNECT, public unicast addresses only.
+// The address is resolved and checked here, then used for the connection itself (no DNS rebinding).
+// Separate lists: a single BlockList matches IPv4 addresses against the IPv4-mapped IPv6 range.
+const NON_PUBLIC_V4 = new net.BlockList(), NON_PUBLIC_V6 = new net.BlockList();
+for (const [a, p] of [['0.0.0.0',8],['10.0.0.0',8],['100.64.0.0',10],['127.0.0.0',8],['169.254.0.0',16],['172.16.0.0',12],['192.0.0.0',24],
+  ['192.0.2.0',24],['192.88.99.0',24],['192.168.0.0',16],['198.18.0.0',15],['198.51.100.0',24],['203.0.113.0',24],['224.0.0.0',4],['240.0.0.0',4]]) NON_PUBLIC_V4.addSubnet(a, p, 'ipv4');
+for (const [a, p] of [['::',127],['::ffff:0:0',96],['64:ff9b::',96],['100::',64],['2001::',32],['2001:db8::',32],['2002::',16],['fc00::',7],['fe80::',10],['ff00::',8]]) NON_PUBLIC_V6.addSubnet(a, p, 'ipv6');
+export function publicAddress(ip) {
+  ip = String(ip || ''); const family = net.isIP(ip);
+  return family === 4 ? !NON_PUBLIC_V4.check(ip, 'ipv4') : family === 6 ? !NON_PUBLIC_V6.check(ip, 'ipv6') : false;
+}
+const listenSocket = (server, socketPath) => new Promise((ok, no) => {
+  try { fs.unlinkSync(socketPath); } catch { /* no stale socket */ }
+  server.once('error', no); server.listen(socketPath, () => { fs.chmodSync(socketPath, 0o600); ok(); });
+});
+export async function egressProxy({ socketPath, ports = [80, 443], lookup = (host, o) => dns.promises.lookup(host, o), allowAddress = publicAddress, maxConnections = 32 }) {
+  const open = new Set(), track = s => { open.add(s); s.on('close', () => open.delete(s)); };
+  const resolve = async host => {
+    host = String(host).replace(/^\[|\]$/g, '');
+    const list = net.isIP(host) ? [{ address: host }] : await lookup(host, { all: true, verbatim: true }).catch(() => []);
+    const hit = list.find(x => allowAddress(x.address));
+    if (!hit) throw Object.assign(Error('后台任务只能访问公网地址'), { status: 403 });
+    return hit.address;
+  };
+  const server = http.createServer(async (req, res) => {
+    const deny = (status, msg) => { if (!res.headersSent) res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' }); res.end(msg); };
+    let url; try { url = new URL(req.url); } catch { return deny(400, '代理请求需要完整网址'); }
+    const port = Number(url.port || 80);
+    if (url.protocol !== 'http:' || !ports.includes(port)) return deny(403, '后台任务只能访问公网的 80/443 端口');
+    let address; try { address = await resolve(url.hostname); } catch (e) { return deny(e.status || 502, e.message); }
+    const headers = { ...req.headers, host: url.host }; delete headers['proxy-connection']; delete headers['proxy-authorization'];
+    const upstream = http.request({ host: address, port, method: req.method, path: url.pathname + url.search, headers, setHost: false }, r => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
+    upstream.setTimeout(120000, () => upstream.destroy(Error('timeout')));
+    upstream.on('error', () => deny(502, '连接失败'));
+    req.pipe(upstream);
+  });
+  server.on('connect', async (req, client, head) => {
+    track(client); client.setTimeout(300000, () => client.destroy()); client.on('error', () => client.destroy());
+    const refuse = status => client.end('HTTP/1.1 ' + status + ' Blocked\r\n\r\n');
+    const m = /^(\[[0-9a-fA-F:.]+\]|[^:\s]+):(\d{1,5})$/.exec(req.url || ''), port = m && Number(m[2]);
+    if (!m || !ports.includes(port)) return refuse(403);
+    if (open.size > maxConnections) return refuse(429);
+    let address; try { address = await resolve(m[1]); } catch (e) { return refuse(e.status || 502); }
+    const upstream = net.connect({ host: address, port, timeout: 15000 });
+    let connected = false;
+    track(upstream);
+    upstream.once('connect', () => { connected = true; upstream.setTimeout(0); client.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head?.length) upstream.write(head); upstream.pipe(client); client.pipe(upstream); });
+    upstream.on('timeout', () => upstream.destroy());
+    upstream.on('error', () => { if (!connected && client.writable) refuse(502); upstream.destroy(); });
+    upstream.on('close', () => client.destroy()); client.on('close', () => upstream.destroy());
+  });
+  server.headersTimeout = 30000; server.requestTimeout = 0;
+  await listenSocket(server, socketPath);
+  return { socket: socketPath, close() { for (const s of open) s.destroy(); server.closeAllConnections(); server.close(); } };
+}
+// One task turn's network: egress for tools, plus the pinned inference proxy for the model client.
+export async function taskNetwork(workspace, inference = null) {
+  if (!workspace?.io) throw new Error('后台任务缺少隔离工作区');
+  const dir = path.join(path.dirname(workspace.io), 'net');
+  fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const egress = await egressProxy({ socketPath: path.join(dir, 'egress.sock') });
+  let proxy = null;
+  try { if (inference) proxy = await inferenceProxy({ ...inference, socketPath: path.join(dir, 'inference.sock') }); }
+  catch (e) { egress.close(); throw e; }
+  const forward = [[TASK_PORTS.egress, egress.socket]].concat(proxy ? [[TASK_PORTS.inference, proxy.socket]] : []);
+  return { token: proxy?.token || null, baseURL: proxy ? 'http://127.0.0.1:' + TASK_PORTS.inference + '/v1' : null,
+    network: { forward, egress: true }, close() { proxy?.close(); egress.close(); } };
 }
 
 export function confinedMcp(t, base, server) {
@@ -292,7 +387,7 @@ export function requestBudget(file,limit=128,options={}) {
   };
   return take;
 }
-export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudget}) {
+export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudget,socketPath}) {
   const token=crypto.randomBytes(32).toString('hex'), clients=new Set(); let total=0,active=0,closed=false;
   const server=http.createServer(async(req,res)=>{
     const reject=(status,msg)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:msg}}));};
@@ -318,8 +413,9 @@ export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudg
     finally{active--;clients.delete(abort);}
   });
   server.requestTimeout=120000;server.headersTimeout=30000;
-  await new Promise((ok,no)=>{server.once('error',no);server.listen(0,'127.0.0.1',ok);});
-  return {token,baseURL:'http://127.0.0.1:'+server.address().port+'/v1',close(){closed=true;for(const c of clients)c.abort();server.closeAllConnections();server.close();}};
+  if(socketPath)await listenSocket(server,socketPath);
+  else await new Promise((ok,no)=>{server.once('error',no);server.listen(0,'127.0.0.1',ok);});
+  return {token,socket:socketPath||null,baseURL:socketPath?null:'http://127.0.0.1:'+server.address().port+'/v1',close(){closed=true;for(const c of clients)c.abort();server.closeAllConnections();server.close();}};
 }
 
 export function containerAppServer(t, config, options) {
@@ -329,7 +425,7 @@ export function containerAppServer(t, config, options) {
   for(let i=0;i<config.length;i+=2){const v=config[i+1];if(!disabled.some(prefix=>v.startsWith(prefix)) && !/^(?:default_permissions|permissions\.|model_catalog_json=)/.test(v))cleaned.push('-c',v);}
   if(options.catalog){const catalog=path.join(privateCodex,'models.json');fs.copyFileSync(options.catalog,catalog);cleaned.push('-c','model_catalog_json='+JSON.stringify(catalog));}
   cleaned.push('-c','sandbox_mode="danger-full-access"','-c','model_providers.xin-gateway.base_url='+JSON.stringify(options.proxy.baseURL));
-  const c=containerCommand(t,'/usr/local/bin/codex',['app-server','--stdio',...cleaned],{CODEX_HOME:privateCodex,XIN_CODEX_KEY:options.proxy.token},t.mcpRoots||[]);
+  const c=containerCommand(t,'/usr/local/bin/codex',['app-server','--stdio',...cleaned],{CODEX_HOME:privateCodex,XIN_CODEX_KEY:options.proxy.token},t.mcpRoots||[],options.proxy.network);
   return {command:c.command,args:c.args,cwd:w.work};
 }
 
@@ -543,7 +639,7 @@ try{
  server=http.createServer((q,r)=>{if(q.url==='/favicon.ico'){r.writeHead(204);r.end();return;}if(q.url!=='/'){r.writeHead(404);r.end();return;}r.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp});r.end(html);});
  await new Promise(ok=>server.listen(0,'127.0.0.1',ok));const origin='http://127.0.0.1:'+server.address().port;
  chrome=spawn('/usr/lib/chromium/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--disable-component-update','--disable-extensions','--disable-sync','--no-first-run','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe']});chrome.stderr.setEncoding('utf8');chrome.stderr.on('data',s=>{chromeError=(chromeError+s).slice(-1000);});
- const portFile=path.join(profile,'DevToolsActivePort');for(let i=0;i<160&&!fs.existsSync(portFile);i++){if(chrome.exitCode!==null)throw Error('Chromium 启动失败：'+chromeError);await pause(25);}if(!fs.existsSync(portFile))throw Error('Chromium 没有就绪：'+chromeError);
+ const portFile=path.join(profile,'DevToolsActivePort');for(let i=0;i<480&&!fs.existsSync(portFile);i++){if(chrome.exitCode!==null)throw Error('Chromium 启动失败：'+chromeError);await pause(25);}if(!fs.existsSync(portFile))throw Error('Chromium 没有就绪：'+chromeError);
  const port=fs.readFileSync(portFile,'utf8').split('\n')[0],pages=await (await fetch('http://127.0.0.1:'+port+'/json/list')).json();const page=pages.find(p=>p.type==='page');
  ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((ok,no)=>{ws.addEventListener('open',ok,{once:true});ws.addEventListener('error',no,{once:true});});
  ws.addEventListener('message',event=>{const m=JSON.parse(event.data);if(m.id){const p=pending.get(m.id);if(p){pending.delete(m.id);clearTimeout(p.timer);if(m.error)p.reject(Error(m.error.message));else p.resolve(m.result);}}else if(m.method==='Runtime.exceptionThrown')errors.push('页面 JavaScript 报错');else if(m.method==='Runtime.consoleAPICalled'&&m.params.type==='error')errors.push('页面报告错误');else if(m.method==='Log.entryAdded'&&m.params.entry.level==='error')errors.push(String(m.params.entry.text).slice(0,150));});
@@ -648,6 +744,9 @@ export async function antigravityWork(t,options) {
   if(!fs.existsSync(agent)||fs.readFileSync(agent,'utf8')!==body){const temp=agent+'.'+process.pid;fs.writeFileSync(temp,body,{mode:0o600,flag:'wx'});fs.renameSync(temp,agent);}
   let conversation=t.antigravityConversation||null,prompt=options.instructions+'\n\n'+options.text+'\n\n每次返回 JSON：action=shell 时把要执行的完整 bash 命令放 command；控制器在隔离副本执行并把输出交回。写文件也用 shell 动作，不调用原生文件或终端工具。完成用 final，缺必要信息用 ask，长期记忆用 remember；text 用中文。不得再派代理。控制器已准备好 bash、Python、Node 和副本，命令默认目录是 '+t.workspace.work+'，无需探测环境或帮助命令。新网页优先直接用一次 shell 写 index.html 和 xin-web.json，不开服务、不自行找预览工具。前台转述中额外添加的功能若与自包含网页规则冲突，以用户原话和控制器规则为准；不要使用 localStorage。';
   report({type:'turn.started'});
+  // Requested shell commands run in the task container; they reach the public web only through egress.
+  const network=await taskNetwork(t.workspace);
+  try{
   for(let turn=0;turn<48;turn++){
     if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
     const args=['-p',prompt,'--agent','xin-confined-worker','--model',AGY_MODEL,'--effort','high','--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
@@ -671,10 +770,11 @@ export async function antigravityWork(t,options) {
     if(a.action==='remember'){options.remember(a.text);prompt='已记录。请继续当前工作。';continue;}
     if(!a.command.trim()||Buffer.byteLength(a.command)>256*1024)throw Error('Antigravity 命令为空或过长');
     const id='agy-'+turn;report({type:'item.started',item:{id,type:'command_execution',command:a.command}});
-    const c=containerCommand(t,'/bin/bash',['-lc',a.command]);
+    const c=containerCommand(t,'/bin/bash',['-lc',a.command],{},[],network.network);
     const resultCommand=await new Promise(resolve=>{const ch=spawn(c.command,c.args,{cwd:t.workspace.work,stdio:['ignore','pipe','pipe'],env:{PATH:'/usr/bin:/bin'}});let out='';const collect=s=>{out=(out+s).slice(-64000);};ch.stdout.on('data',collect);ch.stderr.on('data',collect);const timer=setTimeout(()=>{ch.kill('SIGKILL');},60000);timer.unref();ch.on('error',e=>{clearTimeout(timer);resolve({code:127,out:e.message});});ch.on('close',code=>{clearTimeout(timer);resolve({code:code??1,out});});});
     report({type:'item.completed',item:{id,type:'command_execution',command:a.command,exit_code:resultCommand.code,aggregated_output:resultCommand.out}});
     prompt='控制器执行结果（仅副本；不要重复已成功的操作）：\n'+JSON.stringify(resultCommand)+'\n请继续下一步，完成则返回 final。';
   }
   throw Error('Antigravity 达到本轮动作上限，进度已保留');
+  }finally{network.close();}
 }

@@ -1,5 +1,6 @@
 // 临时配置、假的 CLI；不读取或清理开发机的真实 AI 会话。
 const test = require('node:test');
+const { stopOwned } = require('./helpers/stop-owned.cjs');
 process.env.XIN_CODEX_TRANSPORT = 'exec';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -110,7 +111,7 @@ function fixture(t, extra = {}) {
     title: 'original', created: 1, updated: 1, runs: [] }));
   const barrier = ops => Object.assign(env, { XIN_TEST_BARRIER_TARGET: session,
     XIN_TEST_BARRIER_OPS: ops.join(','), XIN_TEST_BARRIER_DIR: path.join(dir, 'barrier') });
-  t.after(async () => { await pause(50); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => stopOwned(env.XIN_HOME, dir));
   // CLI lifecycle coverage belongs to the daily/background executor, not the now tool-less front.
   const cliSend = () => {
     const run='rclitest001';
