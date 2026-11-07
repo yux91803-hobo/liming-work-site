@@ -60,7 +60,7 @@ async def main():
             await page.locator('.xc-row textarea').fill('只回复 ' + reply_marker + '，不要执行命令，也不要等待后台。')
             await page.locator('.xc-send').click()
             await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=180000)
-            if reply_marker not in await page.locator('.xc-msgs').inner_text():
+            if not any(reply_marker in text for text in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()):
                 raise RuntimeError('Foreground reply missing')
             print('PASS foreground real-model reply during background work', flush=True)
             # Close the page: completion must be recovered through the API and supervisor, without a browser polling loop.
@@ -123,6 +123,8 @@ async def main():
                 text=await page.locator('.xc-msgs').inner_text()
                 if alternate_sid==sid or second_marker not in text or first_marker in text:
                     raise RuntimeError('Conversation isolation failed after a real delayed send')
+                if not any(second_marker in text for text in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()):
+                    raise RuntimeError('New conversation real-model reply missing')
                 limit=time.monotonic()+120
                 while True:
                     old=await call('history',{'sid':sid})

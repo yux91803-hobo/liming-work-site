@@ -15,7 +15,24 @@ function fixture(t) {
   const preload = path.join(root, 'preload.cjs');
   fs.writeFileSync(preload, `require('node:os').homedir=()=>${JSON.stringify(path.join(root, 'profile'))};require('node:module').syncBuiltinESMExports();`);
   env.NODE_OPTIONS = '--require=' + preload;
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(async () => {
+    // Detached runners/watchdogs must exit before removing their preload and state.
+    const r = await import(pathToFileURL(agent).href);
+    const owned = () => fs.readdirSync('/proc').filter(n => /^\d+$/.test(n) && Number(n) !== process.pid).flatMap(n => {
+      try {
+        if (!fs.readFileSync('/proc/' + n + '/environ', 'utf8').split('\0').includes('XIN_HOME=' + env.XIN_HOME)) return [];
+        const identity = r.processIdentity(Number(n));
+        return identity && !['Z', 'X'].includes(identity.state) ? [{ pid: Number(n), identity }] : [];
+      } catch { return []; }
+    });
+    const deadline = Date.now() + 5000;
+    while (owned().length && Date.now() < deadline) {
+      for (const p of owned()) r.signalProcessGroup(p.pid, p.identity, 'SIGKILL');
+      await new Promise(ok => setTimeout(ok, 30));
+    }
+    assert.equal(owned().length, 0, 'fixture processes must exit before removing their state');
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   const call = (op, args) => {
     const r = spawnSync(process.execPath, [agent, 'locked', op], { env, input: JSON.stringify(args), encoding: 'utf8', timeout: 15000 });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
