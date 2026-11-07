@@ -223,8 +223,8 @@ async function call(env, origin, op, args, ctx, now) {
     if ((op === 'send' || op === 'daily') && data && data.run && ctx) ctx.waitUntil(lease('PUT', data.run));
     if (op === 'poll' && data && data.done && args && args.run && ctx) ctx.waitUntil(lease('DELETE', args.run));
     // 后台任务（分身）：vm-agent 说有任务在做就续一个小时（它每 20 分钟提醒一次），都做完了就撤
-    if (data && data.lease === 'renew' && ctx) ctx.waitUntil(lease('PUT', 'tasks', 3600));
-    if (data && data.lease === 'drop' && ctx) ctx.waitUntil(lease('DELETE', 'tasks'));
+    if (!supervisor(env) && !env.XIN_TASK_LEASE_MANAGED && data && data.lease === 'renew' && ctx) ctx.waitUntil(lease('PUT', 'tasks', 3600));
+    if (!supervisor(env) && !env.XIN_TASK_LEASE_MANAGED && data && data.lease === 'drop' && ctx) ctx.waitUntil(lease('DELETE', 'tasks'));
     if (supervisor(env) && data && Number.isInteger(data.bg)) {
       await recordTasks(env, { bg: data.bg, ...(data.version != null ? { version: data.version } : {}), machine: m.id, observedAt: Date.now() });
     }
@@ -393,7 +393,7 @@ export class XinTaskSupervisor {
     if (incoming.version == null && current.observedAt > incoming.observedAt) return json({ ok: true, stale: true });
     const next = { ...current, ...incoming };
     await this.state.storage.put('tasks', next);
-    if (next.bg > 0) await this.state.storage.setAlarm(Date.now() + 60000);
+    if(next.bg>0){const alarm=await this.state.storage.getAlarm?.();if(!alarm||alarm>Date.now()+60000)await this.state.storage.setAlarm(Date.now()+60000);}
     else {
       await this.releaseLease(next);
     }
@@ -410,7 +410,7 @@ export class XinTaskSupervisor {
       const m = await status.json();
       if (m.cooldownUntil && Date.parse(m.cooldownUntil) > Date.now()) delay = Math.max(60000, Date.parse(m.cooldownUntil) - Date.now() + 5000);
       else {
-        const response = await call({ ...this.env, XIN_TASK_SUPERVISOR: undefined }, CRON_ORIGIN, 'tasks', { _watchdog: true }, { waitUntil: p => this.state.waitUntil(p) }, Date.now());
+        const response = await call({ ...this.env, XIN_TASK_SUPERVISOR: undefined, XIN_TASK_LEASE_MANAGED:true }, CRON_ORIGIN, 'tasks', { _watchdog: true }, { waitUntil: p => this.state.waitUntil(p) }, Date.now());
         if (response.ok) {
           const bg = response.data.bg || 0;
           const latest = await this.state.storage.get('tasks') || current;
@@ -419,6 +419,7 @@ export class XinTaskSupervisor {
           if (next.bg === 0) { await this.releaseLease(next); return; }
           const lease = await ib(this.env, `/v1/machines/${current.machine}/activity-leases/xin-tasks`, { method: 'PUT', body: JSON.stringify({ ttlSeconds: 3600 }) });
           if (!lease.ok) throw await ibErr(lease);
+          const afterLease=await this.state.storage.get('tasks');if(afterLease?.bg===0)await this.releaseLease(afterLease);
         }
       }
     } finally {

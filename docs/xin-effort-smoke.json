@@ -1,0 +1,56 @@
+[
+  {
+    "prompt": "chat",
+    "effort": "high",
+    "ms": 3497,
+    "input": 9330,
+    "cached": 0,
+    "output": 193,
+    "ok": true
+  },
+  {
+    "prompt": "chat",
+    "effort": "max",
+    "ms": 2383,
+    "input": 9327,
+    "cached": 4224,
+    "output": 17,
+    "ok": true
+  },
+  {
+    "prompt": "explain",
+    "effort": "max",
+    "ms": 4781,
+    "input": 9340,
+    "cached": 4224,
+    "output": 357,
+    "ok": true
+  },
+  {
+    "prompt": "explain",
+    "effort": "high",
+    "ms": 3987,
+    "input": 9340,
+    "cached": 4352,
+    "output": 221,
+    "ok": true
+  },
+  {
+    "prompt": "stm32",
+    "effort": "high",
+    "ms": 10365,
+    "input": 9400,
+    "cached": 4224,
+    "output": 1194,
+    "ok": true
+  },
+  {
+    "prompt": "stm32",
+    "effort": "max",
+    "ms": 10373,
+    "input": 9400,
+    "cached": 4352,
+    "output": 1215,
+    "ok": true
+  }
+]

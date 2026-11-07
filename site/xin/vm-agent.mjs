@@ -390,6 +390,7 @@ export async function pushAll(msg, delivery = {}) {
   if (!subs.length) return [];
   const keys = vapidKeys(), body = JSON.stringify(msg), gone = [], out = [];
   await Promise.all(subs.map(async sub => {
+    if(delivery.respectWatching && deviceWatching(msg.sid,sub.deviceId)){out.push({endpoint:sub.endpoint.slice(0,60),status:null,viewed:true,...(delivery.ids?{recipient:recipient(sub)}:{})});return;}
     let status = 0;
     try {
       const r = await fetch(sub.endpoint, {
@@ -398,10 +399,10 @@ export async function pushAll(msg, delivery = {}) {
       });
       status = r.status;
     } catch { status = -1; }
-    if (status === 404 || status === 410) gone.push(sub.endpoint);
+    if (status === 404 || status === 410) gone.push({endpoint:sub.endpoint,revision:sub.revision||String(sub.at||'')+JSON.stringify(sub.keys)});
     out.push({ endpoint: sub.endpoint.slice(0, 60), status, ...(delivery.ids ? { recipient: recipient(sub) } : {}) });
   }));
-  if (gone.length) writeSubs(readSubs().filter(x => !gone.includes(x.endpoint)));
+  if(gone.length) lockedCall('tasks','push_gone',{endpoints:gone});
   return out;
 }
 const NOTICE_DIR = () => path.join(BASE, 'outbox');
@@ -416,7 +417,7 @@ async function deliverNotice(id) {
   const claim = lockedCall('tasks', 'notice_claim', { id });
   if (!claim.notice) return;
   const n = claim.notice;
-  const results = await pushAll(n.msg, { skip: n.delivered, ids: true });
+  const results = await pushAll(n.msg, { skip: n.delivered, ids: true, respectWatching:true });
   lockedCall('tasks', 'notice_done', { id, claim: n.claim, results });
 }
 async function flushNotices() {
@@ -531,7 +532,7 @@ function lockedCall(key, op, args) {
   const dir = path.join(BASE, 'locks'); mk(dir);
   const r = spawnSync('flock', ['--exclusive', '--timeout', key === 'tasks' ? '20' : '3', '--conflict-exit-code', '73', '--close',
     path.join(dir, key + '.lock'), process.execPath, SELF, 'locked', op],
-  { encoding: 'utf8', input: JSON.stringify(args || {}), maxBuffer: 2 * 1024 * 1024 });
+  { env:{...process.env,XIN_LOCK:key}, encoding: 'utf8', input: JSON.stringify(args || {}), maxBuffer: 2 * 1024 * 1024 });
   if (r.status === 73) return { error: 'busy', msg: '上一句还没做完，请稍后再试' };
   if (r.error || r.status !== 0) return { error: 'lock_failed', msg: r.error && r.error.code === 'ENOENT'
     ? '云电脑缺少 flock，暂时不能安全更新对话' : '暂时不能安全更新对话，请重试' };
@@ -539,6 +540,18 @@ function lockedCall(key, op, args) {
 }
 // 后台任务的记录也是会话文件，但归 tasks 锁管（调度会整份改写它）
 function patchSession(sid, changes) { return lockedCall(isTask(readJ(sessF(sid))) ? 'tasks' : sid, 'session_patch', { sid, changes }); }
+function applyRunPatch(run,changes){
+  const current=readJ(metaF(run));if(!current)return null;
+  if(changes?.stopped&&current.ended)return current;
+  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','from','fallbacks'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
+  writeJ(metaF(run),current);return current;
+}
+function patchRun(run,changes){
+  const m=readJ(metaF(run));if(!m)return null;
+  const key=m.task||isTask(readJ(sessF(m.sid)))?'tasks':m.sid;
+  if(process.argv[2]==='locked'&&process.env.XIN_LOCK===key)return applyRunPatch(run,changes);
+  const r=lockedCall(key,'run_patch',{run,changes});if(r.error)throw new Error(r.msg||r.error);return r.meta;
+}
 function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
 function emit(run, ev) { fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
 function events(run) {
@@ -824,9 +837,9 @@ const MODEL_ALIAS = [
   new RegExp('(?:用|换成|换到|换个|改用|切到|切换到|让|交给|使用)\\s*(?:一下|下)?\\s*(?:' + src + ')', 'i'),
   new RegExp('(?:' + src + ')\\s*(?:来|去)(?:做|写|答|回答|看|检查|查|弄|干|处理|想|算|改|试|跑)', 'i')]);
 export function namedModel(text) {
-  const clauses = String(text || '').slice(0, 4000).replace(/```[\s\S]*?```|`[^`]*`|「[^」]*」|“[^”]*”/g, '').split(/[。；;\n]/);
+  const clauses = String(text || '').slice(0, 4000).replace(/```[\s\S]*?```|`[^`]*`|「[^」]*」|“[^”]*”|"[^"]*"/g, '').split(/[。；;\n]/);
   for (const t of clauses) {
-    if (/如果|假如|的话|会不会|是否|不要用|别用|不用|不想用/.test(t)) continue;
+    if (/如果|假如|假设|的话|会不会|是否|能不能|为什么|怎么|如何|有人说|他说|她说|比如|例如|不要|别用|不用|不想用|[?？]/.test(t)) continue;
     for (const [id, a, b] of MODEL_ALIAS) if (a.test(t) || b.test(t)) return id;
   }
   return null;
@@ -867,6 +880,7 @@ export function modelStats(days = 14) {
     const k = r.agent + ':' + r.model, s = out[k] || (out[k] = { agent: r.agent, model: r.model, n: 0, ok: 0, ms: 0, fails: 0, fellBack: 0 });
     s.n++; if (r.ok) { s.ok++; s.ms += r.ms || 0; } else if (!r.stopped) s.fails++;
     if (r.from) s.fellBack++;
+    if(r.usage){s.input=(s.input||0)+(r.usage.input||0);s.cached=(s.cached||0)+(r.usage.cached||0);s.output=(s.output||0)+(r.usage.output||0);}
   }
   return Object.values(out).map(s => Object.assign(s, { avgMs: s.ok ? Math.round(s.ms / s.ok) : 0 })).sort((a, b) => b.n - a.n);
 }
@@ -946,13 +960,13 @@ const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
 function runner(run) {
   const meta = readJ(metaF(run));
   if (!meta) process.exit(1);
-  meta.pid = process.pid; meta.identity = processIdentity(process.pid); writeJ(metaF(run), meta);
+  meta.pid = process.pid; meta.identity = processIdentity(process.pid); patchRun(run,{pid:meta.pid,identity:meta.identity});
   const sess = readJ(sessF(meta.sid));
   mk(WORK); installXin();
   const cwd = meta.cwd || WORK; mk(cwd);
   if (meta.task) screenTag = '[任务 ' + meta.no + '] ';   // 「小芯在干什么」终端里分得清是哪个分身
   const role = meta.kind === 'daily' ? 'daily' : meta.task ? 'task' : 'front';
-  const t0 = Date.now(), state = {};
+  const t0 = Date.now(), usageBefore=sessionUsage(sess), state = {};
   let finished = false, stderr = '', child = null, app = null, appCode = null, retried = false, restarting = false, stallTm = 0, deadTm = 0;
   let bridgeTm = 0, steering = false, proxy = null;
   const saveState = () => {
@@ -982,12 +996,11 @@ function runner(run) {
     let m = readJ(metaF(run), meta);
     let stopped = !!m.stopped;
     let ok = !stopped && code === 0 && !state.failed && !state.timeout;
-    if(ok && meta.task && s.workspace && runtime.stm32Task(s)) {
+    if(ok && meta.task && !s.pendingQuestion && !s.approval && s.workspace && runtime.stm32Task(s)) {
       emit(run,{t:'tool',id:'xin-build',name:'编译核验',detail:'控制器在隔离副本执行 make -B，并检查 build/app.hex'});
       let build;try{build=runtime.compileWorkspace(s);}catch(e){build={ok:false,output:e.message};}
-      m=Object.assign(readJ(metaF(run),m),{compileTrusted:true,compileOk:!!build?.ok,compileDigest:build?.digest});
+      m=patchRun(run,{compileTrusted:true,compileOk:!!build?.ok,compileDigest:build?.digest});
       stopped=!!m.stopped;ok=ok&&!stopped;
-      writeJ(metaF(run),m);
       emit(run,{t:'tool_end',id:'xin-build',name:'编译核验',detail:'make -B / build/app.hex',ok:!!build?.ok,out:build?.output||''});
     }
     if (!ok && !stopped && !state.errShown) {
@@ -995,13 +1008,14 @@ function runner(run) {
       emit(run, { t: 'err', text: why || tail || ('退出码 ' + code) });
     }
     // 前台这一句带上了哪些任务结果：做成了就记下前台已经知道了（没做成下一句再带）。在 done 之前记，免得用户紧接着发的下一句又带一遍
-    if (ok && !meta.task && Array.isArray(meta.injected) && meta.injected.length) lockedCall('tasks', 'task_seen', { sids: meta.injected });
+    // Completion and the final stop decision are committed under the conversation/task lock below.
     // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
     const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
     if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {});
-    emit(run, doneEv);
-    if (meta.agent !== 'claude') statAdd({ at: Date.now(), agent: meta.agent, model: meta.model || '', kind: meta.routeKind || meta.kind || 'chat', why: meta.why || '', ok, stopped, ms: Date.now() - t0, from: meta.from || undefined });
-    m.ended = Date.now(); writeJ(metaF(run), m);
+    const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv});
+    if(completion.error){finished=false;setTimeout(()=>finish(code,why),1000);return;}
+    if(completion.done){Object.assign(doneEv,completion.done);ok=doneEv.ok;stopped=doneEv.stopped;}
+    if (meta.agent !== 'claude') statAdd({ at: Date.now(), agent: meta.agent, model: meta.model || '', kind: meta.routeKind || meta.kind || 'chat', why: meta.why || '', ok, stopped, ms: Date.now() - t0, from: meta.from || undefined, ...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0))}}:{}) });
     if (meta.task) {
       // 后台任务：结果先存进任务记录（接着做、等确认还是收尾、排下一个），要推送的在锁外发
       const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model });
@@ -1010,11 +1024,11 @@ function runner(run) {
     }
     if (meta.kind === 'daily') dailyDone(run, meta, ok);
     // 做完提醒：你不在看（关了网页、切到别的应用）才发；你自己停的、每日任务不发
-    else if (!stopped && unwatched(run)) {
+    else if (!stopped) {
       const last = events(run).filter(e => e.t === 'text').pop();
       const text = plainText(last && last.text, 120);
       setTimeout(() => process.exit(0), 20000).unref();
-      pushAll({ title: ok ? '小芯做完了' : '小芯没做成', body: text || (ok ? '点开看看' : '点开看看怎么回事'), tag: 'xin-' + meta.sid, sid: meta.sid, url: '/#xin=' + meta.sid }).catch(() => {});
+      pushAll({ title: ok ? '小芯做完了' : '小芯没做成', body: text || (ok ? '点开看看' : '点开看看怎么回事'), tag: 'xin-' + meta.sid, sid: meta.sid, url: '/#xin=' + meta.sid },{respectWatching:true}).catch(() => {});
     }
     if (!stopped) lockedCall(meta.sid, 'continue_steers', { sid: meta.sid, run });
   };
@@ -1037,7 +1051,7 @@ function runner(run) {
         if (meta.task && ev.t === 'tool_end' && ev.ok && /(?:^|\W)(?:make|arm-none-eabi-gcc|cmake)(?:\s|$)/.test(ev.detail || '')) {
           const m = readJ(metaF(run), meta); m.compileOk = true;
           if (currentSession.workspace) { try { m.compileDigest = runtime.sourceDigest(currentSession.workspace.work); } catch {} }
-          writeJ(metaF(run),m);
+          patchRun(run,{compileOk:m.compileOk,compileDigest:m.compileDigest});
         }
       }
       if (state.sid && !state.sidSaved) { saveState(); state.sidSaved = true; }
@@ -1066,20 +1080,20 @@ function runner(run) {
         if (!meta.sandbox) config.push('-c', 'sandbox_mode="danger-full-access"');
         let container;
         if(meta.sandbox){
-          proxy=await runtime.inferenceProxy({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model});
+          proxy=await runtime.inferenceProxy({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model,takeBudget:runtime.requestBudget(path.join(BASE,'budgets',meta.sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128)});
           container=runtime.containerAppServer(currentSession,config,{proxy,catalog:codexCatalog()});
         }
         app = runtime.appServer(container?.command || cmd, config, { commandArgs:container?.args, spawn: { ...spawnOptions, stdio: ['pipe', 'pipe', 'pipe'] }, cwd,
           thread: currentSession.started ? currentSession.agentSid : null, text: meta.text, images: meta.images || [], model: meta.model,
           effort: meta.effort, boxed: false, rollback: !!meta.from && !!meta.turnId && !!currentSession.started, emit: accept,
-          turn: (threadId, turnId) => { Object.assign(meta, { threadId, turnId }); const m = readJ(metaF(run), meta); Object.assign(m, { threadId, turnId, transport: 'app-server' }); writeJ(metaF(run), m); },
+          turn: (threadId, turnId) => { Object.assign(meta, { threadId, turnId }); patchRun(run,{threadId,turnId,transport:'app-server'}); },
           complete: code => { appCode = code; },
           fail: e => { state.failed = true; state.heldErr = { t: 'err', text: e.message }; },
           approve: request => approvalRequest(run, meta, request)
         });
         child = app.child;
       } else child = spawn(cmd, args, spawnOptions);
-      const launched=readJ(metaF(run),meta); launched.childPid=child.pid; launched.childIdentity=processIdentity(child.pid); writeJ(metaF(run),launched);
+      patchRun(run,{childPid:child.pid,childIdentity:processIdentity(child.pid)});
     } catch (e) { proxy?.close(); proxy=null; finish(127, '启动 ' + cmd + ' 失败：' + e.message); return; }
     child.on('error', e => finish(127, e.code === 'ENOENT' ? '云电脑里没有 ' + cmd + ' 命令' : '启动 ' + cmd + ' 失败：' + e.message));
     child.stdout.setEncoding('utf8');
@@ -1107,7 +1121,7 @@ function runner(run) {
       if ((c !== 0 || state.failed) && canSwitch() && !(readJ(metaF(run), meta) || {}).stopped) {
         const from = meta.model;
         state.switched = true; meta.from = from; meta.model = meta.fallbacks[0]; meta.fallbacks = meta.fallbacks.slice(1);
-        const m2 = readJ(metaF(run), meta); Object.assign(m2, { model: meta.model, from, fallbacks: meta.fallbacks }); writeJ(metaF(run), m2);
+        patchRun(run,{model:meta.model,from,fallbacks:meta.fallbacks});
         emit(run, { t: 'status', text: codexModel(from).name + ' 没接上，换 ' + codexModel(meta.model).name + ' 再试…' });
         Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
         start(); return;
@@ -1477,12 +1491,12 @@ function launch(s, m, userEv) {
   const run = rid('r');
   writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, m));
   emit(run, userEv);
-  s.runs.push(run); s.updated = Date.now(); writeJ(sessF(s.sid), s);
+  s.runs.push(run); s.updated = Date.now(); if(isTask(s))saveTask(s);else writeJ(sessF(s.sid),s);
   rememberAgentSession(s.agent, s.agentSid);
   // 前台在自己的命令里派任务时，别把它那边的 Codex 内部变量、这一轮的编号带给后台的 runner
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && !/^CODEX_(?!HOME$)/.test(k)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK' && !/^CODEX_(?!HOME$)/.test(k)));
   const child = spawn(process.execPath, [SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir(), env });
-  const mm = readJ(metaF(run)); if (mm && !mm.pid) { mm.pid = child.pid; mm.identity = processIdentity(child.pid); writeJ(metaF(run), mm); }
+  const mm = readJ(metaF(run)); if (mm && !mm.pid) { patchRun(run,{pid:child.pid,identity:processIdentity(child.pid)}); }
   child.unref();
   return run;
 }
@@ -1496,12 +1510,12 @@ function runDone(run) {
   if (m && Date.now() - m.started > (Number(process.env.XIN_DEAD_MS) || 15000) && !alive(m.pid, m.identity)) {
     if(m.childPid && alive(m.childPid,m.childIdentity)){
       try{process.kill(-m.childPid,m.orphanStopping && Date.now()-m.orphanStopping>2000?'SIGKILL':'SIGTERM');}catch{}
-      if(!m.orphanStopping){m.orphanStopping=Date.now();writeJ(metaF(run),m);}
+      if(!m.orphanStopping)patchRun(run,{orphanStopping:Date.now()});
       if(alive(m.childPid,m.childIdentity)) return false;
     }
     emit(run, { t: 'err', text: '这一轮中途断了（云电脑重启或进程被杀）' });
     emit(run, { t: 'done', ok: false, code: -1, ms: Date.now() - m.started });
-    m.died = true; m.ended = Date.now(); writeJ(metaF(run), m);
+    patchRun(run,{died:true,ended:Date.now()});
     return true;
   }
   return false;
@@ -1539,28 +1553,34 @@ function occupiesTask(t) {
   const r = lastRun(t);
   return t.status === 'waiting' && r && !runDone(r);
 }
+function taskIndexEntry(t){
+  if(!isFinished(t))return t;
+  const out={};for(const k of ['sid','no','parent','kind','tkind','title','model','why','status','created','updated','startedAt','endedAt','dir','after','frontSeen','question','note','verification','dailyDate'])if(t[k]!==undefined)out[k]=t[k];
+  out.runs=lastRun(t)?[lastRun(t)]:[];out.turnsCount=t.turnsCount??(t.runs||[]).length;
+  if(t.result)out.result={...t.result,text:cut(t.result.text,2000)};return out;
+}
+const taskLockHeld = () => process.argv[2]==='locked' && process.env.XIN_LOCK==='tasks';
 function listTasks() {
-  const index = path.join(BASE, 'tasks-index.json');
-  try {
-    const cached = readJ(index);
-    if (Array.isArray(cached) && fs.statSync(index).mtimeMs >= fs.statSync(SESS).mtimeMs) return cached.sort((a,b) => a.no - b.no);
-  } catch { /* build the index once, including migration from older versions */ }
-  let names = []; try { names = fs.readdirSync(SESS); } catch { return []; }
-  const all = names.filter(f => /^s[0-9a-z]+\.json$/.test(f)).map(f => readJ(path.join(SESS, f))).filter(isTask).sort((a, b) => a.no - b.no);
-  try { writeJ(index, all); } catch { /* read-only callers can still inspect tasks */ }
+  const index=path.join(BASE,'tasks-index.json'),cached=readJ(index);
+  if(cached?.version===3 && Array.isArray(cached.tasks)) return cached.tasks.sort((a,b)=>a.no-b.no);
+  if(!taskLockHeld()){lockedCall('tasks','task_index',{});const fresh=readJ(index);if(fresh?.version===3&&Array.isArray(fresh.tasks))return fresh.tasks.sort((a,b)=>a.no-b.no);}
+  let names=[];try{names=fs.readdirSync(SESS);}catch{return [];}
+  const all=names.filter(f=>/^s[0-9a-z]+\.json$/.test(f)).map(f=>readJ(path.join(SESS,f))).filter(isTask).sort((a,b)=>a.no-b.no);
+  if(taskLockHeld()) {try{writeJ(index,{version:3,tasks:all.map(taskIndexEntry)});}catch{}}
   return all;
 }
 function findTask(a, all) {
   all = all || listTasks();
-  if (a && okId(a.sid, 's')) return all.find(t => t.sid === a.sid) || null;
+  if (a && okId(a.sid, 's')) { const t=readJ(sessF(a.sid));return isTask(t)?t:null; }
   const no = Number(a && a.no);
-  return Number.isInteger(no) && no > 0 ? all.find(t => t.no === no) || null : null;
+  const t=Number.isInteger(no)&&no>0?all.find(t=>t.no===no):null;return t?readJ(sessF(t.sid),t):null;
 }
 function saveTask(t) {
   t.updated = Date.now(); mk(SESS); writeJ(sessF(t.sid), t);
   try {
     const index = path.join(BASE, 'tasks-index.json'), all = readJ(index);
-    if (Array.isArray(all)) writeJ(index, all.filter(x => x.sid !== t.sid).concat(t));
+    if(all?.version===3 && Array.isArray(all.tasks)) writeJ(index,{version:3,tasks:all.tasks.filter(x=>x.sid!==t.sid).concat(taskIndexEntry(t))});
+    else if(taskLockHeld()) listTasks();
   } catch { /* next read rebuilds the index from durable records */ }
   queueControllerEvent();
 }
@@ -1588,7 +1608,7 @@ async function flushControllerEvent() {
     try {
       const r = await fetch(callback.url, { method: 'POST', headers: { authorization: 'Bearer ' + callback.token, 'Content-Type': 'application/json' },
         body: JSON.stringify({ bg: state.bg, version: state.version }), signal: AbortSignal.timeout(10000) });
-      if (r.ok) { const latest = readJ(f); if (latest?.version === state.version) { latest.acknowledged = true; writeJ(f, latest); } return; }
+      if(r.ok){lockedCall('tasks','controller_ack',{version:state.version});return;}
     } catch { /* keep the event durable; active runners and DO alarms retry */ }
     await new Promise(resolve => setTimeout(resolve, 1500 * (n + 1)));
   }
@@ -1614,7 +1634,7 @@ function taskActivity(run) {
 export function taskSummary(t, full) {
   const r = lastRun(t);
   const out = { sid: t.sid, no: t.no, parent: t.parent || null, title: t.title, kind: t.tkind, model: t.model, why: t.why || '', status: t.status,
-    created: t.created, startedAt: t.startedAt || 0, endedAt: t.endedAt || 0, dir: t.dir, after: t.after || [], turns: (t.runs || []).length, question: t.question || '' };
+    created: t.created, startedAt: t.startedAt || 0, endedAt: t.endedAt || 0, dir: t.dir, after: t.after || [], turns: t.turnsCount ?? (t.runs || []).length, question: t.question || '' };
   if (t.status === 'running' && r) out.activity = taskActivity(r);
   if (t.result) out.result = { ok: !!t.result.ok, text: full ? t.result.text : cut(t.result.text, 2000), err: t.result.err || '', at: t.result.at || 0 };
   if (t.inbox && t.inbox.length) out.inbox = t.inbox.length;
@@ -1674,7 +1694,7 @@ function taskNew(a) {
   if (d.error) return { error: 'bad_dir', msg: d.error };
   writeJ(TASK_SEQ(), { n: no });
   const minutes = Math.min(TASK_MIN_MAX, Math.max(5, Math.round(Number(a.minutes) || TASK_MIN)));
-  const t = { sid: rid('s'), kind: 'task', no, parent: okId(a.parent, 's') ? a.parent : null, agent: 'codex', title, goal, tkind: kind,
+  const t = { sid: rid('s'), kind: 'task', no, parent: okId(a.parent, 's') ? a.parent : null, agent: 'codex', title, goal, userRequest:String(a.userRequest||'').slice(0,TEXT_MAX), tkind: kind,
     model: rt.model, why: rt.why, fallbacks: rt.fallbacks, note: rt.note || '', files, dir: d.dir, after, minutes,
     plugins: [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
     status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
@@ -1687,6 +1707,7 @@ function taskNew(a) {
 // 第一轮给分身的话：任务要求、前置任务的结果、用户给的文件
 function taskFirstText(t, deps) {
   const parts = ['【后台任务 ' + t.no + '：' + t.title + '】', t.goal];
+  if(t.userRequest) parts.push('【用户原话，独立核对前台转述是否准确；具体技术结论以官方手册为准】\n'+t.userRequest);
   for (const d of deps) {
     parts.push('\n【任务 ' + d.no + '「' + d.title + '」的结果（' + (TASK_STATUS[d.status] || d.status) + '，它的工作目录 ' + d.dir + '）】\n' + cut(d.result ? d.result.text : '', 6000));
   }
@@ -1699,6 +1720,7 @@ function taskFirstText(t, deps) {
 function startTask(t, all) {
   const deps = (t.after || []).map(n => all.find(x => x.no === n)).filter(Boolean);
   const first = !(t.runs && t.runs.length);
+  delete t.verification;
   t.deadline = t.deadline || Date.now() + (Number(process.env.XIN_TASK_TIMEOUT_MS) || (t.minutes || TASK_MIN) * 60e3);
   // The author might have fallen back to a different model after the review was queued.
   if (t.tkind === 'review' && t.why !== 'named') {
@@ -1797,7 +1819,7 @@ function taskFinish(a) {
   t.finishedRun = a.run;
   if (t.dailyDate && isFinished(t)) dailyDone(a.run, { sid: t.sid, dailyDate: t.dailyDate }, t.status === 'done');
   saveTask(t);
-  const notice = notify && unwatchedConv(t.parent) ? enqueueNotice(t, notify) : null;
+  const notice = notify ? enqueueNotice(t, notify) : null;
   scheduleNow();
   return notice ? { notice, notify } : {};
 }
@@ -1824,6 +1846,7 @@ function taskTell(a) {
     delete t.publication; t.question = ''; t.endedAt = Date.now(); t.result.at = Date.now(); t.frontSeen = false; saveTask(t); scheduleNow();
     return { ok: true, msg: a.decision === 'approve' ? '结果已写回' : '已保留原文件', task: taskSummary(t) };
   }
+  if(t.status==='stopping')return {error:'busy',msg:'任务正在停止，退出后再继续'};
   const text = String(a.text || '').trim().slice(0, 4000) || '接着做';
   if (t.status === 'running') {
     const r = lastRun(t), m = r && readJ(metaF(r));
@@ -1864,7 +1887,7 @@ function taskStop(a) {
   Object.assign(t, { status: wasRunning ? 'stopping' : 'stopped', result: { ok: false, text: wasRunning ? '做到一半被停下了。' : '还没做完就停了。', at: Date.now() }, endedAt: wasRunning ? 0 : Date.now(), inbox: [], frontSeen: false });
   saveTask(t);
   const r = lastRun(t), m = r && readJ(metaF(r));
-  if (wasRunning && m && !runDone(r)) { m.stopped = true; writeJ(metaF(r), m); try { process.kill(-m.pid, 'SIGTERM'); } catch { try { process.kill(m.pid, 'SIGTERM'); } catch { /* 已经没了 */ } } }
+  if (wasRunning && m && !runDone(r)) { patchRun(r,{stopped:true}); try { process.kill(-m.pid, 'SIGTERM'); } catch { try { process.kill(m.pid, 'SIGTERM'); } catch { /* 已经没了 */ } } }
   scheduleNow();
   return { ok: true, task: taskSummary(t) };
 }
@@ -1918,7 +1941,7 @@ function tickTasks() {
 function ensureWatchdog() {
   // flock lives outside every task's writable roots and is released by the kernel on exit.
   mk(path.join(BASE, 'locks'));
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && !/^CODEX_(?!HOME$)/.test(k)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK' && !/^CODEX_(?!HOME$)/.test(k)));
   spawn('flock', ['-n', '--close', path.join(BASE, 'locks/watchdog.lock'), process.execPath, SELF, 'watchdog'],
     { detached: true, stdio: 'ignore', cwd: os.homedir(), env }).unref();
 }
@@ -1938,7 +1961,19 @@ function pushLater(msg) {
 }
 // 网页最近有没有在看这个对话（tasks 轮询会碰一下）：在看就不推送，卡片自己会更新
 const convSeenF = sid => path.join(RUNS, 'conv-' + sid + '.seen');
-function unwatchedConv(sid) { if (!sid) return true; let t = 0; try { t = fs.statSync(convSeenF(sid)).mtimeMs; } catch { /* 没看过 */ } return Date.now() - t > 15000; }
+const validDevice = id => typeof id==='string' && /^[A-Za-z0-9_-]{8,80}$/.test(id);
+const deviceWatchDir = (sid,id) => path.join(BASE,'presence',sid,id);
+function watchDevice(sid,a) {
+  if(!okId(sid,'s')||!validDevice(a.deviceId))return;
+  const dir=deviceWatchDir(sid,a.deviceId),tab=validDevice(a.tabId)?a.tabId:'legacy',f=path.join(dir,tab+'.seen');
+  try{if(a.watching===true){mk(dir);fs.writeFileSync(f,'');}else fs.unlinkSync(f);}catch{}
+}
+function deviceWatching(sid,id) {
+  if(!okId(sid,'s')||!validDevice(id))return false;
+  const dir=deviceWatchDir(sid,id);let watching=false;
+  try{for(const name of fs.readdirSync(dir)){if(!/^[A-Za-z0-9_-]+\.seen$/.test(name))continue;const f=path.join(dir,name);if(Date.now()-fs.statSync(f).mtimeMs<15000)watching=true;else fs.unlinkSync(f);}}catch{}
+  return watching;
+}
 // 前台下一句带上的后台任务情况：做完 / 没做成 / 停了但前台还不知道的写结果，等确认的写问题，进行中、排队的写一句
 export function taskNotes(sid, all) {
   const mine = (all || listTasks()).filter(t => t.parent === sid);
@@ -1974,6 +2009,8 @@ const ops = {
     if (!s || !m || m.sid !== a.sid) return { error: 'stale', msg: '这一轮已经变化，请重新打开对话' };
     const text = String(a.text || '').trim().slice(0, 4000), id = /^[a-zA-Z0-9_-]{8,80}$/.test(a.clientId || '') ? a.clientId : rid('u');
     if (!text) return { error: 'empty', msg: '补充消息是空的' };
+    if(m.stopped)return {error:'stopped',msg:'这一轮正在停止，请下一轮再发'};
+    if((m.steers||[]).length>=128)return {error:'full',msg:'当前轮次补充已满，请等下一轮发送'};
     const existing = (m.steers || []).find(x => x.id === id);
     if (existing) return { ok: true, id, state: existing.state };
     const prior=readJ(path.join(BASE,'messages',id+'.json'));
@@ -2110,7 +2147,7 @@ const ops = {
     const sub = a.sub;
     if (!okSub(sub)) return { error: 'bad_sub', msg: '推送订阅不对' };
     const list = readSubs().filter(x => x.endpoint !== sub.endpoint);
-    list.push({ endpoint: String(sub.endpoint), keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) }, ua: String(a.ua || '').slice(0, 160), at: Date.now() });
+    list.push({ revision:rid('p'), endpoint: String(sub.endpoint), keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) }, ua: String(a.ua || '').slice(0, 160), ...(validDevice(a.deviceId)?{deviceId:a.deviceId}:{}), at: Date.now() });
     writeSubs(list.slice(-SUBS_MAX));
     return { ok: true, subs: Math.min(list.length, SUBS_MAX) };
   },
@@ -2159,7 +2196,7 @@ const ops = {
     if (!s) return { error: 'no_session', msg: '找不到这个对话' };
     const title = String(a.title || '').replace(/\s+/g, ' ').trim().slice(0, 60);
     if (!title) return { error: 'empty', msg: '名字是空的' };
-    s.title = title; writeJ(sessF(a.sid), s);
+    s.title = title; if(isTask(s))saveTask(s);else writeJ(sessF(a.sid),s);
     return { ok: true, session: summary(s) };
   },
   // 归档：收起来不在「最近的对话」里占地方，记录都留着（AI 自己那份会话记录也不删），随时能取消归档、接着聊
@@ -2168,7 +2205,7 @@ const ops = {
     const s = readJ(sessF(a.sid));
     if (!s) return { error: 'no_session', msg: '找不到这个对话' };
     if (a.on === false) { delete s.archived; delete s.archivedAt; } else { s.archived = true; s.archivedAt = Date.now(); }
-    writeJ(sessF(a.sid), s);
+    if(isTask(s))saveTask(s);else writeJ(sessF(a.sid),s);
     return { ok: true, session: summary(s) };
   },
   forget(a) {
@@ -2228,6 +2265,7 @@ const ops = {
     if (!okId(a.run, 'r')) return { error: 'bad_run', msg: '编号不对' };
     if (!fs.existsSync(metaF(a.run))) return { error: 'no_run', msg: '找不到这一轮' };
     try { fs.writeFileSync(seenF(a.run), ''); } catch { /* 记不下来就当没在看 */ }
+    watchDevice(readJ(metaF(a.run))?.sid,a);
     const done = runDone(a.run);
     const evs = events(a.run), off = Math.max(0, a.off | 0);
     const slice = evs.slice(off, off + 400);
@@ -2239,7 +2277,7 @@ const ops = {
     const m = readJ(metaF(a.run));
     if (!m) return { error: 'no_run', msg: '找不到这一轮' };
     if (runDone(a.run)) return { ok: true, already: true };
-    m.stopped = true; writeJ(metaF(a.run), m);
+    const latest=patchRun(a.run,{stopped:true});if(latest?.ended)return {ok:true,already:true};
     try { process.kill(-m.pid, 'SIGTERM'); } catch { try { process.kill(m.pid, 'SIGTERM'); } catch { /* 已经没了 */ } }
     return { ok: true };
   },
@@ -2268,6 +2306,7 @@ const ops = {
   tasks(a = {}) {
     try { tickTasks(); } catch { /* 收拾不了就先看现状 */ }
     const all = listTasks();
+    watchDevice(a.sid,a);
     if (okId(a.sid, 's') && a.watching !== false) { mk(RUNS); try { fs.writeFileSync(convSeenF(a.sid), ''); } catch { /* 记不下来就当没在看 */ } }
     const mine = a.all ? all.slice(-60) : okId(a.sid, 's') ? all.filter(t => t.parent === a.sid) : [];
     const active = all.filter(t => !isFinished(t));
@@ -2289,6 +2328,24 @@ const ops = {
 };
 // 只在 tasks 锁里跑的（main 里分派）
 const iops = {
+  controller_ack(a){const f=path.join(BASE,'controller-event.json'),s=readJ(f);if(s?.version===a.version){s.acknowledged=true;writeJ(f,s);}return {ok:true};},
+  run_complete(a){
+    const m=readJ(metaF(a.run));if(!m)return {error:'no_run'};
+    if(m.ended){const done=tailEvents(a.run).filter(e=>e.t==='done').pop();return {done,already:true};}
+    const done={...a.done,stopped:!!m.stopped,ok:!!a.done?.ok&&!m.stopped};
+    if(done.ok&&!m.task&&m.injected?.length)lockedCall('tasks','task_seen',{sids:m.injected});
+    emit(a.run,done);m.ended=Date.now();writeJ(metaF(a.run),m);
+    const pending=(m.steers||[]).filter(x=>x.state==='pending'||x.state==='next');
+    if(!m.task&&!done.stopped&&pending.length){
+      for(const q of pending)q.state='consumed';writeJ(metaF(a.run),m);
+      const next=ops.send({sid:m.sid,text:pending.map(q=>q.text).join('\n'),clientId:pending[0].id});
+      return {done,next};
+    }
+    return {done};
+  },
+  run_patch(a){if(!okId(a.run,'r'))return {error:'bad_run'};return {meta:applyRunPatch(a.run,a.changes)};},
+  task_index(){listTasks();return {ok:true};},
+  push_gone(a){writeSubs(readSubs().filter(s=>!(a.endpoints||[]).some(x=>x.endpoint===s.endpoint&&x.revision===(s.revision||String(s.at||'')+JSON.stringify(s.keys)))));return {ok:true};},
   notice_claim(a) {
     if (!/^[a-f0-9]{32}$/.test(a.id || '')) return {};
     const f = path.join(NOTICE_DIR(), a.id + '.json'), n = readJ(f);
@@ -2300,9 +2357,9 @@ const iops = {
     const f = path.join(NOTICE_DIR(), a.id + '.json'), n = readJ(f);
     if (!n || n.claim !== a.claim) return {};
     const results = Array.isArray(a.results) ? a.results : [];
-    n.delivered = [...new Set(n.delivered.concat(results.filter(r => r.status >= 200 && r.status < 300 || r.status===404 || r.status===410).map(r => r.recipient)))];
+    n.delivered = [...new Set(n.delivered.concat(results.filter(r => r.viewed || r.status >= 200 && r.status < 300 || r.status===404 || r.status===410).map(r => r.recipient)))];
     n.lastStatuses = results.map(r=>r.status); n.claimedAt = 0;
-    if (!results.length || results.every(r => r.status >= 200 && r.status < 300 || r.status===404 || r.status===410)) { n.state = 'delivered'; n.deliveredAt = Date.now(); }
+    if (!results.length || results.every(r => r.viewed || r.status >= 200 && r.status < 300 || r.status===404 || r.status===410)) { n.state = 'delivered'; n.deliveredAt = Date.now(); }
     else if (n.attempts >= 8 || Date.now()-n.created > 86400e3) n.state='failed';
     else n.nextAt = Date.now() + Math.min(300000,15000*2**n.attempts);
     writeJ(f,n); return { ok:true };
@@ -2331,13 +2388,14 @@ const iops = {
   },
   task_drop(a) {
     let bytes = 0;
-    for (const t of listTasks().filter(x => x.parent === a.parent && !occupiesTask(x) && x.status !== 'queued')) {
+    for (const entry of listTasks().filter(x => x.parent === a.parent && !occupiesTask(x) && x.status !== 'queued')) {
+      const t=readJ(sessF(entry.sid),entry);
       for (const run of t.runs || []) for (const f of [runF(run), metaF(run), seenF(run)]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
       try { fs.unlinkSync(sessF(t.sid)); } catch { /* 没有 */ }
       try { bytes += dropLogs('codex', t.agentSid); } catch { /* 删不掉就留着 */ }
     }
     try { fs.unlinkSync(path.join(BASE,'tasks-index.json')); } catch {}
-    queueControllerEvent();
+    listTasks();queueControllerEvent();
     return { ok: true, bytes };
   }
 };
@@ -2404,7 +2462,7 @@ function taskCmd(argv) {
     // 用户这一句点名的就是这个模型：当成用户点名（检查任务也照用）
     const said = (events(run).find(e => e.t === 'user') || {}).text || '';
     const named = !!o.model && namedModel(said) === o.model;
-    const r = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: o.kind, title: o.title, goal: o.goal, model: o.model, named, dir: o.dir, files: o.files, after: o.after, minutes: o.minutes, plugins: o.plugins });
+    const r = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: o.kind, title: o.title, goal: o.goal, userRequest:said, model: o.model, named, dir: o.dir, files: o.files, after: o.after, minutes: o.minutes, plugins: o.plugins });
     if (r.error) { console.log(r.msg || r.error); return 1; }
     const t = r.task;
     emit(run, { t: 'task', sid: t.sid, no: t.no, title: t.title, kind: t.kind, model: t.model, why: t.why, status: t.status, after: t.after, at: Date.now() });
@@ -2412,7 +2470,7 @@ function taskCmd(argv) {
     // --review：再派一个检查任务，等它做完、换个模型、在同一个目录里检查
     if (o.review && t.kind !== 'review') {
       const rv = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: 'review', title: ('检查：' + t.title).slice(0, 40), after: [t.no], dir: t.dir,
-        goal: '检查任务 ' + t.no + '「' + t.title + '」做出来的东西对不对、有没有漏。原来的要求：\n' + cut(o.goal, 3000) });
+        userRequest:said, goal: '检查任务 ' + t.no + '「' + t.title + '」做出来的东西对不对、有没有漏。原来的要求：\n' + cut(o.goal, 10000) });
       if (rv.task) {
         const v = rv.task;
         emit(run, { t: 'task', sid: v.sid, no: v.no, title: v.title, kind: v.kind, model: v.model, why: v.why, status: v.status, after: v.after, at: Date.now() });
@@ -2571,7 +2629,7 @@ function main() {
     const s = readJ(sessF(args.sid));
     if (!s) { process.stdout.write(JSON.stringify({ error: 'no_session', msg: '找不到这个对话' })); return; }
     for (const k of ['agentSid', 'started', 'ctxWin', 'hUsage']) if (Object.prototype.hasOwnProperty.call(args.changes || {}, k)) s[k] = args.changes[k];
-    s.updated = Date.now(); writeJ(sessF(args.sid), s); rememberAgentSession(s.agent, s.agentSid);
+    s.updated = Date.now(); if(isTask(s))saveTask(s);else writeJ(sessF(args.sid), s); rememberAgentSession(s.agent, s.agentSid);
     process.stdout.write(JSON.stringify({ session: s })); return;
   }
   if (internal) {
@@ -2579,8 +2637,8 @@ function main() {
     process.stdout.write(JSON.stringify(res || {})); return;
   }
   if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
-  const key = op === 'daily' ? 'daily' : ['send', 'steer', 'rename', 'archive', 'forget'].includes(op)
-    ? (okId(args.sid, 's') ? args.sid : op === 'send' && !args.sid ? 'new' : null) : null;
+  const key = ['push_key','push_sub','push_unsub'].includes(op) ? 'tasks' : op === 'daily' ? 'daily' : ['send', 'steer', 'rename', 'archive', 'forget'].includes(op)
+    ? (okId(args.sid, 's') ? isTask(readJ(sessF(args.sid))) ? 'tasks' : args.sid : op === 'send' && !args.sid ? 'new' : null) : null;
   if (!locked && key) { process.stdout.write(JSON.stringify(lockedCall(key, op, args))); return; }
   Promise.resolve().then(() => ops[op](args || {})).catch(e => ({ error: 'internal', msg: String(e && e.message || e) }))
     .then(res => { process.stdout.write(JSON.stringify(res)); });

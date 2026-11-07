@@ -1528,10 +1528,10 @@ test('做完提醒：网页没在看时做完就推送（解得开、带标题�
     const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: path.join(home, 'work'), XIN_PUSH_INSECURE: '1', PATH: bin + ':' + process.env.PATH });
     const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
     const br = fakeBrowser();
-    assert.strictEqual(op('push_sub', { sub: { endpoint: `http://127.0.0.1:${port}/push/a`, keys: br.keys } }).ok, true);
+    assert.strictEqual(op('push_sub', { deviceId:'test-device-1', sub: { endpoint: `http://127.0.0.1:${port}/push/a`, keys: br.keys } }).ok, true);
     const wait = async (run, watch) => {
       for (let i = 0; i < 80; i++) {
-        const p = watch ? op('poll', { run, off: 0 }) : JSON.parse(fs.readFileSync(path.join(home, 'xin', 'runs', run + '.jsonl'), 'utf8').trim().split('\n').pop());
+        const p = watch ? op('poll', { run, off: 0, deviceId:'test-device-1',tabId:'test-tab-1',watching:true }) : JSON.parse(fs.readFileSync(path.join(home, 'xin', 'runs', run + '.jsonl'), 'utf8').trim().split('\n').pop());
         if (watch ? p.done : p.t === 'done') return;
         await new Promise(s => setTimeout(s, 150));
       }

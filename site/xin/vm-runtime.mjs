@@ -94,11 +94,12 @@ export function validateTask(t, controller, meta) {
   if (t.tkind === 'review') {
     let data; try { data = JSON.parse(fs.readFileSync(report,'utf8')); } catch { return { error: '请生成 xin-review.json：verdict="pass"，checks 数组逐项写出 clock、pinmap、peripheral_clock、interrupt 的 id、status（pass/not_applicable）、reference（手册章节）和 evidence（源码文件:行号及判断依据）。' }; }
     if (data.verdict !== 'pass' || !Array.isArray(data.checks)) return { error: '检查报告没有通过；请修复问题并重新编译、核对。' };
-    for (const id of ['clock','pinmap','peripheral_clock','interrupt']) {
-      const c = data.checks.find(c=>c.id===id);
-      if (!c || !['pass','not_applicable'].includes(c.status) || typeof c.reference !== 'string' || c.reference.trim().length<5 || typeof c.evidence !== 'string' || c.evidence.trim().length<8)
-        return { error: '检查报告缺少 '+id+' 的手册依据、源码定位或明确结论；补齐后再完成。' };
+    const missing=[];
+    for(const id of ['clock','pinmap','peripheral_clock','interrupt']){
+      const c=data.checks.find(c=>c.id===id);
+      if(!c||!['pass','not_applicable'].includes(c.status)||typeof c.reference!=='string'||c.reference.trim().length<5||typeof c.evidence!=='string'||c.evidence.trim().length<8)missing.push(id);
     }
+    if(missing.length)return {error:'请一次补齐这些检查项：'+missing.join('、')+'。每项必须有明确字段 id、status、reference（非空字符串，写官方手册章节）、evidence（非空字符串，写源码文件:行号和判断）。已有 manual_sections 等丰富字段可以保留，但不能代替 reference；请为全部四项补齐后再结束。'};
   }
   return { applicable: true, compiled: !!meta.compileOk, reviewed: t.tkind==='review', hardware: false };
 }
@@ -209,7 +210,16 @@ export function confinedMcp(t, base, server) {
 
 // The task receives a short-lived inference-only credential, never the reusable gateway key.
 // The controller pins the model and endpoint and caps request size, concurrency and total requests.
-export async function inferenceProxy({baseURL,key,model,maxRequests=128}) {
+export function requestBudget(file,limit=128) {
+  limit=Math.min(512,Math.max(1,Math.floor(limit)));
+  return ()=>{
+    let used=0;try{used=JSON.parse(fs.readFileSync(file,'utf8')).used||0;}catch{}
+    if(used>=limit)return false;
+    mkdir(path.dirname(file));const tmp=file+'.'+process.pid+'.tmp';
+    fs.writeFileSync(tmp,JSON.stringify({used:used+1,limit,updated:Date.now()}),{mode:0o600});fs.renameSync(tmp,file);return true;
+  };
+}
+export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudget}) {
   const token=crypto.randomBytes(32).toString('hex'), clients=new Set(); let total=0,active=0,closed=false;
   const server=http.createServer(async(req,res)=>{
     const reject=(status,msg)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:msg}}));};
@@ -222,6 +232,7 @@ export async function inferenceProxy({baseURL,key,model,maxRequests=128}) {
       for await(const chunk of req){size+=chunk.length;if(size>16*1024*1024){reject(413,'request too large');return;}chunks.push(chunk);}
       let body;try{body=JSON.parse(Buffer.concat(chunks).toString());}catch{return reject(400,'invalid JSON');}
       if(body.model!==model) return reject(403,'task model is pinned');
+      if(takeBudget&&!takeBudget())return reject(400,'task inference budget exhausted; partial work is retained');
       total++;
       const response=await fetch(baseURL.replace(/\/$/,'')+'/responses',{method:'POST',headers:{authorization:'Bearer '+key,'content-type':'application/json',accept:req.headers.accept||'text/event-stream'},body:JSON.stringify(body),signal:abort.signal});
       res.writeHead(response.status,{'content-type':response.headers.get('content-type')||'application/json','cache-control':'no-store'});

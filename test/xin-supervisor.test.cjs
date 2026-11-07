@@ -35,3 +35,12 @@ test('平台冷却期间不唤醒，alarm 等待冷却截止后再恢复',async 
   await new XinTaskSupervisor(state,{INSTABOX_API_KEY:'fake-only'}).alarm();
   assert.equal(hits,1);assert.ok(alarm>=until+5000);
 });
+
+test('持续轮询不能把已有的监督 alarm 一直推迟',async()=>{
+  const {XinTaskSupervisor}=await import(pathToFileURL(path.join(__dirname,'../src/xin.js')).href);
+  const values=new Map();let alarm=Date.now()+20000,sets=0;const original=alarm;
+  const state={storage:{get:async k=>values.get(k),put:async(k,v)=>values.set(k,v),getAlarm:async()=>alarm,setAlarm:async v=>{alarm=v;sets++;},deleteAlarm:async()=>{alarm=null;}}};
+  const obj=new XinTaskSupervisor(state,{});
+  for(let i=1;i<=5;i++)await obj.fetch(new Request('https://xin.internal/state',{method:'POST',body:JSON.stringify({bg:1,version:i,machine:'m_test',observedAt:i})}));
+  assert.equal(alarm,original);assert.equal(sets,0);
+});

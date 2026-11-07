@@ -45,7 +45,8 @@
     return ls(LS_AGENT) === 'harness' ? 'harness' : 'codex';
   }
   function modelName(id) { return CX_MODELS[id] || HM_MODELS[id] || id || ''; }
-  var S = { enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: ls(LS_EFF) || 'high', hModel: hmPref(), lastModel: '',
+  function deviceId(){var id=ls('lm.xin.device');if(!id||!/^[A-Za-z0-9_-]{8,80}$/.test(id)){id=crypto.randomUUID();ls('lm.xin.device',id);}return id;}
+  var S = { deviceId:deviceId(), tabId:crypto.randomUUID(), enabled: false, authed: false, open: false, sid: ls(LS_SID) || '', moves: [], bond: null, agent: agentPref(), sessAgent: '', effort: ls(LS_EFF) || 'high', hModel: hmPref(), lastModel: '',
     run: '', off: 0, polling: false, mine: {}, errRuns: {}, lastAct: 0, view: 'chat', machine: '', mstate: '', loadSeq: 0, drawer: false, drawerSeq: 0 };
 
   /* ---------- 和页面上的小芯共用机身、眼睛和引脚，避免头像仍然显示旧方眼 ---------- */
@@ -267,7 +268,7 @@
   function login(pw) {
     var err = loginEl.querySelector('.xc-err'); err.textContent = '';
     req('login', { password: pw }).then(function (d) {
-      if (d._status === 200) { S.authed = true; loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); greet(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
+      if (d._status === 200) { S.authed = true; syncPushDevice(); loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); greet(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
       err.textContent = d.msg || (d._status === 429 ? '试太多次了，过一分钟再试' : '登录失败');
     }, function () { err.textContent = '网络不通'; });
   }
@@ -653,6 +654,10 @@
   }
   function b64of(buf) { var s = '', a = new Uint8Array(buf || []); for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
   function swReady() { return navigator.serviceWorker.register('/sw.js').then(function () { return navigator.serviceWorker.ready; }); }
+  function syncPushDevice(){
+    if(!S.authed||!('serviceWorker' in navigator))return;
+    navigator.serviceWorker.getRegistration('/').then(function(r){return r&&r.pushManager?r.pushManager.getSubscription():null;}).then(function(sub){if(sub)return call('push_sub',{sub:sub.toJSON(),deviceId:S.deviceId,ua:navigator.userAgent.slice(0,160)},30000);}).catch(function(){});
+  }
   function pushSetup(t) {
     var no = pushNoSupport();
     if (no) { t.btn.disabled = true; t.note(no); return; }
@@ -668,7 +673,7 @@
       return sub;
     }).then(function (sub) {
       t.set(!!sub);
-      if (sub) call('push_sub', { sub: sub.toJSON(), ua: navigator.userAgent.slice(0, 160) }, 60000).catch(function () {});   // 让小芯那边也记着（它可能删过）
+      if (sub) call('push_sub', { sub: sub.toJSON(), deviceId:S.deviceId, ua: navigator.userAgent.slice(0, 160) }, 60000).catch(function () {});   // 让小芯那边也记着（它可能删过）
     }).catch(function (e) { t.note('做完提醒准备不好：' + e.message); });
     t.btn.addEventListener('click', function () {
       if (busy) return;
@@ -676,7 +681,7 @@
       busy = true; t.note('');
       var on = t.btn.getAttribute('aria-checked') !== 'true';
       var p = on ? reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: u8(key) }).then(function (sub) {
-        return call('push_sub', { sub: sub.toJSON(), ua: navigator.userAgent.slice(0, 160) }, 60000);
+        return call('push_sub', { sub: sub.toJSON(), deviceId:S.deviceId, ua: navigator.userAgent.slice(0, 160) }, 60000);
       }).then(function () {
         t.set(true); t.note('开好了，发了一条试试');
         return call('push_test', {}, 60000).then(function (r) { if (!r.ok) t.note('开好了，但试的那条没发出去：' + JSON.stringify(r.results || []).slice(0, 120)); });
@@ -1197,7 +1202,7 @@
     if (!S.enabled || !S.authed) return;
     if (document.hidden) { tpTm = setTimeout(pollTasks, 5000); return; }
     var sid = S.sid;
-    call('tasks', { sid: sid || undefined, watching: !!(S.open && S.view === 'chat') }, 30000).then(function (d) {
+    call('tasks', { sid: sid || undefined, deviceId:S.deviceId, tabId:S.tabId, watching: !!(S.open && S.view === 'chat' && !document.hidden && document.hasFocus()) }, 30000).then(function (d) {
       if (d && d.error) throw new Error(d.msg || d.error);
       S.bg = d.bg || 0; S.tactive = d.active || [];
       setTasks((d.active || []).concat(d.recent || [], sid === S.sid ? d.tasks || [] : []), true);
@@ -1729,7 +1734,7 @@
     if (!S.polling || !S.run) return;
     if (document.hidden) { pollTm = setTimeout(poll, 1500); return; }
     var run = S.run;
-    call('poll', { run: run, off: S.off }, 0).then(function (d) {
+    call('poll', { run: run, off: S.off, deviceId:S.deviceId, tabId:S.tabId, watching:!!(S.open && S.view==='chat' && !document.hidden && document.hasFocus()) }, 0).then(function (d) {
       if (run !== S.run) return;
       d.events.forEach(function (ev) { if (!(ev.t === 'user' && S.mine[run])) draw(ev, false, run); react(ev); if (ev.t === 'done' && ev.usage) setUsage(ev.usage); });
       S.off = d.off;
@@ -2102,12 +2107,15 @@
     [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { watchDoc(f.contentDocument); } catch (er) {} });
     req('me').then(function (d) {
       S.enabled = !!d.enabled; S.authed = !!d.authed;
-      syncBag(); wakeVm(); greet();
+      syncBag(); wakeVm(); greet(); syncPushDevice();
       openFromHash();
       // 刷新页面时上一轮还在跑：小芯接着陪着（打开面板时会接上）
     }, function () { if (XIN_HASH.test(location.hash)) { S.enabled = false; open(); } });
     window.addEventListener('hashchange', openFromHash);
   }
+  window.addEventListener('pagehide',function(){
+    if(S.authed&&S.sid)fetch(API+'call',{method:'POST',credentials:'same-origin',keepalive:true,headers:{'Content-Type':'application/json','X-Xin':'1'},body:JSON.stringify({op:'tasks',args:{sid:S.sid,deviceId:S.deviceId,tabId:S.tabId,watching:false}})}).catch(function(){});
+  });
   window.LimingXinChat = { open: open, close: close, ask: quick, played: played, tasks: function () { pollTasks(); }, get state() { return S; } };
   boot();
 })();
