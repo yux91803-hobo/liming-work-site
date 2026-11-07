@@ -2131,7 +2131,7 @@ export function frontImmediate(a){
   const receipt=readJ(path.join(RUNS,a.run+'.front.json'));if(receipt)return receipt;
   const mine=listTasks().filter(t=>t.parent===m.sid),text=m.frontRequest||'';
   const created=mine.find(t=>t.frontRun===a.run);if(created)return {terminal:true,text:'好，我这就去弄。',task:taskSummary(created)};
-  if(/^(?:现在|那个|这件事|奶龙|你)?[\s，,]*(?:进度|画得怎么样|画的怎么样|怎么样了|画好了吗|画好了没|做好了吗|做完了吗|弄好了没|到哪了)/.test(text.trim())&&mine.length){
+  if(/^(?:(?:现在|那个|这件事|奶龙|你)[\s，,]*){0,2}(?:进度(?:怎么样了?|如何|到哪了|呢)?|画得怎么样|画的怎么样|怎么样了|画好了吗|画好了没|做好了吗|做完了吗|弄好了没|到哪了)[\s?？!！。]*$/.test(text.trim())&&mine.length){
     const t=mine.at(-1);let message=t.status==='running'?(t.stage==='checking'?'我已经做好网页，正在实际打开、检查动画和交互，还没到交付的时候。':'我还在制作，暂时没有完成结果。'):t.status==='queued'?'我已经记下了，正在等待开始。':t.status==='waiting'?'我需要你确认一下：'+t.question:t.status==='done'?(t.preview?.ready?'我画好了。[打开预览]('+t.preview.url+')':'我做好了：'+(t.result?.text||'')):t.status==='stopped'?'我已经停下了。':'这次还没有完成，进度已保留，可以继续处理。';
     return {terminal:true,text:message};
   }

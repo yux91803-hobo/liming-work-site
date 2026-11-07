@@ -54,6 +54,9 @@ test('进度按真实检查阶段回答，不凭空报已完成或泄露内部�
  const f=fixture(t),{run,sid}=f.front('现在进度怎么样');f.task.parent=sid;f.task.stage='checking';f.task.web=true;f.save();
  const r=f.call('front_immediate',{run});assert.equal(r.terminal,true);assert.match(r.text,/实际打开|检查/);assert.doesNotMatch(r.text,/Kimi|GLM|DeepSeek|分身|任务\s*\d|\d+%/);
 });
+test('带有补充要求的进度句继续交前台理解，不被快捷状态答复吞掉',async t=>{
+ const f=fixture(t),{run,sid}=f.front('现在进度怎么样？把奶龙背景改成蓝色');f.task.parent=sid;f.save();assert.equal(f.call('front_immediate',{run}).terminal,undefined);
+});
 test('普通聊天超时不制造后台任务，明确工作仍保留原话交给后台',async t=>{
  const f=fixture(t),{run}=f.front('你好');const file=f.control+'/runs/'+run+'.json',m=JSON.parse(fs.readFileSync(file));delete m.frontNamed;m.frontWeb=false;fs.writeFileSync(file,JSON.stringify(m));
  assert.equal(f.call('front_fallback',{run}).error,'front_timeout');assert.equal(f.call('tasks',{all:true}).tasks.length,1);
