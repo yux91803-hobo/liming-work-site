@@ -113,21 +113,20 @@ jobs:
           echo "== $WORKER 最近的部署 =="
           npx -y "$WRANGLER" deployments list --name "$WORKER" | tail -40
 
-      # 先写密钥再部署代码：冒烟检查失败自动回滚时，回到的是「旧代码 + 新密钥」，不会回到新代码上
-      - name: 小芯聊天的密钥（只写正式站；没配就跳过，功能保持关闭）
+      - name: 记录正式站回滚版本
+        id: baseline
         if: env.DEPLOY_ENABLED == 'true' && env.DRY_RUN != 'true' && env.TARGET == 'production'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          XIN_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
-          XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
         run: |
-          if [ -z "$XIN_OWNER_PASSWORD" ] || [ -z "$XIN_INSTABOX_API_KEY" ]; then
-            echo "没配 XIN_OWNER_PASSWORD / XIN_INSTABOX_API_KEY：小芯聊天保持关闭"; exit 0
-          fi
-          if [ ${#XIN_OWNER_PASSWORD} -lt 12 ]; then echo "::warning::XIN_OWNER_PASSWORD 少于 12 位，Worker 不会打开小芯聊天"; fi
-          jq -n --arg a "$XIN_OWNER_PASSWORD" --arg b "$XIN_INSTABOX_API_KEY" '{OWNER_PASSWORD: $a, INSTABOX_API_KEY: $b}' \
-            | npx -y "$WRANGLER" secret bulk $ENV_FLAG --name liming-worldmap
+          baseline_version=$(curl -fsS --retry 3 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/liming-worldmap/deployments" \
+            | jq -er 'if .success == true then .result.deployments[0].versions else error("读取当前部署失败") end
+              | if length == 1 and .[0].percentage == 100 then .[0].version_id else error("当前不是单版本部署，停止发布") end
+              | select(test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))')
+          echo "version=$baseline_version" >> "$GITHUB_OUTPUT"
+          echo "已记录发布前的正式站版本：$baseline_version"
 
       - name: 部署
         id: deploy
@@ -144,6 +143,22 @@ jobs:
             [ -n "$url" ] || { echo "没从部署输出里找到 workers.dev 地址"; exit 1; }
             echo "BASE=$url" >> "$GITHUB_ENV"
           fi
+
+      # 回滚后先部署新代码再写密钥，避免 Cloudflare 拒绝编辑未部署的最新版本。
+      - name: 小芯聊天的密钥（只写正式站；没配就跳过，功能保持关闭）
+        if: steps.deploy.outcome == 'success' && env.TARGET == 'production'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          XIN_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
+          XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
+        run: |
+          if [ -z "$XIN_OWNER_PASSWORD" ] || [ -z "$XIN_INSTABOX_API_KEY" ]; then
+            echo "没配 XIN_OWNER_PASSWORD / XIN_INSTABOX_API_KEY：小芯聊天保持关闭"; exit 0
+          fi
+          if [ ${#XIN_OWNER_PASSWORD} -lt 12 ]; then echo "::warning::XIN_OWNER_PASSWORD 少于 12 位，Worker 不会打开小芯聊天"; fi
+          jq -n --arg a "$XIN_OWNER_PASSWORD" --arg b "$XIN_INSTABOX_API_KEY" '{OWNER_PASSWORD: $a, INSTABOX_API_KEY: $b}' \
+            | npx -y "$WRANGLER" secret bulk $ENV_FLAG --name liming-worldmap
 
       - name: 冒烟检查
         id: smoke
@@ -182,9 +197,12 @@ jobs:
           XIN_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
         run: python scripts/test-xin-live.py
 
-      - name: 正式站检查失败，自动回滚到上一版
+      - name: 正式站检查失败，回滚到发布前记录的版本
         if: failure() && steps.deploy.outcome == 'success' && env.TARGET == 'production'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx -y "$WRANGLER" rollback --name liming-worldmap --message "上线验证失败，自动回滚"
+          BASELINE_VERSION: ${{ steps.baseline.outputs.version }}
+        run: |
+          test -n "$BASELINE_VERSION"
+          npx -y "$WRANGLER" rollback "$BASELINE_VERSION" --name liming-worldmap --yes --message "上线验证失败，回滚到发布前版本"

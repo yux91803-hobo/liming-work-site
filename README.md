@@ -75,7 +75,7 @@ wrangler.jsonc        正式站（顶层）与测试站（env.staging）配置
 由 GitHub Actions（`.github/workflows/deploy.yml`）完成，令牌在仓库 Secrets 里：
 
 - 开 PR 到 `main`：检查通过后部署测试站 `liming-hub-staging`（只有 `*.workers.dev` 地址），并检查首页和 `/tools/stm32/`。
-- 合并到 `main`：部署正式站 `liming-worldmap`（liming-work.com）；检查失败自动回滚到上一版。
+- 合并到 `main`：部署正式站 `liming-worldmap`（liming-work.com）；检查失败自动回滚到发布前记录的版本。
 - Actions 页面可以手动运行，默认只 dry-run。
 
 ### 小芯聊天要配的东西

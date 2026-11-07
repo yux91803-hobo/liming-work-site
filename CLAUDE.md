@@ -13,7 +13,7 @@ Liming 工具箱 / STM32 学习工作台，正式站 https://liming-work.com （
 1. 从 `main` 开 `claude/...` 分支改代码。
 2. 本地验证：`npm run check`（语法、资源引用、单元测试）和 `npm run test:e2e`（浏览器测试，本机用 `CHROMIUM_PATH` 指向 /opt/pw-browsers 里的 chrome）必须全过；改了页面就 `npm run dev` 起本地预览，用 Chromium 截图自查电脑（1280）、平板竖屏（768）和横屏（1024）、手机（390），浅色和深色。
 3. 开 PR → GitHub Actions 跑单元测试和浏览器测试，通过后自动部署测试站 `liming-hub-staging`（只有 `*.workers.dev` 地址，不绑正式域名）并做冒烟检查。
-4. 检查和测试站都绿了，Claude 自己合并 PR → Actions 自动部署正式站，冒烟检查失败会自动回滚到上一版。
+4. 检查和测试站都绿了，Claude 自己合并 PR → Actions 自动部署正式站，冒烟检查失败会自动回滚到发布前记录的版本。
 5. 合并后确认正式站那次 Actions 运行是绿的，再向用户汇报。
 
 部署配置：`wrangler.jsonc`（顶层 = 正式站，`env.staging` = 测试站），`.github/workflows/deploy.yml`（`DEPLOY_ENABLED` 是总开关）。令牌在 GitHub Secrets（`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`），会话里读不到，部署只走 Actions。
@@ -25,4 +25,4 @@ Liming 工具箱 / STM32 学习工作台，正式站 https://liming-work.com （
 - README、docs/CHANGES.md 可能落后于代码；功能以代码和 docs/CHANGES.md 最新条目为准，改了功能顺手更新 README。
 - 测试不过不合并；不跳过、不删测试来变绿。
 - 会删数据的改动（Durable Object 迁移、删存储等）先停下问用户。
-- 手动回滚：Actions 里正式站失败会自动回滚；也可以 `wrangler rollback --name liming-worldmap`。
+- 手动回滚：Actions 里正式站失败会自动回滚；也可以先从 deployments list 选取已验证的版本 UUID，再用 `wrangler rollback <版本UUID> --name liming-worldmap`（不要假定上一份上传版本就是稳定版本）。
