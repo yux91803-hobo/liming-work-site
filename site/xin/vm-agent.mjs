@@ -212,7 +212,8 @@ export const TASK_GUIDE = () => [
   '前台只有 xin task new/list/show/tell/stop 和 xin remember；所有实际操作必须派出去，无 shell、浏览器、文件编辑能力。',
   '调用 xin 结构化工具，argv 数组对应 xin task 参数，不支持 heredoc。用户点名模型由控制器覆盖到 task new，不切换前台。',
   '派完或 task tell 后马上结束本轮。对外用第一人称，不主动讲模型、分身或编号；直接询问实现时如实简答。',
-  '同一件事的追问和修改转给原工作；进度只根据 taskNotes 或 task show/list；ask 后把问题第一人称问用户，答复用 tell 转回。'
+  '同一件事的追问和修改转给原工作；进度只根据 taskNotes 或 task show/list；ask 后把问题第一人称问用户，答复用 tell 转回。',
+  '普通杂活、资料检索和 HTML 网页由控制器优先安排 Antigravity Gemini 3.8 Flash High；它的真实额度与恢复倒计时由控制器持久记录，额度耗尽期间使用其它入口。前台不换模型，不声称自己没有已配置的执行入口。'
 ];
 // 后台分身的设定：小芯的设定 + 「你现在在后台干活」
 const WEB_TASK_GUIDE = '这项工作的成品是可打开、有动画和交互的网页。交付一个自包含 HTML，CSS/JS 内联，绘图使用 CSS、内联 SVG 或 Canvas；不使用外部脚本、CDN、iframe、fetch、localStorage 或需要常驻的服务。优先交付精致完整的一页，代码尽量控制在 300 行内，避免框架与长篇过程总结。布局适配 1280 和 390 像素。控制器会真正打开、点击、截图并发布持久预览，你无需开预览服务器，也不要寻找、安装或调用浏览器工具；写好成品后结束，控制器负责验收。网页标题与可见内容不主动提模型、分身、任务编号。根目录写 xin-web.json，例如 {"entry":"index.html","title":"奶龙","checks":[{"selector":"#dance","expectSelector":"#dragon","expectClass":"dancing"}]}。checks 需要 1–8 个实际点击及可观察变化，也可用 expectText 或 expectAttribute:{"name":"data-state","value":"dancing"}；点击应能在电脑和手机生效；推荐每次点击更新持久的 data-state 或计数文字，避免检查本来已成立的状态。做完只说明成品，不编造预览 URL，控制器发布后生成真实链接。';
@@ -597,7 +598,7 @@ function patchSession(sid, changes) { return lockedCall(isTask(readJ(sessF(sid))
 function applyRunPatch(run,changes){
   const current=readJ(metaF(run));if(!current)return null;
   if(changes?.stopped&&current.ended)return current;
-  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','from','fallbacks','frontUsage','webCheck'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
+  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','effort','from','fallbacks','frontUsage','webCheck'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
   writeJ(metaF(run),current);return current;
 }
 function patchRun(run,changes){
@@ -680,6 +681,11 @@ function codexCmd(c) {
 export function fromCodex(o, state) {
   const out = [];
   if (!o || typeof o !== 'object') return out;
+  if(o.type==='xin.usage'){
+    const u=o.usage||{},p=state.frontUsage||{input:0,output:0,cached:0};
+    const input=p.input+(u.input_tokens||0),output=p.output+(u.output_tokens||0);
+    state.frontUsage={input,output,cached:p.cached+(u.cache_read_tokens||0),total:input+output,ctx:(u.input_tokens||0)+(u.output_tokens||0),win:1000000};return out;
+  }
   if (o.type === 'thread.started') { if (o.thread_id) state.sid = o.thread_id; return out; }
   if (o.type === 'error') {
     const m = String(o.message || '');
@@ -883,6 +889,7 @@ export const ROUTES = {
 export const KIND_NAMES = { chat: '聊天', quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务' };
 // 用户点名：「用 / 换成 / 让 … 模型」或者「模型 来做 / 来看 …」。Flash 要排在同名的前面
 const MODEL_ALIAS = [
+  [runtime.AGY_MODEL,'antigravity\\b|agy\\b|gemini[\\s-]*3\\.8[\\s-]*flash(?:[\\s-]*high)?'],
   ['glm-5.3-flash', 'glm[\\s-]*(?:5(?:\\.3)?)?[\\s-]*flash|智谱\\s*flash'],
   ['glm-5.3', 'glm(?:[\\s-]*5(?:\\.3)?)?|智谱'],
   ['kimi-k3.1-pro', 'kimi(?:[\\s-]*k?3(?:\\.1)?)?(?:[\\s-]*pro)?|月之暗面'],
@@ -902,8 +909,8 @@ export function namedModel(text) {
 // 回 {model, why, kind, fallbacks, note}：why = named（用户点名）/ picked（小芯提议）/ 类别名（按类别挑的）
 export function route(o = {}) {
   const kind = ROUTES[o.kind] ? o.kind : 'chat', avoid = o.avoid || [];
-  const known = id => CODEX_MODELS.some(m => m.id === id);
-  const fits = id => known(id) && (!o.images || codexModel(id).image);
+  const known = id => CODEX_MODELS.some(m => m.id === id)||id===runtime.AGY_MODEL;
+  const fits = id => known(id) && (id!==runtime.AGY_MODEL||kind!=='chat') && (!o.images || id!==runtime.AGY_MODEL&&codexModel(id).image);
   const order = ROUTES[kind].filter(id => fits(id) && !avoid.includes(id));
   let model = null, why = kind, note = '';
   if (o.want) {
@@ -1116,7 +1123,7 @@ function runner(run) {
     const currentSession = readJ(sessF(meta.sid), sess);
     if(currentSession.tkind==='review'&&reviewAuthors(currentSession).includes(meta.model)){finish(127,'独立复核模型与实际作者相同，已拒绝启动。');return;}
     let invocation;
-    try { invocation = agentArgs(meta.agent, currentSession, meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model, role, sandbox: !!meta.sandbox }); }
+    try { invocation = meta.task&&meta.model===runtime.AGY_MODEL?[process.execPath,[SELF,'agy-run',run]]:agentArgs(meta.agent, currentSession, meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model, role, sandbox: !!meta.sandbox }); }
     catch (e) { finish(127, e.message); return; }
     const [cmd, args] = invocation;
     let got = false, buf = '';
@@ -1151,7 +1158,7 @@ function runner(run) {
         env: Object.assign({}, process.env, meta.agent === 'harness' ? harnessEnv() : meta.agent === 'codex' ? codexKeyEnv() : {}, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
       };
       app = null; appCode = null;
-      if (meta.agent === 'codex' && process.env.XIN_CODEX_TRANSPORT !== 'exec') {
+      if (meta.agent === 'codex' && meta.model!==runtime.AGY_MODEL && process.env.XIN_CODEX_TRANSPORT !== 'exec') {
         const config = [];
         for (let i = 0; i < args.length; i++) if (args[i] === '-c') config.push('-c', args[++i]);
         if (!meta.sandbox) config.push('-c', 'sandbox_mode="danger-full-access"');
@@ -1196,19 +1203,21 @@ function runner(run) {
       clearTimeout(stallTm);
       if (restarting) { restarting = false; start(); return; }
       const c = appCode == null ? code == null ? 1 : code : appCode;
-      if((c!==0||state.failed)&&sess.strictModel&&!state.strictRetried&&!state.worked&&!state.timeout&&!(readJ(metaF(run),meta)||{}).stopped){
+      if((c!==0||state.failed)&&sess.strictModel&&meta.model!==runtime.AGY_MODEL&&!state.strictRetried&&!state.worked&&!state.timeout&&!(readJ(metaF(run),meta)||{}).stopped){
         state.strictRetried=true;emit(run,{t:'status',text:'执行入口暂时没接上，正在按原安排重试。'});
         Object.assign(state,{failed:false,errShown:false,heldErr:null,lastErr:''});stderr='';start();return;
       }
       // 模型还没开始干活就失败了：换候选里的下一个模型再试一次（用户自己停的不换）
-      if ((c !== 0 || state.failed) && canSwitch() && !(readJ(metaF(run), meta) || {}).stopped) {
+      const quotaFallback=c===75&&meta.model===runtime.AGY_MODEL&&!state.switched&&!state.timeout&&safeFallbacks().length;
+      if ((c !== 0 || state.failed) && (canSwitch()||quotaFallback) && !(readJ(metaF(run), meta) || {}).stopped) {
         const from = meta.model;
         const candidates=safeFallbacks();
         if(!candidates.length){finish(c,'独立复核候选已改变，未回退到实际作者模型。');return;}
-        state.switched = true; meta.from = from; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);
-        patchRun(run,{model:meta.model,from,fallbacks:meta.fallbacks});
+        state.switched = true; meta.from = from; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);meta.effort=AUTO_EFFORT;
+        patchRun(run,{model:meta.model,effort:meta.effort,from,fallbacks:meta.fallbacks});
+        if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
-        emit(run, { t: 'status', text: codexModel(from).name + ' 没接上，换 ' + codexModel(meta.model).name + ' 再试…' });
+        emit(run, { t: 'status', text: from===runtime.AGY_MODEL?'原执行入口暂不可用，保留现有文件继续处理。':codexModel(from).name + ' 没接上，换 ' + codexModel(meta.model).name + ' 再试…' });
         Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
         start(); return;
       }
@@ -1863,7 +1872,9 @@ function taskNew(a) {
   }
   // 检查别的任务：避开被检查的那个模型（换个模型看，才看得出问题）
   const avoid = kind === 'review' ? authorModels(after.map(n=>all.find(t=>t.no===n)).filter(d=>d?.status==='done')) : [];
-  const rt = route({ kind: files.some(f => f.image) ? (kind === 'review' ? 'review' : 'vision') : kind, want: a.model || null, named: !!a.named, images: files.some(f => f.image), avoid });
+  const agyState=readJ(path.join(BASE,'antigravity-quota.json'),{}),images=files.some(f=>f.image);
+  const preferAgy=!a.named&&!a.daily&&!images&&(kind==='quick'||kind==='research'||kind==='code'&&a.web)&&runtime.antigravityBinary()&&(!agyState.blocked||Date.now()>=agyState.retryAt);
+  const rt = route({ kind: images ? (kind === 'review' ? 'review' : 'vision') : kind, want: preferAgy?runtime.AGY_MODEL:a.model||null, named: !!a.named, images, avoid });
   if(rt.error)return {error:rt.error,msg:rt.note};
   const seq = (readJ(TASK_SEQ(), {}) || {}).n || all.reduce((m, t) => Math.max(m, t.no || 0), 0);
   const no = seq + 1;
@@ -1875,7 +1886,7 @@ function taskNew(a) {
   const t = { sid: rid('s'), kind: 'task', no, parent: okId(a.parent, 's') ? a.parent : null, agent: 'codex', title, goal, userRequest:String(a.userRequest||'').slice(0,TEXT_MAX), tkind: kind,
     model: rt.model, requestedModel:a.model||null,requestedNamed:!!a.named,actualModel:null,actualModels:[],reviewAuthors:[],why: rt.why, fallbacks: rt.fallbacks, note: rt.note || '', files, dir: d.dir, after, minutes,
     plugins: [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
-    frontRun:a.frontRun||null,web:!!a.web,strictModel:!!a.strictModel,status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
+    frontRun:a.frontRun||null,web:!!a.web,strictModel:!!a.strictModel&&rt.model!==runtime.AGY_MODEL,status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
   if(t.strictModel)t.fallbacks=[];
   saveTask(t);
   if (a.daily) writeJ(DAILY_LAST(), { date: t.dailyDate, run: null, sid: t.sid, at: Date.now(), ok: null, status: 'queued' });
@@ -1915,7 +1926,7 @@ function startTask(t, all) {
   const userText = first ? t.goal : String(t.nextShow || t.next || '接着做');
   const cm = codexModel(t.model);
   Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, startedAt: t.startedAt || Date.now() });
-  const run = launch(t, { text, effort: AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first ? t.fallbacks || [] : [],
+  const run = launch(t, { text, effort: t.model===runtime.AGY_MODEL?'high':AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||t.model===runtime.AGY_MODEL ? t.fallbacks || [] : [],
     images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || WORK, sandbox: !t.dailyDate && TASK_SANDBOX(),
     deadline: t.deadline }, { t: 'user', text: userText, at: Date.now() });
   if (t.dailyDate) writeJ(DAILY_LAST(), { date: t.dailyDate, run, sid: t.sid, at: Date.now(), ok: null });
@@ -2249,7 +2260,7 @@ export function frontAction(a) {
     const o = parseTaskArgs(rest);
     if (o.error || !o.goal) return {error:o.error || '请写清要求'};
     if (o.kind && !TASK_KINDS.includes(o.kind)) return {error:'未知工作类型'};
-    if (o.model && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型'};
+    if (o.model && o.model!==runtime.AGY_MODEL && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型'};
     const previous = mine.find(t=>t.frontRun===a.run);
     if (previous) return {terminal:true,text:'好，我这就去弄。',task:taskSummary(previous)};
     const requested = m.frontNamed || o.model;
@@ -2641,6 +2652,7 @@ const ops = {
     if (a.all) {
       // 任务中心：各模型最近 14 天用得怎么样、每个任务是哪个对话派的、每日任务做得怎么样
       out.stats = modelStats();
+      out.antigravity = readJ(path.join(BASE,'antigravity-quota.json')) || null;
       const titles = {};
       for (const t of mine) if (t.parent && !(t.parent in titles)) titles[t.parent] = (readJ(sessF(t.parent)) || {}).title || '';
       out.titles = titles;
@@ -2657,7 +2669,9 @@ const iops = {
   handoff_start:handoffStart,handoff_finish:handoffFinish,
   front_immediate:frontImmediate,
   task_stage(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run||!['working','checking'].includes(a.stage))return {error:'stale'};t.stage=a.stage;saveTask(t);return {ok:true};},
-  task_model(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run)return {error:'stale'};t.model=t.actualModel=a.model;saveTask(t);return {ok:true};},
+  task_model(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run)return {error:'stale'};if(t.model===runtime.AGY_MODEL){t.agentSid=null;t.started=false;}t.model=t.actualModel=a.model;saveTask(t);return {ok:true};},
+  agy_quota(a){const f=path.join(BASE,'antigravity-quota.json');writeJ(f,runtime.mergeAntigravityQuota(readJ(f),a.quota));return {ok:true};},
+  agy_conversation(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run||!UUID_RE.test(a.id||''))return {error:'stale'};t.antigravityConversation=a.id;saveTask(t);return {ok:true};},
   run_stat(a){statAdd(a);return {ok:true};},
   controller_ack(a){const f=path.join(BASE,'controller-event.json'),s=readJ(f);if(s?.version===a.version){s.acknowledged=true;writeJ(f,s);}return {ok:true};},
   run_complete(a){
@@ -2796,7 +2810,7 @@ function taskCmd(argv) {
     if (!o.goal) o.goal = readStdin().trim();
     if (!o.goal) { console.log('要写清楚让分身做什么\n' + TASK_HELP); return 2; }
     if (o.kind && !TASK_KINDS.includes(o.kind)) { console.log('类型只能是：' + TASK_KINDS.join(' / ')); return 2; }
-    if (o.model && !CODEX_MODELS.some(m => m.id === o.model)) { console.log('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).join('、') + '）'); return 2; }
+    if (o.model && o.model!==runtime.AGY_MODEL && !CODEX_MODELS.some(m => m.id === o.model)) { console.log('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(runtime.AGY_MODEL).join('、') + '）'); return 2; }
     // 用户这一句点名的就是这个模型：当成用户点名（检查任务也照用）
     const said = (events(run).find(e => e.t === 'user') || {}).text || '';
     if (meta.frontNamed) o.model = meta.frontNamed;
@@ -2953,6 +2967,13 @@ function main() {
   const locked = op === 'locked';
   if (locked) op = process.argv[3];
   if (op === 'run') { runner(process.argv[3]); return; }
+  if(op==='agy-run'){
+    const run=process.argv[3],m=readJ(metaF(run)),t=m&&readJ(sessF(m.sid));
+    if(!m?.task||!t?.workspace||m.model!==runtime.AGY_MODEL){process.exitCode=1;return;}
+    const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
+    runtime.antigravityWork(t,{clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember})
+      .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
+  }
   if (op === 'warm') { warm(); return; }
   if (op === 'callback') { flushControllerEvent().catch(() => {}); return; }
   if (op === 'watchdog') { watchdog().catch(() => {}); return; }

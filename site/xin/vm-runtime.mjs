@@ -585,3 +585,86 @@ export function previewAsset(controller,a) {
   const dir=path.join(controller,'previews',a.id),file=a.file||'index.html';
   try{const m=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8')),entry=m.files[file],real=path.join(dir,file);if(!entry||m.id!==a.id||fs.lstatSync(dir).isSymbolicLink()||!fs.lstatSync(real).isFile())throw Error('bad file');return {real,...entry,title:m.title,parent:m.parent};}catch{return {error:'not_found',msg:'找不到这个预览'};}
 }
+
+// Antigravity keeps its login in the controller profile. Its model receives no
+// native file/terminal/MCP permission; requested commands run through bwrap here.
+export const AGY_MODEL='gemini-3.8-flash-high';
+export function antigravityBinary(home=process.env.XIN_AGY_HOME||os.homedir()) {
+  return [process.env.XIN_ANTIGRAVITY_BIN,path.join(home,'.local/bin/agy'),path.join(home,'.gemini/bin/agy')].find(p=>p&&fs.existsSync(p))||null;
+}
+export function antigravityQuota(result,now=Date.now()) {
+  const groups=result?.command?.data?.groups;
+  if(!Array.isArray(groups))throw Error('Antigravity 没有返回可核对的额度信息');
+  const buckets=groups.filter(g=>(g.buckets||[]).some(b=>/^gemini-/.test(b.id||''))).flatMap(g=>g.buckets).map(b=>({id:b.id,remaining:Number(b.remaining_fraction),resetAt:Date.parse(b.reset_time)}));
+  if(!buckets.length||buckets.some(b=>!Number.isFinite(b.remaining)||b.remaining<0||b.remaining>1||!Number.isFinite(b.resetAt)))throw Error('Antigravity 额度字段不完整');
+  const exhausted=buckets.filter(b=>b.remaining<=0);
+  return {model:AGY_MODEL,checkedAt:now,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};
+}
+export const AGY_SETTINGS={toolPermission:'request-review',allowNonWorkspaceAccess:false,useG1Credits:false,permissions:{deny:['command(*)','read_file(*)','write_file(*)','execute_url(*)','mcp(*)'],allow:['read_url(*)']}};
+export function mergeAntigravityQuota(old,next,now=Date.now()) {
+  if(!old?.blocked||old.retryAt<=now)return next;
+  // A slower successful query must not erase a concurrent quota exhaustion.
+  const buckets=next.buckets.map(b=>{const prior=old.buckets?.find(p=>p.id===b.id&&p.remaining<=0&&p.resetAt>now);return prior?{...b,remaining:0,resetAt:Math.max(b.resetAt,prior.resetAt)}:b;});
+  const exhausted=buckets.filter(b=>b.remaining<=0);return {...next,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};
+}
+const AGY_SCHEMA={type:'object',properties:{action:{type:'string',enum:['shell','final','ask','remember']},command:{type:'string'},text:{type:'string'}},required:['action','command','text'],additionalProperties:false};
+function agyProcess(binary,args,cwd,onEvent=()=>{}) {
+  return new Promise((resolve,reject)=>{
+    const child=spawn(binary,args,{cwd,stdio:['ignore','pipe','pipe'],env:{HOME:process.env.XIN_AGY_HOME||os.homedir(),PATH:process.env.PATH||'/usr/local/bin:/usr/bin:/bin',LANG:'C.UTF-8'}});
+    let buf='',stderr='',result=null,model=null,bytes=0;
+    const timer=setTimeout(()=>child.kill('SIGKILL'),260000);timer.unref();
+    child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
+    child.stdout.on('data',s=>{bytes+=Buffer.byteLength(s);if(bytes>4*1024*1024){child.kill('SIGKILL');return;}buf+=s;let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);try{const o=JSON.parse(line);if(o.event==='init')model=o.init?.model;if(o.event==='result')result=o.result;onEvent(o);}catch{}}});
+    child.stderr.on('data',s=>{stderr=(stderr+s).slice(-4000);});
+    child.on('error',e=>{clearTimeout(timer);reject(e);});
+    child.on('close',code=>{clearTimeout(timer);resolve({code,result,model,stderr});});
+  });
+}
+export async function readAntigravityQuota(binary,cwd) {
+  const r=await agyProcess(binary,['-p','/usage','--output-format','stream-json','--print-timeout','25s'],cwd);
+  if(r.code!==0)throw Error('Antigravity 额度查询失败');return antigravityQuota(r.result);
+}
+export async function antigravityWork(t,options) {
+  const binary=antigravityBinary();if(!binary)throw Error('Antigravity 命令不可用');
+  if(!t.workspace)throw Error('Antigravity 只接收隔离的项目副本');
+  const report=o=>process.stdout.write(JSON.stringify(o)+'\n');
+  if(options.quotaState?.blocked&&options.quotaState.retryAt>Date.now()){report({type:'error',message:'Antigravity 额度仍在倒计时，按已记录的恢复时间等待。'});return 75;}
+  const clientDir=options.clientDir;if(!clientDir||under(clientDir,t.workspace.work))throw Error('Antigravity 客户端目录必须由控制器单独持有');
+  let quota;try{quota=await readAntigravityQuota(binary,clientDir);options.quota(quota);}catch{quota=null;}
+  if(quota?.blocked){report({type:'error',message:'Antigravity 额度暂不可用，已记录服务端恢复时间。'});return 75;}
+  if(!quota)throw Error('暂时无法核对 Antigravity 额度，保留任务交给其他执行入口');
+  const home=process.env.XIN_AGY_HOME||os.homedir(),agents=path.join(home,'.gemini/config/agents');mkdir(agents);
+  const agent=path.join(agents,'xin-confined-worker.md'),body='---\nname: xin-confined-worker\ndescription: Xiaoxin controlled background worker.\nmainAgent: true\nsubagent: false\ntools:\n  - search_web\n  - read_url_content\n  - finish\n---\nReturn structured actions to the external controller. File and shell operations are unavailable as native tools. Never delegate or schedule.\n';
+  if(!fs.existsSync(agent)||fs.readFileSync(agent,'utf8')!==body){const temp=agent+'.'+process.pid;fs.writeFileSync(temp,body,{mode:0o600,flag:'wx'});fs.renameSync(temp,agent);}
+  let conversation=t.antigravityConversation||null,prompt=options.instructions+'\n\n'+options.text+'\n\n每次返回 JSON：action=shell 时把要执行的完整 bash 命令放 command；控制器在隔离副本执行并把输出交回。写文件也用 shell 动作，不调用原生文件或终端工具。完成用 final，缺必要信息用 ask，长期记忆用 remember；text 用中文。不得再派代理。控制器已准备好 bash、Python、Node 和副本，命令默认目录是 '+t.workspace.work+'，无需探测环境或帮助命令。新网页优先直接用一次 shell 写 index.html 和 xin-web.json，不开服务、不自行找预览工具。前台转述中额外添加的功能若与自包含网页规则冲突，以用户原话和控制器规则为准；不要使用 localStorage。';
+  report({type:'turn.started'});
+  for(let turn=0;turn<48;turn++){
+    if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
+    const args=['-p',prompt,'--agent','xin-confined-worker','--model',AGY_MODEL,'--effort','high','--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
+    const r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(s?.state==='DONE'&&['search_web','read_url_content'].includes(name))report({type:'item.completed',item:{id:'web-'+turn+'-'+s.step_index,type:'web_search',query:s.tool_info?.parameters?.query||s.tool_info?.parameters?.url||name}});});
+    const result=r.result;if(r.model!==AGY_MODEL)throw Error('Antigravity 实际模型与固定模型不一致');
+    if(result?.usage){options.budget.recordUsage?.({...result.usage,input_tokens_details:{cached_tokens:result.usage.cache_read_tokens||0}});report({type:'xin.usage',usage:result.usage});}
+    else options.budget.recordUsage?.(null);
+    if(r.code!==0||result?.status!=='SUCCESS'){
+      try{quota=await readAntigravityQuota(binary,clientDir);options.quota(quota);}catch{}
+      if(quota?.blocked||/quota|rate.limit|resource.exhausted/i.test(JSON.stringify(result||{})+' '+r.stderr)){report({type:'error',message:'Antigravity 额度已用尽，已保留当前文件和额度记录。'});return 75;}
+      throw Error('Antigravity 本轮未完成，已保留进度');
+    }
+    conversation=result.conversation_id||conversation;if(conversation)options.conversation(conversation);
+    let a=result.structured_output;try{a=a||JSON.parse(result.response);}catch{throw Error('Antigravity 未返回可执行的结构化动作');}
+    if(!a||!AGY_SCHEMA.properties.action.enum.includes(a.action)||typeof a.command!=='string'||typeof a.text!=='string')throw Error('Antigravity 动作字段无效');
+    if(a.action==='final'||a.action==='ask'){
+      if(a.action==='ask')options.ask(a.text);
+      report({type:'item.completed',item:{type:'agent_message',text:a.text}});
+      try{options.quota(await readAntigravityQuota(binary,clientDir));}catch{}return 0;
+    }
+    if(a.action==='remember'){options.remember(a.text);prompt='已记录。请继续当前工作。';continue;}
+    if(!a.command.trim()||Buffer.byteLength(a.command)>256*1024)throw Error('Antigravity 命令为空或过长');
+    const id='agy-'+turn;report({type:'item.started',item:{id,type:'command_execution',command:a.command}});
+    const c=containerCommand(t,'/bin/bash',['-lc',a.command]);
+    const resultCommand=await new Promise(resolve=>{const ch=spawn(c.command,c.args,{cwd:t.workspace.work,stdio:['ignore','pipe','pipe'],env:{PATH:'/usr/bin:/bin'}});let out='';const collect=s=>{out=(out+s).slice(-64000);};ch.stdout.on('data',collect);ch.stderr.on('data',collect);const timer=setTimeout(()=>{ch.kill('SIGKILL');},60000);timer.unref();ch.on('error',e=>{clearTimeout(timer);resolve({code:127,out:e.message});});ch.on('close',code=>{clearTimeout(timer);resolve({code:code??1,out});});});
+    report({type:'item.completed',item:{id,type:'command_execution',command:a.command,exit_code:resultCommand.code,aggregated_output:resultCommand.out}});
+    prompt='控制器执行结果（仅副本；不要重复已成功的操作）：\n'+JSON.stringify(resultCommand)+'\n请继续下一步，完成则返回 final。';
+  }
+  throw Error('Antigravity 达到本轮动作上限，进度已保留');
+}

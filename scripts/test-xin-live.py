@@ -43,7 +43,7 @@ async def main():
             await page.locator('.xc-login button').click()
             await page.wait_for_function('LimingXinChat.state.authed', timeout=30000)
             # The test namespace and result are unique to this run. No user project is touched.
-            request = ('这是发布后的真实联调，只派一个后台任务并立即回复，不要等待它完成。使用 xin task new --kind research --model deepseek-v4.1-flash '
+            request = ('这是发布后的真实联调，使用默认后台安排，只派一个后台任务并立即回复，不要等待它完成。使用 xin task new --kind research '
                        '--title ' + marker + ' --dir ' + directory + ' -- 后台测试：先执行 sleep 45，再用 printf 把精确文本 ' + marker +
                        ' 写入当前任务副本的 result.txt，结束。不要访问其它项目、记事本、设备或用户服务。请只派这个任务，不要派审查。')
             await page.locator('.xc-row textarea').fill(request)
@@ -82,6 +82,17 @@ async def main():
             again = await call('history', {'sid': task['sid']})
             if again['task']['result']['at'] != h['task']['result']['at'] or len(again['runs']) != 1:
                 raise RuntimeError('Task completion was duplicated')
+            actual = again['task'].get('actualModel')
+            if actual == 'gemini-3.8-flash-high':
+                finished = [e for r in again['runs'] for e in r['events'] if e.get('t') == 'done']
+                if not finished or finished[-1].get('effort') != 'high':
+                    raise RuntimeError('Antigravity was not fixed at High')
+                print('PASS real default Antigravity Gemini 3.8 Flash High and confined file output', flush=True)
+            else:
+                quota = (await call('tasks', {'all': True})).get('antigravity') or {}
+                if not quota.get('blocked') or quota.get('retryAt', 0) <= time.time() * 1000:
+                    raise RuntimeError('Default Antigravity did not run and no real quota cooldown explains the fallback')
+                print('PASS real quota cooldown retained and fallback produced the verified file', flush=True)
             if errors:
                 raise RuntimeError('Browser JavaScript errors')
             print('PASS closed-page completion, published file download and stable single-turn result', flush=True)
