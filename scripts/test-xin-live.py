@@ -14,7 +14,8 @@ PASSWORD = os.environ.get('XIN_OWNER_PASSWORD', '')
 async def main():
     if len(PASSWORD) < 12:
         raise RuntimeError('Production smoke requires the configured owner credential')
-    marker = 'xin-smoke-' + uuid.uuid4().hex
+    # Task titles are limited to 40 characters; keep the exact-match fixture inside that contract.
+    marker = 'xin-smoke-' + uuid.uuid4().hex[:24]
     directory = '/data/workspace/.xin-live-smoke/' + marker
     sid = None
     async with async_playwright() as p:
