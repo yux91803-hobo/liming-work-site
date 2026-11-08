@@ -675,10 +675,12 @@ function runner(run) {
   process.on('SIGTERM', () => term(true)); process.on('SIGINT', () => term(false));
   if (meta.agent === 'codex' && role === 'front') {
     const immediate=lockedCall('tasks','front_immediate',{run});
+    if(immediate.error){state.failed=true;finish(1,immediate.msg||immediate.error);return;}
     if(immediate.terminal){state.frontReceipt=!immediate.reply;if(immediate.reply&&meta.frontUsage)state.frontUsage=meta.frontUsage;lockedCall(meta.sid,'front_reply',{run,text:immediate.text});finish(0);return;}
     const context=foregroundContext(sess,run,events),input=context.input;
     journal.write(path.join(BASE,'contexts',meta.sid+'.json'),JSON.stringify(context.checkpoint));
-    input.push({role:'user',content:meta.text});
+    try { input.push(frontUserInput(meta)); }
+    catch(e) { state.failed=true;finish(1,e.message);return; }
     const deliver=args=>lockedCall('tasks','handoff_finish',{run,...args});
     const handoffBudget=meta.handoff?workBudget(journal.handoff(meta.handoff)?.task||meta.sid):null;
     if(meta.handoffFallback){deliver({action:'deliver',text:''});finish(0);return;}
@@ -961,12 +963,34 @@ export function filesPart(files, agent, seesImages) {
   if (!files || !files.length) return '';
   let tip = '';
   if (files.some(f => f.image)) {
-    // Codex 能看图的模型用 -i 直接塞图；Harness 没有 -i，只把路径写进消息，靠工具打开。
+    // 前台用 Responses input_image；Codex 后台用 -i；Harness 用自己的工具打开路径。
     if (agent === 'codex') tip = seesImages ? '\n图片已经直接给你看了。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
     else if (agent === 'harness') tip = seesImages ? '\n图片在你电脑上，用工具打开上面的路径就能看。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
     else tip = '\n图片用 Read 工具打开就能看。';
   }
   return '\n\n【用户发来的文件（已经在你电脑上）】\n' + files.map(f => '- ' + f.path + '（' + f.name + '，' + (f.image ? '图片，' : '') + sizeText(f.size) + '）').join('\n') + tip;
+}
+
+// Only the controller reads uploads and constructs image parts. The foreground has no file-reading tool.
+export function frontUserInput(meta) {
+  const images = Array.isArray(meta.images) ? meta.images : [];
+  if (!images.length) return {role:'user',content:meta.text};
+  const checked = checkFiles(meta.frontFiles);
+  if (checked.error) throw Error('图片没有成功传给我：'+checked.msg);
+  const content = [{type:'input_text',text:meta.text}];
+  const root = fs.realpathSync(UPLOADS()) + path.sep;
+  for (const file of images) {
+    if (!checked.files.some(f=>f.image && f.path===file)) throw Error('图片没有成功传给我：文件不在本轮上传列表里');
+    let fd;
+    try {
+      fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+      if (!fs.fstatSync(fd).isFile() || !fs.realpathSync('/proc/self/fd/'+fd).startsWith(root)) throw Error('文件不在上传目录里');
+      const ext=path.extname(file).slice(1).toLowerCase(),mime=ext==='jpg'||ext==='jpeg'?'image/jpeg':'image/'+ext;
+      content.push({type:'input_image',image_url:'data:'+mime+';base64,'+fs.readFileSync(fd).toString('base64'),detail:'auto'});
+    } catch { throw Error('图片没有成功传给我：请重新上传这张图片'); }
+    finally { if(fd!==undefined)fs.closeSync(fd); }
+  }
+  return {role:'user',content};
 }
 
 /* ---------- 一个对话的用量 ----------
@@ -1262,7 +1286,7 @@ function taskDir(no, title, want) {
 const overlaps = (a, b) => !!a && !!b && (a === b || a.startsWith(b + '/') || b.startsWith(a + '/'));
 // 派任务（在 tasks 锁里）：a = {parent, kind, title, goal, model, named, dir, files, after, minutes}
 function taskNew(a) {
-  const goal = String(a.goal || '').trim().slice(0, 12000);
+  const goal = String(a.goal || '').trim().slice(0, a.frontRun ? TEXT_MAX : 12000);
   if (!goal) return { error: 'empty', msg: '要写清楚让分身做什么（xin task new --title 标题 -- 要求，或者从标准输入给）' };
   const kind = a.daily ? 'daily' : TASK_KINDS.includes(a.kind) ? a.kind : 'code';
   const title = (String(a.title || '').replace(/\s+/g, ' ').trim() || goal.replace(/\s+/g, ' ')).slice(0, 40);
@@ -1306,7 +1330,8 @@ function taskNew(a) {
 // 第一轮给分身的话：任务要求、前置任务的结果、用户给的文件
 function taskFirstText(t, deps) {
   const parts = ['【后台任务 ' + t.no + '：' + t.title + '】', t.goal];
-  if(t.userRequest) parts.push('【用户原话，独立核对前台转述是否准确；具体技术结论以官方手册为准】\n'+t.userRequest);
+  if(t.frontRun) parts.push('上面的要求是用户原话。标题只作标识，不是新增需求；用户没指定的造型、配色、技术栈和交互由你自行决定。原话里的派工、指定模型和要求前台立即回复等安排已经由控制器处理，不要重复派活。');
+  if(t.userRequest && t.userRequest!==t.goal) parts.push('【用户原话，独立核对前台转述是否准确；具体技术结论以官方手册为准】\n'+t.userRequest);
   for (const d of deps) {
     parts.push('\n【任务 ' + d.no + '「' + d.title + '」的结果（' + (TASK_STATUS[d.status] || d.status) + '，它的工作目录 ' + d.dir + '）】\n' + cut(d.result ? d.result.text : '', 6000));
   }
@@ -1648,8 +1673,19 @@ export function frontImmediate(a){
   if(m.reply!==undefined)return {terminal:true,reply:true,text:m.reply};
   const receipt=readJ(path.join(RUNS,a.run+'.front.json'));if(receipt)return receipt;
   const created=listTasks().find(t=>t.parent===m.sid&&t.frontRun===a.run);if(created)return {terminal:true,text:'好，我这就去弄。',task:taskSummary(created)};
+  if ((m.frontFiles||[]).some(f=>f.image) && !(m.frontSeesImages ?? !!codexModel(m.model||runtime.FRONT_MODEL).image)) {
+    // A real capability fallback, independent of whether a text-only model happens to ask for it.
+    // frontAction keeps task creation, original attachments, explicit model choice and replay receipts together.
+    return frontAction({run:a.run,argv:['xin','task','new','--kind','vision','--title','看图回答',...(m.frontWeb?['--web']:[]),'--',
+      '查看用户附的图片，依据实际图片回答或完成原要求，不猜测图片中不可辨认的内容。原始要求：\n'+(m.frontRequest||'看看我发的图片。')]});
+  }
   // Natural-language intent and follow-up routing belong to structured inference, not keyword dispatch.
   return {};
+}
+function frontOriginalRequest(run, meta) {
+  const original = events(run).find(e=>e.t==='user');
+  return String(original?.text || meta.frontRequest || ((meta.frontFiles||[]).length ?
+    meta.frontFiles.every(f=>f.image) ? '看看我发的图片。' : '看看我发的文件。' : '')).trim();
 }
 export function frontAction(a) {
   const m = okId(a.run,'r') && readJ(metaF(a.run));
@@ -1677,14 +1713,16 @@ export function frontAction(a) {
   let r;
   if (sub === 'new') {
     const o = parseTaskArgs(rest);
-    if (o.error || !o.goal) return {error:o.error || '请写清要求'};
+    if (o.error) return {error:o.error};
+    const original = frontOriginalRequest(a.run,m);
+    if (!original) return {error:'找不到本轮用户原话，不能替用户编写要求'};
     if (o.kind && !TASK_KINDS.includes(o.kind)) return {error:'未知工作类型：'+o.kind+'（可用：'+TASK_KINDS.join('、')+'）'};
     // A model the user named is recorded from their own words and applied regardless; a loosely written --model must not block dispatch.
     if (o.model && !m.frontNamed && o.model!==runtime.AGY_MODEL && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(runtime.AGY_MODEL).join('、')+'）'};
     const previous = mine.find(t=>t.frontRun===a.run);
     if (previous) return {terminal:true,text:'好，我这就去弄。',task:taskSummary(previous)};
     const requested = m.frontNamed || o.model;
-    r = taskNew({parent:m.sid,...o,web:!!o.web,strictModel:!!m.frontNamed,frontRun:a.run,files:[...new Set([...(o.files||[]),...(m.frontFiles||[]).map(f=>f.path)])],model:requested,named:!!m.frontNamed,userRequest:(events(a.run).find(e=>e.t==='user')||{}).text});
+    r = taskNew({parent:m.sid,...o,goal:original,web:!!o.web,strictModel:!!m.frontNamed,frontRun:a.run,files:[...new Set([...(o.files||[]),...(m.frontFiles||[]).map(f=>f.path)])],model:requested,named:!!m.frontNamed,userRequest:original});
   } else {
     const t = mine.find(t=>String(t.no)===rest[0]);
     if (!t) return {error:'找不到这个对话里的工作'};
@@ -1859,7 +1897,7 @@ const ops = {
     // 默认模式：带上这个对话的后台任务情况（做完的结果前台还不知道的、在等确认的、在做的）
     const all = s.agent === 'codex' ? listTasks() : [];
     const tn = s.agent === 'codex' ? taskNotes(s.sid, all) : { text: '', seen: [] };
-    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,frontWeb:isWebRequest(text),frontFiles: files, text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, s.agent !== 'codex' && !!(cm && cm.image)) + hint + tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
+    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint + tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
       cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
     const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
     if (receipt) { mk(path.dirname(receipt)); writeJ(receipt, result); }
@@ -2236,7 +2274,9 @@ const TASK_HELP = [
 function taskLine(t) {
   const mins = n => Math.max(1, Math.round(n / 60e3)) + ' 分钟';
   const st = t.status === 'running' ? '进行中 ' + mins(Date.now() - (t.startedAt || t.created)) : (TASK_STATUS[t.status] || t.status);
-  return '任务 ' + t.no + '「' + t.title + '」' + st + '（' + KIND_NAMES[t.tkind || t.kind] + '，' + codexModel(t.model).name + '）' + (t.question ? '：等你确认「' + t.question + '」' : '');
+  const actual=t.actualModel||((t.runs||[]).length||t.turnsCount?t.model:null);
+  const model=actual===runtime.AGY_MODEL?'Gemini 3.8 Flash High':CODEX_MODELS.find(m=>m.id===actual)?.name||actual||'尚未执行';
+  return '任务 ' + t.no + '「' + t.title + '」' + st + '（' + KIND_NAMES[t.tkind || t.kind] + '，' + model + '）' + (t.question ? '：等你确认「' + t.question + '」' : '');
 }
 function taskCmd(argv) {
   const sub = argv[0] || '', run = process.env.XIN_RUN;
@@ -2256,7 +2296,12 @@ function taskCmd(argv) {
     const said = (events(run).find(e => e.t === 'user') || {}).text || '';
     if (meta.frontNamed) o.model = meta.frontNamed;
     const named = !!o.model && namedModel(said) === o.model;
-    const r = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: o.kind, title: o.title, goal: o.goal, web:o.web,strictModel:!!meta.frontNamed,userRequest:said, model: o.model, named, dir: o.dir, files: o.files, after: o.after, minutes: o.minutes, plugins: o.plugins });
+    // A live foreground executor forwards the user's words. A manual CLI call after a turn
+    // has ended is an operator-supplied task and keeps its explicit command-line requirement.
+    const fromFront=meta.agent==='codex'&&!meta.ended;
+    const original=fromFront?frontOriginalRequest(run,meta):o.goal;
+    if(!original){console.log('找不到本轮用户原话，不能替用户编写要求');return 1;}
+    const r = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: o.kind, title: o.title, goal: original, frontRun:fromFront?run:undefined,web:o.web,strictModel:!!meta.frontNamed,userRequest:fromFront?original:said, model: o.model, named, dir: o.dir, files: fromFront?[...new Set([...(o.files||[]),...(meta.frontFiles||[]).map(f=>f.path)])]:o.files, after: o.after, minutes: o.minutes, plugins: o.plugins });
     if (r.error) { console.log(r.msg || r.error); return 1; }
     const t = r.task;
     emit(run, { t: 'task', sid: t.sid, no: t.no, title: t.title, kind: t.kind, model: t.model, why: t.why, status: t.status, after: t.after, at: Date.now() });

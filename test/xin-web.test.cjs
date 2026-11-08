@@ -15,6 +15,45 @@ function fixture(t){
  return {root,control,project,task,env,save,call,front};
 }
 async function web(t){const f=fixture(t),r=await load();fs.writeFileSync(f.project+'/index.html',html);fs.writeFileSync(f.project+'/xin-web.json',JSON.stringify({entry:'index.html',title:'奶龙',checks:[{selector:'#dance',expectSelector:'#dragon',expectClass:'dancing'}]}));f.task.web=true;f.task.workspace=r.prepareWorkspace(f.task,f.control);return {...f,r};}
+test('前台派活逐字使用用户原话，丢弃模型扩写，长消息的最后一段和原图都保留',t=>{
+ const f=fixture(t),original='让 Kimi 按这张图做个网页。\n颜色按我说的红色，按钮保留。\n'+'原话细节。'.repeat(2600)+'\n最后一条要求也不能丢。';
+ const {run}=f.front(original),file=f.root+'/uploads/photo.png';fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'png');
+ const mf=f.control+'/runs/'+run+'.json',meta=JSON.parse(fs.readFileSync(mf));meta.frontFiles=[{path:file,name:'photo.png',image:true}];meta.frontRequest='元数据里的另一种扩写也不能覆盖原文';fs.writeFileSync(mf,JSON.stringify(meta));
+ const argv=['xin','task','new','--kind','code','--web','--title','做网页','--','额外新增绿色3D造型，必须使用 React，加十种动画和导航栏'];
+ const result=f.call('front_action',{run,argv});assert.equal(result.terminal,true);
+ const task=JSON.parse(fs.readFileSync(f.control+'/sessions/'+result.task.sid+'.json'));
+ assert.equal(task.goal,original);assert.equal(task.userRequest,original);assert.deepEqual(task.files.map(x=>x.path),[file]);assert.equal(task.web,true);
+ assert.ok(!task.goal.includes('绿色3D'));assert.equal(f.call('front_action',{run,argv}).task.sid,task.sid,'重放不重复派工');
+});
+test('前台确实不支持视觉时自动派一个 vision 工作，原图和原话照传，重复启动不再派一次',t=>{
+ const f=fixture(t),original='图里写的是什么？',{run}=f.front(original),file=f.root+'/uploads/photo.png';fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'png');
+ const mf=f.control+'/runs/'+run+'.json',meta=JSON.parse(fs.readFileSync(mf));Object.assign(meta,{model:'glm-5.3-flash',frontSeesImages:false,frontNamed:null,frontWeb:false,images:[],frontFiles:[{path:file,name:'photo.png',image:true}]});fs.writeFileSync(mf,JSON.stringify(meta));
+ const first=f.call('front_immediate',{run}),again=f.call('front_immediate',{run});assert.equal(first.terminal,true);assert.equal(first.task.kind,'vision');assert.equal(again.task.sid,first.task.sid);
+ const task=JSON.parse(fs.readFileSync(f.control+'/sessions/'+first.task.sid+'.json'));assert.equal(task.goal,original);assert.deepEqual(task.files.map(x=>x.path),[file]);
+ assert.notEqual(task.model,'glm-5.3-flash');assert.equal(f.call('tasks',{all:true}).tasks.length,2,'只有占位任务和这一个看图任务');
+});
+test('前台能看图时不自动派活；根据图片制作时仍保留正常 code/web 派工',t=>{
+ const f=fixture(t),original='根据图片做个能打开的交互网页',{run}=f.front(original),file=f.root+'/uploads/photo.webp';fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'webp');
+ const mf=f.control+'/runs/'+run+'.json',meta=JSON.parse(fs.readFileSync(mf));Object.assign(meta,{frontSeesImages:true,frontFiles:[{path:file,name:'photo.webp',image:true}],images:[file]});fs.writeFileSync(mf,JSON.stringify(meta));
+ assert.equal(f.call('front_immediate',{run}).terminal,undefined);assert.equal(f.call('tasks',{all:true}).tasks.length,1);
+ const result=f.call('front_action',{run,argv:['xin','task','new','--kind','code','--web','--title','图片做网页','--','前台自己加的技术方案']});assert.equal(result.task.kind,'code');assert.equal(result.task.web,true);
+ const task=JSON.parse(fs.readFileSync(f.control+'/sessions/'+result.task.sid+'.json'));assert.equal(task.goal,original);assert.deepEqual(task.files.map(x=>x.path),[file]);
+});
+test('前台只编码本轮已验证的上传图片；PDF 不冒充图片，丢失文件或指向外部的软链接明确失败',t=>{
+ const f=fixture(t),dir=f.root+'/uploads';fs.mkdirSync(dir);const png=dir+'/a.png',webp=dir+'/b.webp',pdf=dir+'/c.pdf';for(const [p,data] of [[png,'png'],[webp,'webp'],[pdf,'pdf']])fs.writeFileSync(p,data);
+ const meta={text:'图片已经直接给你看了。',frontFiles:[png,webp,pdf].map(p=>({path:p,name:path.basename(p)})),images:[png,webp]};
+ const js=code=>{const r=spawnSync(process.execPath,['--input-type=module','-e',`import fs from 'node:fs';import * as a from ${JSON.stringify(pathToFileURL(agent).href)};const meta=${JSON.stringify(meta)};${code}`],{env:f.env,encoding:'utf8'});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
+ const content=js('console.log(JSON.stringify(a.frontUserInput(meta).content));');assert.deepEqual(content.filter(x=>x.type==='input_image').map(x=>x.image_url),['data:image/png;base64,'+Buffer.from('png').toString('base64'),'data:image/webp;base64,'+Buffer.from('webp').toString('base64')]);
+ fs.unlinkSync(png);assert.match(js('try{a.frontUserInput(meta);console.log(JSON.stringify("unexpected"))}catch(e){console.log(JSON.stringify(e.message))}'),/图片没有成功传给我/);
+ const outside=f.root+'/outside.txt';fs.writeFileSync(outside,'not an upload');fs.symlinkSync(outside,png);assert.match(js('try{a.frontUserInput(meta);console.log(JSON.stringify("unexpected"))}catch(e){console.log(JSON.stringify(e.message))}'),/图片没有成功传给我/);
+});
+test('xin task list/show 第一行按 actualModel 显示，Antigravity 和未知模型不误标成默认 GLM',t=>{
+ const f=fixture(t),{run,sid}=f.front('查看任务');Object.assign(f.task,{no:24,parent:sid,status:'done',actualModel:'gemini-3.8-flash-high',model:'glm-5.3-flash'});f.save();
+ const cli=(...argv)=>{const r=spawnSync(process.execPath,[agent,'xin','task',...argv],{env:{...f.env,XIN_RUN:run},encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout.split('\n')[0];};
+ for(const args of [['list'],['show','24']]){const line=cli(...args);assert.match(line,/Gemini 3\.8 Flash High/);assert.doesNotMatch(line,/GLM/);}
+ const index=f.control+'/tasks-index.json';fs.unlinkSync(index);f.task.actualModel='future-vision-model';f.save();assert.match(cli('show','24'),/future-vision-model/);assert.doesNotMatch(cli('list'),/GLM/);
+ fs.unlinkSync(index);Object.assign(f.task,{actualModel:null,status:'queued',runs:[]});f.save();assert.match(cli('show','24'),/尚未执行/);
+});
 test('网页清单只接受自包含 HTML、实际点击检查和副本内路径',async t=>{
  const f=await web(t),file=f.task.workspace.work+'/xin-web.json',initial=JSON.parse(fs.readFileSync(file));assert.equal(f.r.webManifest(f.task).title,'奶龙');
  for(const entry of ['../outside.html','/etc/passwd']){fs.writeFileSync(file,JSON.stringify({...initial,entry}));assert.throws(()=>f.r.webManifest(f.task),/HTML|副本/);}
