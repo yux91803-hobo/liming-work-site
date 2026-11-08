@@ -57,6 +57,7 @@ export * from './vm-models.mjs';
 export * from './vm-persona.mjs';
 import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, memoryPreferences,setMemoryPreferences,MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
 import {recallAll,turnGuidance,safeContextEvents} from './vm-context.mjs';
+import {reportLearning,learningEvidence} from './vm-learning.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 
@@ -434,6 +435,12 @@ export function frontLog(entry) {
     const lines = readText(f).split('\n').filter(Boolean).slice(-199); lines.push(JSON.stringify({ at: Date.now(), ...entry }));
     fs.writeFileSync(f, lines.join('\n') + '\n');
   } catch { /* diagnostics never break a turn */ }
+}
+export function frontDiagnostics(meta,events,logs=[]){
+  const kind=s=>/sqlite|database.*lock/i.test(s)?'database':/abort|cancel/i.test(s)?'cancelled':/time.?out|超时/i.test(s)?'timeout':/fetch|HTTP|network|网关|gateway|socket/i.test(s)?'gateway':s?'controller':null;
+  return {ended:!!meta.ended,stopped:!!meta.stopped,replyBytes:Buffer.byteLength(String(meta.reply||'')),
+    events:events.map(e=>({t:e.t,...(e.t==='done'?{ok:e.ok,stopped:!!e.stopped,ms:e.ms}:{}),...(['text','err'].includes(e.t)?{bytes:Buffer.byteLength(String(e.text||'')),...(e.t==='err'?{errorType:kind(e.text||'')}:{} )}:{})})),
+    traces:logs.filter(l=>l.run===meta.run).map(l=>({outcome:l.outcome,errorType:kind(l.error||''),calls:(l.calls||[]).map(c=>({call:c.call,...(c.error?{errorType:kind(c.error)}:{})}))}))};
 }
 // 只重试尚未开始工作的 CLI：开始处理后可能长时间不输出，网络超时由 CLI 自己处理，避免重复投递同一轮。
 const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
@@ -1794,6 +1801,7 @@ function bgInfo(all) {
   return lease ? { bg, lease, version } : { bg, version };
 }
 const ops = {
+  learning_report(a){return reportLearning(a);},
   memory_preferences(){return memoryPreferences();},
   memory_preferences_set(a){return setMemoryPreferences(a);},
   preview_asset(a){return runtime.previewAsset(BASE,a);},
@@ -1822,7 +1830,7 @@ const ops = {
   },
   // 小芯的记忆（vm-memory.mjs）：网页「小芯的记忆」看、加、确认、改、设隐私、忘掉
   memory_list() {
-    const items = listMemory(), titles = {};
+    const items = listMemory().map(it=>({...it,evidence:[...learningEvidence(it.id),...it.evidence].slice(0,3)})), titles = {};
     for (const sid of new Set(items.flatMap(it => it.evidence.map(e => e.sid)).filter(sid => okId(sid, 's')))) {
       const s = readJ(sessF(sid));
       if (s) titles[sid] = isTask(s) ? '后台任务：' + s.title : s.title || '';
@@ -2111,7 +2119,8 @@ const ops = {
     if (!s) return { error: 'no_session', msg: '找不到这个对话' };
     const runs = (s.runs || []).slice(-30);
     // started：每一轮什么时候开始的（后台任务的结果卡片按时间插在这些轮之间）
-    const out = runs.map(r => { const d = runDone(r), evs = events(r); return { run: r, events: evs, done: d, started: (readJ(metaF(r)) || {}).started || 0 }; });
+    const diagnostics=a.diagnose?readText(path.join(BASE,'logs','front.jsonl')).split('\n').flatMap(l=>{try{return [JSON.parse(l)];}catch{return [];}}):[];
+    const out = runs.map(r => { const d = runDone(r), evs = events(r),m=readJ(metaF(r))||{};return { run: r, events: evs, done: d, started:m.started||0,...(a.diagnose?{diagnostics:frontDiagnostics(m,evs,diagnostics)}:{}) }; });
     const last = out[out.length - 1];
     // active.started：网页重新打开面板时，「思考中 · N 秒」接着算，不从 0 开始
     const res = { session: summary(s), usage: sessionUsage(s), runs: out, active: last && !last.done ? { run: last.run, off: last.events.length, started: last.started } : null };

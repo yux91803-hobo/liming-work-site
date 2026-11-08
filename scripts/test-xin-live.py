@@ -177,7 +177,14 @@ async def main():
                     if time.monotonic()>limit:raise RuntimeError('Original real turn did not finish')
                     await asyncio.sleep(2)
                 events=[e for run in old['runs'] if run['run']==held['run'] for e in run['events'] if e.get('t')=='text']
-                if not any(first_marker in e.get('text','') for e in events):raise RuntimeError('Original conversation reply was lost')
+                if not any(first_marker in e.get('text','') for e in events):
+                    # Emit only structural evidence about this test's own turn, never model/user text.
+                    debug=await call('history',{'sid':sid,'diagnose':True})
+                    original=next((r for r in debug['runs'] if r['run']==held['run']),{})
+                    expected_request=any(e.get('t')=='user' and first_marker in e.get('text','') for e in original.get('events',[]))
+                    evidence={'requestSaved':expected_request,'done':original.get('done'),'diagnostics':original.get('diagnostics'),
+                              'replyPresent':bool(events),'repeatedEarlierMarker':any(reply_marker in e.get('text','') for e in events)}
+                    raise RuntimeError('Original conversation reply was lost: '+json.dumps(evidence,ensure_ascii=True))
                 if errors:raise RuntimeError('Browser JavaScript errors')
                 print('PASS real delayed response stays in its original conversation while the new conversation completes',flush=True)
             finally:

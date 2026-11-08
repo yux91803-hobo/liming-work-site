@@ -3,6 +3,12 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const load=()=>import('../site/xin/vm-runtime.mjs');
+test('前台失败诊断只给结构、字节数和错误类别，不带原话、回答或网关正文',async()=>{
+  const {frontDiagnostics}=await import('../site/xin/vm-agent.mjs');
+  const secret='这是一段不可外露的原话',r=frontDiagnostics({run:'rfront00001',reply:secret,ended:1},[{t:'user',text:secret},{t:'text',text:secret},{t:'err',text:'HTTP 503 '+secret},{t:'done',ok:false}],
+    [{run:'rfront00001',outcome:'error',error:'fetch '+secret,calls:[{call:'xin task list',error:'sqlite locked '+secret}]}]);
+  assert.doesNotMatch(JSON.stringify(r),new RegExp(secret));assert.equal(r.replyBytes,Buffer.byteLength(secret));assert.equal(r.events[2].errorType,'gateway');assert.equal(r.traces[0].calls[0].errorType,'database');
+});
 const message=text=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text}]}]});
 const call=(argv,name='xin')=>({type:'function_call',name,call_id:'one',arguments:JSON.stringify({argv})});
 function options(output) {

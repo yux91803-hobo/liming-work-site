@@ -156,10 +156,14 @@ async def xin_mock(pg, authed=False, live=None):
         st['ops'].append(op)
         if op == 'status': return await ok({'ok': True, 'data': {'name': 'li', 'state': 'running'}})
         if op == 'wake': return await ok({'ok': True, 'data': {'state': 'running', 'action': 'none'}})
-        if op == 'memory_preferences': return await ok({'ok': True, 'data': {'followups': st.get('followups', True)}})
+        if op == 'learning_report':
+            st.setdefault('learning_events', []).extend(args.get('events', []))
+            return await ok({'ok': True, 'data': {'ok': True, 'accepted': len(args.get('events', []))}})
+        if op == 'memory_preferences': return await ok({'ok': True, 'data': {'followups': st.get('followups', True), 'learning': st.get('learning', True)}})
         if op == 'memory_preferences_set':
-            st['followups'] = args['followups']
-            return await ok({'ok': True, 'data': {'followups': st['followups']}})
+            for key in ('followups', 'learning'):
+                if key in args: st[key] = args[key]
+            return await ok({'ok': True, 'data': {'followups': st.get('followups', True), 'learning': st.get('learning', True)}})
         if op == 'memory_list': return await ok({'ok': True, 'data': {'items': st['memitems'], 'titles': {'shist00001': '看看目录'}}})
         if op == 'memory_add':
             st['mem_added'] = args
@@ -1826,7 +1830,12 @@ async def main():
         await pv.click('.xc-set-b'); await pv.wait_for_selector('.xc-set')
         rows = await pv.evaluate("[...document.querySelectorAll('.xc-tg-t b')].map(b => b.textContent)")
         await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false' && !document.querySelector('.xc-push .xc-sw').disabled")
-        check('设置：天启模式、附带正在看的页面、主动跟进、做完提醒，做完提醒默认关着', rows == ['天启模式', '附带正在看的页面', '主动跟进', '做完提醒'], rows)
+        check('设置：天启模式、附带正在看的页面、学习记录、主动跟进、做完提醒，做完提醒默认关着', rows == ['天启模式', '附带正在看的页面', '学习记录', '主动跟进', '做完提醒'], rows)
+        await pv.wait_for_function("!document.querySelector('.xc-learning .xc-sw').disabled")
+        learn0 = await pv.get_attribute('.xc-learning .xc-sw', 'aria-checked')
+        await pv.click('.xc-learning .xc-sw')
+        await pv.wait_for_function("!document.querySelector('.xc-learning .xc-sw').disabled && document.querySelector('.xc-learning .xc-sw').getAttribute('aria-checked') === 'false'")
+        check('学习记录：默认开，可关闭，浏览器和云电脑同时保存', learn0 == 'true' and xv['learning'] is False and await pv.evaluate("localStorage.getItem('lm.xin.learning')") == '0')
         await pv.wait_for_function("!document.querySelector('.xc-followups .xc-sw').disabled")
         f0 = await pv.get_attribute('.xc-followups .xc-sw', 'aria-checked')
         await pv.click('.xc-followups .xc-sw')

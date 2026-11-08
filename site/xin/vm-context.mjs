@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {BASE,journal,readJ,readText,okId} from './vm-base.mjs';
 import {memoryDb,memoryBlocked,memoryBlockedText,memorySensitivity} from './vm-memory.mjs';
+import {learningGuidance} from './vm-learning.mjs';
 
 const sess=sid=>path.join(BASE,'sessions',sid+'.json'),meta=run=>path.join(BASE,'runs',run+'.json'),raw=run=>path.join(BASE,'runs',run+'.jsonl');
 const normal=s=>s?.agent==='codex'&&!s.kind&&!s.dailyDate;
@@ -58,8 +59,10 @@ export function recallAll(query,limit=8,sync=true){
 const words=text=>[...new Set(String(text||'').toLowerCase().match(/[a-z][a-z0-9_]{1,25}|[\u4e00-\u9fff]{2,6}/g)||[])].filter(s=>!['用户','小芯','什么','怎么','一下','现在','看看','以前','这次','你好'].includes(s));
 const relevant=(content,keys)=>keys.some(k=>content.toLowerCase().includes(k)||k.length>=4&&content.includes(k.slice(0,2)));
 export function turnGuidance({text='',context='',sid='',now=Date.now()}={}){
-  const keys=words(text+' '+context),rows=memoryDb().prepare("SELECT * FROM memory_items WHERE status='active' ORDER BY COALESCE(confirmed,updated) DESC").all();
+  // A private current message is still delivered as the user requested, but never used as a search key.
+  const privateInput=!!memorySensitivity(text+' '+context),keys=privateInput?[]:words(text+' '+context),rows=memoryDb().prepare("SELECT * FROM memory_items WHERE status='active' ORDER BY COALESCE(confirmed,updated) DESC").all();
   const lines=[];let used=0;
+  const learning=privateInput?'':learningGuidance(text+' '+context,now);if(learning){lines.push(learning);used+=learning.length;}
   for(const it of rows){
     if(memorySensitivity(it.content))continue;
     if(it.type!=='profile'&&!relevant(it.content,keys))continue;
