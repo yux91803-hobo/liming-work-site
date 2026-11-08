@@ -269,9 +269,16 @@ async def xin_mock(pg, authed=False, live=None):
         if op == 'poll':
             if st.get('hold'):
                 return await ok({'ok': True, 'data': {'events': [], 'off': args.get('off', 0), 'done': False}})
-            i = min(st['polls'], len(live) - 1); st['polls'] += 1
-            evs = live[i] if st['polls'] <= len(live) else []
-            return await ok({'ok': True, 'data': {'events': evs, 'off': args.get('off', 0) + len(evs), 'done': st['polls'] >= len(live)}})
+            st['polls'] += 1
+            # Like the real append-only API: delivery does not consume an event. A cancelled or
+            # failed request must be replayable from the browser's last acknowledged offset.
+            published=[event for block in live[:min(st['polls'],len(live))] for event in block]
+            off=max(0,int(args.get('off',0)));evs=published[off:off+400]
+            done=st['polls']>=len(live) and off+len(evs)>=len(published)
+            if st.get('lose_done_once') and any(e.get('t')=='done' for e in evs):
+                st['lose_done_once']=False;st['lost_done']=True
+                return await ok({'ok':False,'state':'error','msg':'synthetic response delivery failure'})
+            return await ok({'ok': True, 'data': {'events': evs, 'off': off+len(evs), 'done': done}})
         return await ok({'ok': False, 'state': 'error', 'msg': 'mock'})
     await pg.route('**/api/xin/**', handle)
     return st
@@ -1514,7 +1521,13 @@ async def main():
           !!document.querySelector('.xc-tool'), document.querySelector('.xc-msgs').lastElementChild.classList.contains('xc-typing')]""")
         check('发出去：默认模式传 Codex、思考强度最高、不带模型（小芯电脑上挑）；只有自己的一句和小芯的第一句，它执行的命令、无关警告都不显示，最后冒「正在输入」写着在电脑上忙；小芯坐到电脑前敲代码',
               {k:v for k,v in xs['sent'].items() if k != 'clientId'} == {'agent': 'codex', 'text': '看看工作目录', 'effort': 'max'} and bool(xs['sent'].get('clientId')) and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
-        await pg.wait_for_function(CHAT_DONE, timeout=8000)
+        try:
+            await pg.wait_for_function(CHAT_DONE, timeout=8000)
+        except Exception:
+            # Structural diagnostics only; this is the mock transcript, never a production chat.
+            state=await pg.evaluate("({run:!!LimingXinChat.state.run,off:LimingXinChat.state.off,polling:LimingXinChat.state.polling,sawDone:!!LimingXinChat.state.sawDone,hidden:document.hidden,typing:!!document.querySelector('.xc-typing')})")
+            print('CHAT_END_DIAGNOSTICS '+json.dumps({'state':state,'mockPolls':xs['polls'],'pageErrors':errors[-3:]}),flush=True)
+            raise
         # 荡秋千 / 跳跃时 xin dance 会先排队，落地后才开始；不要在空中动作尚未结束时读取最终姿态。
         await pg.wait_for_function("LimingXin.mode === 'play'", timeout=20000)
         await pg.wait_for_timeout(200)
