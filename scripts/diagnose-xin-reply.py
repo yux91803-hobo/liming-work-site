@@ -32,7 +32,12 @@ def probe(entry,mode,label):
     evidence=json.loads(result.get('stdout','{}'))
     print(label+' '+json.dumps(evidence,ensure_ascii=True),flush=True)
 
-probe('/data/home/.xin/agent/vm-agent-158f619f9dcc.mjs','inspect','BASELINE_EVIDENCE')
+if os.environ.get('XIN_DIAG_MODE')=='memory-and-native':
+    result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',Path('scripts/maintain-xin-front.cjs').read_text()],'timeoutSeconds':100})
+    print('MEMORY_AND_CAPABILITIES '+json.dumps(json.loads(result.get('stdout','{}')),ensure_ascii=True),flush=True)
+    if result.get('exitCode')!=0:raise RuntimeError('Bounded maintenance failed')
+else:
+    probe('/data/home/.xin/agent/vm-agent-158f619f9dcc.mjs','inspect','BASELINE_EVIDENCE')
 uploaded=set()
 def bundle(root):
     names={};active=set()
@@ -48,5 +53,5 @@ def bundle(root):
             uploaded.add(hashed)
         names[name]=hashed;active.remove(name);return hashed
     return '/data/home/.xin/agent/'+visit('vm-agent.mjs')
-probe(bundle(Path('site/xin')),'deepseek','CANDIDATE_DEEPSEEK_EVIDENCE')
+if os.environ.get('XIN_DIAG_MODE')!='memory-and-native':probe(bundle(Path('site/xin')),'deepseek','CANDIDATE_DEEPSEEK_EVIDENCE')
 probe(bundle(Path('.diagnostic-opus/site/xin')),'native','CANDIDATE_OPUS_EVIDENCE')
