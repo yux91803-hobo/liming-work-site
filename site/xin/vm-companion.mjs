@@ -1,6 +1,7 @@
 // Xiaoxin's own companion state: mascot actions, learned moves, bond (好感度) and the next-visit greeting.
 import path from 'node:path';
-import { BASE, mk, rid, readJ, writeJ, cut } from './vm-base.mjs';
+import { BASE, journal, mk, rid, readJ, writeJ, cut } from './vm-base.mjs';
+import {memoryPreferences,memoryMeta,setMemoryMeta,memoryBlockedText} from './vm-memory.mjs';
 
 /* 小芯能做的动作（xin 命令和网页共用这张表；网页只认这些名字） */
 export const ACTS = {
@@ -26,7 +27,15 @@ export function setNext(text) {
 }
 export function getNext(now = Date.now()) {
   const g = readJ(NEXT_FILE());
-  return g && g.text && now - g.at < NEXT_TTL ? g : null;
+  return memoryPreferences().followups && g && g.text && now - g.at < NEXT_TTL && !memoryBlockedText(g.text,g.at) ? g : null;
+}
+export function claimNext(now=Date.now(),device='legacy') {
+  return journal.atomic(()=>{
+    const g=getNext(now);if(!g)return null;
+    const date=new Date(now+8*3600e3).toISOString().slice(0,10),seen=memoryMeta('followup_delivery');
+    if(seen?.date===date)return seen.id===g.id&&seen.device===device?g:null;
+    setMemoryMeta('followup_delivery',{date,id:g.id,device});return g;
+  });
 }
 
 /* ---------- 学会新动作 ----------

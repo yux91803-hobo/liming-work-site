@@ -156,6 +156,10 @@ async def xin_mock(pg, authed=False, live=None):
         st['ops'].append(op)
         if op == 'status': return await ok({'ok': True, 'data': {'name': 'li', 'state': 'running'}})
         if op == 'wake': return await ok({'ok': True, 'data': {'state': 'running', 'action': 'none'}})
+        if op == 'memory_preferences': return await ok({'ok': True, 'data': {'followups': st.get('followups', True)}})
+        if op == 'memory_preferences_set':
+            st['followups'] = args['followups']
+            return await ok({'ok': True, 'data': {'followups': st['followups']}})
         if op == 'memory_list': return await ok({'ok': True, 'data': {'items': st['memitems'], 'titles': {'shist00001': '看看目录'}}})
         if op == 'memory_add':
             st['mem_added'] = args
@@ -1535,7 +1539,7 @@ async def main():
         await pg.click('.xc-memb'); await pg.wait_for_selector('.xm-it')
         memv = await pg.evaluate("[[...document.querySelectorAll('.xm-h')].map(e => e.textContent), document.querySelector('.xm-sec.pend .xm-txt').textContent, (document.querySelector('.xm-src') || {}).textContent, (document.querySelector('.xm-sec:not(.pend) .xm-quote') || {}).textContent]")
         check('记忆：侧边栏「小芯的记忆」：待确认排在最前（以前的记事本），确认过的按类型分组，带出处和原话', memv == [['待确认（1）', '关于你（1）'], '用户在学定时器', '来自「看看目录」', '“以后讲代码先给我结论”'], memv)
-        await pg.click('.xm-sec.pend .xm-b.ok'); await pg.wait_for_function("!document.querySelector('.xm-sec.pend') && document.querySelector('.xm-msg').textContent === '确认了'")
+        await pg.click('.xm-sec.pend .xm-b.ok'); await pg.wait_for_function("!document.querySelector('.xm-sec.pend') && document.querySelector('.xm-msg')?.textContent === '确认了'")
         await pg.fill('.xm-in', '喜欢先看代码'); await pg.select_option('.xm-sel', 'learning'); await pg.click('.xm-add .xc-btn')
         await pg.wait_for_function("[...document.querySelectorAll('.xm-txt')].some(e => e.textContent === '喜欢先看代码')")
         bad = pg.locator('.xm-it', has_text='讲代码先给结论').locator('.xm-b.bad')
@@ -1822,7 +1826,15 @@ async def main():
         await pv.click('.xc-set-b'); await pv.wait_for_selector('.xc-set')
         rows = await pv.evaluate("[...document.querySelectorAll('.xc-tg-t b')].map(b => b.textContent)")
         await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false' && !document.querySelector('.xc-push .xc-sw').disabled")
-        check('设置：天启模式、附带正在看的页面、做完提醒（模型、思考强度在输入框底下；没有「朗读回答」了），做完提醒默认关着', rows == ['天启模式', '附带正在看的页面', '做完提醒'], rows)
+        check('设置：天启模式、附带正在看的页面、主动跟进、做完提醒，做完提醒默认关着', rows == ['天启模式', '附带正在看的页面', '主动跟进', '做完提醒'], rows)
+        await pv.wait_for_function("!document.querySelector('.xc-followups .xc-sw').disabled")
+        f0 = await pv.get_attribute('.xc-followups .xc-sw', 'aria-checked')
+        await pv.click('.xc-followups .xc-sw')
+        await pv.wait_for_function("!document.querySelector('.xc-followups .xc-sw').disabled && document.querySelector('.xc-followups .xc-sw').getAttribute('aria-checked') === 'false'")
+        check('主动跟进：默认开，关掉保存到小芯电脑', f0 == 'true' and xv['followups'] is False, xv.get('followups'))
+        await pv.click('.xc-set-b'); await pv.click('.xc-set-b')
+        await pv.wait_for_function("!document.querySelector('.xc-followups .xc-sw').disabled")
+        check('主动跟进：重新打开设置仍是关闭', await pv.get_attribute('.xc-followups .xc-sw', 'aria-checked') == 'false')
         c0 = await pv.evaluate("document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked')")
         await pv.click('.xc-ctxauto .xc-sw')
         c1 = await pv.evaluate("[document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked'), localStorage.getItem('lm.xin.ctx')]")

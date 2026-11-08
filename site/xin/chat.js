@@ -459,7 +459,7 @@
     var setB = h('button', 'xc-dr-row xc-set-b'); setB.type = 'button'; setB.setAttribute('aria-expanded', 'false');
     setB.innerHTML = svgIcon('gear') + '<span>设置</span>' + svgIcon('chev');
     var set = settings(); set.hidden = true;
-    setB.addEventListener('click', function () { set.hidden = !set.hidden; setB.setAttribute('aria-expanded', set.hidden ? 'false' : 'true'); if (!set.hidden) set.scrollIntoView({ block: 'nearest' }); });
+    setB.addEventListener('click', function () { set.hidden = !set.hidden; setB.setAttribute('aria-expanded', set.hidden ? 'false' : 'true'); if (!set.hidden) { set.load(); set.scrollIntoView({ block: 'nearest' }); } });
     var ft = h('div', 'xc-dr-ft');
     ft.appendChild(setB); ft.appendChild(set);
     var out = h('button', 'xc-link xc-dr-out', '退出登录'); out.type = 'button'; out.addEventListener('click', logout);
@@ -648,6 +648,13 @@
     ctx.set(ls(LS_CTX) !== '0');
     ctx.btn.addEventListener('click', function () { var on = ls(LS_CTX) === '0'; ls(LS_CTX, on ? null : '0'); ctx.set(on); S.ctxSkip = null; refreshCtx(); });
     box.appendChild(ctx.row);
+    var follow = toggleRow('xc-followups', '主动跟进', '小芯偶尔跟进复习或约定，每天最多一次');
+    follow.set(true);follow.btn.disabled = true;
+    box.load=function(){if(!S.authed)return;follow.btn.disabled=true;call('memory_preferences', {}, 60000).then(function(d){if(d.error)throw Error(d.msg);follow.set(d.followups !== false);follow.btn.disabled=false;follow.note('');}).catch(function(){follow.note('暂时读不到设置，重新打开设置可重试');});};
+    follow.btn.addEventListener('click',function(){var on=follow.btn.getAttribute('aria-checked')!=='true';follow.btn.disabled=true;
+      call('memory_preferences_set',{followups:on},60000).then(function(d){if(d.error)throw Error(d.msg||'没改成');follow.set(d.followups);follow.btn.disabled=false;follow.note('');}).catch(function(){follow.btn.disabled=false;follow.note('没改成，请稍后重试');});
+    });
+    box.appendChild(follow.row);
     var push = toggleRow('xc-push', '做完提醒', '关掉网页或切到别的应用时，小芯做完了发一条通知');
     box.appendChild(push.row);
     pushSetup(push);
@@ -2199,7 +2206,7 @@
   var GREETED = 'lm.xin.greeted';
   function greet() {
     if (!S.enabled || !S.authed) return;
-    call('greet', {}, 60000).then(function (g) {
+    call('greet', {deviceId:S.deviceId,agent:S.sessAgent||S.agent}, 60000).then(function (g) {
       if (g && g.moves) setMoves(g.moves);
       if (g && g.bond) setBond(g.bond);
       if (g && g.bg) { S.bg = g.bg; pollTasksSoon(500); }   // 后台有任务在做：看看进度（做完了小芯会冒气泡）

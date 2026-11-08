@@ -20,7 +20,7 @@ const COOKIE = '__Host-xin';
 const SESSION_SEC = 30 * 86400;
 const AGENT_ASSET = '/xin/vm-agent.mjs';
 const VM_DIR = '/data/home/.xin/agent';
-export const OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'memory_list', 'memory_add', 'memory_update', 'memory_forget', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
+export const OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'memory_list', 'memory_add', 'memory_update', 'memory_forget','memory_preferences','memory_preferences_set', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
   'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off', 'tasks', 'task_stop', 'task_tell']);
 const SCREEN_W = 1280, SCREEN_H = 800, SCREEN_VIEW_TTL = 1800, SCREEN_CTL_TTL = 900;   // 桌面大小；链接多久内能打开（秒）
 const FILE_MAX = 100 * 1024 * 1024;   // 下载最大 100 MB（和上传一样大：发给小芯的文件也能原样下回来）
