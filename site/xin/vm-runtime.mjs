@@ -539,7 +539,7 @@ export const FRONT_MODEL = 'deepseek-v4.1-flash';
 export function frontCommand(argv, acts = []) {
   if (!Array.isArray(argv) || argv.length > 128 || argv.some(x => typeof x !== 'string' || x.length > 60000)) return false;
   if (argv[0] !== 'xin') return false;
-  if (['remember','recall','bond','next','move'].includes(argv[1])) return argv.length >= 3;
+  if (['remember','forget','recall','bond','next','move'].includes(argv[1])) return argv.length >= 3;
   if (argv[1] === 'task') return ['new','list','show','tell','stop'].includes(argv[2]);
   return acts.includes(argv[1]);
 }
@@ -593,7 +593,7 @@ export async function frontTurn(o) {
           ? await o.deliver(args)
           : call.name === 'xin' && frontCommand(args?.argv, o.acts)
           ? await o.command(args.argv, call.call_id)
-          : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop、xin remember/recall 和小芯自己的表情、好感度、开场白、动作。'};
+          : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop、xin remember/forget/recall 和小芯自己的表情、好感度、开场白、动作。'};
         if (result.terminal) return result.text;
         input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)});
       }
