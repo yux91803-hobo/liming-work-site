@@ -1091,19 +1091,22 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
 test('后台任务：到时间没做完停下（算没做成）；runner 中途被杀，下次有人来看时接着做一次（提醒它先查现状），再断就等用户', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task3-'));
   const fc = fakeTaskCodex(tmp);
-  const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '300' });
+  // 进程报到（写下 pid）前不会被当成断了：留够启动时间，CI 机器忙时也不误判
+  const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '3000' });
   const r = op('send', { agent: 'codex', text: '你好' });
   await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
   const { execFileSync } = require('node:child_process');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
-  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_WORK: work, XIN_RUN: r.run, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '300', PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
+  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_WORK: work, XIN_RUN: r.run, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '3000', PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
   const xinTask = (...a) => execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString();
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
   xinTask('new', '--title', '慢活', '--', '慢慢做');
   const t = await until(() => { const x = op('tasks', { sid: r.sid }).tasks[0]; return x && x.status === 'failed' && x; }, 15000, '超时');
   assert.match(t.result.err, /^超时（60 分钟）$/);
   // 被杀：把分身那一轮的 runner 和它起的 codex 一起杀掉（模拟电脑重启）
-  xinTask('new', '--title', '会断的', '--', '做');
+  // 这个任务测的是被杀后接着做，不是超时：时限给足，别让忙的机器先把它判成超时
+  const longEnv = Object.assign({}, env, { XIN_TASK_TIMEOUT_MS: '120000' });
+  execFileSync(process.execPath, [agent, 'xin', 'task', 'new', '--title', '会断的', '--', '做'], { env: longEnv, input: '' });
   const t2 = await until(() => { const x = op('tasks', { sid: r.sid }).tasks.find(y => y.title === '会断的'); return x && x.status === 'running' && x; }, 15000, '在做');
   const sess = JSON.parse(fs.readFileSync(path.join(xin, 'sessions', t2.sid + '.json'), 'utf8'));
   const meta = JSON.parse(fs.readFileSync(path.join(xin, 'runs', sess.runs[0] + '.json'), 'utf8'));
