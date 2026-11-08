@@ -33,6 +33,7 @@
 
 ## 3. 上线状态与回滚经过
 
+- #92 已成功上线：main `7f2c128`，正式站部署与真机联调全绿（站长交接确认）。
 - #90、#91 合并后，正式站真机联调（`scripts/test-xin-live.py`）两次未过，都自动回滚到 #89 的 Worker 版本。两次失败都与记忆改动无关：
   - 第一次：Kimi 网页三次没过点击验收；
   - 第二次：前台派 Kimi 任务时三步用完，走了兜底。
@@ -55,6 +56,9 @@
 3. 真实模型的联调本身会偶发失败。确认和改动无关后可以重跑失败的 job（`rerun_failed_jobs`），但先找到原因再决定。之前的偶发都对应真实问题，见 #92。
 
 ### 4.2 记忆 v1 第 2 件：空闲整理（设计：`docs/xin-next-stage.md` §4.3、§4.4、§4.7、§4.10）
+
+本阶段已实现（当前 PR 待上线验证）：`vm-memory-idle.mjs`，默认安静 45 秒；轻整理 600 字 / 2 轮，深整理 4,000 字 / 一周；每天 4 次 / 48,000 token，65 秒请求时限。每个对话的 run / event / offset 断点在 `memory_meta`，模型请求前持久预留预算。结果统计在 `idle_last`，最近尝试时间在 `idle_attempt`，不记原话或模型输出日志；`memory_versions` 留版本，`restoreMemoryVersion` 可显式回退；忘掉会清除关联版本。
+
 
 目标：从默认模式的真实对话里提出记忆，并更新已有判断。
 
@@ -138,6 +142,10 @@
 - **对时间敏感的测试**
   - CI 机器忙时，测试里很短的超时会误判。例如 #91：`XIN_DEAD_MS=300` 时，新启动的进程还没写 pid 就被当成断了。
   - 修法是放宽时间、不改判断内容。确认方法：在本机用 `node -e "while(1){}"` 占满 CPU 复现，并和改动前的版本对比。
+- **InstaBox 免费机冷却**
+  - `maxRunMinutes=120`：连续运行满 120 分钟会被强制冷却，期间叫不醒。2026-11-08 这次约 3 分钟；按 InstaBox 文档，后续冷却可能从 5–20 分钟起逐次加长。
+  - 部署联调和 exec 排查会让电脑一直醒着，少调 exec。联调第一步失败、电脑上又没有新记录时，先只读查看 `GET /v1/machines/{id}` 的 `cooldownUntil`、`runStartedAt`，不要先反复执行命令或叫醒。
+  - 正式站联调调用真实模型，偶发失败会自动回滚；先查清原因，确认和改动无关后，才重跑失败 job。
 - **云电脑**
   - 会话里有 `INSTABOX_API_KEY` 时可以用 InstaBox API 只读排查：`POST https://api.instabox.sh/v1/machines/{id}/exec`，body 为 `{cmd, timeoutSeconds}`；机器 id 从 `GET /v1/machines` 拿。
   - 调用前先读 https://instabox.sh/llms.txt 。

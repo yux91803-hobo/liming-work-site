@@ -21,9 +21,18 @@ function db() {
       CREATE TABLE IF NOT EXISTS memory_log (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL, detail TEXT, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS memory_forgotten (norm TEXT PRIMARY KEY, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS memory_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT NOT NULL, body TEXT NOT NULL, reason TEXT NOT NULL, at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS memory_replacements (old TEXT PRIMARY KEY, next TEXT NOT NULL, at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS memory_proposals (item TEXT PRIMARY KEY, replaces TEXT, scope TEXT NOT NULL DEFAULT 'long-term');
+      CREATE TABLE IF NOT EXISTS memory_observations (item TEXT NOT NULL, sid TEXT NOT NULL, run TEXT NOT NULL, quote_hash TEXT NOT NULL, day TEXT NOT NULL, topic TEXT NOT NULL,
+        PRIMARY KEY(item,sid,run,quote_hash));
+      CREATE TABLE IF NOT EXISTS memory_blocked_sources (sid TEXT NOT NULL, run TEXT NOT NULL, PRIMARY KEY(sid,run));
+      CREATE TABLE IF NOT EXISTS memory_retired (norm TEXT PRIMARY KEY, at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS memory_by_status ON memory_items(status, type, updated);
       CREATE INDEX IF NOT EXISTS memory_evidence_item ON memory_evidence(item);`);
-    ready = true;
+    // DDL participates in the caller's transaction too. Do not cache schema readiness before commit:
+    // a rejected first command can roll the new tables back while this process continues running.
+    if (journal.active) journal.defer(() => { ready = true; }); else ready = true;
   }
   return d;
 }
@@ -46,14 +55,73 @@ const SECRET_MSG = '这类内容不记：密码、验证码、密钥、证件号
 
 function log(item, action, actor, detail) {
   db().prepare('INSERT INTO memory_log(item,action,actor,detail,at) VALUES(?,?,?,?,?)').run(item, action, actor, detail == null ? null : JSON.stringify(detail), Date.now());
+  setMemoryMeta('revision', crypto.randomUUID());
 }
 function evidence(item, e, at = Date.now()) {
   if (!e) return;
-  const quote = clean(e.quote || '').slice(0, 200);
+  const quote = String(e.quote || '').slice(0, 200); // Preserve the user's exact whitespace and punctuation.
   if (!quote && !e.sid) return;
-  db().prepare('INSERT INTO memory_evidence(item,sid,run,quote,at) VALUES(?,?,?,?,?)').run(item, e.sid || null, e.run || null, quote, e.at || at);
+  if (!db().prepare('SELECT 1 FROM memory_evidence WHERE item=? AND sid IS ? AND run IS ? AND quote=?').get(item, e.sid || null, e.run || null, quote))
+    db().prepare('INSERT INTO memory_evidence(item,sid,run,quote,at) VALUES(?,?,?,?,?)').run(item, e.sid || null, e.run || null, quote, e.at || at);
 }
 const row = id => db().prepare('SELECT * FROM memory_items WHERE id=?').get(id);
+
+// Shared with the controller's idle reviewer. No model can execute these helpers.
+export const memoryDb = () => db();
+export function memoryMeta(key, fallback = null) {
+  const r = db().prepare('SELECT value FROM memory_meta WHERE key=?').get(key);
+  try { return r ? JSON.parse(r.value) : fallback; } catch { return fallback; }
+}
+export function setMemoryMeta(key, value) {
+  db().prepare('INSERT INTO memory_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(value));
+}
+export function memorySnapshot(id, reason) {
+  const item = row(id);
+  if (item) db().prepare('INSERT INTO memory_versions(item,body,reason,at) VALUES(?,?,?,?)').run(id,
+    JSON.stringify({ item, evidence: db().prepare('SELECT * FROM memory_evidence WHERE item=?').all(id) }), reason, Date.now());
+}
+export function memoryBlocked(content, ev) {
+  return !!db().prepare('SELECT 1 FROM memory_forgotten WHERE norm=?').get(hash(memoryNorm(content))) ||
+    !!(ev?.sid && ev?.run && db().prepare('SELECT 1 FROM memory_blocked_sources WHERE sid=? AND run=?').get(ev.sid, ev.run)) ||
+    !!(Number.isFinite(ev?.at) && db().prepare('SELECT 1 FROM memory_retired WHERE norm=? AND at>=?').get(hash(memoryNorm(content)),ev.at));
+}
+function retireSources(it) {
+  db().prepare('INSERT INTO memory_retired(norm,at) VALUES(?,?) ON CONFLICT(norm) DO UPDATE SET at=excluded.at').run(hash(it.norm),Date.now());
+  for (const e of db().prepare('SELECT sid,run FROM memory_evidence WHERE item=?').all(it.id))
+    if (e.sid && e.run) db().prepare('INSERT OR IGNORE INTO memory_blocked_sources(sid,run) VALUES(?,?)').run(e.sid,e.run);
+}
+
+export function supersedeMemory(oldId, nextId, actor = 'idle') {
+  const old = row(oldId), next = row(nextId);
+  if (!old || !next || oldId === nextId || !['active','pending'].includes(old.status) || next.status !== 'active') return false;
+  memorySnapshot(oldId, 'supersede');
+  db().prepare("UPDATE memory_items SET status='superseded',updated=? WHERE id=?").run(Date.now(), oldId);
+  db().prepare('INSERT INTO memory_replacements(old,next,at) VALUES(?,?,?) ON CONFLICT(old) DO UPDATE SET next=excluded.next,at=excluded.at').run(oldId, nextId, Date.now());
+  retireSources(old);
+  log(oldId, 'supersede', actor, { next: nextId });
+  return true;
+}
+
+// A rollback is an explicit user action, never an idle-model operation. Forgotten items have no snapshot to restore.
+export function restoreMemoryVersion(version) {
+  return journal.atomic(() => {
+    const v = db().prepare('SELECT * FROM memory_versions WHERE id=?').get(version);
+    if (!v || !row(v.item)) return { error: 'not_found' };
+    const saved = JSON.parse(v.body), it = saved.item;
+    const replacement = db().prepare('SELECT next FROM memory_replacements WHERE old=?').get(it.id);
+    if (replacement && row(replacement.next)?.status === 'active') {
+      memorySnapshot(replacement.next, 'rollback');
+      retireSources(row(replacement.next));
+      db().prepare("UPDATE memory_items SET status='pending',updated=? WHERE id=?").run(Date.now(), replacement.next);
+    }
+    memorySnapshot(it.id, 'rollback');
+    db().prepare('UPDATE memory_items SET type=?,content=?,norm=?,basis=?,status=?,confirmed=?,updated=? WHERE id=?')
+      .run(it.type, it.content, it.norm, it.status === 'active' ? 'stated' : it.basis, it.status, Date.now(), Date.now(), it.id);
+    db().prepare('DELETE FROM memory_replacements WHERE old=?').run(it.id);
+    log(it.id, 'rollback', 'user', { version });
+    return { item: row(it.id) };
+  });
+}
 
 // source: user（记忆页）| chat（默认模式聊天）| daily（每日任务）| worker（后台任务）| legacy（旧记事本）
 export function addMemory({ content, type = 'profile', basis = 'observed', source = 'chat', evidence: ev = null, at } = {}) {
@@ -69,12 +137,13 @@ export function addMemory({ content, type = 'profile', basis = 'observed', sourc
   const norm = memoryNorm(text);
   if (!norm) return { error: 'empty', msg: '要记的内容是空的' };
   return journal.atomic(() => {
-    if (source !== 'user' && db().prepare('SELECT 1 FROM memory_forgotten WHERE norm=?').get(hash(norm))) return { error: 'forgotten', msg: '用户让我忘掉过这件事，不再记。' };
+    if (source !== 'user' && memoryBlocked(text, ev)) return { error: 'forgotten', msg: '用户让我忘掉或纠正过这件事，不再记。' };
     // Only what the user said (or the user's own edits) counts at once; daily procedures are Xiaoxin's own know-how.
     let status = source === 'user' || source === 'daily' || source === 'chat' && basis === 'stated' ? 'active' : 'pending';
     if ((sens === 'personal' || sens === 'word') && source !== 'user') status = 'private';
     const now = Date.now(), same = db().prepare('SELECT * FROM memory_items WHERE norm=? AND status IN ' + LIVE).get(norm);
     if (same) {
+      memorySnapshot(same.id, 'evidence');
       const upgrade = same.status === 'pending' && status === 'active';
       db().prepare('UPDATE memory_items SET updated=?, status=?, basis=?, confirmed=? WHERE id=?').run(now, upgrade ? 'active' : same.status,
         upgrade ? basis : same.basis, upgrade ? now : same.confirmed, same.id);
@@ -100,15 +169,19 @@ export function updateMemory(id, changes = {}, actor = 'user') {
       if (!text) return { error: 'empty', msg: '内容是空的；不想要这条就点「忘掉」' };
       if (memorySensitivity(text) === 'value') return { error: 'secret', msg: SECRET_MSG };
       Object.assign(next, { content: text, norm: memoryNorm(text), basis: 'stated' });
+      if (next.norm !== it.norm) retireSources(it);
     }
     if (changes.type && MEMORY_TYPES[changes.type]) next.type = changes.type;
     if (changes.private === true) next.status = 'private';
     else if (changes.private === false && it.status === 'private') next.status = 'active';
     if (changes.confirm) { if (next.status === 'pending') next.status = 'active'; next.confirmed = now; if (next.basis !== 'stated') next.basis = 'stated'; }
     if (changes.content != null && next.status === 'pending') { next.status = 'active'; next.confirmed = now; }
+    memorySnapshot(id, 'user_update');
     db().prepare('UPDATE memory_items SET content=?,norm=?,type=?,basis=?,status=?,confirmed=?,updated=? WHERE id=?')
       .run(next.content, next.norm, next.type, next.basis, next.status, next.confirmed, now, id);
     log(id, 'update', actor, { from: { type: it.type, status: it.status }, to: { type: next.type, status: next.status }, edited: changes.content != null });
+    const proposal = db().prepare('SELECT replaces FROM memory_proposals WHERE item=?').get(id);
+    if (changes.confirm && next.status === 'active' && proposal?.replaces) supersedeMemory(proposal.replaces, id, actor);
     return { item: row(id) };
   });
 }
@@ -118,9 +191,24 @@ export function forgetMemory(id, actor = 'user') {
   return journal.atomic(() => {
     const it = row(id);
     if (!it) return { error: 'not_found', msg: '找不到这条记忆' };
-    db().prepare('INSERT OR IGNORE INTO memory_forgotten(norm,at) VALUES(?,?)').run(hash(it.norm), Date.now());
-    db().prepare('DELETE FROM memory_evidence WHERE item=?').run(id);
-    db().prepare('DELETE FROM memory_items WHERE id=?').run(id);
+    // Forget the whole chain, including superseded judgements and snapshots. Block the original runs too:
+    // a paraphrase extracted from old chat must not recreate what the owner deliberately forgot.
+    const ids = new Set([id]);
+    const links = db().prepare('SELECT old,next FROM memory_replacements UNION SELECT replaces AS old,item AS next FROM memory_proposals WHERE replaces IS NOT NULL').all();
+    for (let n = -1; n !== ids.size;) { n = ids.size; for (const l of links) if (ids.has(l.old) || ids.has(l.next)) { ids.add(l.old); ids.add(l.next); } }
+    for (const key of ids) {
+      const current = row(key), versions = db().prepare('SELECT body FROM memory_versions WHERE item=?').all(key).map(v => JSON.parse(v.body));
+      const all = [...versions, { item: current, evidence: db().prepare('SELECT * FROM memory_evidence WHERE item=?').all(key) }];
+      for (const snap of all) {
+        if (snap.item) db().prepare('INSERT OR IGNORE INTO memory_forgotten(norm,at) VALUES(?,?)').run(hash(snap.item.norm), Date.now());
+        for (const e of snap.evidence) if (e.sid && e.run) db().prepare('INSERT OR IGNORE INTO memory_blocked_sources(sid,run) VALUES(?,?)').run(e.sid, e.run);
+      }
+      db().prepare('DELETE FROM memory_evidence WHERE item=?').run(key);
+      db().prepare('DELETE FROM memory_versions WHERE item=?').run(key);
+      db().prepare('DELETE FROM memory_observations WHERE item=?').run(key);
+      db().prepare('DELETE FROM memory_proposals WHERE item=?').run(key);
+      db().prepare('DELETE FROM memory_items WHERE id=?').run(key);
+    }
     log(id, 'forget', actor, { type: it.type });
     return { ok: true };
   });
