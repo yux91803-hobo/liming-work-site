@@ -1860,9 +1860,14 @@
     var run = S.run,generation=S.convSeq;
     call('poll', { run: run, off: S.off, deviceId:S.deviceId, tabId:S.tabId, watching:!!(S.open && S.view==='chat' && !document.hidden && document.hasFocus()) }, 0,null,function(){return generation===S.convSeq&&run===S.run;}).then(function (d) {
       if (run !== S.run || generation!==S.convSeq) return;
-      d.events.forEach(function (ev) { if (!(ev.t === 'user' && S.mine[run])) draw(ev, false, run); react(ev); if (ev.t === 'done' && ev.usage) setUsage(ev.usage); });
+      d.events.forEach(function (ev) {
+        if (ev.t === 'done') S.sawDone = run;
+        if (!(ev.t === 'user' && S.mine[run])) draw(ev, false, run); react(ev); if (ev.t === 'done' && ev.usage) setUsage(ev.usage);
+      });
       S.off = d.off;
       if (d.events.length) toBottom();
+      // 记录里的 ended 可能先于回复行可见。这时 done 为真但这一页没有 done 事件，接着取，不能把这轮收掉。
+      if (d.done && S.sawDone !== run) { progress(); pollTm = setTimeout(poll, d.events.length ? 400 : 300); return; }
       if (d.done) {
         S.run = ''; stopPolling(); setStatus(''); typing(false); render(); if (!touch && S.open) input.focus();
         if (S.sessAgent === 'codex' || d.events.some(function (ev) { return ev.t === 'task'; })) pollTasksSoon(800);   // 这一句派了分身、或者有任务在做：看看任务

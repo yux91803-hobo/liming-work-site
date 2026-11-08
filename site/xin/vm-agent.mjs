@@ -2083,11 +2083,14 @@ const ops = {
     if (!fs.existsSync(metaF(a.run))) return { error: 'no_run', msg: '找不到这一轮' };
     try { fs.writeFileSync(seenF(a.run), ''); } catch { /* 记不下来就当没在看 */ }
     watchDevice(readJ(metaF(a.run))?.sid,a);
-    const done = runDone(a.run);
+    runDone(a.run); // 进程已死时先把 done 写进记录，再决定这次能不能告诉网页「读完了」
     const evs = events(a.run), off = Math.max(0, a.off | 0);
     const slice = evs.slice(off, off + 400);
     const sid = (readJ(metaF(a.run)) || {}).sid, latest = sid && lastRun(readJ(sessF(sid)));
-    return { events: slice, off: off + slice.length, done: done && off + slice.length >= evs.length, ...(latest && latest !== a.run ? { next: latest } : {}) };
+    // meta.ended 会先于同一笔提交里的回复/done 行落到磁盘（recover 先写文档，再追加 jsonl）。
+    // 只看到 ended 就告诉网页读完，网页会停轮询，助手正文永远画不出来。
+    const closed = evs.some(e => e && e.t === 'done');
+    return { events: slice, off: off + slice.length, done: closed && off + slice.length >= evs.length, ...(latest && latest !== a.run ? { next: latest } : {}) };
   },
   stop(a) {
     if (!okId(a.run, 'r')) return { error: 'bad_run', msg: '编号不对' };
@@ -2111,7 +2114,7 @@ const ops = {
     if (!s) return { error: 'no_session', msg: '找不到这个对话' };
     const runs = (s.runs || []).slice(-30);
     // started：每一轮什么时候开始的（后台任务的结果卡片按时间插在这些轮之间）
-    const out = runs.map(r => { const d = runDone(r), evs = events(r); return { run: r, events: evs, done: d, started: (readJ(metaF(r)) || {}).started || 0 }; });
+    const out = runs.map(r => { runDone(r); const evs = events(r); return { run: r, events: evs, done: evs.some(e => e && e.t === 'done'), started: (readJ(metaF(r)) || {}).started || 0 }; });
     const last = out[out.length - 1];
     // active.started：网页重新打开面板时，「思考中 · N 秒」接着算，不从 0 开始
     const res = { session: summary(s), usage: sessionUsage(s), runs: out, active: last && !last.done ? { run: last.run, off: last.events.length, started: last.started } : null };

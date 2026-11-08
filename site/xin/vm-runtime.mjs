@@ -568,10 +568,11 @@ export async function frontTurn(o) {
       if (!response.ok) throw new Error('前台连接失败（HTTP '+response.status+'）');
       const data = await response.json();
       if (abort.signal.aborted) throw new Error('前台超时');
-      if (data.error || data.status === 'failed' || data.status === 'incomplete') throw new Error('前台未完成回复');
-      o.usage?.(data.usage);
       const output = data.output || [], calls = output.filter(x => x.type === 'function_call');
       const said = output.filter(x => x.type === 'message').flatMap(x => x.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('\n');
+      // 推理把输出额度用完时，网关会标 incomplete，但正文可能已经在 output 里。先读正文，没有正文才算失败。
+      if (data.error || data.status === 'failed' || (data.status === 'incomplete' && !said)) throw new Error('前台未完成回复');
+      o.usage?.(data.usage);
       const parsed = calls.map(call => { try { return JSON.parse(call.arguments); } catch { return null; } });
       // Text plus expressions only: perform them and answer now, without another model round.
       if (said && !o.handoff && calls.length && calls.every((c, i) => c.name === 'xin' && expression(parsed[i]?.argv))) {

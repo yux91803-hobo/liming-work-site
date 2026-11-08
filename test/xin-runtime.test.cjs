@@ -569,6 +569,23 @@ test('只清理本任务私有 tmp；等待期间保留，项目输出与其它�
   assert.equal(r.cleanupTaskTemporary({...f.task,status:'done'}),true);assert.deepEqual(fs.readdirSync(tmp),[]);assert.ok(fs.existsSync(path.join(f.task.workspace.work,'output.txt')));
   assert.throws(()=>r.cleanupTaskTemporary({...f.task,status:'done',workspace:{...f.task.workspace,tmp:f.root}}),/归属/);
 });
+test('ended 先可见时，轮询在 done 行落地前不算读完，随后仍能取到助手正文',async t=>{
+  const f=fixture(t),sid='spollgap001',run='rpollgap0001';
+  fs.mkdirSync(path.join(f.control,'sessions'),{recursive:true});
+  fs.mkdirSync(path.join(f.control,'runs'),{recursive:true});
+  fs.writeFileSync(path.join(f.control,'sessions',sid+'.json'),JSON.stringify({sid,agent:'codex',runs:[run]}));
+  const meta=path.join(f.control,'runs',run+'.json'),log=path.join(f.control,'runs',run+'.jsonl');
+  fs.writeFileSync(meta,JSON.stringify({run,sid,agent:'codex',started:Date.now(),ended:Date.now()}));
+  fs.writeFileSync(log,JSON.stringify({t:'user',text:'只回复标记'})+'\n');
+  const early=f.call('poll',{run,off:1});
+  assert.equal(early.done,false);
+  assert.deepEqual(early.events,[]);
+  fs.appendFileSync(log,JSON.stringify({t:'text',text:'generation-current-abc123'})+'\n'+JSON.stringify({t:'done',ok:true})+'\n');
+  const late=f.call('poll',{run,off:early.off});
+  assert.equal(late.done,true);
+  assert.deepEqual(late.events.map(e=>e.t),['text','done']);
+  assert.equal(late.events[0].text,'generation-current-abc123');
+});
 test('真实完成推送以第一人称给用户，内部模型记录仍保留',async t=>{
   const f=fixture(t);f.task.parent='sfrontnotice';f.task.title='画 SVG';f.save();
   fs.writeFileSync(path.join(f.control,'runs','rruntime001.jsonl'),JSON.stringify({t:'text',text:'我画好了。'})+'\n');
