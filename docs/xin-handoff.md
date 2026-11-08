@@ -57,8 +57,7 @@
 
 ### 4.2 记忆 v1 第 2 件：空闲整理（设计：`docs/xin-next-stage.md` §4.3、§4.4、§4.7、§4.10）
 
-本阶段已实现（当前 PR 待上线验证）：`vm-memory-idle.mjs`，默认安静 45 秒；轻整理 600 字 / 2 轮，深整理 4,000 字 / 一周；每天 4 次 / 48,000 token，65 秒请求时限。每个对话的 run / event / offset 断点在 `memory_meta`，模型请求前持久预留预算。结果统计在 `idle_last`，最近尝试时间在 `idle_attempt`，不记原话或模型输出日志；`memory_versions` 留版本，`restoreMemoryVersion` 可显式回退；忘掉会清除关联版本。
-
+本阶段已实现并合并（#93；正式站状态见对应 Deploy）：`vm-memory-idle.mjs`，默认安静 45 秒；轻整理 600 字 / 2 轮，深整理 4,000 字 / 一周；每天 4 次 / 48,000 token，65 秒请求时限。每个对话的 run / event / offset 断点在 `memory_meta`，模型请求前持久预留预算。结果统计在 `idle_last`，最近尝试时间在 `idle_attempt`，不记原话或模型输出日志；`memory_versions` 留版本，`restoreMemoryVersion` 可显式回退；忘掉会清除关联版本。
 
 目标：从默认模式的真实对话里提出记忆，并更新已有判断。
 
@@ -138,6 +137,8 @@
   - `npm run test:e2e`：需要先 `npm run dev` 起 5173 端口的预览，并设 `CHROMIUM_PATH=/opt/pw-browsers/chromium-*/chrome-linux64/chrome`。
   - 改了页面要截图自查：电脑 1280、平板 768 和 1024、手机 390，浅色和深色。
 - **部署流水线**：只改文档也会触发完整部署和真机联调（`deploy.yml` 没有路径过滤），尽量把文档和代码放在同一个 PR 里。
+  - 节省 Actions：PR 完整验证后保存 `tested-tree-check/e2e` 两份代码树证据（7 天）；main 的正式发布只有在同仓库已合并 PR 的成功运行里找齐证据，且目录树、head 和运行号全部一致时才复用测试。缺证据或不同代码会停止发布；手动 workflow 仍完整测试。正式站冒烟和真机联调照常，不能拿失败的测试结果复用。同一个 PR 更新会取消旧 SHA 的验证，发 PR 前先在本地测完、把相关修复集中提交。
+
 - **真机联调**：用真实模型、站长的正式账号，失败会自动回滚。脚本约定不在 CI 日志里输出模型过程、响应正文或截图。
 - **对时间敏感的测试**
   - CI 机器忙时，测试里很短的超时会误判。例如 #91：`XIN_DEAD_MS=300` 时，新启动的进程还没写 pid 就被当成断了。

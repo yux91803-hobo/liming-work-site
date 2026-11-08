@@ -2,6 +2,7 @@
 Credentials come only from Actions Secrets. Never emit response bodies, cookies, screenshots or model traces.
 """
 import asyncio
+import base64
 import json
 import os
 import time
@@ -20,6 +21,7 @@ async def main():
     sid = None
     alternate_sid = None
     web_sid = None
+    image_sid = None
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
         context = await browser.new_context(viewport={'width': 1280, 'height': 860})
@@ -64,6 +66,37 @@ async def main():
             if not any(reply_marker in text for text in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()):
                 raise RuntimeError('Foreground reply missing')
             print('PASS foreground real-model reply during background work', flush=True)
+            # Only pixels contain the random answer; neither the prompt nor the filename reveals it.
+            visual_token = 'READ-' + uuid.uuid4().hex[:10].upper()
+            png = await page.evaluate("""text => {
+                const c=document.createElement('canvas');c.width=1100;c.height=200;
+                const g=c.getContext('2d');g.fillStyle='white';g.fillRect(0,0,c.width,c.height);
+                g.fillStyle='black';g.font='bold 90px monospace';g.fillText(text,30,130);
+                return c.toDataURL('image/png').split(',')[1];
+            }""", visual_token)
+            uploaded = await context.request.post(BASE + '/api/xin/upload?name=visual-check.png',
+                headers={'X-Xin':'1','Content-Type':'application/octet-stream'},data=base64.b64decode(png),timeout=80000)
+            upload_data = await uploaded.json()
+            if uploaded.status != 200 or not upload_data.get('ok'):
+                raise RuntimeError('Synthetic image upload failed')
+            image = await call('send', {'agent':'codex','clientId':'visual-'+uuid.uuid4().hex,
+                'text':'只读取这张图片中唯一一行字符并照写出来。不要派任务、执行命令或记忆。',
+                'files':[{'path':upload_data['data']['path'],'name':'visual-check.png'}]})
+            image_sid = image['sid']
+            limit = time.monotonic() + 90
+            while True:
+                result = await call('poll', {'run':image['run'],'off':0})
+                if result.get('done'): break
+                if time.monotonic() > limit: raise RuntimeError('Foreground image reply timed out')
+                await asyncio.sleep(2)
+            image_events = result.get('events', [])
+            image_text = '\n'.join(e.get('text','') for e in image_events if e.get('t') == 'text')
+            image_done = next((e for e in image_events if e.get('t') == 'done'), {})
+            if visual_token not in image_text or not image_done.get('ok') or image_done.get('model') != 'deepseek-v4.1-flash':
+                raise RuntimeError('Foreground real-model image reading mismatch')
+            if (await call('tasks', {'sid':image_sid})).get('tasks'):
+                raise RuntimeError('Foreground image chat unexpectedly delegated work')
+            print('PASS real foreground reads random image text directly without delegating', flush=True)
             # Close the page: completion must be recovered through the API and supervisor, without a browser polling loop.
             await page.close()
             await asyncio.sleep(55)
@@ -233,14 +266,14 @@ async def main():
             await art.close()
         finally:
             # Forget only this run's own conversation. Leave its small result artifact for diagnosis.
-            for owned_sid in [s for s in (sid,alternate_sid) if s]:
+            for owned_sid in [s for s in (sid,alternate_sid,image_sid) if s]:
                 try:
                     h = await call('history', {'sid': owned_sid})
                     if h.get('active'):
                         await call('stop', {'run': h['active']['run']})
                     ts = (await call('tasks', {'sid': owned_sid})).get('tasks', [])
                     for t in ts:
-                        if ((t.get('title') == marker and t.get('dir') == directory) or t['sid'] == web_sid) and t['status'] in ('running','queued','waiting','stopping'):
+                        if (owned_sid == image_sid or (t.get('title') == marker and t.get('dir') == directory) or t['sid'] == web_sid) and t['status'] in ('running','queued','waiting','stopping'):
                             await call('task_stop', {'sid': t['sid']})
                     await call('forget', {'sid': owned_sid})
                 except Exception:

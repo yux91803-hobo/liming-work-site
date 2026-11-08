@@ -863,6 +863,13 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   assert.equal(request.model,'deepseek-v4.1-flash');
   const prompt = JSON.stringify(request.input);
   assert.ok(prompt.includes(img) && prompt.includes(pdf));
+  assert.ok(prompt.includes('图片已经直接给你看了。'));
+  assert.ok(!prompt.includes('你现在用的模型看不了图片内容'));
+  const parts = request.input.find(x=>x.role==='user').content;
+  assert.deepStrictEqual(parts.filter(x=>x.type==='input_image'),[{type:'input_image',image_url:'data:image/jpeg;base64,'+Buffer.from('jpg').toString('base64'),detail:'auto'}]);
+  assert.ok(request.instructions.includes('识图、读图中文字、解释图中内容属于你能直接回答的聊天'));
+  assert.ok(!request.instructions.includes('必须交给 vision 工作读取'));
+  assert.strictEqual(op('tasks',{sid:r.sid}).tasks.length,0,'前台读图回答没有派后台任务');
   assert.equal(p.events.find(e=>e.t==='done').model,'deepseek-v4.1-flash');
   // 用户点名 GLM-5.3：这一句用它（网页传的 model / effort 不管），图片照样 -i，悄悄告诉它别提换模型；对话上记下最近用的模型
   const r2 = op('send', { sid: r.sid, model: 'kimi-k3.1-pro', effort: 'low', text: '用 GLM-5.3 看看这张呢', files: [{ path: img, name: '板子.jpg' }] });
@@ -1020,7 +1027,7 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   assert.deepStrictEqual(h.tasks.map(x => [x.no, x.status]), [[1, 'done']]);
   assert.ok(h.runs[0].started > 0);
   const th = op('history', { sid: t.sid });
-  assert.ok(th.task && th.task.goal === '编译 blink 工程' && th.runs[0].events[0].text === '编译 blink 工程' && th.runs[0].events.some(e => e.t === 'tool_end' && e.detail === 'make'), JSON.stringify(th).slice(0, 400));
+  assert.ok(th.task && th.task.goal === '请 TEST_DISPATCH 一下' && th.runs[0].events[0].text === '请 TEST_DISPATCH 一下' && th.runs[0].events.some(e => e.t === 'tool_end' && e.detail === 'make'), JSON.stringify(th).slice(0, 400));
   // 前台下一句带上结果；做成了以后就不再带
   const r2 = op('send', { sid: r.sid, text: '怎么样了' });
   const second = await until(() => {const p=op('poll', { run: r2.run, off: 0 });return p.done&&p;}, 15000, '前台第二句');

@@ -8,6 +8,11 @@
 
 name: Deploy
 
+# 同一个 PR 更新时停止旧版验证，避免重复消耗 Actions 分钟；正式发布不取消。
+concurrency:
+  group: deploy-run-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 on:
   pull_request:
     branches: [main]
@@ -32,6 +37,8 @@ env:
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 defaults:
   run:
@@ -39,6 +46,8 @@ defaults:
 
 jobs:
   check:
+    # main 只接受同代码树的已通过 PR 证据，正式发布不重复跑这两套测试。
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -47,8 +56,20 @@ jobs:
           node-version: 22
       - name: 语法、资源引用和单元测试
         run: npm run check
+      - name: 记录单元测试通过的代码树
+        if: github.event_name == 'pull_request'
+        run: node scripts/ci-proof.mjs write check
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request'
+        with:
+          name: tested-tree-check
+          path: .ci-proof/check.json
+          include-hidden-files: true
+          retention-days: 7
+          overwrite: true
 
   e2e:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -74,11 +95,25 @@ jobs:
           python test/e2e/map_e2e.py http://localhost:5173
           python test/e2e/xin_runtime_e2e.py http://localhost:5173
           python test/e2e/xin_web_e2e.py http://localhost:5173
+      - name: 记录浏览器测试通过的代码树
+        if: github.event_name == 'pull_request'
+        run: node scripts/ci-proof.mjs write e2e
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request'
+        with:
+          name: tested-tree-e2e
+          path: .ci-proof/e2e.json
+          include-hidden-files: true
+          retention-days: 7
+          overwrite: true
 
   deploy:
     needs: [check, e2e]
     # 外部 fork 的 PR 拿不到 Secrets，跳过
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      always() && !cancelled() &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'push' || (needs.check.result == 'success' && needs.e2e.result == 'success'))
     runs-on: ubuntu-latest
     concurrency:
       group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.target || (github.event_name == 'push' && 'production' || 'staging') }}
@@ -91,6 +126,46 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+
+      - name: 查找本次合并对应的完整 PR 验证
+        if: github.event_name == 'push'
+        id: checked
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner,repo}=context.repo;
+            const associated=await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit,{owner,repo,commit_sha:context.sha,per_page:100});
+            let source=null;
+            for(const candidate of associated){
+              const {data:p}=await github.rest.pulls.get({owner,repo,pull_number:candidate.number});
+              if(p.merged && p.merge_commit_sha===context.sha && p.base.ref==='main' && p.head.repo?.full_name===`${owner}/${repo}`){source=p;break;}
+            }
+            if(!source)throw Error('没有对应的已合并同仓库 PR；请走 PR 或手动完整验证，停止部署');
+            const {data}=await github.rest.actions.listWorkflowRuns({owner,repo,workflow_id:'deploy.yml',head_sha:source.head.sha,event:'pull_request',status:'success',per_page:20});
+            let checked=null;
+            for(const run of data.workflow_runs){
+              if(run.conclusion!=='success'||run.head_sha!==source.head.sha)continue;
+              const artifacts=await github.paginate(github.rest.actions.listWorkflowRunArtifacts,{owner,repo,run_id:run.id,per_page:100});
+              if(['tested-tree-check','tested-tree-e2e'].every(name=>artifacts.some(a=>a.name===name&&!a.expired))){checked=run;break;}
+            }
+            if(!checked)throw Error('缺少完整成功的 PR 测试和测试站验证证据，停止部署');
+            core.setOutput('run',String(checked.id));core.setOutput('head',source.head.sha);
+            core.info(`复用 PR #${source.number} 的已通过验证，运行 ${checked.id}`);
+      - name: 读取 PR 的两份验证证据
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tested-tree-*
+          merge-multiple: true
+          path: .ci-proof
+          run-id: ${{ steps.checked.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: 核对正式代码与已测试代码完全相同
+        if: github.event_name == 'push'
+        env:
+          CI_CHECKED_RUN: ${{ steps.checked.outputs.run }}
+          CI_CHECKED_HEAD: ${{ steps.checked.outputs.head }}
+        run: node scripts/ci-proof.mjs verify
 
       - name: 选择站点
         run: |

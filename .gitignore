@@ -1,4 +1,5 @@
 node_modules/
+.ci-proof/
 .wrangler/
 .env*
 .dev.vars*
