@@ -1,0 +1,162 @@
+// Normalises Claude Code / Codex / Harness JSON output into the controller's event format.
+import { cut } from './vm-base.mjs';
+export const OUT_MAX = 2000;   // 一个工具输出最多带回多少字
+
+/* ---------- 把 Claude Code / Codex 的 JSON 输出整理成统一的事件 ----------
+   {t:'text', text}                    AI 说的话
+   {t:'tool', id, name, detail}        AI 开始执行一个工具（命令、改文件…）
+   {t:'tool_end', id, ok, out, name?, detail?}
+   {t:'status', text}                  临时状态（重连之类），不算错
+   {t:'err', text}                     出错
+   state 里记 sid（AI 自己的会话号）、failed、cost */
+export function detailOf(name, input) {
+  input = input || {};
+  if (name === 'Bash') return String(input.command || '');
+  if (input.file_path) return String(input.file_path);
+  if (input.pattern) return String(input.pattern) + (input.path ? '  ' + input.path : '');
+  if (input.url) return String(input.url);
+  if (input.description) return String(input.description);
+  if (input.query) return String(input.query);
+  try { return cut(JSON.stringify(input), 300); } catch { return ''; }
+}
+export function resultText(c) {
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) return c.map(x => x && (x.text != null ? x.text : x.type === 'image' ? '[图片]' : '')).filter(Boolean).join('\n');
+  return c == null ? '' : JSON.stringify(c);
+}
+export function fromClaude(o, state) {
+  const out = [];
+  if (!o || typeof o !== 'object') return out;
+  if (o.type === 'system' && o.subtype === 'init') { if (o.session_id) state.sid = o.session_id; if (o.model) state.model = o.model; return out; }
+  if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {
+    if (o.error || o.is_api_error_message) {
+      const t = o.message.content.map(c => c && c.text).filter(Boolean).join('\n') || String(o.error);
+      state.failed = true; state.errShown = true;
+      out.push({ t: 'err', text: t });
+      return out;
+    }
+    for (const c of o.message.content) {
+      if (!c) continue;
+      if (c.type === 'text' && c.text && c.text.trim()) out.push({ t: 'text', text: c.text });
+      else if (c.type === 'tool_use') out.push({ t: 'tool', id: c.id, name: c.name, detail: cut(detailOf(c.name, c.input), 600) });
+    }
+    return out;
+  }
+  if (o.type === 'user' && o.message && Array.isArray(o.message.content)) {
+    for (const c of o.message.content) {
+      if (c && c.type === 'tool_result') out.push({ t: 'tool_end', id: c.tool_use_id, ok: !c.is_error, out: cut(resultText(c.content), OUT_MAX) });
+    }
+    return out;
+  }
+  if (o.type === 'result') {
+    if (typeof o.total_cost_usd === 'number') state.cost = o.total_cost_usd;
+    // 模型的上下文上限（网页显示上下文用了多少）；几个模型时取最大的那个（主模型）
+    for (const k in o.modelUsage || {}) { const w = o.modelUsage[k] && o.modelUsage[k].contextWindow; if (w > (state.ctxWin || 0)) state.ctxWin = w; }
+    if (o.session_id) state.sid = o.session_id;
+    if (o.is_error) {
+      state.failed = true;
+      if (!state.errShown) { state.errShown = true; out.push({ t: 'err', text: String(o.result || o.subtype || '出错了') }); }
+    }
+  }
+  return out;
+}
+export function codexCmd(c) {
+  if (Array.isArray(c)) { const i = c.indexOf('-lc'); return i >= 0 && c[i + 1] ? c[i + 1] : c.join(' '); }
+  return String(c || '');
+}
+export function fromCodex(o, state) {
+  const out = [];
+  if (!o || typeof o !== 'object') return out;
+  if(o.type==='xin.usage'){
+    const u=o.usage||{},p=state.frontUsage||{input:0,output:0,cached:0};
+    const input=p.input+(u.input_tokens||0),output=p.output+(u.output_tokens||0);
+    state.frontUsage={input,output,cached:p.cached+(u.cache_read_tokens||0),total:input+output,ctx:(u.input_tokens||0)+(u.output_tokens||0),win:1000000};return out;
+  }
+  if (o.type === 'thread.started') { if (o.thread_id) state.sid = o.thread_id; return out; }
+  if (o.type === 'error') {
+    const m = String(o.message || '');
+    if (/^Reconnecting/i.test(m)) out.push({ t: 'status', text: m });
+    else { state.lastErr = m; }
+    return out;
+  }
+  if (o.type === 'turn.failed') {
+    state.failed = true; state.errShown = true;
+    out.push({ t: 'err', text: String((o.error && o.error.message) || state.lastErr || '这一轮失败了') });
+    return out;
+  }
+  const it = o.item;
+  if (!it || (o.type !== 'item.started' && o.type !== 'item.completed' && o.type !== 'item.updated')) return out;
+  const done = o.type === 'item.completed';
+  // 真的开始干活了（说了话、执行了命令、改了文件、调了插件）：之后失败也不换模型重来，免得同一件事做两遍
+  if (/^(agent_message|command_execution|file_change|mcp_tool_call|web_search)$/.test(it.type || '')) state.worked = true;
+  switch (it.type) {
+    case 'agent_message': if (done && it.text) out.push({ t: 'text', text: it.text }); break;
+    case 'command_execution': {
+      const detail = cut(codexCmd(it.command), 600);
+      if (o.type === 'item.started') out.push({ t: 'tool', id: it.id, name: 'Bash', detail });
+      else if (done) out.push({ t: 'tool_end', id: it.id, name: 'Bash', detail, ok: it.exit_code === 0 || (it.exit_code == null && it.status === 'completed'), out: cut(it.aggregated_output || '', OUT_MAX) });
+      break;
+    }
+    case 'file_change': if (done) {
+      const detail = (it.changes || []).map(c => (c.kind ? (typeof c.kind==='object'?c.kind.type:c.kind) + ' ' : '') + c.path).join('\n');
+      out.push({ t: 'tool_end', id: it.id, name: 'Edit', detail: cut(detail, 600), ok: it.status !== 'failed', out: '' });
+    } break;
+    case 'mcp_tool_call': {
+      const detail = [it.server, it.tool].filter(Boolean).join(' · ');
+      if (o.type === 'item.started') out.push({ t: 'tool', id: it.id, name: 'MCP', detail });
+      else if (done) out.push({ t: 'tool_end', id: it.id, name: 'MCP', detail, ok: it.status !== 'failed', out: cut(it.error ? (it.error.message || JSON.stringify(it.error)) : resultText(it.result && it.result.content), OUT_MAX) });
+      break;
+    }
+    case 'web_search': if (done) out.push({ t: 'tool_end', id: it.id, name: 'WebSearch', detail: String(it.query || ''), ok: true, out: '' }); break;
+    case 'error': if (done) out.push({ t: 'status', text: String(it.message || '') }); break;   // Codex 的警告（真失败看 turn.failed）
+    default: break;   // reasoning、todo_list 之类不显示
+  }
+  return out;
+}
+
+// Harness 的事件 → 网页的事件。用量（step_end 的 usage）攒在 state.hu：最近一步的输入算上下文，加起来算消耗
+export function harnessResult(r) {
+  if (r == null) return '';
+  if (typeof r === 'string') return r;
+  if (Array.isArray(r)) return r.map(harnessResult).join('');
+  if (typeof r === 'object' && typeof r.text === 'string') return r.text;
+  return JSON.stringify(r);
+}
+export function fromHarness(o, state) {
+  const out = [];
+  if (!o || typeof o !== 'object') return out;
+  state.tools = state.tools || {};
+  switch (o.type) {
+    case 'session': if (typeof o.sessionId === 'string') state.sid = o.sessionId; break;
+    case 'text': if (o.text) out.push({ t: 'text', text: String(o.text) }); break;
+    case 'tool_call': {
+      const inp = o.input || {}, name = o.tool === 'bash' ? 'Bash' : String(o.tool || '工具');
+      const detail = cut(typeof inp.command === 'string' ? inp.command : JSON.stringify(inp), 600);
+      state.tools[o.callId] = { name, detail };
+      out.push({ t: 'tool', id: o.callId, name, detail });
+      break;
+    }
+    case 'tool_result': {
+      const t = state.tools[o.callId] || { name: '工具', detail: '' };
+      out.push({ t: 'tool_end', id: o.callId, name: t.name, detail: t.detail, ok: o.status === 'completed', out: cut(harnessResult(o.result != null ? o.result : o.error), OUT_MAX) });
+      break;
+    }
+    case 'status':
+      if (o.phase === 'step_end' && o.usage) {
+        const u = o.usage, hu = state.hu = state.hu || { input: 0, output: 0, last: 0 };
+        hu.input += u.inputTokens || 0; hu.output += u.outputTokens || 0; hu.last = (u.inputTokens || 0) + (u.outputTokens || 0);
+      }
+      if (o.phase === 'turn_end' && o.reason && o.reason.kind && o.reason.kind !== 'completed' && !state.errShown) {
+        state.failed = true; state.errShown = true;
+        out.push({ t: 'err', text: String(o.reason.message || o.reason.error || ('这一轮没做完（' + o.reason.kind + '）')) });
+      }
+      break;
+    case 'error': {
+      state.failed = true;
+      if (!state.errShown) { state.errShown = true; out.push({ t: 'err', text: String(o.message || (o.error && (o.error.message || o.error.code)) || o.code || '出错了') }); }
+      break;
+    }
+    default: break;   // thinking、final 不显示（final 和 text 一样）
+  }
+  return out;
+}
