@@ -587,13 +587,14 @@ export async function frontTurn(o) {
       input.push(...output);
       for (const [i, call] of calls.entries()) {
         const args = parsed[i], free = call.name === 'xin' && expression(args?.argv);
-        if (!free && ++steps > max) return await o.fallback();
+        if (!free && ++steps > max) { o.trace?.(call.name, args, {error:'步数用完'}); return await o.fallback(); }
         const result = free && ++expressed > 2 ? {error:'这一轮的表情动作已经够了，直接回复用户。'}
           : o.handoff&&call.name==='finish_event'&&['deliver','silent'].includes(args?.action)
           ? await o.deliver(args)
           : call.name === 'xin' && frontCommand(args?.argv, o.acts)
           ? await o.command(args.argv, call.call_id)
           : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop、xin remember/forget/recall 和小芯自己的表情、好感度、开场白、动作。'};
+        o.trace?.(call.name, args, result);
         if (result.terminal) return result.text;
         input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)});
       }
@@ -641,9 +642,9 @@ export function webManifest(t) {
   }
   return {entry:config.entry,title:String(config.title||t.title||'我的作品').slice(0,80),checks,html,digest:crypto.createHash('sha256').update(html).digest('hex')};
 }
-const WEB_BROWSER_CHECK=String.raw`
+export const WEB_BROWSER_CHECK=String.raw`
 import fs from 'node:fs';import path from 'node:path';import http from 'node:http';import {spawn} from 'node:child_process';
-const [file,tmp,configText,csp]=process.argv.slice(1),config=JSON.parse(configText),html=fs.readFileSync(file);
+const [file,tmp,configText,csp,browser='/usr/lib/chromium/chromium']=process.argv.slice(1),config=JSON.parse(configText),html=fs.readFileSync(file);
 const profile=fs.mkdtempSync(path.join(tmp,'web-browser-'));let chrome,ws,server,requestId=0,chromeError='';const pending=new Map(),errors=[];
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 function rpc(method,params={}){return new Promise((resolve,reject)=>{const id=++requestId;const timer=setTimeout(()=>{pending.delete(id);reject(Error('浏览器检查超时：'+method));},5000);pending.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params}));});}
@@ -652,7 +653,7 @@ let result,code=1;
 try{
  server=http.createServer((q,r)=>{if(q.url==='/favicon.ico'){r.writeHead(204);r.end();return;}if(q.url!=='/'){r.writeHead(404);r.end();return;}r.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp});r.end(html);});
  await new Promise(ok=>server.listen(0,'127.0.0.1',ok));const origin='http://127.0.0.1:'+server.address().port;
- chrome=spawn('/usr/lib/chromium/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--disable-component-update','--disable-extensions','--disable-sync','--no-first-run','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe']});chrome.stderr.setEncoding('utf8');chrome.stderr.on('data',s=>{chromeError=(chromeError+s).slice(-1000);});
+ chrome=spawn(browser,['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--disable-component-update','--disable-extensions','--disable-sync','--no-first-run','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe']});chrome.stderr.setEncoding('utf8');chrome.stderr.on('data',s=>{chromeError=(chromeError+s).slice(-1000);});
  const portFile=path.join(profile,'DevToolsActivePort');for(let i=0;i<480&&!fs.existsSync(portFile);i++){if(chrome.exitCode!==null)throw Error('Chromium 启动失败：'+chromeError);await pause(25);}if(!fs.existsSync(portFile))throw Error('Chromium 没有就绪：'+chromeError);
  const port=fs.readFileSync(portFile,'utf8').split('\n')[0],pages=await (await fetch('http://127.0.0.1:'+port+'/json/list')).json();const page=pages.find(p=>p.type==='page');
  ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((ok,no)=>{ws.addEventListener('open',ok,{once:true});ws.addEventListener('error',no,{once:true});});
@@ -669,7 +670,10 @@ try{
    const before=await evaluate(inspect);
    const point=await evaluate('(()=>{const e=document.querySelector('+JSON.stringify(c.selector)+');if(!e)return null;e.scrollIntoView({block:"center"});const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.x+r.width/2,y:r.y+r.height/2}:null;})()');if(!point)throw Error('找不到可点击的元素：'+c.selector);
    await rpc('Input.dispatchMouseEvent',{type:'mouseMoved',...point});await rpc('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});await rpc('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});await pause(120);
-   const actual=await evaluate('(()=>{const c='+JSON.stringify(c)+',e=document.querySelector(c.expectSelector);return !!e&&(c.expectText===undefined||e.textContent.includes(c.expectText))&&(c.expectClass===undefined||e.classList.contains(c.expectClass))&&(c.expectAttribute===undefined||e.getAttribute(c.expectAttribute.name)===c.expectAttribute.value);})()');if(!actual)throw Error('点击后没有得到预期变化：'+c.selector);
+   // Pages often update on the next frame or after a short transition: give the expected state up to 1.5 s to appear.
+   const expect='(()=>{const c='+JSON.stringify(c)+',e=document.querySelector(c.expectSelector);return !!e&&(c.expectText===undefined||e.textContent.includes(c.expectText))&&(c.expectClass===undefined||e.classList.contains(c.expectClass))&&(c.expectAttribute===undefined||e.getAttribute(c.expectAttribute.name)===c.expectAttribute.value);})()';
+   let actual=await evaluate(expect);for(const until=Date.now()+1400;!actual&&Date.now()<until;){await pause(100);actual=await evaluate(expect);}
+   if(!actual){const now=await evaluate(inspect),what=!now?'找不到 '+c.expectSelector:c.expectClass!==undefined?c.expectSelector+' 没有 class '+c.expectClass:c.expectAttribute!==undefined?c.expectSelector+' 的 '+c.expectAttribute.name+' 是 '+JSON.stringify(now.attr)+'，不是 '+JSON.stringify(c.expectAttribute.value):c.expectSelector+' 的文字里没有 '+JSON.stringify(c.expectText);throw Error('点击 '+c.selector+' 后 1.5 秒内没有得到预期变化（'+what+'）；检查在同一页面按顺序连续点击，前面的动画可能还在播放');}
    if(JSON.stringify(before)===JSON.stringify(await evaluate(inspect)))throw Error('点击没有产生可观察变化：'+c.selector);
   }
   if(errors.length)throw Error(errors.join('；'));
@@ -682,8 +686,8 @@ process.stdout.write(JSON.stringify(result)+'\n',()=>process.exit(code));
 `;
 export function checkWebWorkspace(t) {
   let manifest;try{manifest=webManifest(t);}catch(e){return {ok:false,error:e.message};}
-  const args=['--signal=KILL','22',process.execPath,'--input-type=module','-e',WEB_BROWSER_CHECK,path.join(t.workspace.work,manifest.entry),t.workspace.tmp,JSON.stringify({checks:manifest.checks}),WEB_PREVIEW_CSP];
-  const c=containerCommand(t,'/usr/bin/timeout',args),r=spawnSync(c.command,c.args,{cwd:t.workspace.work,env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:28000,maxBuffer:2*1024*1024});
+  const args=['--signal=KILL','40',process.execPath,'--input-type=module','-e',WEB_BROWSER_CHECK,path.join(t.workspace.work,manifest.entry),t.workspace.tmp,JSON.stringify({checks:manifest.checks}),WEB_PREVIEW_CSP];
+  const c=containerCommand(t,'/usr/bin/timeout',args),r=spawnSync(c.command,c.args,{cwd:t.workspace.work,env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:46000,maxBuffer:2*1024*1024});
   let result;try{result=JSON.parse(r.stdout.trim());}catch{return {ok:false,error:'浏览器预览检查未完成：'+String(r.stderr||r.error?.message||'').slice(-700)};}
   return {...result,ok:r.status===0&&!!result.ok,entry:manifest.entry,title:manifest.title,digest:manifest.digest,screenshot:path.join(t.workspace.tmp,'xin-web-preview.png')};
 }

@@ -412,6 +412,27 @@ function killTree(c) {
   signalProcessGroup(c.pid,identity);
   setTimeout(()=>signalProcessGroup(c.pid,identity,'SIGKILL'),2000).unref();
 }
+// When a front turn ends in the fallback or an error, keep a short record of what it tried (logs/front.jsonl, last 200).
+// Command shape only — option names and the enumerated kind/model/basis/type values — never titles, goals or the user's words.
+export function frontCallShape(name, args, result) {
+  const argv = Array.isArray(args?.argv) ? args.argv.map(String) : null, keep = [];
+  if (argv) {
+    for (let i = 1; i < argv.length && argv[i] !== '--'; i++) {
+      const x = argv[i];
+      if (i === 1 || (i === 2 && argv[1] === 'task' && /^[a-z]+$/.test(x)) || /^--[a-z-]+$/.test(x)) keep.push(x.slice(0, 20));
+      if (/^--(?:kind|model|basis|type)$/.test(x) && argv[i + 1] && !argv[i + 1].startsWith('--')) keep.push(argv[i + 1].slice(0, 40));
+    }
+  }
+  const call = argv ? keep.join(' ') : name === 'finish_event' ? 'finish_event ' + String(args?.action || '?').slice(0, 20) : name + (args ? '' : '（参数不是有效 JSON）');
+  return { call: call.slice(0, 200), ...(result?.error ? { error: String(result.msg || result.error).slice(0, 200) } : result?.terminal ? { terminal: true } : {}) };
+}
+export function frontLog(entry) {
+  try {
+    const f = path.join(BASE, 'logs', 'front.jsonl'); mk(path.dirname(f));
+    const lines = readText(f).split('\n').filter(Boolean).slice(-199); lines.push(JSON.stringify({ at: Date.now(), ...entry }));
+    fs.writeFileSync(f, lines.join('\n') + '\n');
+  } catch { /* diagnostics never break a turn */ }
+}
 // 只重试尚未开始工作的 CLI：开始处理后可能长时间不输出，网络超时由 CLI 自己处理，避免重复投递同一轮。
 const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
 function runner(run) {
@@ -661,7 +682,10 @@ function runner(run) {
     const handoffBudget=meta.handoff?workBudget(journal.handoff(meta.handoff)?.task||meta.sid):null;
     if(meta.handoffFallback){deliver({action:'deliver',text:''});finish(0);return;}
     const action = argv => lockedCall('tasks','front_action',{run,argv});
+    const calls = [];let usedFallback = false;
+    const trace = (name, args, result) => { if (calls.length < 12) calls.push(frontCallShape(name, args, result)); };
     const fallback = () => {
+      usedFallback = true;
       const r = lockedCall('tasks','front_fallback',{run});
       if (r.error) throw new Error(r.msg || r.error);
       return r.text;
@@ -670,7 +694,7 @@ function runner(run) {
     const cancel = () => { controller.abort(); if(!finished){state.failed=!readJ(metaF(run))?.stopped;finish(0);} };
     process.on('SIGTERM', cancel); process.on('SIGINT', cancel);
     runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,
-      instructions:systemPrompt(undefined,{tasks:true}),acts:Object.keys(ACTS),input,command:action,fallback,signal:controller.signal,handoff:!!meta.handoff,deliver,takeBudget:handoffBudget,
+      instructions:systemPrompt(undefined,{tasks:true}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,deliver,takeBudget:handoffBudget,
       usage:u=>{if(u){
         handoffBudget?.recordUsage(u);
         const prev = state.frontUsage || usageBefore || {input:0,output:0,cached:0};
@@ -678,8 +702,8 @@ function runner(run) {
         state.frontUsage.total=state.frontUsage.input+state.frontUsage.output;
         patchRun(run,{frontUsage:state.frontUsage});
       }}
-    }).then(text=>{if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
-      .catch(e=>{if(!finished){state.failed=true;finish(1,e.message);}});
+    }).then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
+      .catch(e=>{if(!finished){frontLog({run,outcome:usedFallback?'fallback':'error',error:String(e.message||e).slice(0,300),calls});state.failed=true;finish(1,e.message);}});
   } else start();
 }
 
@@ -1641,8 +1665,9 @@ export function frontAction(a) {
   if (sub === 'new') {
     const o = parseTaskArgs(rest);
     if (o.error || !o.goal) return {error:o.error || '请写清要求'};
-    if (o.kind && !TASK_KINDS.includes(o.kind)) return {error:'未知工作类型'};
-    if (o.model && o.model!==runtime.AGY_MODEL && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型'};
+    if (o.kind && !TASK_KINDS.includes(o.kind)) return {error:'未知工作类型：'+o.kind+'（可用：'+TASK_KINDS.join('、')+'）'};
+    // A model the user named is recorded from their own words and applied regardless; a loosely written --model must not block dispatch.
+    if (o.model && !m.frontNamed && o.model!==runtime.AGY_MODEL && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(runtime.AGY_MODEL).join('、')+'）'};
     const previous = mine.find(t=>t.frontRun===a.run);
     if (previous) return {terminal:true,text:'好，我这就去弄。',task:taskSummary(previous)};
     const requested = m.frontNamed || o.model;
