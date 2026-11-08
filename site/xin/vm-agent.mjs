@@ -704,9 +704,10 @@ function runner(run) {
     const controller = new AbortController();
     const cancel = () => { controller.abort(); if(!finished){state.failed=!readJ(metaF(run))?.stopped;finish(0);} };
     process.on('SIGTERM', cancel); process.on('SIGINT', cancel);
-    let provider;
+    let provider;const protocol={};
     const infer=async()=>{
       provider=await openFrontProvider({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,signal:controller.signal,
+        protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},
         quotaState:readJ(path.join(BASE,'front-antigravity-quota.json')),
         quota:quota=>lockedCall('tasks','front_quota',{quota}),
         model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;meta.providerModel=chosen.providerModel;if(chosen.reason==='quota')meta.from=OPUS_FRONT_MODEL;}
@@ -728,7 +729,7 @@ function runner(run) {
       }}
     });};
     infer().then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
-      .catch(e=>{if(!finished){frontLog({run,outcome:usedFallback?'fallback':'error',error:String(e.message||e).slice(0,300),calls});state.failed=true;finish(1,e.message);}})
+      .catch(e=>{if(!finished){frontLog({run,outcome:usedFallback?'fallback':'error',error:String(e.message||e).slice(0,300),calls,...(Object.keys(protocol).length?{protocol}:{})});state.failed=true;finish(1,e.message);}})
       .finally(()=>provider?.close());
   } else start();
 }

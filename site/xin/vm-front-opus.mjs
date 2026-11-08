@@ -37,8 +37,8 @@ async function quota(binary,cwd,signal){
  return {...antigravityQuota(result,Date.now(),OPUS_FRONT_MODEL),requestedAt};
 }
 class ACP {
- constructor(binary,args,cwd,signal){
-  this.seq=0;this.pending=new Map();this.text='';this.update=null;this.signal=signal;this.buffer='';this.bytes=0;
+ constructor(binary,args,cwd,signal,observe){
+  this.seq=0;this.pending=new Map();this.text='';this.update=null;this.signal=signal;this.buffer='';this.bytes=0;this.observe=observe;
   this.child=spawn(binary,args,childOptions(cwd));this.child.xinIdentity=processIdentity(this.child.pid);
   this.cancel=()=>this.close();signal?.addEventListener('abort',this.cancel,{once:true});
   this.child.stdout.setEncoding('utf8');this.child.stderr.resume();
@@ -48,6 +48,11 @@ class ACP {
  }
  send(o){if(!this.child.stdin.destroyed)this.child.stdin.write(JSON.stringify({jsonrpc:'2.0',...o})+'\n');}
  accept(o){
+  if(o.method==='session/update'){
+   const u=o.params?.update||{},known=['agent_message_chunk','agent_thought_chunk','tool_call','tool_call_update','usage_update','config_option_update','current_mode_update','session_info_update','available_commands_update','plan'];
+   const fields=['text','message','response','final_response','final_answer','answer','output','result','structured_output','content'].filter(k=>Object.hasOwn(u.rawInput||{},k));
+   this.observe?.({kind:known.includes(u.sessionUpdate)?u.sessionUpdate:'other',bytes:u.content?.type==='text'?Buffer.byteLength(u.content.text||''):0,inputFields:fields});
+  }
   if(o.method){
    if(Object.hasOwn(o,'id')){
     if(o.method==='session/request_permission')this.send({id:o.id,result:{outcome:{outcome:'cancelled'}}});
@@ -119,7 +124,7 @@ export async function openFrontProvider(o={}){
   if(global.useG1Credits===true)throw Error('Opus 前台不会动用付费额度；当前 CLI 不能单独关闭这项设置');
  }
  try{
-  acp=new ACP(binary,args,cwd,o.signal);
+  acp=new ACP(binary,args,cwd,o.signal,o.protocol);
   const init=await acp.request('initialize',{protocolVersion:1,clientInfo:{name:'xin-front',version:'1'},clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},terminal:false}},o.signal);
   images=init.agentCapabilities?.promptCapabilities?.image===true;
   const session=await acp.request('session/new',{cwd,mcpServers:[]},o.signal);sid=session.sessionId;if(!sid)throw Error('Opus 没有创建可用前台会话');
@@ -137,7 +142,14 @@ export async function openFrontProvider(o={}){
   const cancel=()=>acp.close();signal?.addEventListener('abort',cancel,{once:true});
   try{
    acp.text='';acp.update=null;await acp.request('session/prompt',{sessionId:sid,prompt:blocks},signal,65000);
-   const out=opusOutput(acp.text);sent=payload.input.length;previous=out.output;
+   let out;
+   try{out=opusOutput(acp.text);}catch{
+    o.protocol?.({kind:'format_repair',bytes:Buffer.byteLength(acp.text)});
+    acp.text='';acp.update=null;
+    await acp.request('session/prompt',{sessionId:sid,prompt:[{type:'text',text:'控制器没有收到有效的前台协议。只修正上一条回复的格式，不重复执行操作，不使用原生工具。必须作为普通助手文字输出严格 JSON：{"text":"上一条给用户的自然回答","calls":[]}；如果需要控制器派活，在 calls 中写 {"name":"xin","argv":["xin","task","new","--","本轮用户原话"]}。不要在 JSON 外解释，不把协议要求当成用户的内容。'}]},signal,65000);
+    out=opusOutput(acp.text);
+   }
+   sent=payload.input.length;previous=out.output;
    if(acp.update?.used!=null)out.contextUsage={used:acp.update.used,size:acp.update.size};
    return out;
   }catch(e){

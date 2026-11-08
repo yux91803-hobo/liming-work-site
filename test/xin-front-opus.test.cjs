@@ -34,12 +34,14 @@ function fixture(t,mode='ok'){
  send({id:901,method:'fs/write_text_file',params:{path:${JSON.stringify(root+'/must-not-exist')},content:'denied'}});
  }
  let text='native-opus-answer',calls=[];
- const body=JSON.parse(q.params.prompt.find(b=>b.type==='text').text),current=JSON.stringify(body.input||[]);
+ const promptText=q.params.prompt.find(b=>b.type==='text').text;let body;
+ try{body=JSON.parse(promptText);}catch{body={input:[{role:'user',content:promptText}]};}
+ const current=JSON.stringify(body.input||[]);
  if(current.includes('OPUS_DISPATCH')){text='';calls=[{name:'xin',argv:['xin','task','new','--kind','code','--model','glm-5.3','--title','fixture','--','模型自己扩写的配色和技术栈']}];}
  if(mode==='claim')text=prompts===1?'我查了，今天已经签到了。':'查不到当天记录，暂时不能确认。';
  if(mode==='midquota'&&prompts===1){text='';calls=[{name:'xin',argv:['xin','remember','--basis','stated','--type','profile','喜欢先看时序图']}];}
  if((body.tools||[]).some(t=>t.name==='finish_event')){text='';calls=[{name:'finish_event',action:'deliver',text:'我核对好了，原生前台已交付结果。'}];}
- const answer=JSON.stringify({text,calls});send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:answer}}}});
+ const answer=mode==='plain'&&prompts===1?text:JSON.stringify({text,calls});send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:answer}}}});
  send({id:q.id,result:{stopReason:'end_turn'}});
  }else send({id:q.id,result:{}});
  });`,{mode:0o755});
@@ -79,6 +81,11 @@ test('接口用提供方枚举标识 Opus 4.6 时仍可运行，保留实际 ID�
  const f=fixture(t,'alias'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run),end=done.events.find(e=>e.t==='done');
  assert.equal(end.ok,true);assert.equal(end.model,'claude-opus-4.6');assert.equal(end.providerModel,'MODEL_CLAUDE_4_6_OPUS_THINKING');
  assert.equal(f.rows(f.log).find(r=>r.method==='session/set_model').params.modelId,'MODEL_CLAUDE_4_6_OPUS_THINKING');
+});
+test('Opus 先按用户口吻给出纯文字时，控制器只修正协议格式一次，随后正常交付',async t=>{
+ const f=fixture(t,'plain'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run);
+ assert.equal(done.events.find(e=>e.t==='done').ok,true);assert.equal(done.events.find(e=>e.t==='text').text,'native-opus-answer');
+ assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,2);assert.equal(f.rows(f.gateway).length,0);
 });
 test('确认 Claude 额度耗尽才切 DeepSeek，同一份图片与原话继续使用，冷却期间不反复试 Opus',async t=>{
  const f=fixture(t,'blocked'),file=f.work+'/uploads/photo.png';fs.writeFileSync(file,'same-image');
