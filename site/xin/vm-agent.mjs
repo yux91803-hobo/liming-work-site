@@ -57,6 +57,8 @@ export * from './vm-models.mjs';
 export * from './vm-persona.mjs';
 import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, memoryPreferences,setMemoryPreferences,MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
 import {recallAll,turnGuidance,safeContextEvents} from './vm-context.mjs';
+import {dailyEvidence,dailyContext} from './vm-daily.mjs';
+import {openFrontProvider,preferredFrontModel,frontModelInfo,OPUS_FRONT_MODEL} from './vm-front-opus.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 
@@ -87,6 +89,8 @@ function lastActivity() {
   return t;
 }
 function maybeWarm() {
+  const quota=readJ(path.join(BASE,'front-antigravity-quota.json'));
+  if(preferredFrontModel()!==runtime.FRONT_MODEL&&!(quota?.blocked&&quota.retryAt>Date.now()))return false;
   if (Date.now() - lastActivity() < WARM_IDLE || !(hasAgent('harness') || hasCmd('codex'))) return false;
   mk(BASE); writeJ(WARM_FILE(), { at: Date.now(), running: true });
   spawn(process.execPath, [SELF, 'warm'], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref();
@@ -700,8 +704,21 @@ function runner(run) {
     const controller = new AbortController();
     const cancel = () => { controller.abort(); if(!finished){state.failed=!readJ(metaF(run))?.stopped;finish(0);} };
     process.on('SIGTERM', cancel); process.on('SIGINT', cancel);
-    runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,
-      instructions:systemPrompt(undefined,{tasks:true}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,deliver,takeBudget:handoffBudget,
+    let provider;
+    const infer=async()=>{
+      provider=await openFrontProvider({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,signal:controller.signal,
+        quotaState:readJ(path.join(BASE,'front-antigravity-quota.json')),
+        quota:quota=>lockedCall('tasks','front_quota',{quota}),
+        model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;if(chosen.reason==='quota')meta.from=OPUS_FRONT_MODEL;}
+      });
+      if(meta.frontFiles?.some(f=>f.image)&&provider.image===false){
+        patchRun(run,{frontSeesImages:false,images:[]});
+        const vision=lockedCall('tasks','front_immediate',{run});if(vision.error)throw Error(vision.msg||vision.error);
+        if(vision.terminal)return vision.text;
+        throw Error('当前前台没有视觉输入，无法读取图片');
+      }
+      return runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,request:provider.request,ms:meta.model===runtime.FRONT_MODEL?25000:65000,
+      instructions:systemPrompt(undefined,{tasks:true}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,lookupBeforeAnswer:!meta.handoff&&runtime.frontLookupRequired(meta.frontRequest||''),deliver,takeBudget:handoffBudget,
       usage:u=>{if(u){
         handoffBudget?.recordUsage(u);
         const prev = state.frontUsage || usageBefore || {input:0,output:0,cached:0};
@@ -709,8 +726,10 @@ function runner(run) {
         state.frontUsage.total=state.frontUsage.input+state.frontUsage.output;
         patchRun(run,{frontUsage:state.frontUsage});
       }}
-    }).then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
-      .catch(e=>{if(!finished){frontLog({run,outcome:usedFallback?'fallback':'error',error:String(e.message||e).slice(0,300),calls});state.failed=true;finish(1,e.message);}});
+    });};
+    infer().then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
+      .catch(e=>{if(!finished){frontLog({run,outcome:usedFallback?'fallback':'error',error:String(e.message||e).slice(0,300),calls});state.failed=true;finish(1,e.message);}})
+      .finally(()=>provider?.close());
   } else start();
 }
 
@@ -1652,7 +1671,7 @@ function handoffStart(a){
   const last=lastRun(s);if(last&&!runDone(last))return {waiting:true};
   if(journal.pendingLaunches().some(j=>j.sid===s.sid&&j.lane===0))return {waiting:true};
   // Repairs are bounded per work item, independent of how often completion is replayed.
-  const run=launch(s,{kind:'handoff',handoff:h.id,handoffFallback:h.attempts>=2,model:runtime.FRONT_MODEL,why:'completion',effort:AUTO_EFFORT,
+  const run=launch(s,{kind:'handoff',handoff:h.id,handoffFallback:h.attempts>=2,model:preferredFrontModel(),why:'completion',effort:AUTO_EFFORT,
     text:handoffPrompt(t,taskNotes(s.sid).text),injected:[{sid:t.sid,version:taskVersion(t)}]},null);
   journal.startHandoff(h.id,run);return {run};
 }
@@ -1677,7 +1696,7 @@ export function frontImmediate(a){
   if(m.reply!==undefined)return {terminal:true,reply:true,text:m.reply};
   const receipt=readJ(path.join(RUNS,a.run+'.front.json'));if(receipt)return receipt;
   const created=listTasks().find(t=>t.parent===m.sid&&t.frontRun===a.run);if(created)return {terminal:true,text:'好，我这就去弄。',task:taskSummary(created)};
-  if ((m.frontFiles||[]).some(f=>f.image) && !(m.frontSeesImages ?? !!codexModel(m.model||runtime.FRONT_MODEL).image)) {
+  if ((m.frontFiles||[]).some(f=>f.image) && !(m.frontSeesImages ?? !!frontModelInfo(m.model||preferredFrontModel()).image)) {
     // A real capability fallback, independent of whether a text-only model happens to ask for it.
     // frontAction keeps task creation, original attachments, explicit model choice and replay receipts together.
     return frontAction({run:a.run,argv:['xin','task','new','--kind','vision','--title','看图回答',...(m.frontWeb?['--web']:[]),'--',
@@ -1710,7 +1729,7 @@ export function frontAction(a) {
   }
   if (act !== 'task') { const c = companionCmd(a.argv.slice(1), a.run); return c && c.code === 0 ? { text: c.text } : { error: c ? c.text : '不支持这个操作' }; }
   const mine = listTasks().filter(t=>t.parent === m.sid);
-  if (sub === 'list') return {tasks:mine.map(taskSummary)};
+  if (sub === 'list') return {tasks:mine.map(taskSummary),daily:dailyEvidence()};
   const mutation = readJ(path.join(RUNS,a.run+'.front.json'));
   if (mutation) return mutation;
   let r;
@@ -1888,12 +1907,12 @@ const ops = {
     const userEv = { t: 'user', text, at: Date.now() };
     if (ctxLabel) userEv.ctx = ctxLabel;
     if (files.length) userEv.files = files.map(f => ({ name: f.name, path: f.path, size: f.size, image: f.image }));
-    // 默认模式前台固定 DeepSeek；点名只记给后台，实际执行由控制器的结构化工具完成。
+    // 前台优先 Antigravity Opus；实际额度耗尽才回 DeepSeek。点名只记给后台。
     // Harness（天启模式）按网页选的，续聊没带 model 时保留对话里的选择。
     let rt = null, cm = null;
     if (s.agent === 'codex') {
-      rt = { model: runtime.FRONT_MODEL, why: 'chat', fallbacks: [] };
-      cm = codexModel(rt.model);
+      rt = { model: preferredFrontModel(), why: 'chat', fallbacks: [] };
+      cm = frontModelInfo(rt.model);
     } else if (s.agent === 'harness') cm = harnessModel(a.model || s.model);
     if (cm) s.model = cm.id;
     const effort = s.agent === 'codex' ? AUTO_EFFORT : resolveEffort(s.agent, cm ? cm.id : null, a.effort);
@@ -2138,6 +2157,7 @@ const ops = {
       // 任务中心：各模型最近 14 天用得怎么样、每个任务是哪个对话派的、每日任务做得怎么样
       out.stats = modelStats();
       out.antigravity = readJ(path.join(BASE,'antigravity-quota.json')) || null;
+      out.frontAntigravity = readJ(path.join(BASE,'front-antigravity-quota.json')) || null;
       const titles = {};
       for (const t of mine) if (t.parent && !(t.parent in titles)) titles[t.parent] = (readJ(sessF(t.parent)) || {}).title || '';
       out.titles = titles;
@@ -2150,6 +2170,16 @@ const ops = {
 };
 // 只在 tasks 锁里跑的（main 里分派）
 const iops = {
+  front_model(a){
+    const m=readJ(metaF(a.run));if(!m||m.task||m.agent!=='codex'||m.stopped||m.ended||![runtime.FRONT_MODEL,OPUS_FRONT_MODEL].includes(a.model))return {error:'bad_front_model'};
+    m.model=a.model;if(a.reason==='quota')m.from=OPUS_FRONT_MODEL;else delete m.from;writeJ(metaF(a.run),m);
+    const s=readJ(sessF(m.sid));if(s){s.model=a.model;writeJ(sessF(m.sid),s);}return {ok:true};
+  },
+  front_quota(a){
+    if(a.quota?.model!==OPUS_FRONT_MODEL||!Array.isArray(a.quota.buckets))return {error:'bad_quota'};
+    const f=path.join(BASE,'front-antigravity-quota.json'),old=readJ(f),quota=runtime.mergeAntigravityQuota(old,a.quota);
+    writeJ(f,quota);return {quota};
+  },
   front_reply(a){const m=readJ(metaF(a.run));if(!m||m.task||m.stopped||m.ended)return {};if(m.reply!==undefined)return {already:true};m.reply=String(a.text||'').slice(0,TEXT_MAX);writeJ(metaF(a.run),m);if(m.reply)emit(a.run,{t:'text',text:m.reply});return {ok:true};},
   handoff_start:handoffStart,handoff_finish:handoffFinish,
   front_immediate:frontImmediate,
@@ -2338,9 +2368,10 @@ function taskCmd(argv) {
   if (sub === 'list') {
     const parent = meta && !meta.task ? meta.sid : null;
     const mine = all.filter(t => t.parent === parent), others = all.filter(t => t.parent !== parent && !isFinished(t));
-    if (!mine.length && !others.length) { console.log('还没有后台任务'); return 0; }
+    if (!mine.length && !others.length) console.log('还没有后台任务');
     if (mine.length) console.log(mine.slice(-20).map(taskLine).join('\n'));
     if (others.length) console.log((mine.length ? '\n' : '') + '别的对话里还没做完的：\n' + others.map(taskLine).join('\n'));
+    console.log(dailyContext());
     return 0;
   }
   const t = findTask({ no: argv[1] }, all);
@@ -2524,7 +2555,7 @@ function transactionalOp(op,args,fn){
   const locked=process.argv[2]==='locked';
   if(!locked)return fn();
   const taskScope=process.env.XIN_LOCK==='tasks'&&Object.hasOwn(iops,op);
-  if(!taskScope&&!['send','handoff_start','front_reply','continue_steers'].includes(op))return fn();
+  if(!taskScope&&!['send','handoff_start','front_reply','front_model','continue_steers'].includes(op))return fn();
   // Initialize the compatibility index before opening SQLite: no child may wait on our transaction while holding tasks.lock.
   if(op==='send'||op==='continue_steers'){mk(SESS);mk(RUNS);listTasks();}
   let command=null;

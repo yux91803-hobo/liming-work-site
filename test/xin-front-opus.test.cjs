@@ -1,0 +1,128 @@
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {spawnSync}=require('node:child_process');
+const {stopOwned}=require('./helpers/stop-owned.cjs');
+const agent=path.join(__dirname,'../site/xin/vm-agent.mjs');
+function fixture(t,mode='ok'){
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-front-opus-')),control=root+'/control',home=root+'/home',work=root+'/work',bin=root+'/bin',log=root+'/native.jsonl',gateway=root+'/gateway.jsonl';
+ for(const dir of [control+'/sessions',control+'/runs',home,work+'/uploads',bin])fs.mkdirSync(dir,{recursive:true});
+ const preload=root+'/preload.cjs';fs.writeFileSync(preload,`
+ require('node:os').homedir=()=>${JSON.stringify(home)};require('node:module').syncBuiltinESMExports();
+ const fs=require('node:fs'),real=fetch;global.fetch=async function(url,init){
+ if(!String(url).endsWith('/v1/responses'))return real(url,init);const body=JSON.parse(init.body);fs.appendFileSync(${JSON.stringify(gateway)},JSON.stringify(body)+'\\n');
+ return new Response(JSON.stringify({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'deepseek-quota-answer'}]}],usage:{input_tokens:8,output_tokens:5}}));};`);
+ fs.writeFileSync(bin+'/agy','#!'+process.execPath+'\n'+`
+ const fs=require('node:fs'),a=process.argv.slice(2),modeFile=${JSON.stringify(root+'/mode')},mode=fs.existsSync(modeFile)?fs.readFileSync(modeFile,'utf8'):${JSON.stringify(mode)},log=${JSON.stringify(log)};
+ const record=o=>fs.appendFileSync(log,JSON.stringify(o)+'\\n'),send=o=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...o})+'\\n');
+ record({argv:a,key:!!process.env.XIN_CODEX_KEY,cwd:process.cwd()});
+ const rows=()=>fs.readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse);
+ if(a.includes('/usage')){const count=rows().filter(x=>x.argv?.includes('/usage')).length;console.log(JSON.stringify({event:'result',result:{command:{data:{groups:[
+ {buckets:[{id:'gemini-5h',remaining_fraction:0,reset_time:new Date(Date.now()+3600000).toISOString()}]},
+ {buckets:[{id:'3p-5h',remaining_fraction:mode==='blocked'||mode==='midquota'&&count>1?0:1,reset_time:new Date(Date.now()+3600000).toISOString()},
+ {id:'3p-weekly',remaining_fraction:1,reset_time:new Date(Date.now()+7*86400000).toISOString()}]}]}}}}));process.exit(0);}
+ if(a.includes('--help')){console.log('acp --agent --settings');process.exit(0);}
+ let prompts=0;require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const q=JSON.parse(line);record(q);if(!q.method)return;
+ if(q.method==='initialize')send({id:q.id,result:{protocolVersion:1,agentCapabilities:{promptCapabilities:{image:mode!=='noimage'}}}});
+ else if(q.method==='session/new')send({id:q.id,result:{sessionId:'native-synthetic-session',models:{currentModelId:'another',availableModels:[{modelId:'claude-opus-4.6',name:'Claude Opus 4.6'}]}}});
+ else if(q.method==='session/set_model')send({id:q.id,result:{}});
+ else if(q.method==='session/prompt'){
+ prompts++;
+ if(mode==='hang')return;
+ if(mode==='transient'||mode==='midquota'&&prompts===2){send({id:q.id,error:{code:429,message:mode==='transient'?'rate limit, retry shortly':'quota exhausted'}});return;}
+ if(mode==='deny'){
+ send({id:900,method:'session/request_permission',params:{sessionId:'native-synthetic-session',options:[]}});
+ send({id:901,method:'fs/write_text_file',params:{path:${JSON.stringify(root+'/must-not-exist')},content:'denied'}});
+ }
+ let text='native-opus-answer',calls=[];
+ const body=JSON.parse(q.params.prompt.find(b=>b.type==='text').text),current=JSON.stringify(body.input||[]);
+ if(current.includes('OPUS_DISPATCH')){text='';calls=[{name:'xin',argv:['xin','task','new','--kind','code','--model','glm-5.3','--title','fixture','--','模型自己扩写的配色和技术栈']}];}
+ if(mode==='claim')text=prompts===1?'我查了，今天已经签到了。':'查不到当天记录，暂时不能确认。';
+ if(mode==='midquota'&&prompts===1){text='';calls=[{name:'xin',argv:['xin','remember','--basis','stated','--type','profile','喜欢先看时序图']}];}
+ if((body.tools||[]).some(t=>t.name==='finish_event')){text='';calls=[{name:'finish_event',action:'deliver',text:'我核对好了，原生前台已交付结果。'}];}
+ const answer=JSON.stringify({text,calls});send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:answer}}}});
+ send({id:q.id,result:{stopReason:'end_turn'}});
+ }else send({id:q.id,result:{}});
+ });`,{mode:0o755});
+ // Only dispatched test tasks use this fake CLI; no real service is contacted.
+ fs.writeFileSync(bin+'/codex','#!'+process.execPath+'\n'+`console.log(JSON.stringify({type:'turn.started'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'后台测试完成'}}));`,{mode:0o755});
+ const env={...process.env,HOME:home,XIN_HOME:control,XIN_WORK:work,XIN_AGY_HOME:home,XIN_ANTIGRAVITY_BIN:bin+'/agy',NODE_OPTIONS:'--require='+preload,PATH:bin+':'+process.env.PATH,XIN_CODEX_TRANSPORT:'exec',XIN_TASK_SANDBOX:'0',XIN_CODEX_KEY:'must-not-reach-native'};
+ delete env.XIN_FRONT_PROVIDER;
+ const call=(op,args={})=>{const r=spawnSync(process.execPath,[agent,op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);const d=JSON.parse(r.stdout);assert.ok(!d.error,JSON.stringify(d));return d;};
+ const wait=async run=>{const until=Date.now()+15000;while(Date.now()<until){const p=call('poll',{run,off:0});if(p.done)return p;await new Promise(r=>setTimeout(r,70));}assert.fail('synthetic front did not finish');};
+ const rows=file=>fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse):[];
+ t.after(()=>stopOwned(control,root));
+ return {root,control,home,work,env,log,gateway,call,wait,rows};
+}
+test('默认实际使用 Opus 4.6，Gemini 的额度耗尽不会影响 Claude；原生端没有网关密钥或执行权限',async t=>{
+ const f=fixture(t,'deny'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run);
+ const end=done.events.find(e=>e.t==='done');assert.equal(end.ok,true);assert.equal(end.model,'claude-opus-4.6');assert.equal(f.rows(f.gateway).length,0);
+ assert.equal(done.events.find(e=>e.t==='text').text,'native-opus-answer');
+ const records=f.rows(f.log);assert.ok(records.filter(r=>r.argv).every(r=>!r.key&&r.cwd===f.control+'/front-antigravity'));
+ const init=records.find(r=>r.method==='initialize');assert.equal(init.params.clientCapabilities.terminal,false);assert.equal(init.params.clientCapabilities.fs.writeTextFile,false);
+ assert.deepEqual(records.find(r=>r.method==='session/new').params.mcpServers,[]);
+ assert.equal(records.find(r=>r.method==='session/set_model').params.modelId,'claude-opus-4.6');
+ assert.equal(records.find(r=>r.id===900&&!r.method).result.outcome.outcome,'cancelled');assert.equal(records.find(r=>r.id===901&&!r.method).error.code,-32601);
+ assert.equal(fs.existsSync(f.root+'/must-not-exist'),false);
+ const session=f.call('history',{sid:sent.sid}).session;assert.equal(session.model,'claude-opus-4.6');
+ const q=JSON.parse(fs.readFileSync(f.control+'/front-antigravity-quota.json'));assert.equal(q.blocked,false);assert.equal(q.buckets.length,2);assert.ok(q.buckets.every(b=>b.id.startsWith('3p-')));
+});
+test('Opus 的图片提示与直接视觉块一致，读图聊天不派活',async t=>{
+ const f=fixture(t),file=f.work+'/uploads/photo.png',bytes=Buffer.from('synthetic-png-fixture');fs.writeFileSync(file,bytes);
+ const sent=f.call('send',{agent:'codex',text:'图里写的是什么',files:[{path:file,name:'photo.png'}]}),done=await f.wait(sent.run);
+ assert.equal(done.events.find(e=>e.t==='done').model,'claude-opus-4.6');
+ const prompt=f.rows(f.log).find(r=>r.method==='session/prompt').params.prompt;
+ assert.deepEqual(prompt.find(b=>b.type==='image'),{type:'image',mimeType:'image/png',data:bytes.toString('base64')});
+ assert.match(prompt.find(b=>b.type==='text').text,/图片已经直接给你看了/);assert.doesNotMatch(prompt.find(b=>b.type==='text').text,/你现在用的模型看不了图片内容/);
+ assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
+});
+test('确认 Claude 额度耗尽才切 DeepSeek，同一份图片与原话继续使用，冷却期间不反复试 Opus',async t=>{
+ const f=fixture(t,'blocked'),file=f.work+'/uploads/photo.png';fs.writeFileSync(file,'same-image');
+ const sent=f.call('send',{agent:'codex',text:'图里写了什么',files:[{path:file,name:'photo.png'}]}),done=await f.wait(sent.run);
+ const end=done.events.find(e=>e.t==='done');assert.equal(end.ok,true);assert.equal(end.model,'deepseek-v4.1-flash');assert.equal(end.from,'claude-opus-4.6');
+ const body=f.rows(f.gateway)[0];assert.equal(body.model,'deepseek-v4.1-flash');assert.ok(body.input.at(-1).content.some(b=>b.type==='input_image'));assert.match(body.input.at(-1).content[0].text,/图里写了什么/);
+ assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,0);
+ const count=f.rows(f.log).length,next=f.call('send',{sid:sent.sid,text:'继续聊'});await f.wait(next.run);assert.equal(f.rows(f.log).length,count);
+ const q=JSON.parse(fs.readFileSync(f.control+'/front-antigravity-quota.json'));assert.ok(q.blocked&&q.retryAt>Date.now());
+ q.retryAt=Date.now()-1;fs.writeFileSync(f.control+'/front-antigravity-quota.json',JSON.stringify(q));fs.writeFileSync(f.root+'/mode','ok');
+ const recovered=f.call('send',{sid:sent.sid,text:'额度恢复后继续聊'}),after=await f.wait(recovered.run);assert.equal(after.events.find(e=>e.t==='done').model,'claude-opus-4.6');
+});
+test('中途真实耗尽按同一上下文接给 DeepSeek，已执行的记忆调用不重复执行',async t=>{
+ const f=fixture(t,'midquota'),sent=f.call('send',{agent:'codex',text:'请记住：喜欢先看时序图'}),done=await f.wait(sent.run);
+ assert.equal(done.events.find(e=>e.t==='done').model,'deepseek-v4.1-flash');
+ const payload=f.rows(f.gateway)[0];assert.ok(payload.input.some(i=>i.type==='function_call_output'));
+ const items=f.call('memory_list').items;assert.equal(items.filter(i=>i.content==='喜欢先看时序图').length,1);
+ assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,2);
+});
+test('普通限流且真实额度还有剩余时不偷偷换模型，也不制造后台任务',async t=>{
+ const f=fixture(t,'transient'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run);
+ assert.equal(done.events.find(e=>e.t==='done').ok,false);assert.equal(f.rows(f.gateway).length,0);assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
+});
+test('Opus 派工仍由控制器原话照传，模型补写的造型、配色和技术栈不进入 goal',async t=>{
+ const f=fixture(t),text='OPUS_DISPATCH：做一个钟表。',sent=f.call('send',{agent:'codex',text}),done=await f.wait(sent.run);
+ assert.equal(done.events.find(e=>e.t==='done').ok,true);
+ const tasks=f.call('tasks',{sid:sent.sid}).tasks;assert.equal(tasks.length,1);
+ const original=JSON.parse(fs.readFileSync(f.control+'/sessions/'+tasks[0].sid+'.json'));assert.equal(original.goal,text);assert.equal(original.userRequest,text);
+});
+test('Opus 未查询却声称查过时，补上的真实查询输入没有因增量偏移而漏掉',async t=>{
+ const f=fixture(t,'claim'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run);
+ assert.equal(done.events.find(e=>e.t==='text').text,'查不到当天记录，暂时不能确认。');
+ const prompts=f.rows(f.log).filter(r=>r.method==='session/prompt');assert.equal(prompts.length,2);
+ const input=JSON.parse(prompts[1].params.prompt.find(b=>b.type==='text').text).input;
+ assert.ok(input.some(i=>i.type==='function_call'&&i.call_id==='controller_lookup'));
+ assert.ok(input.some(i=>i.type==='function_call_output'&&JSON.parse(i.output).daily));
+});
+test('后台完成仍由默认 Opus 接回、持久交付一次，完成事件不会被改成新工作',async t=>{
+ const f=fixture(t),sent=f.call('send',{agent:'codex',text:'OPUS_DISPATCH：整理一份说明。'});await f.wait(sent.run);
+ const until=Date.now()+10000;let visible=[];
+ while(Date.now()<until){f.call('tasks',{sid:sent.sid});const h=f.call('history',{sid:sent.sid});visible=h.runs.flatMap(r=>r.events).filter(e=>e.t==='text'&&e.taskResult);if(visible.length)break;await new Promise(r=>setTimeout(r,100));}
+ assert.equal(visible.length,1);assert.match(visible[0].text,/原生前台已交付结果/);
+ const h=f.call('history',{sid:sent.sid});assert.equal(h.runs.flatMap(r=>r.events).filter(e=>e.t==='text'&&e.taskResult).length,1);
+ assert.equal(f.call('tasks',{sid:sent.sid}).tasks.length,1);
+ assert.ok(h.runs.flatMap(r=>r.events).filter(e=>e.t==='done').every(e=>e.model==='claude-opus-4.6'));
+});
+test('用户停止 Opus 会取消原生请求，保留已停止结果，不按超时派活或切 DeepSeek',async t=>{
+ const f=fixture(t,'hang'),sent=f.call('send',{agent:'codex',text:'你好'});
+ const until=Date.now()+5000;while(!f.rows(f.log).some(r=>r.method==='session/prompt')){assert.ok(Date.now()<until);await new Promise(r=>setTimeout(r,40));}
+ f.call('stop',{run:sent.run});const done=await f.wait(sent.run);assert.equal(done.events.find(e=>e.t==='done').stopped,true);
+ assert.equal(f.rows(f.gateway).length,0);assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
+});
