@@ -3,14 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {BASE,journal,readJ,readText,okId} from './vm-base.mjs';
 import {memoryDb,memoryBlocked,memoryBlockedText,memorySensitivity} from './vm-memory.mjs';
+import {retentionDeleted} from './vm-retention.mjs';
 
 const sess=sid=>path.join(BASE,'sessions',sid+'.json'),meta=run=>path.join(BASE,'runs',run+'.json'),raw=run=>path.join(BASE,'runs',run+'.jsonl');
-const normal=s=>s?.agent==='codex'&&!s.kind&&!s.dailyDate;
+const normal=s=>s?.agent==='codex'&&!s.kind&&!s.dailyDate&&!retentionDeleted(s.sid);
 const date=at=>new Date(Number(at)+8*3600e3).toISOString().slice(0,16).replace('T',' ');
+let ready=false;
 function schema(){
-  const d=memoryDb();
+  const d=memoryDb();if(ready)return d;
   d.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS recall_fts USING fts5(sid UNINDEXED,run UNINDEXED,event UNINDEXED,role UNINDEXED,at UNINDEXED,title UNINDEXED,text,tokenize='trigram');
     CREATE TABLE IF NOT EXISTS recall_sources (run TEXT PRIMARY KEY,sid TEXT NOT NULL,stamp TEXT NOT NULL);`);
+  d.prepare("INSERT INTO recall_fts(recall_fts,rank) VALUES('secure-delete',1)").run();
+  journal.defer(()=>{ready=true;});
   return d;
 }
 function events(run){return readText(raw(run)).split('\n').flatMap(line=>{try{const e=JSON.parse(line);return e.t==='user'||e.t==='text'?[e]:[];}catch{return [];}});}

@@ -55,10 +55,11 @@ export * from './vm-screen.mjs';
 export * from './vm-events.mjs';
 export * from './vm-models.mjs';
 export * from './vm-persona.mjs';
-import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, memoryPreferences,setMemoryPreferences,MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
+import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, memoryMeta,memoryPreferences,setMemoryPreferences,MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
 import {recallAll,turnGuidance,safeContextEvents} from './vm-context.mjs';
 export * from './vm-memory.mjs';
-import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
+import { memoryActivity, idleMemoryReview, memoryBusy } from './vm-memory-idle.mjs';
+import {retentionPolicy,retentionDeleted,retentionTitle,retentionPreview,setRetention,keepConversation,prepareRetentionDelete,finishRetentionDelete,retentionDue,retentionPending,purgeCodexIndexes} from './vm-retention.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
@@ -196,9 +197,10 @@ export async function pushAll(msg, delivery = {}) {
 }
 const NOTICE_DIR = () => path.join(BASE, 'outbox');
 function enqueueNotice(t, msg) {
+  if(t.parent&&retentionDeleted(t.parent))return null;
   const id = crypto.createHash('sha256').update(t.sid + ':' + taskVersion(t)).digest('hex').slice(0,32);
   mk(NOTICE_DIR()); const f = path.join(NOTICE_DIR(), id + '.json');
-  if (!fs.existsSync(f)) writeJ(f, { id, msg, state: 'pending', attempts: 0, nextAt: Date.now(), delivered: [], created: Date.now() });
+  if (!fs.existsSync(f)) writeJ(f, { id, parent:t.parent||null, msg, state: 'pending', attempts: 0, nextAt: Date.now(), delivered: [], created: Date.now() });
   return id;
 }
 async function deliverNotice(id) {
@@ -1167,11 +1169,11 @@ function taskIndexEntry(t){
 const taskLockHeld = () => process.argv[2]==='locked' && process.env.XIN_LOCK==='tasks';
 function listTasks() {
   const index=path.join(BASE,'tasks-index.json'),cached=readJ(index);
-  if(cached?.version===3 && Array.isArray(cached.tasks)) return cached.tasks.sort((a,b)=>a.no-b.no);
-  if(!taskLockHeld()){lockedCall('tasks','task_index',{});const fresh=readJ(index);if(fresh?.version===3&&Array.isArray(fresh.tasks))return fresh.tasks.sort((a,b)=>a.no-b.no);}
+  if(cached?.version===3 && Array.isArray(cached.tasks)) return cached.tasks.filter(t=>!retentionDeleted(t.sid)&&!retentionDeleted(t.parent)).sort((a,b)=>a.no-b.no);
+  if(!taskLockHeld()){lockedCall('tasks','task_index',{});const fresh=readJ(index);if(fresh?.version===3&&Array.isArray(fresh.tasks))return fresh.tasks.filter(t=>!retentionDeleted(t.sid)&&!retentionDeleted(t.parent)).sort((a,b)=>a.no-b.no);}
   let names=[];try{names=fs.readdirSync(SESS);}catch{return [];}
   names=[...new Set(names.concat(journal.stagedNames('sessions/').map(n=>n.slice('sessions/'.length))))];
-  const all=names.filter(f=>/^s[0-9a-z]+\.json$/.test(f)).map(f=>readJ(path.join(SESS,f))).filter(isTask).sort((a,b)=>a.no-b.no);
+  const all=names.filter(f=>/^s[0-9a-z]+\.json$/.test(f)).map(f=>readJ(path.join(SESS,f))).filter(t=>isTask(t)&&!retentionDeleted(t.sid)&&!retentionDeleted(t.parent)).sort((a,b)=>a.no-b.no);
   if(taskLockHeld()) {try{writeJ(index,{version:3,tasks:all.map(taskIndexEntry)});}catch{}}
   return all;
 }
@@ -1290,6 +1292,7 @@ function taskDir(no, title, want) {
 const overlaps = (a, b) => !!a && !!b && (a === b || a.startsWith(b + '/') || b.startsWith(a + '/'));
 // 派任务（在 tasks 锁里）：a = {parent, kind, title, goal, model, named, dir, files, after, minutes}
 function taskNew(a) {
+  if(a.parent&&retentionDeleted(a.parent))return {error:'no_session',msg:'原对话的原话已按保留规则清理'};
   const goal = String(a.goal || '').trim().slice(0, a.frontRun ? TEXT_MAX : 12000);
   if (!goal) return { error: 'empty', msg: '要写清楚让分身做什么（xin task new --title 标题 -- 要求，或者从标准输入给）' };
   const kind = a.daily ? 'daily' : TASK_KINDS.includes(a.kind) ? a.kind : 'code';
@@ -1598,13 +1601,39 @@ function ensureWatchdog() {
 }
 function ensureMemoryIdle() {
   if (journal.active) { journal.defer(ensureMemoryIdle); return; }
-  if (!(readText(CODEX_KEY()) || readText(HARNESS_KEY())).trim()) return;
+  if (!(readText(CODEX_KEY()) || readText(HARNESS_KEY())).trim()&&!retentionPolicy().enabled&&!retentionPending().length) return;
   mk(path.join(BASE, 'locks'));
   // Only a local child after real work completes. Never registered as a task, callback, alarm or lease.
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK'));
   const child = spawn('flock', ['-w','3','--close',path.join(BASE,'locks/memory-idle.lock'),process.execPath,SELF,'memory-idle'],
     {detached:true,stdio:'ignore',cwd:os.homedir(),env});
   child.on('error', () => {}); child.unref();
+}
+function clearRetentionNative(s,deadline=Date.now()+20000){
+  const id=s.agentSid;if(!id)return {ok:true};
+  if(!okAgentSid('codex',id)||!ownsAgentSession('codex',id))return {error:'unknown_native_owner'};
+  const homes=[CODEX_HOME()];
+  if(s.workspace?.home){
+    const expected=path.join(os.tmpdir(),'xin-task-'+s.sid,'home');
+    if(path.resolve(s.workspace.home)!==path.resolve(expected))return {error:'unknown_native_home'};
+    try{if(fs.realpathSync(expected)!==path.resolve(expected))return {error:'native_home_symlink'};homes.push(path.join(expected,'.codex'));}catch(e){if(e.code!=='ENOENT')return {error:'native_home_unavailable'};}
+  }
+  try{
+    for(const home of homes){
+      if(Date.now()>=deadline||memoryBusy())return {error:'interrupted'};
+      const logs=codexLogs(home).filter(l=>l.id===id.toLowerCase());
+      if(logs.length)spawnSync('codex',['delete','--force',id],{stdio:'ignore',timeout:Math.min(5000,Math.max(1,deadline-Date.now())),env:{...process.env,CODEX_HOME:home}});
+      for(const l of logs)try{fs.unlinkSync(l.file);}catch(e){if(e.code!=='ENOENT')throw e;}
+      purgeCodexIndexes(home,id);
+    }
+    return {ok:true};
+  }catch{return {error:'native_cleanup_pending'};}
+}
+function idleRetention(budget=20000){
+  const deadline=Date.now()+Math.max(0,Math.min(20000,budget)),quiet=()=>Date.now()<deadline&&!memoryBusy()&&Date.now()-(memoryMeta('idle_activity')?.at||0)>=45000;
+  if(!quiet())return;
+  for(const sid of retentionPending().slice(0,3)){if(!quiet())return;finishRetentionDelete(sid,s=>clearRetentionNative(s,deadline),quiet);}
+  for(const sid of retentionDue().slice(0,3)){if(!quiet())return;lockedCall(sid,'retention_purge',{sid,deadline});}
 }
 async function watchdog() {
   for (;;) {
@@ -1794,6 +1823,9 @@ function bgInfo(all) {
   return lease ? { bg, lease, version } : { bg, version };
 }
 const ops = {
+  retention_preview(){return retentionPreview();},
+  retention_set(a){const r=setRetention(a);if(r.ok&&r.enabled)ensureMemoryIdle();return r;},
+  retention_keep(a){return keepConversation(a);},
   memory_preferences(){return memoryPreferences();},
   memory_preferences_set(a){return setMemoryPreferences(a);},
   preview_asset(a){return runtime.previewAsset(BASE,a);},
@@ -1826,6 +1858,7 @@ const ops = {
     for (const sid of new Set(items.flatMap(it => it.evidence.map(e => e.sid)).filter(sid => okId(sid, 's')))) {
       const s = readJ(sessF(sid));
       if (s) titles[sid] = isTask(s) ? '后台任务：' + s.title : s.title || '';
+      else {const old=retentionTitle(sid);if(old){titles[sid]=old.title;for(const it of items)for(const e of it.evidence)if(e.sid===sid)e.deleted=true;}}
     }
     return { items, titles, types: MEMORY_TYPES, basis: MEMORY_BASIS };
   },
@@ -2100,7 +2133,7 @@ const ops = {
   },
   sessions() {
     mk(SESS);
-    const list = fs.readdirSync(SESS).filter(f => /^s[0-9a-z]+\.json$/.test(f)).map(f => readJ(path.join(SESS, f))).filter(s => s && !isTask(s));
+    const list = fs.readdirSync(SESS).filter(f => /^s[0-9a-z]+\.json$/.test(f)).map(f => readJ(path.join(SESS, f))).filter(s => s && !isTask(s)&&!retentionDeleted(s.sid));
     list.sort((x, y) => (y.updated || 0) - (x.updated || 0));
     // 没归档的、归档的各给最近 60 个（归档的多了也不会把正在用的挤出去）
     return { sessions: list.filter(s => !s.archived).slice(0, 60).concat(list.filter(s => s.archived).slice(0, 60)).map(summary) };
@@ -2147,6 +2180,7 @@ const ops = {
 };
 // 只在 tasks 锁里跑的（main 里分派）
 const iops = {
+  retention_purge(a){const r=prepareRetentionDelete(a.sid),deadline=Math.min(Number(a.deadline)||Date.now()+20000,Date.now()+20000);if(r.ok)journal.defer(()=>finishRetentionDelete(a.sid,s=>clearRetentionNative(s,deadline),()=>Date.now()<deadline&&!memoryBusy()));return r;},
   front_reply(a){const m=readJ(metaF(a.run));if(!m||m.task||m.stopped||m.ended)return {};if(m.reply!==undefined)return {already:true};m.reply=String(a.text||'').slice(0,TEXT_MAX);writeJ(metaF(a.run),m);if(m.reply)emit(a.run,{t:'text',text:m.reply});return {ok:true};},
   handoff_start:handoffStart,handoff_finish:handoffFinish,
   front_immediate:frontImmediate,
@@ -2183,12 +2217,14 @@ const iops = {
   notice_claim(a) {
     if (!/^[a-f0-9]{32}$/.test(a.id || '')) return {};
     const f = path.join(NOTICE_DIR(), a.id + '.json'), n = readJ(f);
+    if(n&&(retentionDeleted(n.parent)||/^\/#xin=s[0-9a-z]+$/.test(n.msg?.url||'')&&retentionDeleted(n.msg.url.slice(6))))return {};
     if (!n || n.state !== 'pending' || n.nextAt > Date.now() || n.claimedAt > Date.now()-30000) return {};
     n.claim = rid('n'); n.claimedAt = Date.now(); n.attempts++; writeJ(f,n); return { notice:n };
   },
   notice_done(a) {
     if (!/^[a-f0-9]{32}$/.test(a.id || '')) return {};
     const f = path.join(NOTICE_DIR(), a.id + '.json'), n = readJ(f);
+    if(n&&(retentionDeleted(n.parent)||/^\/#xin=s[0-9a-z]+$/.test(n.msg?.url||'')&&retentionDeleted(n.msg.url.slice(6))))return {};
     if (!n || n.claim !== a.claim) return {};
     const results = Array.isArray(a.results) ? a.results : [];
     n.delivered = [...new Set(n.delivered.concat(results.filter(r => r.viewed || r.status >= 200 && r.status < 300 || r.status===404 || r.status===410).map(r => r.recipient)))];
@@ -2482,7 +2518,7 @@ function main() {
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }
-  if (op === 'memory-idle') { idleMemoryReview().catch(() => {}); return; }
+  if (op === 'memory-idle') { const began=Date.now();idleMemoryReview().catch(() => {}).then(()=>{try{idleRetention(120000-(Date.now()-began));}catch{}}); return; }
   if (op === 'callback') { flushControllerEvent().catch(() => {}); return; }
   if (op === 'watchdog') { watchdog().catch(() => {}); return; }
   if (op === 'xin') { process.exitCode = xinCmd(process.argv.slice(3)); return; }
@@ -2494,6 +2530,8 @@ function main() {
   let args = {};
   try { const t = fs.readFileSync(0, 'utf8').trim(); if (t) args = JSON.parse(t); } catch { args = {}; }
   if (!args || typeof args !== 'object' || Array.isArray(args)) args = {};
+  const ownerSid=okId(args.sid,'s')?args.sid:okId(args.run,'r')?readJ(metaF(args.run))?.sid:null;
+  if(ownerSid&&retentionDeleted(ownerSid)&&!['retention_preview','retention_set'].includes(op)){process.stdout.write(JSON.stringify({error:'no_session',msg:'这段对话的原话已按保留规则清理，记忆中的引文仍保留。'}));return;}
   if(locked&&!process.env.XIN_LOCK){
     const sid=args.sid||readJ(metaF(args.run||''))?.sid;
     process.env.XIN_LOCK=['send','session_patch','run_complete','continue_steers'].includes(op)&&sid&&!isTask(readJ(sessF(sid)))?sid:'tasks';

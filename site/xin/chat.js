@@ -655,6 +655,8 @@
       call('memory_preferences_set',{followups:on},60000).then(function(d){if(d.error)throw Error(d.msg||'没改成');follow.set(d.followups);follow.btn.disabled=false;follow.note('');}).catch(function(){follow.btn.disabled=false;follow.note('没改成，请稍后重试');});
     });
     box.appendChild(follow.row);
+    var retain=h('button','xc-link xc-retention','聊天记录保留 · 先看清理清单');retain.type='button';
+    retain.addEventListener('click',function(){setDrawer(false);loadRetention();});box.appendChild(retain);
     var push = toggleRow('xc-push', '做完提醒', '关掉网页或切到别的应用时，小芯做完了发一条通知');
     box.appendChild(push.row);
     pushSetup(push);
@@ -1018,17 +1020,49 @@
       section('隐私（不主动提起）', items.filter(function (it) { return it.status === 'private'; }), 'priv');
     }, function (e) { if (S.view !== 'mem') return; sessEl.innerHTML = ''; sessEl.appendChild(backBtn(true)); sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
   }
+  function loadRetention(note){
+    S.view='retention';render();sessEl.innerHTML='';sessEl.appendChild(h('p','xc-hint','正在列出清理范围…'));
+    call('retention_preview',{},60000).then(function(d){
+      if(S.view!=='retention')return;if(d.error)throw Error(d.msg||'暂时列不出清单');
+      sessEl.innerHTML='';sessEl.appendChild(backBtn(true));
+      sessEl.appendChild(h('h3','xm-h','原始聊天保留'));
+      sessEl.appendChild(h('p','xc-hint xr-status',d.enabled?'已开启：默认对话整理过且 30 天不再活动，才清理原话。':'尚未开启，不会自动删除原话。先看清单，再由你确认。'));
+      var impact=h('ul','xc-hint');(d.impact||[]).forEach(function(t){impact.appendChild(h('li','',t));});sessEl.appendChild(impact);
+      var msg=h('p','xm-msg',note||'');msg.setAttribute('role','status');sessEl.appendChild(msg);
+      function save(op,args,button){button.disabled=true;return call(op,args,60000).then(function(r){if(r.error)throw Error(r.msg||'没改成');loadRetention('已保存');}).catch(function(e){button.disabled=false;msg.textContent=e.message;});}
+      function item(x){
+        var li=h('li','xm-it');li.appendChild(h('p','xm-txt',x.title));
+        li.appendChild(h('p','xm-meta','最后活动：'+new Date(x.lastActivity).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})+' · '+x.runs+' 轮'+(x.tasks?' · '+x.tasks+' 项已结束任务':'')+(x.reasonText?' · '+x.reasonText:'')));
+        var b=h('button','xm-b xr-keep',x.keep?'取消长期保留':'长期保留');b.type='button';
+        b.addEventListener('click',function(){if(x.keep&&!b.dataset.confirmed){b.dataset.confirmed='1';b.textContent='确认取消长期保留？';msg.textContent='取消后，这段对话也会按已确认的 30 天规则处理。';return;}save('retention_keep',{sid:x.sid,keep:!x.keep},b);});
+        li.appendChild(b);return li;
+      }
+      var eligible=d.eligible||[];sessEl.appendChild(h('h3','xm-h','本次会清理（'+eligible.length+'）'));
+      if(!eligible.length)sessEl.appendChild(h('p','xc-hint','当前没有符合条件的对话；开启后只处理未来符合上述规则的默认对话。'));
+      var ul=h('ul','xm-list xr-list');eligible.forEach(function(x){ul.appendChild(item(x));});sessEl.appendChild(ul);
+      if(d.enabled){var off=h('button','xm-b xr-off','关闭后续自动清理');off.type='button';off.addEventListener('click',function(){save('retention_set',{enabled:false},off);});sessEl.appendChild(off);}
+      else{
+        var label=h('label','xr-confirm'),ck=h('input');ck.type='checkbox';ck.setAttribute('aria-label','我已查看清单并同意以上删除范围');
+        label.appendChild(ck);label.appendChild(h('span','','我已查看清单，理解原话无法恢复，同意这次清理及以后的 30 天规则。'));sessEl.appendChild(label);
+        var on=h('button','xc-btn xr-on','确认清单并开启 30 天清理');on.type='button';on.disabled=true;ck.addEventListener('change',function(){on.disabled=!ck.checked;});
+        on.addEventListener('click',function(){if(ck.checked)save('retention_set',{enabled:true,token:d.token,confirm:'processed-chat-30-days'},on);});sessEl.appendChild(on);
+      }
+      var other=h('details','xr-other');other.appendChild(h('summary','xc-hint','暂不清理（'+(d.excluded||[]).length+'）'));
+      var rest=h('ul','xm-list');(d.excluded||[]).forEach(function(x){rest.appendChild(item(x));});other.appendChild(rest);sessEl.appendChild(other);
+      if((d.pending||[]).length)sessEl.appendChild(h('p','xc-hint','有 '+d.pending.length+' 段已开始清理的副本待完成，会在空闲时继续；关闭规则会停止后续新清理。'));
+    }).catch(function(e){if(S.view!=='retention')return;sessEl.innerHTML='';sessEl.appendChild(backBtn(true));sessEl.appendChild(h('p','xc-hint','没能列出清单：'+e.message));});
+  }
   function memItem(it, titles, msg) {
     var li = h('li', 'xm-it'), txt = h('p', 'xm-txt', it.content), meta = h('p', 'xm-meta');
     li.appendChild(txt);
     meta.appendChild(h('span', 'xm-tag', MEM_BASIS[it.basis] || it.basis));
     if (it.status === 'pending' && it.type !== 'unsorted') meta.appendChild(h('span', 'xm-tag', MEM_TYPES[it.type] || it.type));
     var ev = (it.evidence || [])[0];
-    if (ev && ev.sid && Object.prototype.hasOwnProperty.call(titles, ev.sid) && titles[ev.sid].indexOf('后台任务：') !== 0) {
+    if (ev && ev.sid && !ev.deleted && Object.prototype.hasOwnProperty.call(titles, ev.sid) && titles[ev.sid].indexOf('后台任务：') !== 0) {
       var a = h('button', 'xc-link xm-src', '来自「' + (titles[ev.sid] || '一段对话') + '」'); a.type = 'button';
       a.addEventListener('click', function () { openSession(ev.sid); });
       meta.appendChild(a);
-    } else if (ev) meta.appendChild(h('span', 'xm-when', when(ev.at) + (ev.sid ? (titles[ev.sid] ? ' · ' + titles[ev.sid] : ' · 原对话已删除') : '')));
+    } else if (ev) meta.appendChild(h('span', 'xm-when', when(ev.at) + (ev.sid ? (titles[ev.sid] ? ' · ' + titles[ev.sid]+(ev.deleted?'（原话已清理，保留引文）':'') : ' · 原对话已删除') : '')));
     else meta.appendChild(h('span', 'xm-when', when(it.updated)));
     li.appendChild(meta);
     if (ev && ev.quote && ev.quote !== it.content) li.appendChild(h('p', 'xm-quote', '“' + ev.quote.slice(0, 120) + (ev.quote.length > 120 ? '…' : '') + '”'));

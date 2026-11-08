@@ -44,6 +44,9 @@ async def main():
             await page.locator('.xc-login input[name=pw]').fill(PASSWORD, timeout=30000)
             await page.locator('.xc-login button').click()
             await page.wait_for_function('LimingXinChat.state.authed', timeout=30000)
+            # Read-only inventory: never enable or confirm retention from an automated deployment.
+            inventory=await call('retention_preview',{})
+            print('RETENTION_PREVIEW_COUNTS '+json.dumps({'enabled':inventory['enabled'],'eligible':len(inventory.get('eligible',[])),'pending':len(inventory.get('pending',[]))}),flush=True)
             # The test namespace and result are unique to this run. No user project is touched.
             request = ('这是发布后的真实联调，使用默认后台安排，只派一个后台任务并立即回复，不要等待它完成。使用 xin task new --kind research '
                        '--title ' + marker + ' --dir ' + directory + ' -- 后台测试：先执行 sleep 45，再用 printf 把精确文本 ' + marker +

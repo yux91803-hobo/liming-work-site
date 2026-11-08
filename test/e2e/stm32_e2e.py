@@ -155,6 +155,21 @@ async def xin_mock(pg, authed=False, live=None):
         op, args = body.get('op'), body.get('args') or {}
         st['ops'].append(op)
         if op == 'status': return await ok({'ok': True, 'data': {'name': 'li', 'state': 'running'}})
+        if op == 'retention_preview':
+            return await ok({'ok': True, 'data': st.get('retention') or {'enabled': False, 'days': 30, 'eligible': [], 'excluded': [], 'pending': [], 'token': 'preview-token', 'impact': ['清理已整理且 30 天不再活动的默认对话原话，保留记忆短引文和工程，天启不参与。']}})
+        if op == 'retention_set':
+            st['retention_args'] = args
+            st.setdefault('retention', {'eligible': [], 'excluded': [], 'pending': [], 'token': 'preview-token', 'impact': []})['enabled'] = args['enabled']
+            return await ok({'ok': True, 'data': {'ok': True, 'enabled': args['enabled']}})
+        if op == 'retention_keep':
+            st['retention_keep'] = args
+            d = st['retention']
+            for group in ('eligible', 'excluded'):
+                for it in list(d[group]):
+                    if it['sid'] == args['sid']:
+                        d[group].remove(it);it['keep'] = args['keep'];it['reasonText'] = '已长期保留' if args['keep'] else '最近 30 天内仍有活动';d['excluded'].append(it)
+                        return await ok({'ok': True, 'data': {'ok': True}})
+            return await ok({'ok': True, 'data': {'error': 'not_found'}})
         if op == 'wake': return await ok({'ok': True, 'data': {'state': 'running', 'action': 'none'}})
         if op == 'memory_preferences': return await ok({'ok': True, 'data': {'followups': st.get('followups', True)}})
         if op == 'memory_preferences_set':
