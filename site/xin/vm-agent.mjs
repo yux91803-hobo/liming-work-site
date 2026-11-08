@@ -14,7 +14,8 @@
      run <run>                     后台真正跑 AI 的进程（send 起的），把输出整理成事件写进 runs/<run>.jsonl
      xin <动作> [参数]              给 AI 用的命令：让网页上的小芯做动作（xin dance、xin say 你好）；xin remember 一句话 记到小芯的记事本里；
                                    xin move …（编新动作、做新动作）；xin bond +1 理由（好感度）
-     memory   {}                   读小芯的记事本（长期记忆）；memory_set {text} 整本改写（网站上「小芯的记事本」里改）
+     memory_list {} / memory_add {content, type} / memory_update {id, content?, type?, private?, confirm?} / memory_forget {id}：小芯的记忆（网站上「小芯的记忆」）
+     memory   {}                   以前的记事本 memory.md（只读兼容；第一次用记忆库时已导入成待确认）
      daily    {force?}             按每日任务清单开一轮（网站后台每天定时调；今天做过就跳过，force 再做一遍）
      daily_get / daily_set {text}  读 / 改每日任务清单
      greet    {}                   下次见面的开场白（xin next 写的）；顺便在电脑刚睡醒时预热一下模型网关
@@ -54,6 +55,8 @@ export * from './vm-screen.mjs';
 export * from './vm-events.mjs';
 export * from './vm-models.mjs';
 export * from './vm-persona.mjs';
+import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
+export * from './vm-memory.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
@@ -623,7 +626,7 @@ function runner(run) {
   bridgeTm = setInterval(async () => {
     try {
       runtime.drainBridge(sess.workspace, a => {
-        if (a.op === 'remember') return '记下了：' + remember(a.text);
+        if (a.op === 'remember') { const r = addMemory({ content: a.text, source: 'worker', evidence: { sid: meta.sid, run } }); return r.error ? r.msg : '已记成待确认的项目记录：' + r.item.content; }
         if (a.op === 'ask') { const r = lockedCall('tasks', 'task_ask', { sid: meta.sid, question: a.text }); return r.error ? r.msg : '已记下问题，请结束本轮，等待用户回复。'; }
         return '不支持这个操作';
       });
@@ -1735,6 +1738,24 @@ const ops = {
     const text = readMemory();
     return { text, path: MEM_FILE(), size: Buffer.byteLength(text) };
   },
+  // 小芯的记忆（vm-memory.mjs）：网页「小芯的记忆」看、加、确认、改、设隐私、忘掉
+  memory_list() {
+    const items = listMemory(), titles = {};
+    for (const sid of new Set(items.flatMap(it => it.evidence.map(e => e.sid)).filter(sid => okId(sid, 's')))) {
+      const s = readJ(sessF(sid));
+      if (s) titles[sid] = isTask(s) ? '后台任务：' + s.title : s.title || '';
+    }
+    return { items, titles, types: MEMORY_TYPES, basis: MEMORY_BASIS };
+  },
+  memory_add(a) { const r = addMemory({ content: a.content, type: a.type, source: 'user' }); return r.error ? r : { ok: true, item: r.item, duplicate: !!r.duplicate }; },
+  memory_update(a) {
+    if (!/^m[0-9a-z]{6,40}$/.test(a.id || '')) return { error: 'bad_id', msg: '记忆编号不对' };
+    return updateMemory(a.id, { content: a.content, type: a.type, private: typeof a.private === 'boolean' ? a.private : undefined, confirm: !!a.confirm }, 'user');
+  },
+  memory_forget(a) {
+    if (!/^m[0-9a-z]{6,40}$/.test(a.id || '')) return { error: 'bad_id', msg: '记忆编号不对' };
+    return forgetMemory(a.id, 'user');
+  },
   memory_set(a) {
     const text = String(a.text == null ? '' : a.text);
     if (text.length > 60000) return { error: 'too_long', msg: '记事本太长了' };
@@ -2302,11 +2323,24 @@ function companionCmd(argv, run) {
     if (r.delta && live) emit(run, Object.assign({ t: 'bond', d: r.delta, why: why.slice(0, 40) }, bondInfo()));
     return { code: 0, text: r.delta ? '好感度 ' + (r.delta > 0 ? '+' : '') + r.delta + '，现在 ' + r.score + '（' + bondLevel(r.score).name + '）' : '今天的好感度已经加减够多了，这次不算（现在 ' + r.score + '）' };
   }
-  if (act === 'remember') {
-    const t = remember(arg);
-    if (!t) return { code: 2, text: '用法：xin remember 要记住的一句话' };
-    if (live) emit(run, { t: 'mem', text: t });
-    return { code: 0, text: '记到记事本里了：' + t };
+  if (act === 'remember' || act === 'forget') {
+    const meta = live ? readJ(metaF(run)) : null;
+    // Who is remembering decides how much it counts: the user's own chat, the daily routine, or a background worker.
+    const source = meta && meta.kind === 'daily' ? 'daily' : meta && meta.task ? 'worker' : 'chat';
+    if (act === 'forget') {
+      const r = forgetByKeyword(arg, source);
+      return r.ok ? { code: 0, text: '忘掉了：' + r.text } : { code: r.error === 'empty' ? 2 : 1, text: r.error === 'empty' ? '用法：xin forget 关键词' : r.msg };
+    }
+    const o = { type: source === 'daily' ? 'procedure' : 'profile', basis: 'observed' }, words = [];
+    for (let i = 1; i < argv.length; i++) {
+      if ((argv[i] === '--type' || argv[i] === '--basis') && argv[i + 1]) o[argv[i].slice(2)] = argv[++i]; else words.push(argv[i]);
+    }
+    const quote = meta && source === 'chat' ? ((events(run).find(e => e.t === 'user') || {}).text || '') : '';
+    const r = addMemory({ content: words.join(' '), type: o.type, basis: o.basis, source, evidence: meta ? { sid: meta.sid, run, quote } : null });
+    if (r.error) return { code: r.error === 'empty' ? 2 : 1, text: r.error === 'empty' ? '用法：xin remember [--basis stated|observed|inferred] [--type profile|learning|project|procedure|self] 一句话' : r.msg };
+    const it = r.item;
+    if (live && it.status === 'active') emit(run, { t: 'mem', text: it.content });
+    return { code: 0, text: it.status === 'active' ? '记住了：' + it.content : it.status === 'private' ? '这是个人敏感的事，只记成隐私、不主动用：' + it.content : '先记成待确认，用户确认后才当真：' + it.content };
   }
   if (!ACTS[act]) return null;
   if (!live) return { code: 1, text: '现在没有在和网页聊天，小芯看不到' };
@@ -2334,7 +2368,7 @@ function xinCmd(argv) {
   }
   const c = act && act !== '-h' && act !== '--help' ? companionCmd(argv, run) : null;
   if (c) { console.log(c.text); return c.code; }
-  console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记事本里（xin remember 一句话）\n  next     下次见面的开场白（xin next 一句话）\n  move     编新动作、做新动作（xin move help）\n  bond     好感度（xin bond +1 理由）\n  task     后台任务：派分身、看进度、补充、停（xin task help）');
+  console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记忆里（xin remember [--basis stated|observed|inferred] [--type 类型] 一句话）\n  forget   忘掉记忆里的一件事（xin forget 关键词）\n  next     下次见面的开场白（xin next 一句话）\n  move     编新动作、做新动作（xin move help）\n  bond     好感度（xin bond +1 理由）\n  task     后台任务：派分身、看进度、补充、停（xin task help）');
   return act && act !== '-h' && act !== '--help' ? 2 : 0;
 }
 
@@ -2348,7 +2382,7 @@ function main() {
     const run=process.argv[3],m=readJ(metaF(run)),t=m&&readJ(sessF(m.sid));
     if(!m?.task||!t?.workspace||m.model!==runtime.AGY_MODEL){process.exitCode=1;return;}
     const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
-    runtime.antigravityWork(t,{clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember})
+    runtime.antigravityWork(t,{clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}})})
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }
@@ -2399,7 +2433,7 @@ function transactionalOp(op,args,fn){
     command={id:'send:'+args.clientId,digest:inputDigest({sid:sid||null,agent:agent||null,text:text||'',effort:effort||null,model:model||null,context:context||'',ctxLabel:ctxLabel||'',files:files||[]})};
   }else if(['task_tell','task_stop'].includes(op)&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
     command={id:op+':'+args.clientId,digest:inputDigest(args)};
-  }else if(op==='front_action'&&(['remember','task','bond','next','move'].includes(args.argv?.[1])||Object.hasOwn(ACTS,args.argv?.[1]||''))&&!['list','show'].includes(args.argv?.[2])){
+  }else if(op==='front_action'&&(['remember','forget','task','bond','next','move'].includes(args.argv?.[1])||Object.hasOwn(ACTS,args.argv?.[1]||''))&&!['list','show'].includes(args.argv?.[2])){
     command={id:'front:'+args.run+':'+inputDigest(args.argv).slice(0,20),digest:inputDigest({run:args.run,argv:args.argv})};
   }
   return journal.atomic(fn,command);

@@ -401,31 +401,32 @@ test('Codex 每一轮都带小芯的设定（developer_instructions），续接�
   assert.ok(t2.includes('--dangerously-bypass-approvals-and-sandbox') && !t2.includes('--sandbox'));
 });
 
-test('记事本：remember 记一条（带日期、去掉换行），没有文件时先写标题', async () => {
-  const { remember, readMemory, MEM_FILE } = await load('../site/xin/vm-agent.mjs');
-  try { fs.unlinkSync(MEM_FILE()); } catch (e) {}
+test('记忆：remember 去掉换行；用户明确说的马上生效，观察和推测先待确认；同样的内容不重复记', async () => {
+  const { remember, listMemory } = await load('../site/xin/vm-agent.mjs');
   assert.strictEqual(remember('  '), '');
-  assert.strictEqual(remember('用户叫小李\n在学定时器'), '用户叫小李 在学定时器');
+  assert.strictEqual(remember('用户叫小李\n在学定时器', { basis: 'stated' }), '用户叫小李 在学定时器');
   remember('喜欢先看代码');
-  const m = readMemory();
-  assert.match(m, /^# 小芯的记事本\n\n- \d{4}-\d{2}-\d{2}：用户叫小李 在学定时器\n- \d{4}-\d{2}-\d{2}：喜欢先看代码\n$/);
+  remember('用户叫小李 在学定时器', { basis: 'stated' });
+  const items = listMemory().filter(i => /小李|先看代码/.test(i.content)).map(i => [i.content, i.status, i.basis]).sort();
+  assert.deepStrictEqual(items, [['喜欢先看代码', 'pending', 'observed'], ['用户叫小李 在学定时器', 'active', 'stated']]);
 });
 
-test('记事本：每一轮都放进设定里；空的写「还是空的」；太长截断并提醒整理', async () => {
+test('记忆：设定里带记忆库的内容；空的写「还是空的」；太长截断并提醒整理；教它分清依据', async () => {
   const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
-  assert.ok(systemPrompt('- 用户叫小李').includes('<<<记事本\n- 用户叫小李\n记事本>>>'));
+  assert.ok(systemPrompt('- 用户叫小李').includes('<<<记忆\n- 用户叫小李\n记忆>>>'));
   assert.ok(systemPrompt('').includes('（还是空的）'));
   const long = systemPrompt('x'.repeat(20000));
   assert.ok(long.includes('该整理了') && long.length < 12000);
-  assert.ok(systemPrompt('').includes('xin remember'));
+  for (const p of [systemPrompt(''), systemPrompt('', { tasks: true })]) assert.ok(p.includes('xin remember') && p.includes('stated') && p.includes('inferred') && p.includes('xin') && p.includes('forget'));
 });
 
-test('记事本：Codex 每轮的 developer_instructions 里带着当前记事本', async () => {
+test('记忆：Codex 每轮的 developer_instructions 里带着确认过的记忆', async () => {
   const { agentArgs, remember } = await load('../site/xin/vm-agent.mjs');
-  remember('最近在调 I2C');
+  remember('最近在调 I2C', { basis: 'stated', type: 'project' });
+  remember('也许讨厌长代码', { basis: 'inferred' });
   const [, a] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '你好', '');
-  const di = a.find(x => x.startsWith('developer_instructions='));
-  assert.ok(JSON.parse(di.slice('developer_instructions='.length)).includes('最近在调 I2C'));
+  const dev = JSON.parse(a.find(x => x.startsWith('developer_instructions=')).slice('developer_instructions='.length));
+  assert.ok(dev.includes('最近在调 I2C') && !dev.includes('也许讨厌长代码'), '只带确认过的，推测不当成事实');
 });
 
 test('身份：设定写明以它为准；每句后面悄悄附提醒（历史里不显示）', async () => {

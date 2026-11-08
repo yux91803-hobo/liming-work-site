@@ -422,6 +422,33 @@
 .xc-memrow .xc-btn{padding:0 22px}
 .xc-btn2{background:none;border:1px solid var(--line-2);color:var(--ink);font-weight:400}
 .xc-dailyst{margin:6px 0 0;font-size:12.5px;color:var(--ink-2)}
+/* 小芯的记忆：一条一张卡片；待确认的有陶土色左边线，隐私的淡一些 */
+.xm-add{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 2px}
+.xm-in{flex:1 1 220px;min-width:0;height:44px;padding:0 12px;border:1px solid var(--line-2);border-radius:12px !important;background:var(--bg);color:var(--ink);font-size:14px;outline:none}
+.xm-in:focus,.xm-sel:focus,.xm-edit:focus{border-color:var(--clay)}
+.xm-sel{flex:none;height:44px;padding:0 8px;border:1px solid var(--line-2);border-radius:12px !important;background:var(--bg);color:var(--ink);font-size:14px}
+.xm-add .xc-btn{flex:none;padding:0 20px}
+@media (max-width:480px){.xm-in{flex-basis:100%}.xm-sel{flex:1 1 0}.xm-add .xc-btn{flex:1 1 0}}
+@media (pointer:coarse){.xm-in,.xm-sel,.xm-edit{font-size:16px}}
+.xm-msg{min-height:1.2em;margin:4px 0 8px;font-size:12.5px;color:var(--ink-2)}
+.xm-sec{margin:14px 0 0}
+.xm-h{margin:0 0 6px;font-size:13px;font-weight:600;color:var(--ink-2)}
+.xm-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.xm-it{padding:10px 12px;border:1px solid var(--line);border-radius:12px !important;background:var(--panel)}
+.xm-sec.pend .xm-it{border-left:3px solid var(--clay)}
+.xm-sec.priv .xm-it{opacity:.8}
+.xm-txt{margin:0;font-size:14px;line-height:1.55;color:var(--ink);overflow-wrap:anywhere}
+.xm-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:6px 0 0;font-size:12px;color:var(--ink-3)}
+.xm-tag{padding:1px 7px;border-radius:999px !important;background:var(--sunk);color:var(--ink-2)}
+.xm-meta .xm-src{display:inline;margin:0;padding:0;font-size:12px;line-height:inherit;text-align:left;color:var(--ink-2)}
+.xm-quote{margin:6px 0 0;padding-left:8px;border-left:2px solid var(--line-2);font-size:12.5px;line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere}
+.xm-acts{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0}
+.xm-b{min-height:32px;padding:0 12px;border:1px solid var(--line-2);border-radius:999px !important;background:none;color:var(--ink);font-size:13px}
+.xm-b.ok{border-color:var(--clay);color:var(--clay)}
+.xm-b.bad.sure{border-color:#c0473a;background:#c0473a;color:#fff}
+.xm-b:disabled{opacity:.5}
+@media (hover:hover){.xm-b:hover{background:var(--sunk)}.xm-b.bad.sure:hover{background:#a83a2f}}
+.xm-edit{display:block;width:100%;min-height:72px;margin:0;padding:8px 10px;border:1px solid var(--line-2);border-radius:8px !important;background:var(--bg);color:var(--ink);font:14px/1.55 var(--sans);resize:vertical;outline:none}
 .xc-inl{display:inline;margin:0;padding:0 2px}
 
 /* ---------- 小芯的屏幕：全屏看它的电脑桌面 ---------- */

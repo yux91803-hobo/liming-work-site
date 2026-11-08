@@ -3,7 +3,7 @@
    点气泡或输入框上的「展开」才打开这个面板看全文和历史。地址后面加 #xin 直接打开面板。没登录时先在面板里输密码。
    接口见 src/xin.js；AI 每一步（说话、执行命令、xin 动作）都整理成事件，这里一边轮询一边画出来，同时让小芯跟着动：
    AI 在思考 → 小芯坐在电脑前挠头；在执行命令 → 敲代码；xin 命令 → 照做；做完 → 开心，失败 → 难过。
-   对话列表里还有：小芯的记事本、每日任务、小芯的文件（它电脑里 /data/workspace 的文件，能预览、下载）；每个对话能改名、删除。
+   对话列表里还有：小芯的记忆、每日任务、小芯的文件（它电脑里 /data/workspace 的文件，能预览、下载）；每个对话能改名、删除。
    回答里出现的 /data/workspace/… 路径点一下就打开那个文件。
    聊天区像聊天软件：小芯在左边（像素头像）、你在右边；它在电脑上执行的命令不显示，干活时只冒一个「正在输入」的气泡和用时；代码上色。
    标题栏的「屏幕」：全屏看小芯的电脑桌面（桌面上有个终端实时滚动它在干什么），能「观看」也能「接管」。
@@ -100,7 +100,7 @@
       '<div class="xc-st" role="status" aria-live="polite" hidden></div>' +
       '<div class="xc-body"><div class="xc-msgs" aria-live="polite"></div></div>' +
       '<div class="xc-sess" hidden></div>' +
-      // 侧边栏：对话列表、记事本 / 每日任务 / 文件、好感度、设置。从左边滑出来，盖在聊天上面
+      // 侧边栏：对话列表、小芯的记忆 / 每日任务 / 文件、好感度、设置。从左边滑出来，盖在聊天上面
       '<div class="xc-scrim" aria-hidden="true"></div>' +
       '<aside class="xc-drawer" aria-label="对话列表"><div class="xc-dr"></div></aside>' +
       '<form class="xc-login" hidden>' +
@@ -384,7 +384,7 @@
     open();
   }
   /* ---------- 侧边栏 ----------
-     上面：小芯和好感度、「新对话」；中间：记事本 / 每日任务 / 小芯的文件三个入口，下面是最近的对话；最下面：设置（点开）、退出登录。
+     上面：小芯和好感度、「新对话」；中间：小芯的记忆 / 每日任务 / 小芯的文件三个入口，下面是最近的对话；最下面：设置（点开）、退出登录。
      点了对话或入口，侧边栏收起来；入口打开的页面左上角「← 返回」回到聊天并重新拉开侧边栏。 */
   var ICON = {
     mem: '<path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6zM6 3v18M9 8h6M9 12h6"/>',
@@ -405,7 +405,7 @@
     root.querySelector('.xc-drawer').setAttribute('aria-hidden', on ? 'false' : 'true');
     if (on) { loadSessions(); var f = drawerEl.querySelector('.xc-dr-new'); if (f && !touch) setTimeout(function () { f.focus(); }, 60); }
   }
-  // 从侧边栏打开一个页面（记事本 / 每日任务 / 文件）
+  // 从侧边栏打开一个页面（小芯的记忆 / 每日任务 / 文件）
   function fromDrawer(fn) { return function () { setDrawer(false); fn(); }; }
   // 页面左上角的「← 返回」：回到聊天，拉开侧边栏（从侧边栏进来的）
   function backBtn(toDrawer) {
@@ -436,7 +436,7 @@
       b.innerHTML = svgIcon(icon) + '<span></span>' + svgIcon('chev');
       b.querySelector('span').textContent = label; b.addEventListener('click', fromDrawer(fn)); nav.appendChild(b);
     };
-    item('', 'mem', '小芯的记事本', loadMemory);
+    item('', 'mem', '小芯的记忆', function () { loadMemory(); });
     item('xc-dailyb', 'daily', '每日任务', loadDaily);
     item('xc-tasksb', 'gear', '我在做的事', loadTasksView);
     item('xc-filesb', 'files', '小芯的文件', function () { loadFiles(WORK, 'sess'); });
@@ -930,7 +930,6 @@
     }).catch(function (e) { if (S.view !== 'tasks') return; sessEl.innerHTML = ''; sessEl.appendChild(backBtn(true)); sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
   }
 
-  /* ---------- 小芯的记事本：它的长期记忆，能看能改 ---------- */
   /* ---------- 每日任务：网站后台每天定时叫醒小芯的电脑，让它按这份清单做一遍 ---------- */
   function loadDaily() {
     S.view = 'daily'; render();
@@ -965,24 +964,98 @@
       row.appendChild(save); row.appendChild(now); row.appendChild(msg); sessEl.appendChild(row);
     }, function (e) { sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
   }
-  function loadMemory() {
+  /* ---------- 小芯的记忆：它记住的关于你、你的学习和一起做的事。看出处，确认、改、设隐私、忘掉 ----------
+     只有你说过或确认过的才当真；它观察到的、猜的、后台任务记的和以前记事本里的先放在「待确认」。 */
+  var MEM_TYPES = { profile: '关于你', learning: '学习', project: '在做的事', procedure: '做事方法', self: '小芯自己', unsorted: '旧记事本' };
+  var MEM_BASIS = { stated: '你说的', observed: '它观察到的', inferred: '它猜的', legacy: '以前的记事本' };
+  function loadMemory(note) {
     S.view = 'mem'; render();
     sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '正在读取…'));
-    call('memory', {}, 60000).then(function (d) {
+    call('memory_list', {}, 60000).then(function (d) {
+      if (S.view !== 'mem') return;
       sessEl.innerHTML = '';
       sessEl.appendChild(backBtn(true));
-      sessEl.appendChild(h('p', 'xc-hint', '小芯每次聊天都会看这本记事本，聊天时了解到值得记住的事会自己记一笔，乱了也会自己整理。你可以直接改，或者在聊天里说「记住……」「忘掉……」。'));
-      var ta = h('textarea', 'xc-memt'); ta.value = d.text || ''; ta.placeholder = '还是空的'; ta.setAttribute('aria-label', '小芯的记事本');
-      sessEl.appendChild(ta);
-      var row = h('div', 'xc-memrow'), save = h('button', 'xc-btn', '保存'), msg = h('span', 'xc-hint', '');
-      save.type = 'button';
-      save.addEventListener('click', function () {
-        save.disabled = true; msg.textContent = '正在保存…';
-        call('memory_set', { text: ta.value }, 60000).then(function () { msg.textContent = '存好了'; save.disabled = false; var x = xin(); if (x) x.say('记事本改好啦', 2500); },
-          function (e) { msg.textContent = '没存上：' + e.message; save.disabled = false; });
+      sessEl.appendChild(h('p', 'xc-hint', '小芯记住的关于你、你的学习和你们一起做的事。只有你说过或确认过的才当真；它观察到的、猜的和以前记事本里的，先放在「待确认」。点出处能回到当时的对话。'));
+      var add = h('form', 'xm-add'), inp = h('input', 'xm-in'), sel = h('select', 'xm-sel'), btn = h('button', 'xc-btn', '记住');
+      inp.type = 'text'; inp.maxLength = 300; inp.placeholder = '让小芯记住…（比如：讲代码先给结论）'; inp.setAttribute('aria-label', '让小芯记住的事');
+      sel.setAttribute('aria-label', '类型');
+      ['profile', 'learning', 'project', 'self'].forEach(function (k) { var o = h('option', '', MEM_TYPES[k]); o.value = k; sel.appendChild(o); });
+      btn.type = 'submit';
+      add.appendChild(inp); add.appendChild(sel); add.appendChild(btn);
+      var msg = h('p', 'xm-msg', note || ''); msg.setAttribute('role', 'status');
+      add.addEventListener('submit', function (e) {
+        e.preventDefault();
+        if (!inp.value.trim()) { inp.focus(); return; }
+        btn.disabled = true; msg.textContent = '正在记…';
+        call('memory_add', { content: inp.value, type: sel.value }, 60000).then(function (r) {
+          if (r && r.error) { btn.disabled = false; msg.textContent = r.msg || '没记上'; return; }
+          var x = xin(); if (x) x.say('记住啦～', 2500);
+          loadMemory(r && r.duplicate ? '这件事已经记着了' : '记住了');
+        }, function (e2) { btn.disabled = false; msg.textContent = '没记上：' + e2.message; });
       });
-      row.appendChild(save); row.appendChild(msg); sessEl.appendChild(row);
-    }, function (e) { sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
+      sessEl.appendChild(add); sessEl.appendChild(msg);
+      var items = d.items || [], titles = d.titles || {};
+      if (!items.length) sessEl.appendChild(h('p', 'xc-hint xm-empty', '还没有记住什么。聊天时你说「记住……」，或者在上面直接写。'));
+      var section = function (title, list, cls) {
+        if (!list.length) return;
+        var sec = h('section', 'xm-sec' + (cls ? ' ' + cls : ''));
+        sec.appendChild(h('h3', 'xm-h', title + '（' + list.length + '）'));
+        var ul = h('ul', 'xm-list');
+        list.forEach(function (it) { ul.appendChild(memItem(it, titles, msg)); });
+        sec.appendChild(ul); sessEl.appendChild(sec);
+      };
+      section('待确认', items.filter(function (it) { return it.status === 'pending'; }), 'pend');
+      ['profile', 'learning', 'project', 'procedure', 'self', 'unsorted'].forEach(function (k) {
+        section(MEM_TYPES[k], items.filter(function (it) { return it.status === 'active' && it.type === k; }));
+      });
+      section('隐私（不主动提起）', items.filter(function (it) { return it.status === 'private'; }), 'priv');
+    }, function (e) { if (S.view !== 'mem') return; sessEl.innerHTML = ''; sessEl.appendChild(backBtn(true)); sessEl.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); });
+  }
+  function memItem(it, titles, msg) {
+    var li = h('li', 'xm-it'), txt = h('p', 'xm-txt', it.content), meta = h('p', 'xm-meta');
+    li.appendChild(txt);
+    meta.appendChild(h('span', 'xm-tag', MEM_BASIS[it.basis] || it.basis));
+    if (it.status === 'pending' && it.type !== 'unsorted') meta.appendChild(h('span', 'xm-tag', MEM_TYPES[it.type] || it.type));
+    var ev = (it.evidence || [])[0];
+    if (ev && ev.sid && Object.prototype.hasOwnProperty.call(titles, ev.sid) && titles[ev.sid].indexOf('后台任务：') !== 0) {
+      var a = h('button', 'xc-link xm-src', '来自「' + (titles[ev.sid] || '一段对话') + '」'); a.type = 'button';
+      a.addEventListener('click', function () { openSession(ev.sid); });
+      meta.appendChild(a);
+    } else if (ev) meta.appendChild(h('span', 'xm-when', when(ev.at) + (ev.sid ? (titles[ev.sid] ? ' · ' + titles[ev.sid] : ' · 原对话已删除') : '')));
+    else meta.appendChild(h('span', 'xm-when', when(it.updated)));
+    li.appendChild(meta);
+    if (ev && ev.quote && ev.quote !== it.content) li.appendChild(h('p', 'xm-quote', '“' + ev.quote.slice(0, 120) + (ev.quote.length > 120 ? '…' : '') + '”'));
+    var acts = h('div', 'xm-acts');
+    var act = function (label, cls, fn) { var b = h('button', 'xm-b' + (cls ? ' ' + cls : ''), label); b.type = 'button'; b.addEventListener('click', function () { fn(b); }); acts.appendChild(b); return b; };
+    var send = function (args, done, b) {
+      if (b) b.disabled = true;
+      return call('memory_update', Object.assign({ id: it.id }, args), 60000).then(function (r) {
+        if (r && r.error) { if (b) b.disabled = false; msg.textContent = r.msg || '没改成'; return; }
+        loadMemory(done);
+      }, function (e) { if (b) b.disabled = false; msg.textContent = '没改成：' + e.message; });
+    };
+    if (it.status === 'pending') act('对，记住', 'ok', function (b) { send({ confirm: true }, '确认了', b); });
+    act('改', '', function () {
+      var ta = h('textarea', 'xm-edit'); ta.value = it.content; ta.maxLength = 300; ta.setAttribute('aria-label', '改这条记忆');
+      var row = h('div', 'xm-acts'), save = h('button', 'xm-b ok', '保存'), cancel = h('button', 'xm-b', '取消');
+      save.type = cancel.type = 'button';
+      save.addEventListener('click', function () { send({ content: ta.value }, '改好了', save); });
+      cancel.addEventListener('click', function () { loadMemory(); });
+      row.appendChild(save); row.appendChild(cancel);
+      li.replaceChild(ta, txt); li.replaceChild(row, acts);
+      ta.focus();
+    });
+    act(it.status === 'private' ? '取消隐私' : '设为隐私', '', function (b) { send({ private: it.status !== 'private' }, it.status === 'private' ? '小芯又可以用这条了' : '设为隐私了：小芯不会主动提起', b); });
+    act('忘掉', 'bad', function (b) {
+      if (!b.classList.contains('sure')) { b.classList.add('sure'); b.textContent = '确定忘掉？'; setTimeout(function () { b.classList.remove('sure'); b.textContent = '忘掉'; }, 4000); return; }
+      b.disabled = true;
+      call('memory_forget', { id: it.id }, 60000).then(function (r) {
+        if (r && r.error) { b.disabled = false; msg.textContent = r.msg || '没忘掉'; return; }
+        loadMemory('忘掉了，以后也不会再从聊天里记回来');
+      }, function (e) { b.disabled = false; msg.textContent = '没忘掉：' + e.message; });
+    });
+    li.appendChild(acts);
+    return li;
   }
   function when(t) {
     var d = new Date(t), now = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };

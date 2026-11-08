@@ -7,7 +7,7 @@
 //   GET  /api/xin/me       {enabled, authed}
 //   POST /api/xin/login    {password}
 //   POST /api/xin/logout
-//   POST /api/xin/call     {op, args}   op = status | wake | ping | send | poll | stop | sessions | history | memory | memory_set（小芯的记事本）
+//   POST /api/xin/call     {op, args}   op = status | wake | ping | send | poll | stop | sessions | history | memory_list | memory_add | memory_update | memory_forget（小芯的记忆）| memory | memory_set（以前的记事本）
 //                                       | greet | daily | daily_get | daily_set | rename | archive | forget（对话改名 / 归档 / 删除）| files（小芯的文件：列文件夹、预览）
 //                                       | push_key | push_sub | push_unsub | push_test（做完提醒）| moves（新动作）| bond | bond_play（好感度）
 //                                       | screen {control?}（小芯的屏幕：开桌面、桌面上开终端、要一个短时的桌面链接）| screen_off（作废桌面链接）
@@ -20,7 +20,7 @@ const COOKIE = '__Host-xin';
 const SESSION_SEC = 30 * 86400;
 const AGENT_ASSET = '/xin/vm-agent.mjs';
 const VM_DIR = '/data/home/.xin/agent';
-export const OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
+export const OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'memory_list', 'memory_add', 'memory_update', 'memory_forget', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
   'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off', 'tasks', 'task_stop', 'task_tell']);
 const SCREEN_W = 1280, SCREEN_H = 800, SCREEN_VIEW_TTL = 1800, SCREEN_CTL_TTL = 900;   // 桌面大小；链接多久内能打开（秒）
 const FILE_MAX = 100 * 1024 * 1024;   // 下载最大 100 MB（和上传一样大：发给小芯的文件也能原样下回来）

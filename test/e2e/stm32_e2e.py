@@ -124,7 +124,11 @@ CHAT_DONE = "!document.querySelector('.xc-typing') && !LimingXinChat.state.run &
 
 async def xin_mock(pg, authed=False, live=None):
     live = live or XIN_LIVE
-    st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': [], 'mem': '# 小芯的记事本\n\n- 2026-11-04：用户在学定时器\n',
+    st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': [], 'mem_added': None, 'mem_forgot': None,
+          'memitems': [{'id': 'mlegacy0001', 'type': 'unsorted', 'content': '用户在学定时器', 'basis': 'legacy', 'status': 'pending', 'source': 'legacy', 'created': 1762200000000, 'updated': 1762200000000, 'confirmed': None,
+                        'evidence': [{'sid': None, 'run': None, 'quote': '- 2026-11-04：用户在学定时器', 'at': 1762200000000}]},
+                       {'id': 'mchat000001', 'type': 'profile', 'content': '讲代码先给结论', 'basis': 'stated', 'status': 'active', 'source': 'chat', 'created': 1762300000000, 'updated': 1762300000000, 'confirmed': 1762300000000,
+                        'evidence': [{'sid': 'shist00001', 'run': 'rhist00001', 'quote': '以后讲代码先给我结论', 'at': 1762300000000}]}],
           'greet': None, 'daily': '- 看看网关今天签到成没成，没成就补签\n', 'daily_args': None, 'renamed': None, 'forgot': None, 'download': None,
           'push_sub': None, 'push_unsub': None, 'push_test': 0, 'history_sid': None}
     async def handle(route):
@@ -152,7 +156,25 @@ async def xin_mock(pg, authed=False, live=None):
         st['ops'].append(op)
         if op == 'status': return await ok({'ok': True, 'data': {'name': 'li', 'state': 'running'}})
         if op == 'wake': return await ok({'ok': True, 'data': {'state': 'running', 'action': 'none'}})
-        if op == 'memory': return await ok({'ok': True, 'data': {'text': st['mem'], 'size': len(st['mem'])}})
+        if op == 'memory_list': return await ok({'ok': True, 'data': {'items': st['memitems'], 'titles': {'shist00001': '看看目录'}}})
+        if op == 'memory_add':
+            st['mem_added'] = args
+            st['memitems'].insert(0, {'id': 'mnew0000001', 'type': args.get('type', 'profile'), 'content': args.get('content', ''), 'basis': 'stated', 'status': 'active', 'source': 'user',
+                                      'created': 1762400000000, 'updated': 1762400000000, 'confirmed': 1762400000000, 'evidence': []})
+            return await ok({'ok': True, 'data': {'ok': True, 'item': st['memitems'][0]}})
+        if op == 'memory_update':
+            for it in st['memitems']:
+                if it['id'] == args.get('id'):
+                    if args.get('confirm'): it['status'] = 'active'
+                    if args.get('content'): it['content'] = args['content']
+                    if args.get('private') is True: it['status'] = 'private'
+                    if args.get('private') is False: it['status'] = 'active'
+                    return await ok({'ok': True, 'data': {'item': it}})
+            return await ok({'ok': True, 'data': {'error': 'not_found', 'msg': '找不到这条记忆'}})
+        if op == 'memory_forget':
+            st['mem_forgot'] = args.get('id')
+            st['memitems'] = [it for it in st['memitems'] if it['id'] != args.get('id')]
+            return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'greet': return await ok({'ok': True, 'data': st['greet'] or {'warming': False}})
         if op == 'bond': return await ok({'ok': True, 'data': st.get('bond') or {'score': 0, 'level': 0, 'name': '刚认识', 'next': 15, 'log': []}})
         if op == 'bond_play':
@@ -166,9 +188,6 @@ async def xin_mock(pg, authed=False, live=None):
         if op == 'daily':
             st['daily_args'] = args
             return await ok({'ok': True, 'data': {'sid': 'shist00001', 'run': 'rdaily00002', 'agent': 'codex'}})
-        if op == 'memory_set':
-            st['mem'] = args.get('text', '')
-            return await ok({'ok': True, 'data': {'ok': True}})
         if op == 'tasks':
             ts = st.get('tasks') or []
             live_ = [t for t in ts if t['status'] in ('queued', 'running')]
@@ -1513,10 +1532,17 @@ async def main():
         check('记事本：小芯记了一笔，聊天里一个小提示「记住了：…」', st[5] == ['记住了：用户在做 blink 点灯'], st[5])
         await pg.keyboard.press('Escape')
         await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-si')
-        await pg.click('.xc-memb'); await pg.wait_for_selector('.xc-memt')
-        memv = await pg.input_value('.xc-memt')
-        await pg.fill('.xc-memt', memv + '- 2026-11-04：喜欢先看代码\n'); await pg.click('.xc-memrow .xc-btn'); await pg.wait_for_timeout(300)
-        check('记事本：对话列表里能打开，看到内容，改了能保存', '用户在学定时器' in memv and xs['mem'].endswith('喜欢先看代码\n') and '存好了' in await pg.text_content('.xc-memrow'), (memv, xs['mem']))
+        await pg.click('.xc-memb'); await pg.wait_for_selector('.xm-it')
+        memv = await pg.evaluate("[[...document.querySelectorAll('.xm-h')].map(e => e.textContent), document.querySelector('.xm-sec.pend .xm-txt').textContent, (document.querySelector('.xm-src') || {}).textContent, (document.querySelector('.xm-sec:not(.pend) .xm-quote') || {}).textContent]")
+        check('记忆：侧边栏「小芯的记忆」：待确认排在最前（以前的记事本），确认过的按类型分组，带出处和原话', memv == [['待确认（1）', '关于你（1）'], '用户在学定时器', '来自「看看目录」', '“以后讲代码先给我结论”'], memv)
+        await pg.click('.xm-sec.pend .xm-b.ok'); await pg.wait_for_function("!document.querySelector('.xm-sec.pend') && document.querySelector('.xm-msg').textContent === '确认了'")
+        await pg.fill('.xm-in', '喜欢先看代码'); await pg.select_option('.xm-sel', 'learning'); await pg.click('.xm-add .xc-btn')
+        await pg.wait_for_function("[...document.querySelectorAll('.xm-txt')].some(e => e.textContent === '喜欢先看代码')")
+        bad = pg.locator('.xm-it', has_text='讲代码先给结论').locator('.xm-b.bad')
+        await bad.click(); sure = await bad.text_content(); await bad.click()
+        await pg.wait_for_function("![...document.querySelectorAll('.xm-txt')].some(e => e.textContent === '讲代码先给结论')")
+        check('记忆：确认、直接添加（选类型）、忘掉要点两下', xs['mem_added'] == {'content': '喜欢先看代码', 'type': 'learning'} and sure == '确定忘掉？' and xs['mem_forgot'] == 'mchat000001'
+              and [it['status'] for it in xs['memitems'] if it['id'] == 'mlegacy0001'] == ['active'], (xs['mem_added'], sure, xs['mem_forgot']))
         await pg.click('.xc-back'); await pg.wait_for_selector('.xc-si')
         await pg.click('.xc-si'); await pg.wait_for_selector('.xc-code')
         st = await pg.evaluate("""[document.querySelector('.xc-code code').textContent, document.querySelector('.xc-code .xc-lang').textContent, !!document.querySelector('.xc-tool'),
@@ -1653,7 +1679,7 @@ async def main():
         dr = await pf.evaluate("""(() => { const d = document.querySelector('.xc-drawer').getBoundingClientRect(), p = document.querySelector('.xc').getBoundingClientRect();
           return [document.querySelector('.xc').classList.contains('dr-open'), Math.round(d.left - p.left), d.width < p.width, !!document.querySelector('.xc-dr .xc-dr-new'), document.querySelector('.xc-set').hidden,
             getComputedStyle(document.querySelector('.xc-scrim')).opacity, document.querySelector('.xc-list-b').getAttribute('aria-expanded'), !document.querySelector('.xc-body').hidden]; })()""")
-        check('☰ 拉开侧边栏：从面板左边滑出来、比面板窄，后面一层遮罩，聊天还在下面；上面「新对话」，四个入口：记事本、每日任务、后台任务、小芯的文件；设置收着', tiles == ['小芯的记事本', '每日任务', '我在做的事', '小芯的文件'] and 0 <= dr[1] <= 2 and dr[:1] + dr[2:] == [True, True, True, True, '1', 'true', True], (tiles, dr))   # 宽屏面板左边有 2px 边框，侧边栏贴着它
+        check('☰ 拉开侧边栏：从面板左边滑出来、比面板窄，后面一层遮罩，聊天还在下面；上面「新对话」，四个入口：小芯的记忆、每日任务、后台任务、小芯的文件；设置收着', tiles == ['小芯的记忆', '每日任务', '我在做的事', '小芯的文件'] and 0 <= dr[1] <= 2 and dr[:1] + dr[2:] == [True, True, True, True, '1', 'true', True], (tiles, dr))   # 宽屏面板左边有 2px 边框，侧边栏贴着它
         await pf.click('.xc-sli:nth-child(1) .xc-si-more'); await pf.wait_for_selector('.xc-sa input')
         await pf.fill('.xc-sa input', '点灯程序'); await pf.click('.xc-sa-b:has-text("改名")'); await pf.wait_for_timeout(300)
         t = await pf.text_content('.xc-sli:nth-child(1) .xc-si-t')
