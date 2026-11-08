@@ -1,0 +1,17 @@
+name: Diagnose Xin reply
+on:
+  push:
+    branches: [claude/xin-lost-reply]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, box]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: 只读排查前台失败（不输出原话、回复或密钥）
+        env:
+          XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
+        run: python3 scripts/diagnose-xin-reply.py
