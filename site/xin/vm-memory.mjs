@@ -28,6 +28,7 @@ function db() {
         PRIMARY KEY(item,sid,run,quote_hash));
       CREATE TABLE IF NOT EXISTS memory_blocked_sources (sid TEXT NOT NULL, run TEXT NOT NULL, PRIMARY KEY(sid,run));
       CREATE TABLE IF NOT EXISTS memory_retired (norm TEXT PRIMARY KEY, at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS memory_suppressed_phrases (hash TEXT PRIMARY KEY, length INTEGER NOT NULL, fingerprint INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS memory_by_status ON memory_items(status, type, updated);
       CREATE INDEX IF NOT EXISTS memory_evidence_item ON memory_evidence(item);`);
     // DDL participates in the caller's transaction too. Do not cache schema readiness before commit:
@@ -41,6 +42,40 @@ const clean = text => String(text == null ? '' : text).replace(/\s+/g, ' ').trim
 // Normalised form for duplicates and forgetting: width-folded, lower-case, no spaces or punctuation.
 export const memoryNorm = text => String(text || '').normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
 const hash = norm => crypto.createHash('sha256').update(norm).digest('hex');
+const rolling = text => { let h=0;for(let i=0;i<text.length;i++)h=(Math.imul(h,31)+text.charCodeAt(i))>>>0;return h; };
+function suppressPhrase(text) {
+  const norm=memoryNorm(text);if(!norm)return;
+  db().prepare('INSERT OR IGNORE INTO memory_suppressed_phrases(hash,length,fingerprint) VALUES(?,?,?)').run(hash(norm),norm.length,rolling(norm));
+}
+let textRules=null;
+export function memoryBlockedText(text, at=Date.now()) {
+  const revision=memoryMeta('revision');
+  if(!textRules||textRules.revision!==revision){
+    const phrases=db().prepare('SELECT * FROM memory_suppressed_phrases').all(),groups=new Map();
+    for(const p of phrases){if(!groups.has(p.length))groups.set(p.length,new Map());const g=groups.get(p.length);if(!g.has(p.fingerprint))g.set(p.fingerprint,new Set());g.get(p.fingerprint).add(p.hash);}
+    // Legacy forgetting stored only an irreversible hash, without a source or phrase length. Old raw
+    // text cannot safely be classified in that case; never send text older than that decision back.
+    const opaque=db().prepare('SELECT max(f.at) AS at FROM memory_forgotten f LEFT JOIN memory_suppressed_phrases p ON p.hash=f.norm WHERE p.hash IS NULL').get().at||0;
+    textRules={revision,groups,opaque};
+  }
+  if(textRules.opaque && at<=textRules.opaque)return true;
+  const norm=memoryNorm(text);
+  for(const [len,patterns] of textRules.groups){
+    if(len>norm.length)continue;
+    let power=1,h=rolling(norm.slice(0,len));for(let i=1;i<len;i++)power=Math.imul(power,31)>>>0;
+    for(let i=0;i<=norm.length-len;i++){
+      const candidates=patterns.get(h);if(candidates?.has(hash(norm.slice(i,i+len))))return true;
+      if(i+len<norm.length)h=(Math.imul((h-Math.imul(norm.charCodeAt(i),power))>>>0,31)+norm.charCodeAt(i+len))>>>0;
+    }
+  }
+  return false;
+}
+
+export const memoryPreferences=()=>({followups:memoryMeta('preferences',{followups:true}).followups!==false});
+export function setMemoryPreferences(changes) {
+  if(typeof changes?.followups!=='boolean')return {error:'bad_setting',msg:'开关值不对'};
+  setMemoryMeta('preferences',{...memoryPreferences(),followups:changes.followups});return memoryPreferences();
+}
 // value: looks like a credential or identity number itself — never stored, not even when the user types it.
 // word: only mentions passwords/keys — refused from chat and workers, kept private from the old notebook, allowed from the user.
 // personal: health and money topics — kept private (never used) unless the user adds them.
@@ -200,8 +235,8 @@ export function forgetMemory(id, actor = 'user') {
       const current = row(key), versions = db().prepare('SELECT body FROM memory_versions WHERE item=?').all(key).map(v => JSON.parse(v.body));
       const all = [...versions, { item: current, evidence: db().prepare('SELECT * FROM memory_evidence WHERE item=?').all(key) }];
       for (const snap of all) {
-        if (snap.item) db().prepare('INSERT OR IGNORE INTO memory_forgotten(norm,at) VALUES(?,?)').run(hash(snap.item.norm), Date.now());
-        for (const e of snap.evidence) if (e.sid && e.run) db().prepare('INSERT OR IGNORE INTO memory_blocked_sources(sid,run) VALUES(?,?)').run(e.sid, e.run);
+        if (snap.item) { db().prepare('INSERT OR IGNORE INTO memory_forgotten(norm,at) VALUES(?,?)').run(hash(snap.item.norm), Date.now());suppressPhrase(snap.item.content); }
+        for (const e of snap.evidence) {suppressPhrase(e.quote);if (e.sid && e.run) db().prepare('INSERT OR IGNORE INTO memory_blocked_sources(sid,run) VALUES(?,?)').run(e.sid, e.run);}
       }
       db().prepare('DELETE FROM memory_evidence WHERE item=?').run(key);
       db().prepare('DELETE FROM memory_versions WHERE item=?').run(key);
@@ -210,6 +245,9 @@ export function forgetMemory(id, actor = 'user') {
       db().prepare('DELETE FROM memory_items WHERE id=?').run(key);
     }
     log(id, 'forget', actor, { type: it.type });
+    // The search index is only a cache. Forgetting purges matching cached text in the same transaction.
+    if(db().prepare("SELECT 1 FROM sqlite_master WHERE name='recall_fts'").get())for(const r of db().prepare('SELECT rowid,sid,run,text,at FROM recall_fts').all())
+      if(memoryBlockedText(r.text,Number(r.at))||memoryBlocked('',r))db().prepare('DELETE FROM recall_fts WHERE rowid=?').run(r.rowid);
     return { ok: true };
   });
 }

@@ -44,7 +44,7 @@ import * as runtime from './vm-runtime.mjs';
 import { StateJournal, inputDigest } from './vm-state.mjs';
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
 import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX } from './vm-base.mjs';
-import { ACTS, setNext, getNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
+import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag } from './vm-screen.mjs';
 import { fromClaude, fromCodex, fromHarness } from './vm-events.mjs';
 import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
@@ -55,7 +55,8 @@ export * from './vm-screen.mjs';
 export * from './vm-events.mjs';
 export * from './vm-models.mjs';
 export * from './vm-persona.mjs';
-import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
+import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, memoryPreferences,setMemoryPreferences,MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
+import {recallAll,turnGuidance,safeContextEvents} from './vm-context.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 
@@ -677,9 +678,12 @@ function runner(run) {
     const immediate=lockedCall('tasks','front_immediate',{run});
     if(immediate.error){state.failed=true;finish(1,immediate.msg||immediate.error);return;}
     if(immediate.terminal){state.frontReceipt=!immediate.reply;if(immediate.reply&&meta.frontUsage)state.frontUsage=meta.frontUsage;lockedCall(meta.sid,'front_reply',{run,text:immediate.text});finish(0);return;}
-    const context=foregroundContext(sess,run,events),input=context.input;
+    const context=foregroundContext(sess,run,r=>safeContextEvents(r,events)),input=context.input;
     journal.write(path.join(BASE,'contexts',meta.sid+'.json'),JSON.stringify(context.checkpoint));
-    try { input.push(frontUserInput(meta)); }
+    try {
+      if(!meta.handoff){const guide=turnGuidance({sid:meta.sid,text:meta.frontRequest||'',context:meta.context||''});if(guide)input.push({role:'user',content:guide});}
+      input.push(frontUserInput(meta));
+    }
     catch(e) { state.failed=true;finish(1,e.message);return; }
     const deliver=args=>lockedCall('tasks','handoff_finish',{run,...args});
     const handoffBudget=meta.handoff?workBudget(journal.handoff(meta.handoff)?.task||meta.sid):null;
@@ -1694,8 +1698,7 @@ export function frontAction(a) {
   const [,act,sub,...rest] = a.argv;
   if(act==='recall'){
     const query=[sub,...rest].join(' ').trim();if(!query)return {error:'请写历史关键词'};
-    const s=readJ(sessF(m.sid)),matches=(s?.runs||[]).slice(-200).flatMap(run=>events(run).filter(e=>(e.t==='user'||e.t==='text')&&String(e.text||'').includes(query)).map(e=>({role:e.t==='user'?'user':'assistant',text:String(e.text||'').slice(0,2000)})));
-    return {matches:matches.slice(-8),more:matches.length>8};
+    return recallAll(query);
   }
   const handoff=m.handoff&&journal.handoff(m.handoff);
   if(m.handoff&&(!handoff||handoff.state!=='running'||handoff.run!==a.run||taskVersion(readJ(sessF(handoff.task),{}))!==handoff.version))return {error:'stale',msg:'这份结果已被新的要求替代'};
@@ -1791,6 +1794,8 @@ function bgInfo(all) {
   return lease ? { bg, lease, version } : { bg, version };
 }
 const ops = {
+  memory_preferences(){return memoryPreferences();},
+  memory_preferences_set(a){return setMemoryPreferences(a);},
   preview_asset(a){return runtime.previewAsset(BASE,a);},
   steer(a) {
     if (!okId(a.sid, 's') || !okId(a.run, 'r')) return { error: 'bad_id', msg: '对话或轮次不对' };
@@ -1897,7 +1902,7 @@ const ops = {
     // 默认模式：带上这个对话的后台任务情况（做完的结果前台还不知道的、在等确认的、在做的）
     const all = s.agent === 'codex' ? listTasks() : [];
     const tn = s.agent === 'codex' ? taskNotes(s.sid, all) : { text: '', seen: [] };
-    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint + tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
+    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint + tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
       cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
     const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
     if (receipt) { mk(path.dirname(receipt)); writeJ(receipt, result); }
@@ -1934,12 +1939,12 @@ const ops = {
     const t = readJ(sessF(result.task.sid));
     return { sid: t.sid, run: lastRun(t), agent: 'codex', model: t.model, ...bgInfo() };
   },
-  greet() {
+  greet(a={}) {
     flushNotices().catch(() => {});
     const warming = maybeWarm();
-    const g = getNext();
+    const g = a.agent==='harness'?null:claimNext(Date.now(),validDevice(a.deviceId)?a.deviceId:'legacy');
     let bond = null;
-    try { bondAdd('visit', 1, '今天来看我了'); bond = bondInfo(); } catch { /* 记不下来就不带 */ }
+    if(a.agent!=='harness')try { bondAdd('visit', 1, '今天来看我了'); bond = bondInfo(); } catch { /* 记不下来就不带 */ }
     let bg = {};
     try { tickTasks(); bg = bgInfo(); } catch { /* 收拾不了就算了 */ }
     return Object.assign({ warming, bond, moves: readMoves() }, bg, g || {});
@@ -2438,6 +2443,11 @@ function xinCmd(argv) {
   const act = argv[0], run = process.env.XIN_RUN, meta = okId(run, 'r') ? readJ(metaF(run)) : null;
   // 天启是独立功能：不读写小芯的记事本、好感度、动作、开场白和后台任务
   if (meta && meta.agent === 'harness') { console.log('天启模式是独立功能，不使用小芯的 xin 命令（记事本、好感度、动作、开场白、后台任务等）。'); return 1; }
+  if (act === 'recall') {
+    if(meta?.task){console.log('后台只使用任务内的资料，不检索私人聊天。');return 1;}
+    const q=argv.slice(1).join(' ').trim();if(!q){console.log('用法：xin recall 关键词');return 2;}
+    console.log(JSON.stringify(recallAll(q)));return 0;
+  }
   if (act === 'task') return taskCmd(argv.slice(1));
   if (act === 'plugin') {   // 插件开关：xin plugin（列出来）、xin plugin on 名字、xin plugin off 名字；下一句开始生效
     const sub = argv[1] || '', name = argv[2] || '';
