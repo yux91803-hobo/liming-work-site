@@ -162,3 +162,15 @@ test('后台任务的「记住」进待确认的项目记录；天启里不能�
   assert.equal(r.status, 1); assert.match(r.stdout, /天启模式是独立功能/);
   assert.equal(op('memory_list').items.length, 1);
 });
+
+test('首次建记忆表的事务回滚后，同一进程仍能重新初始化；数据库改动只新增表，旧结构仍可读', t => {
+  const {js} = home(t);
+  const r = js(`const {journal}=await import(${JSON.stringify(pathToFileURL(path.join(__dirname, '../site/xin/vm-base.mjs')).href)});
+    journal.atomic(()=>{m.addMemory({content:'这条应随事务回滚',source:'user'});return {error:'injected'};});
+    const saved=m.addMemory({content:'回滚之后仍能正常记忆',source:'user'});
+    const tables=journal.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(x=>x.name);
+    return {status:saved.item.status,content:m.listMemory().map(x=>x.content),tables,
+      oldQuery:journal.db.prepare("SELECT content FROM memory_items WHERE status IN ('active','pending','private')").all().map(x=>x.content)};`);
+  assert.equal(r.status,'active');assert.deepEqual(r.content,['回滚之后仍能正常记忆']);assert.deepEqual(r.oldQuery,r.content);
+  for (const table of ['memory_items','memory_evidence','memory_log','memory_forgotten','memory_meta','memory_versions','memory_replacements']) assert.ok(r.tables.includes(table));
+});

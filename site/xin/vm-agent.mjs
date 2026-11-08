@@ -57,6 +57,7 @@ export * from './vm-models.mjs';
 export * from './vm-persona.mjs';
 import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
 export * from './vm-memory.mjs';
+import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
@@ -1030,6 +1031,7 @@ export function sessionUsage(s) {
 /* ---------- 对外的 op ---------- */
 // 开一轮：记下这一轮要给 AI 的话，历史里放 userEv（用户看到的那句），在后台起 runner
 function launch(s, m, userEv) {
+  memoryActivity(); // All foreground/background work preempts an in-flight idle review.
   const run = rid('r');
   writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, m));
   if(userEv)emit(run, userEv);
@@ -1295,6 +1297,7 @@ function taskNew(a) {
     frontRun:a.frontRun||null,web:!!a.web,strictModel:!!a.strictModel&&rt.model!==runtime.AGY_MODEL,status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
   if(t.strictModel)t.fallbacks=[];
   saveTask(t);
+  memoryActivity();
   if (a.daily) writeJ(DAILY_LAST(), { date: t.dailyDate, run: null, sid: t.sid, at: Date.now(), ok: null, status: 'queued' });
   scheduleNow();
   ensureWatchdog();
@@ -1564,6 +1567,16 @@ function ensureWatchdog() {
   spawn('flock', ['-n', '--close', path.join(BASE, 'locks/watchdog.lock'), process.execPath, SELF, 'watchdog'],
     { detached: true, stdio: 'ignore', cwd: os.homedir(), env }).unref();
 }
+function ensureMemoryIdle() {
+  if (journal.active) { journal.defer(ensureMemoryIdle); return; }
+  if (!(readText(CODEX_KEY()) || readText(HARNESS_KEY())).trim()) return;
+  mk(path.join(BASE, 'locks'));
+  // Only a local child after real work completes. Never registered as a task, callback, alarm or lease.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK'));
+  const child = spawn('flock', ['-w','3','--close',path.join(BASE,'locks/memory-idle.lock'),process.execPath,SELF,'memory-idle'],
+    {detached:true,stdio:'ignore',cwd:os.homedir(),env});
+  child.on('error', () => {}); child.unref();
+}
 async function watchdog() {
   for (;;) {
     try { journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();await flushNotices(); await flushControllerEvent(); } catch { /* transient errors are retried */ }
@@ -1756,6 +1769,7 @@ const ops = {
     if(lastRun(s)!==a.run) return {error:'stale',msg:'这一轮已经变化，请重新打开对话'};
     if (runDone(a.run)) return { ...ops.send({ sid: a.sid, text, clientId:id }), next: true, id };
     m.steers = (m.steers || []).concat([{ id, text, at: Date.now(), state: 'pending' }]); writeJ(metaF(a.run), m);
+    memoryActivity();
     emit(a.run, { t: 'user', text, at: Date.now(), steer: true, clientId: id });
     return { ok: true, id, state: 'pending' };
   },
@@ -2110,6 +2124,8 @@ const iops = {
     if(a.stat){const stat={...a.stat,run:a.run,ok:done.ok,stopped:done.stopped};const saved=taskLockHeld()?iops.run_stat(stat):lockedCall('tasks','run_stat',stat);if(saved.error)return saved;}
     if(done.ok&&!m.task&&m.injected?.length)journal.defer(()=>lockedCall('tasks','task_seen',{sids:m.injected}));
     emit(a.run,done);m.ended=Date.now();writeJ(metaF(a.run),m);journal.finishLaunch(a.run);
+    memoryActivity(); // Count the quiet window from the latest completion as well as the latest input.
+    journal.defer(ensureMemoryIdle);
     const pending=(m.steers||[]).filter(x=>x.state==='pending'||x.state==='next');
     if(!m.task&&!done.stopped&&pending.length){
       for(const q of pending)q.state='consumed';writeJ(metaF(a.run),m);
@@ -2411,6 +2427,7 @@ function main() {
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }
+  if (op === 'memory-idle') { idleMemoryReview().catch(() => {}); return; }
   if (op === 'callback') { flushControllerEvent().catch(() => {}); return; }
   if (op === 'watchdog') { watchdog().catch(() => {}); return; }
   if (op === 'xin') { process.exitCode = xinCmd(process.argv.slice(3)); return; }
