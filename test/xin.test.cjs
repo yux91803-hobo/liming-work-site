@@ -15,6 +15,13 @@ process.env.CLAUDE_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-claud
 process.env.XIN_DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-dsh-'));
 process.env.XIN_DSH = path.join(process.env.XIN_DSH_HOME, 'no-dsh');
 const load = rel => import(pathToFileURL(path.join(__dirname, rel)).href);
+// A whole fresh module graph (vm-agent and every module it imports) that reads the current environment.
+// A query string on vm-agent alone no longer suffices: shared modules such as vm-base are cached by URL.
+function freshAgentUrl(tag) {
+  const src = path.join(__dirname, '../site/xin'), dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-mod-' + tag + '-'));
+  for (const f of fs.readdirSync(src).filter(f => /^vm-.*\.mjs$/.test(f))) fs.copyFileSync(path.join(src, f), path.join(dir, f));
+  return pathToFileURL(path.join(dir, 'vm-agent.mjs')).href;
+}
 const PW = 'correct horse battery';
 const AGENT_TEXT = '// fake vm-agent\n';
 const ORIGIN = 'https://liming-work.com';
@@ -143,6 +150,46 @@ test('send：脚本没传上去时自动上传再跑，并挂活动租约', asyn
     assert.ok(ib.calls.some(c => c.key.includes('activity-leases')));
     for (const c of ib.calls) assert.strictEqual(c.init.headers['X-API-Key'], 'ibk_test_key_1234567890');
   } finally { ib.restore(); }
+});
+
+test('上传小芯脚本：按 import 递归带上全部本地模块，文件名带内容摘要，import 指向对应的新文件名', async () => {
+  const site = path.join(__dirname, '../site');
+  const assets = { fetch: async r => { const f = path.join(site, new URL(r.url).pathname); return fs.existsSync(f) ? new Response(fs.readFileSync(f, 'utf8')) : new Response('nope', { status: 404 }); } };
+  const m = await fresh(), env = mkEnv({ ASSETS: assets }), ck = await login(m, env);
+  const ib = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/exec': [
+      { body: { stdout: '', stderr: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data/home/.xin/agent/vm-base-x.mjs'", exitCode: 1 } },
+      { body: { stdout: JSON.stringify({ ok: true, agents: [] }), stderr: '', exitCode: 0 } }
+    ],
+    'PUT /v1/machines/m_abc/files': [{ status: 201, body: { created: true } }]
+  });
+  try {
+    const d = await (await m.handleXin(req('/api/xin/call', { body: { op: 'ping' }, headers: { cookie: ck } }), env, null)).json();
+    assert.strictEqual(d.ok, true);
+    const puts = ib.calls.filter(c => c.key === 'PUT /v1/machines/m_abc/files').map(c => ({ name: path.basename(c.url.searchParams.get('path')), body: c.body }));
+    const uploaded = new Map(puts.map(p => [p.name, p.body]));
+    const local = fs.readdirSync(path.join(site, 'xin')).filter(f => /^vm-.*\.mjs$/.test(f));
+    for (const f of local) assert.ok([...uploaded.keys()].some(n => new RegExp('^' + f.replace('.mjs', '') + '-[0-9a-f]{12}\\.mjs$').test(n)), '没有上传 ' + f);
+    assert.strictEqual(puts.at(-1).name.startsWith('vm-agent-'), true, '依赖先传，入口最后传');
+    for (const [name, body] of uploaded) for (const dep of [...body.matchAll(/from '\.\/(vm-[^']+)'/g)].map(x => x[1])) {
+      assert.match(dep, /-[0-9a-f]{12}\.mjs$/, name + ' 里的 import 没有改成带摘要的文件名');
+      assert.ok(uploaded.has(dep), name + ' 引用了没上传的 ' + dep);
+    }
+  } finally { ib.restore(); }
+});
+
+test('上传小芯脚本：缺模块或模块循环引用时明确报错，不上传半套', async () => {
+  const files = { '/xin/vm-agent.mjs': "import { a } from './vm-a.mjs';\n", '/xin/vm-a.mjs': "import { b } from './vm-b.mjs';\nexport const a = 1;\n", '/xin/vm-b.mjs': "import { a } from './vm-a.mjs';\nexport const b = 2;\n" };
+  for (const [files2, code] of [[files, 'module_cycle'], [{ '/xin/vm-agent.mjs': "import { a } from './vm-missing.mjs';\n" }, 'no_runtime']]) {
+    const m = await fresh(), env = mkEnv({ ASSETS: { fetch: async r => files2[new URL(r.url).pathname] ? new Response(files2[new URL(r.url).pathname]) : new Response('nope', { status: 404 }) } }), ck = await login(m, env);
+    const ib = fakeIB({ 'GET /v1/machines': [MACHINES] });
+    try {
+      const d = await (await m.handleXin(req('/api/xin/call', { body: { op: 'ping' }, headers: { cookie: ck } }), env, null)).json();
+      assert.strictEqual(d.ok, false); assert.ok(!ib.calls.some(c => c.key.startsWith('PUT')), code);
+      assert.match(d.msg, code === 'module_cycle' ? /循环依赖/ : /缺 vm-missing\.mjs/);
+    } finally { ib.restore(); }
+  }
 });
 
 test('云电脑关机了：替它开机，回 waking', async () => {
@@ -724,7 +771,7 @@ test('插件：只列用户自己装的（电脑自带的不显示、不让关�
   process.env.XIN_HOME = xinDir; process.env.CODEX_HOME = codexHome; process.env.XIN_CODEX_SYS = sys;
   try {
     // 换了 XIN_HOME 要重新载入（BASE 在载入时定好），后面加个参数当成新模块
-    const { mcpFlags, agentArgs } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-agent.mjs')).href + '?plug');
+    const { mcpFlags, agentArgs } = await import(freshAgentUrl('plug'));
     assert.deepStrictEqual(mcpFlags(), ['-c', 'mcp_servers.rea.enabled=true']);
     // glm-5.3-flash 看不了图：图片不用 -i
     const [, a] = agentArgs('codex', { started: false }, '你好', '', { images: ['/data/workspace/uploads/1/a.png', '/data/workspace/uploads/1/b.jpg'] });
@@ -748,7 +795,7 @@ test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3
   const saved = [process.env.XIN_HOME, process.env.CODEX_HOME];
   process.env.XIN_HOME = xinDir; process.env.CODEX_HOME = codexHome;
   try {
-    const { agentArgs, codexKeyEnv, CODEX_MODELS } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-agent.mjs')).href + '?cxroute');
+    const { agentArgs, codexKeyEnv, CODEX_MODELS } = await import(freshAgentUrl('cxroute'));
     const [, a] = agentArgs('codex', { started: false }, '你好', '');
     const cs = a.filter((x, i) => a[i - 1] === '-c');
     const cat = path.join(xinDir, 'codex-models.json');

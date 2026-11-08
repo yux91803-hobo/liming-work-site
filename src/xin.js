@@ -110,22 +110,33 @@ async function machine(env, now) {
   return machineCache.m;
 }
 let agentCache = null;
+// vm-agent.mjs and every local module it imports (recursively) go to the VM under content-hashed names.
+// Dependencies are hashed first, so any change anywhere renames everything that imports it.
+const MODULE_IMPORT = /from '\.\/(vm-[a-z0-9-]+\.mjs)'/g;
 async function agentScript(env, origin) {
   if (agentCache) return agentCache;
-  const r = await env.ASSETS.fetch(new Request(origin + AGENT_ASSET));
-  if (!r.ok) throw { status: 500, code: 'no_agent', msg: '网站里缺 vm-agent.mjs' };
-  let text = await r.text();
-  const dependencies = [];
-  for(const file of ['vm-runtime.mjs','vm-state.mjs','vm-handoff.mjs'])if (text.includes("from './"+file+"'")) {
-    const dep = await env.ASSETS.fetch(new Request(origin + '/xin/'+file));
-    if (!dep.ok) throw { status: 500, code: 'no_runtime', msg: '网站里缺 '+file };
-    const body = await dep.text(), digest = hex(await crypto.subtle.digest('SHA-256', enc.encode(body))).slice(0, 12);
-    const name = file.replace('.mjs','-') + digest + '.mjs';
-    text = text.replace("from './"+file+"'", "from './" + name + "'");
-    dependencies.push({ text: body, path: VM_DIR + '/' + name });
+  const sources = new Map(), order = [];
+  const visit = async (file, chain) => {
+    if (chain.includes(file)) throw { status: 500, code: 'module_cycle', msg: '小芯脚本的模块有循环依赖：' + chain.concat(file).join(' → ') };
+    if (sources.has(file)) return;
+    const r = await env.ASSETS.fetch(new Request(origin + '/xin/' + file));
+    if (!r.ok) throw file === 'vm-agent.mjs' ? { status: 500, code: 'no_agent', msg: '网站里缺 vm-agent.mjs' } : { status: 500, code: 'no_runtime', msg: '网站里缺 ' + file };
+    const text = await r.text();
+    sources.set(file, text);
+    for (const dep of new Set([...text.matchAll(MODULE_IMPORT)].map(m => m[1]))) await visit(dep, chain.concat(file));
+    order.push(file);
+  };
+  await visit(AGENT_ASSET.split('/').pop(), []);
+  const names = new Map(), texts = new Map();
+  for (const file of order) {   // dependencies before dependants
+    let text = sources.get(file);
+    for (const dep of new Set([...text.matchAll(MODULE_IMPORT)].map(m => m[1]))) text = text.replaceAll("from './" + dep + "'", "from './" + names.get(dep) + "'");
+    names.set(file, file.replace(/\.mjs$/, '-') + hex(await crypto.subtle.digest('SHA-256', enc.encode(text))).slice(0, 12) + '.mjs');
+    texts.set(file, text);
   }
-  const h = hex(await crypto.subtle.digest('SHA-256', enc.encode(text))).slice(0, 12);
-  agentCache = { text, path: `${VM_DIR}/vm-agent-${h}.mjs`, dependencies };
+  const entry = AGENT_ASSET.split('/').pop();
+  const dependencies = order.filter(f => f !== entry).map(f => ({ text: texts.get(f), path: VM_DIR + '/' + names.get(f) }));
+  agentCache = { text: texts.get(entry), path: VM_DIR + '/' + names.get(entry), dependencies };
   return agentCache;
 }
 function uuid() { return crypto.randomUUID(); }
