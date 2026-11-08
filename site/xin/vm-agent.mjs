@@ -510,7 +510,7 @@ function runner(run) {
     // Completion and the final stop decision are committed under the conversation/task lock below.
     // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
     const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
-    if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {});
+    if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {}, meta.providerModel ? {providerModel:meta.providerModel} : {});
     const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0))}}:{}) } : null;
     const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv,stat});
     if(completion.error){finished=false;setTimeout(()=>finish(code,why),1000);return;}
@@ -709,7 +709,7 @@ function runner(run) {
       provider=await openFrontProvider({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,signal:controller.signal,
         quotaState:readJ(path.join(BASE,'front-antigravity-quota.json')),
         quota:quota=>lockedCall('tasks','front_quota',{quota}),
-        model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;if(chosen.reason==='quota')meta.from=OPUS_FRONT_MODEL;}
+        model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;meta.providerModel=chosen.providerModel;if(chosen.reason==='quota')meta.from=OPUS_FRONT_MODEL;}
       });
       if(meta.frontFiles?.some(f=>f.image)&&provider.image===false){
         patchRun(run,{frontSeesImages:false,images:[]});
@@ -2172,7 +2172,7 @@ const ops = {
 const iops = {
   front_model(a){
     const m=readJ(metaF(a.run));if(!m||m.task||m.agent!=='codex'||m.stopped||m.ended||![runtime.FRONT_MODEL,OPUS_FRONT_MODEL].includes(a.model))return {error:'bad_front_model'};
-    m.model=a.model;if(a.reason==='quota')m.from=OPUS_FRONT_MODEL;else delete m.from;writeJ(metaF(a.run),m);
+    m.model=a.model;m.providerModel=String(a.providerModel||a.model).slice(0,200);if(a.reason==='quota')m.from=OPUS_FRONT_MODEL;else delete m.from;writeJ(metaF(a.run),m);
     const s=readJ(sessF(m.sid));if(s){s.model=a.model;writeJ(sessF(m.sid),s);}return {ok:true};
   },
   front_quota(a){

@@ -94,7 +94,7 @@ export function opusOutput(text){
 const quotaError=e=>e?.code===429||/resource[_ ]exhausted|quota.*(?:exceed|exhaust)|(?:exceed|exhaust).*quota|rate.limit/i.test(String(e?.message||'')+' '+JSON.stringify(e?.data||{}));
 export async function openFrontProvider(o={}){
  let actual=FRONT_MODEL,reason=null,acp=null,sid=null,sent=0,previous=[],images=false;
- const chosen=(model,why=null)=>{actual=model;reason=why;o.model?.({model,reason:why});};
+ const chosen=(model,why=null,providerModel=model)=>{actual=model;reason=why;o.model?.({model,reason:why,providerModel});};
  const fallback=async(payload,signal)=>{
   const r=await (o.fetch||fetch)(o.baseURL.replace(/\/$/,'')+'/responses',{method:'POST',signal,headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},body:JSON.stringify({...payload,model:FRONT_MODEL})});
   if(!r.ok)throw Error('前台连接失败（HTTP '+r.status+'）');return r.json();
@@ -126,7 +126,9 @@ export async function openFrontProvider(o={}){
   const models=session.models?.availableModels||[],target=models.find(m=>m.modelId===OPUS_FRONT_MODEL)||models.find(m=>/claude.*opus.*4[. -]6(?:\D|$)/i.test(m.name||'')&&!/4[. -]6\d/.test(m.name||''));
   if(!target)throw Error('Antigravity 当前账号没有提供 Claude Opus 4.6');
   if(session.models.currentModelId!==target.modelId)await acp.request('session/set_model',{sessionId:sid,modelId:target.modelId},o.signal);
-  chosen(target.modelId);
+  // ACP can use a provider enum/alias for the same verified Opus 4.6 model.
+  // Keep the public model identity stable and retain the exact provider ID as evidence.
+  chosen(OPUS_FRONT_MODEL,null,target.modelId);
  }catch(e){acp?.close();throw e;}
  return {image:images,close(){acp?.close();},async request(payload,signal){
   if(actual===FRONT_MODEL)return fallback(payload,signal);

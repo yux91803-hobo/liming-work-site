@@ -23,7 +23,7 @@ function fixture(t,mode='ok'){
  let prompts=0;require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);record(q);if(!q.method)return;
  if(q.method==='initialize')send({id:q.id,result:{protocolVersion:1,agentCapabilities:{promptCapabilities:{image:mode!=='noimage'}}}});
- else if(q.method==='session/new')send({id:q.id,result:{sessionId:'native-synthetic-session',models:{currentModelId:'another',availableModels:[{modelId:'claude-opus-4.6',name:'Claude Opus 4.6'}]}}});
+ else if(q.method==='session/new')send({id:q.id,result:{sessionId:'native-synthetic-session',models:{currentModelId:'another',availableModels:[{modelId:mode==='alias'?'MODEL_CLAUDE_4_6_OPUS_THINKING':'claude-opus-4.6',name:'Claude Opus 4.6'}]}}});
  else if(q.method==='session/set_model')send({id:q.id,result:{}});
  else if(q.method==='session/prompt'){
  prompts++;
@@ -74,6 +74,11 @@ test('Opus 的图片提示与直接视觉块一致，读图聊天不派活',asyn
  assert.deepEqual(prompt.find(b=>b.type==='image'),{type:'image',mimeType:'image/png',data:bytes.toString('base64')});
  assert.match(prompt.find(b=>b.type==='text').text,/图片已经直接给你看了/);assert.doesNotMatch(prompt.find(b=>b.type==='text').text,/你现在用的模型看不了图片内容/);
  assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
+});
+test('接口用提供方枚举标识 Opus 4.6 时仍可运行，保留实际 ID，不误当成未知前台模型',async t=>{
+ const f=fixture(t,'alias'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run),end=done.events.find(e=>e.t==='done');
+ assert.equal(end.ok,true);assert.equal(end.model,'claude-opus-4.6');assert.equal(end.providerModel,'MODEL_CLAUDE_4_6_OPUS_THINKING');
+ assert.equal(f.rows(f.log).find(r=>r.method==='session/set_model').params.modelId,'MODEL_CLAUDE_4_6_OPUS_THINKING');
 });
 test('确认 Claude 额度耗尽才切 DeepSeek，同一份图片与原话继续使用，冷却期间不反复试 Opus',async t=>{
  const f=fixture(t,'blocked'),file=f.work+'/uploads/photo.png';fs.writeFileSync(file,'same-image');
