@@ -58,7 +58,8 @@ export function recallAll(query,limit=8,sync=true){
 const words=text=>[...new Set(String(text||'').toLowerCase().match(/[a-z][a-z0-9_]{1,25}|[\u4e00-\u9fff]{2,6}/g)||[])].filter(s=>!['用户','小芯','什么','怎么','一下','现在','看看','以前','这次','你好'].includes(s));
 const relevant=(content,keys)=>keys.some(k=>content.toLowerCase().includes(k)||k.length>=4&&content.includes(k.slice(0,2)));
 export function turnGuidance({text='',context='',sid='',now=Date.now()}={}){
-  const keys=words(text+' '+context),rows=memoryDb().prepare("SELECT * FROM memory_items WHERE status='active' ORDER BY COALESCE(confirmed,updated) DESC").all();
+  // Do not turn credentials or other private current input into an automatic cross-chat search key.
+  const privateInput=!!memorySensitivity(text+' '+context),keys=privateInput?[]:words(text+' '+context),rows=memoryDb().prepare("SELECT * FROM memory_items WHERE status='active' ORDER BY COALESCE(confirmed,updated) DESC").all();
   const lines=[];let used=0;
   for(const it of rows){
     if(memorySensitivity(it.content))continue;

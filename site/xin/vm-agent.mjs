@@ -57,6 +57,7 @@ export * from './vm-models.mjs';
 export * from './vm-persona.mjs';
 import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, memoryPreferences,setMemoryPreferences,MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
 import {recallAll,turnGuidance,safeContextEvents} from './vm-context.mjs';
+import {dailyEvidence,dailyContext} from './vm-daily.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 
@@ -701,7 +702,7 @@ function runner(run) {
     const cancel = () => { controller.abort(); if(!finished){state.failed=!readJ(metaF(run))?.stopped;finish(0);} };
     process.on('SIGTERM', cancel); process.on('SIGINT', cancel);
     runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,
-      instructions:systemPrompt(undefined,{tasks:true}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,deliver,takeBudget:handoffBudget,
+      instructions:systemPrompt(undefined,{tasks:true}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,lookupBeforeAnswer:!meta.handoff&&runtime.frontLookupRequired(meta.frontRequest||''),deliver,takeBudget:handoffBudget,
       usage:u=>{if(u){
         handoffBudget?.recordUsage(u);
         const prev = state.frontUsage || usageBefore || {input:0,output:0,cached:0};
@@ -1710,7 +1711,7 @@ export function frontAction(a) {
   }
   if (act !== 'task') { const c = companionCmd(a.argv.slice(1), a.run); return c && c.code === 0 ? { text: c.text } : { error: c ? c.text : '不支持这个操作' }; }
   const mine = listTasks().filter(t=>t.parent === m.sid);
-  if (sub === 'list') return {tasks:mine.map(taskSummary)};
+  if (sub === 'list') return {tasks:mine.map(taskSummary),daily:dailyEvidence()};
   const mutation = readJ(path.join(RUNS,a.run+'.front.json'));
   if (mutation) return mutation;
   let r;
@@ -2338,9 +2339,10 @@ function taskCmd(argv) {
   if (sub === 'list') {
     const parent = meta && !meta.task ? meta.sid : null;
     const mine = all.filter(t => t.parent === parent), others = all.filter(t => t.parent !== parent && !isFinished(t));
-    if (!mine.length && !others.length) { console.log('还没有后台任务'); return 0; }
+    if (!mine.length && !others.length) console.log('还没有后台任务');
     if (mine.length) console.log(mine.slice(-20).map(taskLine).join('\n'));
     if (others.length) console.log((mine.length ? '\n' : '') + '别的对话里还没做完的：\n' + others.map(taskLine).join('\n'));
+    console.log(dailyContext());
     return 0;
   }
   const t = findTask({ no: argv[1] }, all);

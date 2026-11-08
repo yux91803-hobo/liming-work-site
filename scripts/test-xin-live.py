@@ -191,11 +191,23 @@ async def main():
                 limit=time.monotonic()+120
                 while True:
                     old=await call('history',{'sid':sid})
-                    if not old.get('active'):break
+                    original=next((r for r in old.get('runs',[]) if r['run']==held['run']),None)
+                    # Another completion/handoff can be the last run. Wait for the exact accepted input.
+                    if original and original.get('done'):break
                     if time.monotonic()>limit:raise RuntimeError('Original real turn did not finish')
                     await asyncio.sleep(2)
                 events=[e for run in old['runs'] if run['run']==held['run'] for e in run['events'] if e.get('t')=='text']
-                if not any(first_marker in e.get('text','') for e in events):raise RuntimeError('Original conversation reply was lost')
+                if not any(first_marker in e.get('text','') for e in events):
+                    target_events=original.get('events',[]) if original else []
+                    kinds={k:sum(e.get('t')==k for e in target_events) for k in sorted({e.get('t') or '?' for e in target_events})}
+                    ended=[e for e in target_events if e.get('t')=='done']
+                    raise RuntimeError('Original conversation reply was lost'
+                        +' events='+','.join(k+':'+str(kinds[k]) for k in kinds)
+                        +' doneOk='+str(bool(ended and ended[-1].get('ok')))
+                        +' stopped='+str(bool(ended and ended[-1].get('stopped')))
+                        +' userHasMarker='+str(any(first_marker in e.get('text','') for e in target_events if e.get('t')=='user'))
+                        +' assistantBytes='+str(sum(len(e.get('text','').encode()) for e in events))
+                        +' assistantHasPriorMarker='+str(any(reply_marker in e.get('text','') for e in events)))
                 if errors:raise RuntimeError('Browser JavaScript errors')
                 print('PASS real delayed response stays in its original conversation while the new conversation completes',flush=True)
             finally:
