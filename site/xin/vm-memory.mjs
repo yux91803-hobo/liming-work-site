@@ -143,23 +143,33 @@ export function listMemory() {
     created: it.created, updated: it.updated, confirmed: it.confirmed, evidence: proofs.all(it.id).map(e => ({ sid: e.sid, run: e.run, quote: e.quote, at: e.at })) }));
 }
 
-// The old Markdown notebook is imported once, as pending items with their original lines as evidence. The file stays.
+// The old Markdown notebook is imported as pending items with their original lines as evidence. The file stays.
+// Each line is taken in once (remembered by hash). If the old notebook gains lines later — e.g. the previous controller
+// ran again after a rollback — only the new lines are imported; lines the user already edited or forgot are not.
+const lineHash = line => crypto.createHash('sha256').update(line).digest('hex').slice(0, 24);
 export function importLegacyNotebook(text = readText(LEGACY_FILE())) {
   const body = String(text || '').trim();
-  const d = db(), done = d.prepare("SELECT value FROM memory_meta WHERE key='legacy_import'").get();
-  if (done || !body) return { skipped: true };
+  if (!body) return { skipped: true };
+  const d = db(), digest = crypto.createHash('sha256').update(body).digest('hex'), get = () => d.prepare("SELECT value FROM memory_meta WHERE key='legacy_import'").get();
+  const prior = get();
+  if (prior && JSON.parse(prior.value).digest === digest) return { skipped: true };
   return journal.atomic(() => {
-    if (d.prepare("SELECT value FROM memory_meta WHERE key='legacy_import'").get()) return { skipped: true };
+    const row = get(), meta = row ? JSON.parse(row.value) : null;
+    if (meta && meta.digest === digest) return { skipped: true };
+    // A record from before line hashes were kept is rebuilt from the lines quoted by imported items.
+    const seen = new Set(meta ? meta.lines || d.prepare("SELECT e.quote FROM memory_evidence e JOIN memory_items i ON i.id=e.item WHERE i.source='legacy'").all().map(r => lineHash(r.quote)) : []);
     let count = 0;
     for (const raw of body.split('\n')) {
       const line = raw.trim();
-      if (!line || /^#/.test(line)) continue;
+      if (!line || /^#/.test(line) || seen.has(lineHash(line))) continue;
+      seen.add(lineHash(line));
       const m = /^[-*]\s*(?:(\d{4}-\d{2}-\d{2})[：:]\s*)?(.+)$/.exec(line), content = m ? m[2] : line;
       const at = m && m[1] ? Date.parse(m[1] + 'T12:00:00+08:00') : undefined;
       const r = addMemory({ content, source: 'legacy', evidence: { quote: line, at }, at });
       if (r.item && !r.duplicate) count++;
     }
-    d.prepare("INSERT INTO memory_meta(key,value) VALUES('legacy_import',?)").run(JSON.stringify({ at: Date.now(), count, digest: crypto.createHash('sha256').update(body).digest('hex') }));
+    d.prepare("INSERT INTO memory_meta(key,value) VALUES('legacy_import',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+      .run(JSON.stringify({ at: Date.now(), count: (meta ? meta.count || 0 : 0) + count, digest, lines: [...seen] }));
     return { imported: count };
   });
 }

@@ -92,6 +92,27 @@ test('旧记事本：第一次用时导入成待确认（保留原文和日期�
   assert.equal(fs.readFileSync(path.join(xin, 'memory.md'), 'utf8'), notebook);
 });
 
+test('旧记事本后来又多了几行（例如回滚期间旧版本记的）：只补导新行；用户改过或忘掉的原行不会回来；旧格式的导入记录也能接上', t => {
+  const notebook = '# 小芯的记事本\n\n- 2026-11-04：用户叫小李\n- 2026-11-05：在学定时器\n';
+  const { js, xin } = home(t, notebook);
+  const file = path.join(xin, 'memory.md');
+  const first = js(`const r=m.importLegacyNotebook();const it=m.listMemory().find(i=>i.content==='在学定时器');m.updateMemory(it.id,{content:'在学定时器和 PWM'},'user');
+    const li=m.listMemory().find(i=>i.content==='用户叫小李');m.forgetMemory(li.id,'user');return r;`);
+  assert.equal(first.imported, 2);
+  fs.appendFileSync(file, '- 2026-11-08：喜欢先看图再看代码\n');
+  const r = js(`const r=m.importLegacyNotebook(),again=m.importLegacyNotebook();return {r,again,list:m.listMemory().map(i=>i.content).sort()};`);
+  assert.equal(r.r.imported, 1); assert.equal(r.again.skipped, true);
+  assert.deepEqual(r.list, ['喜欢先看图再看代码', '在学定时器和 PWM']);
+  // A record written before line hashes were kept: rebuilt from the quoted lines, so only the newest line comes in.
+  js(`const {journal}=await import(${JSON.stringify(pathToFileURL(path.join(__dirname, '../site/xin/vm-base.mjs')).href)});
+    const v=JSON.parse(journal.db.prepare("SELECT value FROM memory_meta WHERE key='legacy_import'").get().value);delete v.lines;
+    journal.db.prepare("UPDATE memory_meta SET value=? WHERE key='legacy_import'").run(JSON.stringify(v));return null;`);
+  fs.appendFileSync(file, '- 2026-11-08：晚上九点后不想被提醒\n');
+  const b = js(`return {r:m.importLegacyNotebook(),list:m.listMemory().map(i=>i.content).sort()};`);
+  assert.equal(b.r.imported, 1);
+  assert.deepEqual(b.list, ['喜欢先看图再看代码', '在学定时器和 PWM', '晚上九点后不想被提醒']);
+});
+
 test('设定里给谁看什么：前台不带做事方法；每日任务带；后台任务只带确认过、不隐私的「关于你」', t => {
   const { js } = home(t);
   const r = js(`m.addMemory({content:'称呼小李',source:'user'});m.addMemory({content:'学到 I2C 了',source:'user',type:'learning'});
