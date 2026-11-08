@@ -1,23 +1,50 @@
-# Box runner recovery
+# Box runner: safe recovery and restart limitations
 
-Scope: private yux91803-hobo/liming-work-site; runner box-liming-work-site, labels self-hosted/Linux/X64/box.
-Debian 13 x86_64, normal box user with existing gh repo authorization and sudo.
+Scope: PRIVATE `yux91803-hobo/liming-work-site`, immutable GitHub repository ID `1434453690`; runner `box-liming-work-site`, labels `self-hosted/Linux/X64/box`. Debian 13 x86_64. Use the normal box user with authorized `gh` and passwordless sudo; do not run installer as root or copy gh authentication into the CI account.
 
-- `bash install.sh --check`: read-only installation/runtime checks, no token generation.
-- `bash install.sh --install`: recreate user, official verified distributions, browser/dependencies, registration, sandbox and dedicated supervisor config. Does NOT start/trigger jobs.
-- Review workflow labels and queued jobs, then `bash install.sh --start`.
-- `bash backup.sh /chosen/local/path.tar.gz`: whitelist recipes only, no credentials.
+## One explicit recovery command
 
-Installation paths: /var/lib/liming-actions/runner (700 parent, runner credential files 600); /opt/liming-runner-tools (root-owned tools); /opt/hostedtoolcache (CI-owned dependency cache); /etc/liming-actions; /var/lib/liming-actions-supervisor (root-only control socket/logs).
+After retrieving this directory from the private repository and authorizing gh, inspect the old runner ID/status:
 
-Supervisor 4.3.0 invokes the official runsvc.sh. A root-owned wrapper drops UID/GID/capabilities, sets no_new_privs, clears environment, and enters a Bubblewrap filesystem/PID sandbox. No box home/workspace/app files are mounted. Networking is shared, not a network security boundary. The runner is intentionally for trusted private-repository code only, not forks/untrusted PRs. CI cannot access root supervisor control socket. There is no sudo grant for actions-box.
+```bash
+gh api repos/yux91803-hobo/liming-work-site/actions/runners --jq '.runners[]|{id,name,status,busy,labels:[.labels[].name]}'
+# Read-only preflight; performs NO installation, DELETE, registration-token request or service restart:
+bash scripts/box-runner/install.sh --recover --dry-run --replace-offline-runner-id 21
+# Only AFTER a real wipe and when the exact old ID is offline/not busy:
+bash scripts/box-runner/install.sh --recover --replace-offline-runner-id 21
+```
 
-CRITICAL LIMITATIONS:
-- Current container uses tini, not systemd. Current-container process crash recovery is configured and tested; full-box/container restart autostart is NOT configured or promised. No platform daemon was edited. A supported platform boot hook is still needed.
-- After total wipe, the previous GitHub runner entry remains but local credentials are gone. Installer refuses to replace/delete it or register a duplicate. Explicit authorization to remove that exact old entry is required before fresh registration. No long-lived registration token is stored in recovery files.
-- Keep these recipes in this private repository under scripts/box-runner. After wiping the box, retrieve this directory through freshly authorized gh/git; local-only archives cannot survive wiping. No credentials are stored in the recipes.
-- Installer syntax and --check are tested; complete destructive clean-image restore has NOT been performed. No CI/deploy/model calls are part of this installer.
-- Production workflow retains the original real-model live tests. These consume model-provider quota; run only with owner authorization. The runner migration does not skip or weaken them.
-- Self-hosted compute is free per current GitHub docs; artifact/cache storage is separately billed.
+The last command explicitly selects removal of that exact offline orphan, reinstalls prerequisites/distributions/account/configuration, privately obtains a fresh short-lived registration token through gh, registers and starts the current-container service. Replace `21` with the actual old ID; it is NOT a blanket delete permission. The CURRENT online runner21 must not be deleted or used as a wipe test.
 
-Pinned official runner/Node/Python SHA256 hashes are in versions.json and install.sh. Google Chrome is provisioned using its official signed APT repository only when absent. All application secrets remain in Actions Secrets; official runner local credential files are necessary registration state and must never be archived or committed.
+Safety checks are fail-closed: exact repository ID/name/private/admin permission; private-fork workflows disabled; unique expected runner name; matching explicitly selected ID and box/self-hosted labels; status exactly offline and busy exactly false. The repository and exact runner are re-read immediately before DELETE. Online/busy/unknown/mismatching states and retained/partial local authentication refuse replacement. GitHub has no atomic status-conditional DELETE exposed here, so the immediate re-read minimizes, but cannot mathematically eliminate, a server-side state race. No replacement retry loop or alternative API is used.
+
+Without the replacement flag, matching existing local authentication is kept (idempotent); a same-name orphan refuses and prints the explicit selection needed. When no same-name remote/local registration exists, `--recover` registers fresh without deletion. If failure occurs after deleting the orphan but before new registration, inspect the inventory; when the name is genuinely free, retry WITHOUT a replacement flag. Never delete another ID blindly.
+
+Other modes:
+- `bash install.sh --check`: read-only local/runtime/inventory checks.
+- `bash install.sh --install [--replace-offline-runner-id ID]`: install/register/configure but do not start.
+- `bash install.sh --recover --dry-run`: read-only idempotence/fresh-registration plan.
+- `bash install.sh --start`: start existing dedicated supervisor in THIS container, already-running no-op.
+- `python3 test_recovery.py`: 23 offline mocked safety tests, no GitHub/sudo/model/application calls.
+- `bash backup.sh /chosen/local/path.tar.gz`: whitelist only these eight recipe/test files, never runtime authentication.
+
+## What does NOT work automatically
+
+This shared box currently has `tini` as PID1; system and user systemd report offline. No cron/runit/s6 or desktop-session/user-systemd startup mechanism was found. The dedicated Supervisor restarts its runner child after crashes while the container lives, but is NOT a full-container boot hook. No .profile/.bashrc startup trick, shared platform daemon modification, permanent routine, paid service, or real box reboot was used.
+
+Research found no documented supported user boot hook. Official recovery docs say machine replacement/recovery drops installed apps/packages and virtual environments. The official support forum also warns that background programs in .profile/.bashrc can wedge ALL bots' shell access; this is not a safe substitute. A true solution requires the platform to expose a supported per-user boot/post-restore service hook (with an approved way to reinstall dependencies and start the dedicated supervisor), or provide a documented persistent service manager. Then the already-existing `--recover`/`--start` entrypoints can be attached to it. Until that capability exists, somebody must explicitly invoke recovery/start after rebuild. Do NOT call this unattended reboot persistence.
+
+References:
+- https://cursor.com/help/grok-bot/computer-recovery
+- https://forum.cursor.com/t/grok-bot-computer-unresponsive-since-oct-23-reset-didnt-help/176019/6
+- https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/configure-the-application
+
+## Isolation / credentials / tested scope
+
+Runner account `actions-box` has no sudo, no login shell and only its own group. `/var/lib/liming-actions` is700; official runner-generated credential files are600. Supervisor's config/control/logs are root-only. Root-owned wrapper drops UID/GID/capabilities, enables no_new_privs, clears environment and runs official runsvc.sh in a Bubblewrap filesystem/PID sandbox; bot home/workspace/app/root/control paths are not mounted. Networking is shared, so ONLY trusted private-repository code is safe. Workflows reject forks/non-main dispatch refs; repository private-fork execution is disabled.
+
+Paths: runner `/var/lib/liming-actions/runner`; tools `/opt/liming-runner-tools`; CI dependency cache `/opt/hostedtoolcache`; service config `/etc/liming-actions/supervisord.conf`; root-only control/logs `/var/lib/liming-actions-supervisor`. Pins/checksums are in versions.json/install.sh. Browser restore uses Google's official signed APT repository when Chrome is absent.
+
+Application secrets stay in Actions Secrets with the existing deployment behavior. Fresh temporary registration token is stdin/environment-only; it and gh auth are never backed up/committed/printed. Necessary official runner-generated local auth stays private and is NOT a recovery asset. Backups contain only install.sh,backup.sh,sandbox.sh,supervisord.conf,README.md,versions.json,register.py,test_recovery.py. Fetch these recipes from the private repo after a wipe; a local-only archive cannot survive a wipe.
+
+Shell/Python syntax, live read-only idempotence, active-runner replacement refusal, archive whitelist and23 mock cases were tested. No real orphan deletion, current-runner re-registration, destructive wipe, full clean-image restore or actual reboot was performed. Current-container child-crash recovery was tested in the original installation. No deployment/model test is part of the recovery tests. Production model acceptance is a separate application workflow, not a reason to weaken recovery checks.

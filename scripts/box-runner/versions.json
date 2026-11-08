@@ -1,9 +1,26 @@
 {
-  "runner": {"version":"2.338.2","sha256":"baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40"},
-  "node": {"version":"22.23.4","sha256":"1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce"},
-  "python": {"version":"3.12.16","source":"actions/python-versions linux-24.04-x64","sha256":"dec61ed20cd3e71143f1642ef9966945dea8ae4f3e96b306205a710da4f2191a"},
-  "playwright":"1.64.1","supervisor":"4.3.0",
-  "user":"actions-box","runner_dir":"/var/lib/liming-actions/runner",
-  "supervisor_config":"/etc/liming-actions/supervisord.conf",
-  "boot_persistence":false
+  "runner": {
+    "version": "2.338.2",
+    "sha256": "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40"
+  },
+  "node": {
+    "version": "22.23.4",
+    "sha256": "1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce"
+  },
+  "python": {
+    "version": "3.12.16",
+    "source": "actions/python-versions linux-24.04-x64",
+    "sha256": "dec61ed20cd3e71143f1642ef9966945dea8ae4f3e96b306205a710da4f2191a"
+  },
+  "playwright": "1.64.1",
+  "supervisor": "4.3.0",
+  "user": "actions-box",
+  "runner_dir": "/var/lib/liming-actions/runner",
+  "supervisor_config": "/etc/liming-actions/supervisord.conf",
+  "boot_persistence": false,
+  "recovery_recipe_version": 2,
+  "repository": "yux91803-hobo/liming-work-site",
+  "repository_id": 1434453690,
+  "runner_name": "box-liming-work-site",
+  "replacement_requires_explicit_offline_id": true
 }

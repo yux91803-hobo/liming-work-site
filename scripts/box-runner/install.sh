@@ -11,7 +11,28 @@ RUNNER=$HOME_DIR/runner
 TOOLS=/opt/liming-runner-tools
 CACHE=/opt/hostedtoolcache
 MODE=${1:---check}
-case "$MODE" in --check|--install|--start) ;; *) echo 'usage: install.sh [--check|--install|--start]'; exit 2;; esac
+if [ "$#" -gt 0 ]; then shift; fi
+REPLACE_ID=
+DRY_RUN=false
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --replace-offline-runner-id)
+      [ "$#" -ge 2 ] && [[ "$2" =~ ^[1-9][0-9]*$ ]] && [ -z "$REPLACE_ID" ] || { echo 'Expected one positive old runner ID.' >&2; exit 2; }
+      REPLACE_ID=$2; shift 2 ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+case "$MODE" in --check|--install|--recover|--start) ;; *) echo 'usage: install.sh [--check|--install|--recover|--start] [--dry-run] [--replace-offline-runner-id ID]'; exit 2;; esac
+REG_ARGS=()
+if [ -n "$REPLACE_ID" ]; then REG_ARGS+=(--replace-offline-runner-id "$REPLACE_ID"); fi
+if { [ "$MODE" = --check ] || [ "$MODE" = --start ]; } && { [ -n "$REPLACE_ID" ] || [ "$DRY_RUN" = true ]; }; then
+  echo 'Replacement/dry-run flags apply only to --install or --recover.' >&2; exit 2
+fi
+if [ "$DRY_RUN" = true ]; then
+  # No apt/user/service/token/DELETE/config changes. Performs read-only identity checks only.
+  exec python3 "$HERE/register.py" --dry-run "${REG_ARGS[@]}"
+fi
 if [ "$MODE" = --check ]; then
   id "$USER_NAME"
   sudo -u "$USER_NAME" test -f "$RUNNER/.runner"
@@ -23,8 +44,14 @@ if [ "$MODE" = --check ]; then
 fi
 if [ "$MODE" = --start ]; then
   # This starts the current container service; NOT a container boot hook.
-  if sudo "$TOOLS/supervisor-venv/bin/supervisorctl" -c /etc/liming-actions/supervisord.conf status >/dev/null 2>&1; then
-    echo 'Dedicated supervisor is already running.'
+  CTL=(sudo "$TOOLS/supervisor-venv/bin/supervisorctl" -c /etc/liming-actions/supervisord.conf)
+  if daemon_pid=$("${CTL[@]}" pid 2>/dev/null) && [[ "$daemon_pid" =~ ^[1-9][0-9]*$ ]]; then
+    child_pid=$("${CTL[@]}" pid liming-actions)
+    if [[ "$child_pid" =~ ^[1-9][0-9]*$ ]]; then
+      echo 'Dedicated supervisor/runner already active; no restart performed.'
+    else
+      "${CTL[@]}" start liming-actions
+    fi
   else
     sudo env -i PATH=/usr/bin:/bin HOME=/root "$TOOLS/supervisor-venv/bin/supervisord" -c /etc/liming-actions/supervisord.conf
   fi
@@ -33,6 +60,7 @@ fi
 if [ "$(id -u)" = 0 ]; then echo 'Run as the normal box user so gh uses its authorized identity, not root.' >&2; exit 1; fi
 command -v gh >/dev/null
 sudo -n true
+python3 "$HERE/register.py" --dry-run "${REG_ARGS[@]}"
 # Only the tested base is supported; fail instead of silently installing wrong ABI builds.
 . /etc/os-release
 if ! { [ "$ID" = debian ] && [ "$VERSION_ID" = 13 ]; }; then
@@ -93,33 +121,9 @@ if [ ! -x "$TOOLS/supervisor-venv/bin/supervisord" ]; then
   sudo /usr/bin/python3 -m venv "$TOOLS/supervisor-venv"
   sudo "$TOOLS/supervisor-venv/bin/pip" install supervisor==4.3.0
 fi
-# Never --replace/delete a remote runner without explicit authorization.
-if ! sudo -u "$USER_NAME" test -f "$RUNNER/.runner"; then
-  if [ -n "$(gh api "repos/$REPO/actions/runners" --jq ".runners[]|select(.name==\"$NAME\")|.id")" ]; then
-    echo 'Runner name already exists remotely but local credentials are gone. Ask for explicit old-entry removal authorization; no duplicate or replacement was created.' >&2; exit 1
-  fi
-  python3 - <<'PYREG'
-import json,subprocess,sys
-p=subprocess.run(['gh','api','--method','POST','repos/yux91803-hobo/liming-work-site/actions/runners/registration-token'],capture_output=True,text=True)
-if p.returncode:
- print(p.stderr,file=sys.stderr);sys.exit(p.returncode)
-d=json.loads(p.stdout)
-code="""import json,sys,os,subprocess
-j=json.load(sys.stdin);os.umask(0o077)
-e={'HOME':'/var/lib/liming-actions','USER':'actions-box','PATH':'/usr/bin:/bin','ACTIONS_RUNNER_INPUT_TOKEN':j['token']}
-sys.exit(subprocess.run(['./config.sh','--unattended','--url','https://github.com/yux91803-hobo/liming-work-site','--name','box-liming-work-site','--labels','box','--work','_work'],cwd='/var/lib/liming-actions/runner',env=e).returncode)
-"""
-sys.exit(subprocess.run(['sudo','-u','actions-box','env','-i','PATH=/usr/bin:/bin','python3','-c',code],input=json.dumps(d),text=True).returncode)
-PYREG
-else
-  sudo -u "$USER_NAME" python3 - <<'PYCHECK'
-import json
-j=json.load(open('/var/lib/liming-actions/runner/.runner'))
-assert j['agentName']=='box-liming-work-site'
-assert j['gitHubUrl'].rstrip('/')=='https://github.com/yux91803-hobo/liming-work-site'
-print('Existing local registration retained; no new token requested.')
-PYCHECK
-fi
+# Rechecks repo, identity, offline+not-busy state immediately before any explicit deletion.
+# Existing local auth is retained. No gh credential is copied to the CI account.
+python3 "$HERE/register.py" --apply "${REG_ARGS[@]}"
 sudo -u "$USER_NAME" cp "$RUNNER/bin/runsvc.sh" "$RUNNER/runsvc.sh"
 sudo -u "$USER_NAME" chmod 755 "$RUNNER/runsvc.sh"
 printf '%s\n' "$TOOLS/node-v22.23.4-linux-x64/bin:$CACHE/Python/3.12.16/x64/bin:/usr/bin:/bin" | sudo -u "$USER_NAME" tee "$RUNNER/.path" >/dev/null
@@ -130,6 +134,10 @@ for f in resolv.conf hosts nsswitch.conf passwd group os-release ld.so.cache loc
 sudo ln -sf /opt/google/chrome/google-chrome /etc/liming-actions/sandbox-etc/alternatives/google-chrome
 sudo install -m 755 "$HERE/sandbox.sh" "$TOOLS/bin/sandbox.sh"
 sudo install -m 600 "$HERE/supervisord.conf" /etc/liming-actions/supervisord.conf
-# Deliberately no automatic start: first review current workflow labels and pending jobs.
-echo 'Installed/restored without starting. Review workflows, then run install.sh --start.'
-echo 'Container boot persistence is NOT configured. An offline pre-wipe registration needs explicit cleanup authorization.'
+if [ "$MODE" = --recover ]; then
+  # Explicit one-command restore includes current-container start, NOT a boot hook.
+  bash "$HERE/install.sh" --start
+else
+  echo 'Installed/restored without starting. Review workflows, then run install.sh --start.'
+fi
+echo 'Full-container boot persistence is NOT configured; no platform init or shell startup files were changed.'
