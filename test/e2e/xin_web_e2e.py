@@ -15,6 +15,11 @@ body{margin:0;min-height:100vh;display:grid;place-content:center;text-align:cent
 document.getElementById('dance').onclick=()=>{document.getElementById('dragon').classList.add('dancing');document.getElementById('state').textContent='我跳起来啦';};
 </script></body></html>'''
 
+async def loaded(frame):
+    # The preview shows the frame as soon as it sets srcdoc; the artwork's own script runs after its button is parsed,
+    # and the emoji font can arrive later and move the centred button. Click only after load and fonts settle.
+    await frame.locator('#dance').evaluate("async el => { const d = el.ownerDocument; if (d.readyState !== 'complete') await new Promise(r => d.defaultView.addEventListener('load', r, {once: true})); await d.fonts.ready; await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }")
+
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
@@ -36,6 +41,7 @@ async def main():
             if scenario in ('ready', 'waking'):
                 await page.wait_for_selector('#frame:not([hidden])')
                 frame = page.frame_locator('#frame')
+                await loaded(frame)
                 await frame.locator('#dance').click()
                 assert await frame.locator('#state').inner_text() == '我跳起来啦'
                 assert await frame.locator('body').evaluate('() => self.origin') == 'null'
@@ -112,6 +118,7 @@ async def main():
                 preview = await opened.value
                 await preview.emulate_media(color_scheme=theme)
                 await preview.wait_for_selector('#frame:not([hidden])')
+                await loaded(preview.frame_locator('#frame'))
                 await preview.frame_locator('#frame').locator('#dance').click()
                 assert await preview.frame_locator('#frame').locator('#state').inner_text() == '我跳起来啦'
                 assert await preview.evaluate('document.documentElement.scrollWidth <= innerWidth')

@@ -95,3 +95,41 @@ test('预览元数据不能把私有控制文件伪装成网页',async t=>{
  global.fetch=async(url)=>{const u=new URL(url);if(u.pathname==='/v1/machines')return Response.json({machines:[{id:'m_test',name:'li'}]});if(u.pathname.endsWith('/exec'))return Response.json({exitCode:0,stdout:JSON.stringify({real:'/data/home/.xin/codex.key',size:12,sha256:'a'.repeat(64)})});assert.fail('private file must never be fetched');};t.after(()=>{global.fetch=real;api._reset();});
  assert.equal((await api.handleXin(new Request(origin+'/api/xin/preview/'+id+'/index.html',{headers:{cookie}}),env,null)).status,502);
 });
+test('点名模型已记录时，前台多写或写错的 --model 不挡派工；没点名时写错模型或类型会给出可选值',async t=>{
+ const f=fixture(t),{run}=f.front();
+ const a=f.call('front_action',{run,argv:['xin','task','new','--kind','code','--web','--model','kimi','--title','奶龙互动网页','--','画奶龙互动网页']});
+ assert.equal(a.terminal,true);assert.equal(a.task.model,'kimi-k3.1-pro');assert.equal(a.task.web,true);
+ const sid='swebfront02',other='rwebfront02',text='帮我查一下资料';
+ fs.writeFileSync(f.control+'/sessions/'+sid+'.json',JSON.stringify({sid,agent:'codex',runs:[other]}));
+ fs.writeFileSync(f.control+'/runs/'+other+'.json',JSON.stringify({sid,run:other,agent:'codex',model:'deepseek-v4.1-flash',frontNamed:null,frontRequest:text,text,started:Date.now()}));
+ fs.writeFileSync(f.control+'/runs/'+other+'.jsonl',JSON.stringify({t:'user',text})+'\n');
+ assert.match(f.call('front_action',{run:other,argv:['xin','task','new','--model','kimi','--','查资料']}).error,/^未知模型：kimi（可用：.*kimi-k3\.1-pro/);
+ assert.match(f.call('front_action',{run:other,argv:['xin','task','new','--kind','web','--','查资料']}).error,/^未知工作类型：web（可用：quick、code/);
+ assert.equal(f.call('tasks',{all:true}).tasks.filter(x=>x.parent===sid).length,0);
+});
+test('前台兜底记录只留命令形状：选项名和类型、模型、依据取值，不留标题、要求或要记的话',async()=>{
+ const a=await import(pathToFileURL(agent).href);
+ assert.deepEqual(a.frontCallShape('xin',{argv:['xin','task','new','--kind','code','--web','--model','kimi','--title','秘密标题','--','画我的秘密']},{error:'未知模型：kimi'}),{call:'task new --kind code --web --model kimi --title',error:'未知模型：kimi'});
+ assert.deepEqual(a.frontCallShape('xin',{argv:['xin','remember','--basis','stated','--type','profile','我住在某个地方']},{text:'ok'}),{call:'remember --basis stated --type profile'});
+ assert.deepEqual(a.frontCallShape('xin',{argv:['xin','task','new','--','做']},{terminal:true,text:'好'}),{call:'task new',terminal:true});
+ assert.equal(a.frontCallShape('xin',null,{error:'x'}).call,'xin（参数不是有效 JSON）');
+});
+function chromium(){
+ const pw='/opt/pw-browsers',found=[process.env.CHROMIUM_PATH,'/usr/lib/chromium/chromium','/usr/bin/google-chrome','/usr/bin/chromium'];
+ try{for(const d of fs.readdirSync(pw).filter(d=>/^chromium-\d+$/.test(d)))found.push(pw+'/'+d+'/chrome-linux64/chrome',pw+'/'+d+'/chrome-linux/chrome');}catch{}
+ return found.find(p=>p&&fs.existsSync(p));
+}
+test('网页验收用真浏览器点击：变化在下一帧或稍后（1.5 秒内）出现也算通过；一直没出现时说清楚看到的状态和连续点击的规则',async()=>{
+ const browser=chromium();assert.ok(browser,'需要 Chromium：设置 CHROMIUM_PATH');
+ const r=await load(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'xin-webcheck-'));
+ const page=script=>'<!doctype html><html><head><title>奶龙</title></head><body><button id="wave" data-count="0" style="width:120px;height:40px">挥手</button><div id="dragon" style="width:80px;height:80px">龙</div><script>'+script+'</script></body></html>';
+ const check=(name,script,checks)=>{const file=path.join(dir,name+'.html'),tmp=fs.mkdtempSync(path.join(dir,'tmp-'));fs.writeFileSync(file,page(script));
+  const o=spawnSync(process.execPath,['--input-type=module','-e',r.WEB_BROWSER_CHECK,file,tmp,JSON.stringify({checks}),r.WEB_PREVIEW_CSP,browser],{encoding:'utf8',timeout:60000});
+  try{return JSON.parse(o.stdout.trim());}catch{throw Error('检查脚本没有输出结果：'+o.stderr.slice(-500));}};
+ const later=check('later','wave.onclick=()=>setTimeout(()=>{wave.dataset.count="1";},500)',[{selector:'#wave',expectSelector:'#wave',expectAttribute:{name:'data-count',value:'1'}}]);
+ assert.equal(later.ok,true,later.error);assert.deepEqual(later.viewports.map(v=>v.width),[1280,390]);
+ const gone=check('gone','wave.onclick=()=>{dragon.classList.add("happy");setTimeout(()=>dragon.classList.remove("happy"),30);}',[{selector:'#wave',expectSelector:'#dragon',expectClass:'happy'}]);
+ assert.equal(gone.ok,false);assert.match(gone.error,/^点击 #wave 后 1\.5 秒内没有得到预期变化（#dragon 没有 class happy）；检查在同一页面按顺序连续点击/);
+ const attr=check('attr','wave.onclick=()=>{wave.dataset.count="2";}',[{selector:'#wave',expectSelector:'#wave',expectAttribute:{name:'data-count',value:'1'}}]);
+ assert.equal(attr.ok,false);assert.match(attr.error,/#wave 的 data-count 是 "2"，不是 "1"/);
+});
