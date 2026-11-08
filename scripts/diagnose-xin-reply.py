@@ -1,11 +1,13 @@
-"""One read-only VM exec. Print only failure categories and counters from the failed deployment's time window."""
-import hashlib,json,os,re,sys,urllib.parse,urllib.request
+"""Bounded synthetic reply comparison. Output counters, capability metadata and two sanitized legacy methods only."""
+import hashlib,json,os,re,sys,time,urllib.parse,urllib.request,uuid
 from pathlib import Path
 API='https://api.instabox.sh'
 key=os.environ.get('XIN_INSTABOX_API_KEY','')
 if not key:raise RuntimeError('Configured InstaBox credential is required')
 def api(route,data=None):
-    req=urllib.request.Request(API+route,headers={'X-API-Key':key,'Content-Type':'application/json'},data=None if data is None else json.dumps(data).encode())
+    headers={'X-API-Key':key,'Content-Type':'application/json'}
+    if route.endswith(('/resume','/start')):headers['Idempotency-Key']=str(uuid.uuid4())
+    req=urllib.request.Request(API+route,headers=headers,data=None if data is None else json.dumps(data).encode())
     with urllib.request.urlopen(req,timeout=170) as r:return json.load(r)
 machines=api('/v1/machines').get('machines',[])
 machine=next((m for m in machines if m.get('name')=='li'),machines[0] if len(machines)==1 else None)
@@ -16,6 +18,13 @@ if state.get('cooldownUntil'):
     from datetime import datetime,timezone
     if datetime.fromisoformat(state['cooldownUntil'].replace('Z','+00:00'))>datetime.now(timezone.utc):
         print('DIAGNOSE_DEFERRED_COOLDOWN',flush=True);sys.exit(0)
+if state.get('state')!='running':
+    api('/v1/machines/'+machine['id']+('/start' if state.get('state')=='stopped' else '/resume'),{})
+    for _ in range(15):
+        state=api('/v1/machines/'+machine['id'])
+        if state.get('state')=='running':break
+        time.sleep(2)
+    if state.get('state')!='running':raise RuntimeError('VM did not become ready after cooldown')
 source=Path('scripts/probe-xin-reply.cjs').read_text()
 def probe(entry,mode,label):
     result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source,entry,mode],'timeoutSeconds':150})
