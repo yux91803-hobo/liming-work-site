@@ -61,6 +61,13 @@ test('用户停止不触发预算派活，也不等待过期才结束',async()=>
   o.fallback=()=>assert.fail('停止不能派活');
   await assert.rejects(frontTurn(o),/user stopped/);
 });
+test('额度用完但已经写出的正文保留；没有正文的 incomplete 仍然失败',async()=>{
+  const {frontTurn}=await load();
+  const text='generation-current-abc123';
+  const partial={status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[{type:'message',content:[{type:'output_text',text}]}]};
+  assert.equal(await frontTurn(options(partial)),text);
+  await assert.rejects(frontTurn(options({status:'incomplete',output:[]})),/前台未完成回复/);
+});
 test('表情动作不占派活步数；同一次回复里有文字就直接答，不多问一轮；每轮最多两次表情',async()=>{
   const {frontTurn}=await load(),acts=['dance','say'];
   // Expressions first, then the work call: with a one-step work budget the task is still dispatched.

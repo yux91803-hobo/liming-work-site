@@ -168,8 +168,26 @@ async def main():
                 text=await page.locator('.xc-msgs').inner_text()
                 if alternate_sid==sid or second_marker not in text or first_marker in text:
                     raise RuntimeError('Conversation isolation failed after a real delayed send')
-                if not any(second_marker in text for text in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()):
-                    raise RuntimeError('New conversation real-model reply missing')
+                bubbles = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()
+                if not any(second_marker in text for text in bubbles):
+                    kinds = {}
+                    saved = None
+                    try:
+                        saved = await call('history', {'sid': alternate_sid})
+                        for event in [e for r in saved.get('runs', []) for e in r.get('events', [])]:
+                            kinds[event.get('t') or '?'] = kinds.get(event.get('t') or '?', 0) + 1
+                    except Exception:
+                        kinds = {'history': 0}
+                    done = [e for r in (saved or {}).get('runs', []) for e in r.get('events', []) if e.get('t') == 'done']
+                    assistant_has_marker = any(second_marker in (e.get('text') or '') for r in (saved or {}).get('runs', []) for e in r.get('events', []) if e.get('t') == 'text')
+                    # Counts and booleans only: never print the reply, the marker or the prompt.
+                    raise RuntimeError('New conversation real-model reply missing'
+                        + ' bubbles=' + str(len(bubbles))
+                        + ' bad=' + str(await page.locator('.xc-ai.bad').count())
+                        + ' typing=' + str(await page.locator('.xc-ai.xc-typing').count())
+                        + ' events=' + ','.join(k + ':' + str(kinds[k]) for k in sorted(kinds))
+                        + ' doneOk=' + str(bool(done and done[-1].get('ok')))
+                        + ' savedAssistantHasMarker=' + str(bool(assistant_has_marker)))
                 limit=time.monotonic()+120
                 while True:
                     old=await call('history',{'sid':sid})
