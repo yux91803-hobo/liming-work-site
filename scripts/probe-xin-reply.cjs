@@ -17,7 +17,8 @@ const call=(op,args)=>{const r=spawnSync('node',[agent,op],{env,input:JSON.strin
 if(r.status!==0)throw Error('controller_exit');const out=JSON.parse(r.stdout);if(out.error)throw Error('controller_'+out.error);return out;};
 const delay=ms=>new Promise(r=>setTimeout(r,ms)),created=[];
 const wait=async run=>{const until=Date.now()+(mode==='native'?110000:40000);while(Date.now()<until){const r=call('poll',{run,off:0});if(r.done)return {done:true,events:r.events||[]};await delay(400);}throw Error('specific_run_timeout');};
-const evidence=(result)=>{const es=result.events,said=es.filter(e=>e.t==='text').map(e=>e.text||'').join('\n');return {done:result.done,types:es.map(e=>e.t),text:markers.map(m=>said.includes(m)),bytes:Buffer.byteLength(said),finish:es.filter(e=>e.t==='done').map(e=>({ok:e.ok,model:e.model,stopped:e.stopped})),errorTypes:es.filter(e=>e.t==='err').map(e=>/Opus|Antigravity|ACP/.test(e.text)?'opus_interface':/前台.*回复|格式/.test(e.text)?'reply_format':'other')};};
+const publicErrors=new Set(['bad_front_model','Opus 没有返回有效的前台回复格式','Opus 前台回复字段不完整','Opus 请求超时','Opus 连接结束','Opus 没有创建可用前台会话','Antigravity 当前账号没有提供 Claude Opus 4.6','前台已停止','当前 Opus 接口没有接收到图片能力，未发送不一致的看图提示']);
+const evidence=(result)=>{const es=result.events,said=es.filter(e=>e.t==='text').map(e=>e.text||'').join('\n');return {done:result.done,types:es.map(e=>e.t),text:markers.map(m=>said.includes(m)),bytes:Buffer.byteLength(said),finish:es.filter(e=>e.t==='done').map(e=>({ok:e.ok,model:e.model,providerModel:e.providerModel,stopped:e.stopped})),errorTypes:es.filter(e=>e.t==='err').map(e=>publicErrors.has(e.text)?e.text:/Opus|Antigravity|ACP/.test(e.text)?'opus_interface':/前台.*回复|格式/.test(e.text)?'reply_format':'other')};};
 (async()=>{const out={};try{
 if(mode==='inspect'){
  const memory=await import('file://'+path.join(base,'agent/vm-memory-5d8065faa2c7.mjs')),db=memory.memoryDb();
@@ -35,7 +36,17 @@ if(mode==='inspect'){
 if(!fs.existsSync(agent))throw Error('missing_bundle');
 const initial=call('send',{agent:'codex',text:'只回复 '+markers[0]+'，不要执行命令、派任务或记忆。'});created.push(initial.sid);
 out.initial=evidence(await wait(initial.run));
-if(mode==='native')return;
+if(mode==='native'){
+ try{out.protocol=fs.readFileSync(path.join(base,'logs/front.jsonl'),'utf8').split('\n').flatMap(l=>{try{return [JSON.parse(l)];}catch{return [];}}).filter(e=>e.run===initial.run).map(e=>({error:publicErrors.has(e.error)?e.error:'other',protocol:e.protocol}));}catch{}
+ if(!out.initial.text[0]||!out.initial.finish.at(-1)?.ok)return;
+ const visual='READ-'+crypto.randomBytes(5).toString('hex').toUpperCase(),file=path.join(root,'uploads','photo.png');fs.mkdirSync(path.dirname(file),{recursive:true});
+ const source=`from playwright.sync_api import sync_playwright\nimport shutil,sys\nwith sync_playwright() as p:\n b=p.chromium.launch(headless=True,executable_path=shutil.which('chromium') or shutil.which('google-chrome'),args=['--no-sandbox'])\n page=b.new_page(viewport={'width':1100,'height':220})\n page.set_content('<canvas width="1100" height="220"></canvas>')\n page.evaluate('text=>{const c=document.querySelector("canvas"),g=c.getContext("2d");g.fillStyle="white";g.fillRect(0,0,c.width,c.height);g.fillStyle="black";g.font="bold 90px monospace";g.fillText(text,30,135);}',sys.argv[1])\n page.locator('canvas').screenshot(path=sys.argv[2])\n b.close()`;
+ const rendered=spawnSync('python3',['-c',source,visual,file],{env:{HOME:'/data/home',PATH:process.env.PATH||'/usr/local/bin:/usr/bin:/bin'},encoding:'utf8',timeout:20000});
+ if(rendered.status!==0){out.imageSetup=false;return;}
+ const image=call('send',{agent:'codex',text:'只照写这张图中唯一一行字符，不派任务、不执行命令、不记忆。',files:[{path:file,name:'photo.png'}]});created.push(image.sid);
+ const result=await wait(image.run),text=result.events.filter(e=>e.t==='text').map(e=>e.text||'').join('\n'),tasks=call('tasks',{sid:image.sid}).tasks||[];
+ out.image={...evidence(result),pixelAnswerMatches:text.includes(visual),tasks:tasks.length};return;
+}
 const old=call('send',{sid:initial.sid,text:'只回复 '+markers[1]+'，不要执行命令、派任务或记忆。'});
 const current=call('send',{agent:'codex',text:'只回复 '+markers[2]+'，不要执行命令、派任务或记忆。'});created.push(current.sid);
 const results=await Promise.all([wait(old.run),wait(current.run)]);out.original=evidence(results[0]);out.current=evidence(results[1]);

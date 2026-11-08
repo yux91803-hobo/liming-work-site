@@ -8,7 +8,7 @@ def api(route,data=None):
     headers={'X-API-Key':key,'Content-Type':'application/json'}
     if route.endswith(('/resume','/start')):headers['Idempotency-Key']=str(uuid.uuid4())
     req=urllib.request.Request(API+route,headers=headers,data=None if data is None else json.dumps(data).encode())
-    with urllib.request.urlopen(req,timeout=170) as r:return json.load(r)
+    with urllib.request.urlopen(req,timeout=280) as r:return json.load(r)
 machines=api('/v1/machines').get('machines',[])
 machine=next((m for m in machines if m.get('name')=='li'),machines[0] if len(machines)==1 else None)
 if not machine:raise RuntimeError('Configured VM was not found')
@@ -27,16 +27,17 @@ if state.get('state')!='running':
     if state.get('state')!='running':raise RuntimeError('VM did not become ready after cooldown')
 source=Path('scripts/probe-xin-reply.cjs').read_text()
 def probe(entry,mode,label):
-    result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source,entry,mode],'timeoutSeconds':150})
+    result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source,entry,mode],'timeoutSeconds':240 if mode=='native' else 150})
     if result.get('exitCode')!=0:raise RuntimeError('Synthetic diagnosis failed, exit '+str(result.get('exitCode')))
     evidence=json.loads(result.get('stdout','{}'))
     print(label+' '+json.dumps(evidence,ensure_ascii=True),flush=True)
+    return evidence
 
 if os.environ.get('XIN_DIAG_MODE')=='memory-and-native':
     result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',Path('scripts/maintain-xin-front.cjs').read_text()],'timeoutSeconds':100})
     print('MEMORY_AND_CAPABILITIES '+json.dumps(json.loads(result.get('stdout','{}')),ensure_ascii=True),flush=True)
     if result.get('exitCode')!=0:raise RuntimeError('Bounded maintenance failed')
-else:
+elif os.environ.get('XIN_DIAG_MODE')!='protocol':
     probe('/data/home/.xin/agent/vm-agent-158f619f9dcc.mjs','inspect','BASELINE_EVIDENCE')
 uploaded=set()
 def bundle(root):
@@ -53,5 +54,7 @@ def bundle(root):
             uploaded.add(hashed)
         names[name]=hashed;active.remove(name);return hashed
     return '/data/home/.xin/agent/'+visit('vm-agent.mjs')
-if os.environ.get('XIN_DIAG_MODE')!='memory-and-native':probe(bundle(Path('site/xin')),'deepseek','CANDIDATE_DEEPSEEK_EVIDENCE')
-probe(bundle(Path('.diagnostic-opus/site/xin')),'native','CANDIDATE_OPUS_EVIDENCE')
+if os.environ.get('XIN_DIAG_MODE') not in ('memory-and-native','protocol'):probe(bundle(Path('site/xin')),'deepseek','CANDIDATE_DEEPSEEK_EVIDENCE')
+native=probe(bundle(Path('.diagnostic-opus/site/xin')),'native','CANDIDATE_OPUS_EVIDENCE')
+if os.environ.get('XIN_DIAG_MODE')=='protocol' and not (native.get('initial',{}).get('text',[False])[0] and native.get('image',{}).get('pixelAnswerMatches') and native.get('image',{}).get('tasks')==0):
+    raise RuntimeError('Native foreground protocol or direct image verification failed')

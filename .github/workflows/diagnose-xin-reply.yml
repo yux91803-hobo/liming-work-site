@@ -13,12 +13,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5
         with:
-          ref: 2db77b7c58fe91efd27015a2c43c20c1567155f9
+          ref: 5272427a8dd0e8e102635c4960dc06cf95410916
           path: .diagnostic-opus
-      - name: 执行机资源与日志计数（不输出日志正文或环境）
-        run: python3 scripts/diagnose-box-runner.py
       - name: 合成对话对照与能力元数据（不打印聊天、回复或密钥）
         env:
-          XIN_DIAG_MODE: memory-and-native
+          XIN_DIAG_MODE: protocol
           XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
         run: python3 scripts/diagnose-xin-reply.py
