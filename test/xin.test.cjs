@@ -528,8 +528,10 @@ test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做�
   op('daily_set', { text: '- 网关签到' });
   const r = op('daily');
   assert.strictEqual(r.agent, 'codex');
-  let p = null;
-  for (let i = 0; i < 60; i++) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(s => setTimeout(s, 200)); }
+  let p = null, completed = null;
+  // A model turn can finish before the controller has published the daily task and its day marker.
+  for (let i = 0; i < 60; i++) { p = op('poll', { run: r.run, off: 0 }); if (p.done) { completed=op('tasks',{all:true}).tasks.find(t=>t.sid===r.sid);if(completed?.status==='done')break; } await new Promise(s => setTimeout(s, 200)); }
+  assert.strictEqual(completed?.status,'done',JSON.stringify({done:p?.done,task:completed?.status}));
   const ts = p.events.map(e => e.t);
   assert.deepStrictEqual(ts, ['user', 'status', 'text', 'done'], JSON.stringify(p.events));
   assert.strictEqual(p.events[1].text, '这次连接卡住了，重新连一次…');

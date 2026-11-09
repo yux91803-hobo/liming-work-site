@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {BASE,journal,readJ,readText,okId} from './vm-base.mjs';
 import {memoryDb,memoryBlocked,memoryBlockedText,memorySensitivity} from './vm-memory.mjs';
+import {learningGuidance} from './vm-learning.mjs';
 
 const sess=sid=>path.join(BASE,'sessions',sid+'.json'),meta=run=>path.join(BASE,'runs',run+'.json'),raw=run=>path.join(BASE,'runs',run+'.jsonl');
 const normal=s=>s?.agent==='codex'&&!s.kind&&!s.dailyDate;
@@ -61,6 +62,7 @@ export function turnGuidance({text='',context='',sid='',now=Date.now()}={}){
   // Do not turn credentials or other private current input into an automatic cross-chat search key.
   const privateInput=!!memorySensitivity(text+' '+context),keys=privateInput?[]:words(text+' '+context),rows=memoryDb().prepare("SELECT * FROM memory_items WHERE status='active' ORDER BY COALESCE(confirmed,updated) DESC").all();
   const lines=[];let used=0;
+  const learning=privateInput?'':learningGuidance(text+' '+context,now);if(learning){lines.push(learning);used+=learning.length;}
   for(const it of rows){
     if(memorySensitivity(it.content))continue;
     if(it.type!=='profile'&&!relevant(it.content,keys))continue;

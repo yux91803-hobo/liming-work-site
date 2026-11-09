@@ -158,10 +158,14 @@ async def xin_mock(pg, authed=False, live=None):
         st['ops'].append(op)
         if op == 'status': return await ok({'ok': True, 'data': {'name': 'li', 'state': 'running'}})
         if op == 'wake': return await ok({'ok': True, 'data': {'state': 'running', 'action': 'none'}})
-        if op == 'memory_preferences': return await ok({'ok': True, 'data': {'followups': st.get('followups', True)}})
+        if op == 'learning_report':
+            st.setdefault('learning_events', []).extend(args.get('events', []))
+            return await ok({'ok': True, 'data': {'ok': True, 'accepted': len(args.get('events', []))}})
+        if op == 'memory_preferences': return await ok({'ok': True, 'data': {'followups': st.get('followups', True), 'learning': st.get('learning', True)}})
         if op == 'memory_preferences_set':
-            st['followups'] = args['followups']
-            return await ok({'ok': True, 'data': {'followups': st['followups']}})
+            for key in ('followups', 'learning'):
+                if key in args: st[key] = args[key]
+            return await ok({'ok': True, 'data': {'followups': st.get('followups', True), 'learning': st.get('learning', True)}})
         if op == 'memory_list': return await ok({'ok': True, 'data': {'items': st['memitems'], 'titles': {'shist00001': '看看目录'}}})
         if op == 'memory_add':
             st['mem_added'] = args
@@ -272,6 +276,9 @@ async def xin_mock(pg, authed=False, live=None):
             st['sent'] = args
             return await ok({'ok': True, 'data': {'sid': 'snew000001', 'run': 'rlive00001', 'agent': args.get('agent') or 'codex'}})
         if op == 'poll':
+            if st.get('poll_gate'):
+                st['poll_entered'].set()
+                await st['poll_gate'].wait()
             if st.get('hold'):
                 return await ok({'ok': True, 'data': {'events': [], 'off': args.get('off', 0), 'done': False}})
             st['polls'] += 1
@@ -500,6 +507,54 @@ async def stm32_audit_regressions(b):
         await pg.goto(TOOL + '?' + query); await pg.wait_for_selector('html.ready')
         check('异常地址仍能加载学习台：' + query, await pg.locator('#main').inner_text() != '')
     await pg.context.close()
+
+async def xin_timing_checks(b):
+    # 发出去、还没送到小芯的电脑：「正在输入」旁边写「接收中」、标题栏「接收中…」，自己那句下面不加小字；
+    # 送到了变成「思考中」，从送到那一刻算秒数，每秒走；电脑在睡时写「唤醒中」（不写「唤醒云电脑」，也不另外冒状态栏）
+    pt = await page(b)
+    xt = await xin_mock(pt, authed=True, live=[[{'t': 'user', 'text': '想一想'}, {'t': 'text', 'text': '想好了。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 5000}]])
+    xt['send_gate'] = asyncio.Event(); xt['send_entered'] = asyncio.Event()
+    xt['poll_gate'] = asyncio.Event(); xt['poll_entered'] = asyncio.Event()
+    # Start before navigation, then pause after load as recommended by Playwright. The later
+    # pause time leaves room for slow resource loading without using wall time for timer assertions.
+    await pt.clock.install(time=datetime(2026,11,9,0,0,0,tzinfo=timezone.utc))
+    await pt.goto(BASE + '/#xin'); await pt.wait_for_selector('.xc.show .xc-row textarea')
+    await pt.clock.pause_at(datetime(2026,11,9,2,0,0,tzinfo=timezone.utc))
+    await pt.fill('.xc-row textarea', '想一想'); await pt.keyboard.press('Enter')
+    await asyncio.wait_for(xt['send_entered'].wait(),5)
+    await pt.clock.run_for(5000)
+    s1 = await pt.evaluate("[(document.querySelector('.xc-typing-l') || {}).textContent, document.querySelector('.xc-sub').textContent, document.querySelector('.xc-me').textContent, !!document.querySelector('.xc-me.pending')]")
+    xt['send_gate'].set()
+    await expect(pt.locator('.xc-me.pending')).to_have_count(0,timeout=5000)
+    s2 = await pt.evaluate("[document.querySelector('.xc-typing-l').textContent, document.querySelector('.xc-sub').textContent]")
+    await pt.clock.run_for(1000); l1 = await pt.text_content('.xc-typing-l')
+    await pt.clock.run_for(1000); l2 = await pt.text_content('.xc-typing-l')
+    check('发出去还没送到：「正在输入」旁边写「接收中」、标题栏「接收中…」，自己那句下面没有小字', s1 == ['接收中', '接收中…', '想一想', True], s1)
+    check('送到了：变成「思考中」、标题栏「思考中…」；秒数从送到那一刻算、每秒走一下',
+          s2[0].startswith('思考中') and s2[1] == '思考中…' and l1 == '思考中 · 1 秒' and l2 == '思考中 · 2 秒', (s2,l1,l2))
+    # Finish the held real HTTP poll while this clock is still controlled. A new page below
+    # checks waking with ordinary timers, so completion cannot race clock restoration.
+    await asyncio.wait_for(xt['poll_entered'].wait(),5)
+    xt['poll_gate'].set()
+    try:
+        await expect(pt.locator('.xc-typing')).to_have_count(0,timeout=8000)
+    except Exception:
+        state=await pt.evaluate("({run:!!LimingXinChat.state.run,off:LimingXinChat.state.off,polling:LimingXinChat.state.polling,sawDone:!!LimingXinChat.state.sawDone,hidden:document.hidden})")
+        print('TIMER_COMPLETION_DIAGNOSTICS '+json.dumps({'state':state,'mockPolls':xt['polls']}),flush=True)
+        raise
+    check('计时检查：真实完成回执只结束一次，保留唯一回复', await pt.evaluate(CHAT_DONE) and await pt.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()==['想好了。'] and xt['polls']==1)
+    await pt.context.close()
+    pt = await page(b)
+    xt = await xin_mock(pt, authed=True, live=[[{'t': 'user', 'text': '再想一想'}], [], [], [{'t': 'text', 'text': '想好了。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 5000}]])
+    await pt.goto(BASE + '/#xin'); await pt.wait_for_selector('.xc.show .xc-row textarea')
+    xt['send_waking'] = 1; xt['send_delay'] = 1.5
+    await pt.fill('.xc-row textarea', '再想一想'); await pt.keyboard.press('Enter')
+    await pt.wait_for_function("(document.querySelector('.xc-typing-l') || {}).textContent === '唤醒中'", timeout=3000)
+    s3 = await pt.evaluate("[document.querySelector('.xc-sub').textContent, document.querySelector('.xc-st').hidden, document.querySelector('.xc').innerText.includes('云电脑'), [...document.querySelectorAll('.xc-me')].pop().textContent]")
+    await pt.wait_for_function("((document.querySelector('.xc-typing-l') || {}).textContent || '').startsWith('思考中')", timeout=6000)
+    check('电脑在睡：「正在输入」旁边和标题栏写「唤醒中」，不写「唤醒云电脑」、不冒状态栏；叫醒发出去以后变成「思考中」',
+          s3 == ['唤醒中…', True, False, '再想一想'] and xt['sent'].get('text') == '再想一想', (s3, xt['sent']))
+    await pt.context.close()
 
 async def main():
     async with async_playwright() as p:
@@ -1606,39 +1661,7 @@ async def main():
         check('点新对话：用量那一行收起来', not await pg.is_visible('.xc-use'))
         await pg.click('.xc-x'); await pg.wait_for_timeout(400)
         check('关掉面板', not await pg.is_visible('.xc'))
-        # 发出去、还没送到小芯的电脑：「正在输入」旁边写「接收中」、标题栏「接收中…」，自己那句下面不加小字；
-        # 送到了变成「思考中」，从送到那一刻算秒数，每秒走；电脑在睡时写「唤醒中」（不写「唤醒云电脑」，也不另外冒状态栏）
-        pt = await page(b)
-        xt = await xin_mock(pt, authed=True, live=[[{'t': 'user', 'text': '想一想'}], [], [], [{'t': 'text', 'text': '想好了。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 5000}]])
-        xt['send_gate'] = asyncio.Event(); xt['send_entered'] = asyncio.Event(); xt['hold'] = True
-        # Start before navigation, then pause after load as recommended by Playwright. The later
-        # pause time leaves room for slow resource loading without using wall time for timer assertions.
-        await pt.clock.install(time=datetime(2026,11,9,0,0,0,tzinfo=timezone.utc))
-        await pt.goto(BASE + '/#xin'); await pt.wait_for_selector('.xc.show .xc-row textarea')
-        await pt.clock.pause_at(datetime(2026,11,9,2,0,0,tzinfo=timezone.utc))
-        await pt.fill('.xc-row textarea', '想一想'); await pt.keyboard.press('Enter')
-        await asyncio.wait_for(xt['send_entered'].wait(),5)
-        await pt.clock.run_for(5000)
-        s1 = await pt.evaluate("[(document.querySelector('.xc-typing-l') || {}).textContent, document.querySelector('.xc-sub').textContent, document.querySelector('.xc-me').textContent, !!document.querySelector('.xc-me.pending')]")
-        xt['send_gate'].set()
-        await expect(pt.locator('.xc-me.pending')).to_have_count(0,timeout=5000)
-        s2 = await pt.evaluate("[document.querySelector('.xc-typing-l').textContent, document.querySelector('.xc-sub').textContent]")
-        await pt.clock.run_for(1000); l1 = await pt.text_content('.xc-typing-l')
-        await pt.clock.run_for(1000); l2 = await pt.text_content('.xc-typing-l')
-        check('发出去还没送到：「正在输入」旁边写「接收中」、标题栏「接收中…」，自己那句下面没有小字', s1 == ['接收中', '接收中…', '想一想', True], s1)
-        check('送到了：变成「思考中」、标题栏「思考中…」；秒数从送到那一刻算、每秒走一下',
-              s2[0].startswith('思考中') and s2[1] == '思考中…' and l1 == '思考中 · 1 秒' and l2 == '思考中 · 2 秒', (s2,l1,l2))
-        xt.pop('send_gate'); xt.pop('send_entered'); xt['hold'] = False
-        await pt.clock.resume()
-        await pt.wait_for_function(CHAT_DONE, timeout=8000)
-        xt['send_waking'] = 1; xt['send_delay'] = 1.5; xt['polls'] = 0   # 第二句从头再放一遍进度（不然第一次取进度就是做完了）
-        await pt.fill('.xc-row textarea', '再想一想'); await pt.keyboard.press('Enter')
-        await pt.wait_for_function("(document.querySelector('.xc-typing-l') || {}).textContent === '唤醒中'", timeout=3000)
-        s3 = await pt.evaluate("[document.querySelector('.xc-sub').textContent, document.querySelector('.xc-st').hidden, document.querySelector('.xc').innerText.includes('云电脑'), [...document.querySelectorAll('.xc-me')].pop().textContent]")
-        await pt.wait_for_function("((document.querySelector('.xc-typing-l') || {}).textContent || '').startsWith('思考中')", timeout=6000)
-        check('电脑在睡：「正在输入」旁边和标题栏写「唤醒中」，不写「唤醒云电脑」、不冒状态栏；叫醒发出去以后变成「思考中」',
-              s3 == ['唤醒中…', True, False, '再想一想'] and xt['sent'].get('text') == '再想一想', (s3, xt['sent']))
-        await pt.context.close()
+        await xin_timing_checks(b)
         # 上一句还在跑（多标签）：send 回 soft busy → 输入还原、提示请稍后再试、打开同一对话，不把发送状态弄脏
         pb = await page(b)
         xb = await xin_mock(pb, authed=True)
@@ -1873,7 +1896,12 @@ async def main():
         await pv.click('.xc-set-b'); await pv.wait_for_selector('.xc-set')
         rows = await pv.evaluate("[...document.querySelectorAll('.xc-tg-t b')].map(b => b.textContent)")
         await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false' && !document.querySelector('.xc-push .xc-sw').disabled")
-        check('设置：天启模式、附带正在看的页面、主动跟进、做完提醒，做完提醒默认关着', rows == ['天启模式', '附带正在看的页面', '主动跟进', '做完提醒'], rows)
+        check('设置：天启模式、附带正在看的页面、学习记录、主动跟进、做完提醒，做完提醒默认关着', rows == ['天启模式', '附带正在看的页面', '学习记录', '主动跟进', '做完提醒'], rows)
+        await pv.wait_for_function("!document.querySelector('.xc-learning .xc-sw').disabled")
+        learn0 = await pv.get_attribute('.xc-learning .xc-sw', 'aria-checked')
+        await pv.click('.xc-learning .xc-sw')
+        await pv.wait_for_function("!document.querySelector('.xc-learning .xc-sw').disabled && document.querySelector('.xc-learning .xc-sw').getAttribute('aria-checked') === 'false'")
+        check('学习记录：默认开，可关闭，浏览器和云电脑同时保存', learn0 == 'true' and xv['learning'] is False and await pv.evaluate("localStorage.getItem('lm.xin.learning')") == '0')
         await pv.wait_for_function("!document.querySelector('.xc-followups .xc-sw').disabled")
         f0 = await pv.get_attribute('.xc-followups .xc-sw', 'aria-checked')
         await pv.click('.xc-followups .xc-sw')

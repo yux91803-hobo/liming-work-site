@@ -218,6 +218,7 @@
     o = o || {};
     drawer(false);
     var r = cur(), k = keyOf(r), fresh = k !== viewKey;
+    if(STM.learning)STM.learning.view(r);
     if (fresh) {
       if (view && view.destroy) view.destroy();
       ui.clear(main);

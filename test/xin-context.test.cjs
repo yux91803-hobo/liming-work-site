@@ -62,6 +62,11 @@ test('敏感本轮原话不触发自动跨对话检索；已确认的交流习�
  return c.turnGuidance({text:'只回复 generation-original-123456abcdef，不要记忆'});`);
  assert.match(r,/先给结论/);assert.doesNotMatch(r,/相关旧话|front-oldmarker/);
 });
+test('当前消息含敏感串时不拿它作自动检索关键词，仍可使用已确认的普通交流习惯',t=>{
+ const run=fixture(t),r=run(`chat(1,'generation 是过去讨论过的一段普通记录');m.addMemory({content:'先给结论',source:'user'});
+ return c.turnGuidance({text:'只回复 generation-original-123456abcdef'});`);
+ assert.match(r,/先给结论/);assert.doesNotMatch(r,/相关旧话|过去讨论过/);
+});
 test('保留控制器已经交付的真实结果，但不读回内部完成事件指令',t=>{
  const run=fixture(t),r=run(`const a=chat(1,'内部完成事件');const file=path.join(b.BASE,'runs',a.run+'.json');
  b.writeJ(file,{...b.readJ(file),kind:'handoff'});fs.appendFileSync(path.join(b.BASE,'runs',a.run+'.jsonl'),JSON.stringify({t:'text',text:'编好了，生成 blink.hex',taskResult:{sid:'stask00001',status:'done'},at:a.at}));

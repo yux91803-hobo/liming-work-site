@@ -71,10 +71,11 @@ export function memoryBlockedText(text, at=Date.now()) {
   return false;
 }
 
-export const memoryPreferences=()=>({followups:memoryMeta('preferences',{followups:true}).followups!==false});
+export const memoryPreferences=()=>({followups:memoryMeta('preferences',{}).followups!==false,learning:memoryMeta('preferences',{}).learning!==false});
 export function setMemoryPreferences(changes) {
-  if(typeof changes?.followups!=='boolean')return {error:'bad_setting',msg:'开关值不对'};
-  setMemoryMeta('preferences',{...memoryPreferences(),followups:changes.followups});return memoryPreferences();
+  const keys=['followups','learning'].filter(k=>Object.hasOwn(changes||{},k));
+  if(!keys.length||keys.some(k=>typeof changes[k]!=='boolean'))return {error:'bad_setting',msg:'开关值不对'};
+  return journal.atomic(()=>{setMemoryMeta('preferences',{...memoryPreferences(),...Object.fromEntries(keys.map(k=>[k,changes[k]]))});return memoryPreferences();});
 }
 // value: looks like a credential or identity number itself — never stored, not even when the user types it.
 // word: only mentions passwords/keys — refused from chat and workers, kept private from the old notebook, allowed from the user.
@@ -221,6 +222,24 @@ export function updateMemory(id, changes = {}, actor = 'user') {
   });
 }
 
+// Only the controller's study reporter calls this. Observed exercise results never become user statements.
+export function learningMemory({id,content,quote,at}) {
+  return journal.atomic(()=>{
+    let it=id&&row(id);
+    if(it){
+      const userEdit=db().prepare("SELECT 1 FROM memory_log WHERE item=? AND actor='user' AND action IN ('update','supersede','rollback') LIMIT 1").get(id);
+      if(userEdit||it.status!=='active'||it.source!=='learning')return {item:it,protected:true};
+      if(it.content!==content){memorySnapshot(id,'learning_update');retireSources(it);
+        db().prepare('UPDATE memory_items SET content=?,norm=?,updated=? WHERE id=?').run(content,memoryNorm(content),at,id);log(id,'update','learning',{type:'learning'});}
+      else db().prepare('UPDATE memory_items SET updated=? WHERE id=?').run(at,id);
+    }else{
+      const r=addMemory({content,type:'learning',basis:'observed',source:'learning',at});if(r.error)return r;
+      it=r.item;if(it.source!=='learning')return {item:it,protected:true};id=it.id;db().prepare("UPDATE memory_items SET status='active' WHERE id=?").run(id);log(id,'activate','learning',{basis:'observed'});
+    }
+    evidence(id,{quote,at});return {item:row(id)};
+  });
+}
+
 // Forgetting removes the statement and its quotes; only a hash remains so the same content is not stored again.
 export function forgetMemory(id, actor = 'user') {
   return journal.atomic(() => {
@@ -232,6 +251,14 @@ export function forgetMemory(id, actor = 'user') {
     const links = db().prepare('SELECT old,next FROM memory_replacements UNION SELECT replaces AS old,item AS next FROM memory_proposals WHERE replaces IS NOT NULL').all();
     for (let n = -1; n !== ids.size;) { n = ids.size; for (const l of links) if (ids.has(l.old) || ids.has(l.next)) { ids.add(l.old); ids.add(l.next); } }
     for (const key of ids) {
+      if(db().prepare("SELECT 1 FROM sqlite_master WHERE name='learning_profiles'").get()){
+        for(const p of db().prepare('SELECT scope FROM learning_profiles WHERE item=?').all(key)){
+          db().prepare('INSERT OR IGNORE INTO learning_blocked(hash,at) VALUES(?,?)').run(hash(p.scope),Date.now());
+          db().prepare('DELETE FROM learning_events WHERE scope=?').run(p.scope);
+          db().prepare('DELETE FROM learning_profiles WHERE scope=?').run(p.scope);
+        }
+        db().prepare('DELETE FROM learning_links WHERE item=?').run(key);
+      }
       const current = row(key), versions = db().prepare('SELECT body FROM memory_versions WHERE item=?').all(key).map(v => JSON.parse(v.body));
       const all = [...versions, { item: current, evidence: db().prepare('SELECT * FROM memory_evidence WHERE item=?').all(key) }];
       for (const snap of all) {
