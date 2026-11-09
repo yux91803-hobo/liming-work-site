@@ -10,16 +10,23 @@ version=subprocess.run(['node','-p','process.version'],text=True,capture_output=
 metrics['node']=version if re.fullmatch(r'v[0-9.]+',version) else 'unknown'
 samples=[]
 for kind in ['Worker','Runner']:
-    files=sorted(glob.glob('/var/lib/liming-actions/runner/_diag/'+kind+'_*.log'),key=os.path.getmtime)[-3:]
+    files=sorted(glob.glob('/var/lib/liming-actions/runner/_diag/'+kind+'_*.log'),key=os.path.getmtime)[-10:]
     for file in files:
         with open(file,'rb') as f:
             f.seek(max(0,os.path.getsize(file)-1024*1024));body=f.read().decode(errors='replace')
-        samples.append({'kind':kind,'at':int(os.path.getmtime(file)),
+        lines=[s for s in body.splitlines() if re.search(r'2026-11-09[ T]12:(?:1[89]|2[0-9]|3[01]):',s)]
+        body='\n'.join(lines)
+        if not body:continue
+        samples.append({'kind':kind,'at':int(os.path.getmtime(file)),'linesInDeploymentWindow':len(lines),
             'memoryErrors':len(re.findall(r'OutOfMemory|heap out of memory|ENOMEM',body,re.I)),
             'killed':len(re.findall(r'SIGKILL|\bkilled\b',body,re.I)),
             'terminated':len(re.findall(r'SIGTERM|\bterminated\b',body,re.I)),
             'connectionErrors':len(re.findall(r'lost.*connection|disconnect|connection.*(?:lost|fail|close)',body,re.I)),
             'cancelled':len(re.findall(r'cancelled|canceled|abandoned',body,re.I)),
+            'timeouts':len(re.findall(r'timed out|TimeoutException|TaskCanceledException',body,re.I)),
+            'sessionConflict':len(re.findall(r'session.*(?:conflict|already exists)|\b409\b',body,re.I)),
+            'jobMissing':len(re.findall(r'job.*(?:not found|abandon)|abandoned',body,re.I)),
+            'httpErrorCodes':sorted(set(re.findall(r'\b(?:401|403|404|408|429|500|502|503|504)\b',body))),
             'exitCodes':re.findall(r'exit(?:ed)? (?:with )?code[: =]+(-?\d+)',body,re.I)[-8:]})
 metrics['runnerLogCounters']=samples
 print('BOX_COUNTERS '+json.dumps(metrics),flush=True)

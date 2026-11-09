@@ -1,4 +1,4 @@
-name: Preflight Xin native profile
+name: Read box deployment connection evidence
 on:
   push:
     branches: [claude/xin-lost-reply]
@@ -8,11 +8,8 @@ permissions:
 jobs:
   inspect:
     runs-on: [self-hosted, box]
-    timeout-minutes: 7
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@v5
-      - name: 独立原生目录的实际看图与落盘验证（不唤醒电脑）
-        env:
-          XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
-          XIN_DIAG_MODE: native-profile
-        run: python3 scripts/diagnose-xin-reply.py
+      - name: 只读部署时段的 runner 计数（不连云电脑、不重启）
+        run: python3 scripts/diagnose-box-runner.py
