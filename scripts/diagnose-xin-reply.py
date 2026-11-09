@@ -14,6 +14,22 @@ machine=next((m for m in machines if m.get('name')=='li'),machines[0] if len(mac
 if not machine:raise RuntimeError('Configured VM was not found')
 state=api('/v1/machines/'+machine['id'])
 print('MACHINE '+json.dumps({k:state.get(k) for k in ('state','runStartedAt','cooldownUntil')}),flush=True)
+if os.environ.get('XIN_DIAG_MODE')=='native-storage':
+    if state.get('state')!='running':
+        print('NATIVE_STORAGE_DEFERRED_NOT_RUNNING',flush=True);sys.exit(0)
+    source=r'''
+const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),home='/data/home';
+const candidates=['.local/bin/agy','.gemini/bin/agy'].map(x=>path.join(home,x)),binary=candidates.find(p=>fs.existsSync(p));
+const out={available:!!binary,roots:{},help:{}};
+if(binary)for(const args of [['--help'],['acp','--help'],['conversations','--help'],['history','--help']]){const r=cp.spawnSync(binary,args,{encoding:'utf8',timeout:6000,env:{HOME:home,PATH:'/usr/local/bin:/usr/bin:/bin'}});out.help[args.join(' ')]={status:r.status,text:(r.stdout||'').slice(0,12000)};}
+const safe=s=>/^[a-f0-9-]{16,}$/i.test(s)?'<id>':s.replace(/[a-f0-9]{24,}/ig,'<id>');
+for(const rel of ['.gemini','.gemini/antigravity-cli','.gemini/antigravity','.gemini/tmp','.local/share/agy']){
+ const root=path.join(home,rel);try{out.roots[rel]=fs.readdirSync(root,{withFileTypes:true}).slice(0,60).map(e=>({name:safe(e.name),directory:e.isDirectory(),extension:e.isFile()?path.extname(e.name):null}));}catch{out.roots[rel]=null;}
+}
+process.stdout.write(JSON.stringify(out));'''
+    r=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source],'timeoutSeconds':35})
+    if r.get('exitCode')!=0:raise RuntimeError('Native storage inspection failed')
+    print('NATIVE_STORAGE '+json.dumps(json.loads(r.get('stdout','{}')),ensure_ascii=True),flush=True);sys.exit(0)
 if state.get('cooldownUntil'):
     from datetime import datetime,timezone
     if datetime.fromisoformat(state['cooldownUntil'].replace('Z','+00:00'))>datetime.now(timezone.utc):

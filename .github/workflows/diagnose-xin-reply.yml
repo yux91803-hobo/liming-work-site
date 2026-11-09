@@ -11,12 +11,8 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/checkout@v5
-        with:
-          ref: 5272427a8dd0e8e102635c4960dc06cf95410916
-          path: .diagnostic-opus
-      - name: 合成对话对照与能力元数据（不打印聊天、回复或密钥）
+      - name: 只读检查原生记录的布局与公开帮助（不读取聊天、不唤醒电脑）
         env:
-          XIN_DIAG_MODE: protocol
+          XIN_DIAG_MODE: native-storage
           XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
         run: python3 scripts/diagnose-xin-reply.py
