@@ -1,4 +1,4 @@
-"""Production smoke: real dispatch/chat, durable completion, conversation isolation and Kimi web delivery.
+"""Production smoke: real dispatch/chat, durable completion, conversation isolation and named Gemini 3.8 (Antigravity) web delivery.
 Credentials come only from Actions Secrets. Never emit response bodies, cookies, screenshots or model traces.
 """
 import asyncio
@@ -12,6 +12,9 @@ from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
 PASSWORD = os.environ.get('XIN_OWNER_PASSWORD', '')
+AGY_MODEL = 'gemini-3.8-flash-high'
+# Public replies must not mention model, runner or task internals.
+LEAKS = ('kimi','deepseek','gemini','antigravity','分身','任务编号')
 
 async def main():
     if len(PASSWORD) < 12:
@@ -239,7 +242,7 @@ async def main():
                 release.set()
             # Canonical user scenario. Use the current isolated conversation, with no existing work.
             started = time.monotonic()
-            named_request = '你让 Kimi 去画个奶龙。做成可爱的动画互动网页：黄色圆滚滚的小恐龙、大眼睛，可以点按钮跳舞和挥手，适合手机。不使用任何外部资源。请直接制作，不要先讨论。'
+            named_request = '你让 Gemini 3.8 Flash 去画个奶龙。做成可爱的动画互动网页：黄色圆滚滚的小恐龙、大眼睛，可以点按钮跳舞和挥手，适合手机。不使用任何外部资源。请直接制作，不要先讨论。'
             await page.locator('.xc-row textarea').fill(named_request)
             await page.locator('.xc-send').click()
             await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
@@ -251,24 +254,25 @@ async def main():
                 raise RuntimeError('Named web receipt did not retain exactly one original request')
             receipt_done = next((e for e in reversed(receipt_runs[0]['events']) if e.get('t') == 'done'), {})
             receipt_model = await check_front(receipt_done)
-            if ack_seconds > front_reply_limit(receipt_model) or '我' not in reply or any(x in reply.lower() for x in ('kimi','deepseek','分身','任务编号')):
+            if ack_seconds > front_reply_limit(receipt_model) or '我' not in reply or any(x in reply.lower() for x in LEAKS):
                 raise RuntimeError('Named web work did not receive a bounded first-person receipt'
                     + ' seconds=' + str(round(ack_seconds, 2)) + ' model=' + receipt_model
                     + ' firstPerson=' + str('我' in reply)
-                    + ' leaks=' + str(any(x in reply.lower() for x in ('kimi','deepseek','分身','任务编号'))))
+                    + ' leaks=' + str(any(x in reply.lower() for x in LEAKS)))
             ts = (await call('tasks', {'sid': alternate_sid}))['tasks']
             web = [t for t in ts if t.get('parent') == alternate_sid and t.get('web')]
-            if len(web) != 1 or web[0].get('requestedModel') != 'kimi-k3.1-pro' or not web[0].get('strictModel'):
-                raise RuntimeError('Kimi web dispatch was missing, duplicated or not pinned')
+            # Antigravity work is never strict-pinned (controller keeps a real-quota fallback), so check the named request instead.
+            if len(web) != 1 or web[0].get('requestedModel') != AGY_MODEL or not web[0].get('requestedNamed'):
+                raise RuntimeError('Named Gemini web dispatch was missing, duplicated or not recorded as named')
             web_sid = web[0]['sid']
             if web[0]['status'] not in ('queued','running'):
-                raise RuntimeError('Expected active Kimi work during concurrent foreground test')
+                raise RuntimeError('Expected active Gemini web work during concurrent foreground test')
             front_marker = 'web-front-' + uuid.uuid4().hex[:12]
             await page.locator('.xc-row textarea').fill('只回复 ' + front_marker + '，不要执行命令、派任务或等待正在做的事。')
             await page.locator('.xc-send').click()
             await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
             if front_marker not in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text():
-                raise RuntimeError('Concurrent real foreground reply missing during Kimi work')
+                raise RuntimeError('Concurrent real foreground reply missing during Gemini web work')
             front = await call('history', {'sid': alternate_sid})
             done = [e for r in front['runs'] for e in r['events'] if e.get('t') == 'done']
             await check_front(done[-1] if done else {})
@@ -279,25 +283,31 @@ async def main():
             state = (await call('history', {'sid': web_sid}))['task']['status']
             if state in ('queued','running') and ('画好了' in progress or '%' in progress):
                 raise RuntimeError('Progress claimed completion or an invented percentage')
-            print('PASS named Kimi web receipt, configured foreground with real quota evidence and truthful progress', flush=True)
+            print('PASS named Gemini web receipt, configured foreground with real quota evidence and truthful progress', flush=True)
             limit = time.monotonic() + 1500
             while True:
                 web = (await call('history', {'sid': web_sid}))['task']
                 if web['status'] == 'done' and web.get('delivery', {}).get('state') == 'delivered': break
                 if web['status'] in ('failed','stopped','waiting') or time.monotonic() > limit:
-                    raise RuntimeError('Real Kimi web work did not complete: ' + web['status'])
+                    raise RuntimeError('Real Gemini web work did not complete: ' + web['status'])
                 await asyncio.sleep(5)
             preview = web.get('preview') or {}
             saved_front = await call('history', {'sid': alternate_sid})
             deliveries = [e for r in saved_front['runs'] for e in r['events'] if e.get('taskResult', {}).get('sid') == web_sid]
             if len(deliveries) != 1 or '我画好了' not in deliveries[0].get('text', ''):
                 raise RuntimeError('Completion was not delivered exactly once without another user prompt')
-            if web.get('actualModel') != 'kimi-k3.1-pro' or not preview.get('ready') or not preview.get('checks'):
-                raise RuntimeError('Real Kimi web artifact or browser evidence missing')
+            if web.get('actualModel') != AGY_MODEL:
+                # Same rule as the background file task: a fallback is only acceptable with a real Antigravity quota cooldown.
+                quota = (await call('tasks', {'all': True})).get('antigravity') or {}
+                if not quota.get('blocked') or quota.get('retryAt', 0) <= time.time() * 1000:
+                    raise RuntimeError('Named Gemini web work ran elsewhere without a real quota cooldown')
+                print('PASS named Gemini web fell back only under a real quota cooldown', flush=True)
+            if not preview.get('ready') or not preview.get('checks'):
+                raise RuntimeError('Real Gemini web artifact or browser evidence missing')
             if not all((web.get('cleanup') or {}).get(k) for k in ('processesGone','tmpCleaned')):
                 raise RuntimeError('Temporary processes/files were not cleaned before delivery')
             result = web['result']['text']
-            if '我画好了' not in result or any(x in result.lower() for x in ('kimi','deepseek','分身','任务编号')):
+            if '我画好了' not in result or any(x in result.lower() for x in LEAKS):
                 raise RuntimeError('Web completion did not use the required public voice')
             await page.evaluate('LimingXinChat.tasks()')
             await page.wait_for_selector('.xc-preview', timeout=15000)
@@ -325,7 +335,7 @@ async def main():
             if await frame.locator('body').evaluate('() => self.origin') != 'null':
                 raise RuntimeError('Delivered artwork escaped its opaque sandbox')
             if errors: raise RuntimeError('Browser JavaScript errors')
-            print('PASS real Kimi animated web preview, actual clicks and complete temporary cleanup', flush=True)
+            print('PASS real Gemini animated web preview, actual clicks and complete temporary cleanup', flush=True)
             print('PREVIEW_URL ' + BASE + preview['url'], flush=True)
             await art.close()
         finally:

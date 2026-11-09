@@ -1,3 +1,9 @@
+# 修改清单 · 2026-11-09（正式联调的奶龙网页改为点名 Gemini 3.8）
+
+- 站长要求奶龙动画网页不要总测 Kimi K3.1：`scripts/test-xin-live.py` 的点名网页请求改为「你让 Gemini 3.8 Flash 去画个奶龙」，走 Antigravity 的 `gemini-3.8-flash-high`。
+- Antigravity 工作在控制器里不会被 strictModel 固定（保留真实额度耗尽时的兜底），所以断言改为：只有一项网页工作、`requestedModel` 为 Gemini 3.8、`requestedNamed` 为真；实际模型不是 Gemini 3.8 时，必须有真实的 Antigravity 额度冷却记录才算通过（与后台文件任务同一规则）。
+- 前台确认和完成回复的泄漏检查加上 gemini、antigravity；其余接单时限、第一人称、进度如实、预览点击、沙盒隔离和临时文件清理断言不变。README 同步。
+
 # 修改清单 · 2026-11-09（小芯请求卡死不再让对话停住）
 
 - 起因：正式站联调中云电脑上的回复都已完成，但网页在 13:49（UTC）后不再发出任何请求，`S.run` 一直不清；CI 所在虚拟机会被宿主机暂停，暂停前的 TCP 连接被静默丢掉，而网页的 `fetch` 没有期限。修复由 Hark 起草，黎审核。
