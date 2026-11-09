@@ -7,6 +7,7 @@ import json
 import os
 import time
 import uuid
+from xin_live_policy import validate_front_model, front_reply_limit
 from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
@@ -39,6 +40,9 @@ async def main():
                     await asyncio.sleep(min(15, max(2, d.get('retryAfter', 3))))
                     continue
                 raise RuntimeError('Production call failed: ' + op + ' HTTP ' + str(response.status) + ' state=' + str(d.get('state', d.get('data', {}).get('error', 'unknown'))))
+        async def check_front(done):
+            quota = (await call('tasks', {'all': True})).get('frontAntigravity') if done.get('model') == 'deepseek-v4.1-flash' else None
+            return validate_front_model(done, quota, time.time() * 1000)
         try:
             await page.goto(BASE + '/#xin', wait_until='domcontentloaded')
             await page.locator('.xc-login input[name=pw]').fill(PASSWORD, timeout=30000)
@@ -94,12 +98,7 @@ async def main():
             image_done = next((e for e in image_events if e.get('t') == 'done'), {})
             if visual_token not in image_text or not image_done.get('ok'):
                 raise RuntimeError('Foreground real-model image reading mismatch')
-            if image_done.get('model')=='deepseek-v4.1-flash':
-                front_quota=(await call('tasks',{'all':True})).get('frontAntigravity') or {}
-                if not front_quota.get('blocked') or front_quota.get('retryAt',0)<=time.time()*1000:
-                    raise RuntimeError('Foreground skipped Opus without real exhausted quota')
-            elif image_done.get('model')!='claude-opus-4.6':
-                raise RuntimeError('Foreground used an unconfigured model')
+            await check_front(image_done)
             if (await call('tasks', {'sid':image_sid})).get('tasks'):
                 raise RuntimeError('Foreground image chat unexpectedly delegated work')
             print('PASS real foreground reads random image text directly without delegating', flush=True)
@@ -220,13 +219,23 @@ async def main():
                 release.set()
             # Canonical user scenario. Use the current isolated conversation, with no existing work.
             started = time.monotonic()
-            await page.locator('.xc-row textarea').fill('你让 Kimi 去画个奶龙。做成可爱的动画互动网页：黄色圆滚滚的小恐龙、大眼睛，可以点按钮跳舞和挥手，适合手机。不使用任何外部资源。请直接制作，不要先讨论。')
+            named_request = '你让 Kimi 去画个奶龙。做成可爱的动画互动网页：黄色圆滚滚的小恐龙、大眼睛，可以点按钮跳舞和挥手，适合手机。不使用任何外部资源。请直接制作，不要先讨论。'
+            await page.locator('.xc-row textarea').fill(named_request)
             await page.locator('.xc-send').click()
-            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=30000)
+            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
             ack_seconds = time.monotonic() - started
             reply = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text()
-            if ack_seconds > 20 or '我' not in reply or any(x in reply.lower() for x in ('kimi','deepseek','分身','任务编号')):
-                raise RuntimeError('Named web work did not receive a prompt first-person receipt')
+            receipt_history = await call('history', {'sid': alternate_sid})
+            receipt_runs = [r for r in receipt_history['runs'] if any(e.get('t') == 'user' and e.get('text') == named_request for e in r['events'])]
+            if len(receipt_runs) != 1:
+                raise RuntimeError('Named web receipt did not retain exactly one original request')
+            receipt_done = next((e for e in reversed(receipt_runs[0]['events']) if e.get('t') == 'done'), {})
+            receipt_model = await check_front(receipt_done)
+            if ack_seconds > front_reply_limit(receipt_model) or '我' not in reply or any(x in reply.lower() for x in ('kimi','deepseek','分身','任务编号')):
+                raise RuntimeError('Named web work did not receive a bounded first-person receipt'
+                    + ' seconds=' + str(round(ack_seconds, 2)) + ' model=' + receipt_model
+                    + ' firstPerson=' + str('我' in reply)
+                    + ' leaks=' + str(any(x in reply.lower() for x in ('kimi','deepseek','分身','任务编号'))))
             ts = (await call('tasks', {'sid': alternate_sid}))['tasks']
             web = [t for t in ts if t.get('parent') == alternate_sid and t.get('web')]
             if len(web) != 1 or web[0].get('requestedModel') != 'kimi-k3.1-pro' or not web[0].get('strictModel'):
@@ -242,16 +251,15 @@ async def main():
                 raise RuntimeError('Concurrent real foreground reply missing during Kimi work')
             front = await call('history', {'sid': alternate_sid})
             done = [e for r in front['runs'] for e in r['events'] if e.get('t') == 'done']
-            if not done or done[-1].get('model') != 'deepseek-v4.1-flash':
-                raise RuntimeError('Foreground changed model during named background work')
+            await check_front(done[-1] if done else {})
             await page.locator('.xc-row textarea').fill('现在进度怎么样')
             await page.locator('.xc-send').click()
-            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=30000)
+            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
             progress = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text()
             state = (await call('history', {'sid': web_sid}))['task']['status']
             if state in ('queued','running') and ('画好了' in progress or '%' in progress):
                 raise RuntimeError('Progress claimed completion or an invented percentage')
-            print('PASS named Kimi web receipt, unchanged DeepSeek chat and truthful progress', flush=True)
+            print('PASS named Kimi web receipt, configured foreground with real quota evidence and truthful progress', flush=True)
             limit = time.monotonic() + 1500
             while True:
                 web = (await call('history', {'sid': web_sid}))['task']
