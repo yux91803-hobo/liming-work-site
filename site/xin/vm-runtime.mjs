@@ -543,6 +543,8 @@ export function frontCommand(argv, acts = []) {
   if (argv[1] === 'task') return ['new','list','show','tell','stop'].includes(argv[2]);
   return acts.includes(argv[1]);
 }
+export const frontLookupRequired=text=>/签到|每日任务|签到了|签过到/.test(String(text||''));
+const claimsLookup=text=>/我(?:(?!没|未|不|想|要|会|打算|可以|需要)[^。！？!?，,\n]){0,12}(?:查了|查过|查到|翻了|翻过|翻到)/u.test(text)||/\bI(?:'ve| have| just| already| also)* (?:checked|looked up|searched)\b/i.test(text);
 export async function frontTurn(o) {
   const abort = new AbortController();
   let expired=false;
@@ -555,18 +557,31 @@ export async function frontTurn(o) {
   // own small cap, and the total number of model rounds stays bounded.
   const expression = argv => Array.isArray(argv) && argv[0] === 'xin' && (['bond','next','move'].includes(argv[1]) || (o.acts||[]).includes(argv[1]));
   let steps = 0, rounds = 0, expressed = 0;
+  let lookedUp=false,lookupAttempted=false;
+  const isLookup=argv=>argv?.[0]==='xin'&&(argv[1]==='recall'||argv[1]==='task'&&['list','show'].includes(argv[2]));
+  const lookup=async()=>{
+    lookupAttempted=true;
+    const argv=['xin','task','list'],call_id='controller_lookup';
+    const result=await o.command(argv,call_id);o.trace?.('xin',{argv},result);
+    lookedUp=!!result&&!result.error;
+    input.push({type:'function_call',name:'xin',call_id,arguments:JSON.stringify({argv})},
+      {type:'function_call_output',call_id,output:JSON.stringify(result??{error:'没有查询结果'})});
+    return lookedUp;
+  };
   try {
+    // Factual daily questions always use a fresh, real read before the first model answer.
+    if(o.lookupBeforeAnswer&&!await lookup())return '我还没查到可靠的当天记录，暂时不能确认。';
     while (steps < max && rounds++ < max + 2) {
       if(o.takeBudget&&!o.takeBudget())throw Error('本项工作的推理预算已用完，保留现有结果');
-      const response = await (o.fetch || fetch)(o.baseURL.replace(/\/$/,'') + '/responses', {
-        method:'POST', signal:abort.signal,
-        headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},
-        body:JSON.stringify({model:FRONT_MODEL, stream:false, reasoning:{effort:'max'}, instructions:o.instructions, input,
+      const payload={model:FRONT_MODEL, stream:false, reasoning:{effort:'max'}, instructions:o.instructions, input,
           max_output_tokens:1800, tools:[{type:'function',name:'xin',description:'调度工作、查看真实进度、转达用户回复、记事；也能做表情动作、调整好感度、留下次见面的开场白。argv 是参数数组，不是 shell；新建或转达工作后本轮立即结束。',
-            parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true},...(o.handoff?[{type:'function',name:'finish_event',description:'对内部完成事件作最终决定：向用户交付真实结果或保持安静。',strict:true,parameters:{type:'object',properties:{action:{type:'string',enum:['deliver','silent']},text:{type:'string'}},required:['action','text'],additionalProperties:false}}]:[])]})
-      });
-      if (!response.ok) throw new Error('前台连接失败（HTTP '+response.status+'）');
-      const data = await response.json();
+            parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true},...(o.handoff?[{type:'function',name:'finish_event',description:'对内部完成事件作最终决定：向用户交付真实结果或保持安静。',strict:true,parameters:{type:'object',properties:{action:{type:'string',enum:['deliver','silent']},text:{type:'string'}},required:['action','text'],additionalProperties:false}}]:[])]};
+      let data;
+      if(o.request)data=await o.request(payload,abort.signal);
+      else{
+        const response=await (o.fetch||fetch)(o.baseURL.replace(/\/$/,'')+'/responses',{method:'POST',signal:abort.signal,headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},body:JSON.stringify(payload)});
+        if(!response.ok)throw new Error('前台连接失败（HTTP '+response.status+'）');data=await response.json();
+      }
       if (abort.signal.aborted) throw new Error('前台超时');
       const output = data.output || [], calls = output.filter(x => x.type === 'function_call');
       const said = output.filter(x => x.type === 'message').flatMap(x => x.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('\n');
@@ -574,6 +589,13 @@ export async function frontTurn(o) {
       if (data.error || data.status === 'failed' || (data.status === 'incomplete' && !said)) throw new Error('前台未完成回复');
       o.usage?.(data.usage);
       const parsed = calls.map(call => { try { return JSON.parse(call.arguments); } catch { return null; } });
+      // Withhold an invented "I checked". Execute the read, then regenerate against its evidence.
+      // A later turn or an injected old quote is never proof of a read in this turn.
+      if(said&&!o.handoff&&!lookedUp&&claimsLookup(said)&&(!calls.length||calls.every((c,i)=>c.name==='xin'&&expression(parsed[i]?.argv)))){
+        if(lookupAttempted||!await lookup())return '我还没查到可靠记录，暂时不能确认。';
+        input.push({role:'user',content:'控制器刚刚才实际执行了查询。请依据上方工具结果重新回答，不要沿用没有证据的结论；查不到就明确说不能确认。'});
+        continue;
+      }
       // Text plus expressions only: perform them and answer now, without another model round.
       if (said && !o.handoff && calls.length && calls.every((c, i) => c.name === 'xin' && expression(parsed[i]?.argv))) {
         for (const [i, call] of calls.entries()) if (++expressed <= 2 && frontCommand(parsed[i].argv, o.acts)) await o.command(parsed[i].argv, call.call_id);
@@ -596,6 +618,7 @@ export async function frontTurn(o) {
           ? await o.command(args.argv, call.call_id)
           : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop、xin remember/forget/recall 和小芯自己的表情、好感度、开场白、动作。'};
         o.trace?.(call.name, args, result);
+        if(call.name==='xin'&&isLookup(args?.argv)&&result&&!result.error)lookedUp=true;
         if (result.terminal) return result.text;
         input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)});
       }
@@ -717,13 +740,14 @@ export const AGY_MODEL='gemini-3.8-flash-high';
 export function antigravityBinary(home=process.env.XIN_AGY_HOME||os.homedir()) {
   return [process.env.XIN_ANTIGRAVITY_BIN,path.join(home,'.local/bin/agy'),path.join(home,'.gemini/bin/agy')].find(p=>p&&fs.existsSync(p))||null;
 }
-export function antigravityQuota(result,now=Date.now()) {
+export function antigravityQuota(result,now=Date.now(),model=AGY_MODEL) {
   const groups=result?.command?.data?.groups;
   if(!Array.isArray(groups))throw Error('Antigravity 没有返回可核对的额度信息');
-  const buckets=groups.filter(g=>(g.buckets||[]).some(b=>/^gemini-/.test(b.id||''))).flatMap(g=>g.buckets).map(b=>({id:b.id,remaining:Number(b.remaining_fraction),resetAt:Date.parse(b.reset_time)}));
+  const family=model.startsWith('claude-')?/^(?:claude-|3p-)/:/^gemini-/;
+  const buckets=groups.filter(g=>(g.buckets||[]).some(b=>family.test(b.id||''))).flatMap(g=>g.buckets).map(b=>({id:b.id,remaining:Number(b.remaining_fraction),resetAt:Date.parse(b.reset_time)}));
   if(!buckets.length||buckets.some(b=>!Number.isFinite(b.remaining)||b.remaining<0||b.remaining>1||!Number.isFinite(b.resetAt)))throw Error('Antigravity 额度字段不完整');
   const exhausted=buckets.filter(b=>b.remaining<=0);
-  return {model:AGY_MODEL,checkedAt:now,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};
+  return {model,checkedAt:now,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};
 }
 export const AGY_SETTINGS={toolPermission:'request-review',allowNonWorkspaceAccess:false,useG1Credits:false,permissions:{deny:['command(*)','read_file(*)','write_file(*)','execute_url(*)','mcp(*)'],allow:['read_url(*)']}};
 export function mergeAntigravityQuota(old,next,now=Date.now()) {

@@ -123,6 +123,21 @@ test('设定里给谁看什么：前台不带做事方法；每日任务带；�
   assert.ok(r[2].includes('称呼小李') && !r[2].includes('学到 I2C 了'));
 });
 
+test('确认过的旧记事本 unsorted 在前台和每日任务可见，待确认仍标注；隐私和后台隔离不变',t=>{
+  const {js}=home(t);
+  const r=js(`const a=m.addMemory({content:'旧笔记：正在做温度记录仪',source:'legacy'}).item;
+    m.updateMemory(a.id,{confirm:true});
+    m.addMemory({content:'旧笔记：可能喜欢先看例子',source:'legacy'});
+    const p=m.addMemory({content:'旧笔记：只在记忆页保留',source:'legacy'}).item;m.updateMemory(p.id,{private:true});
+    return {front:m.coreMemory('front'),daily:m.coreMemory('daily'),worker:m.coreMemory('worker')};`);
+  for(const audience of ['front','daily']){
+    assert.match(r[audience],/旧记事本：\n- 旧笔记：正在做温度记录仪/);
+    assert.match(r[audience],/用户还没确认[\s\S]*可能喜欢先看例子/);
+    assert.doesNotMatch(r[audience],/只在记忆页保留/);
+  }
+  assert.doesNotMatch(r.worker,/旧笔记/);
+});
+
 test('网页上的记忆页：列出（带出处和对话名）、加、确认、改、设隐私、忘掉；编号不对就拒绝', t => {
   const { op, xin } = home(t);
   fs.writeFileSync(path.join(xin, 'sessions', 'smemchat01.json'), JSON.stringify({ sid: 'smemchat01', agent: 'codex', title: '聊 PWM', runs: [] }));

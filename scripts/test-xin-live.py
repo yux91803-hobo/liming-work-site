@@ -92,8 +92,14 @@ async def main():
             image_events = result.get('events', [])
             image_text = '\n'.join(e.get('text','') for e in image_events if e.get('t') == 'text')
             image_done = next((e for e in image_events if e.get('t') == 'done'), {})
-            if visual_token not in image_text or not image_done.get('ok') or image_done.get('model') != 'deepseek-v4.1-flash':
+            if visual_token not in image_text or not image_done.get('ok'):
                 raise RuntimeError('Foreground real-model image reading mismatch')
+            if image_done.get('model')=='deepseek-v4.1-flash':
+                front_quota=(await call('tasks',{'all':True})).get('frontAntigravity') or {}
+                if not front_quota.get('blocked') or front_quota.get('retryAt',0)<=time.time()*1000:
+                    raise RuntimeError('Foreground skipped Opus without real exhausted quota')
+            elif image_done.get('model')!='claude-opus-4.6':
+                raise RuntimeError('Foreground used an unconfigured model')
             if (await call('tasks', {'sid':image_sid})).get('tasks'):
                 raise RuntimeError('Foreground image chat unexpectedly delegated work')
             print('PASS real foreground reads random image text directly without delegating', flush=True)
@@ -191,11 +197,23 @@ async def main():
                 limit=time.monotonic()+120
                 while True:
                     old=await call('history',{'sid':sid})
-                    if not old.get('active'):break
+                    original=next((r for r in old.get('runs',[]) if r['run']==held['run']),None)
+                    # Another completion/handoff can be the last run. Wait for the exact accepted input.
+                    if original and original.get('done'):break
                     if time.monotonic()>limit:raise RuntimeError('Original real turn did not finish')
                     await asyncio.sleep(2)
                 events=[e for run in old['runs'] if run['run']==held['run'] for e in run['events'] if e.get('t')=='text']
-                if not any(first_marker in e.get('text','') for e in events):raise RuntimeError('Original conversation reply was lost')
+                if not any(first_marker in e.get('text','') for e in events):
+                    target_events=original.get('events',[]) if original else []
+                    kinds={k:sum(e.get('t')==k for e in target_events) for k in sorted({e.get('t') or '?' for e in target_events})}
+                    ended=[e for e in target_events if e.get('t')=='done']
+                    raise RuntimeError('Original conversation reply was lost'
+                        +' events='+','.join(k+':'+str(kinds[k]) for k in kinds)
+                        +' doneOk='+str(bool(ended and ended[-1].get('ok')))
+                        +' stopped='+str(bool(ended and ended[-1].get('stopped')))
+                        +' userHasMarker='+str(any(first_marker in e.get('text','') for e in target_events if e.get('t')=='user'))
+                        +' assistantBytes='+str(sum(len(e.get('text','').encode()) for e in events))
+                        +' assistantHasPriorMarker='+str(any(reply_marker in e.get('text','') for e in events)))
                 if errors:raise RuntimeError('Browser JavaScript errors')
                 print('PASS real delayed response stays in its original conversation while the new conversation completes',flush=True)
             finally:

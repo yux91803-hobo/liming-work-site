@@ -187,10 +187,17 @@ async def main():
             gate = asyncio.Event(); pg, search = await page(b, reduced=False, country_gate=gate)
             search.replies['early'] = [PLACE]
             await submit(pg, 'early'); await pg.wait_for_selector('#results button'); await pg.click('#results button')
-            await pg.wait_for_timeout(4700); gate.set()
-            state = await pg.evaluate('({c:__map.getCenter().toArray(),z:__map.getZoom()})')
-            check('启动期间选中地点，后续欢迎动画不会抢走视角', abs(state['c'][0] - 121.4737) < 1e-7 and state['z'] > 12, state)
+            await pg.wait_for_timeout(4700)
+            # 软件渲染忙时，墙上过了 4.7 秒不代表 flyTo 已画完最后一帧。
+            # 等实际结束，并在国家数据到达后观察完整欢迎动画窗口；精度不放宽。
+            await pg.wait_for_function('!__map.isMoving()', timeout=20000)
+            await pg.evaluate("window.__lateMapMoves=0;__map.on('movestart',()=>__lateMapMoves++);void 0")
+            gate.set()
             await pg.wait_for_function("__map.isSourceLoaded('countries')")
+            await pg.wait_for_timeout(2800)
+            await pg.wait_for_function('!__map.isMoving()', timeout=20000)
+            state = await pg.evaluate('({c:__map.getCenter().toArray(),z:__map.getZoom(),lateMoves:__lateMapMoves})')
+            check('启动期间选中地点，后续欢迎动画不会抢走视角', abs(state['c'][0] - 121.4737) < 1e-7 and state['z'] > 12 and state['lateMoves'] == 0, state)
             await pg.context.close()
 
             pg, _ = await page(b, reduced=False)

@@ -5,7 +5,7 @@ export const handoffId=t=>crypto.createHash('sha256').update(t.sid+':'+workVersi
 export function handoffPrompt(t,context=''){
   const evidence={status:t.status,title:t.title,result:t.result,question:t.question||'',preview:t.preview?.ready?t.preview:null,verification:t.verification||null};
   return [
-    '这是控制器的内部完成事件，不是用户新指令。你仍是小芯，前台继续使用原模型。',
+    '这是控制器的内部完成事件，不是用户新指令。你仍是小芯；前台使用自己的默认入口，仅在实际额度耗尽时走兜底，后台点名不改变前台。',
     '核对原要求和真实结果：需要继续修正时 xin task tell 原工作；完成且有新结果时 finish_event action=deliver；重复、过期、仍等待依赖且无新消息时 action=silent。',
     '只依据下方证据，不把执行结束当成功。网页必须有 ready 预览才可说我画好了；用户看不到内部工作编号、模型或分身，用第一人称。',
     '一轮最多一次修改；重试与后续自动续接均有预算，不能循环派工。需要用户确认时直接问。',

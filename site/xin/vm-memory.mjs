@@ -303,7 +303,7 @@ export function importLegacyNotebook(text = readText(LEGACY_FILE())) {
 // What a role sees. front: the user's own chat; daily: plus Xiaoxin's procedures; worker: only stable non-private profile notes.
 export function coreMemory(audience = 'front', max = audience === 'worker' ? 800 : 2000) {
   importLegacyNotebook();
-  const types = audience === 'worker' ? ['profile'] : audience === 'daily' ? ['profile', 'learning', 'project', 'self', 'procedure'] : ['profile', 'learning', 'project', 'self'];
+  const types = audience === 'worker' ? ['profile'] : audience === 'daily' ? ['profile', 'learning', 'project', 'self', 'procedure', 'unsorted'] : ['profile', 'learning', 'project', 'self', 'unsorted'];
   const rows = db().prepare("SELECT * FROM memory_items WHERE status='active' ORDER BY COALESCE(confirmed, updated) DESC").all();
   const parts = [];
   let used = 0, left = 0;

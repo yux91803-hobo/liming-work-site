@@ -1,5 +1,8 @@
 // Test-only inference server replacement. Never used by production code.
 const fs = require('node:fs');
+// Existing gateway fixtures explicitly exercise the supported DeepSeek provider.
+// Default Opus and actual quota switching are covered by xin-front-opus.test.cjs.
+process.env.XIN_FRONT_PROVIDER='deepseek';
 const real = global.fetch;
 global.fetch = async function(url, init) {
   if (!String(url).endsWith('/v1/responses')) return real(url, init);

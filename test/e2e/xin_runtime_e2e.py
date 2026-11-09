@@ -10,6 +10,18 @@ import stm32_e2e as ui
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
+        replay=await ui.page(browser)
+        replay_state=await ui.xin_mock(replay,authed=True)
+        replay_state['lose_done_once']=True
+        await replay.goto(ui.BASE+'/#xin')
+        await replay.locator('.xc-row textarea').fill('看看工作目录')
+        await replay.locator('.xc-send').click()
+        await replay.wait_for_function(ui.CHAT_DONE,timeout=20000)
+        assert replay_state.get('lost_done') and replay_state['polls']>=4
+        replies=await replay.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()
+        assert replies==['收到，我看看。','里面有一个 blink 目录。'],replies
+        print('PASS lost final poll retries from its acknowledged offset and delivers each reply once',flush=True)
+        await replay.context.close()
         pg = await ui.page(browser)
         st = await ui.xin_mock(pg, authed=True)
         st['hold'] = True
