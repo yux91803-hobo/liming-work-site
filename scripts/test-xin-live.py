@@ -52,9 +52,29 @@ async def main():
             request = ('这是发布后的真实联调，使用默认后台安排，只派一个后台任务并立即回复，不要等待它完成。使用 xin task new --kind research '
                        '--title ' + marker + ' --dir ' + directory + ' -- 后台测试：先执行 sleep 45，再用 printf 把精确文本 ' + marker +
                        ' 写入当前任务副本的 result.txt，结束。不要访问其它项目、记事本、设备或用户服务。请只派这个任务，不要派审查。')
+            async def settle(predicate, timeout):
+                # On timeout report booleans only (page state + whether the server already finished the run). Never print text or markers.
+                try:
+                    await page.wait_for_function(predicate, timeout=timeout)
+                    return
+                except Exception as error:
+                    failure = error
+                state = {}
+                try:
+                    state = await page.evaluate('(() => { const s = LimingXinChat.state; return {sid: s.sid || "", run: s.run || "", sending: !!s.sending, polling: !!s.polling}; })()')
+                except Exception:
+                    pass
+                server_done = None
+                if state.get('run'):
+                    try:
+                        server_done = bool((await call('poll', {'run': state['run'], 'off': 0})).get('done'))
+                    except Exception:
+                        server_done = None
+                raise RuntimeError('Chat state did not settle: sid=%s run=%s sending=%s polling=%s server_run_done=%s' % (
+                    bool(state.get('sid')), bool(state.get('run')), state.get('sending'), state.get('polling'), server_done)) from failure
             await page.locator('.xc-row textarea').fill(request)
             await page.locator('.xc-send').click()
-            await page.wait_for_function('LimingXinChat.state.sid && !LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=240000)
+            await settle('LimingXinChat.state.sid && !LimingXinChat.state.run && !LimingXinChat.state.sending', 240000)
             sid = await page.evaluate('LimingXinChat.state.sid')
             tasks = (await call('tasks', {'sid': sid}))['tasks']
             owned = [t for t in tasks if t['parent'] == sid and t['title'] == marker and t['dir'] == directory]
@@ -66,7 +86,7 @@ async def main():
             reply_marker = 'front-' + uuid.uuid4().hex[:12]
             await page.locator('.xc-row textarea').fill('只回复 ' + reply_marker + '，不要执行命令，也不要等待后台。')
             await page.locator('.xc-send').click()
-            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=180000)
+            await settle('!LimingXinChat.state.run && !LimingXinChat.state.sending', 180000)
             if not any(reply_marker in text for text in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()):
                 raise RuntimeError('Foreground reply missing')
             print('PASS foreground real-model reply during background work', flush=True)
