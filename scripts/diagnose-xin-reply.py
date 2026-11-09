@@ -1,17 +1,23 @@
 """Bounded synthetic reply comparison. Output counters, capability metadata and two sanitized legacy methods only."""
-import hashlib,json,os,re,sys,time,urllib.parse,urllib.request,uuid
+import hashlib,json,os,re,signal,sys,time,urllib.parse,urllib.request,uuid
 from pathlib import Path
 API='https://api.instabox.sh'
 key=os.environ.get('XIN_INSTABOX_API_KEY','')
 if not key:raise RuntimeError('Configured InstaBox credential is required')
-def api(route,data=None):
+native_mode=os.environ.get('XIN_DIAG_MODE') in ('native-profile','native-setup','named-receipt')
+if native_mode:
+    def expired(*_):raise TimeoutError('Native preflight total deadline exceeded')
+    signal.signal(signal.SIGALRM,expired);signal.alarm(240)
+def api(route,data=None,timeout=None):
     headers={'X-API-Key':key,'Content-Type':'application/json'}
     if route.endswith(('/resume','/start')):headers['Idempotency-Key']=str(uuid.uuid4())
     req=urllib.request.Request(API+route,headers=headers,data=None if data is None else json.dumps(data).encode())
-    with urllib.request.urlopen(req,timeout=280) as r:return json.load(r)
+    with urllib.request.urlopen(req,timeout=timeout or (20 if native_mode else 280)) as r:return json.load(r)
+if native_mode:print('PREFLIGHT_PHASE machine-list',flush=True)
 machines=api('/v1/machines').get('machines',[])
 machine=next((m for m in machines if m.get('name')=='li'),machines[0] if len(machines)==1 else None)
 if not machine:raise RuntimeError('Configured VM was not found')
+if native_mode:print('PREFLIGHT_PHASE machine-state',flush=True)
 state=api('/v1/machines/'+machine['id'])
 print('MACHINE '+json.dumps({k:state.get(k) for k in ('state','runStartedAt','cooldownUntil')}),flush=True)
 if os.environ.get('XIN_DIAG_MODE') in ('native-profile','native-setup','named-receipt'):
@@ -20,9 +26,20 @@ if os.environ.get('XIN_DIAG_MODE') in ('native-profile','native-setup','named-re
     if state.get('state')!='running' or cooling:
         print('NATIVE_PROFILE_DEFERRED_NOT_RUNNING_OR_COOLDOWN',flush=True);sys.exit(0)
     source=Path({'native-setup':'scripts/probe-xin-native-setup.cjs','named-receipt':'scripts/probe-xin-named-receipt.cjs'}.get(os.environ.get('XIN_DIAG_MODE'),'scripts/probe-xin-native-profile.cjs')).read_text()
-    result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source],'timeoutSeconds':220})
+    print('PREFLIGHT_PHASE native-exec',flush=True)
+    result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source],'timeoutSeconds':180},timeout=200)
+    rows=[]
+    for line in result.get('stdout','').splitlines():
+        try:rows.append(json.loads(line))
+        except (ValueError,TypeError):pass
+    print('PREFLIGHT_PHASES '+json.dumps([r['phase'] for r in rows if isinstance(r,dict) and set(r)=={'phase'}]),flush=True)
+    print('PREFLIGHT_EXEC '+json.dumps({'exitCode':result.get('exitCode'),'stdoutBytes':len(result.get('stdout','').encode()),'stderrBytes':len(result.get('stderr','').encode())}),flush=True)
+    evidence=next((r for r in reversed(rows) if isinstance(r,dict) and set(r)!={'phase'}),{})
+    print({'native-setup':'NATIVE_SETUP ','named-receipt':'NAMED_RECEIPT '}.get(os.environ.get('XIN_DIAG_MODE'),'NATIVE_PROFILE ')+json.dumps(evidence,ensure_ascii=True),flush=True)
     if result.get('exitCode')!=0:raise RuntimeError('Native profile synthetic preflight did not complete')
-    evidence=json.loads(result.get('stdout','{}'));print({'native-setup':'NATIVE_SETUP ','named-receipt':'NAMED_RECEIPT '}.get(os.environ.get('XIN_DIAG_MODE'),'NATIVE_PROFILE ')+json.dumps(evidence,ensure_ascii=True),flush=True);sys.exit(0)
+    if os.environ.get('XIN_DIAG_MODE')=='native-profile' and not (evidence.get('pixelAnswerMatches') and evidence.get('profileContainsSession') and evidence.get('headlessAnswer') and evidence.get('headlessOwnedSession') and evidence.get('authReferencePreserved') and evidence.get('ownSessionInDefault') is False and evidence.get('headlessSessionInDefault') is False):
+        raise RuntimeError('Native private image and storage proof is incomplete')
+    sys.exit(0)
 if os.environ.get('XIN_DIAG_MODE')=='native-storage':
     if state.get('state')!='running':
         print('NATIVE_STORAGE_DEFERRED_NOT_RUNNING',flush=True);sys.exit(0)
