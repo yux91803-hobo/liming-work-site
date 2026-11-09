@@ -11,6 +11,8 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
+      - name: 只读 runner 传输与合成测试计数
+        run: python3 scripts/diagnose-box-runner.py
       - name: 云桌面浏览器、隔离工作区与所属页面恢复（不唤醒、不登录）
         env:
           XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}

@@ -30,7 +30,7 @@ def bundle(name):
     with urllib.request.urlopen(req,timeout=30) as r:r.read()
     names[name]=hashed
     return hashed
-entries=['vm-browser-service.mjs','vm-runtime.mjs','vm-base.mjs']
+entries=['vm-browser-service.mjs','vm-runtime.mjs','vm-base.mjs','vm-browser-driver.mjs']
 paths=['/data/home/.xin/diagnostic/browser-modules/'+bundle(n) for n in entries]
 print('BROWSER_PREFLIGHT_PHASE uploaded '+str(len(names))+' code modules',flush=True)
 result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',Path('scripts/probe-xin-browser.cjs').read_text(),*paths],'timeoutSeconds':240},timeout=260)
