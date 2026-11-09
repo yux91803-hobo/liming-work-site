@@ -22,3 +22,8 @@ jobs:
         env:
           XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
         run: python3 scripts/diagnose-xin-browser.py
+      - name: 生产原生工作适配器实际读图与独立落盘（不唤醒、不登录）
+        env:
+          XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
+          XIN_BROWSER_PROBE: native-worker
+        run: python3 scripts/diagnose-xin-browser.py

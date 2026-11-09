@@ -1,6 +1,7 @@
 // Exercise only an owned synthetic task, a public page and disposable browser profiles.
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),cp=require('node:child_process'),{pathToFileURL}=require('node:url');
-const owned=path.join('/data/home/.xin/diagnostic','browser-'+crypto.randomBytes(8).toString('hex'));
+// Chromium creates a Unix socket under TMPDIR; keep this disposable root short enough for sun_path.
+const owned=path.join('/data/home/.xin','bd-'+crypto.randomBytes(5).toString('hex'));
 for(const dir of ['control','projects/probe','tmp'])fs.mkdirSync(path.join(owned,dir),{recursive:true,mode:0o700});
 process.env.XIN_HOME=path.join(owned,'control');process.env.XIN_WORK=path.join(owned,'projects');process.env.TMPDIR=path.join(owned,'tmp');
 const out={},phase=name=>{out.phase=name;process.stdout.write(JSON.stringify({phase:name})+'\n');};let service,network,b,task,direct;

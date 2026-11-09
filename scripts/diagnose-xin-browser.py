@@ -30,10 +30,12 @@ def bundle(name):
     with urllib.request.urlopen(req,timeout=30) as r:r.read()
     names[name]=hashed
     return hashed
-entries=['vm-browser-service.mjs','vm-runtime.mjs','vm-base.mjs','vm-browser-driver.mjs']
+worker=os.environ.get('XIN_BROWSER_PROBE')=='native-worker'
+entries=['vm-native-worker.mjs','vm-native-profiles.mjs','vm-base.mjs','vm-runtime.mjs'] if worker else ['vm-browser-service.mjs','vm-runtime.mjs','vm-base.mjs','vm-browser-driver.mjs']
 paths=['/data/home/.xin/diagnostic/browser-modules/'+bundle(n) for n in entries]
 print('BROWSER_PREFLIGHT_PHASE uploaded '+str(len(names))+' code modules',flush=True)
-result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',Path('scripts/probe-xin-browser.cjs').read_text(),*paths],'timeoutSeconds':240},timeout=260)
+source=Path('scripts/probe-xin-native-worker.cjs' if worker else 'scripts/probe-xin-browser.cjs').read_text()
+result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source,*paths],'timeoutSeconds':140 if worker else 240},timeout=160 if worker else 260)
 rows=[]
 for line in result.get('stdout','').splitlines():
     try:rows.append(json.loads(line))
@@ -42,4 +44,4 @@ print('BROWSER_PHASES '+json.dumps([r['phase'] for r in rows if isinstance(r,dic
 print('BROWSER_EXEC '+json.dumps({'exitCode':result.get('exitCode'),'stderrBytes':len(result.get('stderr','').encode())}),flush=True)
 evidence=next((r for r in reversed(rows) if isinstance(r,dict) and set(r)!={'phase'}),{})
 print('BROWSER_PREFLIGHT '+json.dumps(evidence),flush=True)
-if result.get('exitCode')!=0 or evidence.get('error') or not evidence.get('recoveredURL'):raise RuntimeError('Real browser and sandbox preflight failed')
+if result.get('exitCode')!=0 or evidence.get('error') or not evidence.get('pixelAnswerMatches' if worker else 'recoveredURL'):raise RuntimeError('Real native worker preflight failed' if worker else 'Real browser and sandbox preflight failed')
