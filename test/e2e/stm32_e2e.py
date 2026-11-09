@@ -1,7 +1,8 @@
 """STM32 学习台端到端测试（需要 python playwright + chromium）
 先 npm run dev，再 python3 test/e2e/stm32_e2e.py [http://localhost:5173]"""
 import asyncio, json, os, sys
-from playwright.async_api import async_playwright
+from datetime import datetime, timezone
+from playwright.async_api import async_playwright, expect
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else 'http://localhost:5173'
 TOOL = BASE + '/tools/stm32/'
@@ -22,6 +23,7 @@ async def page(b, w=1280, h=860, mobile=False, theme='light'):
     # 小芯的「叛逆」是随机的（不肯睡、偏要走回去），测试里关掉，免得结果时好时坏
     await ctx.add_init_script("addEventListener('load', function () { if (window.LimingXin) LimingXin.obedient = true; })")
     pg = await ctx.new_page()
+    await pg.bring_to_front()
     # 网站自己的资源失败才算问题；外部地图瓦片等第三方资源不计
     pg.on('response', lambda r: local_fail.append('%d %s' % (r.status, r.url)) if r.status >= 400 and r.url.startswith(BASE) else None)
     # ERR_ABORTED 是页面跳走时浏览器主动取消的请求，不算失败
@@ -263,6 +265,9 @@ async def xin_mock(pg, authed=False, live=None):
                 st['busy_args'] = args
                 sid = args.get('sid') or 'snew000001'
                 return await ok({'ok': True, 'data': {'error': 'busy', 'msg': '上一句还没做完，请稍后再试', 'run': 'rbusy00001', 'sid': sid}})
+            if st.get('send_gate'):
+                st['send_entered'].set()
+                await st['send_gate'].wait()
             if st.get('send_delay'): await asyncio.sleep(st['send_delay'])
             st['sent'] = args
             return await ok({'ok': True, 'data': {'sid': 'snew000001', 'run': 'rlive00001', 'agent': args.get('agent') or 'codex'}})
@@ -1605,18 +1610,26 @@ async def main():
         # 送到了变成「思考中」，从送到那一刻算秒数，每秒走；电脑在睡时写「唤醒中」（不写「唤醒云电脑」，也不另外冒状态栏）
         pt = await page(b)
         xt = await xin_mock(pt, authed=True, live=[[{'t': 'user', 'text': '想一想'}], [], [], [{'t': 'text', 'text': '想好了。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 5000}]])
-        xt['send_delay'] = 1.5
-        await pt.goto(BASE + '/#xin'); await pt.wait_for_selector('.xc.show .xc-row textarea'); await pt.wait_for_timeout(300)
-        await pt.fill('.xc-row textarea', '想一想'); await pt.keyboard.press('Enter'); await pt.wait_for_timeout(400)
+        xt['send_gate'] = asyncio.Event(); xt['send_entered'] = asyncio.Event(); xt['hold'] = True
+        # Start before navigation, then pause after load as recommended by Playwright. The later
+        # pause time leaves room for slow resource loading without using wall time for timer assertions.
+        await pt.clock.install(time=datetime(2026,11,9,0,0,0,tzinfo=timezone.utc))
+        await pt.goto(BASE + '/#xin'); await pt.wait_for_selector('.xc.show .xc-row textarea')
+        await pt.clock.pause_at(datetime(2026,11,9,2,0,0,tzinfo=timezone.utc))
+        await pt.fill('.xc-row textarea', '想一想'); await pt.keyboard.press('Enter')
+        await asyncio.wait_for(xt['send_entered'].wait(),5)
+        await pt.clock.run_for(5000)
         s1 = await pt.evaluate("[(document.querySelector('.xc-typing-l') || {}).textContent, document.querySelector('.xc-sub').textContent, document.querySelector('.xc-me').textContent, !!document.querySelector('.xc-me.pending')]")
-        await pt.wait_for_function("!document.querySelector('.xc-me.pending')", timeout=5000)
+        xt['send_gate'].set()
+        await expect(pt.locator('.xc-me.pending')).to_have_count(0,timeout=5000)
         s2 = await pt.evaluate("[document.querySelector('.xc-typing-l').textContent, document.querySelector('.xc-sub').textContent]")
-        await pt.wait_for_timeout(1150); l1 = await pt.text_content('.xc-typing-l')
-        await pt.wait_for_timeout(1000); l2 = await pt.text_content('.xc-typing-l')
-        sec = lambda t: int(t.split(' · ')[1].split(' ')[0]) if ' · ' in t else -1
+        await pt.clock.run_for(1000); l1 = await pt.text_content('.xc-typing-l')
+        await pt.clock.run_for(1000); l2 = await pt.text_content('.xc-typing-l')
         check('发出去还没送到：「正在输入」旁边写「接收中」、标题栏「接收中…」，自己那句下面没有小字', s1 == ['接收中', '接收中…', '想一想', True], s1)
         check('送到了：变成「思考中」、标题栏「思考中…」；秒数从送到那一刻算、每秒走一下',
-              s2[0].startswith('思考中') and s2[1] == '思考中…' and l1.startswith('思考中 · ') and 1 <= sec(l1) <= 2 and sec(l2) == sec(l1) + 1, (s2, l1, l2))
+              s2[0].startswith('思考中') and s2[1] == '思考中…' and l1 == '思考中 · 1 秒' and l2 == '思考中 · 2 秒', (s2,l1,l2))
+        xt.pop('send_gate'); xt.pop('send_entered'); xt['hold'] = False
+        await pt.clock.resume()
         await pt.wait_for_function(CHAT_DONE, timeout=8000)
         xt['send_waking'] = 1; xt['send_delay'] = 1.5; xt['polls'] = 0   # 第二句从头再放一遍进度（不然第一次取进度就是做完了）
         await pt.fill('.xc-row textarea', '再想一想'); await pt.keyboard.press('Enter')
