@@ -1,7 +1,7 @@
 // Synthetic native image and private-HOME checks; never prints prompt, response, credentials, or owner conversations.
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),cp=require('node:child_process');
 const home='/data/home',binary=['.local/bin/agy','.gemini/bin/agy'].map(p=>path.join(home,p)).find(p=>fs.existsSync(p));
-const out={available:!!binary};let child,pending=new Map(),seq=0,text='',sid='',profile='';
+const out={available:!!binary};let stderr='',child,pending=new Map(),seq=0,text='',sid='',profile='';
 let env={HOME:home,PATH:'/usr/local/bin:/usr/bin:/bin',LANG:'C.UTF-8'};
 function rpc(method,params,ms=20000){return new Promise((resolve,reject)=>{const id=++seq,timer=setTimeout(()=>{pending.delete(id);reject(Error('rpc_timeout'));},ms);pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});}
 function end(){if(child&&!child.killed){child.stdin.end();child.kill('SIGTERM');}}
@@ -18,12 +18,15 @@ function end(){if(child&&!child.killed){child.stdin.end();child.kill('SIGTERM');
  env={...env,HOME:root};out.noPaidCredits=true;out.privateHome=true;out.canonicalRoot=fs.realpathSync(root)===root;
  out.pythonPlaywright=cp.spawnSync('python3',['-c',"import importlib.util;print(bool(importlib.util.find_spec('playwright')))"],{env,encoding:'utf8',timeout:5000}).stdout?.trim()==='True';
  out.displaySockets=(()=>{try{return fs.readdirSync('/tmp/.X11-unix').filter(n=>/^X[0-9]+$/.test(n)).slice(0,4);}catch{return [];}})();
- child=cp.spawn(binary,['acp','--app-data-dir',profile,'--agent','xin-front-controller','--settings',JSON.stringify(settings),'--log-file','/dev/null'],{cwd:work,env,stdio:['pipe','pipe','pipe']});child.stderr.resume();child.stdout.setEncoding('utf8');let buffer='';
+ const stat=fs.statSync(binary),header=stat.size<16384?fs.readFileSync(binary,'utf8'):'';out.launcherScript=header.startsWith('#!');out.launcherUsesHome=out.launcherScript&&header.includes('HOME');out.launcherResolved=fs.realpathSync(binary).replace(home,'<home>');
+ const version=cp.spawnSync(binary,['--version'],{env,encoding:'utf8',timeout:5000});out.privateVersionCode=version.status;out.privateVersionMissing=/not found|ENOENT/i.test(version.stderr||'');
+
+ child=cp.spawn(binary,['acp','--app-data-dir',profile,'--agent','xin-front-controller','--settings',JSON.stringify(settings),'--log-file','/dev/null'],{cwd:work,env,stdio:['pipe','pipe','pipe']});child.stderr.on('data',s=>{stderr=(stderr+s).slice(-8000);});child.stdout.setEncoding('utf8');let buffer='';
  child.stdout.on('data',chunk=>{buffer+=chunk;let n;while((n=buffer.indexOf('\n'))>=0){let q;try{q=JSON.parse(buffer.slice(0,n));}catch{buffer=buffer.slice(n+1);continue;}buffer=buffer.slice(n+1);
   if(q.method){if(Object.hasOwn(q,'id'))child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:q.id,...(q.method==='session/request_permission'?{result:{outcome:{outcome:'cancelled'}}}:{error:{code:-32601,message:'No file or terminal capability'}})})+'\n');else if(q.method==='session/update'&&q.params?.update?.sessionUpdate==='agent_message_chunk')text+=q.params.update.content?.text||'';continue;}
   const p=pending.get(q.id);if(p){clearTimeout(p.timer);pending.delete(q.id);q.error?p.reject(Error('native_rpc_error')):p.resolve(q.result||{});}
  }});
- child.on('close',()=>{for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('native_closed'));}pending.clear();});child.on('error',()=>{});child.stdin.on('error',()=>{});
+ child.on('close',(code,signal)=>{out.nativeExit=code;out.nativeSignal=signal;for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('native_closed'));}pending.clear();});child.on('error',()=>{});child.stdin.on('error',()=>{});
  const init=await rpc('initialize',{protocolVersion:1,clientInfo:{name:'xin-profile-preflight',version:'1'},clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},terminal:false}});out.imageCapability=init.agentCapabilities?.promptCapabilities?.image===true;out.loadSession=init.agentCapabilities?.loadSession===true;
  const session=await rpc('session/new',{cwd:work,mcpServers:[]});sid=session.sessionId;out.uuidSession=/^[a-f0-9-]{36}$/i.test(sid||'');
  const models=session.models?.availableModels||[];out.models=models.slice(0,40).map(m=>({id:String(m.modelId).slice(0,100),name:String(m.name||'').slice(0,100)}));
@@ -47,5 +50,5 @@ function end(){if(child&&!child.killed){child.stdin.end();child.kill('SIGTERM');
  out.authReferencePreserved=fs.lstatSync(path.join(profile,'antigravity-oauth-token')).isSymbolicLink();
 
  }catch(e){out.error=['rpc_timeout','native_rpc_error','native_closed'].includes(e.message)?e.message:'preflight_unavailable';}
- finally{end();process.stdout.write(JSON.stringify(out));setTimeout(()=>process.exit(0),1000).unref();}
+ finally{end();out.stderrBytes=Buffer.byteLength(stderr);out.errorKinds=Object.entries({missing:/not found|ENOENT|No such file/i,permission:/EACCES|permission denied/i,auth:/auth|login|credential|sign.in/i,agent:/agent/i,config:/settings|config|yaml|json/i,unknownOption:/unknown option|unrecognized.*argument|unexpected.*argument/i,runtime:/module|shared librar|bun|node|panic|unhandled/i}).filter(([,re])=>re.test(stderr)).map(([name])=>name);out.errorOptions=[...stderr.matchAll(/--[a-z][a-z-]{1,60}/g)].map(x=>x[0]).filter((x,i,a)=>a.indexOf(x)===i).slice(0,12);process.stdout.write(JSON.stringify(out));setTimeout(()=>process.exit(0),1000).unref();}
 })().catch(()=>{end();process.stdout.write(JSON.stringify({error:'preflight_unavailable'}));});
