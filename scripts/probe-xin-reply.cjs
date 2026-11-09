@@ -40,9 +40,11 @@ if(mode==='native'){
  try{out.protocol=fs.readFileSync(path.join(base,'logs/front.jsonl'),'utf8').split('\n').flatMap(l=>{try{return [JSON.parse(l)];}catch{return [];}}).filter(e=>e.run===initial.run).map(e=>({error:publicErrors.has(e.error)?e.error:'other',protocol:e.protocol}));}catch{}
  if(!out.initial.text[0]||!out.initial.finish.at(-1)?.ok)return;
  const visual='READ-'+crypto.randomBytes(5).toString('hex').toUpperCase(),file=path.join(root,'uploads','photo.png');fs.mkdirSync(path.dirname(file),{recursive:true});
- const source=`from playwright.sync_api import sync_playwright\nimport shutil,sys\nwith sync_playwright() as p:\n b=p.chromium.launch(headless=True,executable_path=shutil.which('chromium') or shutil.which('google-chrome'),args=['--no-sandbox'])\n page=b.new_page(viewport={'width':1100,'height':220})\n page.set_content('<canvas width="1100" height="220"></canvas>')\n page.evaluate('text=>{const c=document.querySelector("canvas"),g=c.getContext("2d");g.fillStyle="white";g.fillRect(0,0,c.width,c.height);g.fillStyle="black";g.font="bold 90px monospace";g.fillText(text,30,135);}',sys.argv[1])\n page.locator('canvas').screenshot(path=sys.argv[2])\n b.close()`;
- const rendered=spawnSync('python3',['-c',source,visual,file],{env:{HOME:'/data/home',PATH:process.env.PATH||'/usr/local/bin:/usr/bin:/bin'},encoding:'utf8',timeout:20000});
- if(rendered.status!==0){out.imageSetup=false;return;}
+ const chrome=['/usr/lib/chromium/chromium','/usr/bin/chromium','/usr/bin/google-chrome'].find(p=>fs.existsSync(p));
+ if(!chrome){out.imageSetup=false;return;}
+ const html='<html><body style="margin:0;background:white"><div style="padding:30px;font:bold 90px monospace;color:black">'+visual+'</div></body></html>';
+ const rendered=spawnSync(chrome,['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--hide-scrollbars','--no-first-run','--user-data-dir='+path.join(root,'capture-profile'),'--window-size=1100,220','--virtual-time-budget=500','--screenshot='+file,'data:text/html,'+encodeURIComponent(html)],{env:{HOME:'/data/home',PATH:process.env.PATH||'/usr/local/bin:/usr/bin:/bin'},encoding:'utf8',timeout:20000});
+ if(rendered.status!==0||!fs.existsSync(file)){out.imageSetup=false;out.captureExit=rendered.status;return;}
  const image=call('send',{agent:'codex',text:'只照写这张图中唯一一行字符，不派任务、不执行命令、不记忆。',files:[{path:file,name:'photo.png'}]});created.push(image.sid);
  const result=await wait(image.run),text=result.events.filter(e=>e.t==='text').map(e=>e.text||'').join('\n'),tasks=call('tasks',{sid:image.sid}).tasks||[];
  out.image={...evidence(result),pixelAnswerMatches:text.includes(visual),tasks:tasks.length};return;
