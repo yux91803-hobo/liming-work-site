@@ -57,18 +57,29 @@
   }
 
   /* ---------- 请求 ---------- */
-  function req(path, body) {
+  // ms：这次请求的期限。连接被静默丢掉（手机休眠、换 Wi-Fi、宿主机暂停虚拟机）时 fetch 永远不结束也不报错，
+  // 轮询停在半路、S.run / S.sending 永远清不掉；到期就 abort，按 state:'timeout' 失败，交给调用方重试。
+  // 测试可用 window.LimingXinChatTimeoutMs 把期限调短（只会更短）。
+  function reqMs(ms) { var o = +(window.LimingXinChatTimeoutMs || 0); return o > 0 ? Math.min(o, ms) : ms; }
+  function req(path, body, ms) {
     var opt = body === undefined ? { credentials: 'same-origin' } : { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Xin': '1' }, body: JSON.stringify(body) };
+    var ctl = ms && typeof AbortController === 'function' ? new AbortController() : null, tm = 0, late = false;
+    if (ctl) { opt.signal = ctl.signal; tm = setTimeout(function () { late = true; ctl.abort(); }, reqMs(ms)); }
     return fetch(API + path, opt).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (d) { d = d || {}; d._status = r.status; return d; });
+      return r.json().catch(function (e) { if (late) throw e; return {}; }).then(function (d) { d = d || {}; d._status = r.status; return d; });
+    }).then(function (d) { clearTimeout(tm); return d; }, function (e) {
+      clearTimeout(tm);
+      if (late) { e = new Error('连接超时'); e.state = 'timeout'; }
+      else if (e && typeof e === 'object' && !e.state) e.state = 'network';   // fetch 的 TypeError：断网 / 连接被重置
+      throw e;
     });
   }
   // 调云电脑：正在唤醒 / InstaBox 忙就等一会儿再试（最多 maxWait 毫秒），状态写在面板上
   function call(op, args, maxWait, onWait, current) {
     if(op==='task_tell'||op==='task_stop'){args=args||{};if(!args.clientId)args.clientId=crypto.randomUUID();}
-    var t0 = Date.now();
+    var t0 = Date.now(), ms = op === 'poll' ? 25000 : op === 'wake' || op === 'greet' ? 120000 : 60000;   // Worker → exec 最长 40 秒；poll 在服务器上是立即返回的
     function once() {
-      return req('call', { op: op, args: args || {} }).then(function (d) {
+      return req('call', { op: op, args: args || {} }, ms).then(function (d) {
         if (d._status === 401) { S.authed = false; syncBag(); render(); throw new Error('要先登录'); }
         if (d._status !== 200) throw new Error(d.msg || d.error || ('出错了（' + d._status + '）'));
         if (d.ok) { if (op !== 'status' && (!current || current())) setStatus(''); return d.data; }
@@ -80,6 +91,13 @@
         var err = new Error(d.state === 'cooldown' ? '云电脑连续跑满了时长，在冷却，大约 ' + Math.ceil((d.retryAfter || 60) / 60) + ' 分钟后再试' : (d.msg || '云电脑出错了'));
         err.state = d.state; err.retryAfter = d.retryAfter;
         throw err;
+      }, function (e) {
+        // 超时 / 断网：带 clientId 的操作（send、task_tell…）云电脑按 clientId 去重，原样重发同一份 args 不会多发一遍
+        if ((e.state === 'timeout' || e.state === 'network') && args && args.clientId && Date.now() - t0 < (maxWait || 0)) {
+          if (!current || current()) setStatus('网络不稳，正在重发…', 'wait');
+          return sleepMs(1500).then(once);
+        }
+        throw e;
       });
     }
     return once();
@@ -1694,7 +1712,7 @@
     if ((!text && !atts.length) || S.run || S.sending || S.loadingConversation) return false;
     if (given == null && !prep && attsBusy()) { setStatus('文件还没传完，传完再发', 'wait'); setTimeout(function () { setStatus(''); }, 2500); return false; }
     S.sending = true;
-    var retry=S.retrySend&&S.retrySend.text===text&&JSON.stringify(S.retrySend.atts||[])===JSON.stringify(atts)?S.retrySend:null;
+    var retry=S.retrySend&&S.retrySend.text===text&&(S.retrySend.sid==null||S.retrySend.sid===S.sid)&&JSON.stringify(S.retrySend.atts||[])===JSON.stringify(atts)?S.retrySend:null;
     S.retrySend=null;
     var generation=S.convSeq,flight={generation:generation,sid:S.sid,id:prep&&prep.queued?prep.queued[0].id:retry?retry.id:crypto.randomUUID(),text:text,atts:atts,queued:prep&&prep.queued?prep.queued.map(function(v){return v.id;}):[]};S.sendFlight=flight;
     if (list.querySelector('.xc-hello')) clearList();
@@ -1735,6 +1753,7 @@
       if (prep && prep.queued) { S.queueFlight = []; prep.queued.forEach(function (v) { queueMsg(v.text, v); }); saveQueue(); }
       if (!(prep && prep.queued) && !input.value) { input.value = text; ls(LS_DRAFT, text); grow(); }
       if (!(prep && prep.queued) && atts.length && !(S.atts || []).length) { S.atts = atts; renderAtts(); render(); }   // 没发出去：附件放回去
+      if (!(prep && prep.queued) && (e.state === 'timeout' || e.state === 'network')) S.retrySend = { id: flight.id, sid: flight.sid, text: text, atts: atts, payload: flight.payload };   // 可能其实送到了：再点发送沿用同一个 clientId，云电脑认得出来，不会多一轮
       var x2 = xin(); if (x2) { x2.ai(''); x2.cmd('confused'); if (!S.open) x2.say('没发出去：' + e.message + '（点我看看）', 9000, open); }
       // 上一句还在跑（多标签最常见）：别弄脏 S.run，把输入还回去，重新打开同一对话接着看进行中的那一轮
       if (e.code === 'busy' || /还没做完/.test(e.message)) {
