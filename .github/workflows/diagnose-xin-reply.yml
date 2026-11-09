@@ -5,14 +5,21 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 jobs:
   inspect:
     runs-on: [self-hosted, box]
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
-      - name: 只读检查原生记录的布局与公开帮助（不读取聊天、不唤醒电脑）
+      - name: 从 runner 直接读取本仓库合成浏览器检查的失败日志
         env:
-          XIN_DIAG_MODE: native-storage
-          XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
-        run: python3 scripts/diagnose-xin-reply.py
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/inspect-ci-log.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: failed-e2e-log
+          path: .diagnostic/failed-e2e.log
+          include-hidden-files: true
+          retention-days: 1
