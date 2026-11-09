@@ -103,14 +103,25 @@ jobs:
           fi
       - name: 浏览器端到端测试（电脑、手机宽度：点击、翻页、返回、模拟器）
         run: |
+          set -o pipefail
+          mkdir -p test-results/e2e
           node scripts/preview.mjs --port 5173 > preview.log 2>&1 &
           preview_pid=$!
           trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do curl -sf http://localhost:5173/ > /dev/null && break; sleep 1; done
-          python test/e2e/stm32_e2e.py http://localhost:5173
-          python test/e2e/map_e2e.py http://localhost:5173
-          python test/e2e/xin_runtime_e2e.py http://localhost:5173
-          python test/e2e/xin_web_e2e.py http://localhost:5173
+          python test/e2e/stm32_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/stm32.log
+          python test/e2e/map_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/map.log
+          python test/e2e/xin_runtime_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-runtime.log
+          python test/e2e/xin_web_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-web.log
+      - name: 保存浏览器检查报告（失败也保留）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/e2e/*.log
+            preview.log
+          retention-days: 1
       - name: 记录浏览器测试通过的代码树
         if: github.event_name == 'pull_request'
         run: node scripts/ci-proof.mjs write e2e

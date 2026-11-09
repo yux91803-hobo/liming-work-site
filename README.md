@@ -114,4 +114,4 @@ AI 在云电脑里是完全放权的（不经确认就执行命令），云电�
 
 互传和协作中心删除时留下的 Cloudflare 资源（迁移 `v2` 已在两个站执行过）：D1 数据库 `liming-hub` 还在账号里，确认不要可以 `npx wrangler d1 delete liming-hub`；旧密钥 `TRANSFER_PASSWORD`、`TRANSFER_KEY`、`TRANSFER_PW_VERSION` 可以用 `npx wrangler secret delete <名字>` 删掉。
 
-GitHub Actions 验证会复用同一份代码的成功结果：PR 完整测试并部署测试站，合并后核对代码树与两份通过证据，正式发布只重复环境相关的冒烟和真实模型联调。证据缺失或代码不同就停止部署；手动运行仍完整验证。
+GitHub Actions 的 check / e2e / deploy 全部在 `[self-hosted, box]` 的 `box-liming-work-site` 上运行。PR 和 main 都完整检查当前代码；PR 通过后部署测试站，合并后还会核对代码树与两份 PR 通过证据，再做正式站冒烟和真实模型联调。证据缺失或代码不同就停止部署。每套合成浏览器检查的独立日志和预览服务日志会在失败时照常上传，保留一天；正式站的真实聊天不放进这份报告。
