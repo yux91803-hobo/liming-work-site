@@ -25,15 +25,38 @@ async def click_dance(page, label):
     await page.bring_to_front()
     frame = page.frame_locator('#frame')
     await loaded(frame)
-    await frame.locator('#dance').click()
+    button = frame.locator('#dance')
+    await button.evaluate("""() => {
+      window.previewInputs = [];
+      for (const type of ['pointerdown','pointerup','mousedown','mouseup','touchstart','touchend','click']) {
+        document.addEventListener(type, e => {
+          const point = e.changedTouches?.[0] || e;
+          window.previewInputs.push({type, trusted:e.isTrusted, target:e.target.id, x:point.clientX, y:point.clientY});
+          window.previewInputs = window.previewInputs.slice(-16);
+        }, true);
+      }
+    }""")
     try:
+        # Loading and font work can outlive popup activation. Confirm actual focus just before
+        # the sole input; mobile uses the same native touch path as a person using a phone.
+        await page.bring_to_front()
+        await page.wait_for_function('document.hasFocus()', timeout=5000)
+        await button.focus()
+        await expect(button).to_be_focused(timeout=5000)
+        if await page.evaluate('navigator.maxTouchPoints > 0'):
+            await button.tap()
+        else:
+            await button.click()
         # A click acknowledgement can precede the iframe's paint / event work. Wait for its actual
         # observable result, without clicking twice or bypassing the real input event.
         await expect(frame.locator('#state')).to_have_text('我跳起来啦', timeout=5000)
         await expect(frame.locator('#dragon')).to_have_class('dancing', timeout=5000)
-        assert await frame.locator('#dance').evaluate('() => window.danceClicks') == 1
+        assert await button.evaluate('() => window.danceClicks') == 1
+        clicks = await button.evaluate("() => window.previewInputs.filter(e => e.type === 'click')")
+        assert len(clicks) == 1 and clicks[0]['trusted'] and clicks[0]['target'] == 'dance'
     except Exception:
-        detail = await frame.locator('#dance').evaluate("el => ({ready:document.readyState,visible:document.visibilityState,focused:document.hasFocus(),handler:typeof el.onclick,clicks:window.danceClicks,state:document.getElementById('state').textContent,rect:el.getBoundingClientRect().toJSON()})")
+        detail = await button.evaluate("el => ({ready:document.readyState,visible:document.visibilityState,focused:document.hasFocus(),handler:typeof el.onclick,clicks:window.danceClicks,state:document.getElementById('state').textContent,rect:el.getBoundingClientRect().toJSON(),inputs:window.previewInputs,active:document.activeElement?.id,viewport:{width:innerWidth,height:innerHeight,offsetX:visualViewport?.offsetLeft,offsetY:visualViewport?.offsetTop}})")
+        detail['pageFocused'] = await page.evaluate('document.hasFocus()')
         print('PREVIEW_CLICK ' + json.dumps({'case':label,'detail':detail}), flush=True)
         Path('screens').mkdir(exist_ok=True)
         await page.screenshot(path='screens/xin-web-failure-' + label + '.png')
