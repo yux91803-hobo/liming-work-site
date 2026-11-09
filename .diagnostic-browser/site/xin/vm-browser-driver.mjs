@@ -5,7 +5,7 @@ import readline from 'node:readline';
 import {spawn} from 'node:child_process';
 import {processIdentity,signalProcessGroup} from './vm-base.mjs';
 
-export const BROWSER_DRIVER=String.raw`import sys,json,asyncio,hashlib,base64,os
+export const BROWSER_DRIVER=String.raw`import sys,json,asyncio,hashlib,base64,os,re
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 
@@ -169,7 +169,8 @@ async def main():
     print(json.dumps({'id':q.get('request'),'result':result},ensure_ascii=True),flush=True)
    except Exception as e:
     # Avoid library exception text: it can contain URLs, field values or page excerpts.
-    print(json.dumps({'id':q.get('request'),'error':str(e) if isinstance(e,RuntimeError) else '浏览器操作未完成，请重新查看页面','kind':type(e).__name__,'op':q.get('op')}),flush=True)
+    cause=re.search(r'\bERR_[A-Z0-9_]+\b',str(e))
+    print(json.dumps({'id':q.get('request'),'error':str(e) if isinstance(e,RuntimeError) else '浏览器操作未完成，请重新查看页面','kind':type(e).__name__,'cause':cause.group(0) if cause else 'timeout' if type(e).__name__=='TimeoutError' else None,'op':q.get('op')}),flush=True)
  finally:
   for key in list(contexts):
    try:await close_context(key)
@@ -185,7 +186,7 @@ export class BrowserDriver {
   this.child=spawn(python,['-u','-c',BROWSER_DRIVER],{cwd:this.root,detached:true,stdio:['pipe','pipe','pipe'],env:{PATH:process.env.PATH||'/usr/bin:/bin',HOME:this.root,TMPDIR:path.join(this.root,'tmp'),LANG:'C.UTF-8',DISPLAY:display}});
   this.child.xinIdentity=processIdentity(this.child.pid);
   const lines=readline.createInterface({input:this.child.stdout});lines.on('line',line=>{
-   let m;try{m=JSON.parse(line);}catch{return;}const p=this.pending.get(m.id);if(!p)return;clearTimeout(p.timer);this.pending.delete(m.id);m.error?p.reject(Object.assign(Error(m.error),{kind:m.kind,operation:m.op})):p.resolve(m.result);
+   let m;try{m=JSON.parse(line);}catch{return;}const p=this.pending.get(m.id);if(!p)return;clearTimeout(p.timer);this.pending.delete(m.id);m.error?p.reject(Object.assign(Error(m.error),{kind:m.kind,cause:m.cause,operation:m.op})):p.resolve(m.result);
   });
   this.child.stderr.on('data',()=>{});const fail=()=>{this.closed=true;for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(Error('浏览器驱动已停止，操作结果需要重新核对'));}this.pending.clear();};
   this.child.on('error',fail);this.child.on('close',fail);

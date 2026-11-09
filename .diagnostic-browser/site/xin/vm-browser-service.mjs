@@ -13,11 +13,12 @@ import {BrowserDriver} from './vm-browser-driver.mjs';
 const root=()=>path.join(BASE,'browser'),infoFile=()=>path.join(root(),'service.json');
 const matches=(a,b)=>typeof a==='string'&&typeof b==='string'&&Buffer.byteLength(a)===Buffer.byteLength(b)&&crypto.timingSafeEqual(Buffer.from(a),Buffer.from(b));
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
+const failure=e=>({error:e.message||'浏览器操作没有完成',...(typeof e.cause==='string'&&/^(?:ERR_[A-Z0-9_]+|timeout)$/.test(e.cause)?{cause:e.cause}:{}),...(typeof e.kind==='string'&&/^[A-Za-z.]{1,60}$/.test(e.kind)?{kind:e.kind}:{})});
 const socketListen=(server,socket)=>new Promise((resolve,reject)=>{try{fs.unlinkSync(socket);}catch{}server.once('error',reject);server.listen(socket,()=>{fs.chmodSync(socket,0o600);resolve();});});
 function requestSocket(info,body,ms=180000){return new Promise((resolve,reject)=>{
  const req=http.request({socketPath:info.socket,method:'POST',path:'/',headers:{authorization:'Bearer '+info.token,'content-type':'application/json'}},res=>{
   let body='',bytes=0;res.setEncoding('utf8');res.on('data',s=>{bytes+=Buffer.byteLength(s);if(bytes>4*1024*1024){req.destroy(Error('浏览器回执过大'));return;}body+=s;});
-  res.on('end',()=>{try{const r=JSON.parse(body);r.error?reject(Error(r.error)):resolve(r);}catch(e){reject(e);}});
+  res.on('end',()=>{try{const r=JSON.parse(body);r.error?reject(Object.assign(Error(r.error),{cause:r.cause,kind:r.kind})):resolve(r);}catch(e){reject(e);}});
  });req.setTimeout(ms,()=>req.destroy(Error('浏览器控制器暂时没有回应，请先查看状态')));req.on('error',reject);req.end(JSON.stringify(body));
 });}
 export async function browserOwner(self,op,args={},options={}){
@@ -102,7 +103,7 @@ export async function serveBrowser({egressFactory,driverFactory,resolveTask,noti
    if(q.op==='state')return reply(200,await dispatch(q));
    if(q.op==='pause'&&q.args?.paused===true)await control.pause(true);
    const next=chain.then(()=>dispatch(q));chain=next.catch(()=>{});reply(200,await next);setTimeout(()=>flush().catch(()=>{}),0).unref();
-  }catch(e){reply(400,{error:e.message||'浏览器请求没有完成'});}
+  }catch(e){reply(400,failure(e));}
  });
  server.requestTimeout=190000;server.headersTimeout=10000;await socketListen(server,socket);
  const info={pid:process.pid,identity:processIdentity(process.pid),socket,token};const file=infoFile(),tmp=file+'.'+process.pid;
@@ -149,7 +150,7 @@ export async function attachTaskBrowser(self,t,dir,onWait=()=>{}){
    const r=await browserOwner(self,'request',{sid:t.sid,token:capability,request});
    if(request.op==='screenshot'||request.op==='action'&&request.action==='screenshot'){const image=browserModelImage(t,r.result||r);if(image)images.push(image);}
    reply(200,r);if(r.waiting)onWait(r);
-  }catch(e){reply(400,{error:e.message||'浏览器操作没有完成'});}
+  }catch(e){reply(400,failure(e));}
  });
  server.requestTimeout=185000;await socketListen(server,socket);
  fs.writeFileSync(path.join(dir,'browser.json'),JSON.stringify({socket,token}),{mode:0o600});fs.writeFileSync(path.join(dir,'browser-cli.cjs'),BROWSER_CLI,{mode:0o600});
