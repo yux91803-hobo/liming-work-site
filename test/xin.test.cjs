@@ -869,7 +869,7 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   assert.ok(!prompt.includes('你现在用的模型看不了图片内容'));
   const parts = request.input.find(x=>x.role==='user').content;
   assert.deepStrictEqual(parts.filter(x=>x.type==='input_image'),[{type:'input_image',image_url:'data:image/jpeg;base64,'+Buffer.from('jpg').toString('base64'),detail:'auto'}]);
-  assert.ok(request.instructions.includes('识图、读图中文字、解释图中内容属于你能直接回答的聊天'));
+  assert.ok(request.instructions.includes('看图读图直接回答'));
   assert.ok(!request.instructions.includes('必须交给 vision 工作读取'));
   assert.strictEqual(op('tasks',{sid:r.sid}).tasks.length,0,'前台读图回答没有派后台任务');
   assert.equal(p.events.find(e=>e.t==='done').model,'deepseek-v4.1-flash');
@@ -1867,10 +1867,11 @@ test('记事本超过上限：保留开头和最新的记录，只省略中间',
   assert.ok(systemPrompt(lines.join('\n')).includes('第 999 条记录'));
 });
 
-test('默认模式前台：设定带关系等级（不带会变的分数，保持缓存），并教它偶尔用表情、好感度、开场白', async () => {
-  const { systemPrompt, bondInfo } = await load('../site/xin/vm-agent.mjs');
+test('默认模式前台：只留必要规则，不规定语气和性格（不带会变的分数，保持缓存），表情、好感度、开场白仍是可用工具', async () => {
+  const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
   const p = systemPrompt('', { tasks: true });
-  assert.ok(p.includes('你和用户现在的关系：' + bondInfo().name));
+  assert.ok(p.includes('兄弟') && p.includes('北京时间') && p.includes('原话照传') && p.includes('明确同意') && p.includes('我查了') && p.includes('密钥'));
+  assert.ok(!p.includes('你和用户现在的关系') && !p.includes('亲近程度') && !p.includes('简短回答'));
   assert.ok(!/好感度 \d/.test(p));
   assert.ok(p.includes('["xin","bond","+1","理由"]') && p.includes('["xin","next","一句话"]') && p.includes('["xin","dance"]'));
 });
