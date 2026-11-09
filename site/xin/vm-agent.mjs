@@ -717,7 +717,7 @@ function runner(run) {
         protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},
         quotaState:readJ(path.join(BASE,'front-antigravity-quota.json')),
         quota:quota=>lockedCall('tasks','front_quota',{quota}),
-        model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;meta.providerModel=chosen.providerModel;if(chosen.reason==='quota')meta.from=OPUS_FRONT_MODEL;}
+        model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;meta.providerModel=chosen.providerModel;if(['quota','format','front_model'].includes(chosen.reason))meta.from=OPUS_FRONT_MODEL;}
       });
       if(meta.frontFiles?.some(f=>f.image)&&provider.image===false){
         patchRun(run,{frontSeesImages:false,images:[]});
@@ -2182,7 +2182,7 @@ const ops = {
 const iops = {
   front_model(a){
     const m=readJ(metaF(a.run));if(!m||m.task||m.agent!=='codex'||m.stopped||m.ended||![runtime.FRONT_MODEL,OPUS_FRONT_MODEL].includes(a.model))return {error:'bad_front_model'};
-    m.model=a.model;m.providerModel=String(a.providerModel||a.model).slice(0,200);if(a.reason==='quota')m.from=OPUS_FRONT_MODEL;else delete m.from;writeJ(metaF(a.run),m);
+    m.model=a.model;m.providerModel=String(a.providerModel||a.model).slice(0,200);if(['quota','format','front_model'].includes(a.reason))m.from=OPUS_FRONT_MODEL;else delete m.from;writeJ(metaF(a.run),m);
     const s=readJ(sessF(m.sid));if(s){s.model=a.model;writeJ(sessF(m.sid),s);}return {ok:true};
   },
   front_quota(a){

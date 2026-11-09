@@ -41,7 +41,7 @@ function fixture(t,mode='ok'){
  if(mode==='claim')text=prompts===1?'我查了，今天已经签到了。':'查不到当天记录，暂时不能确认。';
  if(mode==='midquota'&&prompts===1){text='';calls=[{name:'xin',argv:['xin','remember','--basis','stated','--type','profile','喜欢先看时序图']}];}
  if((body.tools||[]).some(t=>t.name==='finish_event')){text='';calls=[{name:'finish_event',action:'deliver',text:'我核对好了，原生前台已交付结果。'}];}
- const answer=mode==='plain'&&prompts===1?text:JSON.stringify({text,calls});send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:answer}}}});
+ const answer=mode==='plain'&&prompts===1?text:mode==='broken'?'{"text":"半截回复':mode==='fenced'?'好的，按格式回复：\\n'+String.fromCharCode(96).repeat(3)+'json\\n'+JSON.stringify({text})+'\\n'+String.fromCharCode(96).repeat(3)+'\\n':JSON.stringify({text,calls});send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:answer}}}});
  send({id:q.id,result:{stopReason:'end_turn'}});
  }else send({id:q.id,result:{}});
  });`,{mode:0o755});
@@ -82,10 +82,55 @@ test('接口用提供方枚举标识 Opus 4.6 时仍可运行，保留实际 ID�
  assert.equal(end.ok,true);assert.equal(end.model,'claude-opus-4.6');assert.equal(end.providerModel,'MODEL_CLAUDE_4_6_OPUS_THINKING');
  assert.equal(f.rows(f.log).find(r=>r.method==='session/set_model').params.modelId,'MODEL_CLAUDE_4_6_OPUS_THINKING');
 });
-test('Opus 先按用户口吻给出纯文字时，控制器只修正协议格式一次，随后正常交付',async t=>{
- const f=fixture(t,'plain'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run);
- assert.equal(done.events.find(e=>e.t==='done').ok,true);assert.equal(done.events.find(e=>e.t==='text').text,'native-opus-answer');
- assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,2);assert.equal(f.rows(f.gateway).length,0);
+test('Opus 用纯文字聊天时直接当作回复交付，不再报格式错误，也不切模型',async t=>{
+ const f=fixture(t,'plain'),sent=f.call('send',{agent:'codex',text:'你觉得人生有什么意义？'}),done=await f.wait(sent.run);
+ const end=done.events.find(e=>e.t==='done');assert.equal(end.ok,true);assert.equal(end.model,'claude-opus-4.6');assert.equal(end.from,undefined);
+ assert.equal(done.events.find(e=>e.t==='text').text,'native-opus-answer');
+ assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,1);assert.equal(f.rows(f.gateway).length,0);
+ assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
+});
+test('Opus 把协议包在代码块和说明文字里、省略空 calls 时照常解析，不需要修正',async t=>{
+ const f=fixture(t,'fenced'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run);
+ const end=done.events.find(e=>e.t==='done');assert.equal(end.ok,true);assert.equal(end.model,'claude-opus-4.6');
+ assert.equal(done.events.find(e=>e.t==='text').text,'native-opus-answer');
+ assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,1);assert.equal(f.rows(f.gateway).length,0);
+});
+test('修正一次后仍是坏格式时，本轮改由 DeepSeek 用同一上下文回答，不把格式错误给用户，也不重复派活',async t=>{
+ const f=fixture(t,'broken'),sent=f.call('send',{agent:'codex',text:'你觉得人生有什么意义？'}),done=await f.wait(sent.run);
+ const end=done.events.find(e=>e.t==='done');assert.equal(end.ok,true);assert.equal(end.model,'deepseek-v4.1-flash');assert.equal(end.from,'claude-opus-4.6');
+ assert.equal(done.events.find(e=>e.t==='text').text,'deepseek-quota-answer');
+ assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,2);
+ const bodies=f.rows(f.gateway);assert.equal(bodies.length,1);assert.equal(bodies[0].model,'deepseek-v4.1-flash');assert.match(JSON.stringify(bodies[0].input),/人生有什么意义/);
+ assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
+ // Format trouble is not a quota cooldown: the next turn tries Opus again.
+ assert.equal(fs.existsSync(f.control+'/front-antigravity-quota.json')&&JSON.parse(fs.readFileSync(f.control+'/front-antigravity-quota.json')).blocked,false);
+});
+test('控制器拒绝记录 Opus（bad_front_model）时本轮改用 DeepSeek，记录切换原因而不是报错',async t=>{
+ const f=fixture(t,'ok'),script=`
+ import {openFrontProvider} from ${JSON.stringify(require('node:url').pathToFileURL(path.join(__dirname,'../site/xin/vm-front-opus.mjs')).href)};
+ const seen=[],p=await openFrontProvider({binary:${JSON.stringify(f.root+'/bin/agy')},cwd:${JSON.stringify(f.root+'/front')},baseURL:'http://127.0.0.1:9/v1',key:'k',
+  model:c=>{seen.push(c);if(c.model==='claude-opus-4.6')throw Error('bad_front_model');}});
+ const out=await p.request({input:[{role:'user',content:'你好'}],tools:[]});p.close();
+ console.log(JSON.stringify({seen,text:out.output[0].content[0].text}));`;
+ const r=spawnSync(process.execPath,['--input-type=module','-e',script],{env:f.env,encoding:'utf8',timeout:20000});
+ assert.equal(r.status,0,r.stderr);const d=JSON.parse(r.stdout.trim().split('\n').at(-1));
+ assert.deepEqual(d.seen.map(c=>[c.model,c.reason]),[['claude-opus-4.6',null],['deepseek-v4.1-flash','front_model']]);
+ assert.equal(d.text,'deepseek-quota-answer');assert.equal(f.rows(f.gateway).length,1);
+ assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,0);
+});
+test('前台协议解析：容忍代码块、前后说明和缺省 calls，纯文字当聊天；不从文字推断工具，仍拒绝越权工具和超量调用',async()=>{
+ const {opusOutput}=await import(require('node:url').pathToFileURL(path.join(__dirname,'../site/xin/vm-front-opus.mjs')).href);
+ const view=o=>o.output.map(x=>x.type==='message'?x.content[0].text:[x.name,JSON.parse(x.arguments)]);
+ assert.deepEqual(view(opusOutput('{"text":"你好","calls":[]}')),['你好']);
+ assert.deepEqual(view(opusOutput('好的\n```json\n{"text":"含 {括号} 和 \\"引号\\""}\n```\n谢谢')),['含 {括号} 和 "引号"']);
+ assert.deepEqual(view(opusOutput('先说明 {"text":"","calls":[{"name":"xin","argv":["xin","task","list"]}]} 结尾')),[['xin',{argv:['xin','task','list']}]]);
+ assert.deepEqual(view(opusOutput('人生的意义在于体验，我可以帮你派个任务去查。')),['人生的意义在于体验，我可以帮你派个任务去查。']);
+ assert.equal(opusOutput('我去 xin task new 帮你做').output.filter(x=>x.type==='function_call').length,0);
+ for(const bad of ['','   ','{"text":"半截','{"text":"","calls":[]}','前缀 "calls": [','{"text":"x","calls":"xin"}'])assert.throws(()=>opusOutput(bad),undefined,bad);
+ assert.throws(()=>opusOutput('{"text":"","calls":[{"name":"shell","argv":["rm"]}]}'),/不允许的工具/);
+ assert.throws(()=>opusOutput(JSON.stringify({text:'',calls:Array(6).fill({name:'xin',argv:['xin','task','list']})})),/字段不完整/);
+ assert.throws(()=>opusOutput('完成事件也用纯文字',{prose:false}));
+ assert.deepEqual(view(opusOutput('{"text":"","calls":[{"name":"finish_event","action":"deliver","text":"交付"}]}',{prose:false})),[['finish_event',{action:'deliver',text:'交付'}]]);
 });
 test('确认 Claude 额度耗尽才切 DeepSeek，同一份图片与原话继续使用，冷却期间不反复试 Opus',async t=>{
  const f=fixture(t,'blocked'),file=f.work+'/uploads/photo.png';fs.writeFileSync(file,'same-image');
