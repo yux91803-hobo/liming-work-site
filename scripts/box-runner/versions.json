@@ -18,9 +18,10 @@
   "runner_dir": "/var/lib/liming-actions/runner",
   "supervisor_config": "/etc/liming-actions/supervisord.conf",
   "boot_persistence": false,
-  "recovery_recipe_version": 2,
+  "recovery_recipe_version": 3,
   "repository": "yux91803-hobo/liming-work-site",
   "repository_id": 1434453690,
   "runner_name": "box-liming-work-site",
-  "replacement_requires_explicit_offline_id": true
+  "replacement_requires_explicit_offline_id": true,
+  "service_signal_relay": "root-owned; forwards INT to official RunnerService.js before sandbox parent exits"
 }

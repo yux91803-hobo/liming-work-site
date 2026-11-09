@@ -26,7 +26,7 @@ Other modes:
 - `bash install.sh --recover --dry-run`: read-only idempotence/fresh-registration plan.
 - `bash install.sh --start`: start existing dedicated supervisor in THIS container, already-running no-op.
 - `python3 test_recovery.py`: 23 offline mocked safety tests, no GitHub/sudo/model/application calls.
-- `bash backup.sh /chosen/local/path.tar.gz`: whitelist only these eight recipe/test files, never runtime authentication.
+- `bash backup.sh /chosen/local/path.tar.gz`: whitelist only these ten recipe/test files, never runtime authentication.
 
 ## What does NOT work automatically
 
@@ -45,6 +45,60 @@ Runner account `actions-box` has no sudo, no login shell and only its own group.
 
 Paths: runner `/var/lib/liming-actions/runner`; tools `/opt/liming-runner-tools`; CI dependency cache `/opt/hostedtoolcache`; service config `/etc/liming-actions/supervisord.conf`; root-only control/logs `/var/lib/liming-actions-supervisor`. Pins/checksums are in versions.json/install.sh. Browser restore uses Google's official signed APT repository when Chrome is absent.
 
-Application secrets stay in Actions Secrets with the existing deployment behavior. Fresh temporary registration token is stdin/environment-only; it and gh auth are never backed up/committed/printed. Necessary official runner-generated local auth stays private and is NOT a recovery asset. Backups contain only install.sh,backup.sh,sandbox.sh,supervisord.conf,README.md,versions.json,register.py,test_recovery.py. Fetch these recipes from the private repo after a wipe; a local-only archive cannot survive a wipe.
+Application secrets stay in Actions Secrets with the existing deployment behavior. Fresh temporary registration token is stdin/environment-only; it and gh auth are never backed up/committed/printed. Necessary official runner-generated local auth stays private and is NOT a recovery asset. Backups contain only install.sh,backup.sh,sandbox.sh,supervisord.conf,README.md,versions.json,register.py,test_recovery.py,service-relay.py,test_service_relay.py. Fetch these recipes from the private repo after a wipe; a local-only archive cannot survive a wipe.
 
 Shell/Python syntax, live read-only idempotence, active-runner replacement refusal, archive whitelist and23 mock cases were tested. No real orphan deletion, current-runner re-registration, destructive wipe, full clean-image restore or actual reboot was performed. Current-container child-crash recovery was tested in the original installation. No deployment/model test is part of the recovery tests. Production model acceptance is a separate application workflow, not a reason to weaken recovery checks.
+
+
+## Graceful service control and connection health (recipe v3)
+
+A process-running/online indication is NOT evidence of job delivery. Inspect actual
+queued job IDs, assigned runner_id, local Worker, listener session and timestamps.
+The 2026-11-09 incident logged a 100-second broker GET timeout; its initial transport
+root cause remains unconfirmed. Fresh HEAD/HTTPS success does not test authenticated
+long polling. Upstream issue4703/open PR4734 describes an unbounded response-body
+stall but is not a released fix or proof of this instance's cause; do NOT install
+unreviewed runner patches, disable TLS, bypass proxies, or delete registration21.
+
+A separate local defect WAS reproduced: signaling the old outer Bubblewrap wrapper
+with TERM killed its detached children through --die-with-parent before their
+handlers ran. That bypassed the official service shutdown/session cleanup and can
+cause post-restart409 "session already exists". Recipe v3 runs a root-owned Python
+signal relay ABOVE the unchanged UID/capability/filesystem/PID sandbox. On stop it
+finds only the official RunnerService.js descendant (UID,exact argv,cwd and ancestry
+checks), opens a PID-stable handle, and forwards INT just as official runsvc.sh does.
+It keeps the sandbox parent alive during cleanup. Shutdown is bounded75seconds,
+then only its own sandbox is killed; Supervisor retains its90-second hard limit.
+No credentials, environment values, network payloads or other service state are read.
+
+`sudo python3 scripts/box-runner/test_service_relay.py` runs THREE disposable sandbox tests, not the production runner:
+graceful TERM->INT propagation, bounded unresponsive-child termination, no arbitrary
+CLI command execution. Run `python3 test_recovery.py` separately for23 mock safety cases.
+The relay requires Python3 with Linux pidfd support, supplied by the tested Debian13.
+
+Existing live installations require an explicit idle maintenance transition; merely
+copying the config does not update a running Supervisor child. Never restart with a
+Worker/active job, queued assignment already in progress, or another recovery operator.
+Record reservation/outcome in patrol-events.log and auto-restart-log.txt. For the OLD
+wrapper, allow the official Node manager to finish graceful INT before killing its
+Bubblewrap parent; otherwise wait for official stale-session expiry without repeated
+restarts. Fresh installs use the relay immediately. Keep the prior root-only config
+for rollback; rolling back also requires idle coordination and a graceful stop.
+
+Patrol policy: read-only first; one shared advisory lock and reservation, minimum
+15-minute cooldown. Do NOT restart for a single offline sample, expected session
+Conflict/reconnect, or the absence of log output in an otherwise idle runner. Observe
+natural reconnect through the official client's bounded retry window; never kill a
+Worker even if API says offline. Evidence for escalation: a same-label queued job
+unassigned for10minutes AND no Worker/in-progress job, persistent transport failure,
+and no current maintenance/reconnect. At most one controlled graceful recovery, then
+escalate with sanitized times/errors; do not create an endless periodic restart loop.
+These patrol rules must be adopted by the owner of the existing routine, not by a new
+routine added by this recipe. Full-container boot persistence is still unavailable.
+
+Official references:
+- https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/monitor-and-troubleshoot
+- https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/use-proxy-servers
+- https://github.com/actions/runner/issues/4090
+- https://github.com/actions/runner/issues/4703
+- https://github.com/actions/runner/pull/4734
