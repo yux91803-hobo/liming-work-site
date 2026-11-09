@@ -122,6 +122,7 @@ jobs:
             test-results/e2e/*.log
             preview.log
             screens/xin-web-failure-*.png
+            screens/stm32-drag-failure.png
           retention-days: 1
       - name: 记录浏览器测试通过的代码树
         if: github.event_name == 'pull_request'

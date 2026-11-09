@@ -1182,16 +1182,28 @@ async def main():
         check('玩灯：一直盯着灯看，最后才笑一下（表情不来回切）', len(hap) == 1 and all(f in ('', 'eyes') for f in faces[:hap[0]]), faces)
         await pg.context.close()
 
-        # 电脑：抓着头拖，鼠标停在卡片上沿外面、身子挂在卡片里，也能扔进去
+        # 抓头后鼠标仍在卡片上沿外、身体在卡片里：先确认出场落地，再一次真实拖放。
         pg = await page(b)
-        await pg.goto(BASE + '/'); await pg.evaluate("sessionStorage.clear()"); await pg.wait_for_timeout(2500)
+        await pg.goto(BASE + '/'); await pg.evaluate("sessionStorage.clear()")
+        await pg.bring_to_front()
+        await pg.evaluate("document.fonts.ready")
+        await pg.wait_for_function("window.LimingXin && LimingXin.mode === 'idle' && !!LimingXin.plat")
         r = await pg.evaluate("""(() => { const r = LimingXin.el.getBoundingClientRect(), cx = r.x + r.width / 2;
           for (let yy = r.y; yy < r.bottom; yy++) { const e = document.elementFromPoint(cx, yy); if (e && LimingXin.el.contains(e)) return [cx, yy + 2]; }
-          return [cx, r.y + r.height / 2]; })()""")
+          throw new Error('小芯没有可抓住的头部'); })()""")
         c = await pg.evaluate("(() => { const r = document.querySelector('.card[data-id=stm32]').getBoundingClientRect(); return [r.x + r.width / 2, r.y]; })()")
-        await pg.mouse.move(r[0], r[1]); await pg.mouse.down(); await pg.mouse.move(c[0], c[1] - 6, steps=6); await pg.mouse.up()
-        await pg.wait_for_timeout(1200)
-        check('电脑：抓着头拖、身子在学习台卡片上，松手就进去', await pg.evaluate("document.body.classList.contains('tool-open')"))
+        try:
+            await pg.mouse.move(r[0], r[1]); await pg.mouse.down()
+            await pg.mouse.move(c[0], c[1] - 6, steps=6)
+            await pg.wait_for_function("LimingXin.mode === 'drag' && !!document.querySelector('.card[data-id=stm32].xin-over')", timeout=3000)
+            await pg.mouse.up()
+            await pg.wait_for_function("document.body.classList.contains('tool-open')", timeout=5000)
+            check('电脑：抓着头拖、身子在学习台卡片上，松手就进去', True)
+        except Exception:
+            detail = await pg.evaluate("({mode:LimingXin.mode,visible:document.visibilityState,focused:document.hasFocus(),over:document.querySelector('.card.xin-over')?.dataset.id,open:document.body.classList.contains('tool-open'),rect:LimingXin.el.getBoundingClientRect().toJSON()})")
+            check('电脑：抓着头拖、身子在学习台卡片上，松手就进去', False, detail)
+            os.makedirs('screens', exist_ok=True)
+            await pg.screenshot(path='screens/stm32-drag-failure.png')
         await pg.context.close()
 
         # 新动作：听烦了砸耳机、敲代码砸电脑、荡秋千、跳舞、不听话
