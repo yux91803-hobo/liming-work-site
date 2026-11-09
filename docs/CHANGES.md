@@ -14,6 +14,7 @@
 - 修正一次后仍然无法解析（或字段为空、不合法）时，这一轮改由 DeepSeek 前台用同一份请求回答，原因记为 `format`，`done.model` 为 deepseek-v4.1-flash，`from` 为 claude-opus-4.6。此前没有执行过任何工具，所以不会重复派活。这不算额度冷却，下一轮照常先用 Opus。DeepSeek 自己出错时直接报错，不再走第二次兜底。
 - 控制器拒绝记录 Opus（`bad_front_model`）时，同样改用 DeepSeek，原因记为 `front_model`。如果这一轮本身已停止或已结束，记录 DeepSeek 也会被拒，仍然按原样报错。
 - `site/xin/vm-agent.mjs` 的 `front_model` 在 quota、format、front_model 三种原因下都记录 `from`，网页显示「Opus 没接上，换了它」。
+- 顺带修正上一版正式联调的奶龙断言：任务摘要（`tasks`）不带内部的 `requestedNamed` 字段，所以 Deploy 42650492285 中派活其实正确（Gemini 3.8、点名），却误报「not recorded as named」并自动回滚。现改为检查摘要里的 `why == 'named'` 和 `requestedModel`。
 - 测试 `test/xin-front-opus.test.cjs` 有以下变化：
   - 原来的「纯文字先修正一次」改为「纯文字直接交付、只问一次」；
   - 新增代码块和说明文字包裹的协议、修正后仍坏而切 DeepSeek（不派活、不进冷却）、`bad_front_model` 切 DeepSeek，以及解析规则的单元测试。

@@ -262,7 +262,8 @@ async def main():
             ts = (await call('tasks', {'sid': alternate_sid}))['tasks']
             web = [t for t in ts if t.get('parent') == alternate_sid and t.get('web')]
             # Antigravity work is never strict-pinned (controller keeps a real-quota fallback), so check the named request instead.
-            if len(web) != 1 or web[0].get('requestedModel') != AGY_MODEL or not web[0].get('requestedNamed'):
+            # The task summary exposes the routing reason as `why`; it does not carry the internal requestedNamed flag.
+            if len(web) != 1 or web[0].get('requestedModel') != AGY_MODEL or web[0].get('why') != 'named':
                 raise RuntimeError('Named Gemini web dispatch was missing, duplicated or not recorded as named')
             web_sid = web[0]['sid']
             if web[0]['status'] not in ('queued','running'):
