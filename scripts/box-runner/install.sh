@@ -133,6 +133,7 @@ sudo install -d -m 755 /etc/liming-actions/sandbox-etc/ssl/certs /etc/liming-act
 for f in resolv.conf hosts nsswitch.conf passwd group os-release ld.so.cache localtime; do sudo cp -L "/etc/$f" "/etc/liming-actions/sandbox-etc/$f"; done
 sudo ln -sf /opt/google/chrome/google-chrome /etc/liming-actions/sandbox-etc/alternatives/google-chrome
 sudo install -m 755 "$HERE/sandbox.sh" "$TOOLS/bin/sandbox.sh"
+sudo install -m 755 "$HERE/service-relay.py" "$TOOLS/bin/service-relay.py"
 sudo install -m 600 "$HERE/supervisord.conf" /etc/liming-actions/supervisord.conf
 if [ "$MODE" = --recover ]; then
   # Explicit one-command restore includes current-container start, NOT a boot hook.
