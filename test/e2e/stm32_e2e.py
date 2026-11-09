@@ -1226,14 +1226,23 @@ async def main():
         await pg.evaluate("""window.__xinK = 0; new MutationObserver(() => { window.__xinK = Math.max(window.__xinK, document.querySelectorAll('.xin-k').length); })
           .observe(document.body, { childList: true, subtree: true })""")
         # 正在半空（刚起跳）时叫它敲代码：要等落地再敲，不能一落地就被掐掉（以前偶尔这样：笔记本没了也没砸）
-        await pg.evaluate("(() => { const ps = LimingXin.plats(); LimingXin.hop(ps.findIndex(p => p.kind === 'top' && p.el.dataset.id === 'map')); })()"); await pg.wait_for_timeout(260)
-        air = await pg.evaluate("LimingXin.mode")
-        await pg.evaluate("LimingXin.code(true, 'smash')")
+        await pg.bring_to_front()
+        air = await pg.evaluate("""() => new Promise((resolve,reject) => {
+          let timer; const watch = new MutationObserver(() => {
+            if (LimingXin.mode !== 'fly') return;
+            watch.disconnect(); clearTimeout(timer);
+            const before = LimingXin.mode; LimingXin.code(true, 'smash');
+            resolve({before, after: LimingXin.mode});
+          });
+          watch.observe(LimingXin.el, {attributes:true, attributeFilter:['class']});
+          timer=setTimeout(() => {watch.disconnect(); reject(new Error('hop did not enter real flight'));},5000);
+          const ps=LimingXin.plats(); LimingXin.hop(ps.findIndex(p => p.kind === 'top' && p.el.dataset.id === 'map'));
+        })""")
         pcs = []
         for i in range(90):
             await pg.wait_for_timeout(200)
             pcs.append(await pg.evaluate("[!!LimingXin.el.querySelector('rect.c-lt'), window.__xinK]"))
-        check('写不出来气炸了：把电脑砸了（电脑碎成碎片）；半空中叫它也等落地再做', air == 'fly' and pcs[-1][1] > 0 and not pcs[-1][0], (air, pcs[-1]))
+        check('写不出来气炸了：把电脑砸了（电脑碎成碎片）；半空中叫它也等落地再做', air['before'] == 'fly' and air['after'] == 'fly' and pcs[-1][1] > 0 and not pcs[-1][0], (air, pcs[-1]))
         await pg.wait_for_timeout(4000)
         await pg.evaluate("(() => { const ps = LimingXin.plats(); LimingXin.hop(ps.findIndex(p => p.kind === 'top' && p.el.dataset.id === 'map')); })()"); await pg.wait_for_timeout(1500)
         await pg.evaluate("LimingXin.swing()")
