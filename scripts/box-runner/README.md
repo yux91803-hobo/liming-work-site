@@ -102,3 +102,18 @@ Official references:
 - https://github.com/actions/runner/issues/4090
 - https://github.com/actions/runner/issues/4703
 - https://github.com/actions/runner/pull/4734
+
+## Network stall fix 2026-11-09 (VM pause -> silent dead TCP flows)
+Root cause of the broker 100 s timeouts / renewjob stalls / "lost communication": the
+box VM is periodically paused by its host (observed 21:10:51-21:12:01 CST: monotonic
++11.8 s vs wall +66 s; systemd 3-min watchdog kills at 09:47/10:10/11:21 CST). All egress
+goes through a host-side transparent proxy (every name resolves to 198.18.0.1). After a
+pause, pre-pause flows are silently black-holed (no RST): renewjob sockets showed
+unacked data + growing retransmits, and .NET waited its full 100 s HTTP timeout
+(GITHUB_ACTIONS_RUNNER_HTTP_TIMEOUT cannot go below 100 s). Mitigation:
+`liming-tcp-keepalive.c`, LD_PRELOAD'ed by sandbox.sh, enables SO_KEEPALIVE
+(idle 15 s, intvl 5 s, cnt 3) and TCP_USER_TIMEOUT 30 s on outbound TCP of
+Runner.Listener/Runner.Worker only (no-op for every other process). Dead flows now fail
+in ~30 s and the official retry reconnects. The pauses themselves are platform-side
+and are NOT fixed; a pause long enough can still lose a job. Rollback: remove the
+LD_PRELOAD= entry from sandbox.sh and do an idle graceful restart.

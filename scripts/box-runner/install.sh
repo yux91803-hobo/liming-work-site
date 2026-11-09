@@ -69,7 +69,7 @@ fi
 [ "$(uname -m)" = x86_64 ]
 # Only CI dependencies; no paid resources or application services.
 sudo apt-get update
-sudo apt-get install -y --no-install-recommends ca-certificates curl git jq xz-utils tar bubblewrap util-linux python3-venv gnupg libicu76 libssl3t64 libkrb5-3 zlib1g libstdc++6
+sudo apt-get install -y --no-install-recommends ca-certificates curl git jq xz-utils tar bubblewrap util-linux gcc libc6-dev python3-venv gnupg libicu76 libssl3t64 libkrb5-3 zlib1g libstdc++6
 if ! command -v google-chrome >/dev/null; then
   key=$(mktemp); trap 'rm -f "$key"' EXIT
   curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o "$key"
@@ -132,6 +132,12 @@ sudo install -d -m 700 /var/lib/liming-actions-supervisor
 sudo install -d -m 755 /etc/liming-actions/sandbox-etc/ssl/certs /etc/liming-actions/sandbox-etc/fonts /etc/liming-actions/sandbox-etc/alternatives
 for f in resolv.conf hosts nsswitch.conf passwd group os-release ld.so.cache localtime; do sudo cp -L "/etc/$f" "/etc/liming-actions/sandbox-etc/$f"; done
 sudo ln -sf /opt/google/chrome/google-chrome /etc/liming-actions/sandbox-etc/alternatives/google-chrome
+# Runner-only TCP keepalive/user-timeout shim (see README: VM pause -> silent dead flows).
+sudo install -d -m 755 "$TOOLS/lib"
+gcc -O2 -Wall -fPIC -shared -o /tmp/liming-tcp-keepalive.so "$HERE/liming-tcp-keepalive.c" -ldl
+sudo install -m 644 /tmp/liming-tcp-keepalive.so "$TOOLS/lib/liming-tcp-keepalive.so"
+sudo install -m 644 "$HERE/liming-tcp-keepalive.c" "$TOOLS/lib/liming-tcp-keepalive.c"
+rm -f /tmp/liming-tcp-keepalive.so
 sudo install -m 755 "$HERE/sandbox.sh" "$TOOLS/bin/sandbox.sh"
 sudo install -m 755 "$HERE/service-relay.py" "$TOOLS/bin/service-relay.py"
 sudo install -m 600 "$HERE/supervisord.conf" /etc/liming-actions/supervisord.conf
