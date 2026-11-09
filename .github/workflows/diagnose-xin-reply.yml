@@ -1,25 +1,18 @@
-name: Diagnose Xin reply
+name: Preflight Xin native profile
 on:
   push:
     branches: [claude/xin-lost-reply]
   workflow_dispatch:
 permissions:
   contents: read
-  actions: read
 jobs:
   inspect:
     runs-on: [self-hosted, box]
-    timeout-minutes: 12
+    timeout-minutes: 7
     steps:
       - uses: actions/checkout@v5
-      - name: 从 runner 直接读取本仓库合成浏览器检查的失败日志
+      - name: 单次合成原生看图与本地资料目录检查（不唤醒电脑）
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/inspect-ci-log.cjs
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: failed-e2e-log
-          path: .diagnostic/failed-e2e.log
-          include-hidden-files: true
-          retention-days: 1
+          XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
+          XIN_DIAG_MODE: native-profile
+        run: python3 scripts/diagnose-xin-reply.py

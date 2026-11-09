@@ -14,6 +14,15 @@ machine=next((m for m in machines if m.get('name')=='li'),machines[0] if len(mac
 if not machine:raise RuntimeError('Configured VM was not found')
 state=api('/v1/machines/'+machine['id'])
 print('MACHINE '+json.dumps({k:state.get(k) for k in ('state','runStartedAt','cooldownUntil')}),flush=True)
+if os.environ.get('XIN_DIAG_MODE')=='native-profile':
+    from datetime import datetime,timezone
+    cooling=state.get('cooldownUntil') and datetime.fromisoformat(state['cooldownUntil'].replace('Z','+00:00'))>datetime.now(timezone.utc)
+    if state.get('state')!='running' or cooling:
+        print('NATIVE_PROFILE_DEFERRED_NOT_RUNNING_OR_COOLDOWN',flush=True);sys.exit(0)
+    source=Path('scripts/probe-xin-native-profile.cjs').read_text()
+    result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source],'timeoutSeconds':160})
+    if result.get('exitCode')!=0:raise RuntimeError('Native profile synthetic preflight did not complete')
+    evidence=json.loads(result.get('stdout','{}'));print('NATIVE_PROFILE '+json.dumps(evidence,ensure_ascii=True),flush=True);sys.exit(0)
 if os.environ.get('XIN_DIAG_MODE')=='native-storage':
     if state.get('state')!='running':
         print('NATIVE_STORAGE_DEFERRED_NOT_RUNNING',flush=True);sys.exit(0)
