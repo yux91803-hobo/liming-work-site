@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const home='/data/home',binary=['.local/bin/agy','.gemini/bin/agy'].map(p=>path.join(home,p)).find(p=>fs.existsSync(p));
 const out={available:!!binary};let stderr='',child,pending=new Map(),seq=0,text='',sid='',profile='';
 let env={HOME:home,PATH:'/usr/local/bin:/usr/bin:/bin',LANG:'C.UTF-8'};
-function rpc(method,params,ms=20000){return new Promise((resolve,reject)=>{const id=++seq,timer=setTimeout(()=>{pending.delete(id);reject(Error('rpc_timeout'));},ms);pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});}
+function rpc(method,params,ms=20000){return new Promise((resolve,reject)=>{const id=++seq,timer=setTimeout(()=>{pending.delete(id);reject(Error('rpc_timeout'));},ms);pending.set(id,{resolve,reject,timer,method});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});}
 function end(){if(child&&!child.killed){child.stdin.end();child.kill('SIGTERM');}}
 (async()=>{try{
  if(!binary)return;
@@ -14,18 +14,19 @@ function end(){if(child&&!child.killed){child.stdin.end();child.kill('SIGTERM');
  fs.symlinkSync(auth,path.join(profile,'antigravity-oauth-token'));
  const settings={useG1Credits:false,toolPermission:'strict',allowNonWorkspaceAccess:false,permissions:{deny:['command(*)','read_file(*)','write_file(*)','execute_url(*)','mcp(*)'],allow:[]}};
  fs.writeFileSync(path.join(profile,'settings.json'),JSON.stringify(settings),{mode:0o600});
- fs.writeFileSync(path.join(agents,'xin-front-controller.md'),'---\nname: xin-front-controller\ndescription: Synthetic private profile verification\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n---\nOnly return JSON with text and calls. Calls is empty. Do not execute tools or remember.\n',{mode:0o600});
+ fs.mkdirSync(path.join(agents,'xin-front-controller'),{mode:0o700});
+ fs.writeFileSync(path.join(agents,'xin-front-controller/agent.md'),'---\nname: xin-front-controller\ndescription: Synthetic private profile verification\nmainAgent: true\nsubagent: false\ntools:\n  - finish\n---\nOnly return JSON with text and calls. Calls is empty. Do not execute tools or remember.\n',{mode:0o600});
  env={...env,HOME:root};out.noPaidCredits=true;out.privateHome=true;out.canonicalRoot=fs.realpathSync(root)===root;
  out.pythonPlaywright=cp.spawnSync('python3',['-c',"import importlib.util;print(bool(importlib.util.find_spec('playwright')))"],{env,encoding:'utf8',timeout:5000}).stdout?.trim()==='True';
  out.displaySockets=(()=>{try{return fs.readdirSync('/tmp/.X11-unix').filter(n=>/^X[0-9]+$/.test(n)).slice(0,4);}catch{return [];}})();
  const stat=fs.statSync(binary),header=stat.size<16384?fs.readFileSync(binary,'utf8'):'';out.launcherScript=header.startsWith('#!');out.launcherUsesHome=out.launcherScript&&header.includes('HOME');out.launcherResolved=fs.realpathSync(binary).replace(home,'<home>');
  const version=cp.spawnSync(binary,['--version'],{env,encoding:'utf8',timeout:5000});out.privateVersionCode=version.status;out.privateVersionMissing=/not found|ENOENT/i.test(version.stderr||'');
 
- const args=['acp','--app-data-dir',profile,'--agent','xin-front-controller','--log-file','/dev/null'];if(out.settingsFlag)args.push('--settings',JSON.stringify(settings));
+ const args=['acp','--app-data-dir',profile,'--agent','xin-front-controller','--log-file','/dev/null'];if(out.settingsFlag)args.push('--settings',JSON.stringify(settings));if(((help.stdout||'')+(help.stderr||'')).includes('--gemini-dir'))args.push('--gemini-dir',path.join(root,'.gemini'));
  child=cp.spawn(binary,args,{cwd:work,env,stdio:['pipe','pipe','pipe']});child.stderr.on('data',s=>{stderr=(stderr+s).slice(-8000);});child.stdout.setEncoding('utf8');let buffer='';
  child.stdout.on('data',chunk=>{buffer+=chunk;let n;while((n=buffer.indexOf('\n'))>=0){let q;try{q=JSON.parse(buffer.slice(0,n));}catch{buffer=buffer.slice(n+1);continue;}buffer=buffer.slice(n+1);
   if(q.method){if(Object.hasOwn(q,'id'))child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:q.id,...(q.method==='session/request_permission'?{result:{outcome:{outcome:'cancelled'}}}:{error:{code:-32601,message:'No file or terminal capability'}})})+'\n');else if(q.method==='session/update'&&q.params?.update?.sessionUpdate==='agent_message_chunk')text+=q.params.update.content?.text||'';continue;}
-  const p=pending.get(q.id);if(p){clearTimeout(p.timer);pending.delete(q.id);q.error?p.reject(Error('native_rpc_error')):p.resolve(q.result||{});}
+  const p=pending.get(q.id);if(p){clearTimeout(p.timer);pending.delete(q.id);if(q.error){out.rpcError={code:q.error.code,method:p.method,kinds:Object.entries({agent:/agent/i,notFound:/not.found|does not exist|unknown|cannot.find/i,auth:/auth|credential|log.?in|sign.?in/i,directory:/workspace|directory|working.dir/i,storage:/migrat|schema|sqlite|database/i,permission:/denied|permission|not.allowed/i,invalid:/invalid|expired/i}).filter(([,re])=>re.test(String(q.error.message||''))).map(([k])=>k)};p.reject(Error('native_rpc_error'));}else p.resolve(q.result||{});}
  }});
  child.on('close',(code,signal)=>{out.nativeExit=code;out.nativeSignal=signal;for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('native_closed'));}pending.clear();});child.on('error',()=>{});child.stdin.on('error',()=>{});
  const init=await rpc('initialize',{protocolVersion:1,clientInfo:{name:'xin-profile-preflight',version:'1'},clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},terminal:false}});out.imageCapability=init.agentCapabilities?.promptCapabilities?.image===true;out.loadSession=init.agentCapabilities?.loadSession===true;
