@@ -1,9 +1,10 @@
 """Preview delivery: actual iframe interaction, isolated scripts, recovery, and ready-only links."""
 import asyncio
+import json
 import os
 import time
 from pathlib import Path
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, expect
 import stm32_e2e as ui
 
 ID = 'a' * 32
@@ -12,13 +13,31 @@ CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; st
 HTML = '''<!doctype html><html lang="zh"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>奶龙小岛</title><style>
 body{margin:0;min-height:100vh;display:grid;place-content:center;text-align:center;background:#fff5d9;font-family:system-ui;color:#654421}#dragon{font-size:90px;margin:30px}button{font:inherit;border:0;border-radius:20px;background:#ffcd45;padding:14px 32px}.dancing{transform:rotate(-12deg)}
 </style></head><body><h1>奶龙小岛</h1><div id="dragon">🐥</div><button id="dance">一起跳舞</button><p id="state">今天也要开心</p><script>
-document.getElementById('dance').onclick=()=>{document.getElementById('dragon').classList.add('dancing');document.getElementById('state').textContent='我跳起来啦';};
+window.danceClicks=0;document.getElementById('dance').onclick=()=>{window.danceClicks++;setTimeout(()=>{document.getElementById('dragon').classList.add('dancing');document.getElementById('state').textContent='我跳起来啦';},120);};
 </script></body></html>'''
 
 async def loaded(frame):
     # The preview shows the frame as soon as it sets srcdoc; the artwork's own script runs after its button is parsed,
     # and the emoji font can arrive later and move the centred button. Click only after load and fonts settle.
     await frame.locator('#dance').evaluate("async el => { const d = el.ownerDocument; if (d.readyState !== 'complete') await new Promise(r => d.defaultView.addEventListener('load', r, {once: true})); await d.fonts.ready; await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }")
+
+async def click_dance(page, label):
+    await page.bring_to_front()
+    frame = page.frame_locator('#frame')
+    await loaded(frame)
+    await frame.locator('#dance').click()
+    try:
+        # A click acknowledgement can precede the iframe's paint / event work. Wait for its actual
+        # observable result, without clicking twice or bypassing the real input event.
+        await expect(frame.locator('#state')).to_have_text('我跳起来啦', timeout=5000)
+        await expect(frame.locator('#dragon')).to_have_class('dancing', timeout=5000)
+        assert await frame.locator('#dance').evaluate('() => window.danceClicks') == 1
+    except Exception:
+        detail = await frame.locator('#dance').evaluate("el => ({ready:document.readyState,visible:document.visibilityState,focused:document.hasFocus(),handler:typeof el.onclick,clicks:window.danceClicks,state:document.getElementById('state').textContent,rect:el.getBoundingClientRect().toJSON()})")
+        print('PREVIEW_CLICK ' + json.dumps({'case':label,'detail':detail}), flush=True)
+        Path('screens').mkdir(exist_ok=True)
+        await page.screenshot(path='screens/xin-web-failure-' + label + '.png')
+        raise
 
 async def main():
     async with async_playwright() as p:
@@ -41,9 +60,7 @@ async def main():
             if scenario in ('ready', 'waking'):
                 await page.wait_for_selector('#frame:not([hidden])')
                 frame = page.frame_locator('#frame')
-                await loaded(frame)
-                await frame.locator('#dance').click()
-                assert await frame.locator('#state').inner_text() == '我跳起来啦'
+                await click_dance(page, scenario)
                 assert await frame.locator('body').evaluate('() => self.origin') == 'null'
                 assert await frame.locator('body').evaluate("() => {try{return parent.document.title}catch(e){return e.name}}") == 'SecurityError'
                 assert await frame.locator('body').evaluate("async () => {try {await fetch('/api/xin/me');return 'escaped'}catch{return 'blocked'}}") == 'blocked'
@@ -118,9 +135,7 @@ async def main():
                 preview = await opened.value
                 await preview.emulate_media(color_scheme=theme)
                 await preview.wait_for_selector('#frame:not([hidden])')
-                await loaded(preview.frame_locator('#frame'))
-                await preview.frame_locator('#frame').locator('#dance').click()
-                assert await preview.frame_locator('#frame').locator('#state').inner_text() == '我跳起来啦'
+                await click_dance(preview, str(width) + '-' + theme)
                 assert await preview.evaluate('document.documentElement.scrollWidth <= innerWidth')
                 if shots: await preview.screenshot(path=str(Path(shots)/f'preview-{width}-{theme}.png'))
                 await page.context.close()
