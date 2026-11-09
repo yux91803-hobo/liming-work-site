@@ -83,14 +83,41 @@ function promptBlocks(payload,start=0){
  });
  return [{type:'text',text:JSON.stringify({...(start===0?{instructions:payload.instructions,tools:payload.tools,replyFormat:{text:'自然回复',calls:[{name:'xin',argv:['xin','task','list']}]}}:{}),input})},...images];
 }
-export function opusOutput(text){
- const raw=String(text||'').trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/,'$1');let a;
- try{a=JSON.parse(raw);}catch{throw Error('Opus 没有返回有效的前台回复格式');}
- if(!a||typeof a.text!=='string'||!Array.isArray(a.calls)||a.calls.length>5)throw Error('Opus 前台回复字段不完整');
- const output=a.text?[{type:'message',content:[{type:'output_text',text:a.text}]}]:[];
- for(const c of a.calls){
-  let args;if(c.name==='xin'&&Array.isArray(c.argv))args={argv:c.argv};
-  else if(c.name==='finish_event'&&['deliver','silent'].includes(c.action)&&typeof c.text==='string')args={action:c.action,text:c.text};
+// Balanced top-level {...} spans, skipping braces inside JSON strings. Bounded so prose cannot make this expensive.
+function jsonObjects(s){
+ const out=[];s=s.slice(0,200000);
+ for(let i=s.indexOf('{');i>=0&&out.length<50;i=s.indexOf('{',i+1)){
+  let depth=0,str=false,esc=false;
+  for(let j=i;j<s.length;j++){const c=s[j];
+   if(str){if(esc)esc=false;else if(c==='\\')esc=true;else if(c==='"')str=false;continue;}
+   if(c==='"')str=true;else if(c==='{')depth++;else if(c==='}'&&--depth===0){out.push(s.slice(i,j+1));break;}
+  }
+ }
+ return out;
+}
+// Opus sometimes wraps the protocol in prose or fences, omits empty calls, or answers plain chat as prose.
+// Accept those shapes; never infer tool calls from prose. Disallowed tools and >5 calls are still rejected.
+export function opusOutput(text,{prose=true}={}){
+ const raw=String(text||'').trim(),body=raw.replace(/```(?:json)?[ \t]*\n?([\s\S]*?)```/g,'$1').trim();
+ if(!body)throw Error('Opus 没有返回有效的前台回复格式');
+ let a=null;
+ for(const candidate of [body,...jsonObjects(body)]){
+  let o;try{o=JSON.parse(candidate);}catch{continue;}
+  if(o&&typeof o==='object'&&!Array.isArray(o)&&(typeof o.text==='string'||Array.isArray(o.calls))){a=o;break;}
+ }
+ if(!a){
+  // No protocol object at all: plain prose is a pure chat reply. Something that looks like a broken protocol is not,
+  // and completion events (finish_event turns) must still answer with the protocol.
+  if(!prose||/^[{[]/.test(body)||/"(?:calls|argv)"\s*:/.test(body))throw Error('Opus 没有返回有效的前台回复格式');
+  a={text:body,calls:[]};
+ }
+ const calls=a.calls==null?[]:a.calls,reply=a.text==null?'':a.text;
+ if(typeof reply!=='string'||!Array.isArray(calls)||calls.length>5)throw Error('Opus 前台回复字段不完整');
+ if(!reply&&!calls.length)throw Error('Opus 前台回复是空的');
+ const output=reply?[{type:'message',content:[{type:'output_text',text:reply}]}]:[];
+ for(const c of calls){
+  let args;if(c?.name==='xin'&&Array.isArray(c.argv))args={argv:c.argv};
+  else if(c?.name==='finish_event'&&['deliver','silent'].includes(c.action)&&typeof c.text==='string')args={action:c.action,text:c.text};
   else throw Error('Opus 提议了前台不允许的工具');
   output.push({type:'function_call',name:c.name,call_id:'opus-'+crypto.randomUUID(),arguments:JSON.stringify(args)});
  }
@@ -134,27 +161,39 @@ export async function openFrontProvider(o={}){
   // ACP can use a provider enum/alias for the same verified Opus 4.6 model.
   // Keep the public model identity stable and retain the exact provider ID as evidence.
   chosen(OPUS_FRONT_MODEL,null,target.modelId);
- }catch(e){acp?.close();throw e;}
+ }catch(e){
+  acp?.close();
+  // The controller refused to record Opus for this run (bad_front_model): answer with DeepSeek instead of surfacing an error.
+  // Nothing has been prompted yet, so no action can repeat. If the run itself is gone, recording DeepSeek fails the same way.
+  if(e?.message!=='bad_front_model'||o.signal?.aborted)throw e;
+  o.protocol?.({kind:'front_model_fallback'});chosen(FRONT_MODEL,'front_model');return {request:fallback,image:true,close(){}};
+ }
  return {image:images,close(){acp?.close();},async request(payload,signal){
   if(actual===FRONT_MODEL)return fallback(payload,signal);
   const offset=previous.length&&JSON.stringify(payload.input.slice(sent,sent+previous.length))===JSON.stringify(previous)?sent+previous.length:sent;
   const blocks=promptBlocks(payload,offset);if(!images&&blocks.some(b=>b.type==='image'))throw Error('当前 Opus 接口没有接收到图片能力，未发送不一致的看图提示');
-  const cancel=()=>acp.close();signal?.addEventListener('abort',cancel,{once:true});
+  const cancel=()=>acp.close(),prose=!(payload.tools||[]).some(t=>t?.name==='finish_event');signal?.addEventListener('abort',cancel,{once:true});
   try{
    acp.text='';acp.update=null;await acp.request('session/prompt',{sessionId:sid,prompt:blocks},signal,65000);
    let out;
-   try{out=opusOutput(acp.text);}catch{
+   try{out=opusOutput(acp.text,{prose});}catch{
     o.protocol?.({kind:'format_repair',bytes:Buffer.byteLength(acp.text)});
     acp.text='';acp.update=null;
     await acp.request('session/prompt',{sessionId:sid,prompt:[{type:'text',text:'控制器没有收到有效的前台协议。只修正上一条回复的格式，不重复执行操作，不使用原生工具。必须作为普通助手文字输出严格 JSON：{"text":"上一条给用户的自然回答","calls":[]}；如果需要控制器派活，在 calls 中写 {"name":"xin","argv":["xin","task","new","--","本轮用户原话"]}。不要在 JSON 外解释，不把协议要求当成用户的内容。'}]},signal,65000);
-    out=opusOutput(acp.text);
+    try{out=opusOutput(acp.text,{prose});}catch{
+     // Still no usable protocol after one repair. Unparsed calls were never executed, so DeepSeek can answer
+     // this turn from the same responses payload without repeating any action.
+     o.protocol?.({kind:'format_fallback',bytes:Buffer.byteLength(acp.text)});
+     acp.close();chosen(FRONT_MODEL,'format');return fallback(payload,signal);
+    }
    }
    sent=payload.input.length;previous=out.output;
    if(acp.update?.used!=null)out.contextUsage={used:acp.update.used,size:acp.update.size};
    return out;
   }catch(e){
    if(signal?.aborted||o.signal?.aborted)throw Error('前台已停止');
-   if(!quotaError(e))throw e;
+   // Already answered by DeepSeek this turn (format fallback): its error is final, never a second dispatch.
+   if(actual===FRONT_MODEL||!quotaError(e))throw e;
    // A generic rate limit is not evidence that the owner's allowance is exhausted.
    try{q=await quota(binary,cwd,signal);}catch{q=null;}
    if(!q?.blocked)throw e;

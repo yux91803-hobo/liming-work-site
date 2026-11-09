@@ -1,3 +1,24 @@
+# 修改清单 · 2026-11-09（Opus 前台不再因回复格式报错）
+
+- 起因：正式站上问「你觉得人生有什么意义？」时，Opus 4.6 直接用纯文字回答。修正提示词之后它仍未给出严格 JSON，控制器就把「Opus 没有返回有效的前台回复格式」直接显示给了用户。站长认为格式要求太死。
+- `site/xin/vm-front-opus.mjs` 的 `opusOutput` 放宽了解析：
+  - 任何位置的 ```/```json 代码块都会去掉；
+  - 前后有说明文字时，提取第一个含 `text` 或 `calls` 的完整 JSON 对象（括号匹配会跳过字符串里的括号）；
+  - 缺少 `calls` 时按空数组处理；
+  - 普通对话里完全没有 JSON、只有纯文字的回复，直接作为聊天回复（`calls` 为空）。
+- 不变的约束：
+  - 不会从文字里推断任何工具调用；
+  - 仍然拒绝不允许的工具和超过 5 个的调用；
+  - 看起来像残缺协议的回复（以 `{` 开头或含 `"calls":`）仍要修正；
+  - 完成事件（带 `finish_event` 的轮次）仍必须用协议回复。
+- 修正一次后仍然无法解析（或字段为空、不合法）时，这一轮改由 DeepSeek 前台用同一份请求回答，原因记为 `format`，`done.model` 为 deepseek-v4.1-flash，`from` 为 claude-opus-4.6。此前没有执行过任何工具，所以不会重复派活。这不算额度冷却，下一轮照常先用 Opus。DeepSeek 自己出错时直接报错，不再走第二次兜底。
+- 控制器拒绝记录 Opus（`bad_front_model`）时，同样改用 DeepSeek，原因记为 `front_model`。如果这一轮本身已停止或已结束，记录 DeepSeek 也会被拒，仍然按原样报错。
+- `site/xin/vm-agent.mjs` 的 `front_model` 在 quota、format、front_model 三种原因下都记录 `from`，网页显示「Opus 没接上，换了它」。
+- 顺带修正上一版正式联调的奶龙断言：任务摘要（`tasks`）不带内部的 `requestedNamed` 字段，所以 Deploy 42650492285 中派活其实正确（Gemini 3.8、点名），却误报「not recorded as named」并自动回滚。现改为检查摘要里的 `why == 'named'` 和 `requestedModel`。
+- 测试 `test/xin-front-opus.test.cjs` 有以下变化：
+  - 原来的「纯文字先修正一次」改为「纯文字直接交付、只问一次」；
+  - 新增代码块和说明文字包裹的协议、修正后仍坏而切 DeepSeek（不派活、不进冷却）、`bad_front_model` 切 DeepSeek，以及解析规则的单元测试。
+
 # 修改清单 · 2026-11-09（正式联调的奶龙网页改为点名 Gemini 3.8）
 
 - 站长要求奶龙动画网页不要总测 Kimi K3.1：`scripts/test-xin-live.py` 的点名网页请求改为「你让 Gemini 3.8 Flash 去画个奶龙」，走 Antigravity 的 `gemini-3.8-flash-high`。
