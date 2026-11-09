@@ -11,8 +11,8 @@ jobs:
     timeout-minutes: 7
     steps:
       - uses: actions/checkout@v5
-      - name: 单次合成原生看图与本地资料目录检查（不唤醒电脑）
+      - name: 原生会话配置比较（不请求模型回复、不唤醒电脑）
         env:
           XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
-          XIN_DIAG_MODE: native-profile
+          XIN_DIAG_MODE: native-setup
         run: python3 scripts/diagnose-xin-reply.py
