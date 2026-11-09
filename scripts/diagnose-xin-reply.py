@@ -20,11 +20,18 @@ if os.environ.get('XIN_DIAG_MODE')=='native-storage':
     source=r'''
 const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),home='/data/home';
 const candidates=['.local/bin/agy','.gemini/bin/agy'].map(x=>path.join(home,x)),binary=candidates.find(p=>fs.existsSync(p));
-const out={available:!!binary,roots:{},help:{}};
-if(binary)for(const args of [['--help'],['acp','--help'],['conversations','--help'],['history','--help']]){const r=cp.spawnSync(binary,args,{encoding:'utf8',timeout:6000,env:{HOME:home,PATH:'/usr/local/bin:/usr/bin:/bin'}});out.help[args.join(' ')]={status:r.status,text:(r.stdout||'').slice(0,12000)};}
+const out={available:!!binary,roots:{},help:{},storage:{}};
+if(binary)for(const args of [['--help'],['acp','--help']]){const r=cp.spawnSync(binary,args,{encoding:'utf8',timeout:6000,env:{HOME:home,PATH:'/usr/local/bin:/usr/bin:/bin'}});out.help[args.join(' ')]={status:r.status,text:((r.stdout||'')+(r.stderr||'')).replace(/\x1b\[[0-9;]*m/g,'').slice(0,18000)};}
 const safe=s=>/^[a-f0-9-]{16,}$/i.test(s)?'<id>':s.replace(/[a-f0-9]{24,}/ig,'<id>');
 for(const rel of ['.gemini','.gemini/antigravity-cli','.gemini/antigravity','.gemini/tmp','.local/share/agy']){
  const root=path.join(home,rel);try{out.roots[rel]=fs.readdirSync(root,{withFileTypes:true}).slice(0,60).map(e=>({name:safe(e.name),directory:e.isDirectory(),extension:e.isFile()?path.extname(e.name):null}));}catch{out.roots[rel]=null;}
+}
+const {DatabaseSync}=require('node:sqlite');
+for(const rel of ['.gemini/antigravity-cli','.gemini/antigravity']){
+ const root=path.join(home,rel),info={};
+ for(const folder of ['conversations','brain','annotations','log','implicit','cache']){try{const list=fs.readdirSync(path.join(root,folder),{withFileTypes:true});info[folder]={count:list.length,shapes:list.slice(0,8).map(e=>({directory:e.isDirectory(),uuid:/^[a-f0-9-]{36}(?:\.[a-z0-9]+)?$/i.test(e.name),extension:e.isFile()?path.extname(e.name):null}))};}catch{}}
+ const file=path.join(root,'conversation_summaries.db');if(fs.existsSync(file)){const db=new DatabaseSync(file,{readOnly:true});try{info.schema=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(t=>({table:t.name,columns:db.prepare('PRAGMA table_info("'+t.name.replaceAll('"','""')+'")').all().map(c=>({name:c.name,type:c.type}))}));}finally{db.close();}}
+ out.storage[rel]=info;
 }
 process.stdout.write(JSON.stringify(out));'''
     r=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source],'timeoutSeconds':35})
