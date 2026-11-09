@@ -20,7 +20,7 @@ if os.environ.get('XIN_DIAG_MODE')=='native-profile':
     if state.get('state')!='running' or cooling:
         print('NATIVE_PROFILE_DEFERRED_NOT_RUNNING_OR_COOLDOWN',flush=True);sys.exit(0)
     source=Path('scripts/probe-xin-native-profile.cjs').read_text()
-    result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source],'timeoutSeconds':160})
+    result=api('/v1/machines/'+machine['id']+'/exec',{'argv':['node','-e',source],'timeoutSeconds':220})
     if result.get('exitCode')!=0:raise RuntimeError('Native profile synthetic preflight did not complete')
     evidence=json.loads(result.get('stdout','{}'));print('NATIVE_PROFILE '+json.dumps(evidence,ensure_ascii=True),flush=True);sys.exit(0)
 if os.environ.get('XIN_DIAG_MODE')=='native-storage':
