@@ -648,9 +648,14 @@
     ctx.set(ls(LS_CTX) !== '0');
     ctx.btn.addEventListener('click', function () { var on = ls(LS_CTX) === '0'; ls(LS_CTX, on ? null : '0'); ctx.set(on); S.ctxSkip = null; refreshCtx(); });
     box.appendChild(ctx.row);
+    var learning=toggleRow('xc-learning','学习记录','把学习台的阅读和答题情况告诉小芯，关闭后不再上报');
+    learning.set(ls('lm.xin.learning')!=='0');learning.btn.disabled=true;
+    learning.btn.addEventListener('click',function(){var on=learning.btn.getAttribute('aria-checked')!=='true';learning.btn.disabled=true;
+      call('memory_preferences_set',{learning:on},60000).then(function(d){if(d.error)throw Error(d.msg);learning.set(d.learning);ls('lm.xin.learning',d.learning?null:'0');learning.btn.disabled=false;learning.note('');}).catch(function(){learning.btn.disabled=false;learning.note('没改成，请稍后重试');});
+    });box.appendChild(learning.row);
     var follow = toggleRow('xc-followups', '主动跟进', '小芯偶尔跟进复习或约定，每天最多一次');
     follow.set(true);follow.btn.disabled = true;
-    box.load=function(){if(!S.authed)return;follow.btn.disabled=true;call('memory_preferences', {}, 60000).then(function(d){if(d.error)throw Error(d.msg);follow.set(d.followups !== false);follow.btn.disabled=false;follow.note('');}).catch(function(){follow.note('暂时读不到设置，重新打开设置可重试');});};
+    box.load=function(){if(!S.authed)return;follow.btn.disabled=true;learning.btn.disabled=true;call('memory_preferences', {}, 60000).then(function(d){if(d.error)throw Error(d.msg);follow.set(d.followups !== false);learning.set(d.learning!==false);ls('lm.xin.learning',d.learning===false?'0':null);learning.btn.disabled=false;follow.btn.disabled=false;follow.note('');learning.note('');}).catch(function(){follow.note('暂时读不到设置，重新打开设置可重试');learning.note('暂时读不到设置，重新打开设置可重试');});};
     follow.btn.addEventListener('click',function(){var on=follow.btn.getAttribute('aria-checked')!=='true';follow.btn.disabled=true;
       call('memory_preferences_set',{followups:on},60000).then(function(d){if(d.error)throw Error(d.msg||'没改成');follow.set(d.followups);follow.btn.disabled=false;follow.note('');}).catch(function(){follow.btn.disabled=false;follow.note('没改成，请稍后重试');});
     });
@@ -1024,7 +1029,9 @@
     meta.appendChild(h('span', 'xm-tag', MEM_BASIS[it.basis] || it.basis));
     if (it.status === 'pending' && it.type !== 'unsorted') meta.appendChild(h('span', 'xm-tag', MEM_TYPES[it.type] || it.type));
     var ev = (it.evidence || [])[0];
-    if (ev && ev.sid && Object.prototype.hasOwnProperty.call(titles, ev.sid) && titles[ev.sid].indexOf('后台任务：') !== 0) {
+    if(ev && /^\/tools\/stm32\/\?/.test(ev.url||'')){
+      var study=h('a','xc-link xm-src','来自「'+ev.title+'」');study.href=ev.url;meta.appendChild(study);
+    } else if (ev && ev.sid && Object.prototype.hasOwnProperty.call(titles, ev.sid) && titles[ev.sid].indexOf('后台任务：') !== 0) {
       var a = h('button', 'xc-link xm-src', '来自「' + (titles[ev.sid] || '一段对话') + '」'); a.type = 'button';
       a.addEventListener('click', function () { openSession(ev.sid); });
       meta.appendChild(a);
