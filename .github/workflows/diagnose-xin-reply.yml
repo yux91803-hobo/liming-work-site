@@ -11,8 +11,8 @@ jobs:
     timeout-minutes: 7
     steps:
       - uses: actions/checkout@v5
-      - name: 已有联调确认回复的计数检查（不请求模型、不唤醒电脑）
+      - name: 原生目录参数解析比较（不请求模型、不唤醒电脑）
         env:
           XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
-          XIN_DIAG_MODE: named-receipt
+          XIN_DIAG_MODE: native-setup
         run: python3 scripts/diagnose-xin-reply.py
