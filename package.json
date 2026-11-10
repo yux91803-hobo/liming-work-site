@@ -8,6 +8,6 @@
     "check": "node scripts/check.mjs",
     "test": "node --test test/*.test.cjs",
     "check:c": "node scripts/check-stm32-c.cjs",
-    "test:e2e": "python3 test/e2e/stm32_e2e.py && python3 test/e2e/map_e2e.py && python3 test/e2e/xin_runtime_e2e.py && python3 test/e2e/xin_web_e2e.py && python3 test/e2e/xin_learning_e2e.py && python3 test/e2e/xin_timeout_e2e.py && python3 test/e2e/xin_main_e2e.py"
+    "test:e2e": "python3 test/e2e/stm32_e2e.py && python3 test/e2e/map_e2e.py && python3 test/e2e/xin_runtime_e2e.py && python3 test/e2e/xin_web_e2e.py && python3 test/e2e/xin_learning_e2e.py && python3 test/e2e/xin_timeout_e2e.py && python3 test/e2e/xin_main_e2e.py && python3 test/e2e/xin_work_e2e.py"
   }
 }

@@ -116,6 +116,7 @@ jobs:
           python test/e2e/xin_learning_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-learning.log
           python test/e2e/xin_timeout_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-timeout.log
           python test/e2e/xin_main_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-main.log
+          python test/e2e/xin_work_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-work.log
       - name: 保存浏览器检查报告（失败也保留）
         if: always()
         uses: actions/upload-artifact@v4

@@ -117,8 +117,10 @@
       '<header class="xc-hd">' +
         '<button class="xc-ib xc-list-b" type="button" aria-label="对话列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9"/></svg></button>' +
         '<div class="xc-ttl"><span class="xc-ttl-t"><b>小芯</b><span class="xc-sub"></span></span></div>' +
+        '<button class="xc-ib xc-work-b" type="button" aria-label="进行中和成果" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg><i></i></button>' +
         '<button class="xc-ib xc-scr-b" type="button" aria-label="小芯的屏幕" title="看小芯的电脑屏幕"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M8 20h8M12 16v4"/></svg></button>' +
         '<button class="xc-ib xc-new-b" type="button" aria-label="新对话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>' +
+        '<button class="xc-ib xc-wb-b" type="button" aria-label="工作台"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="xc-wb-in" d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/><path class="xc-wb-out" d="M4 14h6v6M10 14l-7 7M20 10h-6V4M14 10l7-7"/></svg></button>' +
         '<button class="xc-ib xc-x" type="button" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>' +
       '</header>' +
       '<div class="xc-st" role="status" aria-live="polite" hidden></div>' +
@@ -127,6 +129,8 @@
       // 侧边栏：对话列表、小芯的记忆 / 每日任务 / 文件、好感度、设置。从左边滑出来，盖在聊天上面
       '<div class="xc-scrim" aria-hidden="true"></div>' +
       '<aside class="xc-drawer" aria-label="对话列表"><div class="xc-dr"></div></aside>' +
+      // 工作台（全屏）右边一栏：在做的、等你的、做好的。宽屏一直在，窄屏从右边滑进来
+      '<aside class="xc-work" aria-label="进行中和成果"><div class="xc-wk-hd"><b>工作台</b><button class="xc-ib xc-wk-x" type="button" aria-label="收起"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button></div><div class="xc-wk-sc"></div></aside>' +
       '<form class="xc-login" hidden>' +
         '<input type="password" name="pw" autocomplete="current-password" placeholder="密码" aria-label="密码" required>' +
         '<button type="submit" class="xc-btn">登录</button>' +
@@ -186,6 +190,10 @@
     root.querySelector('.xc-x').addEventListener('click', close);
     root.querySelector('.xc-scr-b').addEventListener('click', function () { openScreen(false); });
     root.querySelector('.xc-new-b').addEventListener('click', function () { newChat(); if (!touch) input.focus(); });
+    root.querySelector('.xc-wb-b').addEventListener('click', function () { if (S.wb) unwork(); else work(); });
+    root.querySelector('.xc-work-b').addEventListener('click', function () { setWorkOpen(!root.classList.contains('work-open')); });
+    root.querySelector('.xc-wk-x').addEventListener('click', function () { setWorkOpen(false); });
+    window.addEventListener('resize', layout);
     root.querySelector('.xc-list-b').addEventListener('click', function () { setDrawer(!S.drawer); });
     loginEl.addEventListener('submit', function (e) { e.preventDefault(); login(loginEl.pw.value); });
     // 小芯还在回上一句：输入框里有话就排队（回完一起发），没话按钮就是「停止」
@@ -206,7 +214,7 @@
       if (e.key !== 'Escape' || (scrEl && !scrEl.hidden)) return;
       if (menuEl && !menuEl.hidden) { setMenu(false); return; }
       if (pickEl && !pickEl.hidden) { e.preventDefault(); e.stopPropagation(); setPick(false, true); return; }
-      if (S.sheet) setSheet(false); else if (S.drawer) setDrawer(false); else close();
+      if (S.sheet) setSheet(false); else if (root.classList.contains('work-open')) setWorkOpen(false); else if (S.drawer && !root.classList.contains('wb-side')) setDrawer(false); else close();
     });
     list.addEventListener('click', function (e) {
       var fp = e.target.closest('.xc-path'); if (fp) { e.preventDefault(); loadFiles(fp.getAttribute('data-path'), 'chat'); return; }
@@ -230,6 +238,10 @@
     else if (S.mstate === 'stopped') t = '开机中…';
     else if (S.mstate) t = S.mstate;
     titleEl.textContent = t; titleEl.className = 'xc-sub' + (cls ? ' ' + cls : '');
+    // 左栏常驻时，左上角已经是小芯：中间标题栏写正在看的是哪个对话
+    var tb = root.querySelector('.xc-ttl b'), side = root.classList.contains('wb-side');
+    tb.textContent = side ? (S.sid && S.sid === S.main || mainDraft() ? '主对话' : S.title || (S.sid ? '对话' : '新对话')) : '小芯';
+    root.querySelector('.xc-ttl').classList.toggle('conv', side);
     var ds = drawerEl && drawerEl.querySelector('.xc-dr-st'); if (ds) { ds.textContent = t; ds.className = 'xc-dr-st' + (cls ? ' ' + cls : ''); }
   }
   function render() {
@@ -239,9 +251,10 @@
     foot.hidden = login || off || S.view !== 'chat';
     sessEl.hidden = login || off || S.view === 'chat';
     root.querySelector('.xc-body').hidden = login || S.view !== 'chat';
-    root.querySelector('.xc-list-b').hidden = root.querySelector('.xc-new-b').hidden = root.querySelector('.xc-scr-b').hidden = login || off;
+    root.querySelector('.xc-list-b').hidden = root.querySelector('.xc-new-b').hidden = root.querySelector('.xc-scr-b').hidden = root.querySelector('.xc-work-b').hidden = login || off;
     if ((login || off) && S.drawer) setDrawer(false);
     root.classList.toggle('running', !!S.run);
+    root.classList.toggle('locked', login || off);
     renderPick();
     renderSendBtn();
     renderStrip();
@@ -277,27 +290,30 @@
     render(); grow(); refreshCtx();
     if (!S.enabled) return;
     if (!S.authed) { if (!touch) loginEl.pw.focus(); return; }
-    if (!S.loadingConversation && (S.histFor !== (S.sid || '') || !list.childNodes.length)) loadCurrent();
+    var p = !S.loadingConversation && (S.histFor !== (S.sid || '') || !list.childNodes.length) ? loadCurrent() : null;
     if (S.bg > 0) pollTasksSoon(300);
+    if (S.wb) pollWork();
     if (!touch) input.focus();
+    return p;
   }
   function close() {
     if (!root) return;
     S.open = false; root.classList.remove('show'); document.body.classList.remove('xc-open');
-    setTimeout(function () { if (!S.open) root.hidden = true; }, 220);
-    if (XIN_HASH.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+    setTimeout(function () { if (!S.open) { root.hidden = true; if (S.wb) unwork(true); } }, 240);
+    if (XIN_HASH.test(location.hash) || location.hash === '#xin-work') history.replaceState(null, '', location.pathname + location.search);
+    renderHome(); nextWork();
   }
 
   /* ---------- 登录 ---------- */
   function login(pw) {
     var err = loginEl.querySelector('.xc-err'); err.textContent = '';
     req('login', { password: pw }).then(function (d) {
-      if (d._status === 200) { S.authed = true; syncPushDevice(); loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); greet(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
+      if (d._status === 200) { S.authed = true; syncPushDevice(); loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); greet(); pollWork(); renderHome(); if (S.wb) layout(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
       err.textContent = d.msg || (d._status === 429 ? '试太多次了，过一分钟再试' : '登录失败');
     }, function () { err.textContent = '网络不通'; });
   }
   function logout() {
-    req('logout', {}).then(function () { S.authed = false; syncBag(); render(); });
+    req('logout', {}).then(function () { S.authed = false; syncBag(); render(); renderHome(); });
   }
   function syncBag() {
     // 功能开着就放进背包：点了小芯旁边冒输入框（没登录先开面板输密码）。学习台里的小芯在 mascot.js 里调 ask
@@ -338,9 +354,9 @@
   function newChat(stay, toMain) {
     detachConversation();
     stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null); S.hModel = hmPref(); S.lastModel = ''; S.queue = []; setPick(false);
-    S.toMain = !!toMain; S.more = false;
+    S.toMain = !!toMain; S.more = false; S.title = '';
     if (!stay) { S.view = 'chat'; setDrawer(false); }
-    clearList(); S.histFor = ''; welcome(); render();
+    clearList(); S.histFor = ''; welcome(); render(); refreshSide();
   }
   // 回到主对话：有就打开，还没有就是一张空白页，第一句发出去才有
   function goMain() {
@@ -356,14 +372,16 @@
   }
   function loadCurrent() {
     status();
-    if (!S.sid && mainDraft() && S.main) { openSession(S.main); return; }
-    if (S.sid) openSession(S.sid); else { clearList(); S.histFor = ''; welcome(); render(); }
+    if (!S.sid && mainDraft() && S.main) return openSession(S.main);
+    if (S.sid) return openSession(S.sid);
+    clearList(); S.histFor = ''; welcome(); render();
+    return null;
   }
   function status() {
     call('status').then(function (d) {
       S.machine = d.name || ''; S.mstate = d.state || '';
       if (d.state === 'suspended' || d.state === 'stopped') { wakeVm(); setTimeout(status, 8000); }
-      renderHead();
+      renderHead(); renderHome();
     }, function (e) { setStatus(e.message, 'bad'); });
   }
   function openSession(sid) {
@@ -377,8 +395,9 @@
       S.loadingConversation=false;renderSendBtn();
       if (my !== S.loadSeq) return;
       clearList();
-      S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid; S.toMain = false;
+      S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid; S.toMain = false; S.title = d.session.title || '';
       if (d.session.main) setMain(sid); else if (sid === S.main) setMain('');
+      refreshSide();
       S.more = !!d.more; S.first = d.runs.length ? d.runs[0].run : '';
       if (S.more) list.appendChild(earlierBtn());
       // Harness 对话接着用它上次的模型；Codex（默认模式）的模型是小芯挑的，只记下最近一句用的是谁（模型按钮点开能看到）
@@ -461,6 +480,7 @@
   function svgIcon(k) { return '<svg viewBox="0 0 24 24" aria-hidden="true">' + ICON[k] + '</svg>'; }
   function setDrawer(on) {
     on = !!on;
+    if (root && root.classList.contains('wb-side')) { S.drawer = false; root.classList.remove('dr-open'); return; }
     if (!root || S.drawer === on) { S.drawer = on; return; }
     S.drawer = on;
     root.classList.toggle('dr-open', on);
@@ -549,6 +569,7 @@
     sc.appendChild(ft);
     drawerEl.appendChild(sc);
     var my = ++S.drawerSeq;
+    if (S.sessList) renderSess();
     call('sessions', {}, 60000).then(function (d) {
       if (my !== S.drawerSeq) return;
       S.sessList = d.sessions || [];
@@ -1346,7 +1367,7 @@
       if(live&&old&&t.delivery?.state==='delivered'&&old.delivery?.state!=='delivered')changed.push(t);
       else if (live && old && old.status !== t.status && !tLive(t) && (tLive(old) || old.status === 'waiting')&&(!t.delivery||t.delivery.state==='delivered')) changed.push(t);
     });
-    paintCards();
+    paintCards(); renderWork(); renderHome();
     changed.forEach(function (t) {
       var here = S.open && S.view === 'chat' && S.sid === t.parent;
       if (here && list) { drawTaskResult(t); toBottom(); }
@@ -1371,7 +1392,7 @@
       if (d && d.error) throw new Error(d.msg || d.error);
       S.bg = d.bg || 0; S.tactive = d.active || [];
       setTasks((d.active || []).concat(d.recent || [], sid === S.sid ? d.tasks || [] : []), true);
-      renderStrip();
+      renderStrip(); renderWork(); renderHome();
       var next = S.open && convLive() ? 4000 : S.bg > 0 ? 20000 : 0;
       if (next) tpTm = setTimeout(pollTasks, next);
     }, function () { tpTm = setTimeout(pollTasks, 30000); });
@@ -1615,6 +1636,224 @@
     send(null, { text: q.map(function (y) { return y.text; }).filter(Boolean).join('\n'), atts: [].concat.apply([], q.map(function (y) { return y.atts; })), queued: q });
   }
 
+  /* ---------- 工作台：全屏的聊天，宽屏左边对话、中间聊天、右边在做的和做好的；首页一张卡片进来 ----------
+     手机、竖着的平板：只有聊天，标题栏的方格按钮把「进行中和成果」从右边滑进来。
+     数据都是现成的：任务卡片和看过程用聊天里那一套（openTask），列表从 tasks {all:true} 来，有在做的 4 秒刷一次。 */
+  var SIDE_MIN = 1180, WORK_MIN = 900, wTm = 0, wSeq = 0, thumbs = {}, wkSeen = {}, xwSeen = {};
+  // 右栏、首页每次刷新都是重画：循环的动画（进度条、闪的点）按同一个时钟接着走，不从头来；进场动画只给第一次出现的
+  function phase(el) { var t = Date.now(); el.style.setProperty('--p16', -(t % 1600) + 'ms'); el.style.setProperty('--p12', -(t % 1200) + 'ms'); el.style.setProperty('--p10', -(t % 1000) + 'ms'); }
+  function work(opt) {
+    opt = opt || {};
+    if (!root) build();
+    S.wb = true; root.classList.add('wb'); document.body.classList.add('xc-wb');
+    layout();
+    var p = open();
+    if (location.hash !== '#xin-work' && !opt.keepHash) try { history.replaceState(history.state, '', location.pathname + location.search + '#xin-work'); } catch (e) { /* 地址改不了不影响 */ }
+    return p;
+  }
+  function unwork(silent) {
+    if (!root) return;
+    S.wb = false; root.classList.remove('wb', 'work-open'); document.body.classList.remove('xc-wb');
+    layout();
+    if (!silent && location.hash === '#xin-work') try { history.replaceState(history.state, '', location.pathname + location.search); } catch (e) { /* 同上 */ }
+  }
+  function layout() {
+    if (!root) return;
+    var w = window.innerWidth, side = !!S.wb && w >= SIDE_MIN, wk = !!S.wb && w >= WORK_MIN;
+    var was = root.classList.contains('wb-side');
+    root.classList.toggle('wb-side', side); root.classList.toggle('wb-work', wk);
+    if (wk) setWorkOpen(false);
+    var dr = root.querySelector('.xc-drawer');
+    if (side) { root.classList.remove('dr-open'); S.drawer = false; dr.setAttribute('aria-hidden', 'false'); if (S.authed && (!was || !drawerEl.firstChild)) loadSessions(); }
+    else if (was) dr.setAttribute('aria-hidden', S.drawer ? 'false' : 'true');
+    root.querySelector('.xc-wb-b').setAttribute('aria-label', S.wb ? '收起工作台' : '工作台');
+    renderWork(); renderHead();
+  }
+  function setWorkOpen(on) {
+    if (!root) return;
+    on = !!on && !!S.wb && !root.classList.contains('wb-work');
+    root.classList.toggle('work-open', on);
+    root.querySelector('.xc-work-b').setAttribute('aria-expanded', on ? 'true' : 'false');
+    if (on) { renderWork(); pollWork(); }
+  }
+  // 左边那栏常驻时，对话有变化（开了新的、发出第一句、切换）就跟着刷新，别等手动拉开
+  var sideTm = 0;
+  function refreshSide() { if (!root || !root.classList.contains('wb-side')) return; clearTimeout(sideTm); sideTm = setTimeout(loadSessions, 250); }
+  function pollWork() {
+    clearTimeout(wTm);
+    if (!S.enabled || !S.authed) return;
+    var my = ++wSeq;
+    call('tasks', { all: true, deviceId: S.deviceId, tabId: S.tabId }, 30000).then(function (d) {
+      if (my !== wSeq) return;
+      if (d && d.error) throw new Error(d.msg || d.error);
+      S.bg = d.bg || 0; S.tactive = d.active || []; S.wall = d.tasks || [];
+      setTasks(S.wall.concat(d.active || []), true); renderStrip();
+      nextWork();
+    }).catch(function () { if (my === wSeq) wTm = setTimeout(pollWork, 30000); });
+  }
+  function nextWork() {
+    clearTimeout(wTm);
+    var live = (S.tactive || []).some(tLive), shown = S.open && S.wb && !document.hidden, home = homeShown();
+    var ms = shown ? (live ? 4000 : 30000) : home && live ? 10000 : 0;
+    if (ms) wTm = setTimeout(pollWork, ms);
+  }
+  // 所有任务：最新状态在 S.tinfo（轮询会更新），列表顺序以 tasks {all:true} 为准；没拿到之前就用手上有的
+  function allTasks() {
+    var seen = {}, out = [];
+    (S.wall || []).concat(S.tactive || [], Object.keys(S.tinfo).map(function (k) { return S.tinfo[k]; })).forEach(function (t) {
+      if (!t || !t.sid || seen[t.sid] || !t.title) return; seen[t.sid] = true; out.push(S.tinfo[t.sid] || t);
+    });
+    return out;
+  }
+  function groups() {
+    var all = allTasks(), by = function (k) { return function (a, b) { return (b[k] || b.created || 0) - (a[k] || a.created || 0); }; };
+    return {
+      live: all.filter(tLive).sort(function (a, b) { return (a.created || 0) - (b.created || 0); }),
+      wait: all.filter(function (t) { return t.status === 'waiting'; }).sort(by('endedAt')),
+      done: all.filter(function (t) { return !tLive(t) && t.status !== 'waiting'; }).sort(by('endedAt'))
+    };
+  }
+  function ago(t) {
+    var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    return s < 60 ? '刚刚' : s < 3600 ? Math.floor(s / 60) + ' 分钟前' : s < 86400 ? Math.floor(s / 3600) + ' 小时前' : when(t);
+  }
+  function previewId(t) { var m = t.preview && t.preview.ready && /^\/xin\/preview\.html\?id=([a-f0-9]{32})$/.exec(t.preview.url || ''); return m ? m[1] : ''; }
+  // 网页成品的截图：同一个任务只建一次 <img>，重画时搬过去，不重新下载
+  function thumb(t) {
+    var id = previewId(t); if (!id) return null;
+    var im = thumbs[id];
+    if (!im) {
+      im = thumbs[id] = h('img', 'wk-img'); im.alt = ''; im.loading = 'lazy'; im.decoding = 'async';
+      im.addEventListener('error', function () { im.classList.add('bad'); });
+      im.src = '/api/xin/preview/' + id + '/preview.png';
+    }
+    return im;
+  }
+  function wkCard(t, kind) {
+    var c = h('div', 'wk-c ' + kind + (t.status === 'failed' ? ' bad' : '') + (wkSeen[t.sid + kind] ? '' : ' new')); c.dataset.tsid = t.sid; c.tabIndex = 0; c.setAttribute('role', 'button');
+    wkSeen[t.sid + kind] = true; phase(c);
+    c.setAttribute('aria-label', t.title);
+    var open_ = function () { openTask(t.sid); };
+    c.addEventListener('click', function (e) { if (!e.target.closest('button, a')) open_(); });
+    c.addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && e.target === c) { e.preventDefault(); open_(); } });
+    var im = kind === 'done' ? thumb(t) : null;
+    if (im) { var fig = h('div', 'wk-fig'); fig.appendChild(im); c.appendChild(fig); }
+    var top = h('div', 'wk-top');
+    top.appendChild(h('i', 'wk-dot'));
+    top.appendChild(h('b', 'wk-t', t.title));
+    top.appendChild(h('span', 'wk-time', kind === 'live' ? (t.status === 'queued' ? '排队' : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : ago(t.endedAt || t.created || Date.now())));
+    c.appendChild(top);
+    var line = kind === 'live' ? (t.status === 'stopping' ? '正在停止' : t.activity || '') : kind === 'wait' ? t.question || '在等你确认' : t.status === 'failed' ? (t.result && (t.result.err || firstLine(t.result.text))) || '没做成' : t.status === 'stopped' ? '已停止' : im ? '' : t.result ? firstLine(t.result.text) : '';
+    if (line) c.appendChild(h('p', 'wk-line', line));
+    if (kind === 'live') c.appendChild(h('div', 'wk-bar'));
+    var act = h('div', 'wk-act');
+    if (kind === 'live' && t.status !== 'stopping') {
+      var tell = h('button', 'wk-b', '改一下'); tell.type = 'button'; tell.addEventListener('click', function () { openTask(t.sid, true); });
+      var stopB = h('button', 'wk-b', '停止'); stopB.type = 'button'; stopB.addEventListener('click', function () { stopTask(t.sid, stopB); });
+      act.appendChild(tell); act.appendChild(stopB);
+    } else if (kind === 'wait') {
+      var rep_ = h('button', 'wk-b on', '回复'); rep_.type = 'button'; rep_.addEventListener('click', open_); act.appendChild(rep_);
+    } else if (previewId(t)) {
+      var a = h('a', 'wk-b on', '打开'); a.href = t.preview.url; a.target = '_blank'; a.rel = 'noopener'; act.appendChild(a);
+    }
+    if (act.childNodes.length) c.appendChild(act);
+    return c;
+  }
+  function renderWork() {
+    if (!root || !S.wb) return;
+    var box = root.querySelector('.xc-wk-sc'), g = groups(), top = box.scrollTop, focus = document.activeElement && box.contains(document.activeElement) ? document.activeElement.closest('[data-tsid]') : null;
+    var fsid = focus && focus.dataset.tsid;
+    box.textContent = '';
+    var sec = function (name, list, kind, max) {
+      if (!list.length) return;
+      var hd = h('p', 'wk-h'); hd.appendChild(document.createTextNode(name)); hd.appendChild(h('i', '', String(list.length)));
+      box.appendChild(hd);
+      var wrap = h('div', 'wk-list ' + kind); list.slice(0, max).forEach(function (t) { wrap.appendChild(wkCard(t, kind)); }); box.appendChild(wrap);
+    };
+    sec('在做', g.live, 'live', 20);
+    sec('等你', g.wait, 'wait', 20);
+    sec('成果', g.done, 'done', 30);
+    if (!g.live.length && !g.wait.length && !g.done.length) {
+      var e = h('div', 'wk-empty'); e.appendChild(avatar('big')); e.appendChild(h('p', '', '空闲中')); box.appendChild(e);
+    }
+    box.scrollTop = top;
+    if (fsid) { var again = box.querySelector('[data-tsid="' + fsid + '"]'); if (again) again.focus({ preventScroll: true }); }
+    var b = root.querySelector('.xc-work-b'); b.classList.toggle('live', g.live.length > 0); b.classList.toggle('wait', g.wait.length > 0);
+  }
+
+  /* 首页上的「小芯」：一块终端屏，最近在做的、做好的几行，最后一行直接打字。
+     点哪里都进工作台：点任务打开那个任务；回车把话发到主对话。网站没开小芯聊天时不显示。 */
+  var homeEl = null;
+  function homeShown() { return !!homeEl && !homeEl.hidden && !document.hidden && !document.body.classList.contains('tool-open') && !(S.open && S.wb); }
+  function buildHome() {
+    var slot = document.getElementById('xinWork'); if (!slot || homeEl) return;
+    homeEl = slot;
+    slot.innerHTML = '<h2 class="cat-h">小芯</h2><div class="xw-card"><button class="xw-head" type="button"><span class="xw-who"><b>工作台</b><span class="xw-st"><i></i><em></em></span></span><span class="xw-go" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9.5 7.5 14 12l-4.5 4.5"/></svg></span></button>' +
+      '<div class="xw-term"><ul class="xw-list"></ul><form class="xw-ask"><span class="xw-caret" aria-hidden="true">&gt;</span><input type="text" autocomplete="off" enterkeyhint="send" aria-label="和小芯说"><button type="submit" class="xw-send" aria-label="发送"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button></form></div></div>';
+    var head = slot.querySelector('.xw-head');
+    head.insertBefore(avatar('xw-av'), head.firstChild);
+    head.setAttribute('aria-label', '打开小芯工作台');
+    head.addEventListener('click', function () { work(); });
+    var form = slot.querySelector('.xw-ask'), inp = form.querySelector('input');
+    inp.value = ls('lm.xin.homeDraft') || '';
+    inp.addEventListener('input', function () { ls('lm.xin.homeDraft', inp.value || null); form.classList.toggle('has', !!inp.value.trim()); });
+    form.classList.toggle('has', !!inp.value.trim());
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var t = inp.value.trim();
+      if (!t) { work(); return; }
+      inp.value = ''; ls('lm.xin.homeDraft', null); form.classList.remove('has'); inp.blur();
+      homeSend(t);
+    });
+    slot.querySelector('.xw-term').addEventListener('click', function (e) { if (e.target === this || e.target.classList.contains('xw-list')) inp.focus(); });
+    renderHome();
+  }
+  // 首页打的字：进工作台，发到主对话（正在回上一句就先排着）；没登录先登录，话留在输入框里
+  function homeSend(text) {
+    if (!root) build();
+    if (S.authed) {
+      if (S.main) { if (S.sid !== S.main) { detachConversation(); stopPolling(); typing(false); S.run = ''; S.sid = S.main; ls(LS_SID, S.main); S.histFor = ''; } }
+      else if (S.sid || !S.toMain) newChat(true, true);
+    }
+    var p = work();
+    Promise.resolve(p).then(function () {
+      if (!S.authed || S.agent !== 'codex' && !S.sid) { input.value = text; ls(LS_DRAFT, text); grow(); renderSendBtn(); return; }
+      if (S.run || S.sending || S.loadingConversation) queueMsg(text); else send(text);
+    });
+  }
+  function renderHome() {
+    if (!homeEl) return;
+    homeEl.hidden = !S.enabled;
+    if (!S.enabled) return;
+    var st = homeEl.querySelector('.xw-st'), inp = homeEl.querySelector('.xw-ask input'), g = groups();
+    var busy = g.live.length > 0, state = !S.authed ? 'off' : busy ? 'busy' : S.mstate === 'running' ? 'on' : S.mstate ? 'sleep' : '';
+    st.className = 'xw-st ' + state;
+    st.lastChild.textContent = { off: '未登录', busy: '在忙', on: '在线', sleep: '休息中', '': '' }[state];
+    inp.placeholder = S.authed ? '和小芯说点什么' : '登录后就能聊';
+    var ul = homeEl.querySelector('.xw-list');
+    var rows = g.live.concat(g.wait, g.done).slice(0, 3);
+    var sig = rows.map(function (t) { return t.sid + t.status + (t.activity || ''); }).join('|') + S.authed;
+    if (ul.dataset.sig !== sig) {
+      ul.dataset.sig = sig; ul.textContent = '';
+      rows.forEach(function (t) {
+        var kind = tLive(t) ? 'run' : t.status === 'waiting' ? 'wait' : t.status === 'failed' ? 'bad' : t.status === 'stopped' ? 'stop' : 'ok';
+        var li = h('li'), b = h('button', 'xw-t ' + kind + (xwSeen[t.sid + kind] ? '' : ' new')); b.type = 'button'; b.dataset.tsid = t.sid;
+        xwSeen[t.sid + kind] = true; phase(b);
+        b.appendChild(h('i', 'xw-g')); b.appendChild(h('span', 'xw-tt', t.title)); b.appendChild(h('time', 'xw-tm'));
+        b.setAttribute('aria-label', t.title + ' ' + (TSTAT[t.status] || ''));
+        b.addEventListener('click', function () { var p = work(); Promise.resolve(p).then(function () { openTask(t.sid); }); });
+        li.appendChild(b); ul.appendChild(li);
+      });
+    }
+    [].forEach.call(ul.querySelectorAll('.xw-t'), function (b) {
+      var t = S.tinfo[b.dataset.tsid] || rows.filter(function (x) { return x.sid === b.dataset.tsid; })[0]; if (!t) return;
+      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? '排队' : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? '等你' : ago(t.endedAt || t.created || Date.now());
+    });
+    ul.hidden = !rows.length;
+  }
+  // 在做的任务计时、「几分钟前」每 15 秒走一下
+  setInterval(function () { if (!document.hidden && (homeShown() || (S.open && S.wb))) { renderHome(); if (S.open && S.wb) renderWork(); } }, 15000);
+
   /* ---------- 「＋」菜单、插件 ---------- */
   function setMenu(on) {
     if (!menuEl) return;
@@ -1798,14 +2037,14 @@
       refreshCtx();
       // 送到了：小芯的电脑收到这句、AI 开始干活，从这一刻开始算「思考中」的时间
       S.sending = false; S.waitSend = ''; pending.classList.remove('pending');
-      S.sid = d.sid; S.sessAgent = d.agent || S.sessAgent || S.agent; ls(LS_SID, d.sid); S.toMain = false;
+      S.sid = d.sid; S.sessAgent = d.agent || S.sessAgent || S.agent; ls(LS_SID, d.sid); S.toMain = false; if (d.title) S.title = d.title;
       // 这句进了主对话，而这台设备还没读过它以前的内容：回完重读一遍，把前面的接上
       if (d.main) { setMain(d.sid); if (d.turns > 1 && S.histFor !== d.sid) S.reload = d.sid; }
       if (prep && prep.queued) S.queueFlight = [];
       saveQueue();
       ls('lm.xin.queue.pending', null);
       if (d.bg != null) S.bg = d.bg;
-      S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); render(); typing(true); startPolling();
+      S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); render(); typing(true); startPolling(); if (!flight.sid) refreshSide();
     }).catch(function (e) {
       if(generation!==S.convSeq){settleDetachedSend(flight,null,e);return;}
       S.sendFlight=null;
@@ -2286,6 +2525,7 @@
     if (document.hidden) return;
     if (Date.now() - wokeAt > 600000) { wakeVm(); greet(); }
     if (S.bg > 0) pollTasksSoon(500);
+    if (S.authed && (homeShown() || (S.open && S.wb))) pollWork();
   });
 
   /* ---------- 见面打招呼：小芯用 xin next 留的那句话（比如每日任务的结果），打开网页时在气泡里说 ----------
@@ -2321,6 +2561,7 @@
   // #xin 打开面板；#xin=<对话编号>（点「做完提醒」的通知进来的）打开那段对话
   var XIN_HASH = /^#xin(=s[0-9a-z]{6,24})?$/;
   function openFromHash() {
+    if (location.hash === '#xin-work') { if (!S.open || !S.wb) work({ keepHash: true }); return; }
     var m = XIN_HASH.exec(location.hash);
     if (!m) return;
     openConversation(m[1] ? m[1].slice(1) : '');
@@ -2333,6 +2574,7 @@
     req('me').then(function (d) {
       S.enabled = !!d.enabled; S.authed = !!d.authed;
       syncBag(); wakeVm(); greet(); syncPushDevice();
+      if (S.enabled) buildHome(); if (S.authed) { status(); pollWork(); }
       openFromHash();
       // 刷新页面时上一轮还在跑：小芯接着陪着（打开面板时会接上）
     }, function () { if (XIN_HASH.test(location.hash)) { S.enabled = false; open(); } });
@@ -2341,6 +2583,6 @@
   window.addEventListener('pagehide',function(){
     if(S.authed&&S.sid&&(S.run||S.bg>0))fetch(API+'call',{method:'POST',credentials:'same-origin',keepalive:true,headers:{'Content-Type':'application/json','X-Xin':'1'},body:JSON.stringify({op:'tasks',args:{sid:S.sid,deviceId:S.deviceId,tabId:S.tabId,watching:false}})}).catch(function(){});
   });
-  window.LimingXinChat = { open: open, close: close, ask: quick, played: played, page: page, tasks: function () { pollTasks(); }, get state() { return S; } };
+  window.LimingXinChat = { open: open, close: close, work: work, ask: quick, played: played, page: page, tasks: function () { pollTasks(); }, get state() { return S; } };
   boot();
 })();

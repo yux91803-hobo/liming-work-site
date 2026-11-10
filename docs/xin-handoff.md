@@ -179,7 +179,7 @@
 |---|---|---|
 | 1 | 审查报告入库并标注现状（`docs/xin-architecture-review.md`） | 已提交到分支 `claude/xin-project-continuation-j0hlqv` |
 | 2 | 聊天界面精简、主对话、任务进行中随时改、更早的消息（见 CHANGES 2026-11-10 第一条） | 已提交到同一分支 |
-| 3 | 工具箱首页「小芯工作台」 | 进行中 |
+| 3 | 工具箱首页「小芯」和全屏工作台（见 CHANGES 2026-11-10「工具箱首页」一条） | 已提交到同一分支 |
 | 4 | PR → CI → 合并 → 正式站部署与真机联调 | 未开始 |
 
 接手时：`git log origin/claude/xin-project-continuation-j0hlqv` 看做到哪；分支上的提交都已在本地跑过 `npm run check` 和相关浏览器测试。
