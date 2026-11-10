@@ -503,21 +503,22 @@ test('受控构建验证任意新产物，拒绝旧 HEX、非 ARM ELF 及输出�
 test('前台的表情、好感度、开场白和记事写进本轮事件；同一调用重放不重复加好感', async t => {
   const f=fixture(t), sid='sfrontself01', run='rfrontself01';
   fs.writeFileSync(path.join(f.control,'sessions',sid+'.json'),JSON.stringify({sid,agent:'codex',runs:[run]}));
-  fs.writeFileSync(path.join(f.control,'runs',run+'.json'),JSON.stringify({run,sid,agent:'codex',model:'deepseek-v4.1-flash',text:'你真棒',started:Date.now()}));
-  fs.writeFileSync(path.join(f.control,'runs',run+'.jsonl'),JSON.stringify({t:'user',text:'你真棒'})+'\n');
+  fs.writeFileSync(path.join(f.control,'runs',run+'.json'),JSON.stringify({run,sid,agent:'codex',model:'deepseek-v4.1-flash',text:'你真棒，我喜欢先看波形',started:Date.now()}));
+  fs.writeFileSync(path.join(f.control,'runs',run+'.jsonl'),JSON.stringify({t:'user',text:'你真棒，我喜欢先看波形'})+'\n');
   assert.equal(f.call('front_action',{run,argv:['xin','dance']}).error,undefined);
   const bond=f.call('front_action',{run,argv:['xin','bond','+2','被夸了']});assert.match(bond.text,/好感度 \+2/);
   assert.deepEqual(f.call('front_action',{run,argv:['xin','bond','+2','被夸了']}),bond,'同一调用重放复用回执');
   assert.match(f.call('front_action',{run,argv:['xin','next','明天一起复习 DMA']}).text,/下次见面会说/);
   assert.match(f.call('front_action',{run,argv:['xin','remember','--basis','stated','喜欢先看波形']}).text,/记住了/);
-  assert.match(f.call('front_action',{run,argv:['xin','remember','--basis','inferred','可能不太懂 DMA']}).text,/待确认/,'推测先待确认');
+  assert.match(f.call('front_action',{run,argv:['xin','remember','--basis','inferred','可能不太懂 DMA']}).text,/候选/,'推测先当候选');
+  assert.match(f.call('front_action',{run,argv:['xin','remember','--basis','stated','兄弟是电机工程师']}).text,/候选/,'本轮原话里没有的，不能记成明说');
   assert.ok(f.call('front_action',{run,argv:['xin','plugin','on','rea']}).error);
   assert.ok(f.call('front_action',{run,argv:['xin','bond','+9']}).error,'参数不全时报错');
   const evs=fs.readFileSync(path.join(f.control,'runs',run+'.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
   assert.ok(evs.some(e=>e.t==='xin'&&e.act==='dance'));
   assert.equal(evs.filter(e=>e.t==='bond').length,1);
   assert.ok(evs.some(e=>e.t==='mem'&&e.text==='喜欢先看波形'));
-  assert.ok(!evs.some(e=>e.t==='mem'&&/DMA/.test(e.text)),'待确认的不冒「记住了」');
+  assert.ok(!evs.some(e=>e.t==='mem'&&/DMA|电机/.test(e.text)),'候选不冒「记住了」');
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.control,'bond.json'),'utf8')).score,2);
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.control,'next.json'),'utf8')).text,'明天一起复习 DMA');
 });

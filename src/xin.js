@@ -127,17 +127,40 @@ async function agentScript(env, origin) {
     order.push(file);
   };
   await visit(AGENT_ASSET.split('/').pop(), []);
-  const names = new Map(), texts = new Map();
+  const names = new Map(), texts = new Map(), digests = new Map();
   for (const file of order) {   // dependencies before dependants
     let text = sources.get(file);
     for (const dep of new Set([...text.matchAll(MODULE_IMPORT)].map(m => m[1]))) text = text.replaceAll("from './" + dep + "'", "from './" + names.get(dep) + "'");
-    names.set(file, file.replace(/\.mjs$/, '-') + hex(await crypto.subtle.digest('SHA-256', enc.encode(text))).slice(0, 12) + '.mjs');
-    texts.set(file, text);
+    const sha256 = hex(await crypto.subtle.digest('SHA-256', enc.encode(text)));
+    names.set(file, file.replace(/\.mjs$/, '-') + sha256.slice(0, 12) + '.mjs');
+    texts.set(file, text); digests.set(file, sha256);
   }
   const entry = AGENT_ASSET.split('/').pop();
-  const dependencies = order.filter(f => f !== entry).map(f => ({ text: texts.get(f), path: VM_DIR + '/' + names.get(f) }));
-  agentCache = { text: texts.get(entry), path: VM_DIR + '/' + names.get(entry), dependencies };
+  const dependencies = order.filter(f => f !== entry).map(f => ({ text: texts.get(f), path: VM_DIR + '/' + names.get(f), sha256: digests.get(f) }));
+  agentCache = { text: texts.get(entry), path: VM_DIR + '/' + names.get(entry), sha256: digests.get(entry), dependencies };
   return agentCache;
+}
+function putAgentFile(env, id, file, mode) {
+  return ib(env, `/v1/machines/${id}/files?path=${encodeURIComponent(file.path)}&parents=true&mode=${mode}`, { method: 'PUT', body: file.text, headers: { 'Content-Type': 'application/octet-stream' } });
+}
+// The controller's scripts live on a machine where fully privileged agents also run. A script is found by the hash in
+// its name, so a file edited in place would keep being executed. Every ten minutes (per isolate) compare what is on
+// the machine with what this deployment ships; anything different is replaced and the incident is written down.
+let verifiedAt = 0;
+export async function verifyAgent(env, origin, id, now = Date.now()) {
+  if (now - verifiedAt < 600000) return { skipped: true };
+  verifiedAt = now;
+  const agent = await agentScript(env, origin), files = [...agent.dependencies, agent];
+  const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['sha256sum', '--', ...files.map(f => f.path)], timeoutSeconds: 20 }) });
+  if (!r.ok) { verifiedAt = 0; return { skipped: true }; }   // asleep or busy: the request that follows reports it; check again next time
+  const found = new Map();
+  for (const line of String((await r.json()).stdout || '').split('\n')) { const m = /^([a-f0-9]{64})\s+\*?(\S.*)$/.exec(line); if (m) found.set(m[2], m[1]); }
+  // A missing file is uploaded by exec() when it is first needed; only a present file with other content is an incident.
+  const changed = files.filter(f => found.has(f.path) && found.get(f.path) !== f.sha256);
+  if (!changed.length) return { ok: true };
+  for (const f of files) { const u = await putAgentFile(env, id, f, f === agent ? '0755' : '0644'); if (!u.ok) { verifiedAt = 0; throw await ibErr(u); } }
+  await exec(env, origin, id, 'integrity_event', { files: changed.map(f => f.path.split('/').pop()) }).catch(() => null);
+  return { ok: false, repaired: changed.length };
 }
 function uuid() { return crypto.randomUUID(); }
 
@@ -171,10 +194,10 @@ async function exec(env, origin, id, op, args, retried) {
     // 脚本还没传上去，或者改过了（文件名带内容的哈希）：传一份再跑
     if (!retried && /Cannot find module|ERR_MODULE_NOT_FOUND/.test(res.stderr || '')) {
       for (const dependency of agent.dependencies) {
-        const d = await ib(env, `/v1/machines/${id}/files?path=${encodeURIComponent(dependency.path)}&parents=true&mode=0644`, { method: 'PUT', body: dependency.text, headers: { 'Content-Type': 'application/octet-stream' } });
+        const d = await putAgentFile(env, id, dependency, '0644');
         if (!d.ok) throw await ibErr(d);
       }
-      const u = await ib(env, `/v1/machines/${id}/files?path=${encodeURIComponent(agent.path)}&parents=true&mode=0755`, { method: 'PUT', body: agent.text, headers: { 'Content-Type': 'application/octet-stream' } });
+      const u = await putAgentFile(env, id, agent, '0755');
       if (!u.ok) throw await ibErr(u);
       return exec(env, origin, id, op, args, true);
     }
@@ -231,6 +254,8 @@ async function call(env, origin, op, args, ctx, now) {
   try {
     if (supervisor(env) && ['send', 'daily'].includes(op)) args = { ...(args || {}), _callback: { url: origin + '/api/xin/task-event', token: await callbackToken(env) } };
     const data = await exec(env, origin, m.id, op, args);
+    // 打开网页（greet）时顺手核对云电脑上的控制器脚本有没有被改过；不挡这次请求
+    if (op === 'greet' && ctx) ctx.waitUntil(verifyAgent(env, origin, m.id, now).catch(() => null));
     // AI 在等模型回话时云电脑看起来是闲着的：挂一个「有活在干」的租约，别让它半路自己暂停
     const lease = (method, id, ttl) => ib(env, `/v1/machines/${m.id}/activity-leases/xin-${id}`, method === 'PUT' ? { method, body: JSON.stringify({ ttlSeconds: ttl || 1800 }) } : { method }).catch(() => null);
     if ((op === 'send' || op === 'daily') && data && data.run && ctx) ctx.waitUntil(lease('PUT', data.run));
@@ -401,7 +426,7 @@ export async function runCron(cron, env, ctx, opt = {}) {
 }
 
 // 测试用：清掉缓存
-export function _reset() { keyCache = null; machineCache = null; agentCache = null; }
+export function _reset() { keyCache = null; machineCache = null; agentCache = null; verifiedAt = 0; }
 
 // Durable alarms keep running after a browser closes or the VM restarts. No alarms remain when idle.
 export class XinTaskSupervisor {

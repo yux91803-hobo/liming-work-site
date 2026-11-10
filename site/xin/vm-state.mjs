@@ -25,6 +25,8 @@ export class StateJournal {
       CREATE TABLE IF NOT EXISTS launches (run TEXT PRIMARY KEY, sid TEXT NOT NULL, lane INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, dispatchedAt INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS handoffs (id TEXT PRIMARY KEY, parent TEXT NOT NULL, task TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL,
         state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, nextAt INTEGER NOT NULL, run TEXT);
+      CREATE INDEX IF NOT EXISTS dirty_documents ON documents(name) WHERE dirty=1;
+      CREATE INDEX IF NOT EXISTS unprojected_appends ON appends(projected) WHERE projected=0;
       CREATE INDEX IF NOT EXISTS pending_launches ON launches(state,lane,at);
       CREATE INDEX IF NOT EXISTS pending_handoffs ON handoffs(state,nextAt,parent);`);
     if(!d.prepare('PRAGMA table_info(launches)').all().some(c=>c.name==='attempts'))d.exec('ALTER TABLE launches ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
