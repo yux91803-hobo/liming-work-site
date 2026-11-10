@@ -180,6 +180,8 @@
 | 1 | 审查报告入库并标注现状（`docs/xin-architecture-review.md`） | 已提交到分支 `claude/xin-project-continuation-j0hlqv` |
 | 2 | 聊天界面精简、主对话、任务进行中随时改、更早的消息（见 CHANGES 2026-11-10 第一条） | 已提交到同一分支 |
 | 3 | 工具箱首页「小芯」和全屏工作台（见 CHANGES 2026-11-10「工具箱首页」一条） | 已提交到同一分支 |
-| 4 | PR → CI → 合并 → 正式站部署与真机联调 | 未开始 |
+| 4 | PR #107 → CI → 合并 → 正式站部署与真机联调 | PR 已开。接手时先看 #107 是否已合并，再看 `main` 上对应的 Deploy 运行：冒烟和真机联调都绿、回滚步骤 skipped 就是上线了；失败按 §4.1 排查 |
 
-接手时：`git log origin/claude/xin-project-continuation-j0hlqv` 看做到哪；分支上的提交都已在本地跑过 `npm run check` 和相关浏览器测试。
+接手时：`git log origin/claude/xin-project-continuation-j0hlqv` 看做到哪；分支上的提交都已在本地跑过 `npm run check` 和全部浏览器测试。
+
+之后的工作（站长没有新要求时）：按 `docs/xin-architecture-review.md` 的「接下来的顺序」继续；会删数据、要站长决定的几项先问。
