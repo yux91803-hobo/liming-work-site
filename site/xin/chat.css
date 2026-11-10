@@ -87,11 +87,7 @@
 @keyframes xcdot{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-3px);opacity:1}}
 /* 小提示（记住了 / 学会新动作 / 好感度 / 已停止）和时间 */
 .xc-sys{align-self:center;max-width:92%;padding:4px 12px;border-radius:999px !important;background:var(--sunk);font:12px/1.5 var(--sans);color:var(--ink-2);text-align:center;word-break:break-word}
-.xc-sys.mem::before{content:"✻ ";color:var(--clay)}
 .xc-sys.move::before{content:"★ ";color:#d9a43a}
-.xc-sys.bond{color:#c0503a}
-.xc-sys.bond::before{content:"♥ "}
-[data-theme=dark] .xc-sys.bond{color:#f08b70}
 .xc-time{align-self:center;font:11.5px var(--sans);color:var(--ink-3)}
 /* 这一轮用的模型：回答下面一行小灰字（和气泡左边对齐） */
 .xc-by{align-self:flex-start;max-width:calc(100% - 62px);margin:0 0 2px 40px;font:11.5px/1.4 var(--sans);color:var(--ink-3);word-break:break-word}
@@ -303,9 +299,6 @@
 .xc-dr-st.on::before,.xc-dr-st.busy::before{content:"";display:inline-block;width:6px;height:6px;margin-right:5px;vertical-align:1px;border-radius:50% !important;background:#3f8f5a}
 .xc-dr-st.busy::before{background:var(--clay)}
 .xc-dr-sc{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px 12px calc(14px + var(--sb))}
-.xc-dr-sc .xc-bond{margin:0 0 12px;padding:8px 12px;border-radius:12px !important;background:var(--sunk)}
-.xc-dr-sc .xc-bond-b{padding:0;font-size:13px}
-.xc-dr-sc .xc-bond-log{margin:8px 0 2px;background:var(--panel)}
 .xc-dr-new{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:44px;margin:0 0 14px;border-radius:12px !important;background:var(--clay);color:#fff;
   font-weight:600;transition:transform .08s,filter .15s}
 .xc-dr-new:hover{filter:brightness(1.05)}
@@ -384,19 +377,6 @@
 .xc-memb:hover{border-color:var(--clay)}
 .xc-memb svg{width:18px;height:18px;color:var(--clay)}
 /* 好感度：入口下面一行，点开看最近的变化 */
-.xc-bond{margin:0 0 8px}
-.xc-bond-b{display:block;width:100%;padding:6px 4px;text-align:left;font-size:13px;color:var(--ink-2)}
-.xc-hearts{color:#d9573f}
-.xc-hearts-e{color:var(--ink-3)}
-.xc-bond-b:hover{color:var(--ink)}
-.xc-bond-log{list-style:none;margin:2px 0 6px;padding:6px 8px;border:1px solid var(--line);border-radius:8px !important;background:var(--sunk);font-size:12px}
-.xc-bond-log li{display:flex;gap:8px;padding:3px 0;color:var(--ink-2)}
-.xc-bond-log li span:nth-child(2){flex:1;min-width:0}
-.xc-bond-d{flex:none;width:2.4em;color:#3f8f5a;font-weight:700}
-.xc-bond-log li.down .xc-bond-d{color:#c0503a}
-[data-theme=dark] .xc-bond-d{color:#7bd88f}
-[data-theme=dark] .xc-bond-log li.down .xc-bond-d{color:#f08b70}
-.xc-bond-w{flex:none;color:var(--ink-3)}
 /* 小芯的文件 */
 .xc-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;margin:0 0 8px;font-size:13px}
 .xc-crumbs b{padding:4px 2px;word-break:break-all}
@@ -541,3 +521,20 @@ body.xs-open{overflow:hidden}
 .xc-tv-st{margin:0 0 12px;padding:0;list-style:none}
 .xc-tv-st li{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 10px;padding:8px 4px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}
 .xc-tv-st b{font-size:13px;color:var(--ink)}
+
+/* ---------- 主对话、更早的消息 ---------- */
+.xc-dr-new{margin-bottom:10px}
+.xc-mainrow{display:flex;flex-wrap:wrap;align-items:stretch;margin:0 0 10px;border-radius:12px !important;background:var(--sunk)}
+.xc-mainrow:has(.xc-mainb.cur){background:color-mix(in srgb,var(--clay) 13%,transparent)}
+.xc-mainb{flex:1;min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;min-height:46px;padding:0 12px;border-radius:12px !important;text-align:left;font-size:14.5px;font-weight:600;color:var(--ink)}
+.xc-mainb svg{width:17px;height:17px;color:var(--clay)}
+.xc-mainb i{font:normal 11.5px var(--sans);color:var(--ink-3)}
+.xc-mainb.live i::before{content:"";display:inline-block;width:6px;height:6px;margin-right:6px;border-radius:50% !important;background:var(--clay);vertical-align:1px;animation:xcblink 1.2s ease-in-out infinite}
+.xc-mainrow .xc-si-more{border-radius:12px !important}
+.xc-mainrow .xc-sa{padding:2px 8px 10px}
+.xc-nav{margin-bottom:2px}
+.xc-earlier{align-self:center;margin:0 0 4px !important;padding:6px 14px;border:1px solid var(--line-2);border-radius:999px !important;background:var(--panel);font:12.5px var(--sans);color:var(--ink-2)}
+.xc-earlier:disabled{opacity:.5}
+@media (hover:hover){.xc-earlier:not(:disabled):hover{border-color:var(--clay);color:var(--clay)}}
+.xc-hello{padding-top:min(18vh,96px)}
+.xc-tk-act .xc-tk-in[rows="1"]{min-height:40px;resize:none}

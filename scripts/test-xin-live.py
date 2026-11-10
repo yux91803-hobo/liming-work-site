@@ -51,6 +51,10 @@ async def main():
             await page.locator('.xc-login input[name=pw]').fill(PASSWORD, timeout=30000)
             await page.locator('.xc-login button').click()
             await page.wait_for_function('LimingXinChat.state.authed', timeout=30000)
+            # A fresh browser lands on the owner's always-on main conversation. That is the owner's, not a fixture:
+            # every turn of this run goes to conversations it creates itself (and deletes at the end).
+            await page.locator('.xc-new-b').click()
+            await page.wait_for_function('!LimingXinChat.state.sid && !LimingXinChat.state.toMain && !LimingXinChat.state.loadingConversation && !LimingXinChat.state.run', timeout=30000)
             # The test namespace and result are unique to this run. No user project is touched.
             request = ('这是发布后的真实联调，使用默认后台安排，只派一个后台任务并立即回复，不要等待它完成。使用 xin task new --kind research '
                        '--title ' + marker + ' --dir ' + directory + ' -- 后台测试：先执行 sleep 45，再用 printf 把精确文本 ' + marker +
@@ -79,6 +83,9 @@ async def main():
             await page.locator('.xc-send').click()
             await settle('LimingXinChat.state.sid && !LimingXinChat.state.run && !LimingXinChat.state.sending', 240000)
             sid = await page.evaluate('LimingXinChat.state.sid')
+            if any(s.get('main') and s.get('sid') == sid for s in (await call('sessions', {})).get('sessions', [])):
+                sid = None
+                raise RuntimeError('Smoke turn landed in the main conversation')
             tasks = (await call('tasks', {'sid': sid}))['tasks']
             owned = [t for t in tasks if t['parent'] == sid and t['title'] == marker and t['dir'] == directory]
             if len(owned) != 1 or owned[0]['status'] not in ('running', 'queued'):
