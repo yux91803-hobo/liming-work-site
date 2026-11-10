@@ -1270,8 +1270,11 @@ async def main():
         pg = await page(b)
         await pg.goto(BASE + '/'); await pg.wait_for_timeout(2600)
         await pg.evaluate("LimingXin.music(true)"); await pg.wait_for_timeout(300)
-        await pg.evaluate("LimingXin.bore(); LimingXin.rage('phones')"); await pg.wait_for_timeout(3800)
-        st = await pg.evaluate("[!!document.querySelector('.xin-k') || true, LimingXin.el.querySelector('rect.c-hp') === null]")
+        # rage() 只在小芯站着、走着或玩着时马上开始，否则排到下一次空闲（CI 机器忙时开场动作可能还没完）：等到耳机真的没了，不按固定秒数
+        await pg.evaluate("LimingXin.bore(); LimingXin.rage('phones')")
+        try: await pg.wait_for_function("LimingXin.el.querySelector('rect.c-hp') === null", timeout=15000)
+        except Exception: pass
+        st = await pg.evaluate("[LimingXin.mode, LimingXin.el.querySelector('rect.c-hp') === null]")
         check('听歌听烦了：把耳机扯下来砸了（耳机没了）', st[1], st)
         await pg.wait_for_timeout(5000)
         await pg.evaluate("LimingXin.bag()"); await pg.click('.xin-bag .xin-it:has-text("耳机")'); await pg.wait_for_timeout(300)
