@@ -97,8 +97,11 @@ function evidence(item, e, at = Date.now()) {
   if (!e) return;
   const quote = String(e.quote || '').slice(0, 200); // Preserve the user's exact whitespace and punctuation.
   if (!quote && !e.sid) return;
-  if (!db().prepare('SELECT 1 FROM memory_evidence WHERE item=? AND sid IS ? AND run IS ? AND quote=?').get(item, e.sid || null, e.run || null, quote))
+  if (!db().prepare('SELECT 1 FROM memory_evidence WHERE item=? AND sid IS ? AND run IS ? AND quote=?').get(item, e.sid || null, e.run || null, quote)) {
     db().prepare('INSERT INTO memory_evidence(item,sid,run,quote,at) VALUES(?,?,?,?,?)').run(item, e.sid || null, e.run || null, quote, e.at || at);
+    // A run that becomes the source of a private item leaves the recall index; consumers key their caches on the revision.
+    if (e.sid && e.run) setMemoryMeta('revision', crypto.randomUUID());
+  }
 }
 const row = id => db().prepare('SELECT * FROM memory_items WHERE id=?').get(id);
 
@@ -327,10 +330,11 @@ export function importLegacyNotebook(text = readText(LEGACY_FILE())) {
   });
 }
 
-// What a role sees. front: the user's own chat; daily: plus Xiaoxin's procedures; worker: only stable non-private profile notes.
+// What a role sees. front: the user's own chat; daily: Xiaoxin's procedures only; worker: only stable non-private profile notes.
 export function coreMemory(audience = 'front', max = audience === 'worker' ? 800 : 2000) {
   importLegacyNotebook();
-  const types = audience === 'worker' ? ['profile'] : audience === 'daily' ? ['profile', 'learning', 'project', 'self', 'procedure', 'unsorted'] : ['profile', 'learning', 'project', 'self', 'unsorted'];
+  // The daily routine runs unsandboxed against outside websites: it gets its own procedures, not the owner's profile.
+  const types = audience === 'worker' ? ['profile'] : audience === 'daily' ? ['procedure', 'unsorted'] : ['profile', 'learning', 'project', 'self', 'unsorted'];
   const rows = db().prepare("SELECT * FROM memory_items WHERE status='active' ORDER BY COALESCE(confirmed, updated) DESC").all();
   const parts = [];
   let used = 0, left = 0;

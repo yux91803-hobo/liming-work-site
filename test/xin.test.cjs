@@ -1225,7 +1225,7 @@ test('Harness（天启）：dsh headless --json 起，带天启自己的设定�
   const poll = async run => { let p; for (let i = 0; i < 60; i++) { p = op('poll', { run, off: 0 }); if (p.done) return p; await new Promise(ok => setTimeout(ok, 150)); } return p; };
   const stale = path.join(xin, 'harness-persona.glm-5.3.high.yml');   // 旧版设定副本里带着小芯的记事本
   fs.writeFileSync(stale, '    personaPrefix: "你就是小芯…<<<记事本\\n- 旧记录\\n记事本>>>"\n');
-  const r = op('send', { text: '-看看目录', effort: 'off' });   // 没指定 AI：默认 Harness；思考强度「关」
+  const r = op('send', { agent: 'harness', text: '-看看目录', effort: 'off' });   // 天启要明确指定；思考强度「关」
   assert.strictEqual(r.agent, 'harness');
   const p = await poll(r.run);
   assert.deepStrictEqual(p.events.map(e => e.t), ['user', 'tool', 'tool_end', 'text', 'done'], JSON.stringify(p.events));
@@ -1867,11 +1867,12 @@ test('记事本超过上限：保留开头和最新的记录，只省略中间',
   assert.ok(systemPrompt(lines.join('\n')).includes('第 999 条记录'));
 });
 
-test('默认模式前台：只留必要规则，不规定语气和性格（不带会变的分数，保持缓存），表情、好感度、开场白仍是可用工具', async () => {
+test('默认模式前台：只留必要规则，不规定语气和性格（不带会变的分数，保持缓存），表情、开场白仍是可用工具；好感度不再出现，记忆自己打理', async () => {
   const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
   const p = systemPrompt('', { tasks: true });
   assert.ok(p.includes('兄弟') && p.includes('北京时间') && p.includes('原话照传') && p.includes('明确同意') && p.includes('我查了') && p.includes('密钥'));
   assert.ok(!p.includes('你和用户现在的关系') && !p.includes('亲近程度') && !p.includes('简短回答'));
   assert.ok(!/好感度 \d/.test(p));
-  assert.ok(p.includes('["xin","bond","+1","理由"]') && p.includes('["xin","next","一句话"]') && p.includes('["xin","dance"]'));
+  assert.ok(!p.includes('"bond"') && p.includes('["xin","next","一句话"]') && p.includes('["xin","dance"]'));
+  assert.ok(p.includes('"--quote"') && p.includes('由你自己打理') && !p.includes('待兄弟确认'));
 });

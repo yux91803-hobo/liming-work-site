@@ -446,6 +446,49 @@ export function frontDiagnostics(meta,events,logs=[]){
     events:events.map(e=>({t:e.t,...(e.t==='done'?{ok:e.ok,stopped:!!e.stopped,ms:e.ms}:{}),...(['text','err'].includes(e.t)?{bytes:Buffer.byteLength(String(e.text||'')),...(e.t==='err'?{errorType:kind(e.text||'')}:{} )}:{})})),
     traces:logs.filter(l=>l.run===meta.run).map(l=>({outcome:l.outcome,errorType:kind(l.error||''),calls:(l.calls||[]).map(c=>({call:c.call,...(c.error?{errorType:kind(c.error)}:{})}))}))};
 }
+/* ---------- 检测与恢复（方案 B） ----------
+   天启、Claude 旧模式和每日任务是完全放权的，技术上拦不住它们碰控制器的目录。这里只做「看得见、找得回」：
+   - boundary.jsonl：它们执行的命令里出现控制器目录（每日任务只记密钥、状态库、控制器脚本这些）或改记忆、好感度的 xin 命令时记一条；
+   - integrity.jsonl：网站发现云电脑上的控制器脚本和这一版不一致并已重传时记一条（见 src/xin.js 的 verifyAgent）；
+   - exports/：每天把状态库（含记忆）整份导出一次，留最近 7 份。
+   只记时间、对话和命令开头，不记输出。 */
+const BOUNDARY_F = () => path.join(BASE, 'logs', 'boundary.jsonl'), INTEGRITY_F = () => path.join(BASE, 'logs', 'integrity.jsonl');
+function logLine(file, entry, keep = 500) {
+  try {
+    mk(path.dirname(file));
+    const lines = readText(file).split('\n').filter(Boolean).slice(-(keep - 1)); lines.push(JSON.stringify({ at: Date.now(), ...entry }));
+    const tmp = file + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, lines.join('\n') + '\n', { mode: 0o600 }); fs.renameSync(tmp, file);
+  } catch { /* a diagnostic that cannot be written never breaks the turn */ }
+}
+function recentLines(file, days = 7) {
+  const since = Date.now() - days * 86400e3;
+  return readText(file).split('\n').flatMap(l => { try { const o = JSON.parse(l); return o.at >= since ? [o] : []; } catch { return []; } });
+}
+const SENSITIVE_PATH = /\.xin\/(?:workflow\.sqlite|[a-z-]+\.key|agent\/|push\/|exports\/|logs\/)/;
+export function boundaryKind(meta, ev) {
+  if (!meta || !ev || ev.t !== 'tool') return null;
+  const privileged = meta.agent === 'harness' || meta.agent === 'claude', daily = meta.kind === 'daily';
+  if (!privileged && !daily) return null;
+  const d = String(ev.detail || '').split(BASE + '/').join('~/.xin/');   // the controller directory, wherever it is configured
+  if (SENSITIVE_PATH.test(d)) return 'sensitive';
+  if (daily) return null;   // the daily routine legitimately reads its own list and notes
+  if (/(?:^|[\s;&|(`])xin\s+(?:remember|forget|bond)\b/.test(d)) return 'xin';
+  return /(?:~|\$HOME|\$\{HOME\})\/\.xin\b/.test(d) || /\/\.xin\//.test(d) ? 'dir' : null;
+}
+function boundaryNote(meta, ev) {
+  const kind = boundaryKind(meta, ev);
+  if (kind) logLine(BOUNDARY_F(), { sid: meta.sid, run: meta.run, agent: meta.kind === 'daily' ? 'daily' : meta.agent, kind, cmd: String(ev.detail || '').slice(0, 200) });
+}
+export function exportState(keep = 7) {
+  const dir = path.join(BASE, 'exports'), file = path.join(dir, 'workflow-' + today().replace(/-/g, '') + '.sqlite');
+  if (fs.existsSync(file)) return { skipped: 'exists', file };
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // VACUUM INTO writes a consistent, compact copy without blocking writers for long; the name is fixed, not user input.
+  journal.db.exec("VACUUM INTO '" + file.replace(/'/g, "''") + "'"); fs.chmodSync(file, 0o600);
+  const old = fs.readdirSync(dir).filter(n => /^workflow-\d{8}\.sqlite$/.test(n)).sort().slice(0, -keep);
+  for (const n of old) { try { fs.unlinkSync(path.join(dir, n)); } catch { /* removed concurrently */ } }
+  return { ok: true, file, removed: old.length };
+}
 // 只重试尚未开始工作的 CLI：开始处理后可能长时间不输出，网络超时由 CLI 自己处理，避免重复投递同一轮。
 const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
 function runner(run) {
@@ -554,6 +597,7 @@ function runner(run) {
     const accept = o => {
       if (agentProgress(meta.agent, o)) { got = true; clearTimeout(stallTm); }
       for (const ev of norm(o, state)) {
+        boundaryNote(meta, ev);
         if (ev.t === 'err' && canSwitch()) { state.heldErr = ev; got = true; clearTimeout(stallTm); continue; }
         emit(run, ev); if (ev.t !== 'status') { got = true; clearTimeout(stallTm); }
         if (meta.task && ev.t === 'tool_end' && ev.ok && /(?:^|\W)(?:make|arm-none-eabi-gcc|cmake)(?:\s|$)/.test(ev.detail || '')) {
@@ -689,7 +733,7 @@ function runner(run) {
     const immediate=lockedCall('tasks','front_immediate',{run});
     if(immediate.error){state.failed=true;finish(1,immediate.msg||immediate.error);return;}
     if(immediate.terminal){state.frontReceipt=!immediate.reply;if(immediate.reply&&meta.frontUsage)state.frontUsage=meta.frontUsage;lockedCall(meta.sid,'front_reply',{run,text:immediate.text});finish(0);return;}
-    const context=foregroundContext(sess,run,r=>safeContextEvents(r,events)),input=context.input;
+    const context=foregroundContext(sess,run,r=>safeContextEvents(r,events,'own')),input=context.input;
     journal.write(path.join(BASE,'contexts',meta.sid+'.json'),JSON.stringify(context.checkpoint));
     try {
       if(!meta.handoff){const guide=turnGuidance({sid:meta.sid,text:meta.frontRequest||'',context:meta.context||''});if(guide)input.push({role:'user',content:guide});}
@@ -1109,7 +1153,8 @@ function dispatchLaunches(){
     const meta=readJ(metaF(job.run));if(!meta||meta.ended){journal.finishLaunch(job.run);continue;}
     if(alive(meta.pid,meta.identity)){journal.dispatched(job.run);continue;}
     const own=readJ(sessF(job.sid));
-    const earlier=(own?.runs||[]).filter(r=>r!==job.run).some(r=>{const m=readJ(metaF(r));return m&&!runDone(r)&&alive(m.pid,m.identity);});
+    // Only the latest turns can still be running; a long-lived conversation must not re-read its whole history here.
+    const earlier=(own?.runs||[]).slice(-4).filter(r=>r!==job.run).some(r=>{const m=readJ(metaF(r));return m&&!runDone(r)&&alive(m.pid,m.identity);});
     if(earlier)continue;
     startRunner(job.run);journal.dispatched(job.run);
   }
@@ -1821,6 +1866,10 @@ function bgInfo(all) {
   return lease ? { bg, lease, version } : { bg, version };
 }
 const ops = {
+  // 网站发现控制器脚本被改过并已重传（src/xin.js 的 verifyAgent）：记下来
+  integrity_event(a){const files=(Array.isArray(a.files)?a.files:[]).filter(f=>/^vm-[a-z0-9-]+\.mjs$/.test(f)).slice(0,32);if(files.length)logLine(INTEGRITY_F(),{files});return {ok:true};},
+  // 记忆的可读导出（条目、依据、出处）；整份状态库的每日副本在 exports/
+  memory_export(){return {exportedAt:Date.now(),items:listMemory(),types:MEMORY_TYPES,basis:MEMORY_BASIS};},
   learning_report(a){return reportLearning(a);},
   memory_preferences(){return memoryPreferences();},
   memory_preferences_set(a){return setMemoryPreferences(a);},
@@ -1906,7 +1955,9 @@ const ops = {
         patchRun(r,{stopped:true});journal.defer(()=>signalProcessGroup(current.pid,current.identity,'SIGTERM'));
       }
     } else {
-      const agent = AGENTS.includes(a.agent) ? a.agent : 'harness';
+      // No mode named: the default mode, never the fully privileged one. The retired Claude mode only continues old conversations.
+      if (a.agent === 'claude') return { error: 'retired', msg: 'Claude 旧模式不再新建对话，以前的对话可以接着聊' };
+      const agent = AGENTS.includes(a.agent) ? a.agent : 'codex';
       s = { sid: rid('s'), agent, title: (text || files.map(f => f.name).join('、')).replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
     }
     const ctxLabel = String(a.ctxLabel || '').slice(0, 160);
@@ -1951,6 +2002,7 @@ const ops = {
     rememberCallback(a._callback);
     try { pruneLogs(); } catch { /* 清不了不影响每日任务 */ }
     try { tickTasks(); } catch { /* 收拾不了不影响每日任务 */ }
+    try { exportState(); } catch { /* 导不出来不影响每日任务，明天再试 */ }
     const list = readText(DAILY_FILE()).trim();
     if (!list) return { skipped: 'empty' };
     const done = readJ(DAILY_DONE());
@@ -2172,6 +2224,8 @@ const ops = {
       for (const t of mine) if (t.parent && !(t.parent in titles)) titles[t.parent] = (readJ(sessF(t.parent)) || {}).title || '';
       out.titles = titles;
       out.daily = { last: readJ(DAILY_LAST()) || null, done: readJ(DAILY_DONE()) || null, today: today() };
+      // 最近 7 天：完全放权的对话碰过控制器目录几次、控制器脚本被改过并修复几次（工作台只在不为 0 时提示）
+      out.watch = { boundary: recentLines(BOUNDARY_F()).length, integrity: recentLines(INTEGRITY_F()).length };
     }
     return out;
   },
@@ -2460,22 +2514,36 @@ function companionCmd(argv, run) {
   }
   if (act === 'remember' || act === 'forget') {
     const meta = live ? readJ(metaF(run)) : null;
+    // Memory changes belong to a real turn of Xiaoxin. A bare shell (no run, or a made-up one) cannot write or erase it.
+    if (!meta) return { code: 1, text: '现在不在小芯的对话里，不能改记忆。' };
     // Who is remembering decides how much it counts: the user's own chat, the daily routine, or a background worker.
-    const source = meta && meta.kind === 'daily' ? 'daily' : meta && meta.task ? 'worker' : 'chat';
+    const source = meta.kind === 'daily' ? 'daily' : meta.task ? 'worker' : 'chat';
     if (act === 'forget') {
       const r = forgetByKeyword(arg, source);
       return r.ok ? { code: 0, text: '忘掉了：' + r.text } : { code: r.error === 'empty' ? 2 : 1, text: r.error === 'empty' ? '用法：xin forget 关键词' : r.msg };
     }
+    // A completion event carries a worker's output, never the owner's words: nothing about the owner is learned from it.
+    if (meta.kind === 'handoff') return { code: 1, text: '这一轮是后台结果的汇报，里面没有兄弟的原话，不记个人记忆。' };
     const o = { type: source === 'daily' ? 'procedure' : 'profile', basis: 'observed' }, words = [];
     for (let i = 1; i < argv.length; i++) {
-      if ((argv[i] === '--type' || argv[i] === '--basis') && argv[i + 1]) o[argv[i].slice(2)] = argv[++i]; else words.push(argv[i]);
+      if (['--type', '--basis', '--quote'].includes(argv[i]) && argv[i + 1]) o[argv[i].slice(2)] = argv[++i]; else words.push(argv[i]);
     }
-    const quote = meta && source === 'chat' ? ((events(run).find(e => e.t === 'user') || {}).text || '') : '';
-    const r = addMemory({ content: words.join(' '), type: o.type, basis: o.basis, source, evidence: meta ? { sid: meta.sid, run, quote } : null });
-    if (r.error) return { code: r.error === 'empty' ? 2 : 1, text: r.error === 'empty' ? '用法：xin remember [--basis stated|observed|inferred] [--type profile|learning|project|procedure|self] 一句话' : r.msg };
+    const content = words.join(' ');
+    let quote = '';
+    if (source === 'chat') {
+      // "The owner said so" has to be shown, not claimed: the quote (or the statement itself) must appear verbatim in
+      // what the owner wrote this turn. Otherwise it is kept as a candidate, exactly like an observation.
+      const flat = t => String(t || '').replace(/\s+/g, ' ').trim();
+      const said = events(run).filter(e => e.t === 'user').map(e => String(e.text || '')).join('\n'), cited = flat(o.quote || content);
+      const shown = cited.length >= 2 && flat(said).includes(cited);
+      if (o.basis === 'stated' && !shown) o.basis = 'observed';
+      quote = shown ? cited : said;
+    }
+    const r = addMemory({ content, type: o.type, basis: o.basis, source, evidence: { sid: meta.sid, run, quote } });
+    if (r.error) return { code: r.error === 'empty' ? 2 : 1, text: r.error === 'empty' ? '用法：xin remember [--basis stated|observed|inferred] [--type profile|learning|project|procedure|self] [--quote 用户原话片段] 一句话' : r.msg };
     const it = r.item;
     if (live && it.status === 'active') emit(run, { t: 'mem', text: it.content });
-    return { code: 0, text: it.status === 'active' ? '记住了：' + it.content : it.status === 'private' ? '这是个人敏感的事，只记成隐私、不主动用：' + it.content : '先记成待确认，用户确认后才当真：' + it.content };
+    return { code: 0, text: it.status === 'active' ? '记住了：' + it.content : it.status === 'private' ? '这是个人敏感的事，只记成隐私、不主动用：' + it.content : '先记成候选，以后反复出现才当真：' + it.content };
   }
   if (!ACTS[act]) return null;
   if (!live) return { code: 1, text: '现在没有在和网页聊天，小芯看不到' };

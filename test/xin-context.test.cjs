@@ -73,3 +73,30 @@ test('保留控制器已经交付的真实结果，但不读回内部完成事�
  return {ctx:c.safeContextEvents(a.run),found:c.recallAll('blink').matches,internal:c.recallAll('内部完成').matches};`);
  assert.equal(r.ctx.length,1);assert.equal(r.found.length,1);assert.equal(r.internal.length,0);
 });
+
+test('本对话的上下文不再整轮丢：带哈希、预览链接、心情或花销的那一轮都还在，只把真凭据打码；忘掉的仍然不带；跨对话检索照旧从严',t=>{
+ const run=fixture(t),r=run(`const sid='sownctx001',runs=[],say=[['我提交是 3f2a9c1e7b4d5a6f8091a2b3c4d5e6f708192a3b 这个','我看了这次提交'],
+  ['今天有点焦虑，再讲一遍 CNF 是什么','CNF 是配置位'],['帮我做个页面','我画好了。[打开预览](/xin/preview.html?id=0123456789abcdef0123456789abcdef)'],
+  ['网关密码是 abc12345，key 是 sk-abcdefgh12345678','我不会保存它'],['我喜欢熬夜写代码','好的']];
+ say.forEach(([u,a],i)=>{const id='rownctx00'+i;runs.push(id);b.writeJ(path.join(b.BASE,'runs',id+'.json'),{run:id,sid,agent:'codex',started:1,ended:2});
+  fs.writeFileSync(path.join(b.BASE,'runs',id+'.jsonl'),JSON.stringify({t:'user',text:u,at:Date.now()})+'\\n'+JSON.stringify({t:'text',text:a,at:Date.now()})+'\\n');});
+ b.writeJ(path.join(b.BASE,'sessions',sid+'.json'),{sid,agent:'codex',title:'聊天',runs});
+ const it=m.addMemory({content:'喜欢熬夜写代码',basis:'stated',evidence:{sid,run:runs[4],quote:'我喜欢熬夜写代码'}}).item;m.forgetMemory(it.id);
+ const own=runs.map(id=>c.safeContextEvents(id,undefined,'own').map(e=>e.text)),recall=runs.map(id=>c.safeContextEvents(id).length);
+ return {own,recall,redact:c.redactSecrets('口令: hunter22 卡号 6222021234567890123 提交 3f2a9c1e7b4d5a6f8091a2b3c4d5e6f708192a3b')};`);
+ assert.deepEqual(r.own[0],['我提交是 3f2a9c1e7b4d5a6f8091a2b3c4d5e6f708192a3b 这个','我看了这次提交']);
+ assert.equal(r.own[1][0],'今天有点焦虑，再讲一遍 CNF 是什么');
+ assert.match(r.own[2][1],/preview\.html\?id=0123456789abcdef0123456789abcdef/);
+ assert.equal(r.own[3][0],'网关密码是 （已隐藏），key 是 （已隐藏）');assert.equal(r.own[3][1],'我不会保存它');
+ assert.deepEqual(r.own[4],[],'忘掉的那一轮不回来');
+ assert.deepEqual(r.recall,[0,0,0,0,0],'给别的对话检索用的索引仍然整轮排除');
+ assert.equal(r.redact,'口令: （已隐藏） 卡号 （已隐藏） 提交 3f2a9c1e7b4d5a6f8091a2b3c4d5e6f708192a3b');
+});
+test('检索索引按记忆修订号增量同步：记忆没变时不重读已索引的轮次，变了才重新核对',t=>{
+ const run=fixture(t),r=run(`const a=chat(1,'定时器输入捕获遇到上升沿');c.syncRecall();
+ const metaFile=path.join(b.BASE,'runs',a.run+'.json'),saved=fs.readFileSync(metaFile,'utf8');
+ fs.writeFileSync(metaFile,'{broken');c.syncRecall();const kept=c.recallAll('定时器',8,false).matches.length;
+ fs.writeFileSync(metaFile,saved);const it=m.addMemory({content:'只想私下说的事',source:'user',evidence:{sid:a.sid,run:a.run,quote:'定时器输入捕获遇到上升沿'}}).item;m.updateMemory(it.id,{private:true});
+ return {kept,after:c.recallAll('定时器').matches.length};`);
+ assert.equal(r.kept,1,'没变的轮次不再读它的记录');assert.equal(r.after,0,'成了隐私记忆出处的轮次随修订号变化退出索引');
+});

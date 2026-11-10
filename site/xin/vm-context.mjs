@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {BASE,journal,readJ,readText,okId} from './vm-base.mjs';
-import {memoryDb,memoryBlocked,memoryBlockedText,memorySensitivity} from './vm-memory.mjs';
+import {memoryDb,memoryMeta,setMemoryMeta,memoryBlocked,memoryBlockedText,memorySensitivity} from './vm-memory.mjs';
 import {learningGuidance} from './vm-learning.mjs';
 
 const sess=sid=>path.join(BASE,'sessions',sid+'.json'),meta=run=>path.join(BASE,'runs',run+'.json'),raw=run=>path.join(BASE,'runs',run+'.jsonl');
@@ -15,27 +15,45 @@ function schema(){
   return d;
 }
 function events(run){return readText(raw(run)).split('\n').flatMap(line=>{try{const e=JSON.parse(line);return e.t==='user'||e.t==='text'?[e]:[];}catch{return [];}});}
-export function safeContextEvents(run, read=events){
+// Only spans that are themselves a credential or an identity number. Commit hashes, UUIDs, preview ids and long
+// identifiers are ordinary conversation, not secrets.
+const SECRET_SPANS=[[/((?:密码|口令|验证码|动态码|校验码|\bpassword\b|\bpasswd\b|\bpin\b)\s*(?:是|为|:|：|=)?\s*)[A-Za-z0-9!@#$%^&*._-]{4,}/gi,'$1（已隐藏）'],
+  [/\b(?:sk|ibk|ghp|gho|github_pat|xox[abp]|AKIA)[-_A-Za-z0-9]{8,}/g,'（已隐藏）'],[/(?<!\d)\d{17}[\dXx](?!\d)/g,'（已隐藏）'],[/(?<!\d)\d{16,19}(?!\d)/g,'（已隐藏）']];
+export function redactSecrets(text){let s=String(text||'');for(const [re,to] of SECRET_SPANS)s=s.replace(re,to);return s;}
+// scope 'recall': what may be indexed for other conversations — a turn with anything sensitive stays out entirely.
+// scope 'own': the same conversation's context for the next turn. The owner just said these words here, so the turn
+// is kept and only credential-like spans are masked; dropping it made the foreground forget whole turns.
+// Deliberately forgotten content is excluded in both scopes.
+export function safeContextEvents(run, read=events, scope='recall'){
   const m=readJ(meta(run));if(!m||m.agent!=='codex'||!normal(readJ(sess(m.sid)))||m.task||m.kind&&m.kind!=='handoff'||memoryBlocked('',{sid:m.sid,run}))return [];
-  const d=memoryDb();
-  if(d.prepare("SELECT 1 FROM memory_evidence e JOIN memory_items i ON i.id=e.item WHERE e.sid=? AND e.run=? AND i.status='private' LIMIT 1").get(m.sid,run))return [];
+  const own=scope==='own',d=memoryDb();
+  if(!own&&d.prepare("SELECT 1 FROM memory_evidence e JOIN memory_items i ON i.id=e.item WHERE e.sid=? AND e.run=? AND i.status='private' LIMIT 1").get(m.sid,run))return [];
   const es=read(run).filter(e=>m.kind==='handoff'?e.t==='text'&&e.taskResult:e.t==='user'||e.t==='text');
-  if(es.some(e=>memorySensitivity(e.text||'')||memoryBlockedText(e.text||'',Number(e.at)||m.started||0)))return [];
+  if(es.some(e=>memoryBlockedText(e.text||'',Number(e.at)||m.started||0)))return [];
+  if(own)return es.map(e=>({...e,text:redactSecrets(e.text)}));
+  if(es.some(e=>memorySensitivity(e.text||'')))return [];
   return es;
 }
 export function syncRecall(){
   const d=schema(),valid=new Set();let names=[];try{names=fs.readdirSync(path.join(BASE,'sessions'));}catch{}
   return journal.atomic(()=>{
+    const revision=memoryMeta('revision')||'',unchanged=memoryMeta('recall_revision')===revision;
+    const seen=new Map(d.prepare('SELECT run,sid,stamp FROM recall_sources').all().map(r=>[r.run,r]));
     for(const name of names){
       if(!/^s[0-9a-z]{6,24}\.json$/.test(name))continue;const s=readJ(path.join(BASE,'sessions',name));if(!normal(s))continue;
       for(const run of s.runs||[]){
-        if(!okId(run,'r'))continue;const m=readJ(meta(run));
-        if(!m?.ended||m.sid!==s.sid||m.agent!=='codex'||m.task||m.kind&&m.kind!=='handoff')continue;
+        if(!okId(run,'r'))continue;
         let st;try{st=fs.statSync(raw(run));}catch{continue;}
+        // Forgotten, blocked and private state only changes together with the memory revision. While it is unchanged,
+        // an indexed run whose file and title are unchanged is skipped without reading its meta or querying memory.
+        const file=st.size+':'+st.mtimeMs+':'+(s.title||''),known=seen.get(run);
+        if(unchanged&&known?.sid===s.sid&&(known.stamp===file+':'||known.stamp===file+':blocked')){valid.add(run);continue;}
+        const m=readJ(meta(run));
+        if(!m?.ended||m.sid!==s.sid||m.agent!=='codex'||m.task||m.kind&&m.kind!=='handoff')continue;
         valid.add(run);
         const forbidden=memoryBlocked('',{sid:s.sid,run})||d.prepare("SELECT 1 FROM memory_evidence e JOIN memory_items i ON i.id=e.item WHERE e.run=? AND i.status='private' LIMIT 1").get(run);
-        const stamp=st.size+':'+st.mtimeMs+':'+(s.title||'')+':'+(forbidden?'blocked':'');
-        if(d.prepare('SELECT stamp FROM recall_sources WHERE run=?').get(run)?.stamp===stamp)continue;
+        const stamp=file+':'+(forbidden?'blocked':'');
+        if(known?.stamp===stamp&&known.sid===s.sid)continue;
         d.prepare('DELETE FROM recall_fts WHERE run=?').run(run);
         const es=forbidden?[]:safeContextEvents(run),title=memorySensitivity(s.title||'')?'一段对话':String(s.title||'一段对话').slice(0,80);
         for(const [i,e] of es.entries()){
@@ -45,7 +63,8 @@ export function syncRecall(){
         d.prepare('INSERT INTO recall_sources(run,sid,stamp) VALUES(?,?,?) ON CONFLICT(run) DO UPDATE SET stamp=excluded.stamp,sid=excluded.sid').run(run,s.sid,stamp);
       }
     }
-    for(const r of d.prepare('SELECT run FROM recall_sources').all())if(!valid.has(r.run)){d.prepare('DELETE FROM recall_fts WHERE run=?').run(r.run);d.prepare('DELETE FROM recall_sources WHERE run=?').run(r.run);}
+    for(const r of seen.values())if(!valid.has(r.run)){d.prepare('DELETE FROM recall_fts WHERE run=?').run(r.run);d.prepare('DELETE FROM recall_sources WHERE run=?').run(r.run);}
+    if(!unchanged)setMemoryMeta('recall_revision',revision);
   });
 }
 export function recallAll(query,limit=8,sync=true){

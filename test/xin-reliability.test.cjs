@@ -88,6 +88,12 @@ function fixture(t, extra = {}) {
     assert.equal(r.status, 0, r.stderr || String(r.error || ''));
     return JSON.parse(r.stdout);
   };
+  // The retired Claude mode takes no new conversations; an existing one continues exactly as before.
+  const claudeSend = text => {
+    const sid = 'sclaudeold1';
+    fs.writeFileSync(path.join(env.XIN_HOME, 'sessions', sid + '.json'), JSON.stringify({ sid, agent: 'claude', title: 'old', agentSid: require('node:crypto').randomUUID(), started: false, runs: [], created: Date.now(), updated: Date.now() }));
+    return op('send', { sid, text });
+  };
   const asyncOp = (name, args) => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [AGENT, name], { env });
     let out = '', err = '';
@@ -122,7 +128,7 @@ function fixture(t, extra = {}) {
     spawn(process.execPath,[AGENT,'run',run],{env,detached:true,stdio:'ignore'}).unref();
     return {run,sid:SID};
   };
-  return { dir, env, session, op, asyncOp, wait, seed, barrier, cliSend };
+  return { dir, env, session, op, asyncOp, wait, seed, barrier, cliSend, claudeSend };
 }
 
 function oldLog(env, agent, id = ID) {
@@ -143,7 +149,7 @@ test('清理不碰独立 codex exec / Claude SDK 的旧记录，坏的归属登�
 });
 
 for (const agent of ['codex', 'claude']) test(agent + '：网页新会话登记归属，仍关联的保留，已失联的旧记录才清理', async t => {
-  const f = fixture(t), sent = agent==='codex' ? f.cliSend() : f.op('send', { agent, text: 'test ownership' }); await f.wait(sent.run);
+  const f = fixture(t), sent = agent==='codex' ? f.cliSend() : f.claudeSend('test ownership'); await f.wait(sent.run);
   const sessionFile = path.join(f.env.XIN_HOME, 'sessions', sent.sid + '.json');
   const s = JSON.parse(fs.readFileSync(sessionFile, 'utf8')), marker = path.join(f.env.XIN_HOME, 'agent-sessions', agent + '-' + s.agentSid + '.json');
   assert.deepEqual(JSON.parse(fs.readFileSync(marker, 'utf8')), { agent, id: s.agentSid });
@@ -205,7 +211,7 @@ test('锁持有进程被杀后由系统释放，后续发送不用人工删除�
 
 for (const agent of ['codex', 'claude']) test(agent + ' 思考进展持续超过初始等待时间，不会误重连', async t => {
   const f = fixture(t, { XIN_TEST_MODE: 'thinking', XIN_STALL_MS: '800' });
-  const r = agent==='codex' ? f.cliSend() : f.op('send', { agent, text: 'think' }), events = await f.wait(r.run);
+  const r = agent==='codex' ? f.cliSend() : f.claudeSend('think'), events = await f.wait(r.run);
   assert.equal(fs.readFileSync(path.join(f.dir, 'launches'), 'utf8').trim().split('\n').length, 1);
   assert.equal(events.some(e => e.t === 'status' && /重新连/.test(e.text)), false);
   assert.equal(events.find(e => e.t === 'done').ok, true);
@@ -213,7 +219,7 @@ for (const agent of ['codex', 'claude']) test(agent + ' 思考进展持续超过
 
 for (const agent of ['codex', 'claude']) test(agent + ' 已开始处理后长时间不输出事件，也不会被网页重放任务', async t => {
   const f = fixture(t, { XIN_TEST_MODE: 'silent-thinking', XIN_STALL_MS: '800' });
-  const r = agent==='codex' ? f.cliSend() : f.op('send', { agent, text: 'silent reasoning' }), events = await f.wait(r.run);
+  const r = agent==='codex' ? f.cliSend() : f.claudeSend('silent reasoning'), events = await f.wait(r.run);
   assert.equal(fs.readFileSync(path.join(f.dir, 'launches'), 'utf8').trim().split('\n').length, 1);
   assert.equal(events.some(e => e.t === 'status' && /重新连/.test(e.text)), false);
   assert.equal(events.find(e => e.t === 'done').ok, true);

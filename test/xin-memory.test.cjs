@@ -147,7 +147,7 @@ test('网页上的记忆页：列出（带出处和对话名）、加、确认�
   const run = 'rmemchat01'; fs.writeFileSync(path.join(xin, 'runs', run + '.json'), JSON.stringify({ run, sid: 'smemchat01', agent: 'codex', started: Date.now() }));
   fs.writeFileSync(path.join(xin, 'runs', run + '.jsonl'), JSON.stringify({ t: 'user', text: '我还是先看波形吧' }) + '\n');
   const r = spawnSync(process.execPath, [AGENT, 'xin', 'remember', '--basis', 'observed', '好像喜欢先看波形'], { env: { ...process.env, XIN_HOME: xin, XIN_RUN: run }, encoding: 'utf8' });
-  assert.match(r.stdout, /待确认/);
+  assert.match(r.stdout, /候选/);
   let list = op('memory_list');
   const obs = list.items.find(i => i.content === '好像喜欢先看波形');
   assert.equal(obs.status, 'pending'); assert.equal(obs.evidence[0].quote, '我还是先看波形吧'); assert.equal(list.titles.smemchat01, '聊 PWM');
@@ -167,7 +167,7 @@ test('后台任务的「记住」进待确认的项目记录；天启里不能�
   const run = 'rmemtask01';
   fs.writeFileSync(path.join(xin, 'runs', run + '.json'), JSON.stringify({ run, sid: 'smemtask01', agent: 'codex', task: true, kind: 'task', started: Date.now() }));
   fs.writeFileSync(path.join(xin, 'runs', run + '.jsonl'), '');
-  assert.match(xinCmd(run, 'remember', '--type', 'profile', '--basis', 'stated', '用户喜欢蓝色').stdout, /待确认/);
+  assert.match(xinCmd(run, 'remember', '--type', 'profile', '--basis', 'stated', '用户喜欢蓝色').stdout, /候选/);
   const it = op('memory_list').items[0];
   assert.deepEqual([it.type, it.status, it.source], ['project', 'pending', 'worker']);
   const tq = 'rmemtq0001';
@@ -188,4 +188,44 @@ test('首次建记忆表的事务回滚后，同一进程仍能重新初始化�
       oldQuery:journal.db.prepare("SELECT content FROM memory_items WHERE status IN ('active','pending','private')").all().map(x=>x.content)};`);
   assert.equal(r.status,'active');assert.deepEqual(r.content,['回滚之后仍能正常记忆']);assert.deepEqual(r.oldQuery,r.content);
   for (const table of ['memory_items','memory_evidence','memory_log','memory_forgotten','memory_meta','memory_versions','memory_replacements']) assert.ok(r.tables.includes(table));
+});
+
+test('小芯自己记：「你明确说的」要在本轮原话里找得到，找不到只当候选；汇报后台结果的那一轮和对话之外都不能改记忆', t => {
+  const { op, xin, xinCmd } = home(t);
+  const chat = (run, text, extra = {}) => {
+    fs.writeFileSync(path.join(xin, 'runs', run + '.json'), JSON.stringify({ run, sid: 'smemself01', agent: 'codex', started: Date.now(), ...extra }));
+    fs.writeFileSync(path.join(xin, 'runs', run + '.jsonl'), text == null ? '' : JSON.stringify({ t: 'user', text }) + '\n');
+  };
+  fs.writeFileSync(path.join(xin, 'sessions', 'smemself01.json'), JSON.stringify({ sid: 'smemself01', agent: 'codex', title: '聊天', runs: [] }));
+  chat('rmemself01', '那开漏呢');
+  // The model claims the owner said something that is nowhere in this turn.
+  assert.match(xinCmd('rmemself01', 'remember', '--basis', 'stated', '兄弟是做电机控制的工程师').stdout, /候选/);
+  assert.match(xinCmd('rmemself01', 'remember', '--basis', 'stated', '--quote', '我是工程师', '兄弟是工程师').stdout, /候选/, '编出来的引文也不算');
+  chat('rmemself02', '以后讲代码都先给结论，\n  再讲细节');
+  assert.match(xinCmd('rmemself02', 'remember', '--basis', 'stated', '--quote', '讲代码都先给结论， 再讲细节', '讲代码先给结论再讲细节').stdout, /记住了/, '引文只忽略空白差异');
+  chat('rmemself03', '我叫小李');
+  assert.match(xinCmd('rmemself03', 'remember', '--basis', 'stated', '我叫小李').stdout, /记住了/, '没给引文时，内容本身就是原话也算');
+  const items = Object.fromEntries(op('memory_list').items.map(i => [i.content, [i.status, i.basis, i.evidence[0].quote]]));
+  assert.deepEqual(items['兄弟是做电机控制的工程师'], ['pending', 'observed', '那开漏呢']);
+  assert.deepEqual(items['兄弟是工程师'].slice(0, 2), ['pending', 'observed']);
+  assert.deepEqual(items['讲代码先给结论再讲细节'], ['active', 'stated', '讲代码都先给结论， 再讲细节']);
+  assert.deepEqual(items['我叫小李'], ['active', 'stated', '我叫小李']);
+  // A completion event carries a worker's output, not the owner's words.
+  chat('rmemself04', null, { kind: 'handoff' });
+  const h = xinCmd('rmemself04', 'remember', '--basis', 'stated', '兄弟喜欢紫色');
+  assert.equal(h.status, 1); assert.match(h.stdout, /不记个人记忆/);
+  // Outside a turn of Xiaoxin (no run, or a run that does not exist) memory can be neither written nor erased.
+  for (const run of ['', 'rnotarun001']) for (const argv of [['remember', '--basis', 'stated', '随便写一条'], ['forget', '小李']]) {
+    const r = spawnSync(process.execPath, [AGENT, 'xin', ...argv], { env: { ...process.env, XIN_HOME: xin, XIN_WORK: path.join(xin, '../work'), XIN_RUN: run }, encoding: 'utf8' });
+    assert.equal(r.status, 1); assert.match(r.stdout, /不在小芯的对话里/);
+  }
+  assert.equal(op('memory_list').items.length, 4);
+});
+
+test('每日任务的设定只带它自己的做法，不带站长的画像', t => {
+  const { js } = home(t);
+  const [front, daily] = js(`m.addMemory({content:'回答先给结论',source:'user'});m.addMemory({content:'在做电机控制',source:'user',type:'project'});
+    m.addMemory({content:'签到先点头像',source:'daily',type:'procedure'});return [m.coreMemory('front'),m.coreMemory('daily')];`);
+  assert.match(front, /回答先给结论/); assert.match(front, /在做电机控制/);
+  assert.match(daily, /签到先点头像/); assert.doesNotMatch(daily, /回答先给结论|在做电机控制/);
 });
