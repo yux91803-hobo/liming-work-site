@@ -42,3 +42,17 @@ test('另一连接正持有写锁时打开状态库：等锁释放后初始化�
  const code=await new Promise(ok=>child.on('close',ok));
  assert.equal(code,0,err);assert.equal(out.trim(),'ready');
 });
+test('别的进程占着写锁时 recover 不等待：没有要补写的就不开写事务',async t=>{
+ const {spawn}=require('node:child_process'),{platformTimeout}=require('./helpers/timeout.cjs');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-state-idle-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const {StateJournal}=await import(moduleUrl);const init=new StateJournal(root);init.recover();init.close();
+ const holder=spawn(process.execPath,['-e',`const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(${JSON.stringify(root+'/workflow.sqlite')});d.exec('BEGIN IMMEDIATE');d.prepare("INSERT INTO commands(id,digest,result,at) VALUES('x','d','{}',0)").run();console.log('holding');setTimeout(()=>{d.exec('ROLLBACK');process.exit(0);},${platformTimeout(3000)});`],{stdio:['ignore','pipe','inherit']});
+ await new Promise(ok=>holder.stdout.once('data',ok));t.after(()=>holder.kill());
+ const j=new StateJournal(root);t.after(()=>j.close());
+ const t0=Date.now();j.recover();assert.ok(Date.now()-t0<1000,'recover 等了 '+(Date.now()-t0)+' ms');
+});
+test('有提交了但没投影的行时 recover 照样补写',async t=>{
+ const {root,j}=await fixture(t);j.recover();
+ j.db.prepare("INSERT INTO documents(name,body,dirty) VALUES('sessions/sdirty001.json','{\"sid\":\"sdirty001\"}',1)").run();
+ j.recover();assert.equal(JSON.parse(fs.readFileSync(root+'/sessions/sdirty001.json')).sid,'sdirty001');assert.equal(j.db.prepare("SELECT dirty FROM documents WHERE name='sessions/sdirty001.json'").get().dirty,0);
+});
