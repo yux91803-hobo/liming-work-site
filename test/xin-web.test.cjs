@@ -67,7 +67,7 @@ test('预览快照绑定已检查 HTML，临时目录清理和修改原稿不影
  assert.throws(()=>f.r.publishWebPreview(f.task,f.control,{ok:false}),/浏览器检查/);
  const preview=f.r.publishWebPreview(f.task,f.control,{ok:true,digest:m.digest,screenshot:shot,viewports:[{width:1280,checks:1},{width:390,checks:1}]}),a=f.r.previewAsset(f.control,{id:preview.id});assert.equal(fs.readFileSync(a.real,'utf8'),html);
  fs.appendFileSync(f.task.workspace.work+'/index.html','<!-- changed -->');assert.throws(()=>f.r.publishWebPreview(f.task,f.control,{ok:true,digest:m.digest}),/最终修改/);
- assert.equal(f.r.cleanupTaskTemporary({...f.task,status:'done'}),true);assert.equal(fs.readFileSync(a.real,'utf8'),html);assert.match(preview.url,/^\/xin\/preview.html\?id=[a-f0-9]{32}$/);
+ assert.equal(f.r.cleanupTaskTemporary({...f.task,status:'done'},f.control),true);assert.equal(fs.readFileSync(a.real,'utf8'),html);assert.match(preview.url,/^\/xin\/preview.html\?id=[a-f0-9]{32}$/);
  assert.ok(f.r.previewAsset(f.control,{id:'../escape'}).error);assert.ok(f.r.previewAsset(f.control,{id:preview.id,file:'manifest.json'}).error);
 });
 test('待写回网页收到允许或拒绝后都清理 tmp；允许后的快照继续可读',async t=>{

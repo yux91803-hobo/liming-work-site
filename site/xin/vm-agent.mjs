@@ -957,6 +957,7 @@ function pruneLogs(minAge = PRUNE_AGE) {
   }
   // 30 天前的写回备份、7 天前已送达的推送条目（返回结果只把字节数算进 bytes，字段不变）
   try { res.bytes += runtime.pruneBackups(BASE).bytes; } catch { /* 下次 */ }
+  try { res.bytes += runtime.pruneTaskCopies(BASE, listTasks()).bytes; } catch { /* 下次 */ }
   try { pruneNotices(); } catch { /* 下次 */ }
   return res;
 }
@@ -1177,6 +1178,7 @@ function claudeUsage(id, win) {
 }
 export function sessionUsage(s) {
   try {
+    if (isTask(s) && ['done', 'failed', 'stopped'].includes(s.status) && s.usage) return s.usage;
     if(isTask(s)&&s.antigravityConversation){const b=readJ(path.join(BASE,'budgets',s.sid+'.json'));if(b?.total)return {input:b.input||0,output:b.output||0,cached:b.cached||0,total:b.total,ctx:s.frontUsage?.ctx||0,win:1000000};}
     if (s?.agent === 'codex' && s.frontUsage) return s.frontUsage;
     if (!s || !okAgentSid(s.agent, s.agentSid) || !s.started) return null;
@@ -1289,7 +1291,7 @@ const isBackground = t => ['queued','running','stopping'].includes(t.status) || 
 const isFinished = t => t.status === 'done' || t.status === 'failed' || t.status === 'stopped';
 function cleanupFinishedTask(t){
   if(!isFinished(t))return;
-  try{t.temporaryCleaned=runtime.cleanupTaskTemporary(t);}
+  try{t.temporaryCleaned=runtime.cleanupTaskTemporary(t,BASE);}
   catch(e){t.cleanupError=e.message;if(t.result)t.result.text+='\n临时文件未能清理：'+e.message;}
 }
 function occupiesTask(t) {
@@ -1615,6 +1617,8 @@ function taskFinish(a) {
     if (!a.stopped) notify = taskPush(t, (ok ? '我弄好了：' : '我没做成：') + t.title, t.result.text);
   }
   t.finishedRun = a.run;
+  // 做完时记下用量：副本按保留期删掉以后，过程页照样显示这个任务用了多少
+  if (isFinished(t)) { const fresh = sessionUsage({ ...t, usage: null }); if (fresh) t.usage = fresh; }
   cleanupFinishedTask(t);
   if (t.dailyDate && isFinished(t)) dailyDone(a.run, { sid: t.sid, dailyDate: t.dailyDate }, t.status === 'done');
   saveTask(t);

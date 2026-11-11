@@ -567,9 +567,9 @@ test('前台对 ask 的回复用 tell 续接同一工作，不重复 new；跨�
 test('只清理本任务私有 tmp；等待期间保留，项目输出与其它目录不碰',async t=>{
   const f=fixture(t),r=await load();f.task.workspace=r.prepareWorkspace(f.task,f.control);
   const tmp=f.task.workspace.tmp;fs.writeFileSync(path.join(tmp,'secret'),'fixture');fs.writeFileSync(path.join(f.task.workspace.work,'output.txt'),'keep');
-  assert.equal(r.cleanupTaskTemporary({...f.task,status:'waiting'}),false);assert.ok(fs.existsSync(path.join(tmp,'secret')));
-  assert.equal(r.cleanupTaskTemporary({...f.task,status:'done'}),true);assert.deepEqual(fs.readdirSync(tmp),[]);assert.ok(fs.existsSync(path.join(f.task.workspace.work,'output.txt')));
-  assert.throws(()=>r.cleanupTaskTemporary({...f.task,status:'done',workspace:{...f.task.workspace,tmp:f.root}}),/归属/);
+  assert.equal(r.cleanupTaskTemporary({...f.task,status:'waiting'},f.control),false);assert.ok(fs.existsSync(path.join(tmp,'secret')));
+  assert.equal(r.cleanupTaskTemporary({...f.task,status:'done'},f.control),true);assert.deepEqual(fs.readdirSync(tmp),[]);assert.ok(fs.existsSync(path.join(f.task.workspace.work,'output.txt')));
+  assert.throws(()=>r.cleanupTaskTemporary({...f.task,status:'done',workspace:{...f.task.workspace,tmp:f.root}},f.control),/归属/);
 });
 test('ended 先可见时，轮询在 done 行落地前不算读完，随后仍能取到助手正文',async t=>{
   const f=fixture(t),sid='spollgap001',run='rpollgap0001';
@@ -594,4 +594,30 @@ test('真实完成推送以第一人称给用户，内部模型记录仍保留',
   const out=f.call('task_finish',{sid:f.task.sid,run:'rruntime001',ok:true,model:'glm-5.3'});
   assert.equal(out.notify.title,'我弄好了：画 SVG');assert.equal(out.notify.body,'我画好了。');
   assert.equal(f.read().actualModel,'glm-5.3');
+});
+
+test('新副本放在控制器旁边的 -tasks 目录，不受系统临时目录清理影响', async t => {
+  const f = fixture(t), r = await load();
+  fs.writeFileSync(path.join(f.task.dir, 'main.c'), 'int main(){}');
+  assert.equal(r.taskRoot(f.control), path.join(f.root, 'control-tasks'));
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  assert.ok(f.task.workspace.work.startsWith(r.taskRoot(f.control) + path.sep), f.task.workspace.work);
+  assert.equal(fs.statSync(path.dirname(f.task.workspace.work)).mode & 0o777, 0o700);
+  f.task.status = 'done';
+  assert.equal(r.cleanupTaskTemporary(f.task, f.control), true);
+});
+
+test('保留期：只删做完且超过 7 天的副本；没做成、等确认的留着；软链接不跟', async t => {
+  const f = fixture(t), r = await load(), now = Date.now(), day = 86400e3;
+  fs.writeFileSync(path.join(f.task.dir, 'main.c'), 'int main(){}');
+  const make = (sid, status, endedAt) => { const x = { ...f.task, sid, status, endedAt }; x.workspace = r.prepareWorkspace(x, f.control); return x; };
+  const tasks = [make('soldone0001', 'done', now - 8 * day), make('snewdone001', 'done', now - day), make('soldfail001', 'failed', now - 30 * day), make('soldwait001', 'waiting', now - 30 * day)];
+  const outside = path.join(f.root, 'outside'); fs.mkdirSync(outside); fs.writeFileSync(path.join(outside, 'keep.txt'), 'keep');
+  fs.symlinkSync(outside, path.join(r.taskRoot(f.control), 'xin-task-slinkdone01'));
+  tasks.push({ sid: 'slinkdone01', status: 'done', endedAt: now - 9 * day });
+  const res = r.pruneTaskCopies(f.control, tasks, now);
+  assert.equal(res.removed, 1);
+  const there = sid => fs.existsSync(path.join(r.taskRoot(f.control), 'xin-task-' + sid));
+  assert.deepEqual(['soldone0001', 'snewdone001', 'soldfail001', 'soldwait001'].map(there), [false, true, true, true]);
+  assert.equal(fs.readFileSync(path.join(outside, 'keep.txt'), 'utf8'), 'keep');
 });

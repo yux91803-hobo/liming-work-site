@@ -31,11 +31,18 @@ export function inventory(root) {
   walk(root); return out;
 }
 
+// 任务副本放在控制器自己的目录（XIN_HOME 的同级 <名字>-tasks，正式云电脑上是 ~/.xin-tasks）：以前用 os.tmpdir()，
+// 正式云电脑上是 /data/tmp，InstaBox 会删其中 10 天没用的文件，副本缺文件时写回会误报「将删除原文件」。
+// 不放在 XIN_HOME 里（后台的权限配置拒绝它），也不放在 WORK 里（会出现在「小芯的文件」里、和项目目录重叠）。
+export function taskRoot(controller) { return path.join(path.dirname(controller), path.basename(controller) + '-tasks'); }
+// 旧版放在系统临时目录的副本照样认：续做、清理、删对话都要找得到
+export function taskRoots(controller) { return [...new Set([taskRoot(controller), os.tmpdir()])]; }
 export function prepareWorkspace(t, controller) {
   if (t.workspace && fs.existsSync(t.workspace.work) && fs.existsSync(t.workspace.manifest)) {if(t.workspace.stm32===undefined)t.workspace.stm32=detectStm32(t.dir,Object.keys(inventory(t.dir)));return t.workspace;}
-  const root = path.join(os.tmpdir(), 'xin-task-' + t.sid);
+  const base = taskRoot(controller); mkdir(base); fs.chmodSync(base, 0o700);
+  const root = path.join(base, 'xin-task-' + t.sid);
   const work = path.join(root, 'work'), io = path.join(root, 'io'), home = path.join(root, 'home');
-  mkdir(work); mkdir(io); mkdir(home); mkdir(path.join(home, 'bin')); mkdir(path.join(root, 'tmp'));
+  mkdir(root); fs.chmodSync(root, 0o700); mkdir(work); mkdir(io); mkdir(home); mkdir(path.join(home, 'bin')); mkdir(path.join(root, 'tmp'));
   const before = inventory(t.dir);
   // A fresh turn gets a new baseline. This also detects edits made by the foreground in between turns.
   fs.rmSync(work, { recursive: true, force: true }); mkdir(work);
@@ -660,10 +667,10 @@ export async function frontTurn(o) {
 
 // Delete only controller-owned ephemeral scratch, never the work tree or a user path.
 // Pending questions/publication retain scratch for resume. Arbitrary files in work are NOT secret-scanned.
-export function cleanupTaskTemporary(t) {
+export function cleanupTaskTemporary(t, controller) {
   if (!['done','failed','stopped'].includes(t.status) || !t.workspace) return false;
-  const root = path.join(os.tmpdir(),'xin-task-'+t.sid), tmp=path.join(root,'tmp');
-  if (t.workspace.tmp !== tmp || fs.realpathSync(root) !== root) throw new Error('临时目录归属不符，未清理');
+  const root = path.dirname(String(t.workspace.tmp || '')), tmp=path.join(root,'tmp');
+  if (!taskRoots(controller).some(base => root === path.join(base, 'xin-task-' + t.sid)) || t.workspace.tmp !== tmp || fs.realpathSync(root) !== root) throw new Error('临时目录归属不符，未清理');
   fs.rmSync(tmp,{recursive:true,force:true});mkdir(tmp);
   return true;
 }
@@ -685,12 +692,27 @@ export function dropTaskFiles(t,controller){
     try{if(!fs.existsSync(p))return;if(!check())throw Error('owner');const b=treeBytes(p);removeTree(p);out.bytes+=b;}
     catch{out.kept.push(p);}
   };
-  const copy=path.join(os.tmpdir(),'xin-task-'+t.sid);
-  drop(copy,()=>{const st=fs.lstatSync(copy);return st.isDirectory()&&!st.isSymbolicLink()&&fs.realpathSync(copy)===copy;});
+  for(const base of taskRoots(controller)){
+    const copy=path.join(base,'xin-task-'+t.sid);
+    drop(copy,()=>{const st=fs.lstatSync(copy);return st.isDirectory()&&!st.isSymbolicLink()&&fs.realpathSync(copy)===copy;});
+  }
   drop(path.join(controller,'workspaces',t.sid+'.json'));
   drop(path.join(controller,'budgets',t.sid+'.json'));
   const id=/[?&]id=([a-f0-9]{32})$/.exec(t.preview?.url||'')?.[1];
   if(id){const dir=path.join(controller,'previews',id);drop(dir,()=>{const st=fs.lstatSync(dir);if(!st.isDirectory()||st.isSymbolicLink())return false;const m=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8'));return m.id===id&&m.sid===t.sid;});}
+  return out;
+}
+// 保留期（站长 2026-11-11 同意）：做完的任务，结果已经写回项目，副本 7 天后删（每日清理时）；没做成、停了、等确认的
+// 副本是进度，留到删对话为止。只认目录名 xin-task-<编号>、不是软链接、真实路径等于自身的。
+export function pruneTaskCopies(controller,tasks,now=Date.now(),maxAge=7*86400e3){
+  const out={removed:0,bytes:0};
+  for(const t of tasks||[]){
+    if(t?.status!=='done'||!(t.endedAt>0)||now-t.endedAt<maxAge||!/^s[0-9a-z]{6,24}$/.test(t.sid||''))continue;
+    for(const base of taskRoots(controller)){
+      const copy=path.join(base,'xin-task-'+t.sid);
+      try{const st=fs.lstatSync(copy);if(!st.isDirectory()||st.isSymbolicLink()||fs.realpathSync(copy)!==copy)continue;const b=treeBytes(copy);removeTree(copy);out.removed++;out.bytes+=b;}catch{/* 没有或删不掉，下次 */}
+    }
+  }
   return out;
 }
 // 写回前的备份属于项目，不随对话删；30 天后自动删（每日任务时顺手清）。目录名是 task-<号>-<毫秒时间>。

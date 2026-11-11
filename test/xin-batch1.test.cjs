@@ -195,3 +195,11 @@ test('到点那一刻站长回答：答案进收件箱，下一轮带上，不�
   await until(() => bgCalls(h).length >= 2, 15000, '下一轮').catch(e => { const x = h.task(sid); throw new Error(e.message + ' DIAG ' + JSON.stringify({ status: x.status, inbox: x.inbox, q: x.question, pq: x.pendingQuestion, runs: x.runs, fin: x.finishedRun, calls: h.fc.calls().map(c => c.args.slice(-80)) })); });
   assert.ok(bgCalls(h)[1].args.includes('留着别删'));
 });
+
+test('做完的任务记住用量：副本删了以后 history 照样有用量', async t => {
+  const h = home(t);
+  fs.mkdirSync(path.join(h.xin, 'sessions'), { recursive: true });
+  const usage = { input: 120, cached: 60, output: 30, total: 150, ctx: 40, win: 200000 };
+  fs.writeFileSync(path.join(h.xin, 'sessions', 'susage00001.json'), JSON.stringify({ sid: 'susage00001', kind: 'task', agent: 'codex', no: 1, title: '用量', status: 'done', runs: [], created: 1, endedAt: 2, agentSid: '0199a213-81c0-7800-8aa1-000000000001', started: true, usage }));
+  assert.deepEqual(h.op('history', { sid: 'susage00001' }).usage, usage);
+});
