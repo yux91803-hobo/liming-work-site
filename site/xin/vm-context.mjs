@@ -67,6 +67,11 @@ export function syncRecall(){
     if(!unchanged)setMemoryMeta('recall_revision',revision);
   });
 }
+// 删对话时立刻把它从跨对话检索里拿掉（下次同步本来也会清，这里不等）
+export function dropRecall(sid){
+  if(!okId(sid,'s'))return;const d=schema();
+  d.prepare('DELETE FROM recall_fts WHERE sid=?').run(sid);d.prepare('DELETE FROM recall_sources WHERE sid=?').run(sid);
+}
 export function recallAll(query,limit=8,sync=true){
   const q=String(query||'').trim().slice(0,80);if(!q)return {matches:[],more:false};
   if(sync)syncRecall();const d=schema(),count=Math.min(8,Math.max(1,limit));

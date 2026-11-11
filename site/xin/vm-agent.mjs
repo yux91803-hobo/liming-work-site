@@ -47,8 +47,8 @@ import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, wri
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag } from './vm-screen.mjs';
 import { fromClaude, fromCodex, fromHarness } from './vm-events.mjs';
-import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
-import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
+import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
+import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
 export * from './vm-screen.mjs';
@@ -56,7 +56,7 @@ export * from './vm-events.mjs';
 export * from './vm-models.mjs';
 export * from './vm-persona.mjs';
 import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, memoryPreferences,setMemoryPreferences,MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
-import {recallAll,turnGuidance,safeContextEvents} from './vm-context.mjs';
+import {recallAll,turnGuidance,safeContextEvents,dropRecall} from './vm-context.mjs';
 import {dailyEvidence,dailyContext} from './vm-daily.mjs';
 import {openFrontProvider,preferredFrontModel,frontModelInfo,OPUS_FRONT_MODEL} from './vm-front-opus.mjs';
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
@@ -686,7 +686,7 @@ function runner(run) {
         patchRun(run,{model:meta.model,effort:meta.effort,from,fallbacks:meta.fallbacks});
         if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
-        emit(run, { t: 'status', text: from===runtime.AGY_MODEL?'原执行入口暂不可用，保留现有文件继续处理。':codexModel(from).name + ' 没接上，换 ' + codexModel(meta.model).name + ' 再试…' });
+        emit(run, { t: 'status', text: from===runtime.AGY_MODEL?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
         Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
         start(); return;
       }
@@ -736,6 +736,8 @@ function runner(run) {
     const context=foregroundContext(sess,run,r=>safeContextEvents(r,events,'own')),input=context.input;
     journal.write(path.join(BASE,'contexts',meta.sid+'.json'),JSON.stringify(context.checkpoint));
     try {
+      // 会变的资料（记忆、每日记录、当前时间）放在历史之后：系统提示和历史这段前缀每轮不变，缓存才命中
+      input.push({role:'user',content:frontMaterials()});
       if(!meta.handoff){const guide=turnGuidance({sid:meta.sid,text:meta.frontRequest||'',context:meta.context||''});if(guide)input.push({role:'user',content:guide});}
       input.push(frontUserInput(meta));
     }
@@ -770,7 +772,7 @@ function runner(run) {
         throw Error('当前前台没有视觉输入，无法读取图片');
       }
       return runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,request:provider.request,ms:meta.model===runtime.FRONT_MODEL?25000:65000,
-      instructions:systemPrompt(undefined,{tasks:true}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,lookupBeforeAnswer:!meta.handoff&&runtime.frontLookupRequired(meta.frontRequest||''),deliver,takeBudget:handoffBudget,
+      instructions:systemPrompt(undefined,{tasks:true,materials:false}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,lookupBeforeAnswer:!meta.handoff&&runtime.frontLookupRequired(meta.frontRequest||''),deliver,takeBudget:handoffBudget,
       usage:u=>{if(u){
         handoffBudget?.recordUsage(u);
         const prev = state.frontUsage || usageBefore || {input:0,output:0,cached:0};
@@ -885,6 +887,36 @@ function dropLogs(agent, id, logs) {
 }
 // 启动方式不能证明归属：别的 codex exec / Claude SDK 也用相同标记。只认网站自己的登记。
 // 旧网页会话从现有对话补登记；无法确认归属的历史孤立记录保留。坏文件仍让整个清理停止。
+// 删对话时，状态库之外还留着它内容的几处（审查问题 5）：发送回执（带标题）、推送队列里它的条目（结果正文）、
+// 前台诊断日志里它的条目、跨对话检索索引。都按对话编号认领，别的对话不动。
+function dropConversationTraces(sid, runs) {
+  const own = new Set(runs);
+  const sweep = (dir, mine) => {
+    let names = []; try { names = fs.readdirSync(dir); } catch { return; }
+    for (const n of names) {
+      if (!/^[A-Za-z0-9_-]{8,80}\.json$/.test(n)) continue;
+      const f = path.join(dir, n);
+      try { if (mine(readJ(f))) fs.unlinkSync(f); } catch { /* 删不掉就留着 */ }
+    }
+  };
+  sweep(path.join(BASE, 'messages'), r => r?.sid === sid);
+  sweep(NOTICE_DIR(), n => n?.msg?.sid === sid);
+  try {
+    const f = path.join(BASE, 'logs', 'front.jsonl'), lines = readText(f).split('\n').filter(Boolean);
+    const keep = lines.filter(l => { try { return !own.has(JSON.parse(l).run); } catch { return true; } });
+    if (keep.length !== lines.length) fs.writeFileSync(f, keep.length ? keep.join('\n') + '\n' : '');
+  } catch { /* 没有这个文件 */ }
+  try { dropRecall(sid); } catch { /* 下次同步会清 */ }
+}
+// 推送队列里已送达或已放弃的条目，7 天后删掉
+function pruneNotices(now = Date.now(), maxAge = 7 * 86400e3) {
+  let names = [], removed = 0; try { names = fs.readdirSync(NOTICE_DIR()); } catch { return removed; }
+  for (const n of names.filter(x => /^[a-f0-9]{32}\.json$/.test(x))) {
+    const f = path.join(NOTICE_DIR(), n), v = readJ(f);
+    if (v && (v.state === 'delivered' || v.state === 'failed') && now - (v.deliveredAt || v.created || now) > maxAge) { try { fs.unlinkSync(f); removed++; } catch { /* 下次 */ } }
+  }
+  return removed;
+}
 function pruneLogs(minAge = PRUNE_AGE) {
   const res = { codex: 0, claude: 0, harness: 0, bytes: 0 };
   if (!fs.existsSync(SESS)) return Object.assign(res, { skipped: 'no_sessions_dir' });
@@ -910,6 +942,9 @@ function pruneLogs(minAge = PRUNE_AGE) {
   for (const l of hl.filter(l => old('harness', l))) {
     res.bytes += dropLogs('harness', l.id, hl); res.harness++;
   }
+  // 30 天前的写回备份、7 天前已送达的推送条目（返回结果只把字节数算进 bytes，字段不变）
+  try { res.bytes += runtime.pruneBackups(BASE).bytes; } catch { /* 下次 */ }
+  try { pruneNotices(); } catch { /* 下次 */ }
   return res;
 }
 
@@ -1436,9 +1471,15 @@ function startTask(t, all) {
     if(rt.error){t.status='waiting';t.question=rt.note;t.endedAt=Date.now();t.frontSeen=false;saveTask(t);return false;}
     t.model = rt.model; t.fallbacks = t.strictModel?[]:rt.fallbacks; t.why = rt.why;
   }
+  // 项目副本和任务自己的会话都在系统临时目录里；电脑重启后它们可能已经没了（审查问题 16）。
+  // 这时副本会按原项目重新拷一份，旧会话也续接不上：不再续接，开新会话，并把原要求和现状说清楚，而不是直接算没做成。
+  const lost = !first && !t.dailyDate && !!t.workspace && !fs.existsSync(t.workspace.work);
   try { if (!t.dailyDate) t.workspace = runtime.prepareWorkspace(t, BASE); }
   catch (e) { failTask(t, '没有启动任务：' + e.message); return false; }
-  const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps) : forAgent(t.next || '接着做。', '');
+  if (lost) { t.agentSid = null; t.started = false; delete t.antigravityConversation; }
+  const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps)
+    : lost ? forAgent('电脑重启过，上一轮的项目副本和过程记录都没了，现在的目录是按原项目重新拷贝的。原来的要求：\n' + cut(t.goal || '', 10000) + '\n先看看现在的文件，再接着做' + (t.next ? '：' + t.next : '。'), '')
+    : forAgent(t.next || '接着做。', '');
   const userText = first ? t.goal : String(t.nextShow || t.next || '接着做');
   const cm = codexModel(t.model);
   Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, startedAt: t.startedAt || Date.now() });
@@ -1684,8 +1725,34 @@ function ensureMemoryIdle() {
     {detached:true,stdio:'ignore',cwd:os.homedir(),env});
   child.on('error', () => {}); child.unref();
 }
+/* ---------- 新旧控制器交班（审查问题 20） ----------
+   云电脑上的脚本按内容摘要命名，部署一次路径就变一次。网站每次直接调用控制器时记下这次用的是哪一份（controller-current.json）；
+   长期运行的 watchdog 每轮看一眼：网站已经在用更新的那份，就起一个新版 watchdog 接班（等这把锁放开），自己退出，
+   不再用旧代码和新代码一起改状态库。正在跑的任务轮次照旧用旧代码跑完这一轮。 */
+const CURRENT_F = () => path.join(BASE, 'controller-current.json');
+function markCurrentController() {
+  try {
+    if (readJ(CURRENT_F())?.self === SELF) return;
+    mk(BASE); const tmp = CURRENT_F() + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ self: SELF, at: Date.now() })); fs.renameSync(tmp, CURRENT_F());
+  } catch { /* 记不下来就下次 */ }
+}
+function newerController() {
+  const cur = readJ(CURRENT_F());
+  // 只认同一个目录里、按摘要命名的控制器入口：这份记录被改成别的路径时不跟着去执行
+  const ok = typeof cur?.self === 'string' && cur.self !== SELF && path.dirname(cur.self) === path.dirname(SELF) && /^vm-agent-[a-f0-9]{12}\.mjs$/.test(path.basename(cur.self));
+  return ok && fs.existsSync(cur.self) ? cur.self : null;
+}
+function handOverWatchdog(next) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK' && !/^CODEX_(?!HOME$)/.test(k)));
+  // -w：等这个旧 watchdog 退出、放开锁以后接上
+  mk(path.join(BASE, 'locks'));
+  spawn('flock', ['-w', '60', '--close', path.join(BASE, 'locks/watchdog.lock'), process.execPath, next, 'watchdog'], { detached: true, stdio: 'ignore', cwd: os.homedir(), env }).unref();
+}
 async function watchdog() {
   for (;;) {
+    const next = newerController();
+    if (next) { handOverWatchdog(next); return; }
     try { journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();await flushNotices(); await flushControllerEvent(); } catch { /* transient errors are retried */ }
     const active = listTasks().some(isBackground);
     const pending = readJ(path.join(BASE, 'controller-event.json'));
@@ -1693,10 +1760,6 @@ async function watchdog() {
     if (!active && !notices && !journal.hasPendingHandoffs() && !journal.hasOpenLaunches() && (!pending || pending.acknowledged)) return;
     await new Promise(resolve => setTimeout(resolve, 5000));
   }
-}
-// 推送放到后台进程里发（不让网页那次请求等推送服务）
-function pushLater(msg) {
-  try { spawn(process.execPath, [SELF, 'pushq', JSON.stringify(msg)], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref(); } catch { /* 发不了就算了 */ }
 }
 // 网页最近有没有在看这个对话（tasks 轮询会碰一下）：在看就不推送，卡片自己会更新
 const convSeenF = sid => path.join(RUNS, 'conv-' + sid + '.seen');
@@ -2131,6 +2194,7 @@ const ops = {
     fs.unlinkSync(sessF(a.sid));
     journal.dropConversation(a.sid,s.runs||[]);try{fs.unlinkSync(path.join(BASE,'contexts',a.sid+'.json'));}catch{}
     try { fs.unlinkSync(convSeenF(a.sid)); } catch { /* 没有 */ }
+    dropConversationTraces(a.sid, s.runs || []);
     // AI 自己那份会话记录也删掉；顺手把别的没有对应对话的旧记录清一清
     let freed = 0, pruned = null;
     try { freed = (lockedCall('tasks', 'task_drop', { parent: a.sid }).bytes || 0); } catch { /* 删不掉就留着 */ }
@@ -2340,6 +2404,8 @@ const iops = {
       try { fs.unlinkSync(sessF(t.sid)); } catch { /* 没有 */ }
       journal.dropConversation(t.sid,t.runs||[]);
       try { bytes += dropLogs('codex', t.agentSid); } catch { /* 删不掉就留着 */ }
+      const left = runtime.dropTaskFiles(t, BASE); bytes += left.bytes;
+      if (left.kept.length) logLine(path.join(BASE, 'logs', 'forget.jsonl'), { task: t.sid, kept: left.kept.length });
     }
     try { fs.unlinkSync(path.join(BASE,'tasks-index.json')); } catch {}
     listTasks();queueControllerEvent();
@@ -2422,7 +2488,7 @@ function taskCmd(argv) {
     if (r.error) { console.log(r.msg || r.error); return 1; }
     const t = r.task;
     emit(run, { t: 'task', sid: t.sid, no: t.no, title: t.title, kind: t.kind, model: t.model, why: t.why, status: t.status, after: t.after, at: Date.now() });
-    let out = '派出去了：任务 ' + t.no + '「' + t.title + '」（' + KIND_NAMES[t.kind] + '，' + codexModel(t.model).name + '，' + TASK_STATUS[t.status] + '，工作目录 ' + t.dir + '）。' + (t.note ? t.note + '。' : '');
+    let out = '派出去了：任务 ' + t.no + '「' + t.title + '」（' + KIND_NAMES[t.kind] + '，' + modelLabel(t.model) + '，' + TASK_STATUS[t.status] + '，工作目录 ' + t.dir + '）。' + (t.note ? t.note + '。' : '');
     // --review：再派一个检查任务，等它做完、换个模型、在同一个目录里检查
     if (o.review && t.kind !== 'review') {
       const rv = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: 'review', title: ('检查：' + t.title).slice(0, 40), after: [t.no], dir: t.dir,
@@ -2430,7 +2496,7 @@ function taskCmd(argv) {
       if (rv.task) {
         const v = rv.task;
         emit(run, { t: 'task', sid: v.sid, no: v.no, title: v.title, kind: v.kind, model: v.model, why: v.why, status: v.status, after: v.after, at: Date.now() });
-        out += '检查任务 ' + v.no + '（' + codexModel(v.model).name + '）等它做完就开始。';
+        out += '检查任务 ' + v.no + '（' + modelLabel(v.model) + '）等它做完就开始。';
       } else out += '检查任务没派成：' + (rv.msg || rv.error) + '。';
     }
     console.log(out + '它在后台做，做完结果会自动出现在聊天里；你不用等，回用户一句就结束这一轮。');
@@ -2637,6 +2703,7 @@ function main() {
     process.stdout.write(JSON.stringify(res || {})); return;
   }
   if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
+  if (!locked) markCurrentController();
   // 发给主对话的话不带编号：先认出是哪一个，按它自己的锁排队（重发时的摘要仍按「没带编号」算，见 transactionalOp）
   if (op === 'send' && !args.sid && args.main && !args.mainSid) { const m = mainSid(); if (m) { args.sid = m; args.mainSid = m; } }
   const key = ['push_key','push_sub','push_unsub'].includes(op) ? 'tasks' : op === 'daily' ? 'daily' : ['send', 'steer', 'rename', 'archive', 'forget'].includes(op)

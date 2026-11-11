@@ -641,6 +641,41 @@ export function cleanupTaskTemporary(t) {
   return true;
 }
 
+// 删对话时，它的后台任务在控制器外留下的东西一起删（审查问题 5）：/tmp 里的项目副本（含任务自己的 Codex 会话）、
+// 工作区清单、用量记录、网页预览。每一样都核对归属；删不掉的记下来，不让删对话失败。返回删掉的字节数和没删掉的路径。
+function treeBytes(p){let n=0;try{const st=fs.lstatSync(p);if(!st.isDirectory())return st.size;for(const e of fs.readdirSync(p))n+=treeBytes(path.join(p,e));}catch{}return n;}
+function removeTree(p){
+  try{fs.rmSync(p,{recursive:true,force:true});}
+  catch{ // 只读的子目录（工具链常见）先放开写权限再删
+    const open=d=>{try{fs.chmodSync(d,0o700);for(const e of fs.readdirSync(d,{withFileTypes:true}))if(e.isDirectory()&&!e.isSymbolicLink())open(path.join(d,e.name));}catch{}};
+    open(p);fs.rmSync(p,{recursive:true,force:true});
+  }
+}
+export function dropTaskFiles(t,controller){
+  const out={bytes:0,kept:[]};
+  if(!t||!/^s[0-9a-z]{6,24}$/.test(t.sid||''))return out;
+  const drop=(p,check=()=>true)=>{
+    try{if(!fs.existsSync(p))return;if(!check())throw Error('owner');const b=treeBytes(p);removeTree(p);out.bytes+=b;}
+    catch{out.kept.push(p);}
+  };
+  const copy=path.join(os.tmpdir(),'xin-task-'+t.sid);
+  drop(copy,()=>{const st=fs.lstatSync(copy);return st.isDirectory()&&!st.isSymbolicLink()&&fs.realpathSync(copy)===copy;});
+  drop(path.join(controller,'workspaces',t.sid+'.json'));
+  drop(path.join(controller,'budgets',t.sid+'.json'));
+  const id=/[?&]id=([a-f0-9]{32})$/.exec(t.preview?.url||'')?.[1];
+  if(id){const dir=path.join(controller,'previews',id);drop(dir,()=>{const st=fs.lstatSync(dir);if(!st.isDirectory()||st.isSymbolicLink())return false;const m=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8'));return m.id===id&&m.sid===t.sid;});}
+  return out;
+}
+// 写回前的备份属于项目，不随对话删；30 天后自动删（每日任务时顺手清）。目录名是 task-<号>-<毫秒时间>。
+export function pruneBackups(controller,now=Date.now(),maxAge=30*86400e3){
+  const root=path.join(controller,'backups'),out={removed:0,bytes:0};let names=[];try{names=fs.readdirSync(root);}catch{return out;}
+  for(const name of names){
+    const m=/^task-\d+-(\d{10,})$/.exec(name);if(!m||now-Number(m[1])<maxAge)continue;
+    const p=path.join(root,name);try{const st=fs.lstatSync(p);if(!st.isDirectory()||st.isSymbolicLink())continue;const b=treeBytes(p);removeTree(p);out.removed++;out.bytes+=b;}catch{}
+  }
+  return out;
+}
+
 // Preview documents execute in an opaque origin. The owner session and API are never exposed to them.
 export const WEB_PREVIEW_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 export function webManifest(t) {

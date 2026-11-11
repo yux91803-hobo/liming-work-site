@@ -22,10 +22,26 @@ export function publicCompletion(t,text){
   if(/^(?:好的?|收到|我做好了|完成了)[。！!]*$/.test(s))s=String(t.result?.text||'我做好了。').slice(0,4000);
   return /(?:kimi|deepseek|glm[-\s]|分身|任务\s*\d|任务编号)/i.test(s)?'我做好了：'+String(t.title).slice(0,80)+'。结果和验证记录已经保存，可以打开详情查看。':s;
 }
-export function foregroundContext(s,current,read){
-  const ids=(s.runs||[]).filter(r=>r!==current),older=ids.slice(0,-12),recent=ids.slice(-12),input=[];
-  const continuity=older.slice(-40).flatMap(run=>read(run).filter(e=>e.t==='user'||e.t==='text').map(e=>({run,role:e.t==='user'?'user':'assistant',excerpt:String(e.text||'').slice(0,400)})));
-  if(continuity.length)input.push({role:'user',content:'历史检索索引（可能截断；需要细节用 xin recall 关键词查询原文）：\n'+JSON.stringify(continuity).slice(-16000)});
-  for(const run of recent)for(const e of read(run).filter(e=>e.t==='user'||e.t==='text'))input.push({role:e.t==='user'?'user':'assistant',content:String(e.text||'').slice(0,12000)});
+// 前台的历史：最近十几轮原文，更早的 40 轮做成摘录索引（细节用 xin recall 查原文）。
+// - 原文窗口的起点按 6 轮一挪（最近 12–17 轮）：中间几轮里历史开头不变，模型那边的前缀缓存用得上。
+// - 原文有总字数上限：超了就把最早的整块挪进索引，至少留最近 2 轮原文。主对话会一直聊下去，不能无限长。
+// - 索引按条丢最早的，不切出半截 JSON。
+export const CONTEXT={block:6,recent:12,keep:2,message:12000,recentChars:80000,older:40,excerpt:400,indexChars:16000};
+export function foregroundContext(s,current,read,o=CONTEXT){
+  const ids=(s.runs||[]).filter(r=>r!==current),msgs=new Map();
+  const turn=run=>{if(!msgs.has(run))msgs.set(run,read(run).filter(e=>e.t==='user'||e.t==='text'));return msgs.get(run);};
+  const size=run=>turn(run).reduce((n,e)=>n+Math.min(o.message,String(e.text||'').length),0);
+  let start=Math.max(0,Math.floor((ids.length-o.recent)/o.block)*o.block);
+  let total=ids.slice(start).reduce((n,r)=>n+size(r),0);
+  while(total>o.recentChars&&ids.length-start>o.keep){
+    const next=Math.min(ids.length-o.keep,start+o.block);
+    for(const r of ids.slice(start,next))total-=size(r);
+    start=next;
+  }
+  const older=ids.slice(0,start),recent=ids.slice(start),input=[];
+  const continuity=older.slice(-o.older).flatMap(run=>turn(run).map(e=>({run,role:e.t==='user'?'user':'assistant',excerpt:String(e.text||'').slice(0,o.excerpt)})));
+  while(continuity.length&&JSON.stringify(continuity).length>o.indexChars)continuity.shift();
+  if(continuity.length)input.push({role:'user',content:'历史检索索引（较早的对话只留摘录；需要细节用 xin recall 关键词查询原文）：\n'+JSON.stringify(continuity)});
+  for(const run of recent)for(const e of turn(run))input.push({role:e.t==='user'?'user':'assistant',content:String(e.text||'').slice(0,o.message)});
   return {input,checkpoint:{version:1,through:ids.at(-1)||null,recent,continuity}};
 }

@@ -6,12 +6,14 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const AGENT = path.join(__dirname, '../site/xin/vm-agent.mjs');
+const { stopOwned } = require('./helpers/stop-owned.cjs');
 const ORIGIN = 'https://liming-work.com';
 
 function home(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-watch-')), xin = path.join(dir, 'xin');
   fs.mkdirSync(path.join(xin, 'sessions'), { recursive: true }); fs.mkdirSync(path.join(xin, 'runs'), { recursive: true });
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // 发出去的轮次和 watchdog 在测试结束后还会写这个目录：先停掉再删（不然整套并发跑时偶尔 ENOTEMPTY）
+  t.after(() => stopOwned(xin, dir));
   // Stand-in CLIs first on PATH: a test must never start a real agent that happens to be installed on this machine.
   const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
   for (const cmd of ['claude', 'codex', 'agy']) fs.writeFileSync(path.join(bin, cmd), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
@@ -92,7 +94,7 @@ async function worker() { const m = await import(pathToFileURL(path.join(__dirna
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
 const SOURCES = { 'vm-agent.mjs': "import './x.mjs';\nimport { a } from './vm-base.mjs';\n// agent\n", 'vm-base.mjs': '// base\n' };
 function env() {
-  return { OWNER_PASSWORD: 'correct horse battery', INSTABOX_API_KEY: 'ibk_test_key_1234567890', XIN_MACHINE: 'li',
+  return { OWNER_PASSWORD: 'correct horse battery', INSTABOX_API_KEY: 'ibk_test_key_1234567890', XIN_MACHINE: 'li', XIN_LOGIN_LIMIT: { limit: async () => ({ success: true }) },
     ASSETS: { fetch: async req => { const f = new URL(req.url).pathname.split('/').pop(); return f in SOURCES ? new Response(SOURCES[f]) : new Response('nope', { status: 404 }); } } };
 }
 function fakeBox(handle) {

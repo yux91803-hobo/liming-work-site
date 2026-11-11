@@ -31,6 +31,7 @@ function mkEnv(extra) {
     OWNER_PASSWORD: PW,
     INSTABOX_API_KEY: 'ibk_test_key_1234567890',
     XIN_MACHINE: 'li',
+    XIN_LOGIN_LIMIT: { limit: async () => ({ success: true }) },
     ASSETS: { fetch: async req => new URL(req.url).pathname === '/xin/vm-agent.mjs' ? new Response(AGENT_TEXT) : new Response('nope', { status: 404 }) }
   }, extra || {});
 }
@@ -106,6 +107,30 @@ test('登录限流：超了回 429', async () => {
   const env = mkEnv({ XIN_LOGIN_LIMIT: { limit: async () => ({ success: false }) } });
   const r = await m.handleXin(req('/api/xin/login', { body: { password: PW } }), env, null);
   assert.strictEqual(r.status, 429);
+});
+
+test('登录限流的绑定没配上：不收密码（503），也不发 cookie', async () => {
+  const m = await fresh();
+  for (const XIN_LOGIN_LIMIT of [undefined, {}]) {
+    const r = await m.handleXin(req('/api/xin/login', { body: { password: PW } }), mkEnv({ XIN_LOGIN_LIMIT }), null);
+    assert.strictEqual(r.status, 503);
+    assert.strictEqual(r.headers.get('set-cookie'), null);
+    assert.strictEqual((await r.json()).error, 'no_rate_limit');
+  }
+});
+
+test('找不到云电脑时：预览和任务回调回 502 加说明，不抛成 500', async () => {
+  const m = await fresh(), env = mkEnv({ XIN_TASK_SUPERVISOR: { idFromName: () => 'id', get: () => ({ fetch: async () => new Response('{}') }) } }), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [{ status: 500, body: { error: { code: 'internal', message: 'down' } } }] });
+  try {
+    const p = await m.handleXin(new Request(ORIGIN + '/api/xin/preview/' + 'a'.repeat(32) + '/index.html', { headers: { cookie: ck } }), env, null);
+    // 预览先问控制器要元数据（这一步就要找云电脑）：找不到也只是 5xx 加说明
+    assert.ok(p.status === 502 || p.status === 503, String(p.status));
+    const token = await m._callbackToken(env);
+    const c = await m.handleXin(new Request(ORIGIN + '/api/xin/task-event', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify({ bg: 1, version: 2 }) }), env, null);
+    assert.strictEqual(c.status, 502);
+    assert.strictEqual((await c.json()).ok, false);
+  } finally { ib.restore(); }
 });
 
 test('没登录不能调用', async () => {
@@ -680,6 +705,28 @@ function agentEnv(extraEnv = {}) {
   return { home, work, xin: env.XIN_HOME, op };
 }
 
+test('前台缓存：系统提示每轮一字不差（不带时间、记忆、每日记录）；这些资料放在本轮输入里，排在历史之后、原话之前', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-cache-')), log = path.join(tmp, 'front.log');
+  const { op } = agentEnv({ XIN_FRONT_TEST_LOG: log });
+  const done = async run => { for (let i = 0; i < 100; i++) { if (op('poll', { run, off: 0 }).done) return; await new Promise(ok => setTimeout(ok, 120)); } assert.fail('这一轮没有结束'); };
+  const a = op('send', { agent: 'codex', text: '第一句' }); await done(a.run);
+  // 两轮之间记忆变了：以前会让系统提示跟着变，缓存失效
+  assert.ok(op('memory_add', { content: '讲代码先给结论', type: 'profile' }).ok);
+  const b = op('send', { sid: a.sid, text: '第二句' }); await done(b.run);
+  const reqs = fs.readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  assert.strictEqual(reqs.length, 2);
+  assert.strictEqual(reqs[0].instructions, reqs[1].instructions);
+  for (const bad of ['<<<记忆', '当前北京时间', '每日任务资料']) assert.ok(!reqs[1].instructions.includes(bad), bad);
+  const text = m => typeof m.content === 'string' ? m.content : m.content.map(c => c.text || '').join('');
+  const input = reqs[1].input, mat = input.findIndex(m => m.role === 'user' && text(m).includes('<<<记忆'));
+  assert.ok(mat > 0, '资料在本轮输入里');
+  assert.match(text(input[mat]), /讲代码先给结论/);
+  assert.match(text(input[mat]), /当前北京时间/);
+  assert.ok(input.slice(0, mat).some(m => text(m).includes('第一句')), '历史在资料前面');
+  assert.match(text(input[input.length - 1]), /第二句/);
+  assert.ok(!input.slice(mat + 1).some(m => text(m).includes('<<<记忆')), '资料只有一份');
+});
+
 test('小芯的文件：列文件夹（文件夹在前、不列隐藏的）、预览文字文件、二进制只给下载，工作目录外面一律不行', () => {
   const { home, work, op } = agentEnv();
   fs.mkdirSync(path.join(work, 'blink', 'build'), { recursive: true });
@@ -867,7 +914,7 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   assert.ok(prompt.includes(img) && prompt.includes(pdf));
   assert.ok(prompt.includes('图片已经直接给你看了。'));
   assert.ok(!prompt.includes('你现在用的模型看不了图片内容'));
-  const parts = request.input.find(x=>x.role==='user').content;
+  const parts = request.input.find(x=>x.role==='user'&&Array.isArray(x.content)&&x.content.some(c=>c.type==='input_image')).content;
   assert.deepStrictEqual(parts.filter(x=>x.type==='input_image'),[{type:'input_image',image_url:'data:image/jpeg;base64,'+Buffer.from('jpg').toString('base64'),detail:'auto'}]);
   assert.ok(request.instructions.includes('看图读图直接回答'));
   assert.ok(!request.instructions.includes('必须交给 vision 工作读取'));

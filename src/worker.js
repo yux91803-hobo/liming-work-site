@@ -3,6 +3,7 @@
 // 2. /api/xin/* 小芯聊天（站长登录后，经 InstaBox 云电脑里的 AI 聊天干活，见 xin.js）；定时任务叫醒小芯做每日任务
 // 3. 其余 /api/* 一律 404（互传、协作中心的接口已经删掉）
 // 4. 工具 assets 里的图片缓存一天
+// 5. 云电脑上的控制器脚本（/xin/vm-*.mjs）不对外：Worker 自己经 ASSETS 绑定读取后上传，浏览器拿不到（审查问题 11）
 import { handleXin, runCron } from './xin.js';
 export { XinTaskSupervisor } from './xin.js';
 const IMAGE_CACHE = 'public, max-age=86400';
@@ -24,6 +25,7 @@ export default {
       }
       return r;
     }
+    if (/^\/xin\/vm-/.test(url.pathname)) return new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8', ...SEC_HEADERS } });
     if (url.pathname === '/api/xin' || url.pathname.startsWith('/api/xin/')) return handleXin(req, env, ctx);
     if (url.pathname.startsWith('/api/')) {
       return new Response(JSON.stringify({ error: 'not_found' }), { status: 404, headers: { 'Content-Type': 'application/json; charset=utf-8', ...SEC_HEADERS } });
