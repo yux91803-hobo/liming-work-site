@@ -259,6 +259,27 @@ function patchRun(run,changes){
 }
 function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
 function emit(run, ev) { if(journal.active)journal.append(runF(run),ev);else fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
+// 从字节位置 from 开始读一轮的事件，只到最后一个完整行：items 每条带它那一行结束处的字节位置（解析不了的行 ev 为 null）。
+// 参考 Agent HUD docs/performance.md：日志从上次读到的位置接着读，半行等下次，不整份重读。
+function readRunFrom(file, from, maxBytes = Infinity) {
+  let fd; try { fd = fs.openSync(file, 'r'); } catch { return { items: [], end: from, rest: false }; }
+  try {
+    const size = fs.fstatSync(fd).size;
+    if (from > size) return { items: [], end: from, rest: false };
+    const len = Math.min(maxBytes, size - from), buf = Buffer.alloc(len), n = fs.readSync(fd, buf, 0, len, from), items = [];
+    let start = 0;
+    for (let i = 0; i < n; i++) if (buf[i] === 10) {
+      const line = buf.toString('utf8', start, i); start = i + 1;
+      let ev = null; if (line) { try { ev = JSON.parse(line); } catch { /* 坏行跳过 */ } }
+      items.push({ ev, end: from + start });
+    }
+    return { items, end: from + start, rest: from + n < size };
+  } finally { fs.closeSync(fd); }
+}
+function lineStart(file, pos) {
+  if (pos === 0) return true;
+  let fd; try { fd = fs.openSync(file, 'r'); const b = Buffer.alloc(1); return fs.readSync(fd, b, 0, 1, pos - 1) === 1 && b[0] === 10; } catch { return false; } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
 function events(run) {
   let t; try { t = fs.readFileSync(runF(run), 'utf8'); } catch { return []; }
   const out = [];
@@ -2287,13 +2308,21 @@ const ops = {
     try { fs.writeFileSync(seenF(a.run), ''); } catch { /* 记不下来就当没在看 */ }
     watchDevice(readJ(metaF(a.run))?.sid,a);
     runDone(a.run); // 进程已死时先把 done 写进记录，再决定这次能不能告诉网页「读完了」
-    const evs = events(a.run), off = Math.max(0, a.off | 0);
-    const slice = evs.slice(off, off + 400);
-    const sid = (readJ(metaF(a.run)) || {}).sid, latest = sid && lastRun(readJ(sessF(sid)));
+    const off = Math.max(0, a.off | 0), file = runF(a.run);
+    const sid = (readJ(metaF(a.run)) || {}).sid, latest = sid && lastRun(readJ(sessF(sid))), next = latest && latest !== a.run ? { next: latest } : {};
     // meta.ended 会先于同一笔提交里的回复/done 行落到磁盘（recover 先写文档，再追加 jsonl）。
-    // 只看到 ended 就告诉网页读完，网页会停轮询，助手正文永远画不出来。
-    const closed = evs.some(e => e && e.t === 'done');
-    return { events: slice, off: off + slice.length, done: closed && off + slice.length >= evs.length, ...(latest && latest !== a.run ? { next: latest } : {}) };
+    // 只看到 ended 就告诉网页读完，网页会停轮询，助手正文永远画不出来。所以「读完」只认 done 行（它总是最后一行）。
+    if (Number.isSafeInteger(a.pos) && a.pos >= 0 && lineStart(file, a.pos)) {
+      // 新网页带着上次读到的字节位置：只读新增的部分
+      const r = readRunFrom(file, a.pos, 2 * 1024 * 1024), parsed = r.items.filter(x => x.ev), take = parsed.slice(0, 400), all = take.length === parsed.length;
+      const pos = all ? r.end : take.at(-1).end;
+      const tail = readTail(file, 65536), lines = tail.slice(0, tail.lastIndexOf('\n') + 1).trim().split('\n');
+      let last = null; try { last = JSON.parse(lines.at(-1)); } catch { /* 读到的是半截或空 */ }
+      return { events: take.map(x => x.ev), off: off + take.length, pos, done: all && !r.rest && last?.t === 'done', ...next };
+    }
+    const r = readRunFrom(file, 0), parsed = r.items.filter(x => x.ev), slice = parsed.slice(off, off + 400), all = off + slice.length >= parsed.length;
+    const closed = parsed.some(x => x.ev.t === 'done');
+    return { events: slice.map(x => x.ev), off: off + slice.length, pos: all ? r.end : slice.length ? slice.at(-1).end : (parsed[off - 1]?.end ?? 0), done: closed && all, ...next };
   },
   stop(a) {
     if (!okId(a.run, 'r')) return { error: 'bad_run', msg: '编号不对' };
@@ -2320,10 +2349,11 @@ const ops = {
     const runs = allRuns.slice(Math.max(0, end - 30), end);
     // started：每一轮什么时候开始的（后台任务的结果卡片按时间插在这些轮之间）
     const diagnostics=a.diagnose?readText(path.join(BASE,'logs','front.jsonl')).split('\n').flatMap(l=>{try{return [JSON.parse(l)];}catch{return [];}}):[];
-    const out = runs.map(r => { runDone(r); const evs=events(r),m=readJ(metaF(r))||{};return {run:r,events:evs,done:evs.some(e=>e&&e.t==='done'),started:m.started||0,...(a.diagnose?{diagnostics:frontDiagnostics(m,evs,diagnostics)}:{})}; });
+    const ends = {};
+    const out = runs.map(r => { runDone(r); const rr=readRunFrom(runF(r),0),evs=rr.items.filter(x=>x.ev).map(x=>x.ev),m=readJ(metaF(r))||{};ends[r]=rr.end;return {run:r,events:evs,done:evs.some(e=>e&&e.t==='done'),started:m.started||0,...(a.diagnose?{diagnostics:frontDiagnostics(m,evs,diagnostics)}:{})}; });
     const last = out[out.length - 1];
     // active.started：网页重新打开面板时，「思考中 · N 秒」接着算，不从 0 开始
-    const res = { session: summary(s), usage: sessionUsage(s), runs: out, more: end > 30, active: at < 0 && last && !last.done ? { run: last.run, off: last.events.length, started: last.started } : null };
+    const res = { session: summary(s), usage: sessionUsage(s), runs: out, more: end > 30, active: at < 0 && last && !last.done ? { run: last.run, off: last.events.length, pos: ends[last.run], started: last.started } : null };
     if (isTask(s)) res.task = taskSummary(s, true);                                   // 看一个后台任务的过程
     else if (s.agent === 'codex') res.tasks = listTasks().filter(t => t.parent === s.sid).map(t => taskSummary(t));   // 这个对话派出去的任务
     return res;

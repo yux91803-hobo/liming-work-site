@@ -203,3 +203,47 @@ test('做完的任务记住用量：副本删了以后 history 照样有用量',
   fs.writeFileSync(path.join(h.xin, 'sessions', 'susage00001.json'), JSON.stringify({ sid: 'susage00001', kind: 'task', agent: 'codex', no: 1, title: '用量', status: 'done', runs: [], created: 1, endedAt: 2, agentSid: '0199a213-81c0-7800-8aa1-000000000001', started: true, usage }));
   assert.deepEqual(h.op('history', { sid: 'susage00001' }).usage, usage);
 });
+
+/* ---------- 轮询按字节位置读（参考 Agent HUD docs/performance.md：从上次读到的位置接着读，半行等下次） ---------- */
+function pollRun(h) {
+  const sid = 'spollpos001', run = 'rpollpos0001', dirS = path.join(h.xin, 'sessions'), dirR = path.join(h.xin, 'runs');
+  fs.mkdirSync(dirS, { recursive: true }); fs.mkdirSync(dirR, { recursive: true });
+  fs.writeFileSync(path.join(dirS, sid + '.json'), JSON.stringify({ sid, agent: 'codex', runs: [run], created: 1, updated: 1 }));
+  fs.writeFileSync(path.join(dirR, run + '.json'), JSON.stringify({ run, sid, agent: 'codex', started: Date.now(), pid: process.pid }));
+  const log = path.join(dirR, run + '.jsonl');
+  const add = evs => fs.appendFileSync(log, evs.map(e => JSON.stringify(e) + '\n').join(''));
+  return { run, log, add };
+}
+
+test('按字节位置读和按条数读结果一致；接着上次的位置只拿到新的', async t => {
+  const h = home(t), p = pollRun(h);
+  p.add([1, 2, 3, 4, 5].map(i => ({ t: 'text', text: '第' + i + '段' })));
+  const a = h.op('poll', { run: p.run, off: 0 }), b = h.op('poll', { run: p.run, pos: 0 });
+  assert.deepEqual(b.events, a.events); assert.equal(b.off, 5); assert.equal(b.pos, fs.statSync(p.log).size); assert.equal(b.done, false);
+  p.add([{ t: 'text', text: '第6段' }, { t: 'done', ok: true }]);
+  const c = h.op('poll', { run: p.run, pos: b.pos, off: b.off });
+  assert.deepEqual(c.events.map(e => e.t), ['text', 'done']); assert.equal(c.off, 7); assert.equal(c.done, true);
+  const d = h.op('poll', { run: p.run, pos: c.pos, off: c.off });
+  assert.deepEqual(d.events, []); assert.equal(d.done, true); assert.equal(d.pos, c.pos);
+});
+
+test('pos 落在半行时不越过它；pos 不对（超出长度、不在行首）就按条数读并把位置纠正回来，不出错', async t => {
+  const h = home(t), p = pollRun(h);
+  p.add([{ t: 'text', text: '完整的一行' }]);
+  fs.appendFileSync(p.log, '{"t":"text","text":"写到一半');
+  const a = h.op('poll', { run: p.run, pos: 0 });
+  assert.equal(a.events.length, 1); assert.equal(a.pos, Buffer.byteLength(JSON.stringify({ t: 'text', text: '完整的一行' }) + '\n'));
+  const b = h.op('poll', { run: p.run, pos: a.pos, off: 1 });
+  assert.deepEqual(b.events, []); assert.equal(b.pos, a.pos);
+  const c = h.op('poll', { run: p.run, pos: 1e9, off: 1 });
+  assert.deepEqual(c.events, []); assert.equal(c.pos, a.pos, '超出长度：按条数读，位置纠正回来');
+  const d = h.op('poll', { run: p.run, pos: 3, off: 0 });
+  assert.equal(d.events.length, 1); assert.equal(d.pos, a.pos, '不在行首：按条数读');
+});
+
+test('不带 pos 的旧请求照常按条数读', async t => {
+  const h = home(t), p = pollRun(h);
+  p.add([{ t: 'text', text: '甲' }, { t: 'text', text: '乙' }]);
+  const r = h.op('poll', { run: p.run, off: 1 });
+  assert.deepEqual(r.events.map(e => e.text), ['乙']); assert.equal(r.off, 2);
+});
