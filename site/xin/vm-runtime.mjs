@@ -779,7 +779,9 @@ export function antigravityQuota(result,now=Date.now(),model=AGY_MODEL) {
   const groups=result?.command?.data?.groups;
   if(!Array.isArray(groups))throw Error('Antigravity 没有返回可核对的额度信息');
   const family=model.startsWith('claude-')?/^(?:claude-|3p-)/:/^gemini-/;
-  const buckets=groups.filter(g=>(g.buckets||[]).some(b=>family.test(b.id||''))).flatMap(g=>g.buckets).map(b=>({id:b.id,remaining:Number(b.remaining_fraction),resetAt:Date.parse(b.reset_time)}));
+  // 停用的限额（disabled）不起作用，也不带恢复时间：周限额用完后，Antigravity 把五小时限额标成停用、去掉 reset_time。
+  // 把它当成「字段不完整」会让前台整轮报错，而不是按额度用完改用 DeepSeek。
+  const buckets=groups.filter(g=>(g.buckets||[]).some(b=>family.test(b.id||''))).flatMap(g=>g.buckets).filter(b=>b?.disabled!==true).map(b=>({id:b.id,remaining:Number(b.remaining_fraction),resetAt:Date.parse(b.reset_time)}));
   if(!buckets.length||buckets.some(b=>!Number.isFinite(b.remaining)||b.remaining<0||b.remaining>1||!Number.isFinite(b.resetAt)))throw Error('Antigravity 额度字段不完整');
   const exhausted=buckets.filter(b=>b.remaining<=0);
   return {model,checkedAt:now,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};

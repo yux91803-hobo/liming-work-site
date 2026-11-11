@@ -9,6 +9,19 @@ test('Antigravity 额度同时受五小时和周限额约束，持久记录真�
  assert.deepEqual(r.AGY_SETTINGS.permissions.deny,['command(*)','read_file(*)','write_file(*)','execute_url(*)','mcp(*)']);assert.equal(r.AGY_SETTINGS.useG1Credits,false);
  const exhausted=r.antigravityQuota(input(0,1),now),late=r.antigravityQuota(input(.9,1),now+1000);assert.equal(r.mergeAntigravityQuota(exhausted,late,now+1000).retryAt,five);assert.equal(r.mergeAntigravityQuota(exhausted,late,five+1).blocked,false);
 });
+test('Claude 周限额用完时五小时限额被停用、不带恢复时间：算额度用完（前台改用 DeepSeek），不报字段不完整',async()=>{
+ const r=await load(),now=Date.parse('2026-11-11T04:30:00Z'),week=Date.parse('2026-11-15T10:46:26Z');
+ // 云电脑上 /usage 实际返回的形状
+ const usage={command:{data:{groups:[{buckets:[{id:'gemini-weekly',window:'weekly',remaining_fraction:.98,reset_time:'2026-11-14T11:52:32Z'},{id:'gemini-5h',window:'5h',remaining_fraction:.99,reset_time:'2026-11-11T05:33:10Z'}]},
+  {buckets:[{id:'3p-weekly',window:'weekly',remaining_fraction:0,reset_time:'2026-11-15T10:46:26Z'},{id:'3p-5h',window:'5h',disabled:true,remaining_fraction:.857}]}]}}};
+ const q=r.antigravityQuota(usage,now,'claude-opus-4.6');
+ assert.equal(q.blocked,true);assert.equal(q.retryAt,week);assert.deepEqual(q.buckets.map(b=>b.id),['3p-weekly']);
+ assert.equal(r.antigravityQuota(usage,now).blocked,false,'Gemini 不受影响');
+ // 没有停用标记、只是缺恢复时间：仍然当成数据不可信
+ const bad=structuredClone(usage);delete bad.command.data.groups[1].buckets[1].disabled;assert.throws(()=>r.antigravityQuota(bad,now,'claude-opus-4.6'),/字段/);
+ // 全部都停用：没有可核对的限额
+ const off=structuredClone(usage);off.command.data.groups[1].buckets.forEach(b=>b.disabled=true);assert.throws(()=>r.antigravityQuota(off,now,'claude-opus-4.6'),/字段/);
+});
 test('CLI 续接返回整段累计用量：按持久水位记增量，重启和重复响应不重复计费',async t=>{
  const r=await load(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'xin-agy-budget-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const file=dir+'/budget.json',first=r.requestBudget(file,128,{tokens:10000}),a={input_tokens:2212,output_tokens:2431,cache_read_tokens:0,total_tokens:4643};first();assert.deepEqual(first.recordCumulativeUsage('antigravity','own',a),a);

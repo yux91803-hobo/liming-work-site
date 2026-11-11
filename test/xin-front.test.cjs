@@ -9,6 +9,11 @@ test('前台失败诊断只给结构、字节数和错误类别，不带原话�
     [{run:'rfront00001',outcome:'error',error:'fetch '+secret,calls:[{call:'xin task list',error:'sqlite locked '+secret}]}]);
   assert.doesNotMatch(JSON.stringify(r),new RegExp(secret));assert.equal(r.replyBytes,Buffer.byteLength(secret));assert.equal(r.events[2].errorType,'gateway');assert.equal(r.traces[0].calls[0].errorType,'database');
 });
+test('前台诊断把额度核对失败归为 quota 类，不带原文',async()=>{
+  const {frontDiagnostics}=await import('../site/xin/vm-agent.mjs');
+  const r=frontDiagnostics({run:'rfront00002',ended:1},[{t:'user',text:'只回复 front-x'},{t:'err',text:'Antigravity 额度字段不完整'},{t:'done',ok:false}],[{run:'rfront00002',outcome:'error',error:'Antigravity 额度字段不完整',calls:[]}]);
+  assert.equal(r.events[1].errorType,'quota');assert.equal(r.traces[0].errorType,'quota');assert.doesNotMatch(JSON.stringify(r),/front-x|字段/);
+});
 const message=text=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text}]}]});
 const call=(argv,name='xin')=>({type:'function_call',name,call_id:'one',arguments:JSON.stringify({argv})});
 function options(output) {
