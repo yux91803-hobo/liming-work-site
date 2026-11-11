@@ -181,8 +181,14 @@
 | 1 | 审查报告入库并标注现状（`docs/xin-architecture-review.md`） | 已提交到分支 `claude/xin-project-continuation-j0hlqv` |
 | 2 | 聊天界面精简、主对话、任务进行中随时改、更早的消息（见 CHANGES 2026-11-10 第一条） | 已提交到同一分支 |
 | 3 | 工具箱首页「小芯」和全屏工作台（见 CHANGES 2026-11-10「工具箱首页」一条） | 已提交到同一分支 |
-| 4 | PR #107 → CI → 合并 → 正式站部署与真机联调 | #107 已合并（main `024064a`），但正式联调因 CI 机器断网失败、自动回滚；#106 当时也是同样原因回滚，所以正式站一直停在 #105。联调脚本的断线重试见 CHANGES 2026-11-11，修复 PR 合并后看 `main` 上的 Deploy：冒烟和真机联调都绿、回滚步骤 skipped 才算上线 |
+| 4 | 上线 | **卡住，等站长换执行机**。#107、#108 已合并到 main，但 main 的部署运行连续失败：正式联调两次因 CI 机器断网回滚（#108 已加断线重试），之后浏览器测试又因同一台 box 执行机被宿主机暂停而超时，部署根本没开始。正式站一直是 #105。站长 2026-11-11 说要在自己电脑上装 Linux 跑部署执行机，「做好和你说」——在那之前不要开 PR、不要重跑 main 的部署 |
 
 接手时：`git log origin/claude/xin-project-continuation-j0hlqv` 看做到哪；分支上的提交都已在本地跑过 `npm run check` 和全部浏览器测试。
+
+分支上已提交、还没开 PR 的（等新执行机好了一起开一个 PR）：问题 11（控制器源码不再公开）、17（找不到云电脑不报 500、没有限流不收密码）、7（前台系统提示不变，资料放进本轮输入）、18（前台历史有总量上限）、13 的一部分（模型显示名），以及测试收尾的修复。见 `docs/CHANGES.md` 2026-11-11 各条。
+
+新执行机要满足：标签 `self-hosted` 和 `box`（`deploy.yml` 三个 job 都是 `runs-on: [self-hosted, box]`）；旧的 `box-liming-work-site` 要停掉或删掉，不然任务还会分到它；装好 Google Chrome（`google-chrome` 在 PATH 上），否则工作流会跑 `playwright install --with-deps`，需要 sudo；能装 Node 22 和 Python 3.12（`setup-node`、`setup-python` 会自己下载）；跑的时候别让电脑睡眠。
+
+等站长确认的事：问题 5 删除清单里带★的三项（写回备份、网页预览、每日导出）；CI 日志里那两份带登录 cookie 的旧日志要不要删（或者改一次站长密码让它失效）；问题 10 要不要把部署挪到 GitHub 托管的执行机。
 
 之后的工作（站长没有新要求时）：按 `docs/xin-architecture-review.md` 的「接下来的顺序」继续；会删数据、要站长决定的几项先问。
