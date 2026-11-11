@@ -332,11 +332,16 @@ async def main():
             if web[0]['status'] not in ('queued','running'):
                 raise RuntimeError('Expected active Gemini web work during concurrent foreground test')
             front_marker = spoken_marker(first_marker + ' ' + second_marker)
-            await page.locator('.xc-row textarea').fill('只回复 ' + front_marker + '，不要执行命令、派任务或等待正在做的事。')
+            await page.locator('.xc-row textarea').fill('只回复 ' + front_marker + '，不要执行命令、派任务，也不用管正在做的事。')
             await page.locator('.xc-send').click()
             await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
             if not says(await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text(), front_marker):
-                raise RuntimeError('Concurrent real foreground reply missing during Gemini web work')
+                shown = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()
+                # Counts and booleans only: never print the reply, the marker or the prompt.
+                raise RuntimeError('Concurrent real foreground reply missing during Gemini web work: '
+                    + await front_diagnosis(alternate_sid)
+                    + ' shape=' + json.dumps(reply_shape(shown[-1:], front_marker))
+                    + ' lastMentionsWeb=' + str(any(w in (shown[-1] if shown else '') for w in ('奶龙', '网页', '页面', '在做'))))
             front = await call('history', {'sid': alternate_sid})
             done = [e for r in front['runs'] for e in r['events'] if e.get('t') == 'done']
             await check_front(done[-1] if done else {})

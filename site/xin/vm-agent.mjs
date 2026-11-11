@@ -1785,7 +1785,8 @@ function deviceWatching(sid,id) {
   try{for(const name of fs.readdirSync(dir)){if(!/^[A-Za-z0-9_-]+\.seen$/.test(name))continue;const f=path.join(dir,name);if(Date.now()-fs.statSync(f).mtimeMs<15000)watching=true;else fs.unlinkSync(f);}}catch{}
   return watching;
 }
-// 前台下一句带上的后台任务情况：做完 / 没做成 / 停了但前台还不知道的写结果，等确认的写问题，进行中、排队的写一句
+// 前台下一句带上的后台任务情况：做完 / 没做成 / 停了但前台还不知道的写结果，等确认的写问题，进行中、排队的写一句。
+// 进行中的只当参考：兄弟说的事和它无关时不用插一句进度（站长要的是别套话；联调 #113 里「只回复…」被答成了进度）
 export function isWebRequest(text){return /(?:画|绘制|制作|生成|做).{0,24}(?:奶龙|动画|交互|网页|页面|网站)|(?:网页|动画|交互).{0,12}(?:做|制作|生成|画)/i.test(String(text||''))&&!/^(?:什么是|解释|怎么|如何|为什么)/.test(String(text||'').trim());}
 function pumpHandoffs(){
   for(const h of journal.dueHandoffs())lockedCall(h.parent,'handoff_start',{id:h.id,sid:h.parent});
@@ -1926,7 +1927,7 @@ export function taskNotes(sid, all) {
     else if (t.status === 'running') lines.push(head + '进行中（' + Math.max(1, Math.round((Date.now() - (t.startedAt || t.created)) / 60e3)) + ' 分钟）');
     else if (t.status === 'queued') lines.push(head + '排队中' + (t.after && t.after.length ? '（等任务 ' + t.after.join('、') + ' 做完）' : ''));
   }
-  return { text: lines.length ? '\n\n【后台任务的最新情况（真实快照；只按已知状态第一人称汇报，不猜百分比；要细节用 xin task show 编号，编号和模型不主动展示）】\n' + lines.join('\n') : '', seen };
+  return { text: lines.length ? '\n\n【后台任务的最新情况（真实快照，供你参考；做完、没做成、在等确认的，兄弟还不知道就用第一人称告诉他；进行中、排队中的，兄弟问起或和这句话有关才提，不要每句都报进度，也不猜百分比；要细节用 xin task show 编号，编号和模型不主动展示）】\n' + lines.join('\n') : '', seen };
 }
 // 网站该不该替电脑续「有活在干」的租约（任务在后台跑，等模型回话时电脑看起来像闲着）：有任务就每 20 分钟续一次，没了就撤
 const LEASE_F = () => path.join(BASE, 'tasks-lease.json');
