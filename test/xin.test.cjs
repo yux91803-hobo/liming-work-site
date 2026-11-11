@@ -1090,7 +1090,8 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   const r3 = op('send', { sid: r.sid, text: '好' });
   await until(() => op('poll', { run: r3.run, off: 0 }).done, 15000, '前台第三句');
   const p3 = JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input.at(-1).content;
-  assert.ok(!p3.includes('【后台任务的最新情况（') && !p3.includes('任务 1「编译 LED」做完了'), p3.slice(-300));
+  const p3all = JSON.stringify(JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input);
+  assert.ok(!p3.includes('<后台任务>') && !p3all.includes('<后台任务>') && !p3all.includes('任务 1「编译 LED」做完了'), p3.slice(-300));
   // 运行记录里也有分身那一轮
   const stats = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
   assert.ok(stats.some(x => x.kind === 'code' && x.model === 'glm-5.3' && x.ok));
@@ -1141,6 +1142,11 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   const r2 = op('send', { sid: r.sid, text: '嗯' });
   await until(() => op('poll', { run: r2.run, off: 0 }).done, 15000, '前台');
   assert.ok(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').includes('任务 4「D」在等用户确认：要删掉旧的 build 目录吗'));
+  // 后台任务快照单独一条、带标签、在兄弟的原话前面；原话是最后一条，不夹快照（联调 #113、#114）
+  const q=JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input;
+  const snap=q.findIndex(e=>typeof e.content==='string'&&e.content.startsWith('<后台任务>\n'));
+  assert.ok(snap>=0&&snap<q.length-1&&q[snap].content.endsWith('\n</后台任务>')&&q[snap].content.includes('任务 4「D」在等用户确认：要删掉旧的 build 目录吗'),JSON.stringify(q.map(e=>[e.role,String(e.content).slice(0,40)])));
+  assert.ok(q.at(-1).role==='user'&&q.at(-1).content.includes('嗯')&&!q.at(-1).content.includes('后台任务'),String(q.at(-1).content).slice(-200));
   assert.match(xinTask('tell', '4', '删吧'), /任务 4 接着做了/);
   await until(() => op('tasks', { sid: r.sid }).tasks.find(t => t.title === 'D').status === 'done', 15000, 'D 做完');
   assert.ok(fc.args().some(x => x.includes('用户回复：删吧') && x.includes('（你之前问的是：要删掉旧的 build 目录吗）')));

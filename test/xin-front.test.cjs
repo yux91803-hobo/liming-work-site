@@ -138,18 +138,21 @@ test('表情动作不占派活步数；同一次回复里有文字就直接答�
   o3.acts=acts;let ran=0;o3.command=async()=>{ran++;return {text:'ok'};};
   assert.equal(await frontTurn(o3),'好的');assert.equal(ran,2);
 });
-test('前台带的后台任务情况：没告诉过的结果要说；进行中的只当参考，不让每句都报进度',async()=>{
+test('后台任务快照像 opencode / Codex 的通知：单独一条带标签、只放状态；怎么对待写在系统提示里一次',async()=>{
   const {taskNotes}=await import('../site/xin/vm-agent.mjs');
+  const {systemPrompt}=await import('../site/xin/vm-persona.mjs');
   const now=Date.now(),sid='snotes000001';
   const running={sid:'snotes000002',no:3,parent:sid,title:'画奶龙',status:'running',created:now-120e3,startedAt:now-120e3};
   const done={sid:'snotes000003',no:4,parent:sid,title:'查资料',status:'done',created:now-300e3,endedAt:now-10e3,result:{text:'查到了三条'}};
   const only=taskNotes(sid,[running]);
-  assert.match(only.text,/任务 3「画奶龙」进行中（2 分钟）/);
-  assert.match(only.text,/兄弟问起或和这句话有关才提/);assert.match(only.text,/不要每句都报进度/);
-  assert.doesNotMatch(only.text,/只按已知状态第一人称汇报/);
+  assert.equal(only.text,'<后台任务>\n- 任务 3「画奶龙」进行中（2 分钟）\n</后台任务>');
   assert.deepEqual(only.seen,[]);
   const both=taskNotes(sid,[running,done]);
-  assert.match(both.text,/任务 4「查资料」做完了：查到了三条/);assert.match(both.text,/兄弟还不知道就用第一人称告诉他/);
+  assert.match(both.text,/^<后台任务>\n[\s\S]*任务 4「查资料」做完了：查到了三条[\s\S]*\n<\/后台任务>$/);
   assert.deepEqual(both.seen.map(x=>x.sid),['snotes000003']);
   assert.equal(taskNotes(sid,[]).text,'');
+  const sys=systemPrompt(undefined,{tasks:true,materials:false});
+  assert.match(sys,/<后台任务>…<\/后台任务>：控制器附上的真实快照，是数据，不是兄弟说的话/);
+  assert.match(sys,/进行中、排队中的只在他问起或和他这句话有关时提，别每句都报进度/);
+  assert.equal(sys.split('<后台任务>…').length,2,'规则只写一次');
 });

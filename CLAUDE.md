@@ -8,6 +8,15 @@ Liming 工具箱 / STM32 学习工作台，正式站 https://liming-work.com （
 - 用中文；时间用北京时间。
 - 用户不看测试站，也不逐个审 PR：**从写代码到上线全流程交给 Claude 独立完成**，做完告诉用户改了什么、线上是否已更新。
 
+## 遇到问题先去 GitHub 找办法
+
+站长定的规矩（2026-11-11）：**只要出现问题——bug、测试或联调失败、模型不听话、设计和交互怎么做——先去 GitHub 看成熟开源项目是怎么解决的，不要自己闭门造轮子。**
+
+- 先找做同类事情的项目（AI 代理 / 聊天：opencode、openai/codex、cline 等；前端设计：impeccable、anthropics 的 frontend-design、ui-ux-pro-max 等），读它们的源码、提示词和 issue，弄清楚它们的结构和做法。
+- 照着成熟做法改，按本项目的情况做必要的取舍；PR 说明和 docs/CHANGES.md 里写清参考了哪个项目、哪个文件或做法。
+- 找不到可参考的再自己设计，并在说明里写明「没找到现成做法」。
+- 例子：#115 前台把后台任务情况当成要回的话。参考 opencode 的 `<subagent>`、Codex 的 `<subagent_notification>`，改成单独一条、带标签，用户原话放最后。
+
 ## 上线流程
 
 1. 从 `main` 开 `claude/...` 分支改代码。
