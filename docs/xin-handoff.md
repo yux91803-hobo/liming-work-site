@@ -185,7 +185,7 @@
 
 接手时：`git log origin/claude/xin-project-continuation-j0hlqv` 看做到哪；分支上的提交都已在本地跑过 `npm run check` 和全部浏览器测试。
 
-分支上已提交、还没开 PR 的（等新执行机好了一起开一个 PR）：问题 5（删对话时一起删别处的内容，站长同意按清单做）、11（控制器源码不再公开）、17（找不到云电脑不报 500、没有限流不收密码）、7（前台系统提示不变，资料放进本轮输入）、18（前台历史有总量上限）、13 的一部分（模型显示名），以及测试收尾的修复。见 `docs/CHANGES.md` 2026-11-11 各条。
+分支上已提交、还没开 PR 的（等新执行机好了一起开一个 PR）：问题 5（删对话时一起删别处的内容，站长同意按清单做）、20（部署后旧 watchdog 交班给新版）、11（控制器源码不再公开）、17（找不到云电脑不报 500、没有限流不收密码）、7（前台系统提示不变，资料放进本轮输入）、18（前台历史有总量上限）、13 的一部分（模型显示名），以及测试收尾的修复。见 `docs/CHANGES.md` 2026-11-11 各条。
 
 新执行机要满足：标签 `self-hosted` 和 `box`（`deploy.yml` 三个 job 都是 `runs-on: [self-hosted, box]`）；旧的 `box-liming-work-site` 要停掉或删掉，不然任务还会分到它；装好 Google Chrome（`google-chrome` 在 PATH 上），否则工作流会跑 `playwright install --with-deps`，需要 sudo；能装 Node 22 和 Python 3.12（`setup-node`、`setup-python` 会自己下载）；跑的时候别让电脑睡眠。
 

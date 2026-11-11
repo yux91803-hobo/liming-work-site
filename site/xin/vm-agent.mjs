@@ -1719,8 +1719,34 @@ function ensureMemoryIdle() {
     {detached:true,stdio:'ignore',cwd:os.homedir(),env});
   child.on('error', () => {}); child.unref();
 }
+/* ---------- 新旧控制器交班（审查问题 20） ----------
+   云电脑上的脚本按内容摘要命名，部署一次路径就变一次。网站每次直接调用控制器时记下这次用的是哪一份（controller-current.json）；
+   长期运行的 watchdog 每轮看一眼：网站已经在用更新的那份，就起一个新版 watchdog 接班（等这把锁放开），自己退出，
+   不再用旧代码和新代码一起改状态库。正在跑的任务轮次照旧用旧代码跑完这一轮。 */
+const CURRENT_F = () => path.join(BASE, 'controller-current.json');
+function markCurrentController() {
+  try {
+    if (readJ(CURRENT_F())?.self === SELF) return;
+    mk(BASE); const tmp = CURRENT_F() + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ self: SELF, at: Date.now() })); fs.renameSync(tmp, CURRENT_F());
+  } catch { /* 记不下来就下次 */ }
+}
+function newerController() {
+  const cur = readJ(CURRENT_F());
+  // 只认同一个目录里、按摘要命名的控制器入口：这份记录被改成别的路径时不跟着去执行
+  const ok = typeof cur?.self === 'string' && cur.self !== SELF && path.dirname(cur.self) === path.dirname(SELF) && /^vm-agent-[a-f0-9]{12}\.mjs$/.test(path.basename(cur.self));
+  return ok && fs.existsSync(cur.self) ? cur.self : null;
+}
+function handOverWatchdog(next) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK' && !/^CODEX_(?!HOME$)/.test(k)));
+  // -w：等这个旧 watchdog 退出、放开锁以后接上
+  mk(path.join(BASE, 'locks'));
+  spawn('flock', ['-w', '60', '--close', path.join(BASE, 'locks/watchdog.lock'), process.execPath, next, 'watchdog'], { detached: true, stdio: 'ignore', cwd: os.homedir(), env }).unref();
+}
 async function watchdog() {
   for (;;) {
+    const next = newerController();
+    if (next) { handOverWatchdog(next); return; }
     try { journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();await flushNotices(); await flushControllerEvent(); } catch { /* transient errors are retried */ }
     const active = listTasks().some(isBackground);
     const pending = readJ(path.join(BASE, 'controller-event.json'));
@@ -2675,6 +2701,7 @@ function main() {
     process.stdout.write(JSON.stringify(res || {})); return;
   }
   if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
+  if (!locked) markCurrentController();
   // 发给主对话的话不带编号：先认出是哪一个，按它自己的锁排队（重发时的摘要仍按「没带编号」算，见 transactionalOp）
   if (op === 'send' && !args.sid && args.main && !args.mainSid) { const m = mainSid(); if (m) { args.sid = m; args.mainSid = m; } }
   const key = ['push_key','push_sub','push_unsub'].includes(op) ? 'tasks' : op === 'daily' ? 'daily' : ['send', 'steer', 'rename', 'archive', 'forget'].includes(op)
