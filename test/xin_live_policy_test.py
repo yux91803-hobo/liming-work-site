@@ -3,7 +3,20 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import OPUS, DEEPSEEK, validate_front_model, front_reply_limit
+from xin_live_policy import OPUS, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke
+
+
+class LeftoverSmoke(unittest.TestCase):
+    def test_only_this_scripts_own_non_main_conversations(self):
+        for title in ('这是发布后的真实联调，使用默认后台安排，只派一个后台任务并立即回复，不要等待它完', '只读取这张图片中唯一一行字符并照写出来。不要派任务、执行命令或记忆。',
+                      '只回复 generation-original-0123456789ab，不要执行命令、派任务或记忆。', '只回复 generation-current-0123456789ab，不要执行命令、派任务或记忆。'):
+            with self.subTest(title=title):
+                self.assertTrue(is_leftover_smoke({'sid': 'sx', 'title': title}))
+                self.assertFalse(is_leftover_smoke({'sid': 'sx', 'title': title, 'main': True}))
+        for title in ('你好', '只回复我一句话', '这是发布后的真实效果吗', '只读取这张图片', '', None):
+            with self.subTest(title=title):
+                self.assertFalse(is_leftover_smoke({'sid': 'sx', 'title': title}))
+        self.assertFalse(is_leftover_smoke(None))
 
 
 class FrontPolicy(unittest.TestCase):

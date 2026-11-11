@@ -7,7 +7,7 @@ import json
 import os
 import time
 import uuid
-from xin_live_policy import validate_front_model, front_reply_limit
+from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke
 from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
@@ -64,6 +64,22 @@ async def main():
                     await asyncio.sleep(min(15, max(2, d.get('retryAfter', 3))))
                     continue
                 raise RuntimeError('Production call failed: ' + op + ' HTTP ' + str(response.status) + ' state=' + str(d.get('state', d.get('data', {}).get('error', 'unknown'))))
+        async def forget_owned(owned_sid, own_task):
+            h = await call('history', {'sid': owned_sid})
+            if h.get('active'):
+                await call('stop', {'run': h['active']['run']})
+            ts = (await call('tasks', {'sid': owned_sid})).get('tasks', [])
+            for t in ts:
+                if own_task(t) and t['status'] in ('running','queued','waiting','stopping'):
+                    await call('task_stop', {'sid': t['sid']})
+            # Stopping takes a moment and forget refuses while a turn or task is still winding down: wait for it (at most ~90 s).
+            for _ in range(30):
+                h = await call('history', {'sid': owned_sid})
+                ts = (await call('tasks', {'sid': owned_sid})).get('tasks', [])
+                if not h.get('active') and not any(t['status'] in ('running', 'queued', 'stopping') for t in ts):
+                    break
+                await asyncio.sleep(3)
+            await call('forget', {'sid': owned_sid})
         async def front_diagnosis(sid):
             # Cleanup deletes the conversation and its front log entries, so read the last turn's diagnosis first.
             # The controller's diagnosis has only event kinds, byte counts and error categories: no text, no markers.
@@ -81,6 +97,14 @@ async def main():
             await page.locator('.xc-login input[name=pw]').fill(PASSWORD, timeout=30000)
             await page.locator('.xc-login button').click()
             await page.wait_for_function('LimingXinChat.state.authed', timeout=30000)
+            # Smoke conversations left by an earlier run whose cleanup failed: recall would quote their old instructions
+            # into this run's turns. Remove them first (only this script's own opening lines, never the main conversation).
+            for leftover in [s for s in (await call('sessions', {})).get('sessions', []) if is_leftover_smoke(s)]:
+                try:
+                    await forget_owned(leftover['sid'], lambda t: True)
+                    print('Removed a smoke conversation left by an earlier run', flush=True)
+                except Exception as error:
+                    print('Could not remove an earlier smoke conversation: ' + (str(error)[:160] if isinstance(error, RuntimeError) else type(error).__name__), flush=True)
             # A fresh browser lands on the owner's always-on main conversation. That is the owner's, not a fixture:
             # every turn of this run goes to conversations it creates itself (and deletes at the end).
             await page.locator('.xc-new-b').click()
@@ -380,21 +404,7 @@ async def main():
             # Forget only this run's own conversation. Leave its small result artifact for diagnosis.
             for owned_sid in [s for s in (sid,alternate_sid,image_sid) if s]:
                 try:
-                    h = await call('history', {'sid': owned_sid})
-                    if h.get('active'):
-                        await call('stop', {'run': h['active']['run']})
-                    ts = (await call('tasks', {'sid': owned_sid})).get('tasks', [])
-                    for t in ts:
-                        if (owned_sid == image_sid or (t.get('title') == marker and t.get('dir') == directory) or t['sid'] == web_sid) and t['status'] in ('running','queued','waiting','stopping'):
-                            await call('task_stop', {'sid': t['sid']})
-                    # Stopping takes a moment and forget refuses while a turn or task is still winding down: wait for it (at most ~90 s).
-                    for _ in range(30):
-                        h = await call('history', {'sid': owned_sid})
-                        ts = (await call('tasks', {'sid': owned_sid})).get('tasks', [])
-                        if not h.get('active') and not any(t['status'] in ('running', 'queued', 'stopping') for t in ts):
-                            break
-                        await asyncio.sleep(3)
-                    await call('forget', {'sid': owned_sid})
+                    await forget_owned(owned_sid, lambda t: owned_sid == image_sid or (t.get('title') == marker and t.get('dir') == directory) or t['sid'] == web_sid)
                 except Exception as error:
                     print('Smoke records retained for diagnosis: ' + (str(error)[:160] if isinstance(error, RuntimeError) else type(error).__name__), flush=True)
             await browser.close()

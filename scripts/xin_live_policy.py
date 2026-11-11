@@ -25,3 +25,14 @@ def front_reply_limit(model):
     if model not in REPLY_LIMIT:
         raise RuntimeError('No reply deadline for this foreground model')
     return REPLY_LIMIT[model]
+
+
+# Opening lines of the conversations this smoke test creates (a conversation's title is its first line, cut to 40 chars).
+# An earlier run whose cleanup failed leaves them behind; cross-conversation recall then quotes their old instructions
+# into this run's turns, and the foreground may follow those instead of the current line (seen 2026-11-11 with DeepSeek).
+SMOKE_TITLES = ('这是发布后的真实联调，使用默认后台安排，', '只读取这张图片中唯一一行字符并照写出来。', '只回复 generation-original-', '只回复 generation-current-')
+
+
+def is_leftover_smoke(session):
+    """Only the owner's non-main conversations whose title is one of this script's own opening lines."""
+    return isinstance(session, dict) and not session.get('main') and str(session.get('title') or '').startswith(SMOKE_TITLES)
