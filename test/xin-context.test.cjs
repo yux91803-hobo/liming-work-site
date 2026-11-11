@@ -40,7 +40,7 @@ test('每轮给可照做的建议，待确认/隐私不混入；久未涉及先�
  const priv=m.addMemory({content:'只想私下提起的爱好',source:'user'}).item;m.updateMemory(priv.id,{private:true});
  m.addMemory({content:'音乐喜欢爵士',source:'user'});chat(1,'PWM 频率先分频，再看 ARR');
  return {g:c.turnGuidance({text:'PWM 怎么算',sid:'scontext01'}),task:c.taskMemory('写 PWM 代码'),found:c.recallAll('先分频').matches.length};`);
- assert.match(r.g,/交流时照顾：回答先给结论/);assert.match(r.g,/很久没确认/);assert.doesNotMatch(r.g,/爱看红色|私下提起/);
+ assert.match(r.g,/^<注意事项>\n[\s\S]*\n<\/注意事项>$/);assert.match(r.g,/交流时照顾：回答先给结论/);assert.match(r.g,/很久没确认/);assert.doesNotMatch(r.g,/爱看红色|私下提起/);
  assert.doesNotMatch(r.g,/先分频|相关旧话/,'旧对话原话不每轮自动塞，要用 xin recall 查');assert.equal(r.found,1);
  assert.match(r.task,/回答先给结论/);assert.doesNotMatch(r.task,/音乐|爱看红色|还没独立算对|私下/);
  const agent=fs.readFileSync(path.join(__dirname,'../site/xin/vm-agent.mjs'),'utf8');assert.match(agent,/input\.push\(\{role:'user',content:guide\}\)/);

@@ -98,7 +98,7 @@ export function turnGuidance({text='',context='',sid='',now=Date.now()}={}){
   // 不再每轮自动塞别的对话里的原话（「相关旧话」）：像 Letta 的 conversation_search 那样由模型需要时调 xin recall 查，
   // 每轮自动带的只留提炼过的注意事项（像 Open WebUI 的 <memory_context>）。原话里的「只回复 …」被塞到兄弟这句话跟前时，
   // DeepSeek 会照旧话回（联调 #111、#115–#117）。
-  return lines.length?'【和你相处的注意事项：本轮参考，用户当前原话优先】\n'+lines.join('\n'):'';
+  return lines.length?'<注意事项>\n'+lines.join('\n')+'\n</注意事项>':'';
 }
 export function taskMemory(goal,max=800){
   const keys=words(goal),items=memoryDb().prepare("SELECT content FROM memory_items WHERE status='active' AND type='profile' ORDER BY updated DESC").all();
