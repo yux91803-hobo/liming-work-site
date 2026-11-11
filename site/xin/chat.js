@@ -163,7 +163,7 @@
     document.body.appendChild(root);
     list = root.querySelector('.xc-msgs'); statusEl = root.querySelector('.xc-st'); input = root.querySelector('textarea');
     sendBtn = root.querySelector('.xc-send'); titleEl = root.querySelector('.xc-sub');
-    root.querySelector('.xc-ttl').insertBefore(avatar(), root.querySelector('.xc-ttl-t'));
+    root.querySelector('.xc-ttl').insertBefore(glowAv(''), root.querySelector('.xc-ttl-t'));
     sessEl = root.querySelector('.xc-sess'); loginEl = root.querySelector('.xc-login'); foot = root.querySelector('.xc-ft'); drawerEl = root.querySelector('.xc-dr');
     useEl = root.querySelector('.xc-use');
     sheetEl = root.querySelector('.xc-sheet'); menuEl = root.querySelector('.xc-menu'); fileEl = root.querySelector('.xc-file'); attsEl = root.querySelector('.xc-atts');
@@ -504,7 +504,7 @@
     x.addEventListener('click', function () { setDrawer(false); });
     who.appendChild(h('b', 'xc-dr-name', '小芯'));
     who.appendChild(h('span', 'xc-dr-st', titleEl.textContent || ''));
-    hd.appendChild(avatar('dr')); hd.appendChild(who); hd.appendChild(x);
+    hd.appendChild(glowAv('', 'dr')); hd.appendChild(who); hd.appendChild(x);
     drawerEl.appendChild(hd);
     var sc = h('div', 'xc-dr-sc');
     var nb = h('button', 'xc-dr-new'); nb.type = 'button'; nb.innerHTML = svgIcon('plus') + '<span>新对话</span>';
@@ -967,7 +967,7 @@
     call('tasks', { all: true }, 60000).then(function (d) {
       if (d && d.error) throw new Error(d.msg || d.error);
       if (S.view !== 'tasks') return;
-      S.bg = d.bg || 0; S.tactive = d.active || [];
+      S.bg = d.bg || 0; S.tactive = d.active || []; glowFrom(d);
       setTasks(d.tasks || [], true); renderStrip();
       var top = sessEl.scrollTop;
       sessEl.innerHTML = '';
@@ -1379,7 +1379,7 @@
     var sid = S.sid;
     call('tasks', { sid: sid || undefined, deviceId:S.deviceId, tabId:S.tabId, watching: !!(S.open && S.view === 'chat' && !document.hidden && document.hasFocus()) }, 30000).then(function (d) {
       if (d && d.error) throw new Error(d.msg || d.error);
-      S.bg = d.bg || 0; S.tactive = d.active || [];
+      S.bg = d.bg || 0; S.tactive = d.active || []; glowFrom(d);
       setTasks((d.active || []).concat(d.recent || [], sid === S.sid ? d.tasks || [] : []), true);
       renderStrip(); renderWork(); renderHome();
       var next = S.open && convLive() ? 4000 : S.bg > 0 ? 20000 : 0;
@@ -1676,7 +1676,7 @@
     call('tasks', { all: true, deviceId: S.deviceId, tabId: S.tabId }, 30000).then(function (d) {
       if (my !== wSeq) return;
       if (d && d.error) throw new Error(d.msg || d.error);
-      S.bg = d.bg || 0; S.tactive = d.active || []; S.wall = d.tasks || [];
+      S.bg = d.bg || 0; S.tactive = d.active || []; S.wall = d.tasks || []; glowFrom(d);
       setTasks(S.wall.concat(d.active || []), true); renderStrip();
       nextWork();
     }).catch(function () { if (my === wSeq) wTm = setTimeout(pollWork, 30000); });
@@ -1836,6 +1836,200 @@
     var b = root.querySelector('.xc-work-b'); b.classList.toggle('live', g.live.length > 0); b.classList.toggle('wait', g.wait.length > 0);
   }
 
+
+  /* ---------- 额度光环、额度卡、用量页（数据见 vm-usage.mjs 和 usage op） ----------
+     照 Agent HUD：头像外一圈光环，颜色按用得最多的那项额度（<70% 绿、≥70% 黄、≥90% 红，用完变暗），小芯在干活时呼吸快一些；
+     点头像出额度卡（每个模型 5 小时 / 每周、几点重置、照现在的速度几点用完）；卡片底部「用量」打开工作台里的用量页。 */
+  var GLOW_TXT = { ok: '额度充足', warn: '有一项用了七成以上', high: '有一项快用完了', out: '有一项用完了' };
+  S.glow = '';
+  function glowFrom(d) { if (d && Object.prototype.hasOwnProperty.call(d, 'glow')) { S.glow = GLOW_TXT[d.glow] ? d.glow : ''; paintGlow(); } }
+  // 新建的头像还没挂到页面上时 querySelectorAll 找不到它，所以 glowAv 建好就先按当前状态涂一次
+  function paintOne(b) {
+    b.classList.remove('g-ok', 'g-warn', 'g-high', 'g-out');
+    if (S.glow) b.classList.add('g-' + S.glow);
+    b.classList.toggle('busy', !!(S.run || (S.tactive || []).some(tLive)));
+    b.setAttribute('aria-label', '额度' + (S.glow ? '：' + GLOW_TXT[S.glow] : ''));
+  }
+  function paintGlow() { [].forEach.call(document.querySelectorAll('.xc-glow'), paintOne); }
+  function glowAv(cls, avCls) {
+    var b = h('button', 'xc-glow' + (cls ? ' ' + cls : '')); b.type = 'button'; b.setAttribute('aria-haspopup', 'dialog'); b.setAttribute('aria-label', '额度');
+    b.appendChild(avatar(avCls || ''));
+    b.addEventListener('click', function (e) { e.stopPropagation(); if (!S.authed) { work(); return; } openQuota(b); });
+    paintOne(b);
+    return b;
+  }
+  function qlv(u) { return u >= 1 ? 'out' : u >= 0.9 ? 'high' : u >= 0.7 ? 'warn' : 'ok'; }
+  // 重置、用完的时间：今天写几点，明天写「明天」，一周内写星期几，再远写日期
+  function clock(t) {
+    var d = new Date(t), n = new Date(), p = function (x) { return (x < 10 ? '0' : '') + x; }, hm = p(d.getHours()) + ':' + p(d.getMinutes());
+    var day = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 864e5);
+    return day === 0 ? hm : day === 1 ? '明天 ' + hm : day > 1 && day < 7 ? '周' + '日一二三四五六'[d.getDay()] + ' ' + hm : (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  }
+  function loadUsage(fresh) {
+    if (!fresh && S.uv && Date.now() - S.uvAt < 30000) return Promise.resolve(S.uv);
+    return call('usage', {}, 60000).then(function (d) { if (d && d.error) throw new Error(d.msg || d.error); S.uv = d; S.uvAt = Date.now(); return d; });
+  }
+  function quotaRows(box, u) {
+    var qs = (u && u.quotas) || [];
+    if (!qs.length) { box.appendChild(h('p', 'xq-hint', '还没读到额度：和小芯聊一句或者派个活之后就有了。')); return; }
+    qs.forEach(function (q) {
+      var m = h('div', 'xq-m'), fc = [];
+      m.appendChild(h('p', 'xq-name', q.name));
+      (q.windows || []).filter(function (w) { return w.kind === '5h' || w.kind === 'week'; }).forEach(function (w) {
+        var pct = Math.round(w.used * 100), name = w.kind === '5h' ? '5 小时' : '每周', row = h('div', 'xq-row lv-' + qlv(w.used)), bar = h('span', 'xq-bar'), fill = h('i');
+        var reset = w.reset ? '已重置' : clock(w.resetAt) + ' 重置';
+        row.setAttribute('role', 'group'); row.setAttribute('aria-label', q.name + name + '额度已用 ' + pct + '%，' + reset);
+        row.appendChild(h('span', 'xq-k', name)); fill.style.width = pct + '%'; bar.appendChild(fill); row.appendChild(bar);
+        row.appendChild(h('span', 'xq-v', pct + '%')); row.appendChild(h('span', 'xq-r', reset));
+        m.appendChild(row);
+        if (w.forecastAt) fc.push(name + '额度照现在的速度 ' + clock(w.forecastAt) + ' 用完');
+      });
+      fc.forEach(function (t) { m.appendChild(h('p', 'xq-fc', t)); });
+      if (q.checkedAt) m.appendChild(h('p', 'xq-at', ago(q.checkedAt) + '读取'));
+      box.appendChild(m);
+    });
+  }
+  var quotaEl = null, quotaFrom = null;
+  function quotaKey(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeQuota(); } }
+  function quotaOut(e) { if (quotaEl && !quotaEl.querySelector('.xq').contains(e.target) && !(quotaFrom && quotaFrom.contains(e.target))) closeQuota(); }
+  function closeQuota(keepFocus) {
+    if (!quotaEl) return;
+    quotaEl.remove(); quotaEl = null;
+    document.removeEventListener('keydown', quotaKey, true); document.removeEventListener('pointerdown', quotaOut, true); removeEventListener('resize', closeQuota);
+    var from = quotaFrom; quotaFrom = null;
+    if (!keepFocus && from && from.isConnected) from.focus();
+  }
+  // 电脑、平板贴着头像弹出；手机从底部升起来（CSS 管）
+  function placeQuota(card, btn) {
+    if (innerWidth < 600) { card.style.left = card.style.top = ''; return; }
+    var r = btn.getBoundingClientRect(), w = card.offsetWidth, hh = card.offsetHeight;
+    var left = Math.max(12, Math.min(r.left - 4, innerWidth - w - 12)), top = r.bottom + 8;
+    if (top + hh > innerHeight - 12 && r.top - hh - 8 > 12) top = r.top - hh - 8;
+    card.style.left = left + 'px'; card.style.top = Math.max(12, top) + 'px';
+  }
+  function openQuota(btn) {
+    if (quotaEl) { var same = quotaFrom === btn; closeQuota(); if (same) return; }
+    quotaFrom = btn;
+    var wrap = h('div', 'xq-wrap'), card = h('section', 'xq');
+    card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', '额度'); card.tabIndex = -1;
+    card.appendChild(h('p', 'xq-hint', '正在读取…'));
+    wrap.appendChild(h('div', 'xq-scrim')); wrap.appendChild(card); document.body.appendChild(wrap); quotaEl = wrap;
+    placeQuota(card, btn); card.focus();
+    document.addEventListener('keydown', quotaKey, true); document.addEventListener('pointerdown', quotaOut, true); addEventListener('resize', closeQuota);
+    loadUsage().then(function (u) {
+      if (quotaEl !== wrap) return;
+      card.innerHTML = '';
+      var hd = h('div', 'xq-hd'); hd.appendChild(h('b', '', '额度')); card.appendChild(hd);
+      quotaRows(card, u);
+      var more = h('button', 'xq-more'); more.type = 'button'; more.innerHTML = '<span>用量</span>' + svgIcon('chev');
+      more.addEventListener('click', function () { closeQuota(true); openUsage(); });
+      card.appendChild(more);
+      placeQuota(card, btn);
+    }, function (e) { if (quotaEl !== wrap) return; card.innerHTML = ''; card.appendChild(h('p', 'xq-hint', '读不出来：' + e.message)); });
+  }
+  // 用量页的模型颜色跟着模型走、不跟着排名走（dataviz 参考调色板的前六个，浅色 / 深色都验过色盲可分）；别的模型并成「其他」
+  var SERIES = ['claude-opus-4.6', 'deepseek-v4.1-flash', 'gemini-3.8-flash-high', 'glm-5.3', 'kimi-k3.1-pro', 'glm-5.3-flash'];
+  function seriesOf(id) { var i = SERIES.indexOf(id); return i >= 0 ? 's' + (i + 1) : 'so'; }
+  var RANGES = [['1', '今天'], ['7', '7 天'], ['30', '30 天']];
+  function openUsage() {
+    var p = S.open && S.wb ? null : work();
+    Promise.resolve(p).then(function () {
+      S.sheetTask = null; clearTimeout(S.uTm);
+      sheetHead('用量');
+      var box = h('div', 'xc-sh-list xu'); box.appendChild(h('p', 'xc-hint', '正在读取…'));
+      sheetEl.appendChild(box); setSheet(true);
+      var x = sheetEl.querySelector('.xc-sh-x'); if (x) x.focus();
+      var load = function (fresh) {
+        loadUsage(fresh).then(function (u) {
+          if (!S.sheet || !box.isConnected) return;
+          renderUsagePage(box, u);
+          S.uTm = setTimeout(function () { if (S.sheet && box.isConnected && !document.hidden) load(true); }, 60000);
+        }, function (e) { if (box.isConnected) { box.innerHTML = ''; box.appendChild(h('p', 'xc-hint', '读不出来：' + e.message)); } });
+      };
+      load(false);
+    });
+  }
+  function renderUsagePage(box, u) {
+    S.uRange = S.uRange || '7';
+    box.innerHTML = '';
+    box.appendChild(h('p', 'wk-h', '额度'));
+    var q = h('div', 'xu-q'); quotaRows(q, u); box.appendChild(q);
+    box.appendChild(h('p', 'wk-h', '用了多少'));
+    var seg = h('div', 'xu-seg'); seg.setAttribute('role', 'tablist'); seg.setAttribute('aria-label', '时间范围');
+    var body = h('div', 'xu-body');
+    RANGES.forEach(function (r) {
+      var b = h('button', 'xu-rg' + (r[0] === S.uRange ? ' on' : ''), r[1]); b.type = 'button'; b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', r[0] === S.uRange ? 'true' : 'false');
+      b.addEventListener('click', function () {
+        if (S.uRange === r[0]) return; S.uRange = r[0];
+        [].forEach.call(seg.children, function (x) { var on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-selected', on ? 'true' : 'false'); });
+        usageBody(body, u);
+      });
+      seg.appendChild(b);
+    });
+    box.appendChild(seg); box.appendChild(body);
+    usageBody(body, u);
+  }
+  function usageBody(body, u) {
+    body.innerHTML = '';
+    var n = +S.uRange, days = (u.days || []).slice(-n), t = (u.totals || {})[n === 1 ? 'today' : n === 7 ? 'd7' : 'd30'] || { input: 0, output: 0, cached: 0, runs: 0, hit: null };
+    var names = u.names || {}, nm = function (id) { return id === '其他' ? '其他' : names[id] || id; };
+    body.appendChild(h('p', 'xu-sum', '共 ' + tok(t.input + t.output) + ' token（输入 ' + tok(t.input) + '、输出 ' + tok(t.output) + '）' +
+      (t.hit == null ? '' : '，缓存命中 ' + Math.round(t.hit * 100) + '%') + '，' + t.runs + ' 轮'));
+    // 每天按模型合计（不在 SERIES 里的并成「其他」）
+    var perDay = days.map(function (d) {
+      var by = {};
+      Object.keys(d.models || {}).forEach(function (id) { var m = d.models[id], k = SERIES.indexOf(id) >= 0 ? id : '其他'; by[k] = (by[k] || 0) + (m.input || 0) + (m.output || 0); });
+      return { date: d.date, by: by, total: Object.keys(by).reduce(function (a, k) { return a + by[k]; }, 0) };
+    });
+    var max = Math.max.apply(null, perDay.map(function (d) { return d.total; }).concat([0]));
+    var order = SERIES.concat(['其他']);
+    var wrap = h('div', 'xu-cw'), chart = h('div', 'xu-chart n' + n), tip = h('div', 'xu-tip'); tip.hidden = true;
+    chart.setAttribute('role', 'list'); chart.setAttribute('aria-label', '每天的 token');
+    if (max > 0) chart.appendChild(h('span', 'xu-max', tok(max)));
+    var today = u.days && u.days.length ? u.days[u.days.length - 1].date : '';
+    var dname = function (date) { return date === today ? '今天' : (+date.slice(5, 7)) + '月' + (+date.slice(8, 10)) + '日'; };
+    perDay.forEach(function (d) {
+      var col = h('div', 'xu-day' + (d.total ? '' : ' empty')); col.tabIndex = 0; col.setAttribute('role', 'listitem');
+      var lines = order.filter(function (k) { return d.by[k]; }).map(function (k) { return nm(k) + ' ' + tok(d.by[k]); });
+      col.setAttribute('aria-label', dname(d.date) + '：' + (d.total ? tok(d.total) + ' token，' + lines.join('，') : '没有用量'));
+      var stack = h('div', 'xu-col'); stack.style.height = (max ? d.total / max * 100 : 0) + '%';
+      order.forEach(function (k) { if (!d.by[k]) return; var b = h('span', 'xu-b ' + seriesOf(k)); b.style.flexGrow = d.by[k]; stack.appendChild(b); });
+      col.appendChild(stack);
+      var show = function () {
+        tip.innerHTML = ''; tip.appendChild(h('b', '', dname(d.date) + ' · ' + tok(d.total) + ' token'));
+        order.forEach(function (k) { if (!d.by[k]) return; var r = h('span', 'xu-tr'); r.appendChild(h('i', 'xu-sw ' + seriesOf(k))); r.appendChild(document.createTextNode(nm(k) + ' ' + tok(d.by[k]))); tip.appendChild(r); });
+        tip.hidden = false;
+        var cr = wrap.getBoundingClientRect(), br = col.getBoundingClientRect();
+        tip.style.left = Math.max(0, Math.min(br.left - cr.left + br.width / 2 - tip.offsetWidth / 2, cr.width - tip.offsetWidth)) + 'px';
+      };
+      var hide = function () { tip.hidden = true; };
+      col.addEventListener('pointerenter', show); col.addEventListener('focus', show);
+      col.addEventListener('pointerleave', hide); col.addEventListener('blur', hide);
+      chart.appendChild(col);
+    });
+    wrap.appendChild(chart); wrap.appendChild(tip);
+    var ax = h('div', 'xu-ax');
+    if (perDay.length) { ax.appendChild(h('span', '', perDay.length > 1 ? dname(perDay[0].date) : '')); ax.appendChild(h('span', '', dname(perDay[perDay.length - 1].date))); }
+    wrap.appendChild(ax);
+    body.appendChild(wrap);
+    // 图例（两个以上模型才有意义，但一直给：颜色不能是唯一的区分）和按模型列表
+    var sums = {};
+    perDay.forEach(function (d) { Object.keys(d.by).forEach(function (k) { sums[k] = (sums[k] || 0) + d.by[k]; }); });
+    var present = order.filter(function (k) { return sums[k]; });
+    if (present.length) {
+      var lg = h('ul', 'xu-lg'); lg.setAttribute('aria-label', '图例');
+      present.forEach(function (k) { var li = h('li'); li.appendChild(h('i', 'xu-sw ' + seriesOf(k))); li.appendChild(document.createTextNode(nm(k))); lg.appendChild(li); });
+      body.appendChild(lg);
+      var all = present.reduce(function (a, k) { return a + sums[k]; }, 0), list = h('div', 'xu-ms');
+      present.slice().sort(function (a, b) { return sums[b] - sums[a]; }).forEach(function (k) {
+        var r = h('div', 'xu-m'); r.appendChild(h('i', 'xu-sw ' + seriesOf(k))); r.appendChild(h('span', 'xu-mn', nm(k)));
+        r.appendChild(h('span', 'xu-mv', tok(sums[k]))); r.appendChild(h('span', 'xu-mp', Math.round(sums[k] / all * 100) + '%')); list.appendChild(r);
+      });
+      body.appendChild(list);
+    } else body.appendChild(h('p', 'xc-hint', '这段时间没有用量记录。'));
+  }
+
   /* 首页上的「小芯」：一块终端屏，最近在做的、做好的几行，最后一行直接打字。
      点哪里都进工作台：点任务打开那个任务；回车把话发到主对话。网站没开小芯聊天时不显示。 */
   var homeEl = null;
@@ -1843,10 +2037,10 @@
   function buildHome() {
     var slot = document.getElementById('xinWork'); if (!slot || homeEl) return;
     homeEl = slot;
-    slot.innerHTML = '<h2 class="cat-h">小芯</h2><div class="xw-card"><button class="xw-head" type="button"><span class="xw-who"><b>工作台</b><span class="xw-st"><i></i><em></em></span></span><span class="xw-go" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9.5 7.5 14 12l-4.5 4.5"/></svg></span></button>' +
+    slot.innerHTML = '<h2 class="cat-h">小芯</h2><div class="xw-card"><div class="xw-top"><button class="xw-head" type="button"><span class="xw-who"><b>工作台</b><span class="xw-st"><i></i><em></em></span></span><span class="xw-go" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9.5 7.5 14 12l-4.5 4.5"/></svg></span></button></div>' +
       '<div class="xw-term"><ul class="xw-list"></ul><form class="xw-ask"><span class="xw-caret" aria-hidden="true">&gt;</span><input type="text" autocomplete="off" enterkeyhint="send" aria-label="和小芯说"><button type="submit" class="xw-send" aria-label="发送"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button></form></div></div>';
     var head = slot.querySelector('.xw-head');
-    head.insertBefore(avatar('xw-av'), head.firstChild);
+    head.parentNode.insertBefore(glowAv('xw-glow', 'xw-av'), head);
     head.setAttribute('aria-label', '打开小芯工作台');
     head.addEventListener('click', function () { work(); });
     var form = slot.querySelector('.xw-ask'), inp = form.querySelector('input');
@@ -2099,6 +2293,7 @@
       saveQueue();
       ls('lm.xin.queue.pending', null);
       if (d.bg != null) S.bg = d.bg;
+      glowFrom(d);
       S.mine[d.run] = true; S.run = d.run; S.off = 0; S.pos = null; S.t0 = Date.now(); render(); typing(true); startPolling(); if (!flight.sid) refreshSide();
     }).catch(function (e) {
       if(generation!==S.convSeq){settleDetachedSend(flight,null,e);return;}
@@ -2389,6 +2584,7 @@
   // 小芯在干活时，最后面冒一个「正在输入」的气泡（三个点在跳）和一行字：思考中 / 在电脑上忙，用了多久（每秒走）
   var typingEl = null, typingTick = 0;
   function typing(on) {
+    paintGlow();
     if (!on) { clearInterval(typingTick); typingTick = 0; if (typingEl) typingEl.remove(); typingEl = null; return; }
     if (!typingTick) typingTick = setInterval(progress, 1000);
     if (!typingEl) {
@@ -2596,6 +2792,7 @@
         // 正停在主对话的空白页（还没开始打字发送）：把它读出来
         if (g.main && mainDraft() && !S.sending && !S.run && !S.loadingConversation) { if (S.open && S.authed) openSession(g.main); else S.histFor = ''; }
       }
+      glowFrom(g);
       if (g && g.bg) { S.bg = g.bg; pollTasksSoon(500); }   // 后台有任务在做：看看进度（做完了小芯会冒气泡）
       if (!g || !g.id || !g.text || ls(GREETED) === g.id) {
         if (g && g.bg) setTimeout(function () { var x = xin(); if (x && x.say && x.mode !== 'away' && !x.asking && !S.open) x.say('我还在忙着（' + g.bg + ' 件事），好了告诉你', 6000, openTaskCenter); }, 2500);
