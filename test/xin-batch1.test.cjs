@@ -93,3 +93,48 @@ test('同一个项目目录的两个任务仍然排队', async t => {
   h.hold('bg', false);
   await until(() => h.task(b.task.sid).status === 'done', 20000, '乙最后也做完');
 });
+
+/* ---------- 临时错误：控制器等一会儿接着做 ---------- */
+const bgCalls = h => h.fc.calls().filter(c => c.args.includes('【你现在在后台】'));
+
+test('干活中途断线：等一会儿用同一个会话接着做完，不算没做成', async t => {
+  const h = home(t, { XIN_RETRY_DELAYS_MS: '1500' });
+  h.script(['fail:stream disconnected before completion', 'ok']);
+  const n = h.locked('task_new', { kind: 'code', title: '断线', goal: '编个程序' });
+  const waiting = await until(() => { const x = h.task(n.task.sid); return x.status === 'queued' && x.retryAt > 0 && x; }, 15000, '断线后回到排队、等一会儿');
+  assert.equal(waiting.transientRetries, 1);
+  assert.equal(waiting.result, undefined, '还没有结果，不算没做成');
+  const done = await until(() => { const x = h.task(n.task.sid); return x.status === 'done' && x; }, 20000, '接着做完');
+  assert.equal(done.result.ok, true);
+  const calls = bgCalls(h);
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1].args.includes('resume') && calls[1].args.includes(waiting.agentSid), '续接同一个会话');
+  assert.ok(calls[1].args.includes('刚才连接模型出错'), '告诉它先看现状、别重复有副作用的事');
+});
+
+test('预算用完不重试，直接算没做成', async t => {
+  const h = home(t, { XIN_RETRY_DELAYS_MS: '200' });
+  h.script(['fail:task inference budget exhausted; partial work is retained', 'ok']);
+  const n = h.locked('task_new', { kind: 'code', title: '预算', goal: '编个程序' });
+  const x = await until(() => { const v = h.task(n.task.sid); return v.status === 'failed' && v; }, 15000, '失败');
+  assert.equal(bgCalls(h).length, 1);
+  assert.ok(!x.transientRetries);
+});
+
+test('连续临时错误到上限后算没做成', async t => {
+  const h = home(t, { XIN_RETRY_DELAYS_MS: '200,200,200' });
+  h.script(['fail:502 Bad Gateway', 'fail:502 Bad Gateway', 'fail:502 Bad Gateway', 'fail:502 Bad Gateway']);
+  const n = h.locked('task_new', { kind: 'code', title: '一直断', goal: '编个程序' });
+  const x = await until(() => { const v = h.task(n.task.sid); return v.status === 'failed' && v; }, 40000, '重试用完后失败');
+  assert.equal(bgCalls(h).length, 4);
+  assert.equal(x.transientRetries, 3);
+});
+
+test('重试时已经过了任务时限：按超时收尾，不再起一轮', async t => {
+  const h = home(t, { XIN_RETRY_DELAYS_MS: '3000', XIN_TASK_TIMEOUT_MS: '1500' });
+  h.script(['fail:stream disconnected before completion', 'ok']);
+  const n = h.locked('task_new', { kind: 'code', title: '超时', goal: '编个程序' });
+  const x = await until(() => { const v = h.task(n.task.sid); return v.status === 'failed' && v; }, 30000, '按超时失败');
+  assert.match(x.result.err, /超时/);
+  assert.equal(bgCalls(h).length, 1);
+});

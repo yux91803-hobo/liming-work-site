@@ -62,6 +62,7 @@ import {openFrontProvider,preferredFrontModel,frontModelInfo,OPUS_FRONT_MODEL} f
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
+import { transientFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
@@ -575,7 +576,9 @@ function runner(run) {
     if (meta.task) {
       killTree(child); // 收掉本轮进程组，包括仍持有临时预览端口的子进程
       // 后台任务：结果先存进任务记录（接着做、等确认还是收尾、排下一个），要推送的在锁外发
-      const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model });
+      // 临时错误（断线、网关 5xx、限流）由控制器等一会儿接着做，见 vm-retry.mjs
+      const transient = !ok && !stopped && !state.timeout && transientFailure([why, ...tailEvents(run, 16384).filter(e => e.t === 'err').map(e => e.text), stderr.slice(-2000)].join('\n'));
+      const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model, transient });
       if (r && r.notice) { setTimeout(() => process.exit(0), 20000).unref(); deliverNotice(r.notice).catch(() => {}); }
       return;
     }
@@ -1379,6 +1382,7 @@ export function taskSummary(t, full) {
   if (t.status === 'running' && r) out.activity = t.stage==='checking'?'正在检查网页的动画和交互':taskActivity(r);
   if (t.result) out.result = { ok: !!t.result.ok, text: full ? t.result.text : cut(t.result.text, 2000), err: t.result.err || '', at: t.result.at || 0 };
   if (t.inbox && t.inbox.length) out.inbox = t.inbox.length;
+  if (t.status === 'queued' && t.retryAt > Date.now()) out.retryAt = t.retryAt;
   if (t.note) out.note = t.note;
   if (t.approval || t.publication) out.approval = { id: t.approval?.id || 'publish', kind: t.publication ? 'publish' : t.approval?.kind || 'tool' };
   if (t.publication) out.publication = t.publication;
@@ -1494,14 +1498,14 @@ function startTask(t, all) {
     : forAgent(t.next || '接着做。', '');
   const userText = first ? t.goal : String(t.nextShow || t.next || '接着做');
   const cm = codexModel(t.model);
-  Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, startedAt: t.startedAt || Date.now() });
+  Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, retryAt: 0, startedAt: t.startedAt || Date.now() });
   const run = launch(t, { text, effort: t.model===runtime.AGY_MODEL?'high':AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||t.model===runtime.AGY_MODEL ? t.fallbacks || [] : [],
     images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !t.dailyDate && TASK_SANDBOX(),
     deadline: t.deadline }, { t: 'user', text: userText, at: Date.now() });
   if (t.dailyDate) writeJ(DAILY_LAST(), { date: t.dailyDate, run, sid: t.sid, at: Date.now(), ok: null });
 }
-function failTask(t, why) {
-  Object.assign(t, { status: 'failed', result: { ok: false, text: why, at: Date.now() }, endedAt: Date.now(), frontSeen: false });
+function failTask(t, why, err = '') {
+  Object.assign(t, { status: 'failed', result: { ok: false, text: why, err, at: Date.now() }, endedAt: Date.now(), frontSeen: false });
   saveTask(t);
 }
 // 排队的能开始就开始（在 tasks 锁里）
@@ -1515,6 +1519,9 @@ function scheduleNow() {
     if (bad.length) { failTask(t, '前置任务' + bad.map(d => d ? ' ' + d.no : '').join('、') + ' 没做成，这个任务没开始。'); continue; }
     if (deps.some(d => d.status !== 'done')) continue;
     if (all.some(x => x !== t && occupiesTask(x) && overlaps(x.dir, t.dir))) continue;
+    if (t.retryAt > Date.now()) continue;   // 临时错误后等一会儿再接着做
+    // 时限从第一次开工算起，重试和续做都不延长：已经过了就按超时收尾，不再起一轮立刻被杀
+    if (t.deadline && Date.now() >= t.deadline) { const full = findTask({ sid: t.sid }) || t; failTask(full, '超过 ' + full.minutes + ' 分钟还没做完，停下了。', '超时（' + full.minutes + ' 分钟）'); continue; }
     if (startTask(t, all) !== false) running++;
   }
 }
@@ -1551,6 +1558,9 @@ function taskFinish(a) {
       Object.assign(t, { status: 'waiting', question: '这个任务中途断了两次（电脑暂停或重启），要接着做吗？', endedAt: Date.now(), frontSeen: false });
       notify = taskPush(t, '我这边中途断了：' + t.title, t.question);
     }
+  } else if (a.transient && !a.stopped && !a.timeout && (t.transientRetries || 0) < retryDelays().length) {   // 断线、网关暂时不可用：等一会儿用同一个会话接着做
+    const n = (t.transientRetries || 0) + 1;
+    Object.assign(t, { transientRetries: n, retryAt: Date.now() + retryDelays()[n - 1], next: RETRY_TEXT, nextShow: '（连接出错，稍后接着做）', status: 'queued', queuedAt: Date.now() });
   } else {
     let ok = !!a.ok && !a.stopped && !a.timeout;
     let publication = null;
@@ -1578,6 +1588,7 @@ function taskFinish(a) {
       catch (e) { ok = false; t.publicationError = e.message; }
     }
     t.status = a.stopped ? 'stopped' : ok ? 'done' : 'failed';
+    if (t.status === 'done') { t.transientRetries = 0; t.retryAt = 0; }
     const answer = ((last && last.text) || (a.timeout ? '超过 ' + t.minutes + ' 分钟还没做完，停下了。' : ok ? '做完了。' : '没做成。'));
     t.result = { ok, text: cut(t.workspace ? answer.split(t.workspace.work).join(t.dir) : answer, 8000),
       err: ok ? '' : String(t.publicationError || (a.timeout ? '超时（' + t.minutes + ' 分钟）' : (err && err.text) || '')).slice(0, 600), at: Date.now() };
@@ -1625,6 +1636,7 @@ function taskTell(a) {
   }
   if(t.status==='stopping')return {error:'busy',msg:'任务正在停止，退出后再继续'};
   const text = String(a.text || '').trim().slice(0, 4000) || '接着做';
+  t.transientRetries = 0;
   if(t.tkind==='review'&&t.status==='waiting'){const requested=namedModel(text);if(requested){t.requestedModel=requested;t.requestedNamed=true;}}
   if (t.status === 'running') {
     const r = lastRun(t), m = r && readJ(metaF(r));
@@ -1713,7 +1725,7 @@ function taskTick() {
 function taskNeedsTick(all) {
   const running = all.filter(t=>t.status==='running'||t.status==='stopping'||t.status==='waiting'&&t.approval);
   if (running.some(t => { const r = lastRun(t); return !r || runDone(r); })) return true;
-  return all.some(t => t.status === 'queued') && running.length < TASK_MAX;
+  return all.some(t => t.status === 'queued' && !(t.retryAt > Date.now())) && running.length < TASK_MAX;
 }
 function tickTasks() {
   const all = listTasks();

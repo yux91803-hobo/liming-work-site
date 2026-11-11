@@ -1289,7 +1289,7 @@
   function bareCmd(d) { var m = /^\/(?:usr\/)?bin\/(?:ba)?sh -l?c (['"])([\s\S]*)\1$/.exec(String(d || '').trim()); return m ? m[2] : String(d || ''); }
   function tStatText(t) {
     if (t.status === 'running') return '已进行 ' + dur(Date.now() - (t.startedAt || t.created || Date.now()));
-    if (t.status === 'queued') return t.after && t.after.length ? '等待前一项' : '排队中';
+    if (t.status === 'queued') return t.retryAt > Date.now() ? '连接出错，稍后接着做' : t.after && t.after.length ? '等待前一项' : '排队中';
     return TSTAT[t.status] || t.status;
   }
   function tLine(t) {
@@ -1753,7 +1753,7 @@
     if (!im) c.appendChild(wkIcon(kind === 'wait' ? 'wait' : cat));
     var head = h('div', 'wk-hd');
     head.appendChild(h('b', 'wk-t', t.title));
-    var line = kind === 'live' ? (t.status === 'stopping' ? '停止中' : t.status === 'queued' ? '排队中' : t.activity || '准备中')
+    var line = kind === 'live' ? (t.status === 'stopping' ? '停止中' : t.status === 'queued' ? (t.retryAt > Date.now() ? '连接出错，稍后接着做' : '排队中') : t.activity || '准备中')
       : kind === 'wait' ? t.question || '待确认'
       : t.status === 'failed' ? '失败' + (t.result && (t.result.err || firstLine(t.result.text)) ? '：' + (t.result.err || firstLine(t.result.text)) : '')
       : t.status === 'stopped' ? '已停止' : t.result ? firstLine(t.result.text) : '';
@@ -1902,7 +1902,7 @@
     }
     [].forEach.call(ul.querySelectorAll('.xw-t'), function (b) {
       var t = S.tinfo[b.dataset.tsid] || rows.filter(function (x) { return x.sid === b.dataset.tsid; })[0]; if (!t) return;
-      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? '排队中' : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? '待确认' : ago(t.endedAt || t.created || Date.now());
+      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? (t.retryAt > Date.now() ? '稍后接着做' : '排队中') : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? '待确认' : ago(t.endedAt || t.created || Date.now());
     });
     ul.hidden = !rows.length;
   }
