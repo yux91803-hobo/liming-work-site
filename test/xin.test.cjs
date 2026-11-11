@@ -1123,6 +1123,11 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   const st = () => Object.fromEntries(op('tasks', { sid: r.sid }).tasks.map(t => [t.title, t.status]));
   await until(() => { const s = st(); return s.A === 'running' && s.C === 'running' && s; }, 15000, 'A、C 在做');
   assert.deepStrictEqual(st(), { A: 'running', B: 'queued', C: 'running' });   // B 和 A 同一个目录，等着
+  // 有任务在做、排队时兄弟说别的：前台这一轮不带「进行中 / 排队中」（像 opencode 任务还在跑时不发通知；联调 #113–#116）
+  const rr = op('send', { sid: r.sid, text: '在吗' });
+  await until(() => op('poll', { run: rr.run, off: 0 }).done, 15000, '前台（任务在做）');
+  const qr = JSON.stringify(JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input);
+  assert.ok(qr.includes('在吗') && !qr.includes('<后台任务>') && !qr.includes('进行中（'), qr.slice(-400));
   assert.strictEqual(op('tasks', { sid: r.sid }).bg, 3);
   // 不认识的模型、类型、目录在外面：不派
   assert.match(xinTask('new', '--title', 'X', '--model', 'gpt-9', '--', 'x'), /没有这个模型/);

@@ -1919,17 +1919,21 @@ export function frontFallback(a) {
   if (active.length) return {text:'我还在处理之前的事。这句是补充刚才的要求，还是要另外做一件事？'};
   return {error:'front_timeout',msg:'这句话已保存，但我暂时没能安排好，请重试。'};
 }
-export function taskNotes(sid, all) {
+// active=false（前台每轮）：只带兄弟还不知道的结果和在等确认的；进行中、排队中的不每轮带。
+// 像 opencode 后台任务还在跑时不发通知（subagent-completion.ts：status === "running" 就 return）、Codex 只发变了的部分；
+// 每轮都带「进行中」时，DeepSeek 会把任何一句都答成进度（联调 #113–#116）。兄弟问进度时前台用 xin task list/show 查。
+// 完成事件（handoffPrompt）仍带上进行中、排队中的，用来判断依赖。
+export function taskNotes(sid, all, { active = true } = {}) {
   const mine = (all || listTasks()).filter(t => t.parent === sid);
   const lines = [], seen = [];
   for (const t of mine) {
     const head = '- 任务 ' + t.no + '「' + t.title + '」';
     if (isFinished(t) && !t.frontSeen) { lines.push(head + (TASK_STATUS[t.status] || t.status) + '：' + cut(t.result ? t.result.text : '', 1500).replace(/\n{2,}/g, '\n')+(t.preview?.ready?' 真实预览地址：'+t.preview.url:'')); seen.push({ sid: t.sid, version: taskVersion(t) }); }
     else if (t.status === 'waiting') { lines.push(head + '在等用户确认：' + t.question); if (!t.frontSeen) seen.push({ sid: t.sid, version: taskVersion(t) }); }
-    else if (t.status === 'running') lines.push(head + '进行中（' + Math.max(1, Math.round((Date.now() - (t.startedAt || t.created)) / 60e3)) + ' 分钟）');
-    else if (t.status === 'queued') lines.push(head + '排队中' + (t.after && t.after.length ? '（等任务 ' + t.after.join('、') + ' 做完）' : ''));
+    else if (active && t.status === 'running') lines.push(head + '进行中（' + Math.max(1, Math.round((Date.now() - (t.startedAt || t.created)) / 60e3)) + ' 分钟）');
+    else if (active && t.status === 'queued') lines.push(head + '排队中' + (t.after && t.after.length ? '（等任务 ' + t.after.join('、') + ' 做完）' : ''));
   }
-  // 像 opencode 的 <subagent>、Codex 的 <subagent_notification>：快照只放状态，单独一条带标签；怎么对待它写在系统提示里（TASK_GUIDE）
+  // 像 opencode 的 <subagent>、Codex 的 <subagent_notification>：快照只放状态，单独一条带标签；怎么对待它写在系统提示里（默认模式规则 6）
   return { text: lines.length ? '<后台任务>\n' + lines.join('\n') + '\n</后台任务>' : '', seen };
 }
 // 网站该不该替电脑续「有活在干」的租约（任务在后台跑，等模型回话时电脑看起来像闲着）：有任务就每 20 分钟续一次，没了就撤
@@ -2066,7 +2070,7 @@ const ops = {
     const hint = s.agent === 'codex' && namedModel(text) ? '\n（本轮已记录用户指定的执行模型，task new 会自动应用；前台不切换。只说好，我来。）' : '';
     // 默认模式：带上这个对话的后台任务情况（做完的结果前台还不知道的、在等确认的、在做的）
     const all = s.agent === 'codex' ? listTasks() : [];
-    const tn = s.agent === 'codex' ? taskNotes(s.sid, all) : { text: '', seen: [] };
+    const tn = s.agent === 'codex' ? taskNotes(s.sid, all, { active: false }) : { text: '', seen: [] };
     const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, frontTaskNotes: tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
       cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
     const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, s.main ? { main: true, turns: s.runs.length } : {}, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
