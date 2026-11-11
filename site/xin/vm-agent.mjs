@@ -247,7 +247,7 @@ function patchSession(sid, changes) { return lockedCall(isTask(readJ(sessF(sid))
 function applyRunPatch(run,changes){
   const current=readJ(metaF(run));if(!current)return null;
   if(changes?.stopped&&current.ended)return current;
-  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','effort','from','fallbacks','frontUsage','webCheck'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
+  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','effort','from','fallbacks','frontUsage','webCheck','pageCheck'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
   writeJ(metaF(run),current);return current;
 }
 function patchRun(run,changes){
@@ -544,6 +544,13 @@ function runner(run) {
       let check;try{check=runtime.checkWebWorkspace(s);}catch(e){check={ok:false,error:e.message};}
       m=patchRun(run,{webCheck:{...check,trusted:true}});stopped=!!m.stopped;ok=ok&&!stopped;
       emit(run,{t:'tool_end',id:'xin-web-check',name:'检查网页',ok:!!check.ok,out:check.error||'电脑和手机交互检查通过'});
+    }
+    // 不是网页成品的任务也可能做出页面（比如查资料时顺手做的看板）：打开截一张图，做完后给它一个预览入口
+    if(ok&&meta.task&&!s.web&&!s.pendingQuestion&&!s.approval&&s.workspace&&runtime.findPage(s)){
+      emit(run,{t:'tool',id:'xin-page-check',name:'生成预览',detail:'在浏览器里打开这次做的页面'});
+      let page;try{page=runtime.checkPageWorkspace(s);}catch(e){page={ok:false,error:e.message};}
+      if(page)m=patchRun(run,{pageCheck:{...page,trusted:true}});
+      emit(run,{t:'tool_end',id:'xin-page-check',name:'生成预览',ok:!!page?.ok,out:page?.ok?'可以预览':(page?.error||'没有可预览的页面')});
     }
     if(ok && meta.task && !s.pendingQuestion && !s.approval && s.workspace && runtime.stm32Task(s)) {
       emit(run,{t:'tool',id:'xin-build',name:'编译核验',detail:'控制器在隔离副本执行受控构建，并检查本次新生成的固件产物'});
@@ -1560,6 +1567,8 @@ function taskFinish(a) {
         if (verification.applicable) t.verification = verification;
         publication = runtime.publishWorkspace(t, BASE);
         if(t.web&&!publication.pending)t.preview=runtime.publishWebPreview(t,BASE,runMeta.webCheck);
+        // 普通任务做出的页面：能预览就给入口，预览不成不影响任务本身
+        if(!t.web&&!publication.pending&&runMeta.pageCheck?.trusted&&runMeta.pageCheck.ok){try{t.preview=runtime.publishPagePreview(t,BASE,runMeta.pageCheck);}catch{/* 没有预览也照样算做完 */}}
       }
       catch (e) { ok = false; t.publicationError = e.message; }
     }

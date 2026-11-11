@@ -4,15 +4,15 @@ const url=n=>pathToFileURL(path.join(__dirname,'../site/xin/'+n+'.mjs')).href;
 function fixture(t){const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-learning-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
  return code=>{const r=spawnSync(process.execPath,['--input-type=module','-e',`import * as l from ${JSON.stringify(url('vm-learning'))};import * as m from ${JSON.stringify(url('vm-memory'))};import * as b from ${JSON.stringify(url('vm-base'))};
  const now=Date.UTC(2026,10,8),event=(id,extra={})=>({id:'learn00000'+id,topic:'gpio',exercise:'led-init',kind:'code',answer:'LED_PORT->BSRR = GPIO_BSRR_BS0;',correct:true,independent:true,at:now,...extra});
- const report=(events,extra={})=>l.reportLearning({agent:'codex',events,...extra},now);const out=await(async()=>{${code}})();process.stdout.write(JSON.stringify(out));`],{env:{...process.env,XIN_HOME:path.join(root,'xin'),XIN_WORK:path.join(root,'work')},encoding:'utf8'});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
+ const report=(events,extra={})=>l.reportLearning({agent:'codex',events,...extra},now);const defaultLearning=m.memoryPreferences().learning;m.setMemoryPreferences({learning:true});const out=await(async()=>{${code}})();process.stdout.write(JSON.stringify(out));`],{env:{...process.env,XIN_HOME:path.join(root,'xin'),XIN_WORK:path.join(root,'work')},encoding:'utf8'});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
 }
-test('学习证据只收默认模式的网页上报；开关默认开，关闭后不收，天启/任务/敏感输入/重复编号不收',t=>{
+test('学习证据只收默认模式的网页上报；开关默认关（站长不要学习记录），打开后才收，关闭后不收，天启/任务/敏感输入/重复编号不收',t=>{
  const run=fixture(t),r=run(`b.mk(b.BASE+'/sessions');b.writeJ(b.BASE+'/sessions/stianqi001.json',{agent:'harness'});
- const on=m.memoryPreferences().learning,view=report([event(1,{kind:'view',answer:'',correct:null,independent:false})]);
+ const on=m.memoryPreferences().learning,dflt=defaultLearning,view=report([event(1,{kind:'view',answer:'',correct:null,independent:false})]);
  const before=m.listMemory().length,code=report([event(2)]),duplicate=report([event(2)]),tq=report([event(3)],{sid:'stianqi001'}),agent=report([event(4)],{agent:'harness'}),worker=report([event(5)],{task:true});
  const sensitive=report([event(6,{answer:'网关密码是 abc12345'})]);m.setMemoryPreferences({learning:false});const off=report([event(7)]);
- return {on,view,before,code,duplicate,tq,agent,worker,sensitive,off,n:l.learningDb().prepare('SELECT count(*) n FROM learning_events').get().n};`);
- assert.equal(r.on,true);assert.equal(r.view.accepted,1);assert.equal(r.before,0);assert.equal(r.code.accepted,1);assert.equal(r.duplicate.accepted,0);
+ return {on,dflt,view,before,code,duplicate,tq,agent,worker,sensitive,off,n:l.learningDb().prepare('SELECT count(*) n FROM learning_events').get().n};`);
+ assert.equal(r.dflt,false,'默认关');assert.equal(r.on,true);assert.equal(r.view.accepted,1);assert.equal(r.before,0);assert.equal(r.code.accepted,1);assert.equal(r.duplicate.accepted,0);
  assert.equal(r.tq.error,'not_default');assert.equal(r.agent.error,'not_default');assert.equal(r.worker.error,'not_default');assert.equal(r.sensitive.accepted,0);assert.equal(r.off.ignored,'disabled');assert.equal(r.n,2);
 });
 test('近期证据权重大；独立代码通过提升为基本掌握，后来出错标需要复习，辅助答对不能冒充独立掌握',t=>{

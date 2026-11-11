@@ -7,7 +7,7 @@ import json
 import os
 import time
 import uuid
-from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape
+from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says
 from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
@@ -147,12 +147,12 @@ async def main():
             task = owned[0]
             print('PASS real browser login and real background dispatch', flush=True)
             # Foreground stays usable while the task is executing.
-            reply_marker = 'front-' + uuid.uuid4().hex[:12]
+            reply_marker = spoken_marker()
             await page.locator('.xc-row textarea').fill('只回复 ' + reply_marker + '，不要执行命令，也不要等待后台。')
             await page.locator('.xc-send').click()
             await settle('!LimingXinChat.state.run && !LimingXinChat.state.sending', 180000)
             shown = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()
-            if not any(reply_marker in text for text in shown):
+            if not any(says(text, reply_marker) for text in shown):
                 raise RuntimeError('Foreground reply missing: ' + await front_diagnosis(sid) + ' shape=' + json.dumps(reply_shape(shown, reply_marker)))
             print('PASS foreground real-model reply during background work', flush=True)
             # Only pixels contain the random answer; neither the prompt nor the filename reveals it.
@@ -225,8 +225,8 @@ async def main():
             page.on('pageerror', lambda e: errors.append(type(e).__name__))
             await page.goto(BASE + '/#xin', wait_until='domcontentloaded')
             await page.wait_for_function('(sid) => LimingXinChat.state.authed && LimingXinChat.state.sid===sid && LimingXinChat.state.histFor===sid && !LimingXinChat.state.loadingConversation', arg=sid, timeout=60000)
-            first_marker='generation-original-'+uuid.uuid4().hex[:12]
-            second_marker='generation-current-'+uuid.uuid4().hex[:12]
+            first_marker=spoken_marker(reply_marker)
+            second_marker=spoken_marker(first_marker+' '+reply_marker)
             entered=asyncio.Event();release=asyncio.Event();held={}
             async def hold_send(route):
                 body=route.request.post_data_json or {}
@@ -259,7 +259,7 @@ async def main():
                 if alternate_sid==sid or second_marker not in text or first_marker in text:
                     raise RuntimeError('Conversation isolation failed after a real delayed send')
                 bubbles = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()
-                if not any(second_marker in text for text in bubbles):
+                if not any(says(text, second_marker) for text in bubbles):
                     kinds = {}
                     saved = None
                     try:
@@ -269,7 +269,7 @@ async def main():
                     except Exception:
                         kinds = {'history': 0}
                     done = [e for r in (saved or {}).get('runs', []) for e in r.get('events', []) if e.get('t') == 'done']
-                    assistant_has_marker = any(second_marker in (e.get('text') or '') for r in (saved or {}).get('runs', []) for e in r.get('events', []) if e.get('t') == 'text')
+                    assistant_has_marker = any(says(e.get('text'), second_marker) for r in (saved or {}).get('runs', []) for e in r.get('events', []) if e.get('t') == 'text')
                     # Counts and booleans only: never print the reply, the marker or the prompt.
                     raise RuntimeError('New conversation real-model reply missing'
                         + ' bubbles=' + str(len(bubbles))
@@ -288,7 +288,7 @@ async def main():
                     if time.monotonic()>limit:raise RuntimeError('Original real turn did not finish')
                     await asyncio.sleep(2)
                 events=[e for run in old['runs'] if run['run']==held['run'] for e in run['events'] if e.get('t')=='text']
-                if not any(first_marker in e.get('text','') for e in events):
+                if not any(says(e.get('text',''), first_marker) for e in events):
                     target_events=original.get('events',[]) if original else []
                     kinds={k:sum(e.get('t')==k for e in target_events) for k in sorted({e.get('t') or '?' for e in target_events})}
                     ended=[e for e in target_events if e.get('t')=='done']
@@ -298,7 +298,7 @@ async def main():
                         +' stopped='+str(bool(ended and ended[-1].get('stopped')))
                         +' userHasMarker='+str(any(first_marker in e.get('text','') for e in target_events if e.get('t')=='user'))
                         +' assistantBytes='+str(sum(len(e.get('text','').encode()) for e in events))
-                        +' assistantHasPriorMarker='+str(any(reply_marker in e.get('text','') for e in events)))
+                        +' assistantHasPriorMarker='+str(any(says(e.get('text',''), reply_marker) for e in events)))
                 if errors:raise RuntimeError('Browser JavaScript errors')
                 print('PASS real delayed response stays in its original conversation while the new conversation completes',flush=True)
             finally:
@@ -331,11 +331,11 @@ async def main():
             web_sid = web[0]['sid']
             if web[0]['status'] not in ('queued','running'):
                 raise RuntimeError('Expected active Gemini web work during concurrent foreground test')
-            front_marker = 'web-front-' + uuid.uuid4().hex[:12]
+            front_marker = spoken_marker(first_marker + ' ' + second_marker)
             await page.locator('.xc-row textarea').fill('只回复 ' + front_marker + '，不要执行命令、派任务或等待正在做的事。')
             await page.locator('.xc-send').click()
             await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
-            if front_marker not in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text():
+            if not says(await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text(), front_marker):
                 raise RuntimeError('Concurrent real foreground reply missing during Gemini web work')
             front = await call('history', {'sid': alternate_sid})
             done = [e for r in front['runs'] for e in r['events'] if e.get('t') == 'done']

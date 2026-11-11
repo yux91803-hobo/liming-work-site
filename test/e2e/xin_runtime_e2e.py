@@ -41,7 +41,7 @@ async def main():
         assert await pg.locator('.xc-me.queued .xc-bub').inner_text() == 'change direction now'
         print('PASS reload restores one queued message without sending it twice', flush=True)
         await pg.locator('.xc-qsteer').click()
-        await pg.wait_for_function("document.querySelector('.xc-qtag').textContent === '已送入当前任务'")
+        await pg.wait_for_function("document.querySelector('.xc-qtag').textContent === '已发送'")
         assert st['steer']['clientId'] == before[0]['id'] and st['steer']['run'] == 'rlive00001'
         assert await pg.evaluate("localStorage.getItem('lm.xin.queue.snew000001')") is None
         assert await pg.evaluate('LimingXinChat.state.run') == 'rlive00001'
@@ -57,7 +57,7 @@ async def main():
         await pg.wait_for_selector('.xc-tl-i')
         await pg.locator('.xc-tl-i').click()
         await pg.wait_for_selector('.xc-tk-act .xc-btn')
-        assert await pg.locator('.xc-tk-act .xc-btn').all_text_contents() == ['允许这一次','拒绝']
+        assert await pg.locator('.xc-tk-act .xc-btn').all_text_contents() == ['允许','拒绝']
         assert await pg.locator('.xc-tk-in').count() == 0
         await pg.get_by_role('button', name='拒绝', exact=True).click()
         await pg.wait_for_function("document.querySelector('.xc-tk-note').textContent.length > 0")

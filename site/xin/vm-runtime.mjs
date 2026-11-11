@@ -568,6 +568,26 @@ export async function frontTurn(o) {
       {type:'function_call_output',call_id,output:JSON.stringify(result??{error:'没有查询结果'})});
     return lookedUp;
   };
+  const textOf = data => (data?.output || []).filter(x => x.type === 'message').flatMap(x => x.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('\n').trim();
+  // 工作已经交出去以后要一句回兄弟的话：带上回执，tool_choice none；失败、超时、又想调工具都只是要不到这句话
+  const ownWords = async (payload, calls, i, call, result) => {
+    try {
+      input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify({ok:true,title:result.task.title,status:result.task.status})});
+      for (const c of calls.slice(i + 1)) input.push({type:'function_call_output',call_id:c.call_id,output:JSON.stringify({skipped:true})});
+      input.push({role:'user',content:'已经交出去了。用你自己的话简短回兄弟一句，别套固定说法，别提编号、模型和分身；不要再调用工具。'});
+      const req = {...payload, input, tool_choice:'none'};
+      let data;
+      if (o.request) data = await o.request(req, abort.signal);
+      else {
+        const response = await (o.fetch||fetch)(o.baseURL.replace(/\/$/,'')+'/responses',{method:'POST',signal:abort.signal,headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},body:JSON.stringify(req)});
+        if (!response.ok) return '';
+        data = await response.json();
+      }
+      o.usage?.(data.usage);
+      const text = textOf(data);
+      return text && !claimsLookup(text) ? text.slice(0, 2000) : '';
+    } catch { return ''; }
+  };
   try {
     // Factual daily questions always use a fresh, real read before the first model answer.
     if(o.lookupBeforeAnswer&&!await lookup())return '我还没查到可靠的当天记录，暂时不能确认。';
@@ -619,7 +639,14 @@ export async function frontTurn(o) {
           : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop、xin remember/forget/recall 和小芯自己的表情、好感度、开场白、动作。'};
         o.trace?.(call.name, args, result);
         if(call.name==='xin'&&isLookup(args?.argv)&&result&&!result.error)lookedUp=true;
-        if (result.terminal) return result.text;
+        if (result.terminal) {
+          // 派活、转达、停下之后用它自己的话回兄弟，不套「好，我这就去弄」（站长 2026-11-11）：
+          // 同一条回复里写了话就用；没写就再要一句，不许再调工具；要不到才用控制器的那句。
+          if (o.handoff || !result.task || !result.text) return result.text;
+          if (said && !claimsLookup(said)) return said.trim().slice(0, 2000);
+          const own = await ownWords(payload, calls, i, call, result);
+          return own || result.text;
+        }
         input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)});
       }
     }
@@ -723,7 +750,7 @@ try{
   errors.length=0;await rpc('Emulation.setDeviceMetricsOverride',{width,height:800,deviceScaleFactor:1,mobile:false});await rpc('Page.navigate',{url:origin+'/'});
   let ready=false;for(let i=0;i<100;i++){if(await evaluate('document.readyState === "complete" && !!document.body')){ready=true;break;}await pause(30);}if(!ready)throw Error('预览未加载完成');await pause(250);
   const visible=await evaluate('({title:document.title,ok:[...document.body.querySelectorAll("*")].some(e=>{const r=e.getBoundingClientRect();return r.width>10&&r.height>10}),overflow:document.documentElement.scrollWidth>innerWidth})');
-  if(!visible.ok||!visible.title||visible.overflow)throw Error(width+' 像素预览为空、缺标题或横向溢出');
+  if(!visible.ok||(!config.lenient&&(!visible.title||visible.overflow)))throw Error(width+' 像素预览为空、缺标题或横向溢出');
   for(const c of config.checks){
    const inspect='(()=>{const c='+JSON.stringify(c)+',e=document.querySelector(c.expectSelector);return e?{text:c.expectText===undefined?null:e.textContent,cls:c.expectClass===undefined?null:e.classList.contains(c.expectClass),attr:c.expectAttribute===undefined?null:e.getAttribute(c.expectAttribute.name)}:null;})()';
    const before=await evaluate(inspect);
@@ -752,6 +779,42 @@ export function checkWebWorkspace(t) {
 }
 export function publishWebPreview(t,controller,check) {
   const m=webManifest(t);if(!check?.ok||m.digest!==check.digest)throw Error('网页需要在最终修改后通过浏览器检查');
+  return storePreview(t,controller,m,check);
+}
+// 不是「网页成品」的任务，这次新做或改过的 HTML（比如查资料时顺手做的看板）也给一个预览入口（站长 2026-11-11）。
+// 只挑一个：层级最浅的，同层先 index.html。要自包含才能在预览的沙盒里打开；不要求点击检查，只在浏览器里打开截一张图。
+export function findPage(t) {
+  if(!t.workspace?.work||!t.workspace.manifest||!fs.existsSync(t.workspace.manifest))return null;
+  let before={};try{before=JSON.parse(fs.readFileSync(t.workspace.manifest,'utf8')).before||{};}catch{}
+  let now;try{now=inventory(t.workspace.work);}catch{return null;}
+  const pages=Object.keys(now).filter(n=>/\.html?$/i.test(n)&&now[n]!==before[n]&&!n.split('/').some(p=>p.startsWith('.')));
+  const index=n=>/(^|\/)index\.html?$/i.test(n)?0:1;
+  pages.sort((a,b)=>a.split('/').length-b.split('/').length||index(a)-index(b)||a.localeCompare(b));
+  return pages[0]||null;
+}
+function pageManifest(t,entry) {
+  const root=t.workspace.work,file=path.resolve(root,entry);if(!under(file,root))throw Error('预览入口越界');
+  const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);let html;
+  try{const s=fs.fstatSync(fd);if(!s.isFile()||s.size>512*1024)throw Error('页面超过 512 KB');html=fs.readFileSync(fd,'utf8');}finally{fs.closeSync(fd);}
+  if(!/<html\b/i.test(html)||!/<body\b/i.test(html))throw Error('不是完整的 HTML 文档');
+  if(/<(?:script|iframe|frame|embed)\b[^>]*\bsrc\s*=|<link\b[^>]*\bhref\s*=/i.test(html))throw Error('页面引用了外部文件，预览里打不开');
+  for(const a of html.matchAll(/<(?:img|source|video|audio)\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi))if(!/^(?:data:|blob:)/i.test(a[1]??a[2]??a[3]))throw Error('页面引用了外部图片或音视频，预览里打不开');
+  const title=String((/<title[^>]*>([^<]{1,200})<\/title>/i.exec(html)||[])[1]||t.title||path.basename(entry)).trim().slice(0,80);
+  return {entry,title,checks:[],html,digest:crypto.createHash('sha256').update(html).digest('hex')};
+}
+export function checkPageWorkspace(t) {
+  const entry=findPage(t);if(!entry)return null;
+  let m;try{m=pageManifest(t,entry);}catch(e){return {ok:false,entry,error:e.message};}
+  const args=['--signal=KILL','40',process.execPath,'--input-type=module','-e',WEB_BROWSER_CHECK,path.join(t.workspace.work,entry),t.workspace.tmp,JSON.stringify({checks:[],lenient:true}),WEB_PREVIEW_CSP];
+  const c=containerCommand(t,'/usr/bin/timeout',args),r=spawnSync(c.command,c.args,{cwd:t.workspace.work,env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:46000,maxBuffer:2*1024*1024});
+  let result;try{result=JSON.parse(r.stdout.trim());}catch{return {ok:false,entry,error:'页面没能在浏览器里打开'};}
+  return {...result,ok:r.status===0&&!!result.ok,entry,title:m.title,digest:m.digest,screenshot:path.join(t.workspace.tmp,'xin-web-preview.png')};
+}
+export function publishPagePreview(t,controller,check) {
+  const m=pageManifest(t,check?.entry||'');if(!check?.ok||m.digest!==check.digest)throw Error('页面在打开检查之后又改过');
+  return storePreview(t,controller,m,check);
+}
+function storePreview(t,controller,m,check) {
   const id=crypto.randomBytes(16).toString('hex'),root=path.join(controller,'previews'),staging=path.join(root,'.'+id),dest=path.join(root,id);mkdir(root);fs.mkdirSync(staging,{mode:0o700});
   try{
     fs.writeFileSync(path.join(staging,'index.html'),m.html,{mode:0o400,flag:'wx'});

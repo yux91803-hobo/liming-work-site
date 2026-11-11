@@ -561,7 +561,7 @@
     var setB = h('button', 'xc-dr-row xc-set-b'); setB.type = 'button'; setB.setAttribute('aria-expanded', 'false');
     setB.innerHTML = svgIcon('gear') + '<span>设置</span>' + svgIcon('chev');
     var set = settings(); set.hidden = true;
-    setB.addEventListener('click', function () { set.hidden = !set.hidden; setB.setAttribute('aria-expanded', set.hidden ? 'false' : 'true'); if (!set.hidden) { set.load(); set.scrollIntoView({ block: 'nearest' }); } });
+    setB.addEventListener('click', function () { set.hidden = !set.hidden; setB.setAttribute('aria-expanded', set.hidden ? 'false' : 'true'); if (!set.hidden) { if (set.load) set.load(); set.scrollIntoView({ block: 'nearest' }); } });
     var ft = h('div', 'xc-dr-ft');
     ft.appendChild(setB); ft.appendChild(set);
     var out = h('button', 'xc-link xc-dr-out', '退出登录'); out.type = 'button'; out.addEventListener('click', logout);
@@ -691,7 +691,7 @@
     [].forEach.call(scrEl.querySelectorAll('.xs-mode .xc-ag'), function (b) { b.setAttribute('aria-checked', (b.getAttribute('data-mode') === 'ctl') === control ? 'true' : 'false'); });
     scrEl.querySelector('.xs-tip').textContent = control ? '接管中：你的鼠标、键盘会直接操作小芯的电脑。用完点「观看」或关掉。' : '只看不动：中间那个终端实时显示小芯在干什么。想自己动手，点「接管」。';
     fr.hidden = true; fr.src = 'about:blank';
-    msg.hidden = false; msg.textContent = '正在打开小芯的屏幕…（电脑在睡觉的话要等一会儿）';
+    msg.hidden = false; msg.textContent = '正在打开屏幕…';
     call('screen', { control: control }, 90000).then(function (d) {
       if (my !== scrSeq || scrEl.hidden) return;
       fr.src = d.url; fr.hidden = false; msg.hidden = true;
@@ -706,7 +706,7 @@
     if (root && S.open && !touch) root.querySelector('.xc-scr-b').focus();
   }
 
-  /* ---------- 设置：天启模式、附带正在看的页面、做完提醒（模型、思考强度在输入框底下） ---------- */
+  /* ---------- 设置：天启模式、附带正在看的页面、做完提醒（学习记录、主动跟进站长 2026-11-11 说不要，已去掉） ---------- */
   function toggleRow(cls, title, desc) {
     var row = h('div', 'xc-tg ' + cls), txt = h('div', 'xc-tg-t'), b = h('button', 'xc-sw'), note = h('p', 'xc-tg-n');
     txt.appendChild(h('b', '', title)); if (desc) txt.appendChild(h('span', '', desc));   // 说明小字：没有就不放
@@ -719,7 +719,7 @@
     box.appendChild(h('p', 'xc-set-h', '设置'));
     // 天启模式：打开时新对话用 Harness（自己选模型和思考强度）；关着（默认）用 Codex，小芯自己挑模型、思考强度最高。
     // 只管新对话：已经开着的对话还是原来的 AI（两边的记录不通用）
-    var tq = toggleRow('xc-tianqi', '天启模式', '新对话自己选模型');
+    var tq = toggleRow('xc-tianqi', '天启模式', '');
     tq.set(S.agent === 'harness');
     tq.btn.addEventListener('click', function () {
       S.agent = S.agent === 'harness' ? 'codex' : 'harness'; ls(LS_AGENT, S.agent); tq.set(S.agent === 'harness');
@@ -728,23 +728,11 @@
     });
     box.appendChild(tq.row);
     // 附带：发消息时带上学习台里正在看的页面、选中的文字、写的代码。关掉就都不带（记在这个浏览器里）
-    var ctx = toggleRow('xc-ctxauto', '附带正在看的页面', '');
+    var ctx = toggleRow('xc-ctxauto', '附带当前页面', '');
     ctx.set(ls(LS_CTX) !== '0');
     ctx.btn.addEventListener('click', function () { var on = ls(LS_CTX) === '0'; ls(LS_CTX, on ? null : '0'); ctx.set(on); S.ctxSkip = null; refreshCtx(); });
     box.appendChild(ctx.row);
-    var learning=toggleRow('xc-learning','学习记录','');
-    learning.set(ls('lm.xin.learning')!=='0');learning.btn.disabled=true;
-    learning.btn.addEventListener('click',function(){var on=learning.btn.getAttribute('aria-checked')!=='true';learning.btn.disabled=true;
-      call('memory_preferences_set',{learning:on},60000).then(function(d){if(d.error)throw Error(d.msg);learning.set(d.learning);ls('lm.xin.learning',d.learning?null:'0');learning.btn.disabled=false;learning.note('');}).catch(function(){learning.btn.disabled=false;learning.note('没改成，请稍后重试');});
-    });box.appendChild(learning.row);
-    var follow = toggleRow('xc-followups', '主动跟进', '');
-    follow.set(true);follow.btn.disabled = true;
-    box.load=function(){if(!S.authed)return;follow.btn.disabled=true;learning.btn.disabled=true;call('memory_preferences', {}, 60000).then(function(d){if(d.error)throw Error(d.msg);follow.set(d.followups !== false);learning.set(d.learning!==false);ls('lm.xin.learning',d.learning===false?'0':null);learning.btn.disabled=false;follow.btn.disabled=false;follow.note('');learning.note('');}).catch(function(){follow.note('暂时读不到');learning.note('暂时读不到');});};
-    follow.btn.addEventListener('click',function(){var on=follow.btn.getAttribute('aria-checked')!=='true';follow.btn.disabled=true;
-      call('memory_preferences_set',{followups:on},60000).then(function(d){if(d.error)throw Error(d.msg||'没改成');follow.set(d.followups);follow.btn.disabled=false;follow.note('');}).catch(function(){follow.btn.disabled=false;follow.note('没改成，请稍后重试');});
-    });
-    box.appendChild(follow.row);
-    var push = toggleRow('xc-push', '做完提醒', '');
+    var push = toggleRow('xc-push', '完成通知', '');
     box.appendChild(push.row);
     pushSetup(push);
     return box;
@@ -786,7 +774,7 @@
     }).then(function (sub) {
       t.set(!!sub);
       if (sub) call('push_sub', { sub: sub.toJSON(), deviceId:S.deviceId, ua: navigator.userAgent.slice(0, 160) }, 60000).catch(function () {});   // 让小芯那边也记着（它可能删过）
-    }).catch(function (e) { t.note('做完提醒准备不好：' + e.message); });
+    }).catch(function (e) { t.note('完成通知没打开：' + e.message); });
     t.btn.addEventListener('click', function () {
       if (busy) return;
       if (!reg || !key) { t.note('还在准备，过一两秒再点'); return; }
@@ -988,7 +976,7 @@
       var live = all.filter(function (t) { return tLive(t) || t.status === 'waiting'; }), done = all.filter(function (t) { return !tLive(t) && t.status !== 'waiting'; });
       function row(t) {
         var b = h('button', 'xc-tl-i'); b.type = 'button'; b.dataset.tsid = t.sid;
-        b.appendChild(h('b', '', '我在做：' + t.title));
+        b.appendChild(h('b', '', t.title));
         var m = h('span', 'xc-tl-m'); m.appendChild(h('span', 'xc-task-st st-' + t.status, tStatText(t)));
         m.appendChild(document.createTextNode([TKIND[t.kind]].filter(Boolean).join(' · ')));
         b.appendChild(m);
@@ -1003,7 +991,7 @@
       if (!all.length) sessEl.appendChild(h('p', 'xc-hint', '我还没开始做事。'));
       // 每日任务
       var dl = d.daily && d.daily.last, dst = h('p', 'xc-dailyst');
-      dst.appendChild(document.createTextNode('最近一次：' + (dl && dl.date ? dl.date.slice(5) + ' ' + (dl.ok === null ? '正在做…' : dl.ok ? '做完了' : '没做成') : '还没做过') + '　'));
+      dst.appendChild(document.createTextNode('最近一次：' + (dl && dl.date ? dl.date.slice(5) + ' ' + (dl.ok === null ? '进行中' : dl.ok ? '已完成' : '失败') : '还没做过') + '　'));
       if (dl && dl.sid) { var lk = h('button', 'xc-link xc-inl', '看看'); lk.type = 'button'; lk.addEventListener('click', function () { openSession(dl.sid); }); dst.appendChild(lk); }
       sessEl.appendChild(h('p', 'xc-set-h xc-tv-h', '每日任务'));
       sessEl.appendChild(dst);
@@ -1032,10 +1020,10 @@
     call('daily_get', {}, 60000).then(function (d) {
       sessEl.innerHTML = '';
       sessEl.appendChild(backBtn(true));
-      sessEl.appendChild(h('p', 'xc-hint', '每天 9:10 做一遍，没做成 21:10 再来。一条一行。'));
+      sessEl.appendChild(h('p', 'xc-hint', '每天 9:10 执行，失败时 21:10 重试。每行一项。'));
       if (d.last && d.last.date) {
         var st = h('p', 'xc-dailyst'), lk = h('button', 'xc-link xc-inl', '看看'); lk.type = 'button';
-        st.appendChild(document.createTextNode('最近一次：' + d.last.date.slice(5) + ' ' + (d.last.ok === null ? '正在做…' : d.last.ok ? '做完了' : '没做成') + '　'));
+        st.appendChild(document.createTextNode('最近一次：' + d.last.date.slice(5) + ' ' + (d.last.ok === null ? '进行中' : d.last.ok ? '已完成' : '失败') + '　'));
         lk.addEventListener('click', function () { openSession(d.last.sid); });
         st.appendChild(lk); sessEl.appendChild(st);
       }
@@ -1183,6 +1171,9 @@
   function renderPick() {
     if (!mdlBtn) return;
     var sp = curSpec(), e = LEVELS[curEffort()];
+    // 默认模式没有可选的（一直是「自动 最高」），按钮不放（站长 2026-11-11）；天启模式才有模型和思考强度可选
+    mdlBtn.hidden = !!sp.auto;
+    if (sp.auto) { if (pickEl && !pickEl.hidden) setPick(false); return; }
     var t = mdlBtn.firstChild; t.textContent = sp.name; t.appendChild(h('i', '', e));
     mdlBtn.setAttribute('aria-label', sp.auto ? '模型：小芯自己安排' : '模型和思考强度：' + sp.name + ' ' + e);
     if (!pickEl.hidden) { if (pickEl.dataset.k !== pickKey()) buildPick(); else paintEff(); }
@@ -1285,13 +1276,11 @@
 
   /* ---------- 后台任务（分身） ----------
      默认模式下，前台的小芯把要花时间的活派给分身在后台做，你可以接着聊：
-     - 聊天里派出去的地方有一张任务卡片：任务几、做什么、状态（排队 / 进行中 · 几分钟 / 等你确认 / 做完了 / 没做成 / 已停止）、
-       类别和模型、现在在干什么；「看过程」「停止」。
+     - 聊天里不放任务卡片（站长 2026-11-11），任务在工作台里看；输入框上面一条「在做 N 件事」，点开是任务列表。
      - 做完（或者在等你确认）时，聊天最后小芯说一条结果；你不在看这个对话时页面上的小芯冒个气泡（关着网页就推送，vm-agent 发）。
-     - 「看过程」：一页里看它每一步说的话、执行的命令和结果；在做的能停，做完的、停了的能补充要求让它接着做，等确认的直接回复它。
-     - 输入框上面一条「后台 N 个任务在做」，点开看所有没做完的、这个对话的任务。
+     - 「详情」：一页里看它每一步说的话、执行的命令和结果；在做的能改要求、能停，做完的、停了的能补充后继续，等确认的直接回复。
      状态靠轮询 tasks：看着有任务在做的对话时 4 秒一次，别的时候有任务在做 20 秒一次，没有就不轮询。 */
-  var TSTAT = { queued: '排队中', running: '进行中', stopping: '正在停止', waiting: '等你确认', done: '做完了', failed: '没做成', stopped: '已停止' };
+  var TSTAT = { queued: '排队中', running: '进行中', stopping: '停止中', waiting: '待确认', done: '已完成', failed: '失败', stopped: '已停止' };
   var TKIND = { quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务' };
   var TICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>';
   S.tinfo = {}; S.tactive = []; S.bg = 0; S.queue = [];
@@ -1299,13 +1288,13 @@
   function dur(ms) { var s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + ' 秒' : s < 3600 ? Math.round(s / 60) + ' 分钟' : (s / 3600).toFixed(1).replace(/\.0$/, '') + ' 小时'; }
   function bareCmd(d) { var m = /^\/(?:usr\/)?bin\/(?:ba)?sh -l?c (['"])([\s\S]*)\1$/.exec(String(d || '').trim()); return m ? m[2] : String(d || ''); }
   function tStatText(t) {
-    if (t.status === 'running') return '进行中 · ' + dur(Date.now() - (t.startedAt || t.created || Date.now()));
-    if (t.status === 'queued') return t.after && t.after.length ? '等前一步做完' : '排队中';
+    if (t.status === 'running') return '已进行 ' + dur(Date.now() - (t.startedAt || t.created || Date.now()));
+    if (t.status === 'queued') return t.after && t.after.length ? '等待前一项' : '排队中';
     return TSTAT[t.status] || t.status;
   }
   function tLine(t) {
-    if (t.status === 'running') return t.activity || '在想…';
-    if (t.status === 'waiting') return t.question ? '想问你：' + t.question : '';
+    if (t.status === 'running') return t.activity || '准备中';
+    if (t.status === 'waiting') return t.question || '';
     if (t.result) return firstLine(t.result.text) || t.result.err || '';
     return '';
   }
@@ -1316,14 +1305,14 @@
   }
   function paintCard(e, t) {
     e.className = 'xc-task st-' + t.status; e.innerHTML = '';
-    var hd = h('div', 'xc-task-h'); hd.innerHTML = TICON; hd.appendChild(h('b', '', '我在做：' + t.title)); e.appendChild(hd);
+    var hd = h('div', 'xc-task-h'); hd.innerHTML = TICON; hd.appendChild(h('b', '', t.title)); e.appendChild(hd);
     var st = h('div', 'xc-task-s');
     st.appendChild(h('span', 'xc-task-st', tStatText(t)));
     st.appendChild(h('span', 'xc-task-m', [TKIND[t.kind]].filter(Boolean).join(' · ')));
     e.appendChild(st);
     var line = tLine(t); if (line) e.appendChild(h('div', 'xc-task-a', line));
     var ft = h('div', 'xc-task-b');
-    var v = h('button', 'xc-task-btn', t.status === 'waiting' ? '回复它' : '看过程'); v.type = 'button';
+    var v = h('button', 'xc-task-btn', t.status === 'waiting' ? '回复' : '查看详情'); v.type = 'button';
     v.addEventListener('click', function () { openTask(t.sid); });
     ft.appendChild(v);
     var preview=previewLink(t);if(preview)ft.appendChild(preview);
@@ -1334,7 +1323,7 @@
   }
   function previewLink(t){
     if(!t.preview||!t.preview.ready||!/^\/xin\/preview\.html\?id=[a-f0-9]{32}$/.test(t.preview.url||''))return null;
-    var a=h('a','xc-task-btn xc-preview','打开预览');a.href=t.preview.url;a.target='_blank';a.rel='noopener';return a;
+    var a=h('a','xc-task-btn xc-preview','打开网页');a.href=t.preview.url;a.target='_blank';a.rel='noopener';return a;
   }
   function paintCards() { if (list) [].forEach.call(list.querySelectorAll('.xc-task'), function (e) { var t = S.tinfo[e.dataset.tsid]; if (t) paintCard(e, t); }); }
   // 结果：做完 / 没做成 / 停了 / 在等你确认时，小芯在聊天里说一条（同一次结果只说一次）
@@ -1345,13 +1334,13 @@
     if (list.querySelector('[data-tres="' + key + '"]')) return null;
     var m = aiMsg('task-' + t.sid, t.status === 'failed' || t.status === 'stopped' ? 'tbad' : '');
     m.e.classList.add('xc-tres'); m.e.dataset.tres = key;
-    m.b.appendChild(h('div', 'xc-tres-h', '我处理的「' + t.title + '」' + (TSTAT[t.status] || t.status)));
+    var head = h('div', 'xc-tres-h'); head.appendChild(h('span', '', t.title)); if (t.status !== 'done') head.appendChild(h('em', 'xc-tres-st', TSTAT[t.status] || t.status)); m.b.appendChild(head);
     if (t.status === 'waiting') m.b.appendChild(h('p', 'xc-tres-q', t.question || '在等你确认'));
     else if (t.result && t.result.text) m.b.appendChild(md(t.result.text));
     if (t.status === 'failed' && t.result && t.result.err) m.b.appendChild(h('p', 'xc-tres-err', t.result.err));
     var ft = h('div', 'xc-tres-f');
     ft.appendChild(h('span', '', (t.startedAt && t.endedAt ? '用时 ' + dur(t.endedAt - t.startedAt) : '')));
-    var b = h('button', 'xc-task-btn', t.status === 'waiting' ? '回复它' : '看过程'); b.type = 'button';
+    var b = h('button', 'xc-task-btn', t.status === 'waiting' ? '回复' : '查看详情'); b.type = 'button';
     b.addEventListener('click', function () { openTask(t.sid); });
     ft.appendChild(b); m.b.appendChild(ft);
     var preview=previewLink(t);if(preview)ft.appendChild(preview);
@@ -1377,7 +1366,7 @@
   function announce(t, here) {
     var x = xin(); if (!x || here) return;
     var msg = t.status === 'waiting' ? '我这边需要你确认：' + t.title : (t.status === 'done' ? '我弄好了：' : '我没做成：') + t.title;
-    x.say(msg + '（点我看看）', 12000, function () { open(); if (t.parent && t.parent !== S.sid) openSession(t.parent); });
+    x.say(msg, 12000, function () { open(); if (t.parent && t.parent !== S.sid) openSession(t.parent); });
     if (x.cmd) x.cmd(t.status === 'failed' ? 'sad' : 'happy');
   }
   var tpTm = 0;
@@ -1403,9 +1392,9 @@
     el.hidden = !(n || w) || !S.authed;
     if (el.hidden) return;
     el.innerHTML = TICON;
-    el.appendChild(h('span', '', (n ? '我正在做 ' + n + ' 件事' : '') + (n && w ? '，' : '') + (w ? w + ' 个等你确认' : '')));
+    el.appendChild(h('span', '', (n ? n + ' 个任务进行中' : '') + (n && w ? '，' : '') + (w ? w + ' 个待确认' : '')));
     el.classList.toggle('busy', !!n); el.classList.toggle('wait', !!w);
-    el.setAttribute('aria-label', '我在做的事：' + el.textContent);
+    el.setAttribute('aria-label', '任务：' + el.textContent);
   }
   function stopTask(sid, btn) {
     if (btn) btn.disabled = true;
@@ -1427,7 +1416,7 @@
       setTimeout(function () { if (S.sheet && S.sheetTask === sid) loadTask(sid); }, 600);
     }).catch(function (e) { if (btn) btn.disabled = false; if (note) note.textContent = '没送到：' + e.message; });
   }
-  // 「看过程」：从底下升起来的一页
+  // 「详情」：从底下升起来的一页
   function sheetHead(title) {
     sheetEl.innerHTML = '';
     var hd = h('div', 'xc-sh-hd'), x = h('button', 'xc-ib xc-sh-x');
@@ -1439,7 +1428,7 @@
   function openTask(sid, toInput) {
     var t = S.tinfo[sid];
     S.sheetTask = sid; S.sheetFocus = !!toInput;
-    sheetHead(t ? '我在做：' + t.title : '我在做的事');
+    sheetHead(t ? t.title : '任务');
     var box = h('div', 'xc-sh-list xc-tk'); box.appendChild(h('p', 'xc-hint', '正在读取…'));
     sheetEl.appendChild(box);
     setSheet(true);
@@ -1477,7 +1466,7 @@
     runs.forEach(function (r, i) {
       var pend = {};
       r.events.forEach(function (ev) {
-        if (ev.t === 'user') { var u = h('div', 'xc-tk-ask'); u.appendChild(h('b', '', i === 0 ? '要求' : '补充 / 回复')); u.appendChild(h('div', '', ev.text)); log.appendChild(u); }
+        if (ev.t === 'user') { var u = h('div', 'xc-tk-ask'); u.appendChild(h('b', '', i === 0 ? '要求' : '补充')); u.appendChild(h('div', '', ev.text)); log.appendChild(u); }
         else if (ev.t === 'text') { var tx = h('div', 'xc-tk-say'); tx.appendChild(md(ev.text)); log.appendChild(tx); }
         else if (ev.t === 'tool') { pend[ev.id] = ev; }
         else if (ev.t === 'tool_end') {
@@ -1489,7 +1478,7 @@
           k++; log.appendChild(c);
         }
         else if (ev.t === 'err') log.appendChild(h('div', 'xc-tk-err', ev.text));
-        else if (ev.t === 'done') log.appendChild(h('div', 'xc-tk-done', (ev.stopped ? '停下了' : ev.ok ? '这一轮做完了' : '这一轮没做成') + (ev.ms ? ' · ' + dur(ev.ms) : '')));
+        else if (ev.t === 'done') log.appendChild(h('div', 'xc-tk-done', (ev.stopped ? '已停止' : ev.ok ? '本轮完成' : '本轮失败') + (ev.ms ? '，用时 ' + dur(ev.ms) : '')));
       });
       Object.keys(pend).forEach(function (id) { var p = h('div', 'xc-tk-cmd now'); p.appendChild(h('code', '', bareCmd(pend[id].detail || pend[id].name))); log.appendChild(p); });
     });
@@ -1498,30 +1487,30 @@
     if (t.approval && t.approval.kind !== 'input') {
       act.appendChild(h('p', 'xc-tk-q', t.question || '允许这一次操作吗？'));
       ['approve', 'deny'].forEach(function (decision) {
-        var button = h('button', 'xc-btn', decision === 'approve' ? '允许这一次' : '拒绝'); button.type = 'button';
+        var button = h('button', 'xc-btn', decision === 'approve' ? '允许' : '拒绝'); button.type = 'button';
         button.addEventListener('click', function () { tellTask(t.sid, '', button, note, decision); });
         act.appendChild(button);
       });
     } else if (tLive(t)) {
       // 还在做：补充或改要求直接送进去（它手上这一步做完就按新的来），也能停
       if (t.status !== 'stopping') {
-        var live = h('textarea', 'xc-tk-in'); live.rows = 1; live.value = draft; live.placeholder = '补充或改要求…'; live.setAttribute('aria-label', '补充或改要求');
-        var sendB = h('button', 'xc-btn', '发给它'); sendB.type = 'button';
+        var live = h('textarea', 'xc-tk-in'); live.rows = 1; live.value = draft; live.placeholder = '修改要求'; live.setAttribute('aria-label', '修改要求');
+        var sendB = h('button', 'xc-btn', '发送'); sendB.type = 'button';
         var tell = function () { if (!live.value.trim()) { live.focus(); return; } tellTask(t.sid, live.value, sendB, note); live.value = ''; };
         sendB.addEventListener('click', tell);
         live.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing && !touch) { ev.preventDefault(); tell(); } });
         act.appendChild(live); act.appendChild(sendB);
         if (S.sheetFocus) { S.sheetFocus = false; setTimeout(function () { try { live.focus({ preventScroll: true }); } catch (e) { live.focus(); } }, 60); }
       }
-      var stopB = h('button', 'xc-task-btn', '停止这个任务'); stopB.type = 'button';
+      var stopB = h('button', 'xc-btn sec', '停止'); stopB.type = 'button';
       stopB.addEventListener('click', function () { stopTask(t.sid, stopB); });
       act.appendChild(stopB);
     } else {
-      if (t.status === 'waiting' && t.question) act.appendChild(h('p', 'xc-tk-q', '它想问你：' + t.question));
+      if (t.status === 'waiting' && t.question) act.appendChild(h('p', 'xc-tk-q', t.question));
       var ta = h('textarea', 'xc-tk-in'); ta.rows = 2; ta.value = draft;
-      ta.placeholder = t.status === 'waiting' ? '回复它（比如：可以，删吧）' : '补充要求，让它接着做（不写就照原来的接着做）';
+      ta.placeholder = t.status === 'waiting' ? '输入回复' : '补充要求';
       ta.setAttribute('aria-label', ta.placeholder);
-      var go = h('button', 'xc-btn', t.status === 'waiting' ? '回复' : '接着做'); go.type = 'button';
+      var go = h('button', 'xc-btn', t.status === 'waiting' ? '回复' : '继续'); go.type = 'button';
       go.addEventListener('click', function () { tellTask(t.sid, ta.value, go, note); });
       act.appendChild(ta); act.appendChild(go);
     }
@@ -1539,7 +1528,7 @@
   // 后台任务一览：所有没做完的（哪个对话的都算）和这个对话最近的
   function openTaskList() {
     S.sheetTask = '';
-    sheetHead('我在做的事');
+    sheetHead('任务');
     var box = h('div', 'xc-sh-list xc-tl');
     var act = (S.tactive || []).slice(), seen = {};
     act.forEach(function (t) { seen[t.sid] = true; });
@@ -1547,16 +1536,16 @@
       .sort(function (a, b) { return (b.endedAt || b.created || 0) - (a.endedAt || a.created || 0); }).slice(0, 12);
     function row(t) {
       var b = h('button', 'xc-tl-i'); b.type = 'button';
-      b.appendChild(h('b', '', '我在做：' + t.title));
+      b.appendChild(h('b', '', t.title));
       var m = h('span', 'xc-tl-m'); m.appendChild(h('span', 'xc-task-st st-' + t.status, tStatText(t)));
       m.appendChild(document.createTextNode([TKIND[t.kind], t.parent && t.parent !== S.sid ? '别的对话' : ''].filter(Boolean).join(' · ')));
       b.appendChild(m);
       b.addEventListener('click', function () { openTask(t.sid); });
       return b;
     }
-    if (act.length) { box.appendChild(h('p', 'xc-set-h', '还没做完的')); act.forEach(function (t) { box.appendChild(row(t)); }); }
-    if (mine.length) { box.appendChild(h('p', 'xc-set-h', '这个对话的')); mine.forEach(function (t) { box.appendChild(row(t)); }); }
-    if (!act.length && !mine.length) box.appendChild(h('p', 'xc-hint', '现在没有在做的事'));
+    if (act.length) { box.appendChild(h('p', 'xc-set-h', '进行中')); act.forEach(function (t) { box.appendChild(row(t)); }); }
+    if (mine.length) { box.appendChild(h('p', 'xc-set-h', '当前对话')); mine.forEach(function (t) { box.appendChild(row(t)); }); }
+    if (!act.length && !mine.length) box.appendChild(h('p', 'xc-hint', '暂无任务'));
     sheetEl.appendChild(box);
     setSheet(true);
   }
@@ -1597,8 +1586,8 @@
     if (given == null) { S.atts = []; renderAtts(); input.value = ''; ls(LS_DRAFT, null); grow(); }
     var e = draw({ t: 'user', text: text, files: files });
     e.classList.add('queued');
-    var tag = h('div', 'xc-qtag', '排队中 · 小芯说完这句就发'), x = h('button', '', '✕');
-    x.type = 'button'; x.setAttribute('aria-label', '这句不发了');
+    var tag = h('div', 'xc-qtag', '待发送'), x = h('button', '', '✕');
+    x.type = 'button'; x.setAttribute('aria-label', '取消发送');
     tag.appendChild(x); e.appendChild(tag);
     var q = { id: restored && restored.id || crypto.randomUUID(), text: text, atts: atts, el: e };
     e.dataset.messageId=q.id;
@@ -1610,7 +1599,7 @@
     S.queue = S.queue.concat([q]);
     saveQueue();
     if (S.sessAgent === 'codex' && !atts.length) {
-      var steer = h('button', 'xc-qsteer', '立即补充'); steer.type = 'button';
+      var steer = h('button', 'xc-qsteer', '立即发送'); steer.type = 'button';
       steer.addEventListener('click', function () {
         if (!S.run) { flushQueue(); return; }
         steer.disabled = true;
@@ -1619,7 +1608,7 @@
           if (r.error) throw new Error(r.msg || r.error);
           if(generation!==S.convSeq){settleDetachedSend({sid:sid,queued:[q.id]}, {sid:sid});return;}
           S.queue = S.queue.filter(function (v) { return v !== q; }); saveQueue();
-          e.classList.remove('queued'); tag.textContent = '已送入当前任务'; steer.remove();
+          e.classList.remove('queued'); tag.textContent = '已发送'; steer.remove();
           if (r.next && r.run) { S.run = r.run; S.off = 0; startPolling(); }
         }).catch(function (error) { if(generation!==S.convSeq)return;steer.disabled = false; tag.firstChild.textContent = '尚未补充：' + error.message; });
       });
@@ -1639,7 +1628,8 @@
   /* ---------- 工作台：全屏的聊天，宽屏左边对话、中间聊天、右边在做的和做好的；首页一张卡片进来 ----------
      手机、竖着的平板：只有聊天，标题栏的方格按钮把「进行中和成果」从右边滑进来。
      数据都是现成的：任务卡片和看过程用聊天里那一套（openTask），列表从 tasks {all:true} 来，有在做的 4 秒刷一次。 */
-  var SIDE_MIN = 1180, WORK_MIN = 900, wTm = 0, wSeq = 0, thumbs = {}, wkSeen = {}, xwSeen = {};
+  var SIDE_MIN = 1180, WORK_MIN = 900, wTm = 0, wSeq = 0, thumbs = {}, xwSeen = {};
+  S.wkCat = ls('lm.xin.wkCat') || 'all';
   // 右栏、首页每次刷新都是重画：循环的动画（进度条、闪的点）按同一个时钟接着走，不从头来；进场动画只给第一次出现的
   function phase(el) { var t = Date.now(); el.style.setProperty('--p16', -(t % 1600) + 'ms'); el.style.setProperty('--p12', -(t % 1200) + 'ms'); el.style.setProperty('--p10', -(t % 1000) + 'ms'); }
   function work(opt) {
@@ -1705,12 +1695,32 @@
     });
     return out;
   }
+  // 成果按类别分（站长 2026-11-11）：网页成品、查资料、写代码、每日任务、其他
+  var WK_CATS = [['web', '网页'], ['research', '资料'], ['code', '代码'], ['other', '其他'], ['daily', '每日任务']];
+  var WK_ICON = {
+    web: '<rect x="3" y="4.5" width="18" height="15" rx="2.6"/><path d="M3 9h18"/><path d="M6.3 6.8h.01M8.6 6.8h.01"/>',
+    research: '<circle cx="11" cy="11" r="6.2"/><path d="m20 20-4.4-4.4"/>',
+    code: '<path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4M13.6 5.5l-3.2 13"/>',
+    daily: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.6"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    other: '<path d="M12 3.6 14 9l5.4 2-5.4 2-2 5.4-2-5.4-5.4-2L10 9z"/>',
+    wait: '<circle cx="12" cy="12" r="8.6"/><path d="M12 7.6v5.2M12 16.3h.01"/>'
+  };
+  function wkIcon(k) { var i = h('span', 'wk-ic'); i.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + (WK_ICON[k] || WK_ICON.other) + '</svg>'; return i; }
+  function tCat(t) {
+    if (t.kind === 'daily' || t.dailyDate) return 'daily';
+    if (previewId(t) || t.web) return 'web';
+    if (t.kind === 'research') return 'research';
+    if (t.kind === 'code' || t.kind === 'hard' || t.kind === 'review') return 'code';
+    return 'other';
+  }
   function groups() {
     var all = allTasks(), by = function (k) { return function (a, b) { return (b[k] || b.created || 0) - (a[k] || a.created || 0); }; };
+    var done = all.filter(function (t) { return !tLive(t) && t.status !== 'waiting'; }).sort(by('endedAt')), cats = {};
+    done.forEach(function (t) { (cats[tCat(t)] = cats[tCat(t)] || []).push(t); });
     return {
       live: all.filter(tLive).sort(function (a, b) { return (a.created || 0) - (b.created || 0); }),
       wait: all.filter(function (t) { return t.status === 'waiting'; }).sort(by('endedAt')),
-      done: all.filter(function (t) { return !tLive(t) && t.status !== 'waiting'; }).sort(by('endedAt'))
+      done: done, cats: cats
     };
   }
   function ago(t) {
@@ -1729,55 +1739,100 @@
     }
     return im;
   }
+  // 一行一个任务（分组列表，不是一张张卡片）：左边类别或状态，中间标题和一句话，右边时间；进行中的下面是操作和一条细进度光。
+  // 网页成品例外：截图是这一页唯一的大图。
   function wkCard(t, kind) {
-    var c = h('div', 'wk-c ' + kind + (t.status === 'failed' ? ' bad' : '') + (wkSeen[t.sid + kind] ? '' : ' new')); c.dataset.tsid = t.sid; c.tabIndex = 0; c.setAttribute('role', 'button');
-    wkSeen[t.sid + kind] = true; phase(c);
-    c.setAttribute('aria-label', t.title);
+    var cat = tCat(t), im = kind === 'done' && cat === 'web' ? thumb(t) : null;
+    var c = h('div', 'wk-c ' + kind + ' c-' + cat + ' st-' + t.status + (t.status === 'failed' ? ' bad' : '') + (im ? ' fig' : ' row')); c.dataset.tsid = t.sid; c.tabIndex = 0; c.setAttribute('role', 'button');
+    phase(c);
+    c.setAttribute('aria-label', t.title + '，' + (TSTAT[t.status] || t.status));
     var open_ = function () { openTask(t.sid); };
     c.addEventListener('click', function (e) { if (!e.target.closest('button, a')) open_(); });
     c.addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && e.target === c) { e.preventDefault(); open_(); } });
-    var im = kind === 'done' ? thumb(t) : null;
     if (im) { var fig = h('div', 'wk-fig'); fig.appendChild(im); c.appendChild(fig); }
-    var top = h('div', 'wk-top');
-    top.appendChild(h('i', 'wk-dot'));
-    top.appendChild(h('b', 'wk-t', t.title));
-    top.appendChild(h('span', 'wk-time', kind === 'live' ? (t.status === 'queued' ? '排队' : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : ago(t.endedAt || t.created || Date.now())));
-    c.appendChild(top);
-    var line = kind === 'live' ? (t.status === 'stopping' ? '正在停止' : t.activity || '') : kind === 'wait' ? t.question || '在等你确认' : t.status === 'failed' ? (t.result && (t.result.err || firstLine(t.result.text))) || '没做成' : t.status === 'stopped' ? '已停止' : im ? '' : t.result ? firstLine(t.result.text) : '';
-    if (line) c.appendChild(h('p', 'wk-line', line));
-    if (kind === 'live') c.appendChild(h('div', 'wk-bar'));
+    if (!im) c.appendChild(wkIcon(kind === 'wait' ? 'wait' : cat));
+    var head = h('div', 'wk-hd');
+    head.appendChild(h('b', 'wk-t', t.title));
+    var line = kind === 'live' ? (t.status === 'stopping' ? '停止中' : t.status === 'queued' ? '排队中' : t.activity || '准备中')
+      : kind === 'wait' ? t.question || '待确认'
+      : t.status === 'failed' ? '失败' + (t.result && (t.result.err || firstLine(t.result.text)) ? '：' + (t.result.err || firstLine(t.result.text)) : '')
+      : t.status === 'stopped' ? '已停止' : t.result ? firstLine(t.result.text) : '';
+    if (line && !im) head.appendChild(h('p', 'wk-line', line));
+    c.appendChild(head);
+    c.appendChild(h('span', 'wk-time', kind === 'live' ? (t.status === 'queued' ? '' : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : ago(t.endedAt || t.created || Date.now())));
     var act = h('div', 'wk-act');
     if (kind === 'live' && t.status !== 'stopping') {
-      var tell = h('button', 'wk-b', '改一下'); tell.type = 'button'; tell.addEventListener('click', function () { openTask(t.sid, true); });
+      var tell = h('button', 'wk-b', '修改'); tell.type = 'button'; tell.addEventListener('click', function () { openTask(t.sid, true); });
       var stopB = h('button', 'wk-b', '停止'); stopB.type = 'button'; stopB.addEventListener('click', function () { stopTask(t.sid, stopB); });
       act.appendChild(tell); act.appendChild(stopB);
     } else if (kind === 'wait') {
       var rep_ = h('button', 'wk-b on', '回复'); rep_.type = 'button'; rep_.addEventListener('click', open_); act.appendChild(rep_);
     } else if (previewId(t)) {
-      var a = h('a', 'wk-b on', '打开'); a.href = t.preview.url; a.target = '_blank'; a.rel = 'noopener'; act.appendChild(a);
+      var a = h('a', 'wk-b', '打开网页'); a.href = t.preview.url; a.target = '_blank'; a.rel = 'noopener'; act.appendChild(a);
     }
     if (act.childNodes.length) c.appendChild(act);
+    if (kind === 'live') c.appendChild(h('div', 'wk-bar'));
     return c;
+  }
+  // 每日任务：日期 + 那天的结果，多于 4 天先收起
+  function wkDaily(list) {
+    var wrap = h('div', 'wk-list done daily'), more = !S.wkDailyAll && list.length > 4;
+    (more ? list.slice(0, 4) : list).forEach(function (t) {
+      var r = h('div', 'wk-c done c-daily row day' + (t.status === 'failed' ? ' bad' : '')); r.dataset.tsid = t.sid; r.tabIndex = 0; r.setAttribute('role', 'button');
+      var m = /(\d{1,2}-\d{1,2})\s*$/.exec(t.title || ''), day = m ? m[1] : '';
+      r.setAttribute('aria-label', t.title + '，' + (TSTAT[t.status] || t.status));
+      r.appendChild(h('b', 'wk-day', day || t.title));
+      r.appendChild(h('span', 'wk-line', t.status === 'failed' ? '失败' : (t.result && firstLine(t.result.text)) || ''));
+      r.appendChild(h('span', 'wk-st', TSTAT[t.status] || t.status));
+      var go = function () { openTask(t.sid); };
+      r.addEventListener('click', go);
+      r.addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && e.target === r) { e.preventDefault(); go(); } });
+      wrap.appendChild(r);
+    });
+    if (more) {
+      var all = h('button', 'wk-more', '显示全部（' + list.length + '）'); all.type = 'button';
+      all.addEventListener('click', function () { S.wkDailyAll = true; renderWork(); });
+      wrap.appendChild(all);
+    }
+    return wrap;
   }
   function renderWork() {
     if (!root || !S.wb) return;
-    var box = root.querySelector('.xc-wk-sc'), g = groups(), top = box.scrollTop, focus = document.activeElement && box.contains(document.activeElement) ? document.activeElement.closest('[data-tsid]') : null;
-    var fsid = focus && focus.dataset.tsid;
+    var box = root.querySelector('.xc-wk-sc'), g = groups(), top = box.scrollTop, focus = document.activeElement && box.contains(document.activeElement) ? document.activeElement.closest('[data-tsid], [data-cat]') : null;
+    var fsid = focus && focus.dataset.tsid, fcat = focus && focus.dataset.cat;
+    var present = WK_CATS.filter(function (c) { return (g.cats[c[0]] || []).length; });
+    var cat = S.wkCat && S.wkCat !== 'all' && present.some(function (c) { return c[0] === S.wkCat; }) ? S.wkCat : 'all';
     box.textContent = '';
-    var sec = function (name, list, kind, max) {
-      if (!list.length) return;
-      var hd = h('p', 'wk-h'); hd.appendChild(document.createTextNode(name)); hd.appendChild(h('i', '', String(list.length)));
-      box.appendChild(hd);
-      var wrap = h('div', 'wk-list ' + kind); list.slice(0, max).forEach(function (t) { wrap.appendChild(wkCard(t, kind)); }); box.appendChild(wrap);
-    };
-    sec('在做', g.live, 'live', 20);
-    sec('等你', g.wait, 'wait', 20);
-    sec('成果', g.done, 'done', 30);
-    if (!g.live.length && !g.wait.length && !g.done.length) {
-      var e = h('div', 'wk-empty'); e.appendChild(avatar('big')); e.appendChild(h('p', '', '空闲中')); box.appendChild(e);
+    // 类别：有两类以上成果才出现；只筛成果，进行中和待确认总在上面
+    if (present.length > 1) {
+      var seg = h('div', 'wk-seg'); seg.setAttribute('role', 'tablist'); seg.setAttribute('aria-label', '成果类别');
+      [['all', '全部', g.done.length]].concat(present.map(function (c) { return [c[0], c[1], g.cats[c[0]].length]; })).forEach(function (c) {
+        var b = h('button', 'wk-sg' + (c[0] === cat ? ' on' : '')); b.type = 'button'; b.dataset.cat = c[0];
+        b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', c[0] === cat ? 'true' : 'false');
+        b.appendChild(document.createTextNode(c[1])); b.setAttribute('aria-label', c[1] + ' ' + c[2]);
+        b.addEventListener('click', function () { if (S.wkCat === c[0]) return; S.wkCat = c[0]; ls('lm.xin.wkCat', c[0] === 'all' ? null : c[0]); S.wkSwap = true; renderWork(); });
+        seg.appendChild(b);
+      });
+      box.appendChild(seg);
     }
+    var body = h('div', 'wk-body' + (S.wkSwap ? ' swap' : '')); S.wkSwap = false;
+    var sec = function (name, n) { var hd = h('p', 'wk-h'); hd.appendChild(document.createTextNode(name)); hd.appendChild(h('i', '', String(n))); body.appendChild(hd); };
+    var group = function (list, kind, cls, max) { var wrap = h('div', 'wk-list ' + kind + (cls ? ' ' + cls : '')); list.slice(0, max).forEach(function (t) { wrap.appendChild(wkCard(t, kind)); }); body.appendChild(wrap); };
+    if (g.live.length) { sec('进行中', g.live.length); group(g.live, 'live', '', 20); }
+    if (g.wait.length) { sec('待确认', g.wait.length); group(g.wait, 'wait', '', 20); }
+    (cat === 'all' ? present : present.filter(function (c) { return c[0] === cat; })).forEach(function (c) {
+      var list = g.cats[c[0]];
+      sec(c[1], list.length);
+      if (c[0] === 'daily') body.appendChild(wkDaily(list));
+      else group(list, 'done', 'c-' + c[0], 30);
+    });
+    if (!g.live.length && !g.wait.length && !g.done.length) {
+      var e = h('div', 'wk-empty'); e.appendChild(avatar('big')); e.appendChild(h('p', '', '暂无任务')); body.appendChild(e);
+    }
+    box.appendChild(body);
     box.scrollTop = top;
-    if (fsid) { var again = box.querySelector('[data-tsid="' + fsid + '"]'); if (again) again.focus({ preventScroll: true }); }
+    var again = fsid ? box.querySelector('[data-tsid="' + fsid + '"]') : fcat ? box.querySelector('.wk-sg[data-cat="' + fcat + '"]') : null;
+    if (again) again.focus({ preventScroll: true });
     var b = root.querySelector('.xc-work-b'); b.classList.toggle('live', g.live.length > 0); b.classList.toggle('wait', g.wait.length > 0);
   }
 
@@ -1847,7 +1902,7 @@
     }
     [].forEach.call(ul.querySelectorAll('.xw-t'), function (b) {
       var t = S.tinfo[b.dataset.tsid] || rows.filter(function (x) { return x.sid === b.dataset.tsid; })[0]; if (!t) return;
-      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? '排队' : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? '等你' : ago(t.endedAt || t.created || Date.now());
+      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? '排队中' : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? '待确认' : ago(t.endedAt || t.created || Date.now());
     });
     ul.hidden = !rows.length;
   }
@@ -2053,7 +2108,7 @@
       if (!(prep && prep.queued) && !input.value) { input.value = text; ls(LS_DRAFT, text); grow(); }
       if (!(prep && prep.queued) && atts.length && !(S.atts || []).length) { S.atts = atts; renderAtts(); render(); }   // 没发出去：附件放回去
       if (!(prep && prep.queued) && (e.state === 'timeout' || e.state === 'network')) S.retrySend = { id: flight.id, sid: flight.sid, text: text, atts: atts, payload: flight.payload };   // 可能其实送到了：再点发送沿用同一个 clientId，云电脑认得出来，不会多一轮
-      var x2 = xin(); if (x2) { x2.ai(''); x2.cmd('confused'); if (!S.open) x2.say('没发出去：' + e.message + '（点我看看）', 9000, open); }
+      var x2 = xin(); if (x2) { x2.ai(''); x2.cmd('confused'); if (!S.open) x2.say('没发出去：' + e.message, 9000, open); }
       // 上一句还在跑（多标签最常见）：别弄脏 S.run，把输入还回去，重新打开同一对话接着看进行中的那一轮
       if (e.code === 'busy' || /还没做完/.test(e.message)) {
         setStatus('上一句还没做完，请稍后再试', 'wait');
@@ -2238,7 +2293,7 @@
       x.ai('');
       if (ev.stopped) return;
       if (ev.ok && S.lastText) x.say(summary(S.lastText), 16000, open);
-      else if (!ev.ok) x.say('没做成，点我看看怎么回事', 10000, open);
+      else if (!ev.ok) x.say('这次回复失败了', 10000, open);
       if (Date.now() - S.lastAct < 4000) return;          // AI 刚让它做了动作，就不抢戏了
       x.cmd(ev.ok ? 'happy' : 'sad');
     }
@@ -2250,7 +2305,7 @@
     t = String(t || '');
     var code = /```/.test(t), plain = mdPlain(t.replace(/```[\s\S]*?(```|$)/g, ' ')).replace(/\s+/g, ' ').trim();
     var cut = plain.length > 80 ? plain.slice(0, 78) + '…' : plain;
-    return (cut || '写好了') + (code || plain.length > 80 ? ' （点我看全文）' : '');
+    return (cut || '写好了') + (code || plain.length > 80 ? '…' : '');
   }
   function firstLine(t) {
     t = mdPlain(String(t || '').replace(/```[\s\S]*?(```|$)/g, ' ')).trim();
@@ -2319,14 +2374,13 @@
       m = aiMsg(run, 'bad'); m.b.textContent = ev.text; e = m.e;
     } else if (ev.t === 'done') {
       if (ev.stopped) e = sysChip('已停止');
-      else if (!ev.ok && !S.errRuns[run]) { m = aiMsg(run, 'bad'); m.b.textContent = '这次没做成'; e = m.e; }
+      else if (!ev.ok && !S.errRuns[run]) { m = aiMsg(run, 'bad'); m.b.textContent = '回复失败，请重新发送'; e = m.e; }
       if (ev.model) S.lastModel = ev.model;
       // 这一轮实际用的模型写在回答下面（默认模式是小芯挑的；用户点名、换了模型也说一声）
       if (ev.model && !ev.stopped && S.sessAgent !== 'codex') { if (e) put(e); e = byLine(ev, run); }
     } else if (ev.t === 'task') {
-      // 前台派出去的后台任务：一张卡片（最新状态在 S.tinfo 里，轮询会更新）；刚派出去的记下来，好知道它什么时候做完
+      // 前台派出去的后台任务：聊天里不放卡片（站长 2026-11-11），在工作台里看；刚派出去的记下来，好知道它什么时候做完
       if (!S.tinfo[ev.sid]) S.tinfo[ev.sid] = { sid: ev.sid, no: ev.no, parent: S.sid || '', title: ev.title, kind: ev.kind, model: ev.model, status: ev.status || 'queued', after: ev.after || [], created: ev.at || Date.now() };
-      e = taskCard(ev);
       if (!old) pollTasksSoon(1500);
     } else if (ev.t === 'move') e = sysChip('学会了新动作：' + ev.name, 'move');   // 记忆、好感度是小芯自己的事，不在聊天里报
     if (e) put(e);
