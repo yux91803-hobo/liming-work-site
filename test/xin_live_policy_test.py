@@ -3,7 +3,23 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import OPUS, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke
+from xin_live_policy import OPUS, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape
+
+
+class ReplyShape(unittest.TestCase):
+    def test_shape_tells_failure_kinds_apart_without_any_text(self):
+        m, o = 'generation-current-0123456789ab', 'generation-original-ba9876543210'
+        self.assertTrue(reply_shape(['好，我这就去弄。', m], m)['marker'])
+        s = reply_shape([m.replace('-', '\u2011')], m)
+        self.assertEqual((s['marker'], s['hex'], s['oddDash'], s['ascii']), (False, True, True, False))
+        s = reply_shape([o], m, o)
+        self.assertEqual((s['marker'], s['otherMarker'], s['prefix']), (False, True, False))
+        s = reply_shape([], m)
+        self.assertEqual((s['replies'], s['chars'], s['marker']), (0, 0, False))
+        dumped = str(reply_shape(['任务还在跑，' + o], m, o))
+        self.assertNotIn('0123456789ab', dumped)
+        self.assertNotIn('ba9876543210', dumped)
+        self.assertNotIn('任务', dumped)
 
 
 class LeftoverSmoke(unittest.TestCase):
