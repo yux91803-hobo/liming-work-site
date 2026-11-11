@@ -621,3 +621,61 @@ test('保留期：只删做完且超过 7 天的副本；没做成、等确认�
   assert.deepEqual(['soldone0001', 'snewdone001', 'soldfail001', 'soldwait001'].map(there), [false, true, true, true]);
   assert.equal(fs.readFileSync(path.join(outside, 'keep.txt'), 'utf8'), 'keep');
 });
+
+test('写回写到一半失败：原项目逐字节还原，新建的删掉、删掉的拷回', async t => {
+  const f = fixture(t), r = await load();
+  for (const [n, v] of [['a.c', 'A0'], ['b.c', 'B0'], ['old.txt', 'OLD']]) fs.writeFileSync(path.join(f.task.dir, n), v);
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  const w = f.task.workspace.work;
+  fs.writeFileSync(path.join(w, 'a.c'), 'A1'); fs.writeFileSync(path.join(w, 'b.c'), 'B1'); fs.writeFileSync(path.join(w, 'new.c'), 'NEW'); fs.unlinkSync(path.join(w, 'old.txt'));
+  // 改 a.c、b.c，建 new.c，删 old.txt 四步都做完以后才失败：三种改动都要还原
+  process.env.XIN_TEST_PUBLISH_FAIL_AFTER = '4';
+  t.after(() => { delete process.env.XIN_TEST_PUBLISH_FAIL_AFTER; });
+  assert.throws(() => r.publishWorkspace(f.task, f.control, true), /写回中途失败，原项目已还原/);
+  assert.equal(fs.readFileSync(path.join(f.task.dir, 'a.c'), 'utf8'), 'A0');
+  assert.equal(fs.readFileSync(path.join(f.task.dir, 'b.c'), 'utf8'), 'B0');
+  assert.equal(fs.readFileSync(path.join(f.task.dir, 'old.txt'), 'utf8'), 'OLD');
+  assert.equal(fs.existsSync(path.join(f.task.dir, 'new.c')), false);
+  const backups = fs.readdirSync(path.join(f.control, 'backups'));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.control, 'backups', backups.at(-1), 'publish.json'), 'utf8')).state, 'rolled_back');
+});
+
+test('写回一半后进程被杀：再收尾时已写回的不算冲突，补齐剩下的', async t => {
+  const f = fixture(t), r = await load();
+  for (const [n, v] of [['a.c', 'A0'], ['b.c', 'B0'], ['old.txt', 'OLD']]) fs.writeFileSync(path.join(f.task.dir, n), v);
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  const w = f.task.workspace.work;
+  fs.writeFileSync(path.join(w, 'a.c'), 'A1'); fs.writeFileSync(path.join(w, 'b.c'), 'B1'); fs.writeFileSync(path.join(w, 'new.c'), 'NEW'); fs.unlinkSync(path.join(w, 'old.txt'));
+  // 上一次写回已经改了 a.c、删了 old.txt 就被杀了
+  fs.writeFileSync(path.join(f.task.dir, 'a.c'), 'A1'); fs.unlinkSync(path.join(f.task.dir, 'old.txt'));
+  const plan = r.publicationPlan(f.task, f.control);
+  assert.deepEqual(plan.conflicts, []);
+  assert.deepEqual(plan.applied.sort(), ['a.c', 'old.txt']);
+  const done = r.publishWorkspace(f.task, f.control);
+  assert.equal(done.ok, true);
+  assert.deepEqual(['a.c', 'b.c', 'new.c'].map(n => fs.readFileSync(path.join(f.task.dir, n), 'utf8')), ['A1', 'B1', 'NEW']);
+  assert.equal(fs.existsSync(path.join(f.task.dir, 'old.txt')), false);
+});
+
+test('别人改成和副本一样的内容：不算冲突也不重复写；改成别的内容仍然算冲突', async t => {
+  const f = fixture(t), r = await load();
+  fs.writeFileSync(path.join(f.task.dir, 'same.c'), 'S0'); fs.writeFileSync(path.join(f.task.dir, 'diff.c'), 'D0');
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  fs.writeFileSync(path.join(f.task.workspace.work, 'same.c'), 'S1'); fs.writeFileSync(path.join(f.task.workspace.work, 'diff.c'), 'D1');
+  fs.writeFileSync(path.join(f.task.dir, 'same.c'), 'S1'); fs.writeFileSync(path.join(f.task.dir, 'diff.c'), 'someone else');
+  const p = r.publishWorkspace(f.task, f.control);
+  assert.equal(p.pending, true); assert.deepEqual(p.conflicts, ['diff.c']);
+});
+
+test('写回一半后被杀：再收尾时已写回的源码改动照样算 STM32 的源码改动', async t => {
+  const f = fixture(t), r = await load();
+  fs.writeFileSync(path.join(f.task.dir, 'main.c'), '#include "stm32f10x.h"\nint main(void){}');
+  fs.writeFileSync(path.join(f.task.dir, 'Makefile'), 'CC=arm-none-eabi-gcc\n');
+  f.task.tkind = 'code'; f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  fs.writeFileSync(path.join(f.task.workspace.work, 'main.c'), '#include "stm32f10x.h"\nint main(void){ for(;;); }');
+  fs.writeFileSync(path.join(f.task.dir, 'main.c'), '#include "stm32f10x.h"\nint main(void){ for(;;); }');   // 上次已经写回了
+  const meta = { compileTrusted: true, compileOk: true, compileDigest: r.sourceDigest(f.task.workspace.work) };
+  const v = r.validateTask(f.task, f.control, meta);
+  assert.equal(v.error, undefined, v.error);
+  assert.equal(v.applicable, true);
+});

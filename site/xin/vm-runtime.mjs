@@ -74,10 +74,12 @@ export function publicationPlan(t, controller) {
   const { original, before } = JSON.parse(fs.readFileSync(path.join(controller, 'workspaces', t.sid + '.json'), 'utf8'));
   if (fs.realpathSync(t.dir) !== original) throw new Error('项目目录已改变，结果未覆盖原文件');
   const after = inventory(t.workspace.work), current = inventory(original);
-  const changes = Object.keys(after).filter(n => before[n] !== after[n]);
-  const deleted = Object.keys(before).filter(n => !(n in after));
+  // 原项目已经等于副本的（上次写回到一半被杀、或别人恰好改成一样）算已写回：不算冲突，也不再写
+  const changed = Object.keys(after).filter(n => before[n] !== after[n]), removed = Object.keys(before).filter(n => !(n in after));
+  const applied = [...changed.filter(n => current[n] === after[n]), ...removed.filter(n => !(n in current))];
+  const changes = changed.filter(n => current[n] !== after[n]), deleted = removed.filter(n => n in current);
   const conflicts = [...changes, ...deleted].filter(n => current[n] !== before[n]);
-  return { original, before, after, changes, deleted, conflicts };
+  return { original, before, after, changes, deleted, conflicts, applied };
 }
 
 export function stm32Task(t) {
@@ -159,7 +161,7 @@ export function validateTask(t, controller, meta) {
   const plan = publicationPlan(t, controller);
   if (!stm32Task(t)) return { applicable: false };
   if (!meta.compileTrusted || !meta.compileOk || meta.compileDigest !== sourceDigest(t.workspace.work)) return { error: 'STM32 程序必须在最终改动后通过受控 make / CMake 构建并生成新的有效产物；现在没有针对最终源码的成功编译记录。' };
-  if(t.tkind==='code' && !plan.changes.some(n=>/\.(?:c|h|s|cpp|hpp)$/i.test(n))) return {error:'STM32 实现任务没有源码改动，不能把只编译模板当成完成。请完成要求的程序后重新构建。'};
+  if(t.tkind==='code' && ![...plan.changes,...plan.applied].some(n=>/\.(?:c|h|s|cpp|hpp)$/i.test(n))) return {error:'STM32 实现任务没有源码改动，不能把只编译模板当成完成。请完成要求的程序后重新构建。'};
   const report = path.join(t.workspace.work, 'xin-review.json');
   if (t.tkind === 'review') {
     let data; try { data = JSON.parse(fs.readFileSync(report,'utf8')); } catch { return { error: '请生成 xin-review.json：verdict="pass"，checks 数组逐项写出 clock、pinmap、peripheral_clock、interrupt 的 id、status（pass/not_applicable）、reference（手册章节）和 evidence（源码文件:行号及判断依据）。' }; }
@@ -192,16 +194,36 @@ export function publishWorkspace(t, controller, approved = false) {
   }
   const backup = path.join(controller, 'backups', 'task-' + t.no + '-' + Date.now());
   mkdir(backup);
+  const created = plan.changes.filter(n => !fs.existsSync(path.join(plan.original, n)));
   for (const name of [...plan.changes, ...plan.deleted]) {
     const dst = path.join(plan.original, name);
     if (fs.existsSync(dst)) { const b = path.join(backup, name); mkdir(path.dirname(b)); fs.copyFileSync(dst, b); }
   }
-  for (const name of plan.changes) {
-    const src = path.join(t.workspace.work, name), dst = path.join(plan.original, name);
-    mkdir(path.dirname(dst)); const tmp = dst + '.xin-' + process.pid;
-    fs.copyFileSync(src, tmp); fs.chmodSync(tmp, fs.statSync(src).mode & 0o777); fs.renameSync(tmp, dst);
+  // 写回清单：一批文件不是原子的。中途出错按清单从备份还原；中途被杀则下次收尾把已写回的算 applied、补齐剩下的。
+  // 参考 opencode packages/core/src/snapshot.ts（按内容记录、按文件还原）
+  const record = state => fs.writeFileSync(path.join(backup, 'publish.json'), JSON.stringify({ state, changes: plan.changes, deleted: plan.deleted, created, applied: plan.applied, at: Date.now() }), { mode: 0o600 });
+  record('writing');
+  const done = [], failAfter = Number(process.env.XIN_TEST_PUBLISH_FAIL_AFTER) || 0;
+  const step = name => { done.push(name); if (failAfter && done.length >= failAfter) throw new Error('测试：模拟写回失败'); };
+  try {
+    for (const name of plan.changes) {
+      const src = path.join(t.workspace.work, name), dst = path.join(plan.original, name);
+      mkdir(path.dirname(dst)); const tmp = dst + '.xin-' + process.pid;
+      fs.copyFileSync(src, tmp); fs.chmodSync(tmp, fs.statSync(src).mode & 0o777); fs.renameSync(tmp, dst); step(name);
+    }
+    for (const name of plan.deleted) { fs.unlinkSync(path.join(plan.original, name)); step(name); }
+  } catch (e) {
+    for (const name of done) {
+      const dst = path.join(plan.original, name), saved = path.join(backup, name);
+      try {
+        if (fs.existsSync(saved)) { mkdir(path.dirname(dst)); const tmp = dst + '.xin-restore-' + process.pid; fs.copyFileSync(saved, tmp); fs.renameSync(tmp, dst); }
+        else fs.rmSync(dst, { force: true });
+      } catch { /* 还原不了的留在备份目录里，publish.json 记着清单 */ }
+    }
+    record('rolled_back');
+    throw new Error('写回中途失败，原项目已还原：' + e.message);
   }
-  for (const name of plan.deleted) fs.unlinkSync(path.join(plan.original, name));
+  record('done');
   return { ok: true, files: plan.changes.length, deleted: plan.deleted.length, backup };
 }
 
