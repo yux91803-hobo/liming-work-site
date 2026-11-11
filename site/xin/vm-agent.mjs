@@ -1761,10 +1761,6 @@ async function watchdog() {
     await new Promise(resolve => setTimeout(resolve, 5000));
   }
 }
-// 推送放到后台进程里发（不让网页那次请求等推送服务）
-function pushLater(msg) {
-  try { spawn(process.execPath, [SELF, 'pushq', JSON.stringify(msg)], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref(); } catch { /* 发不了就算了 */ }
-}
 // 网页最近有没有在看这个对话（tasks 轮询会碰一下）：在看就不推送，卡片自己会更新
 const convSeenF = sid => path.join(RUNS, 'conv-' + sid + '.seen');
 const validDevice = id => typeof id==='string' && /^[A-Za-z0-9_-]{8,80}$/.test(id);
