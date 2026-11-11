@@ -1266,6 +1266,8 @@ const TASK_MIN = 60, TASK_MIN_MAX = 180;
 export const TASK_KINDS = ['quick', 'code', 'research', 'hard', 'vision', 'review'];
 export const TASK_STATUS = { queued: '排队中', running: '进行中', stopping: '正在停止', waiting: '等你确认', done: '做完了', failed: '没做成', stopped: '已停止' };
 const TASKS_DIR = () => path.join(WORK, 'tasks');
+// 每日任务自己的目录：以前用整个 WORK，调度规则「目录有包含关系就不同时跑」让它和所有后台任务互相排队（最长 180 分钟）
+export const DAILY_DIR = () => path.join(WORK, 'daily');
 const TASK_SEQ = () => path.join(BASE, 'task-seq.json');
 const RESUME_TEXT = '（刚才电脑暂停或重启，这一轮中途断了。先检查现在的状态——看看文件、编译结果、还在不在跑的进程——已经做过的有副作用的事别再做一遍，然后接着把任务做完。）';
 const isTask = s => !!s && s.kind === 'task';
@@ -1437,8 +1439,8 @@ function taskNew(a) {
   if(rt.error)return {error:rt.error,msg:rt.note};
   const seq = (readJ(TASK_SEQ(), {}) || {}).n || all.reduce((m, t) => Math.max(m, t.no || 0), 0);
   const no = seq + 1;
-  if (a.daily) mk(WORK);
-  const d = a.daily ? { dir: WORK } : taskDir(no, title, a.dir);
+  if (a.daily) mk(DAILY_DIR());
+  const d = a.daily ? { dir: fs.realpathSync(DAILY_DIR()) } : taskDir(no, title, a.dir);
   if (d.error) return { error: 'bad_dir', msg: d.error };
   writeJ(TASK_SEQ(), { n: no });
   const minutes = Math.min(TASK_MIN_MAX, Math.max(5, Math.round(Number(a.minutes) || TASK_MIN)));
@@ -1494,7 +1496,7 @@ function startTask(t, all) {
   const cm = codexModel(t.model);
   Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, startedAt: t.startedAt || Date.now() });
   const run = launch(t, { text, effort: t.model===runtime.AGY_MODEL?'high':AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||t.model===runtime.AGY_MODEL ? t.fallbacks || [] : [],
-    images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || WORK, sandbox: !t.dailyDate && TASK_SANDBOX(),
+    images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !t.dailyDate && TASK_SANDBOX(),
     deadline: t.deadline }, { t: 'user', text: userText, at: Date.now() });
   if (t.dailyDate) writeJ(DAILY_LAST(), { date: t.dailyDate, run, sid: t.sid, at: Date.now(), ok: null });
 }
