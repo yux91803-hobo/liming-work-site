@@ -1091,6 +1091,12 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   await until(() => op('poll', { run: r3.run, off: 0 }).done, 15000, '前台第三句');
   const p3 = JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input.at(-1).content;
   const p3all = JSON.stringify(JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input);
+  // 同一对话里提到前面说过的词：那几轮已经原样在上下文里，自动「相关旧话」不再塞一遍（联调 #115）
+  const r4 = op('send', { sid: r.sid, text: 'test_dispatch 结果呢' });
+  await until(() => op('poll', { run: r4.run, off: 0 }).done, 15000, '前台第四句');
+  const p4 = JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input;
+  assert.ok(p4.some(e=>e.role==='user'&&String(e.content).includes('请 TEST_DISPATCH 一下')),'原话在上下文里');
+  assert.ok(!p4.some(e=>String(e.content).includes('相关旧话')&&String(e.content).includes('TEST_DISPATCH')),JSON.stringify(p4.map(e=>String(e.content).slice(0,60))));
   assert.ok(!p3.includes('<后台任务>') && !p3all.includes('<后台任务>') && !p3all.includes('任务 1「编译 LED」做完了'), p3.slice(-300));
   // 运行记录里也有分身那一轮
   const stats = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));

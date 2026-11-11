@@ -748,7 +748,7 @@ function runner(run) {
       // 后台任务快照单独一条、放在兄弟这句话前面，他的原话永远是最后一条。以前接在他的话后面，
       // DeepSeek 会把快照当成这一句要回的内容（联调 #113、#114：「只回复 三个词」被答成了进度）
       if(meta.frontTaskNotes)input.push({role:'user',content:meta.frontTaskNotes});
-      if(!meta.handoff){const guide=turnGuidance({sid:meta.sid,text:meta.frontRequest||'',context:meta.context||''});if(guide)input.push({role:'user',content:guide});}
+      if(!meta.handoff){const guide=turnGuidance({sid:meta.sid,text:meta.frontRequest||'',context:meta.context||'',skipRuns:[run,...context.checkpoint.recent]});if(guide)input.push({role:'user',content:guide});}
       input.push(frontUserInput(meta));
     }
     catch(e) { state.failed=true;finish(1,e.message);return; }
