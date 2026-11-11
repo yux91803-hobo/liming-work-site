@@ -98,7 +98,7 @@ async def main():
         await pg.wait_for_function("document.querySelectorAll('.xw-t').length === 3", timeout=10000)
         rows = await pg.evaluate("[...document.querySelectorAll('.xw-t')].map(b => [b.classList[1], b.querySelector('.xw-tt').textContent, b.querySelector('.xw-tm').textContent])")
         ui.check('登录后首页：在做的、等你的、做好的三行，在做的写用了多久', [r[:2] for r in rows] == [['run', 'PA0 点灯工程'], ['wait', '删掉旧工程'], ['ok', '奶龙互动网页']]
-                 and rows[0][2] == '3 分钟' and rows[1][2] == '等你' and rows[2][2] == '1 小时前' and await pg.text_content('.xw-st') == '在忙', rows)
+                 and rows[0][2] == '3 分钟' and rows[1][2] == '待确认' and rows[2][2] == '1 小时前' and await pg.text_content('.xw-st') == '在忙', rows)
         fit = await pg.evaluate("document.documentElement.scrollWidth <= innerWidth")
         ui.check('手机首页不横向滚动', fit)
 
@@ -120,7 +120,7 @@ async def main():
         col = await pg.evaluate("""[[...document.querySelectorAll('.wk-h')].map(e => e.textContent), [...document.querySelectorAll('.wk-sg')].map(e => e.textContent), [...document.querySelectorAll('.wk-c')].map(c => c.dataset.tsid),
           (() => { const r = document.querySelector('.xc-work').getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right) === innerWidth]; })(), document.documentElement.scrollWidth <= innerWidth]""")
         ui.check('右栏滑进来盖满聊天：在做 1、等你 1，成果按类别分（网页 1、资料 1，上面能切换类别），顺序对，不横向滚动',
-                 col == [['在做1', '等你1', '网页1', '资料1'], ['全部', '网页', '资料'], ['stasklive01', 'staskwait01', 'staskweb001', 'staskdone01'], [0, True], True], col)
+                 col == [['进行中1', '待确认1', '网页1', '资料1'], ['全部', '网页', '资料'], ['stasklive01', 'staskwait01', 'staskweb001', 'staskdone01'], [0, True], True], col)
         await pg.keyboard.press('Escape')
         await pg.wait_for_function("!document.querySelector('.xc').classList.contains('work-open') && document.querySelector('.xc').classList.contains('show')")
         ui.check('Esc 先收起右栏，工作台还开着', True)
@@ -161,7 +161,7 @@ async def main():
             await pg.wait_for_timeout(200)
             ui.check('%d 宽：网页成品显示截图，「打开」是新标签的预览；重画不重新下载截图' % width,
                      web == ['/api/xin/preview/' + PID + '/preview.png', '/xin/preview.html?id=' + PID, '_blank'] and st['previews'] == n0 == 1, (web, n0, st['previews']))
-            await pg.click('.wk-c[data-tsid=stasklive01] .wk-b:has-text("改一下")')
+            await pg.click('.wk-c[data-tsid=stasklive01] .wk-b:has-text("修改")')
             await pg.wait_for_selector('.xc-sheet:not([hidden]) .xc-tk-in')
             await pg.wait_for_function("document.activeElement === document.querySelector('.xc-sheet .xc-tk-in')", timeout=3000)
             await pg.wait_for_timeout(350)   # 等滑进来的动画走完再量位置

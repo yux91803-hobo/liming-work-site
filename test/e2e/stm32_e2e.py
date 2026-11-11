@@ -1640,7 +1640,7 @@ async def main():
           [...document.querySelectorAll('.xc-ai')].map(e => ['wide', 'cont', 'bad'].filter(c => e.classList.contains(c)).join(' ')),
           (document.querySelector('.xc-ai.bad .xc-bub') || {}).textContent, !!document.querySelector('.xc-time'), document.querySelector('.xc-msgs').textContent.includes('arm-none-eabi-gcc')]""")
         check('打开旧对话：代码块（带语言、复制），执行的命令不显示；小芯接着说的不再画头像；没做成的那一轮有一句提示；最前面有时间',
-              st[:3] == ['int main(void) { return 0; }', 'c', False] and st[3] == ['wide', 'cont', 'cont bad'] and st[4] == '这次没做成' and st[5] and not st[6], st)
+              st[:3] == ['int main(void) { return 0; }', 'c', False] and st[3] == ['wide', 'cont', 'cont bad'] and st[4] == '回复失败，请重新发送' and st[5] and not st[6], st)
         hl = await pg.evaluate("""(() => { const by = c => [...document.querySelectorAll('.xc-code .hl-' + c)].map(e => e.textContent);
           const kw = document.querySelector('.xc-code .hl-kw'); return [by('kw'), by('fn'), by('num'), kw && getComputedStyle(kw).color !== getComputedStyle(document.querySelector('.xc-code code')).color]; })()""")
         check('代码上色：关键字、函数名、数字各有颜色（复制出来还是原文）', hl == [['int', 'void', 'return'], ['main'], ['0'], True], hl)
@@ -1731,7 +1731,7 @@ async def main():
         v = await pgr.input_value('.xc-memt')
         stt = await pgr.text_content('.xc-dailyst')
         await pgr.fill('.xc-memt', v + '- 提醒我复习定时器\n'); await pgr.click('.xc-memrow .xc-btn:not(.xc-btn2)'); await pgr.wait_for_timeout(300)
-        check('每日任务页：看到清单和最近一次结果，改了能保存', '签到' in v and '做完了' in stt and xg['daily'].endswith('提醒我复习定时器\n'), (v, stt, xg['daily']))
+        check('每日任务页：看到清单和最近一次结果，改了能保存', '签到' in v and '已完成' in stt and xg['daily'].endswith('提醒我复习定时器\n'), (v, stt, xg['daily']))
         await pgr.click('.xc-btn2'); await pgr.wait_for_selector('.xc.show .xc-body:not([hidden]) .xc-code')
         check('每日任务页：「现在就做一遍」强制开一轮，并打开那段对话', xg['daily_args'] == {'force': True} and await pgr.evaluate("LimingXinChat.state.view") == 'chat', xg['daily_args'])
         await pgr.context.close()
@@ -1887,7 +1887,7 @@ async def main():
         await pv.click('.xc-set-b'); await pv.wait_for_selector('.xc-set')
         rows = await pv.evaluate("[...document.querySelectorAll('.xc-tg-t b')].map(b => b.textContent)")
         await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false' && !document.querySelector('.xc-push .xc-sw').disabled")
-        check('设置：天启模式、附带正在看的页面、做完提醒（没有学习记录、主动跟进），做完提醒默认关着', rows == ['天启模式', '附带正在看的页面', '做完提醒'] and not await pv.evaluate("!!document.querySelector('.xc-learning, .xc-followups')"), rows)
+        check('设置：天启模式、附带正在看的页面、做完提醒（没有学习记录、主动跟进），做完提醒默认关着', rows == ['天启模式', '附带当前页面', '完成通知'] and not await pv.evaluate("!!document.querySelector('.xc-learning, .xc-followups')"), rows)
         await pv.click('.xc-set-b'); await pv.click('.xc-set-b')
         check('重新打开设置：不报错，开关还在', await pv.is_visible('.xc-push .xc-sw'))
         c0 = await pv.evaluate("document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked')")
@@ -1979,7 +1979,7 @@ async def main():
         await pt.wait_for_function(CHAT_DONE, timeout=8000)
         await pt.wait_for_function("!document.querySelector('.xc-tstrip').hidden", timeout=8000)
         cd = await pt.evaluate(TASK_STRIP_JS)
-        check('后台任务：聊天里不放任务卡片；输入框上面一条「在做 1 件事」', cd == [False, True, '在做 1 件事'], cd)
+        check('后台任务：聊天里不放任务卡片；输入框上面一条「在做 1 件事」', cd == [False, True, '1 个任务进行中'], cd)
         # 还在做的时候改要求：点那条进任务列表，点任务打开详情，写了发给它（它手上这一步做完就按新的来），同一页也能停
         await pt.click('.xc-tstrip'); await pt.wait_for_selector('.xc-sheet .xc-tl-i')
         heads = await pt.evaluate("[document.querySelector('.xc-sh-hd b').textContent, [...document.querySelectorAll('.xc-sheet .xc-set-h')].map(e => e.textContent), [...document.querySelectorAll('.xc-tl-i b')].map(e => e.textContent)]")
@@ -1991,7 +1991,7 @@ async def main():
         await pt.wait_for_function("document.querySelector('.xc-tk-note') && document.querySelector('.xc-tk-note').textContent === '任务 1 接着做了'")
         tell = xt.get('task_tell') or {}
         check('任务还在做时改要求：详情里直接打字，回车发给那个任务（带稳定重试标识），旁边还有停止',
-              live == ['改要求…', ['发送', '停止']] and tell.get('sid') == 'stask00001' and tell.get('text') == '先别编译，改成 PA1' and len(tell.get('clientId', '')) == 36, (live, tell))
+              live == ['修改要求', ['发送', '停止']] and tell.get('sid') == 'stask00001' and tell.get('text') == '先别编译，改成 PA1' and len(tell.get('clientId', '')) == 36, (live, tell))
         xt['task_tell'] = None; T1['status'] = 'running'
         await pt.click('.xc-sh-x'); await pt.wait_for_timeout(300)
         T1.update({'status': 'done', 'endedAt': now, 'activity': '', 'result': {'ok': True, 'text': '我编好了：`/data/workspace/blink/build/app.hex`，直接烧录就行。', 'err': '', 'at': now}})
@@ -1999,14 +1999,14 @@ async def main():
         await pt.wait_for_selector('.xc-tres')
         rs = await pt.evaluate(TASK_RES_JS)
         check('任务做完：聊天最后小芯说结果（标题就是任务名、正文里的路径能点、用时、「详情」），聊天里没有卡片，任务条收起',
-              rs == ['编译 LED', '我编好了：/data/workspace/blink/build/app.hex，直接烧录就行。', '用时 2 分钟', True, True, False, ['详情'], True], rs)
+              rs == ['编译 LED', '我编好了：/data/workspace/blink/build/app.hex，直接烧录就行。', '用时 2 分钟', True, True, False, ['查看详情'], True], rs)
         await pt.evaluate("LimingXinChat.tasks()"); await pt.wait_for_timeout(400)
         check('同一次结果只说一次（再轮询不重复）', await pt.evaluate("document.querySelectorAll('.xc-tres').length") == 1)
         await pt.click('.xc-tres .xc-task-btn'); await pt.wait_for_selector('.xc-sheet .xc-tk-log')
         tk = await pt.evaluate(TASK_SHEET_JS)
         check('详情：一页里写着状态、类别、工作目录（能点开）、要求、每一步说的话和执行的命令（去掉 bash 外壳，点开看输出）；做完的能补充后继续（没有说明小字）',
-              tk[:3] == ['编译 LED', '做完了写代码', '/data/workspace/blink'] and tk[3] == '要求编译 blink 工程' and tk[4] == ['make'] and tk[5]
-              and tk[6] == ['我先看看工程。', '编好了：/data/workspace/blink/build/app.hex'] and tk[7] == '补充…' and tk[8] == '继续', tk)
+              tk[:3] == ['编译 LED', '已完成写代码', '/data/workspace/blink'] and tk[3] == '要求编译 blink 工程' and tk[4] == ['make'] and tk[5]
+              and tk[6] == ['我先看看工程。', '编好了：/data/workspace/blink/build/app.hex'] and tk[7] == '补充要求' and tk[8] == '继续', tk)
         await pt.fill('.xc-tk-in', '再加个呼吸灯'); await pt.click('.xc-tk-act .xc-btn')
         await pt.wait_for_function("document.querySelector('.xc-tk-note') && document.querySelector('.xc-tk-note').textContent === '任务 1 接着做了'")
         tell = xt.get('task_tell') or {}
@@ -2024,7 +2024,7 @@ async def main():
         await pt.wait_for_function(CHAT_DONE, timeout=10000)
         q2 = await pt.evaluate("[...document.querySelectorAll('.xc-me .xc-bub')].map(b => b.textContent).slice(-2)")
         check('小芯在回上一句：输入框有话按钮是「排队发送」，发了先排着（灰色气泡写「排队中」，能 ✕），这一句回完自动发出去',
-              q0 == '排队发送' and q1[:3] == [1, '排队中✕', '停止'] and q1[3] == '' and xt['sent'].get('text') == '再顺便看看那个' and q2 == ['先看看这个', '再顺便看看那个'], (q0, q1, xt['sent'], q2))
+              q0 == '排队发送' and q1[:3] == [1, '待发送✕', '停止'] and q1[3] == '' and xt['sent'].get('text') == '再顺便看看那个' and q2 == ['先看看这个', '再顺便看看那个'], (q0, q1, xt['sent'], q2))
         # 全部任务那一页（侧边栏不再放入口，按名字还能打开）：所有对话的任务（还没做完的 / 最近的，写着哪个对话派的）、每日任务、各模型最近 14 天
         T1.update({'status': 'done'})
         xt['tasks'].append({'sid': 'stask00002', 'no': 2, 'parent': 'snew000001', 'title': '检查：编译 LED', 'kind': 'review', 'model': 'kimi-k3.1-pro', 'why': 'review', 'status': 'queued',
@@ -2032,8 +2032,8 @@ async def main():
         await pt.evaluate("LimingXinChat.page('tasks')"); await pt.wait_for_selector('.xc-sess .xc-tl-i')
         tc = await pt.evaluate(TASK_CENTER_JS)
         check('全部任务那一页（没有入口，功能还在）：还没做完的在上（等任务 1 做完 · 检查 · Kimi）、最近的在下，写着在哪个对话派的；每日任务做得怎么样；各模型最近 14 天（用了几次、成了几次、平均多久、换过几次模型）',
-              tc[0] == ['还没做完的', '最近的', '每日任务'] and tc[1] == ['检查：编译 LED', '编译 LED'] and tc[2][0] == '等前一步做完检查'
-              and tc[3] == ['在「编译一下 blink」里提到的', '在「编译一下 blink」里提到的'] and tc[4].startswith('最近一次：11-06 做完了') and tc[5] == [], tc)
+              tc[0] == ['还没做完的', '最近的', '每日任务'] and tc[1] == ['检查：编译 LED', '编译 LED'] and tc[2][0] == '等待前一项检查'
+              and tc[3] == ['在「编译一下 blink」里提到的', '在「编译一下 blink」里提到的'] and tc[4].startswith('最近一次：11-06 已完成') and tc[5] == [], tc)
         await pt.click('.xc-sess .xc-tl-i[data-tsid=stask00001]'); await pt.wait_for_selector('.xc-sheet .xc-tk-log')
         check('任务中心里点一个任务：打开它的过程', await pt.evaluate("document.querySelector('.xc-sheet .xc-sh-hd b').textContent") == '编译 LED')
         await pt.click('.xc-sh-x'); await pt.wait_for_timeout(200)
