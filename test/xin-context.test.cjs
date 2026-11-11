@@ -39,8 +39,9 @@ test('每轮给可照做的建议，待确认/隐私不混入；久未涉及先�
  m.memoryDb().prepare('UPDATE memory_items SET confirmed=?,updated=? WHERE id=?').run(1,1,it.id);
  const priv=m.addMemory({content:'只想私下提起的爱好',source:'user'}).item;m.updateMemory(priv.id,{private:true});
  m.addMemory({content:'音乐喜欢爵士',source:'user'});chat(1,'PWM 频率先分频，再看 ARR');
- return {g:c.turnGuidance({text:'PWM 怎么算',sid:'scontext01'}),task:c.taskMemory('写 PWM 代码')};`);
- assert.match(r.g,/交流时照顾：回答先给结论/);assert.match(r.g,/很久没确认/);assert.match(r.g,/先分频/);assert.doesNotMatch(r.g,/爱看红色|私下提起/);
+ return {g:c.turnGuidance({text:'PWM 怎么算',sid:'scontext01'}),task:c.taskMemory('写 PWM 代码'),found:c.recallAll('先分频').matches.length};`);
+ assert.match(r.g,/交流时照顾：回答先给结论/);assert.match(r.g,/很久没确认/);assert.doesNotMatch(r.g,/爱看红色|私下提起/);
+ assert.doesNotMatch(r.g,/先分频|相关旧话/,'旧对话原话不每轮自动塞，要用 xin recall 查');assert.equal(r.found,1);
  assert.match(r.task,/回答先给结论/);assert.doesNotMatch(r.task,/音乐|爱看红色|还没独立算对|私下/);
  const agent=fs.readFileSync(path.join(__dirname,'../site/xin/vm-agent.mjs'),'utf8');assert.match(agent,/input\.push\(\{role:'user',content:guide\}\)/);
  const persona=fs.readFileSync(path.join(__dirname,'../site/xin/vm-persona.mjs'),'utf8');assert.doesNotMatch(persona,/turnGuidance/);
@@ -62,11 +63,10 @@ test('敏感本轮原话不触发自动跨对话检索；已确认的交流习�
  return c.turnGuidance({text:'只回复 generation-original-123456abcdef，不要记忆'});`);
  assert.match(r,/先给结论/);assert.doesNotMatch(r,/相关旧话|front-oldmarker/);
 });
-test('自动「相关旧话」不再塞已经原样在上下文里的几轮，别的对话照常能想起来（参考 Open WebUI 跳过已重放的内容）',t=>{
- const run=fixture(t),r=run(`const a=chat(1,'只回复 纸鸢 雪梨 南瓜，不要执行命令');chat(2,'只回复 风筝 海盐 灯塔，不要执行命令');
- return {skip:c.turnGuidance({text:'只回复 书签 枫叶 火车，不要执行命令',sid:a.sid,skipRuns:[a.run]}),all:c.turnGuidance({text:'只回复 书签 枫叶 火车，不要执行命令',sid:a.sid})};`);
- assert.doesNotMatch(r.skip,/纸鸢/);assert.match(r.skip,/相关旧话[\s\S]*风筝 海盐 灯塔/);
- assert.match(r.all,/纸鸢/,'不传 skipRuns 时照旧都能找到');
+test('每轮不再自动塞旧对话原话（像 Letta 由模型调 conversation_search），本对话、别的对话的「只回复 …」都不会出现在兄弟这句话跟前；xin recall 照常查得到',t=>{
+ const run=fixture(t),r=run(`const a=chat(1,'只回复 纸鸢 雪梨 南瓜，不要执行命令');chat(2,'只回复 风筝 海盐 灯塔，不要执行命令');m.addMemory({content:'先给结论',source:'user'});
+ return {g:c.turnGuidance({text:'只回复 书签 枫叶 火车，不要执行命令',sid:a.sid}),found:c.recallAll('只回复').matches.length};`);
+ assert.match(r.g,/先给结论/);assert.doesNotMatch(r.g,/相关旧话|纸鸢|风筝/);assert.equal(r.found,2);
 });
 test('当前消息含敏感串时不拿它作自动检索关键词，仍可使用已确认的普通交流习惯',t=>{
  const run=fixture(t),r=run(`chat(1,'generation 是过去讨论过的一段普通记录');m.addMemory({content:'先给结论',source:'user'});
