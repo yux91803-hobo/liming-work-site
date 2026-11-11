@@ -92,7 +92,7 @@ async function worker() { const m = await import(pathToFileURL(path.join(__dirna
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
 const SOURCES = { 'vm-agent.mjs': "import './x.mjs';\nimport { a } from './vm-base.mjs';\n// agent\n", 'vm-base.mjs': '// base\n' };
 function env() {
-  return { OWNER_PASSWORD: 'correct horse battery', INSTABOX_API_KEY: 'ibk_test_key_1234567890', XIN_MACHINE: 'li',
+  return { OWNER_PASSWORD: 'correct horse battery', INSTABOX_API_KEY: 'ibk_test_key_1234567890', XIN_MACHINE: 'li', XIN_LOGIN_LIMIT: { limit: async () => ({ success: true }) },
     ASSETS: { fetch: async req => { const f = new URL(req.url).pathname.split('/').pop(); return f in SOURCES ? new Response(SOURCES[f]) : new Response('nope', { status: 404 }); } } };
 }
 function fakeBox(handle) {

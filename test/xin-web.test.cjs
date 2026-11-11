@@ -116,7 +116,7 @@ test('网页上下文里提及 STM32 不强制固件构建，原始固件工程�
 });
 test('预览接口要求站长登录，只交付校验过的快照并隔离脚本与站长 API',async t=>{
  const api=await import('../src/xin.js');api._reset();const id='a'.repeat(32),origin='https://liming-work.com',pw='correct horse battery';
- const env={OWNER_PASSWORD:pw,INSTABOX_API_KEY:'ibk_test_private',ASSETS:{fetch:async()=>new Response('// fake agent')}};
+ const env={OWNER_PASSWORD:pw,INSTABOX_API_KEY:'ibk_test_private',XIN_LOGIN_LIMIT:{limit:async()=>({success:true})},ASSETS:{fetch:async()=>new Response('// fake agent')}};
  const login=await api.handleXin(new Request(origin+'/api/xin/login',{method:'POST',headers:{'X-Xin':'1','Content-Type':'application/json'},body:JSON.stringify({password:pw})}),env,null);
  const cookie=login.headers.get('set-cookie').split(';')[0],req=(suffix='',authed=true)=>new Request(origin+'/api/xin/preview/'+id+'/index.html'+suffix,{headers:authed?{cookie}:{}});
  const real=global.fetch;let corrupt=false,reads=0;
@@ -129,7 +129,7 @@ test('预览接口要求站长登录，只交付校验过的快照并隔离脚�
  assert.equal(api.OPS.has('preview_asset'),false);
 });
 test('预览元数据不能把私有控制文件伪装成网页',async t=>{
- const api=await import('../src/xin.js');api._reset();const origin='https://liming-work.com',pw='correct horse battery',id='b'.repeat(32),env={OWNER_PASSWORD:pw,INSTABOX_API_KEY:'ibk_test_private',ASSETS:{fetch:async()=>new Response('// fake agent')}};
+ const api=await import('../src/xin.js');api._reset();const origin='https://liming-work.com',pw='correct horse battery',id='b'.repeat(32),env={OWNER_PASSWORD:pw,INSTABOX_API_KEY:'ibk_test_private',XIN_LOGIN_LIMIT:{limit:async()=>({success:true})},ASSETS:{fetch:async()=>new Response('// fake agent')}};
  const r=await api.handleXin(new Request(origin+'/api/xin/login',{method:'POST',headers:{'X-Xin':'1','Content-Type':'application/json'},body:JSON.stringify({password:pw})}),env,null),cookie=r.headers.get('set-cookie').split(';')[0],real=global.fetch;
  global.fetch=async(url)=>{const u=new URL(url);if(u.pathname==='/v1/machines')return Response.json({machines:[{id:'m_test',name:'li'}]});if(u.pathname.endsWith('/exec'))return Response.json({exitCode:0,stdout:JSON.stringify({real:'/data/home/.xin/codex.key',size:12,sha256:'a'.repeat(64)})});assert.fail('private file must never be fetched');};t.after(()=>{global.fetch=real;api._reset();});
  assert.equal((await api.handleXin(new Request(origin+'/api/xin/preview/'+id+'/index.html',{headers:{cookie}}),env,null)).status,502);

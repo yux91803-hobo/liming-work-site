@@ -31,6 +31,7 @@ function mkEnv(extra) {
     OWNER_PASSWORD: PW,
     INSTABOX_API_KEY: 'ibk_test_key_1234567890',
     XIN_MACHINE: 'li',
+    XIN_LOGIN_LIMIT: { limit: async () => ({ success: true }) },
     ASSETS: { fetch: async req => new URL(req.url).pathname === '/xin/vm-agent.mjs' ? new Response(AGENT_TEXT) : new Response('nope', { status: 404 }) }
   }, extra || {});
 }
@@ -106,6 +107,30 @@ test('登录限流：超了回 429', async () => {
   const env = mkEnv({ XIN_LOGIN_LIMIT: { limit: async () => ({ success: false }) } });
   const r = await m.handleXin(req('/api/xin/login', { body: { password: PW } }), env, null);
   assert.strictEqual(r.status, 429);
+});
+
+test('登录限流的绑定没配上：不收密码（503），也不发 cookie', async () => {
+  const m = await fresh();
+  for (const XIN_LOGIN_LIMIT of [undefined, {}]) {
+    const r = await m.handleXin(req('/api/xin/login', { body: { password: PW } }), mkEnv({ XIN_LOGIN_LIMIT }), null);
+    assert.strictEqual(r.status, 503);
+    assert.strictEqual(r.headers.get('set-cookie'), null);
+    assert.strictEqual((await r.json()).error, 'no_rate_limit');
+  }
+});
+
+test('找不到云电脑时：预览和任务回调回 502 加说明，不抛成 500', async () => {
+  const m = await fresh(), env = mkEnv({ XIN_TASK_SUPERVISOR: { idFromName: () => 'id', get: () => ({ fetch: async () => new Response('{}') }) } }), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [{ status: 500, body: { error: { code: 'internal', message: 'down' } } }] });
+  try {
+    const p = await m.handleXin(new Request(ORIGIN + '/api/xin/preview/' + 'a'.repeat(32) + '/index.html', { headers: { cookie: ck } }), env, null);
+    // 预览先问控制器要元数据（这一步就要找云电脑）：找不到也只是 5xx 加说明
+    assert.ok(p.status === 502 || p.status === 503, String(p.status));
+    const token = await m._callbackToken(env);
+    const c = await m.handleXin(new Request(ORIGIN + '/api/xin/task-event', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify({ bg: 1, version: 2 }) }), env, null);
+    assert.strictEqual(c.status, 502);
+    assert.strictEqual((await c.json()).ok, false);
+  } finally { ib.restore(); }
 });
 
 test('没登录不能调用', async () => {

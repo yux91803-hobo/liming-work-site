@@ -7,7 +7,7 @@
     "directory": "./site",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/tools/*/assets/*"]
+    "run_worker_first": ["/api/*", "/tools/*/assets/*", "/xin/vm-*"]
   },
   // 互传（Space）和登录限流（Limiter）已删除：v2 迁移会在部署时连同里面存的数据一起删掉
   "migrations": [
@@ -42,7 +42,7 @@
         "directory": "./site",
         "binding": "ASSETS",
         "not_found_handling": "single-page-application",
-        "run_worker_first": ["/api/*", "/tools/*/assets/*"]
+        "run_worker_first": ["/api/*", "/tools/*/assets/*", "/xin/vm-*"]
       }
     }
   }

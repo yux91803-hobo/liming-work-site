@@ -34,3 +34,25 @@ test('/api/* → 404', async () => {
   const r = await get(w, '/api/x', env(200, 'text/html'));
   assert.strictEqual(r.status, 404);
 });
+
+test('云电脑上的控制器脚本不对外：/xin/vm-*.mjs 一律 404，不去读静态资源', async () => {
+  const w = await loadWorker();
+  let asked = 0;
+  const e = { ASSETS: { fetch: async () => { asked++; return new Response('// controller source', { status: 200, headers: { 'content-type': 'text/javascript' } }); } } };
+  for (const p of ['/xin/vm-agent.mjs', '/xin/vm-memory.mjs', '/xin/vm-agent-0123456789ab.mjs']) {
+    const r = await get(w, p, e);
+    assert.strictEqual(r.status, 404);
+    assert.doesNotMatch(await r.text(), /controller/);
+  }
+  assert.strictEqual(asked, 0);
+  // 聊天页自己的脚本照常
+  assert.strictEqual((await get(w, '/xin/chat.js', e)).status, 200);
+  assert.strictEqual(asked, 1);
+});
+
+test('wrangler：正式站和测试站都让 Worker 先接住 /xin/vm-*', () => {
+  const text = require('node:fs').readFileSync(path.join(__dirname, '../wrangler.jsonc'), 'utf8');
+  const lists = [...text.matchAll(/"run_worker_first":\s*(\[[^\]]*\])/g)].map(m => JSON.parse(m[1]));
+  assert.strictEqual(lists.length, 2);
+  for (const l of lists) assert.ok(l.includes('/xin/vm-*'), JSON.stringify(l));
+});

@@ -358,7 +358,9 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
     const d=r.data||{};if(d.error)return json({error:d.error,msg:d.msg},d.error==='not_found'?404:400);
     const expected='/data/home/.xin/previews/'+match[1]+'/'+match[2];
     if(d.real!==expected||!Number.isInteger(d.size)||d.size<1||d.size>2*1024*1024||!/^[a-f0-9]{64}$/.test(d.sha256||''))return json({error:'bad_preview',msg:'预览记录不完整'},502);
-    const m=await machine(env,now),asset=await fetch(API+'/v1/machines/'+m.id+'/files/content?path='+encodeURIComponent(d.real),{headers:{'X-API-Key':env.INSTABOX_API_KEY}});
+    let asset;
+    try{const m=await machine(env,now);asset=await fetch(API+'/v1/machines/'+m.id+'/files/content?path='+encodeURIComponent(d.real),{headers:{'X-API-Key':env.INSTABOX_API_KEY}});}
+    catch(e){return json(explain(e||{}),502);}
     if(!asset.ok)return json({error:'preview_unavailable',msg:'预览暂时未能读取，请重试'},502);
     const bytes=await asset.arrayBuffer();if(bytes.byteLength!==d.size||hex(await crypto.subtle.digest('SHA-256',bytes))!==d.sha256)return json({error:'preview_changed',msg:'预览文件校验失败'},502);
     const download=url.searchParams.get('download')==='1',html=match[2]==='index.html';
@@ -371,7 +373,8 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
     const text = await req.text(); if (text.length > 4096) return json({ error: 'too_large' }, 413);
     let state; try { state = JSON.parse(text); } catch { return json({ error: 'bad_json' }, 400); }
     if (!Number.isInteger(state.bg) || state.bg < 0 || state.bg > 100 || !Number.isSafeInteger(state.version) || state.version < 0) return json({ error: 'bad_state' }, 400);
-    const m = await machine(env, now);
+    let m;
+    try { m = await machine(env, now); } catch (e) { return json(explain(e || {}), 502); }
     await recordTasks(env, { bg: state.bg, version: state.version, machine: m.id, observedAt: now });
     return json({ ok: true });
   }
@@ -391,10 +394,10 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
   if (p === 'logout') return json({ ok: true }, 200, { 'Set-Cookie': cookieHeader('', 0) });
   if (p === 'login') {
     const ip = req.headers.get('cf-connecting-ip') || 'x';
-    if (env.XIN_LOGIN_LIMIT && typeof env.XIN_LOGIN_LIMIT.limit === 'function') {
-      const { success } = await env.XIN_LOGIN_LIMIT.limit({ key: 'login:' + ip });
-      if (!success) return json({ error: 'rate_limited', msg: '试太多次了，过一分钟再试' }, 429);
-    }
+    // 没有限流就不收密码：配置漏了绑定时宁可登不上，也不让人无限次猜（审查问题 17）
+    if (!env.XIN_LOGIN_LIMIT || typeof env.XIN_LOGIN_LIMIT.limit !== 'function') return json({ error: 'no_rate_limit', msg: '登录限流没配好，暂时不能登录' }, 503);
+    const { success } = await env.XIN_LOGIN_LIMIT.limit({ key: 'login:' + ip });
+    if (!success) return json({ error: 'rate_limited', msg: '试太多次了，过一分钟再试' }, 429);
     if (!(await checkPassword(env, body.password))) return json({ error: 'wrong_password', msg: '密码不对' }, 401);
     return json({ ok: true }, 200, { 'Set-Cookie': cookieHeader(await makeCookie(env, now), SESSION_SEC) });
   }
@@ -427,6 +430,7 @@ export async function runCron(cron, env, ctx, opt = {}) {
 
 // 测试用：清掉缓存
 export function _reset() { keyCache = null; machineCache = null; agentCache = null; verifiedAt = 0; }
+export const _callbackToken = env => callbackToken(env);   // 测试用：任务回调的令牌
 
 // Durable alarms keep running after a browser closes or the VM restarts. No alarms remain when idle.
 export class XinTaskSupervisor {
