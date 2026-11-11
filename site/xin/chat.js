@@ -353,7 +353,7 @@
   }
   function newChat(stay, toMain) {
     detachConversation();
-    stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; ls(LS_SID, null); S.hModel = hmPref(); S.lastModel = ''; S.queue = []; setPick(false);
+    stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; S.pos = null; ls(LS_SID, null); S.hModel = hmPref(); S.lastModel = ''; S.queue = []; setPick(false);
     S.toMain = !!toMain; S.more = false; S.title = '';
     if (!stay) { S.view = 'chat'; setDrawer(false); }
     clearList(); S.histFor = ''; welcome(); render(); refreshSide();
@@ -388,7 +388,7 @@
     detachConversation();var my=S.loadSeq,generation=S.convSeq;
     S.sid=sid;S.sessAgent='';S.loadingConversation=true;
     // 先清掉「这一轮还在跑」：重读期间那一轮可能已经做完了，以历史里说的为准（还在跑就从那里接着取）
-    stopPolling(); S.run = ''; S.off = 0; S.queue = []; S.view = 'chat'; setDrawer(false); clearList(); render();
+    stopPolling(); S.run = ''; S.off = 0; S.pos = null; S.queue = []; S.view = 'chat'; setDrawer(false); clearList(); render();
     list.appendChild(h('p', 'xc-hint xc-loading', '正在读取对话…'));
     return call('history', { sid: sid }, 60000, null, function(){return generation===S.convSeq;}).then(function (d) {
       if(generation!==S.convSeq)return;
@@ -413,7 +413,7 @@
       ended.forEach(drawTaskResult);
       if ((d.tasks || []).some(function(t){return tLive(t)||t.delivery?.state==='pending';})) pollTasksSoon(1500);
       setUsage(d.usage);
-      if (d.active) { S.run = d.active.run; S.off = d.active.off; S.t0 = Math.min(Date.now(), d.active.started || Date.now()); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
+      if (d.active) { S.run = d.active.run; S.off = d.active.off; S.pos = typeof d.active.pos === 'number' ? d.active.pos : null; S.t0 = Math.min(Date.now(), d.active.started || Date.now()); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
       restoreQueue(); if (!d.active) flushQueue();
       render(); toBottom(true);
     }, function (e) {
@@ -1289,7 +1289,7 @@
   function bareCmd(d) { var m = /^\/(?:usr\/)?bin\/(?:ba)?sh -l?c (['"])([\s\S]*)\1$/.exec(String(d || '').trim()); return m ? m[2] : String(d || ''); }
   function tStatText(t) {
     if (t.status === 'running') return '已进行 ' + dur(Date.now() - (t.startedAt || t.created || Date.now()));
-    if (t.status === 'queued') return t.after && t.after.length ? '等待前一项' : '排队中';
+    if (t.status === 'queued') return t.retryAt > Date.now() ? '连接出错，稍后接着做' : t.after && t.after.length ? '等待前一项' : '排队中';
     return TSTAT[t.status] || t.status;
   }
   function tLine(t) {
@@ -1609,7 +1609,7 @@
           if(generation!==S.convSeq){settleDetachedSend({sid:sid,queued:[q.id]}, {sid:sid});return;}
           S.queue = S.queue.filter(function (v) { return v !== q; }); saveQueue();
           e.classList.remove('queued'); tag.textContent = '已发送'; steer.remove();
-          if (r.next && r.run) { S.run = r.run; S.off = 0; startPolling(); }
+          if (r.next && r.run) { S.run = r.run; S.off = 0; S.pos = null; startPolling(); }
         }).catch(function (error) { if(generation!==S.convSeq)return;steer.disabled = false; tag.firstChild.textContent = '尚未补充：' + error.message; });
       });
       e.appendChild(steer);
@@ -1753,7 +1753,7 @@
     if (!im) c.appendChild(wkIcon(kind === 'wait' ? 'wait' : cat));
     var head = h('div', 'wk-hd');
     head.appendChild(h('b', 'wk-t', t.title));
-    var line = kind === 'live' ? (t.status === 'stopping' ? '停止中' : t.status === 'queued' ? '排队中' : t.activity || '准备中')
+    var line = kind === 'live' ? (t.status === 'stopping' ? '停止中' : t.status === 'queued' ? (t.retryAt > Date.now() ? '连接出错，稍后接着做' : '排队中') : t.activity || '准备中')
       : kind === 'wait' ? t.question || '待确认'
       : t.status === 'failed' ? '失败' + (t.result && (t.result.err || firstLine(t.result.text)) ? '：' + (t.result.err || firstLine(t.result.text)) : '')
       : t.status === 'stopped' ? '已停止' : t.result ? firstLine(t.result.text) : '';
@@ -1902,7 +1902,7 @@
     }
     [].forEach.call(ul.querySelectorAll('.xw-t'), function (b) {
       var t = S.tinfo[b.dataset.tsid] || rows.filter(function (x) { return x.sid === b.dataset.tsid; })[0]; if (!t) return;
-      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? '排队中' : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? '待确认' : ago(t.endedAt || t.created || Date.now());
+      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? (t.retryAt > Date.now() ? '稍后接着做' : '排队中') : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? '待确认' : ago(t.endedAt || t.created || Date.now());
     });
     ul.hidden = !rows.length;
   }
@@ -2099,7 +2099,7 @@
       saveQueue();
       ls('lm.xin.queue.pending', null);
       if (d.bg != null) S.bg = d.bg;
-      S.mine[d.run] = true; S.run = d.run; S.off = 0; S.t0 = Date.now(); render(); typing(true); startPolling(); if (!flight.sid) refreshSide();
+      S.mine[d.run] = true; S.run = d.run; S.off = 0; S.pos = null; S.t0 = Date.now(); render(); typing(true); startPolling(); if (!flight.sid) refreshSide();
     }).catch(function (e) {
       if(generation!==S.convSeq){settleDetachedSend(flight,null,e);return;}
       S.sendFlight=null;
@@ -2238,13 +2238,13 @@
     if (!S.polling || !S.run) return;
     if (document.hidden) { pollTm = setTimeout(poll, 1500); return; }
     var run = S.run,generation=S.convSeq;
-    call('poll', { run: run, off: S.off, deviceId:S.deviceId, tabId:S.tabId, watching:!!(S.open && S.view==='chat' && !document.hidden && document.hasFocus()) }, 0,null,function(){return generation===S.convSeq&&run===S.run;}).then(function (d) {
+    call('poll', Object.assign({ run: run, off: S.off }, typeof S.pos === 'number' ? { pos: S.pos } : {}, { deviceId:S.deviceId, tabId:S.tabId, watching:!!(S.open && S.view==='chat' && !document.hidden && document.hasFocus()) }), 0,null,function(){return generation===S.convSeq&&run===S.run;}).then(function (d) {
       if (run !== S.run || generation!==S.convSeq) return;
       d.events.forEach(function (ev) {
         if (ev.t === 'done') S.sawDone = run;
         if (!(ev.t === 'user' && S.mine[run])) draw(ev, false, run); react(ev); if (ev.t === 'done' && ev.usage) setUsage(ev.usage);
       });
-      S.off = d.off;
+      S.off = d.off; S.pos = typeof d.pos === 'number' ? d.pos : null;   // 新控制器给字节位置，下次只读新增的部分
       if (d.events.length) toBottom();
       // 记录里的 ended 可能先于回复行可见。这时 done 为真但这一页没有 done 事件，接着取，不能把这轮收掉。
       if (d.done && S.sawDone !== run) { progress(); pollTm = setTimeout(poll, d.events.length ? 400 : 300); return; }

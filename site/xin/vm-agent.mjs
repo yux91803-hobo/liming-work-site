@@ -62,6 +62,7 @@ import {openFrontProvider,preferredFrontModel,frontModelInfo,OPUS_FRONT_MODEL} f
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
+import { transientFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
@@ -258,6 +259,27 @@ function patchRun(run,changes){
 }
 function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
 function emit(run, ev) { if(journal.active)journal.append(runF(run),ev);else fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
+// 从字节位置 from 开始读一轮的事件，只到最后一个完整行：items 每条带它那一行结束处的字节位置（解析不了的行 ev 为 null）。
+// 参考 Agent HUD docs/performance.md：日志从上次读到的位置接着读，半行等下次，不整份重读。
+function readRunFrom(file, from, maxBytes = Infinity) {
+  let fd; try { fd = fs.openSync(file, 'r'); } catch { return { items: [], end: from, rest: false }; }
+  try {
+    const size = fs.fstatSync(fd).size;
+    if (from > size) return { items: [], end: from, rest: false };
+    const len = Math.min(maxBytes, size - from), buf = Buffer.alloc(len), n = fs.readSync(fd, buf, 0, len, from), items = [];
+    let start = 0;
+    for (let i = 0; i < n; i++) if (buf[i] === 10) {
+      const line = buf.toString('utf8', start, i); start = i + 1;
+      let ev = null; if (line) { try { ev = JSON.parse(line); } catch { /* 坏行跳过 */ } }
+      items.push({ ev, end: from + start });
+    }
+    return { items, end: from + start, rest: from + n < size };
+  } finally { fs.closeSync(fd); }
+}
+function lineStart(file, pos) {
+  if (pos === 0) return true;
+  let fd; try { fd = fs.openSync(file, 'r'); const b = Buffer.alloc(1); return fs.readSync(fd, b, 0, 1, pos - 1) === 1 && b[0] === 10; } catch { return false; } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
 function events(run) {
   let t; try { t = fs.readFileSync(runF(run), 'utf8'); } catch { return []; }
   const out = [];
@@ -575,7 +597,9 @@ function runner(run) {
     if (meta.task) {
       killTree(child); // 收掉本轮进程组，包括仍持有临时预览端口的子进程
       // 后台任务：结果先存进任务记录（接着做、等确认还是收尾、排下一个），要推送的在锁外发
-      const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model });
+      // 临时错误（断线、网关 5xx、限流）由控制器等一会儿接着做，见 vm-retry.mjs
+      const transient = !ok && !stopped && !state.timeout && transientFailure([why, ...tailEvents(run, 16384).filter(e => e.t === 'err').map(e => e.text), stderr.slice(-2000)].join('\n'));
+      const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model, transient });
       if (r && r.notice) { setTimeout(() => process.exit(0), 20000).unref(); deliverNotice(r.notice).catch(() => {}); }
       return;
     }
@@ -954,6 +978,7 @@ function pruneLogs(minAge = PRUNE_AGE) {
   }
   // 30 天前的写回备份、7 天前已送达的推送条目（返回结果只把字节数算进 bytes，字段不变）
   try { res.bytes += runtime.pruneBackups(BASE).bytes; } catch { /* 下次 */ }
+  try { res.bytes += runtime.pruneTaskCopies(BASE, listTasks()).bytes; } catch { /* 下次 */ }
   try { pruneNotices(); } catch { /* 下次 */ }
   return res;
 }
@@ -1008,21 +1033,32 @@ function taskMcpFlags(t) {
   }
   return flags;
 }
+/* 后台模型中途问站长（requestUserInput）：等回答期间任务算「后台在忙」，Worker 一直续租约、云电脑一直醒着。
+   照 Agent HUD（src/crates/core/src/requests.rs 的 hold_ms: 600_000）：最多挂 10 分钟，没人回就把问题记成「等你确认」，
+   让模型结束这一轮；站长之后回答走 task_tell，接着同一个会话做。 */
+export const APPROVAL_HOLD_MS = Number(process.env.XIN_APPROVAL_HOLD_MS) || 600000;
+export const INPUT_TIMEOUT_TEXT = '（用户 10 分钟内没有回复。问题已经记下，用户回复后会接着叫你。现在结束这一轮：最后一条消息写清楚做到哪了、要用户确认什么。）';
+export async function awaitTaskInput({ id, holdMs = APPROVAL_HOLD_MS, read, expire, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  const until = Date.now() + holdMs;
+  for (;;) {
+    await sleep(350);
+    const m = read();
+    if (!m || m.stopped || m.ended) return { ended: true };
+    const reply = (m.approvalReplies || {})[id];
+    if (reply) return { reply };
+    if (Date.now() >= until) { await expire(); return { expired: true }; }
+  }
+}
 async function approvalRequest(run, meta, request) {
   // File-system escalation is never granted by a background model or its prompt.
   if (request.method === 'item/permissions/requestApproval') return { permissions: {}, scope: 'turn' };
   if (request.method === 'mcpServer/elicitation/request') return { action: 'decline' };
   if (!meta.task || request.method !== 'item/tool/requestUserInput') return { decision: 'decline' };
   const id = rid('a');
-  const p = request.params || {};
+  const p = request.params || {}, answer = text => ({ answers: Object.fromEntries((p.questions || []).map(q => [q.id, { answers: [text] }])) });
   lockedCall('tasks', 'task_approval', { sid: meta.sid, run, id, method: request.method, kind: 'input', question: cut((p.questions || []).map(q => q.question).join('\n'), 450) });
-  for (;;) {
-    await new Promise(resolve => setTimeout(resolve, 350));
-    const m = readJ(metaF(run));
-    if (!m || m.stopped || m.ended) return { answers: {} };
-    const reply = (m.approvalReplies || {})[id];
-    if (reply) return { answers: Object.fromEntries((p.questions || []).map(q => [q.id, { answers: [reply] }])) };
-  }
+  const r = await awaitTaskInput({ id, read: () => readJ(metaF(run)), expire: () => lockedCall('tasks', 'task_approval_expire', { sid: meta.sid, run, id }) });
+  return r.reply ? answer(r.reply) : r.expired ? answer(INPUT_TIMEOUT_TEXT) : { answers: {} };
 }
 export function mcpFlags() {
   const st = pluginState(), have = mcpUser(), out = [];
@@ -1163,6 +1199,7 @@ function claudeUsage(id, win) {
 }
 export function sessionUsage(s) {
   try {
+    if (isTask(s) && ['done', 'failed', 'stopped'].includes(s.status) && s.usage) return s.usage;
     if(isTask(s)&&s.antigravityConversation){const b=readJ(path.join(BASE,'budgets',s.sid+'.json'));if(b?.total)return {input:b.input||0,output:b.output||0,cached:b.cached||0,total:b.total,ctx:s.frontUsage?.ctx||0,win:1000000};}
     if (s?.agent === 'codex' && s.frontUsage) return s.frontUsage;
     if (!s || !okAgentSid(s.agent, s.agentSid) || !s.started) return null;
@@ -1266,6 +1303,8 @@ const TASK_MIN = 60, TASK_MIN_MAX = 180;
 export const TASK_KINDS = ['quick', 'code', 'research', 'hard', 'vision', 'review'];
 export const TASK_STATUS = { queued: '排队中', running: '进行中', stopping: '正在停止', waiting: '等你确认', done: '做完了', failed: '没做成', stopped: '已停止' };
 const TASKS_DIR = () => path.join(WORK, 'tasks');
+// 每日任务自己的目录：以前用整个 WORK，调度规则「目录有包含关系就不同时跑」让它和所有后台任务互相排队（最长 180 分钟）
+export const DAILY_DIR = () => path.join(WORK, 'daily');
 const TASK_SEQ = () => path.join(BASE, 'task-seq.json');
 const RESUME_TEXT = '（刚才电脑暂停或重启，这一轮中途断了。先检查现在的状态——看看文件、编译结果、还在不在跑的进程——已经做过的有副作用的事别再做一遍，然后接着把任务做完。）';
 const isTask = s => !!s && s.kind === 'task';
@@ -1273,7 +1312,7 @@ const isBackground = t => ['queued','running','stopping'].includes(t.status) || 
 const isFinished = t => t.status === 'done' || t.status === 'failed' || t.status === 'stopped';
 function cleanupFinishedTask(t){
   if(!isFinished(t))return;
-  try{t.temporaryCleaned=runtime.cleanupTaskTemporary(t);}
+  try{t.temporaryCleaned=runtime.cleanupTaskTemporary(t,BASE);}
   catch(e){t.cleanupError=e.message;if(t.result)t.result.text+='\n临时文件未能清理：'+e.message;}
 }
 function occupiesTask(t) {
@@ -1377,6 +1416,7 @@ export function taskSummary(t, full) {
   if (t.status === 'running' && r) out.activity = t.stage==='checking'?'正在检查网页的动画和交互':taskActivity(r);
   if (t.result) out.result = { ok: !!t.result.ok, text: full ? t.result.text : cut(t.result.text, 2000), err: t.result.err || '', at: t.result.at || 0 };
   if (t.inbox && t.inbox.length) out.inbox = t.inbox.length;
+  if (t.status === 'queued' && t.retryAt > Date.now()) out.retryAt = t.retryAt;
   if (t.note) out.note = t.note;
   if (t.approval || t.publication) out.approval = { id: t.approval?.id || 'publish', kind: t.publication ? 'publish' : t.approval?.kind || 'tool' };
   if (t.publication) out.publication = t.publication;
@@ -1437,8 +1477,8 @@ function taskNew(a) {
   if(rt.error)return {error:rt.error,msg:rt.note};
   const seq = (readJ(TASK_SEQ(), {}) || {}).n || all.reduce((m, t) => Math.max(m, t.no || 0), 0);
   const no = seq + 1;
-  if (a.daily) mk(WORK);
-  const d = a.daily ? { dir: WORK } : taskDir(no, title, a.dir);
+  if (a.daily) mk(DAILY_DIR());
+  const d = a.daily ? { dir: fs.realpathSync(DAILY_DIR()) } : taskDir(no, title, a.dir);
   if (d.error) return { error: 'bad_dir', msg: d.error };
   writeJ(TASK_SEQ(), { n: no });
   const minutes = Math.min(TASK_MIN_MAX, Math.max(5, Math.round(Number(a.minutes) || TASK_MIN)));
@@ -1492,14 +1532,16 @@ function startTask(t, all) {
     : forAgent(t.next || '接着做。', '');
   const userText = first ? t.goal : String(t.nextShow || t.next || '接着做');
   const cm = codexModel(t.model);
-  Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, startedAt: t.startedAt || Date.now() });
+  Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, retryAt: 0, startedAt: t.startedAt || Date.now() });
   const run = launch(t, { text, effort: t.model===runtime.AGY_MODEL?'high':AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||t.model===runtime.AGY_MODEL ? t.fallbacks || [] : [],
-    images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || WORK, sandbox: !t.dailyDate && TASK_SANDBOX(),
+    images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !t.dailyDate && TASK_SANDBOX(),
     deadline: t.deadline }, { t: 'user', text: userText, at: Date.now() });
   if (t.dailyDate) writeJ(DAILY_LAST(), { date: t.dailyDate, run, sid: t.sid, at: Date.now(), ok: null });
 }
-function failTask(t, why) {
-  Object.assign(t, { status: 'failed', result: { ok: false, text: why, at: Date.now() }, endedAt: Date.now(), frontSeen: false });
+function failTask(t, why, err = '') {
+  Object.assign(t, { status: 'failed', result: { ok: false, text: why, err, at: Date.now() }, endedAt: Date.now(), frontSeen: false });
+  // 每日任务在调度时就失败（比如重试时已过时限）也要记下今天没做成，不然「最近一次」一直显示进行中
+  if (t.dailyDate) dailyDone(lastRun(t), { sid: t.sid, dailyDate: t.dailyDate }, false);
   saveTask(t);
 }
 // 排队的能开始就开始（在 tasks 锁里）
@@ -1513,6 +1555,9 @@ function scheduleNow() {
     if (bad.length) { failTask(t, '前置任务' + bad.map(d => d ? ' ' + d.no : '').join('、') + ' 没做成，这个任务没开始。'); continue; }
     if (deps.some(d => d.status !== 'done')) continue;
     if (all.some(x => x !== t && occupiesTask(x) && overlaps(x.dir, t.dir))) continue;
+    if (t.retryAt > Date.now()) continue;   // 临时错误后等一会儿再接着做
+    // 时限从第一次开工算起，重试和续做都不延长：已经过了就按超时收尾，不再起一轮立刻被杀
+    if (t.deadline && Date.now() >= t.deadline) { const full = findTask({ sid: t.sid }) || t; failTask(full, '超过 ' + full.minutes + ' 分钟还没做完，停下了。', '超时（' + full.minutes + ' 分钟）'); continue; }
     if (startTask(t, all) !== false) running++;
   }
 }
@@ -1549,6 +1594,9 @@ function taskFinish(a) {
       Object.assign(t, { status: 'waiting', question: '这个任务中途断了两次（电脑暂停或重启），要接着做吗？', endedAt: Date.now(), frontSeen: false });
       notify = taskPush(t, '我这边中途断了：' + t.title, t.question);
     }
+  } else if (a.transient && !a.stopped && !a.timeout && (t.transientRetries || 0) < retryDelays().length) {   // 断线、网关暂时不可用：等一会儿用同一个会话接着做
+    const n = (t.transientRetries || 0) + 1;
+    Object.assign(t, { transientRetries: n, retryAt: Date.now() + retryDelays()[n - 1], next: RETRY_TEXT, nextShow: '（连接出错，稍后接着做）', status: 'queued', queuedAt: Date.now() });
   } else {
     let ok = !!a.ok && !a.stopped && !a.timeout;
     let publication = null;
@@ -1576,6 +1624,7 @@ function taskFinish(a) {
       catch (e) { ok = false; t.publicationError = e.message; }
     }
     t.status = a.stopped ? 'stopped' : ok ? 'done' : 'failed';
+    if (t.status === 'done') { t.transientRetries = 0; t.retryAt = 0; }
     const answer = ((last && last.text) || (a.timeout ? '超过 ' + t.minutes + ' 分钟还没做完，停下了。' : ok ? '做完了。' : '没做成。'));
     t.result = { ok, text: cut(t.workspace ? answer.split(t.workspace.work).join(t.dir) : answer, 8000),
       err: ok ? '' : String(t.publicationError || (a.timeout ? '超时（' + t.minutes + ' 分钟）' : (err && err.text) || '')).slice(0, 600), at: Date.now() };
@@ -1591,6 +1640,8 @@ function taskFinish(a) {
     if (!a.stopped) notify = taskPush(t, (ok ? '我弄好了：' : '我没做成：') + t.title, t.result.text);
   }
   t.finishedRun = a.run;
+  // 做完时记下用量：副本按保留期删掉以后，过程页照样显示这个任务用了多少
+  if (isFinished(t)) { const fresh = sessionUsage({ ...t, usage: null }); if (fresh) t.usage = fresh; }
   cleanupFinishedTask(t);
   if (t.dailyDate && isFinished(t)) dailyDone(a.run, { sid: t.sid, dailyDate: t.dailyDate }, t.status === 'done');
   saveTask(t);
@@ -1623,6 +1674,7 @@ function taskTell(a) {
   }
   if(t.status==='stopping')return {error:'busy',msg:'任务正在停止，退出后再继续'};
   const text = String(a.text || '').trim().slice(0, 4000) || '接着做';
+  t.transientRetries = 0;
   if(t.tkind==='review'&&t.status==='waiting'){const requested=namedModel(text);if(requested){t.requestedModel=requested;t.requestedNamed=true;}}
   if (t.status === 'running') {
     const r = lastRun(t), m = r && readJ(metaF(r));
@@ -1711,7 +1763,7 @@ function taskTick() {
 function taskNeedsTick(all) {
   const running = all.filter(t=>t.status==='running'||t.status==='stopping'||t.status==='waiting'&&t.approval);
   if (running.some(t => { const r = lastRun(t); return !r || runDone(r); })) return true;
-  return all.some(t => t.status === 'queued') && running.length < TASK_MAX;
+  return all.some(t => t.status === 'queued' && !(t.retryAt > Date.now())) && running.length < TASK_MAX;
 }
 function tickTasks() {
   const all = listTasks();
@@ -2258,13 +2310,21 @@ const ops = {
     try { fs.writeFileSync(seenF(a.run), ''); } catch { /* 记不下来就当没在看 */ }
     watchDevice(readJ(metaF(a.run))?.sid,a);
     runDone(a.run); // 进程已死时先把 done 写进记录，再决定这次能不能告诉网页「读完了」
-    const evs = events(a.run), off = Math.max(0, a.off | 0);
-    const slice = evs.slice(off, off + 400);
-    const sid = (readJ(metaF(a.run)) || {}).sid, latest = sid && lastRun(readJ(sessF(sid)));
+    const off = Math.max(0, a.off | 0), file = runF(a.run);
+    const sid = (readJ(metaF(a.run)) || {}).sid, latest = sid && lastRun(readJ(sessF(sid))), next = latest && latest !== a.run ? { next: latest } : {};
     // meta.ended 会先于同一笔提交里的回复/done 行落到磁盘（recover 先写文档，再追加 jsonl）。
-    // 只看到 ended 就告诉网页读完，网页会停轮询，助手正文永远画不出来。
-    const closed = evs.some(e => e && e.t === 'done');
-    return { events: slice, off: off + slice.length, done: closed && off + slice.length >= evs.length, ...(latest && latest !== a.run ? { next: latest } : {}) };
+    // 只看到 ended 就告诉网页读完，网页会停轮询，助手正文永远画不出来。所以「读完」只认 done 行（它总是最后一行）。
+    if (Number.isSafeInteger(a.pos) && a.pos >= 0 && lineStart(file, a.pos)) {
+      // 新网页带着上次读到的字节位置：只读新增的部分
+      const r = readRunFrom(file, a.pos, 2 * 1024 * 1024), parsed = r.items.filter(x => x.ev), take = parsed.slice(0, 400), all = take.length === parsed.length;
+      const pos = all ? r.end : take.at(-1).end;
+      const tail = readTail(file, 65536), lines = tail.slice(0, tail.lastIndexOf('\n') + 1).trim().split('\n');
+      let last = null; try { last = JSON.parse(lines.at(-1)); } catch { /* 读到的是半截或空 */ }
+      return { events: take.map(x => x.ev), off: off + take.length, pos, done: all && !r.rest && last?.t === 'done', ...next };
+    }
+    const r = readRunFrom(file, 0), parsed = r.items.filter(x => x.ev), slice = parsed.slice(off, off + 400), all = off + slice.length >= parsed.length;
+    const closed = parsed.some(x => x.ev.t === 'done');
+    return { events: slice.map(x => x.ev), off: off + slice.length, pos: all ? r.end : slice.length ? slice.at(-1).end : (parsed[off - 1]?.end ?? 0), done: closed && all, ...next };
   },
   stop(a) {
     if (!okId(a.run, 'r')) return { error: 'bad_run', msg: '编号不对' };
@@ -2291,10 +2351,11 @@ const ops = {
     const runs = allRuns.slice(Math.max(0, end - 30), end);
     // started：每一轮什么时候开始的（后台任务的结果卡片按时间插在这些轮之间）
     const diagnostics=a.diagnose?readText(path.join(BASE,'logs','front.jsonl')).split('\n').flatMap(l=>{try{return [JSON.parse(l)];}catch{return [];}}):[];
-    const out = runs.map(r => { runDone(r); const evs=events(r),m=readJ(metaF(r))||{};return {run:r,events:evs,done:evs.some(e=>e&&e.t==='done'),started:m.started||0,...(a.diagnose?{diagnostics:frontDiagnostics(m,evs,diagnostics)}:{})}; });
+    const ends = {};
+    const out = runs.map(r => { runDone(r); const rr=readRunFrom(runF(r),0),evs=rr.items.filter(x=>x.ev).map(x=>x.ev),m=readJ(metaF(r))||{};ends[r]=rr.end;return {run:r,events:evs,done:evs.some(e=>e&&e.t==='done'),started:m.started||0,...(a.diagnose?{diagnostics:frontDiagnostics(m,evs,diagnostics)}:{})}; });
     const last = out[out.length - 1];
     // active.started：网页重新打开面板时，「思考中 · N 秒」接着算，不从 0 开始
-    const res = { session: summary(s), usage: sessionUsage(s), runs: out, more: end > 30, active: at < 0 && last && !last.done ? { run: last.run, off: last.events.length, started: last.started } : null };
+    const res = { session: summary(s), usage: sessionUsage(s), runs: out, more: end > 30, active: at < 0 && last && !last.done ? { run: last.run, off: last.events.length, pos: ends[last.run], started: last.started } : null };
     if (isTask(s)) res.task = taskSummary(s, true);                                   // 看一个后台任务的过程
     else if (s.agent === 'codex') res.tasks = listTasks().filter(t => t.parent === s.sid).map(t => taskSummary(t));   // 这个对话派出去的任务
     return res;
@@ -2405,6 +2466,13 @@ const iops = {
     const t = readJ(sessF(a.sid));
     if (!isTask(t) || lastRun(t) !== a.run || !occupiesTask(t)) return { error: 'stale' };
     t.approval = { id: a.id, method: a.method, kind: a.kind }; t.status = 'waiting'; t.question = a.question; saveTask(t);
+    return { ok: true };
+  },
+  // 等回答到点：问题照 xin task ask 记下，这一轮结束前仍占名额；结束后停在「等你确认」，进程退出、租约释放
+  task_approval_expire(a) {
+    const t = readJ(sessF(a.sid));
+    if (!isTask(t) || lastRun(t) !== a.run || t.approval?.id !== a.id) return {};
+    delete t.approval; Object.assign(t, { status: 'running', pendingQuestion: t.question }); saveTask(t);
     return { ok: true };
   },
   steer_ack(a) {

@@ -84,3 +84,14 @@ test('每日清理：30 天前的写回备份、7 天前已送达的推送条目
   assert.ok(fs.existsSync(path.join(xin, 'backups', 'task-4-' + (now - 2 * day))));
   assert.deepEqual(fs.readdirSync(path.join(xin, 'outbox')).sort(), [ID('d') + '.json', ID('e') + '.json'].sort());
 });
+
+test('新位置（控制器旁边的 -tasks 目录）的任务副本随对话一起删', t => {
+  const { xin, op, settle, put } = home(t);
+  const a = op('send', { text: '要删的对话二', clientId: 'receipt-mine-02' }); settle(a.run);
+  const copy = path.join(path.dirname(xin), 'xin-tasks', 'xin-task-staskmine02');
+  put(path.join(xin, 'sessions', 'staskmine02.json'), { sid: 'staskmine02', kind: 'task', parent: a.sid, no: 1, title: '任务', status: 'done', runs: [], created: 1, endedAt: 2, result: { ok: true, text: 'ok', at: 2 } });
+  put(path.join(copy, 'work', 'main.c'), 'int main(){}');
+  try { fs.unlinkSync(path.join(xin, 'tasks-index.json')); } catch { /* 让控制器重建任务索引 */ }
+  assert.equal(op('forget', { sid: a.sid }).ok, true);
+  assert.ok(!fs.existsSync(copy));
+});

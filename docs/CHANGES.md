@@ -1,3 +1,15 @@
+# 修改清单 · 2026-11-11（后台可靠性第一批：每日任务不堵、临时错误接着做、等回答有时限、副本挪位置、写回能还原、读不抢锁）
+
+站长对照 7 个开源项目研究后定的第一批（研究笔记 `docs/xin-research-2026-11-11.md`，设计 `docs/xin-reliability-usage-design.md` 的 A 部分，计划 `docs/superpowers/plans/2026-11-11-xin-reliability-batch1.md`）。网页只多一行卡片小字。
+
+- **每日任务用自己的目录**（`vm-agent.mjs` 的 `DAILY_DIR`）：以前目录是整个 WORK，「目录有包含关系就不同时跑」让它跑的时候（最长 180 分钟）所有新任务都排队。改成 `WORK/daily`，权限不变。参考 opencode `packages/core/src/session/run-coordinator.ts`（按键串行、不同键并发）。
+- **临时错误由控制器接着做**（新模块 `vm-retry.mjs`）：以前模型开始干活后一轮失败就算「没做成」，续不续交给前台模型。现在断线、网关 5xx、限流等，任务回到排队，分别等 1、4、15 分钟用同一个副本和 Codex 会话接着做，不交接、不推送；预算用完、上下文超长、401/403、超时、复核约束照旧失败。时限从第一次开工算，重试时已过就直接按超时收尾。参考 Grok Bot `host/runner/transient-stream-error.ts`、OpenMuse `apps/server/src/engine/worker.ts`。
+- **等回答最多挂 10 分钟**（`awaitTaskInput`、`task_approval_expire`）：以前后台中途提问会一直等，任务算后台在忙，云电脑一直醒着到任务时限，白白消耗免费机 480 分钟的运行时长。现在到点把问题记成「等你确认」、让模型结束这一轮；回答后接着同一个会话做，到点那一刻的回答进收件箱不丢。参考 Agent HUD `src/crates/core/src/requests.rs`（`hold_ms: 600_000`）。
+- **任务副本放 `~/.xin-tasks`**（`vm-runtime.mjs` 的 `taskRoot`、`pruneTaskCopies`）：以前在 `os.tmpdir()`，正式云电脑上是 `/data/tmp`，InstaBox 会删其中 10 天没用的文件，副本缺文件时写回会显示「将删除原文件」。旧路径的副本照样认。保留期（站长同意）：做完的 7 天后删，其余留到删对话；做完时记下用量。
+- **写回失败自动还原**（`publishWorkspace`、`publicationPlan`）：写回前在备份目录写 `publish.json` 清单，中途出错按清单还原；原项目已经等于副本的算 `applied`，不算冲突、不重复写，被杀后再收尾往前补齐，STM32「有没有源码改动」也算上它们。参考 opencode `packages/core/src/snapshot.ts`。
+- **读不抢锁、轮询按字节读**（`vm-state.mjs` 的 `recover`、`poll` 的 `pos`）：每个控制器调用一开始的 `recover()` 以前总是 `BEGIN IMMEDIATE`，现在先用普通查询看有没有要补写的（实验确认 WAL 下读和建表语句不受别的进程写锁影响）。`poll`、`history` 返回字节位置，网页带上就只读新增的部分；旧网页、旧控制器照原来按条数读。页面资源版本 `xc-rel-20261111`。参考 Agent HUD `docs/performance.md`。
+- **测试**：新文件 `test/xin-batch1.test.cjs`（每日任务目录、重试 4 项、等回答 4 项、用量快照、按字节轮询 3 项）、`test/xin-retry.test.cjs`；`xin-state`、`xin-runtime`、`xin-forget` 各加用例。「到点那一刻回答」本机 30 多次只失败过 1 次、没复现出来，失败时会打印任务现场。
+
 # 修改清单 · 2026-11-11（测试时限照 Node.js 的 platformTimeout 统一放大；STM32 返回导航失败时留现场）
 
 GitHub 上跑测试的自托管机器忙的时候，本机 1–4 秒的测试要 12 秒以上，写死的 15 秒时限今天挂了好几次（断点续接、前台等待、额度切换、Kimi 重试），每次都得重跑，拖慢上线。STM32 学习台「快速收目录后搜索，返回」那项也挂过一次（等了 30 秒面板层数没回到 0）。

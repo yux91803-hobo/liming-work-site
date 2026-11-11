@@ -71,7 +71,11 @@ export class StateJournal {
   defer(fn){if(this.active)this.after.push(fn);else fn();}
   recover(){
     if(this.active)return;
-    const d=this.db;d.exec('BEGIN IMMEDIATE');
+    const d=this.db;
+    // Every controller call starts here. With nothing committed-but-unprojected there is nothing to repair, so
+    // a plain WAL read is enough and a reader never waits behind another process's write transaction.
+    if(!d.prepare('SELECT 1 FROM documents WHERE dirty=1 LIMIT 1').get()&&!d.prepare('SELECT 1 FROM appends WHERE projected=0 LIMIT 1').get())return;
+    d.exec('BEGIN IMMEDIATE');
     try{
       for(const x of d.prepare('SELECT * FROM documents WHERE dirty=1 ORDER BY name').all()){
         const file=path.join(this.root,x.name);this.name(file);fs.mkdirSync(path.dirname(file),{recursive:true});

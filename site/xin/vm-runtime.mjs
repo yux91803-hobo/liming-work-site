@@ -31,11 +31,18 @@ export function inventory(root) {
   walk(root); return out;
 }
 
+// 任务副本放在控制器自己的目录（XIN_HOME 的同级 <名字>-tasks，正式云电脑上是 ~/.xin-tasks）：以前用 os.tmpdir()，
+// 正式云电脑上是 /data/tmp，InstaBox 会删其中 10 天没用的文件，副本缺文件时写回会误报「将删除原文件」。
+// 不放在 XIN_HOME 里（后台的权限配置拒绝它），也不放在 WORK 里（会出现在「小芯的文件」里、和项目目录重叠）。
+export function taskRoot(controller) { return path.join(path.dirname(controller), path.basename(controller) + '-tasks'); }
+// 旧版放在系统临时目录的副本照样认：续做、清理、删对话都要找得到
+export function taskRoots(controller) { return [...new Set([taskRoot(controller), os.tmpdir()])]; }
 export function prepareWorkspace(t, controller) {
   if (t.workspace && fs.existsSync(t.workspace.work) && fs.existsSync(t.workspace.manifest)) {if(t.workspace.stm32===undefined)t.workspace.stm32=detectStm32(t.dir,Object.keys(inventory(t.dir)));return t.workspace;}
-  const root = path.join(os.tmpdir(), 'xin-task-' + t.sid);
+  const base = taskRoot(controller); mkdir(base); fs.chmodSync(base, 0o700);
+  const root = path.join(base, 'xin-task-' + t.sid);
   const work = path.join(root, 'work'), io = path.join(root, 'io'), home = path.join(root, 'home');
-  mkdir(work); mkdir(io); mkdir(home); mkdir(path.join(home, 'bin')); mkdir(path.join(root, 'tmp'));
+  mkdir(root); fs.chmodSync(root, 0o700); mkdir(work); mkdir(io); mkdir(home); mkdir(path.join(home, 'bin')); mkdir(path.join(root, 'tmp'));
   const before = inventory(t.dir);
   // A fresh turn gets a new baseline. This also detects edits made by the foreground in between turns.
   fs.rmSync(work, { recursive: true, force: true }); mkdir(work);
@@ -67,10 +74,12 @@ export function publicationPlan(t, controller) {
   const { original, before } = JSON.parse(fs.readFileSync(path.join(controller, 'workspaces', t.sid + '.json'), 'utf8'));
   if (fs.realpathSync(t.dir) !== original) throw new Error('项目目录已改变，结果未覆盖原文件');
   const after = inventory(t.workspace.work), current = inventory(original);
-  const changes = Object.keys(after).filter(n => before[n] !== after[n]);
-  const deleted = Object.keys(before).filter(n => !(n in after));
+  // 原项目已经等于副本的（上次写回到一半被杀、或别人恰好改成一样）算已写回：不算冲突，也不再写
+  const changed = Object.keys(after).filter(n => before[n] !== after[n]), removed = Object.keys(before).filter(n => !(n in after));
+  const applied = [...changed.filter(n => current[n] === after[n]), ...removed.filter(n => !(n in current))];
+  const changes = changed.filter(n => current[n] !== after[n]), deleted = removed.filter(n => n in current);
   const conflicts = [...changes, ...deleted].filter(n => current[n] !== before[n]);
-  return { original, before, after, changes, deleted, conflicts };
+  return { original, before, after, changes, deleted, conflicts, applied };
 }
 
 export function stm32Task(t) {
@@ -152,7 +161,7 @@ export function validateTask(t, controller, meta) {
   const plan = publicationPlan(t, controller);
   if (!stm32Task(t)) return { applicable: false };
   if (!meta.compileTrusted || !meta.compileOk || meta.compileDigest !== sourceDigest(t.workspace.work)) return { error: 'STM32 程序必须在最终改动后通过受控 make / CMake 构建并生成新的有效产物；现在没有针对最终源码的成功编译记录。' };
-  if(t.tkind==='code' && !plan.changes.some(n=>/\.(?:c|h|s|cpp|hpp)$/i.test(n))) return {error:'STM32 实现任务没有源码改动，不能把只编译模板当成完成。请完成要求的程序后重新构建。'};
+  if(t.tkind==='code' && ![...plan.changes,...plan.applied].some(n=>/\.(?:c|h|s|cpp|hpp)$/i.test(n))) return {error:'STM32 实现任务没有源码改动，不能把只编译模板当成完成。请完成要求的程序后重新构建。'};
   const report = path.join(t.workspace.work, 'xin-review.json');
   if (t.tkind === 'review') {
     let data; try { data = JSON.parse(fs.readFileSync(report,'utf8')); } catch { return { error: '请生成 xin-review.json：verdict="pass"，checks 数组逐项写出 clock、pinmap、peripheral_clock、interrupt 的 id、status（pass/not_applicable）、reference（手册章节）和 evidence（源码文件:行号及判断依据）。' }; }
@@ -185,16 +194,39 @@ export function publishWorkspace(t, controller, approved = false) {
   }
   const backup = path.join(controller, 'backups', 'task-' + t.no + '-' + Date.now());
   mkdir(backup);
+  const created = plan.changes.filter(n => !fs.existsSync(path.join(plan.original, n)));
   for (const name of [...plan.changes, ...plan.deleted]) {
     const dst = path.join(plan.original, name);
     if (fs.existsSync(dst)) { const b = path.join(backup, name); mkdir(path.dirname(b)); fs.copyFileSync(dst, b); }
   }
-  for (const name of plan.changes) {
-    const src = path.join(t.workspace.work, name), dst = path.join(plan.original, name);
-    mkdir(path.dirname(dst)); const tmp = dst + '.xin-' + process.pid;
-    fs.copyFileSync(src, tmp); fs.chmodSync(tmp, fs.statSync(src).mode & 0o777); fs.renameSync(tmp, dst);
+  // 写回清单：一批文件不是原子的。中途出错按清单从备份还原；中途被杀则下次收尾把已写回的算 applied、补齐剩下的。
+  // 参考 opencode packages/core/src/snapshot.ts（按内容记录、按文件还原）
+  const record = state => fs.writeFileSync(path.join(backup, 'publish.json'), JSON.stringify({ state, changes: plan.changes, deleted: plan.deleted, created, applied: plan.applied, at: Date.now() }), { mode: 0o600 });
+  record('writing');
+  const done = [], failAfter = Number(process.env.XIN_TEST_PUBLISH_FAIL_AFTER) || 0;
+  const step = name => { done.push(name); if (failAfter && done.length >= failAfter) throw new Error('测试：模拟写回失败'); };
+  try {
+    for (const name of plan.changes) {
+      const src = path.join(t.workspace.work, name), dst = path.join(plan.original, name);
+      mkdir(path.dirname(dst)); const tmp = dst + '.xin-' + process.pid;
+      fs.copyFileSync(src, tmp); fs.chmodSync(tmp, fs.statSync(src).mode & 0o777); fs.renameSync(tmp, dst); step(name);
+    }
+    for (const name of plan.deleted) { fs.unlinkSync(path.join(plan.original, name)); step(name); }
+  } catch (e) {
+    const failed = [];
+    for (const name of done) {
+      const dst = path.join(plan.original, name), saved = path.join(backup, name);
+      try {
+        if (process.env.XIN_TEST_RESTORE_FAIL === name) throw new Error('测试：模拟还原失败');
+        if (fs.existsSync(saved)) { mkdir(path.dirname(dst)); const tmp = dst + '.xin-restore-' + process.pid; fs.copyFileSync(saved, tmp); fs.renameSync(tmp, dst); }
+        else fs.rmSync(dst, { force: true });
+      } catch { failed.push(name); }   // 磁盘满时还原也可能失败：如实说，备份目录和 publish.json 留着清单
+    }
+    try { record(failed.length ? 'rollback_incomplete' : 'rolled_back'); } catch { /* 记不下来也要把真实情况告诉调用方 */ }
+    throw new Error(failed.length ? '写回中途失败，有 ' + failed.length + ' 个文件没能还原（' + failed.slice(0, 10).join('、') + '），写回前的备份在 ' + backup + '：' + e.message
+      : '写回中途失败，原项目已还原：' + e.message);
   }
-  for (const name of plan.deleted) fs.unlinkSync(path.join(plan.original, name));
+  record('done');
   return { ok: true, files: plan.changes.length, deleted: plan.deleted.length, backup };
 }
 
@@ -660,10 +692,10 @@ export async function frontTurn(o) {
 
 // Delete only controller-owned ephemeral scratch, never the work tree or a user path.
 // Pending questions/publication retain scratch for resume. Arbitrary files in work are NOT secret-scanned.
-export function cleanupTaskTemporary(t) {
+export function cleanupTaskTemporary(t, controller) {
   if (!['done','failed','stopped'].includes(t.status) || !t.workspace) return false;
-  const root = path.join(os.tmpdir(),'xin-task-'+t.sid), tmp=path.join(root,'tmp');
-  if (t.workspace.tmp !== tmp || fs.realpathSync(root) !== root) throw new Error('临时目录归属不符，未清理');
+  const root = path.dirname(String(t.workspace.tmp || '')), tmp=path.join(root,'tmp');
+  if (!taskRoots(controller).some(base => root === path.join(base, 'xin-task-' + t.sid)) || t.workspace.tmp !== tmp || fs.realpathSync(root) !== root) throw new Error('临时目录归属不符，未清理');
   fs.rmSync(tmp,{recursive:true,force:true});mkdir(tmp);
   return true;
 }
@@ -685,12 +717,27 @@ export function dropTaskFiles(t,controller){
     try{if(!fs.existsSync(p))return;if(!check())throw Error('owner');const b=treeBytes(p);removeTree(p);out.bytes+=b;}
     catch{out.kept.push(p);}
   };
-  const copy=path.join(os.tmpdir(),'xin-task-'+t.sid);
-  drop(copy,()=>{const st=fs.lstatSync(copy);return st.isDirectory()&&!st.isSymbolicLink()&&fs.realpathSync(copy)===copy;});
+  for(const base of taskRoots(controller)){
+    const copy=path.join(base,'xin-task-'+t.sid);
+    drop(copy,()=>{const st=fs.lstatSync(copy);return st.isDirectory()&&!st.isSymbolicLink()&&fs.realpathSync(copy)===copy;});
+  }
   drop(path.join(controller,'workspaces',t.sid+'.json'));
   drop(path.join(controller,'budgets',t.sid+'.json'));
   const id=/[?&]id=([a-f0-9]{32})$/.exec(t.preview?.url||'')?.[1];
   if(id){const dir=path.join(controller,'previews',id);drop(dir,()=>{const st=fs.lstatSync(dir);if(!st.isDirectory()||st.isSymbolicLink())return false;const m=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8'));return m.id===id&&m.sid===t.sid;});}
+  return out;
+}
+// 保留期（站长 2026-11-11 同意）：做完的任务，结果已经写回项目，副本 7 天后删（每日清理时）；没做成、停了、等确认的
+// 副本是进度，留到删对话为止。只认目录名 xin-task-<编号>、不是软链接、真实路径等于自身的。
+export function pruneTaskCopies(controller,tasks,now=Date.now(),maxAge=7*86400e3){
+  const out={removed:0,bytes:0};
+  for(const t of tasks||[]){
+    if(t?.status!=='done'||!(t.endedAt>0)||now-t.endedAt<maxAge||!/^s[0-9a-z]{6,24}$/.test(t.sid||''))continue;
+    for(const base of taskRoots(controller)){
+      const copy=path.join(base,'xin-task-'+t.sid);
+      try{const st=fs.lstatSync(copy);if(!st.isDirectory()||st.isSymbolicLink()||fs.realpathSync(copy)!==copy)continue;const b=treeBytes(copy);removeTree(copy);out.removed++;out.bytes+=b;}catch{/* 没有或删不掉，下次 */}
+    }
+  }
   return out;
 }
 // 写回前的备份属于项目，不随对话删；30 天后自动删（每日任务时顺手清）。目录名是 task-<号>-<毫秒时间>。

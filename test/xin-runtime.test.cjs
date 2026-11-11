@@ -567,9 +567,9 @@ test('前台对 ask 的回复用 tell 续接同一工作，不重复 new；跨�
 test('只清理本任务私有 tmp；等待期间保留，项目输出与其它目录不碰',async t=>{
   const f=fixture(t),r=await load();f.task.workspace=r.prepareWorkspace(f.task,f.control);
   const tmp=f.task.workspace.tmp;fs.writeFileSync(path.join(tmp,'secret'),'fixture');fs.writeFileSync(path.join(f.task.workspace.work,'output.txt'),'keep');
-  assert.equal(r.cleanupTaskTemporary({...f.task,status:'waiting'}),false);assert.ok(fs.existsSync(path.join(tmp,'secret')));
-  assert.equal(r.cleanupTaskTemporary({...f.task,status:'done'}),true);assert.deepEqual(fs.readdirSync(tmp),[]);assert.ok(fs.existsSync(path.join(f.task.workspace.work,'output.txt')));
-  assert.throws(()=>r.cleanupTaskTemporary({...f.task,status:'done',workspace:{...f.task.workspace,tmp:f.root}}),/归属/);
+  assert.equal(r.cleanupTaskTemporary({...f.task,status:'waiting'},f.control),false);assert.ok(fs.existsSync(path.join(tmp,'secret')));
+  assert.equal(r.cleanupTaskTemporary({...f.task,status:'done'},f.control),true);assert.deepEqual(fs.readdirSync(tmp),[]);assert.ok(fs.existsSync(path.join(f.task.workspace.work,'output.txt')));
+  assert.throws(()=>r.cleanupTaskTemporary({...f.task,status:'done',workspace:{...f.task.workspace,tmp:f.root}},f.control),/归属/);
 });
 test('ended 先可见时，轮询在 done 行落地前不算读完，随后仍能取到助手正文',async t=>{
   const f=fixture(t),sid='spollgap001',run='rpollgap0001';
@@ -594,4 +594,103 @@ test('真实完成推送以第一人称给用户，内部模型记录仍保留',
   const out=f.call('task_finish',{sid:f.task.sid,run:'rruntime001',ok:true,model:'glm-5.3'});
   assert.equal(out.notify.title,'我弄好了：画 SVG');assert.equal(out.notify.body,'我画好了。');
   assert.equal(f.read().actualModel,'glm-5.3');
+});
+
+test('新副本放在控制器旁边的 -tasks 目录，不受系统临时目录清理影响', async t => {
+  const f = fixture(t), r = await load();
+  fs.writeFileSync(path.join(f.task.dir, 'main.c'), 'int main(){}');
+  assert.equal(r.taskRoot(f.control), path.join(f.root, 'control-tasks'));
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  assert.ok(f.task.workspace.work.startsWith(r.taskRoot(f.control) + path.sep), f.task.workspace.work);
+  assert.equal(fs.statSync(path.dirname(f.task.workspace.work)).mode & 0o777, 0o700);
+  f.task.status = 'done';
+  assert.equal(r.cleanupTaskTemporary(f.task, f.control), true);
+});
+
+test('保留期：只删做完且超过 7 天的副本；没做成、等确认的留着；软链接不跟', async t => {
+  const f = fixture(t), r = await load(), now = Date.now(), day = 86400e3;
+  fs.writeFileSync(path.join(f.task.dir, 'main.c'), 'int main(){}');
+  const make = (sid, status, endedAt) => { const x = { ...f.task, sid, status, endedAt }; x.workspace = r.prepareWorkspace(x, f.control); return x; };
+  const tasks = [make('soldone0001', 'done', now - 8 * day), make('snewdone001', 'done', now - day), make('soldfail001', 'failed', now - 30 * day), make('soldwait001', 'waiting', now - 30 * day)];
+  const outside = path.join(f.root, 'outside'); fs.mkdirSync(outside); fs.writeFileSync(path.join(outside, 'keep.txt'), 'keep');
+  fs.symlinkSync(outside, path.join(r.taskRoot(f.control), 'xin-task-slinkdone01'));
+  tasks.push({ sid: 'slinkdone01', status: 'done', endedAt: now - 9 * day });
+  const res = r.pruneTaskCopies(f.control, tasks, now);
+  assert.equal(res.removed, 1);
+  const there = sid => fs.existsSync(path.join(r.taskRoot(f.control), 'xin-task-' + sid));
+  assert.deepEqual(['soldone0001', 'snewdone001', 'soldfail001', 'soldwait001'].map(there), [false, true, true, true]);
+  assert.equal(fs.readFileSync(path.join(outside, 'keep.txt'), 'utf8'), 'keep');
+});
+
+test('写回写到一半失败：原项目逐字节还原，新建的删掉、删掉的拷回', async t => {
+  const f = fixture(t), r = await load();
+  for (const [n, v] of [['a.c', 'A0'], ['b.c', 'B0'], ['old.txt', 'OLD']]) fs.writeFileSync(path.join(f.task.dir, n), v);
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  const w = f.task.workspace.work;
+  fs.writeFileSync(path.join(w, 'a.c'), 'A1'); fs.writeFileSync(path.join(w, 'b.c'), 'B1'); fs.writeFileSync(path.join(w, 'new.c'), 'NEW'); fs.unlinkSync(path.join(w, 'old.txt'));
+  // 改 a.c、b.c，建 new.c，删 old.txt 四步都做完以后才失败：三种改动都要还原
+  process.env.XIN_TEST_PUBLISH_FAIL_AFTER = '4';
+  t.after(() => { delete process.env.XIN_TEST_PUBLISH_FAIL_AFTER; });
+  assert.throws(() => r.publishWorkspace(f.task, f.control, true), /写回中途失败，原项目已还原/);
+  assert.equal(fs.readFileSync(path.join(f.task.dir, 'a.c'), 'utf8'), 'A0');
+  assert.equal(fs.readFileSync(path.join(f.task.dir, 'b.c'), 'utf8'), 'B0');
+  assert.equal(fs.readFileSync(path.join(f.task.dir, 'old.txt'), 'utf8'), 'OLD');
+  assert.equal(fs.existsSync(path.join(f.task.dir, 'new.c')), false);
+  const backups = fs.readdirSync(path.join(f.control, 'backups'));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.control, 'backups', backups.at(-1), 'publish.json'), 'utf8')).state, 'rolled_back');
+});
+
+test('写回一半后进程被杀：再收尾时已写回的不算冲突，补齐剩下的', async t => {
+  const f = fixture(t), r = await load();
+  for (const [n, v] of [['a.c', 'A0'], ['b.c', 'B0'], ['old.txt', 'OLD']]) fs.writeFileSync(path.join(f.task.dir, n), v);
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  const w = f.task.workspace.work;
+  fs.writeFileSync(path.join(w, 'a.c'), 'A1'); fs.writeFileSync(path.join(w, 'b.c'), 'B1'); fs.writeFileSync(path.join(w, 'new.c'), 'NEW'); fs.unlinkSync(path.join(w, 'old.txt'));
+  // 上一次写回已经改了 a.c、删了 old.txt 就被杀了
+  fs.writeFileSync(path.join(f.task.dir, 'a.c'), 'A1'); fs.unlinkSync(path.join(f.task.dir, 'old.txt'));
+  const plan = r.publicationPlan(f.task, f.control);
+  assert.deepEqual(plan.conflicts, []);
+  assert.deepEqual(plan.applied.sort(), ['a.c', 'old.txt']);
+  const done = r.publishWorkspace(f.task, f.control);
+  assert.equal(done.ok, true);
+  assert.deepEqual(['a.c', 'b.c', 'new.c'].map(n => fs.readFileSync(path.join(f.task.dir, n), 'utf8')), ['A1', 'B1', 'NEW']);
+  assert.equal(fs.existsSync(path.join(f.task.dir, 'old.txt')), false);
+});
+
+test('别人改成和副本一样的内容：不算冲突也不重复写；改成别的内容仍然算冲突', async t => {
+  const f = fixture(t), r = await load();
+  fs.writeFileSync(path.join(f.task.dir, 'same.c'), 'S0'); fs.writeFileSync(path.join(f.task.dir, 'diff.c'), 'D0');
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  fs.writeFileSync(path.join(f.task.workspace.work, 'same.c'), 'S1'); fs.writeFileSync(path.join(f.task.workspace.work, 'diff.c'), 'D1');
+  fs.writeFileSync(path.join(f.task.dir, 'same.c'), 'S1'); fs.writeFileSync(path.join(f.task.dir, 'diff.c'), 'someone else');
+  const p = r.publishWorkspace(f.task, f.control);
+  assert.equal(p.pending, true); assert.deepEqual(p.conflicts, ['diff.c']);
+});
+
+test('写回一半后被杀：再收尾时已写回的源码改动照样算 STM32 的源码改动', async t => {
+  const f = fixture(t), r = await load();
+  fs.writeFileSync(path.join(f.task.dir, 'main.c'), '#include "stm32f10x.h"\nint main(void){}');
+  fs.writeFileSync(path.join(f.task.dir, 'Makefile'), 'CC=arm-none-eabi-gcc\n');
+  f.task.tkind = 'code'; f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  fs.writeFileSync(path.join(f.task.workspace.work, 'main.c'), '#include "stm32f10x.h"\nint main(void){ for(;;); }');
+  fs.writeFileSync(path.join(f.task.dir, 'main.c'), '#include "stm32f10x.h"\nint main(void){ for(;;); }');   // 上次已经写回了
+  const meta = { compileTrusted: true, compileOk: true, compileDigest: r.sourceDigest(f.task.workspace.work) };
+  const v = r.validateTask(f.task, f.control, meta);
+  assert.equal(v.error, undefined, v.error);
+  assert.equal(v.applicable, true);
+});
+
+test('写回失败而且有文件没能还原：如实说哪些没还原、备份在哪，不说已还原', async t => {
+  const f = fixture(t), r = await load();
+  for (const [n, v] of [['a.c', 'A0'], ['b.c', 'B0']]) fs.writeFileSync(path.join(f.task.dir, n), v);
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  fs.writeFileSync(path.join(f.task.workspace.work, 'a.c'), 'A1'); fs.writeFileSync(path.join(f.task.workspace.work, 'b.c'), 'B1');
+  process.env.XIN_TEST_PUBLISH_FAIL_AFTER = '2'; process.env.XIN_TEST_RESTORE_FAIL = 'b.c';
+  t.after(() => { delete process.env.XIN_TEST_PUBLISH_FAIL_AFTER; delete process.env.XIN_TEST_RESTORE_FAIL; });
+  let msg = '';
+  try { r.publishWorkspace(f.task, f.control, true); } catch (e) { msg = e.message; }
+  assert.match(msg, /写回中途失败/); assert.doesNotMatch(msg, /已还原/); assert.match(msg, /b\.c/); assert.match(msg, /backups/);
+  assert.equal(fs.readFileSync(path.join(f.task.dir, 'a.c'), 'utf8'), 'A0', '能还原的照样还原');
+  const backups = fs.readdirSync(path.join(f.control, 'backups'));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.control, 'backups', backups.at(-1), 'publish.json'), 'utf8')).state, 'rollback_incomplete');
 });
