@@ -32,11 +32,32 @@ async def main():
         page = await context.new_page()
         errors = []
         page.on('pageerror', lambda e: errors.append(type(e).__name__))
+        # The CI runner VM can be paused by its host; the TCP shim then turns the dead connection into ETIMEDOUT.
+        # Both #106 and #107 release runs were rolled back by exactly that, mid-way through the long wait for the web task.
+        # Read-only ops are safe to resend, so they are retried; ops with side effects are never resent here.
+        READ_ONLY = {'history', 'tasks', 'poll', 'sessions', 'status'}
+        TRANSPORT = ('ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ENETUNREACH', 'EAI_AGAIN', 'socket hang up', 'Timeout')
+        async def raw(what, send, retry):
+            # Every direct request goes through here so a failure never prints Playwright's call log (it carries the cookie).
+            limit = time.monotonic() + 180
+            while True:
+                try:
+                    return await send()
+                except Exception as error:
+                    kind = next((k for k in TRANSPORT if k in str(error)), type(error).__name__)
+                    if retry and kind in TRANSPORT and time.monotonic() < limit:
+                        print('Retrying ' + what + ' after a dropped connection (' + kind + ')', flush=True)
+                        await asyncio.sleep(3)
+                        continue
+                    raise RuntimeError('Production request transport failed: ' + what + ' ' + kind) from None
         async def call(op, args):
             limit = time.monotonic() + 180
             while True:
-                response = await context.request.post(BASE + '/api/xin/call', headers={'X-Xin': '1'}, data={'op': op, 'args': args}, timeout=80000)
-                d = await response.json()
+                response = await raw(op, lambda: context.request.post(BASE + '/api/xin/call', headers={'X-Xin': '1'}, data={'op': op, 'args': args}, timeout=80000), op in READ_ONLY)
+                try:
+                    d = await response.json()
+                except Exception:
+                    d = {}
                 if response.status == 200 and d.get('ok') and not d.get('data', {}).get('error'):
                     return d['data']
                 if d.get('state') in ('waking', 'busy') and time.monotonic() < limit:
@@ -108,8 +129,8 @@ async def main():
                 g.fillStyle='black';g.font='bold 90px monospace';g.fillText(text,30,130);
                 return c.toDataURL('image/png').split(',')[1];
             }""", visual_token)
-            uploaded = await context.request.post(BASE + '/api/xin/upload?name=visual-check.png',
-                headers={'X-Xin':'1','Content-Type':'application/octet-stream'},data=base64.b64decode(png),timeout=80000)
+            uploaded = await raw('upload', lambda: context.request.post(BASE + '/api/xin/upload?name=visual-check.png',
+                headers={'X-Xin':'1','Content-Type':'application/octet-stream'},data=base64.b64decode(png),timeout=80000), False)
             upload_data = await uploaded.json()
             if uploaded.status != 200 or not upload_data.get('ok'):
                 raise RuntimeError('Synthetic image upload failed')
@@ -144,7 +165,7 @@ async def main():
                 if status in ('failed', 'stopped', 'waiting') or time.monotonic() > limit:
                     raise RuntimeError('Background task did not complete: ' + status)
                 await asyncio.sleep(4)
-            response = await context.request.get(BASE + '/api/xin/file', params={'path': directory + '/result.txt'}, timeout=80000)
+            response = await raw('file download', lambda: context.request.get(BASE + '/api/xin/file', params={'path': directory + '/result.txt'}, timeout=80000), True)
             if response.status != 200 or (await response.text()).strip() != marker:
                 raise RuntimeError('Published result file does not match')
             again = await call('history', {'sid': task['sid']})
@@ -357,9 +378,16 @@ async def main():
                     for t in ts:
                         if (owned_sid == image_sid or (t.get('title') == marker and t.get('dir') == directory) or t['sid'] == web_sid) and t['status'] in ('running','queued','waiting','stopping'):
                             await call('task_stop', {'sid': t['sid']})
+                    # Stopping takes a moment and forget refuses while a turn or task is still winding down: wait for it (at most ~90 s).
+                    for _ in range(30):
+                        h = await call('history', {'sid': owned_sid})
+                        ts = (await call('tasks', {'sid': owned_sid})).get('tasks', [])
+                        if not h.get('active') and not any(t['status'] in ('running', 'queued', 'stopping') for t in ts):
+                            break
+                        await asyncio.sleep(3)
                     await call('forget', {'sid': owned_sid})
-                except Exception:
-                    print('Smoke records retained for diagnosis', flush=True)
+                except Exception as error:
+                    print('Smoke records retained for diagnosis: ' + (str(error)[:160] if isinstance(error, RuntimeError) else type(error).__name__), flush=True)
             await browser.close()
 
 if __name__ == '__main__':
