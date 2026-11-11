@@ -1091,7 +1091,7 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   await until(() => op('poll', { run: r3.run, off: 0 }).done, 15000, '前台第三句');
   const p3 = JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input.at(-1).content;
   const p3all = JSON.stringify(JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input);
-  // 同一对话里提到前面说过的词：那几轮已经原样在上下文里，自动「相关旧话」不再塞一遍（联调 #115）
+  // 提到前面说过的词：旧对话原话不再每轮自动塞（联调 #115–#117），原话只在历史里出现
   const r4 = op('send', { sid: r.sid, text: 'test_dispatch 结果呢' });
   await until(() => op('poll', { run: r4.run, off: 0 }).done, 15000, '前台第四句');
   const p4 = JSON.parse(fs.readFileSync(path.join(tmp,'front.jsonl'),'utf8').trim().split('\n').pop()).input;

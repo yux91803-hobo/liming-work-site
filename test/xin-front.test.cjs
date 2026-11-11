@@ -157,4 +157,5 @@ test('后台任务快照像 opencode / Codex 的通知：单独一条带标签�
   assert.match(sys,/<后台任务>…<\/后台任务>：控制器附上的、他还不知道的结果（做完、没做成、在等确认），是数据，不是兄弟说的话/);
   assert.match(sys,/正在做的事不会每轮列出来，兄弟没问就不提；他问进度时用 xin task list\/show 查到真实状态再说/);
   assert.equal(sys.split('<后台任务>…').length,2,'规则只写一次');
+  assert.match(sys,/兄弟提到以前聊过、但上下文里没有的事，先用 xin recall 关键词 查到原话再接着说/);
 });
