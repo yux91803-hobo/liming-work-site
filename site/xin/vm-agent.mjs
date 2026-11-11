@@ -56,7 +56,7 @@ export * from './vm-events.mjs';
 export * from './vm-models.mjs';
 export * from './vm-persona.mjs';
 import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, memoryPreferences,setMemoryPreferences,MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
-import {recallAll,turnGuidance,safeContextEvents} from './vm-context.mjs';
+import {recallAll,turnGuidance,safeContextEvents,dropRecall} from './vm-context.mjs';
 import {dailyEvidence,dailyContext} from './vm-daily.mjs';
 import {openFrontProvider,preferredFrontModel,frontModelInfo,OPUS_FRONT_MODEL} from './vm-front-opus.mjs';
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
@@ -887,6 +887,36 @@ function dropLogs(agent, id, logs) {
 }
 // 启动方式不能证明归属：别的 codex exec / Claude SDK 也用相同标记。只认网站自己的登记。
 // 旧网页会话从现有对话补登记；无法确认归属的历史孤立记录保留。坏文件仍让整个清理停止。
+// 删对话时，状态库之外还留着它内容的几处（审查问题 5）：发送回执（带标题）、推送队列里它的条目（结果正文）、
+// 前台诊断日志里它的条目、跨对话检索索引。都按对话编号认领，别的对话不动。
+function dropConversationTraces(sid, runs) {
+  const own = new Set(runs);
+  const sweep = (dir, mine) => {
+    let names = []; try { names = fs.readdirSync(dir); } catch { return; }
+    for (const n of names) {
+      if (!/^[A-Za-z0-9_-]{8,80}\.json$/.test(n)) continue;
+      const f = path.join(dir, n);
+      try { if (mine(readJ(f))) fs.unlinkSync(f); } catch { /* 删不掉就留着 */ }
+    }
+  };
+  sweep(path.join(BASE, 'messages'), r => r?.sid === sid);
+  sweep(NOTICE_DIR(), n => n?.msg?.sid === sid);
+  try {
+    const f = path.join(BASE, 'logs', 'front.jsonl'), lines = readText(f).split('\n').filter(Boolean);
+    const keep = lines.filter(l => { try { return !own.has(JSON.parse(l).run); } catch { return true; } });
+    if (keep.length !== lines.length) fs.writeFileSync(f, keep.length ? keep.join('\n') + '\n' : '');
+  } catch { /* 没有这个文件 */ }
+  try { dropRecall(sid); } catch { /* 下次同步会清 */ }
+}
+// 推送队列里已送达或已放弃的条目，7 天后删掉
+function pruneNotices(now = Date.now(), maxAge = 7 * 86400e3) {
+  let names = [], removed = 0; try { names = fs.readdirSync(NOTICE_DIR()); } catch { return removed; }
+  for (const n of names.filter(x => /^[a-f0-9]{32}\.json$/.test(x))) {
+    const f = path.join(NOTICE_DIR(), n), v = readJ(f);
+    if (v && (v.state === 'delivered' || v.state === 'failed') && now - (v.deliveredAt || v.created || now) > maxAge) { try { fs.unlinkSync(f); removed++; } catch { /* 下次 */ } }
+  }
+  return removed;
+}
 function pruneLogs(minAge = PRUNE_AGE) {
   const res = { codex: 0, claude: 0, harness: 0, bytes: 0 };
   if (!fs.existsSync(SESS)) return Object.assign(res, { skipped: 'no_sessions_dir' });
@@ -912,6 +942,9 @@ function pruneLogs(minAge = PRUNE_AGE) {
   for (const l of hl.filter(l => old('harness', l))) {
     res.bytes += dropLogs('harness', l.id, hl); res.harness++;
   }
+  // 30 天前的写回备份、7 天前已送达的推送条目（返回结果只把字节数算进 bytes，字段不变）
+  try { res.bytes += runtime.pruneBackups(BASE).bytes; } catch { /* 下次 */ }
+  try { pruneNotices(); } catch { /* 下次 */ }
   return res;
 }
 
@@ -2133,6 +2166,7 @@ const ops = {
     fs.unlinkSync(sessF(a.sid));
     journal.dropConversation(a.sid,s.runs||[]);try{fs.unlinkSync(path.join(BASE,'contexts',a.sid+'.json'));}catch{}
     try { fs.unlinkSync(convSeenF(a.sid)); } catch { /* 没有 */ }
+    dropConversationTraces(a.sid, s.runs || []);
     // AI 自己那份会话记录也删掉；顺手把别的没有对应对话的旧记录清一清
     let freed = 0, pruned = null;
     try { freed = (lockedCall('tasks', 'task_drop', { parent: a.sid }).bytes || 0); } catch { /* 删不掉就留着 */ }
@@ -2342,6 +2376,8 @@ const iops = {
       try { fs.unlinkSync(sessF(t.sid)); } catch { /* 没有 */ }
       journal.dropConversation(t.sid,t.runs||[]);
       try { bytes += dropLogs('codex', t.agentSid); } catch { /* 删不掉就留着 */ }
+      const left = runtime.dropTaskFiles(t, BASE); bytes += left.bytes;
+      if (left.kept.length) logLine(path.join(BASE, 'logs', 'forget.jsonl'), { task: t.sid, kept: left.kept.length });
     }
     try { fs.unlinkSync(path.join(BASE,'tasks-index.json')); } catch {}
     listTasks();queueControllerEvent();
