@@ -48,7 +48,7 @@ import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, 
 import { bareCmd, screenLog, openScreen, setScreenTag } from './vm-screen.mjs';
 import { fromClaude, fromCodex, fromHarness } from './vm-events.mjs';
 import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
-import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
+import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
 export * from './vm-screen.mjs';
@@ -736,6 +736,8 @@ function runner(run) {
     const context=foregroundContext(sess,run,r=>safeContextEvents(r,events,'own')),input=context.input;
     journal.write(path.join(BASE,'contexts',meta.sid+'.json'),JSON.stringify(context.checkpoint));
     try {
+      // 会变的资料（记忆、每日记录、当前时间）放在历史之后：系统提示和历史这段前缀每轮不变，缓存才命中
+      input.push({role:'user',content:frontMaterials()});
       if(!meta.handoff){const guide=turnGuidance({sid:meta.sid,text:meta.frontRequest||'',context:meta.context||''});if(guide)input.push({role:'user',content:guide});}
       input.push(frontUserInput(meta));
     }
@@ -770,7 +772,7 @@ function runner(run) {
         throw Error('当前前台没有视觉输入，无法读取图片');
       }
       return runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,request:provider.request,ms:meta.model===runtime.FRONT_MODEL?25000:65000,
-      instructions:systemPrompt(undefined,{tasks:true}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,lookupBeforeAnswer:!meta.handoff&&runtime.frontLookupRequired(meta.frontRequest||''),deliver,takeBudget:handoffBudget,
+      instructions:systemPrompt(undefined,{tasks:true,materials:false}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,lookupBeforeAnswer:!meta.handoff&&runtime.frontLookupRequired(meta.frontRequest||''),deliver,takeBudget:handoffBudget,
       usage:u=>{if(u){
         handoffBudget?.recordUsage(u);
         const prev = state.frontUsage || usageBefore || {input:0,output:0,cached:0};
