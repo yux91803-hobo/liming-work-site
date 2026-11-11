@@ -1,4 +1,5 @@
 const test = require('node:test');
+const { platformTimeout } = require('./helpers/timeout.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -25,7 +26,7 @@ function fixture(t) {
         return identity && !['Z', 'X'].includes(identity.state) ? [{ pid: Number(n), identity }] : [];
       } catch { return []; }
     });
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + platformTimeout(5000);
     while (owned().length && Date.now() < deadline) {
       for (const p of owned()) r.signalProcessGroup(p.pid, p.identity, 'SIGKILL');
       await new Promise(ok => setTimeout(ok, 30));
@@ -34,7 +35,7 @@ function fixture(t) {
     fs.rmSync(root, { recursive: true, force: true });
   });
   const call = (op, args) => {
-    const r = spawnSync(process.execPath, [agent, 'locked', op], { env, input: JSON.stringify(args), encoding: 'utf8', timeout: 15000 });
+    const r = spawnSync(process.execPath, [agent, 'locked', op], { env, input: JSON.stringify(args), encoding: 'utf8', timeout: platformTimeout(15000) });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };
   const task = { sid: 'sruntime001', no: 1, kind: 'task', tkind: 'code', title: 'test', dir: path.join(root, 'project'), goal: 'test',
@@ -379,7 +380,7 @@ test('实际启动分身时把用户原话与前台转述分别交给模型',asy
   f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_CODEX_TRANSPORT='exec';
   f.task.status='stopped';f.save();
   const task=f.call('task_new',{kind:'review',goal:'前台转述：PB5 默认映射',userRequest:'用户原话：TIM3_CH2 到 PB5，按手册确认重映射',title:'source propagation',dir:path.join(f.root,'second-project')}).task;
-  for(let i=0;i<80;i++){const h=f.call('history',{sid:task.sid});if(h.task.status==='done')break;await new Promise(ok=>setTimeout(ok,100));}
+  for(const end=Date.now()+platformTimeout(15000);Date.now()<end;){const h=f.call('history',{sid:task.sid});if(h.task.status==='done')break;await new Promise(ok=>setTimeout(ok,100));}
   const args=JSON.parse(fs.readFileSync(log,'utf8')),prompt=args.at(-1);
   assert.match(prompt,/前台转述：PB5 默认映射/);assert.match(prompt,/用户原话：TIM3_CH2 到 PB5/);assert.match(prompt,/独立核对前台转述是否准确/);
 });
@@ -387,9 +388,9 @@ test('实际启动分身时把用户原话与前台转述分别交给模型',asy
 test('系统 SIGTERM 保留后台断点并续接，用户停止不被自动重启', async t => {
   const f=fixture(t);fs.unlinkSync(path.join(f.control,'sessions',f.task.sid+'.json'));
   const bin=path.join(f.root,'bin');fs.mkdirSync(bin);f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_CODEX_TRANSPORT='exec';
-  fs.writeFileSync(path.join(bin,'codex'),'#!/bin/sh\nprintf \'%s\\n\' \'{"type":"thread.started","thread_id":"graceful-fixture"}\'\nif [ ! -f .checkpoint ]; then printf ONCE > .checkpoint; sleep 30; fi\nprintf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message","text":"recovered"}}\' \'{"type":"turn.completed"}\'\n',{mode:0o755});
+  fs.writeFileSync(path.join(bin,'codex'),'#!/bin/sh\nprintf \'%s\\n\' \'{"type":"thread.started","thread_id":"graceful-fixture"}\'\nif [ ! -f .checkpoint ]; then printf ONCE > .checkpoint; sleep 600; fi\nprintf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message","text":"recovered"}}\' \'{"type":"turn.completed"}\'\n',{mode:0o755});
   let observed;
-  const wait=async fn=>{const deadline=Date.now()+30000;while(Date.now()<deadline){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,100));}throw Error('fixture did not reach checkpoint: '+JSON.stringify(observed));};
+  const wait=async fn=>{const deadline=Date.now()+platformTimeout(30000);while(Date.now()<deadline){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,100));}throw Error('fixture did not reach checkpoint: '+JSON.stringify(observed));};
   const start=async dir=>{
     fs.mkdirSync(dir,{recursive:true});const a=f.call('task_new',{kind:'research',dir,goal:'fixture',title:'graceful fixture'}).task;
     const s=await wait(()=>{const v=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',a.sid+'.json'))),m=JSON.parse(fs.readFileSync(path.join(f.control,'runs',v.runs.at(-1)+'.json')));observed={phase:'start',status:v.status,modelSession:!!v.agentSid,child:!!m.childPid};return v.agentSid&&m.childIdentity&&v.workspace&&fs.existsSync(path.join(v.workspace.work,'.checkpoint'))?v:null;});
@@ -424,7 +425,7 @@ test('提问后快速回复会清掉对应 pendingQuestion，下一轮完成不�
  assert.equal(f.read().pendingQuestion,undefined);assert.equal(f.read().question,'');
  fs.appendFileSync(path.join(f.control,'runs/rruntime001.jsonl'),JSON.stringify({t:'done',ok:true})+'\n');
  f.call('task_finish',{sid:f.task.sid,run:'rruntime001',ok:true});
- const deadline=Date.now()+15000;let task;
+ const deadline=Date.now()+platformTimeout(15000);let task;
  while(Date.now()<deadline){f.call('tasks',{});task=f.read();if(['done','failed','waiting'].includes(task.status))break;await new Promise(r=>setTimeout(r,100));}
  assert.equal(task.status,'done',JSON.stringify(task));assert.equal(task.runs.length,2);assert.equal(task.pendingQuestion,undefined);
 });
@@ -444,7 +445,7 @@ test('原任务 fallback 与复核 fallback 组合：requestedModel 保持原值
  fs.writeFileSync(path.join(bin,'codex'),'#!'+process.execPath+'\n'+`const fs=require('node:fs');const a=process.argv.slice(2),v=a.find(s=>s.startsWith('model='));if(!v){console.log('[]');process.exit(0);}const model=JSON.parse(v.slice(6)),role=a.join(' ').includes('REVIEW_CASE')?'review':'author';fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({role,model})+'\\n');if(role==='author'&&model==='glm-5.3'||role==='review'&&model==='deepseek-v4.1-flash'){setTimeout(()=>{console.log(JSON.stringify({type:'error',message:'provider unavailable'}));process.exit(1);},300);}else{console.log(JSON.stringify({type:'thread.started',thread_id:role+'-fixture'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'done'}}));console.log(JSON.stringify({type:'turn.completed'}));}` ,{mode:0o755});
  const a=f.call('task_new',{kind:'research',goal:'AUTHOR_CASE',dir:f.task.dir,model:'glm-5.3',named:true}).task;
  const review=f.call('task_new',{kind:'review',goal:'REVIEW_CASE',after:[a.no],dir:f.task.dir,model:'deepseek-v4.1-flash',named:true}).task;
- const deadline=Date.now()+20000;let ah,rh;
+ const deadline=Date.now()+platformTimeout(20000);let ah,rh;
  while(Date.now()<deadline){f.call('tasks',{});ah=f.call('history',{sid:a.sid}).task;rh=f.call('history',{sid:review.sid}).task;if(['done','failed','waiting'].includes(rh.status))break;await new Promise(r=>setTimeout(r,100));}
  ah=f.call('history',{sid:a.sid}).task;rh=f.call('history',{sid:review.sid}).task;
  assert.equal(ah.status,'done',JSON.stringify(ah));assert.equal(rh.status,'done',JSON.stringify(rh));
@@ -459,7 +460,7 @@ test('组长退出后，单独存活且忽略 TERM 的孙进程仍会被清理�
   const f=fixture(t),pidFile=path.join(f.root,'grandchild'),release=path.join(f.root,'release');let identity,leader;
   const script=`import os,sys,time,signal\np=os.fork()\nif p==0:\n ${separate?'os.setpgid(0,0)':'pass'}\n signal.signal(signal.SIGTERM,signal.SIG_IGN)\n open(sys.argv[1],'w').write(str(os.getpid()))\n while True:time.sleep(1)\nelse:\n while not os.path.exists(sys.argv[2]):time.sleep(.01)\n`;
   leader=spawn('python3',['-c',script,pidFile,release],{detached:true,stdio:'ignore'});t.after(()=>{if(identity)r.signalProcessGroup(leader.pid,identity,'SIGKILL');});
-  const wait=async fn=>{const end=Date.now()+10000;while(Date.now()<end){const v=fn();if(v)return v;await new Promise(ok=>setTimeout(ok,30));}throw Error('process fixture timeout');};
+  const wait=async fn=>{const end=Date.now()+platformTimeout(10000);while(Date.now()<end){const v=fn();if(v)return v;await new Promise(ok=>setTimeout(ok,30));}throw Error('process fixture timeout');};
   await wait(()=>fs.existsSync(pidFile));identity=r.processIdentity(leader.pid);assert.ok(identity);
   const exited=once(leader,'exit');fs.writeFileSync(release,'1');await exited;
   assert.equal(r.processIdentity(leader.pid),null);assert.equal(r.processGroupMembers(leader.pid,identity).length,1);

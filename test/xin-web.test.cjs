@@ -1,4 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
+const { platformTimeout } = require('./helpers/timeout.cjs');
 const {spawnSync}=require('node:child_process');const {pathToFileURL}=require('node:url');
 const agent=path.join(__dirname,'../site/xin/vm-agent.mjs'),load=()=>import('../site/xin/vm-runtime.mjs');
 const html='<!doctype html><html><head><title>奶龙</title><style>body{margin:0}</style></head><body><button id="dance">跳舞</button><div id="dragon"></div><script>dance.onclick=()=>dragon.classList.add("dancing")</script></body></html>';
@@ -96,7 +97,7 @@ test('指定入口连续报错仅重试同一个 Kimi，不静默回退其它可
  const f=fixture(t);fs.unlinkSync(f.control+'/sessions/'+f.task.sid+'.json');const bin=f.root+'/bin',log=f.root+'/models.jsonl';fs.mkdirSync(bin);f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_TASK_SANDBOX='0';
  fs.writeFileSync(bin+'/codex','#!'+process.execPath+'\n'+`const fs=require('node:fs'),a=process.argv.slice(2),v=a.find(x=>x.startsWith('model='));if(!v){console.log('[]');process.exit(0);}fs.appendFileSync(${JSON.stringify(log)},v.slice(6)+'\\n');setTimeout(()=>{console.log(JSON.stringify({type:'error',message:'provider unavailable'}));process.exit(1);},150);`,{mode:0o755});
  const task=f.call('task_new',{kind:'research',goal:'strict provider fixture',model:'kimi-k3.1-pro',named:true,strictModel:true}).task;
- const deadline=Date.now()+15000;let h;while(Date.now()<deadline){h=f.call('history',{sid:task.sid}).task;if(['failed','done','waiting'].includes(h.status))break;await new Promise(ok=>setTimeout(ok,60));}
+ const deadline=Date.now()+platformTimeout(15000);let h;while(Date.now()<deadline){h=f.call('history',{sid:task.sid}).task;if(['failed','done','waiting'].includes(h.status))break;await new Promise(ok=>setTimeout(ok,60));}
  assert.equal(h.status,'failed',JSON.stringify(h));assert.equal(h.actualModel,'kimi-k3.1-pro');assert.equal(h.requestedModel,'kimi-k3.1-pro');assert.deepEqual(fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse),['kimi-k3.1-pro','kimi-k3.1-pro']);
 });
 test('进度查询工具返回真实检查阶段，交给前台解释',async t=>{

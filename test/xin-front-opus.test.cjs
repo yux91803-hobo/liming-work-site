@@ -1,4 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const { platformTimeout } = require('./helpers/timeout.cjs');
 const {spawnSync}=require('node:child_process');
 const {stopOwned}=require('./helpers/stop-owned.cjs');
 const agent=path.join(__dirname,'../site/xin/vm-agent.mjs');
@@ -51,7 +52,7 @@ function fixture(t,mode='ok'){
  const env={...process.env,HOME:home,XIN_HOME:control,XIN_WORK:work,XIN_AGY_HOME:home,XIN_ANTIGRAVITY_BIN:bin+'/agy',NODE_OPTIONS:'--require='+preload,PATH:bin+':'+process.env.PATH,XIN_CODEX_TRANSPORT:'exec',XIN_TASK_SANDBOX:'0',XIN_CODEX_KEY:'must-not-reach-native'};
  delete env.XIN_FRONT_PROVIDER;
  const call=(op,args={})=>{const r=spawnSync(process.execPath,[agent,op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);const d=JSON.parse(r.stdout);assert.ok(!d.error,JSON.stringify(d));return d;};
- const wait=async run=>{const until=Date.now()+15000;while(Date.now()<until){const p=call('poll',{run,off:0});if(p.done)return p;await new Promise(r=>setTimeout(r,70));}assert.fail('synthetic front did not finish');};
+ const wait=async run=>{const until=Date.now()+platformTimeout(15000);while(Date.now()<until){const p=call('poll',{run,off:0});if(p.done)return p;await new Promise(r=>setTimeout(r,70));}assert.fail('synthetic front did not finish');};
  const rows=file=>fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse):[];
  t.after(()=>stopOwned(control,root));
  return {root,control,home,work,env,log,gateway,call,wait,rows};
@@ -177,7 +178,7 @@ test('Opus 未查询却声称查过时，补上的真实查询输入没有因增
 });
 test('后台完成仍由默认 Opus 接回、持久交付一次，完成事件不会被改成新工作',async t=>{
  const f=fixture(t),sent=f.call('send',{agent:'codex',text:'OPUS_DISPATCH：整理一份说明。'});await f.wait(sent.run);
- const until=Date.now()+10000;let visible=[];
+ const until=Date.now()+platformTimeout(10000);let visible=[];
  while(Date.now()<until){f.call('tasks',{sid:sent.sid});const h=f.call('history',{sid:sent.sid});visible=h.runs.flatMap(r=>r.events).filter(e=>e.t==='text'&&e.taskResult);if(visible.length)break;await new Promise(r=>setTimeout(r,100));}
  assert.equal(visible.length,1);assert.match(visible[0].text,/原生前台已交付结果/);
  const h=f.call('history',{sid:sent.sid});assert.equal(h.runs.flatMap(r=>r.events).filter(e=>e.t==='text'&&e.taskResult).length,1);
@@ -186,7 +187,7 @@ test('后台完成仍由默认 Opus 接回、持久交付一次，完成事件�
 });
 test('用户停止 Opus 会取消原生请求，保留已停止结果，不按超时派活或切 DeepSeek',async t=>{
  const f=fixture(t,'hang'),sent=f.call('send',{agent:'codex',text:'你好'});
- const until=Date.now()+5000;while(!f.rows(f.log).some(r=>r.method==='session/prompt')){assert.ok(Date.now()<until);await new Promise(r=>setTimeout(r,40));}
+ const until=Date.now()+platformTimeout(5000);while(!f.rows(f.log).some(r=>r.method==='session/prompt')){assert.ok(Date.now()<until);await new Promise(r=>setTimeout(r,40));}
  f.call('stop',{run:sent.run});const done=await f.wait(sent.run);assert.equal(done.events.find(e=>e.t==='done').stopped,true);
  assert.equal(f.rows(f.gateway).length,0);assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
 });

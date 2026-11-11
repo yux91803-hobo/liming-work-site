@@ -1,5 +1,6 @@
 // 新旧控制器交班（审查问题 20）：网站直接调用时记下当前用的是哪一份脚本；还在跑的旧 watchdog 发现有更新的一份，就让新版接班、自己退出。
 const test = require('node:test');
+const { platformTimeout } = require('./helpers/timeout.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -44,7 +45,7 @@ test('旧 watchdog 发现网站已经在用新的一份：让新版接班，自�
   const t0 = Date.now(), r = run(['watchdog']);
   assert.equal(r.status, 0, r.stderr);
   assert.ok(Date.now() - t0 < 8000, '没有接着循环');
-  for (let i = 0; i < 100 && !fs.existsSync(marker); i++) spawnSync('sleep', ['0.1']);
+  for (const end = Date.now() + platformTimeout(15000); Date.now() < end && !fs.existsSync(marker);) spawnSync('sleep', ['0.1']);
   assert.equal(fs.readFileSync(marker, 'utf8'), 'watchdog');
 });
 
