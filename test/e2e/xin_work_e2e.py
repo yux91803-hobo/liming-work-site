@@ -117,10 +117,10 @@ async def main():
         await pg.click('.xc-work-b')
         await pg.wait_for_function("document.querySelector('.xc').classList.contains('work-open')")
         await pg.wait_for_timeout(350)
-        col = await pg.evaluate("""[[...document.querySelectorAll('.wk-h')].map(e => e.firstChild.textContent + e.lastChild.textContent), [...document.querySelectorAll('.wk-c')].map(c => c.dataset.tsid),
+        col = await pg.evaluate("""[[...document.querySelectorAll('.wk-h')].map(e => e.textContent), [...document.querySelectorAll('.wk-sg')].map(e => e.textContent), [...document.querySelectorAll('.wk-c')].map(c => c.dataset.tsid),
           (() => { const r = document.querySelector('.xc-work').getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right) === innerWidth]; })(), document.documentElement.scrollWidth <= innerWidth]""")
-        ui.check('右栏滑进来盖满聊天：在做 1、等你 1、成果 2，顺序对，不横向滚动',
-                 col == [['在做1', '等你1', '成果2'], ['stasklive01', 'staskwait01', 'staskweb001', 'staskdone01'], [0, True], True], col)
+        ui.check('右栏滑进来盖满聊天：在做 1、等你 1，成果按类别分（网页 1、资料 1，上面能切换类别），顺序对，不横向滚动',
+                 col == [['在做1', '等你1', '网页1', '资料1'], ['全部', '网页', '资料'], ['stasklive01', 'staskwait01', 'staskweb001', 'staskdone01'], [0, True], True], col)
         await pg.keyboard.press('Escape')
         await pg.wait_for_function("!document.querySelector('.xc').classList.contains('work-open') && document.querySelector('.xc').classList.contains('show')")
         ui.check('Esc 先收起右栏，工作台还开着', True)
@@ -133,7 +133,7 @@ async def main():
         await pg.click('.xw-t.wait')
         await pg.wait_for_selector('.xc-sheet:not([hidden]) .xc-tk-log')
         sh = await pg.evaluate("[document.querySelector('.xc').classList.contains('wb'), document.querySelector('.xc-sh-hd b').textContent]")
-        ui.check('首页点任务：进工作台，直接打开那个任务', sh == [True, '我在做：删掉旧工程'], sh)
+        ui.check('首页点任务：进工作台，直接打开那个任务', sh == [True, '删掉旧工程'], sh)
         await pg.context.close()
 
         # 5. 宽屏三栏；右栏卡片的动作；看过程盖在右栏上

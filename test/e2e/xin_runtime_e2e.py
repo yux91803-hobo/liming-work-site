@@ -41,7 +41,7 @@ async def main():
         assert await pg.locator('.xc-me.queued .xc-bub').inner_text() == 'change direction now'
         print('PASS reload restores one queued message without sending it twice', flush=True)
         await pg.locator('.xc-qsteer').click()
-        await pg.wait_for_function("document.querySelector('.xc-qtag').textContent === '已送入当前任务'")
+        await pg.wait_for_function("document.querySelector('.xc-qtag').textContent === '已插话'")
         assert st['steer']['clientId'] == before[0]['id'] and st['steer']['run'] == 'rlive00001'
         assert await pg.evaluate("localStorage.getItem('lm.xin.queue.snew000001')") is None
         assert await pg.evaluate('LimingXinChat.state.run') == 'rlive00001'
