@@ -1158,6 +1158,10 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   const snap=q.findIndex(e=>typeof e.content==='string'&&e.content.startsWith('<后台任务>\n'));
   assert.ok(snap>=0&&snap<q.length-1&&q[snap].content.endsWith('\n</后台任务>')&&q[snap].content.includes('任务 4「D」在等用户确认：要删掉旧的 build 目录吗'),JSON.stringify(q.map(e=>[e.role,String(e.content).slice(0,40)])));
   assert.ok(q.at(-1).role==='user'&&q.at(-1).content.includes('嗯')&&!q.at(-1).content.includes('后台任务'),String(q.at(-1).content).slice(-200));
+  // 最后一条是兄弟的原话、不带标签；它前面控制器附上的每一条都用成对标签包着（联调 #118：资料没有结尾，兄弟的话被当成资料）
+  assert.ok(!/^<(资料|注意事项|后台任务)>/.test(q.at(-1).content));
+  const tail=[];for(let i=q.length-2;i>=0&&q[i].role==='user';i--)tail.push(String(q[i].content));
+  assert.ok(tail.length>=2&&tail.every(c=>/^<(资料|注意事项|后台任务)>\n[\s\S]*\n<\/\1>$/.test(c)),JSON.stringify(tail.map(c=>c.slice(0,30)+'…'+c.slice(-20))));
   assert.match(xinTask('tell', '4', '删吧'), /任务 4 接着做了/);
   await until(() => op('tasks', { sid: r.sid }).tasks.find(t => t.title === 'D').status === 'done', 15000, 'D 做完');
   assert.ok(fc.args().some(x => x.includes('用户回复：删吧') && x.includes('（你之前问的是：要删掉旧的 build 目录吗）')));
