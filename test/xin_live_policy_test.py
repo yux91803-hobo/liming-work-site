@@ -3,23 +3,42 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import OPUS, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape
+from xin_live_policy import OPUS, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN
+
+
+class SpokenMarker(unittest.TestCase):
+    def test_words_not_hex_and_two_markers_never_share_a_word(self):
+        import random
+        for seed in range(200):
+            rng = random.Random(seed)
+            a = spoken_marker(rng=rng); b = spoken_marker(a, rng=rng)
+            self.assertEqual(len(a.split()), 3); self.assertTrue(all(w in SPOKEN for w in a.split()))
+            self.assertFalse(set(a.split()) & set(b.split()))
+            self.assertNotRegex(a, '[0-9a-f]{4}')
+
+    def test_says_allows_punctuation_but_needs_every_word(self):
+        self.assertTrue(says('青柠、风筝、海盐', '青柠 风筝 海盐'))
+        self.assertTrue(says('青柠 风筝 海盐', '青柠 风筝 海盐'))
+        self.assertFalse(says('青柠、风筝', '青柠 风筝 海盐'))
+        self.assertFalse(says('', '青柠 风筝 海盐'))
+        self.assertFalse(says('anything', ''))
 
 
 class ReplyShape(unittest.TestCase):
     def test_shape_tells_failure_kinds_apart_without_any_text(self):
-        m, o = 'generation-current-0123456789ab', 'generation-original-ba9876543210'
-        self.assertTrue(reply_shape(['好，我这就去弄。', m], m)['marker'])
-        s = reply_shape([m.replace('-', '\u2011')], m)
-        self.assertEqual((s['marker'], s['hex'], s['oddDash'], s['ascii']), (False, True, True, False))
-        s = reply_shape([o], m, o)
-        self.assertEqual((s['marker'], s['otherMarker'], s['prefix']), (False, True, False))
+        m, o = '青柠 风筝 海盐', '灯塔 松果 白鹭'
+        self.assertTrue(reply_shape(['好，我这就去弄。', '青柠、风筝、海盐'], m)['anyReplySays'])
+        s = reply_shape(['青柠 风筝'], m)
+        self.assertEqual((s['words'], s['of'], s['anyReplySays']), (2, 3, False))
+        s = reply_shape(['灯塔 松果 白鹭'], m, o)
+        self.assertEqual((s['words'], s['otherWords']), (0, 3))
+        s = reply_shape(['generation-current'], 'generation-current-0123456789ab')
+        self.assertEqual((s['chars'], s['ascii'], s['words']), (18, True, 0))
         s = reply_shape([], m)
-        self.assertEqual((s['replies'], s['chars'], s['marker']), (0, 0, False))
+        self.assertEqual((s['replies'], s['chars'], s['words']), (0, 0, 0))
         dumped = str(reply_shape(['任务还在跑，' + o], m, o))
-        self.assertNotIn('0123456789ab', dumped)
-        self.assertNotIn('ba9876543210', dumped)
-        self.assertNotIn('任务', dumped)
+        for w in m.split() + o.split() + ['任务']:
+            self.assertNotIn(w, dumped)
 
 
 class LeftoverSmoke(unittest.TestCase):

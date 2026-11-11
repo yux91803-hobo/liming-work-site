@@ -38,14 +38,32 @@ def is_leftover_smoke(session):
     return isinstance(session, dict) and not session.get('main') and str(session.get('title') or '').startswith(SMOKE_TITLES)
 
 
+# 「只回复 X」用的标记：几个随机的普通词，不用十六进制。DeepSeek 当前台时会把十六进制当成内部编号，
+# 按人设「不主动讲任务编号」删掉后半段（2026-11-11 联调里见过回复正好是 generation-current 这 18 个字符）。
+SPOKEN = ('青柠', '风筝', '海盐', '灯塔', '松果', '白鹭', '琥珀', '银杏', '竹笛', '云杉', '橘猫', '雪梨', '麦穗', '珊瑚', '砚台', '纸鸢',
+          '薄荷', '石榴', '萤火', '杏仁', '柚子', '鲸鱼', '雨伞', '火车', '邮票', '陀螺', '积木', '书签', '茶壶', '蜻蜓', '葡萄', '贝壳',
+          '铃铛', '枫叶', '海豚', '钢琴', '风车', '橄榄', '冰川', '南瓜')
+
+
+def spoken_marker(avoid='', rng=None):
+    """Three distinct random words, none shared with `avoid`."""
+    import random
+    taken = set(str(avoid or '').split())
+    return ' '.join((rng or random.SystemRandom()).sample([w for w in SPOKEN if w not in taken], 3))
+
+
+def says(text, marker):
+    """The reply contains every word of the marker (punctuation between them is fine)."""
+    text = str(text or '')
+    return bool(marker) and all(w in text for w in str(marker).split())
+
+
 def reply_shape(texts, marker, other=None):
-    """Shape of the visible replies when the expected marker is missing, without printing any reply or marker.
-    Tells apart: an empty or long answer, a marker with altered dashes, the hex part alone, an echo of the other marker."""
+    """Shape of the visible replies when the expected marker is missing, without printing any reply or marker."""
     texts = [str(t or '') for t in (texts or [])]
     last = texts[-1] if texts else ''
-    tail = marker.rsplit('-', 1)[-1]
-    prefix = marker[:marker.rfind('-') + 1] if '-' in marker else marker
-    dashes = '‐‑‒–—―−－'
+    words = str(marker).split()
+    dashes = '\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uff0d'
     return {'replies': len(texts), 'chars': len(last), 'lines': len(last.splitlines()) if last else 0, 'ascii': last.isascii(),
-            'marker': marker in last, 'hex': tail in last, 'prefix': prefix in last, 'otherMarker': bool(other) and other in last,
-            'oddDash': any(d in last for d in dashes), 'anyReplyHasMarker': any(marker in t for t in texts)}
+            'words': sum(w in last for w in words), 'of': len(words), 'otherWords': sum(w in last for w in str(other or '').split()),
+            'oddDash': any(d in last for d in dashes), 'anyReplySays': any(says(t, marker) for t in texts)}
