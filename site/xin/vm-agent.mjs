@@ -47,7 +47,7 @@ import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, wri
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag } from './vm-screen.mjs';
 import { fromClaude, fromCodex, fromHarness } from './vm-events.mjs';
-import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
+import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
 import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
@@ -686,7 +686,7 @@ function runner(run) {
         patchRun(run,{model:meta.model,effort:meta.effort,from,fallbacks:meta.fallbacks});
         if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
-        emit(run, { t: 'status', text: from===runtime.AGY_MODEL?'原执行入口暂不可用，保留现有文件继续处理。':codexModel(from).name + ' 没接上，换 ' + codexModel(meta.model).name + ' 再试…' });
+        emit(run, { t: 'status', text: from===runtime.AGY_MODEL?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
         Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
         start(); return;
       }
@@ -2424,7 +2424,7 @@ function taskCmd(argv) {
     if (r.error) { console.log(r.msg || r.error); return 1; }
     const t = r.task;
     emit(run, { t: 'task', sid: t.sid, no: t.no, title: t.title, kind: t.kind, model: t.model, why: t.why, status: t.status, after: t.after, at: Date.now() });
-    let out = '派出去了：任务 ' + t.no + '「' + t.title + '」（' + KIND_NAMES[t.kind] + '，' + codexModel(t.model).name + '，' + TASK_STATUS[t.status] + '，工作目录 ' + t.dir + '）。' + (t.note ? t.note + '。' : '');
+    let out = '派出去了：任务 ' + t.no + '「' + t.title + '」（' + KIND_NAMES[t.kind] + '，' + modelLabel(t.model) + '，' + TASK_STATUS[t.status] + '，工作目录 ' + t.dir + '）。' + (t.note ? t.note + '。' : '');
     // --review：再派一个检查任务，等它做完、换个模型、在同一个目录里检查
     if (o.review && t.kind !== 'review') {
       const rv = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: 'review', title: ('检查：' + t.title).slice(0, 40), after: [t.no], dir: t.dir,
@@ -2432,7 +2432,7 @@ function taskCmd(argv) {
       if (rv.task) {
         const v = rv.task;
         emit(run, { t: 'task', sid: v.sid, no: v.no, title: v.title, kind: v.kind, model: v.model, why: v.why, status: v.status, after: v.after, at: Date.now() });
-        out += '检查任务 ' + v.no + '（' + codexModel(v.model).name + '）等它做完就开始。';
+        out += '检查任务 ' + v.no + '（' + modelLabel(v.model) + '）等它做完就开始。';
       } else out += '检查任务没派成：' + (rv.msg || rv.error) + '。';
     }
     console.log(out + '它在后台做，做完结果会自动出现在聊天里；你不用等，回用户一句就结束这一轮。');

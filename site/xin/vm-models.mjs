@@ -42,7 +42,10 @@ export const CODEX_MODELS = [
   { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', win: 1000000, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
   { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', win: 1000000, image: true, efforts: ['off', 'low', 'high', 'max'], def: 'high' }
 ];
-export function codexModel(id) { return CODEX_MODELS.find(m => m.id === id) || CODEX_MODELS[0]; }
+export function codexModel(id) { return CODEX_MODELS.find(m => m.id === id) || CODEX_MODELS[0]; }   // 起 Codex 用：不认识的照样按第一个开工
+// 只用来显示名字：认得后台的 Gemini（Antigravity）和前台的 Opus；不认识的原样显示编号，不冒充成列表里第一个（审查问题 13）
+const OTHER_NAMES = { 'gemini-3.8-flash-high': 'Gemini 3.8 Flash', 'claude-opus-4.6': 'Claude Opus 4.6' };
+export function modelLabel(id) { const m = CODEX_MODELS.find(x => x.id === id) || HARNESS_MODELS.find(x => x.id === id); return m ? m.name : OTHER_NAMES[id] || String(id || '未知模型'); }
 
 /* ---------- 默认模式（Codex 自动）：路由器 ----------
    网页上「天启模式」关着（默认）时，新对话用 Codex：用户不选模型和思考强度。思考强度一律最高（AUTO_EFFORT），
@@ -95,7 +98,7 @@ export function route(o = {}) {
     const w = String(o.want);
     if(kind==='review'&&o.named&&avoid.includes(w))return {model:null,why:'named',kind,fallbacks:[],error:'independent_review_model',note:'指定模型是被复核任务的实际作者，不能作为独立复核模型，请选择其他模型。'};
     if (fits(w) && (o.named && kind!=='review' || !avoid.includes(w))) { model = w; why = o.named ? 'named' : 'picked'; }
-    else if (known(w)) note = codexModel(w).name + (o.images && !codexModel(w).image ? ' 看不了图' : ' 这次不合适') + '，换成了别的';
+    else if (known(w)) note = modelLabel(w) + (o.images && (w === runtime.AGY_MODEL || !codexModel(w).image) ? ' 看不了图' : ' 这次不合适') + '，换成了别的';
     else note = '没有叫 ' + w.slice(0, 40) + ' 的模型，按类别挑了一个';
   }
   // 候选全被排除了（比如要看图、能看图的又都在 avoid 里）：退回能用的第一个
