@@ -138,3 +138,60 @@ test('重试时已经过了任务时限：按超时收尾，不再起一轮', as
   assert.match(x.result.err, /超时/);
   assert.equal(bgCalls(h).length, 1);
 });
+
+/* ---------- 等站长回答：最多挂 10 分钟（参考 Agent HUD requests.rs 的 hold_ms） ---------- */
+const loadAgent = () => { process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-batch1-import-')); return import(require('node:url').pathToFileURL(AGENT).href); };
+
+test('awaitTaskInput：到点先记下问题再交还', async () => {
+  const { awaitTaskInput, APPROVAL_HOLD_MS, INPUT_TIMEOUT_TEXT } = await loadAgent();
+  assert.equal(APPROVAL_HOLD_MS, 600000);
+  assert.match(INPUT_TIMEOUT_TEXT, /10 分钟内没有回复/);
+  let expired = 0;
+  const r = await awaitTaskInput({ id: 'a1', holdMs: 60, read: () => ({}), expire: () => { expired++; }, sleep: ms => new Promise(ok => setTimeout(ok, Math.min(ms, 10))) });
+  assert.deepEqual(r, { expired: true });
+  assert.equal(expired, 1);
+});
+
+test('awaitTaskInput：有答复就返回答复，本轮结束就返回 ended', async () => {
+  const { awaitTaskInput } = await loadAgent();
+  const sleep = () => new Promise(ok => setTimeout(ok, 5));
+  let n = 0;
+  assert.deepEqual(await awaitTaskInput({ id: 'a1', holdMs: 5000, read: () => (++n > 2 ? { approvalReplies: { a1: '删吧' } } : {}), expire: () => assert.fail('不该到点'), sleep }), { reply: '删吧' });
+  assert.deepEqual(await awaitTaskInput({ id: 'a1', holdMs: 5000, read: () => ({ ended: Date.now() }), expire: () => assert.fail('不该到点'), sleep }), { ended: true });
+});
+
+async function askingTask(h) {
+  h.hold('bg', true);
+  const n = h.locked('task_new', { kind: 'code', title: '要问', goal: '清理工程' });
+  const t = await until(() => { const x = h.task(n.task.sid); return x.status === 'running' && x.runs.length && x; }, 15000, '开工');
+  const run = t.runs.at(-1);
+  assert.equal(h.locked('task_approval', { sid: t.sid, run, id: 'a1', method: 'item/tool/requestUserInput', kind: 'input', question: '要删掉旧的 build 目录吗？' }).ok, true);
+  assert.equal(h.op('tasks', {}).bg, 1, '等回答期间算后台在忙');
+  return { sid: t.sid, run };
+}
+
+test('等回答到点：问题记成等你确认，这一轮结束后不再算后台在忙；回答后接着做', async t => {
+  const h = home(t);
+  const { sid, run } = await askingTask(h);
+  assert.equal(h.locked('task_approval_expire', { sid, run, id: 'a1' }).ok, true);
+  let x = h.task(sid);
+  assert.equal(x.status, 'running'); assert.equal(x.approval, undefined); assert.equal(x.pendingQuestion, '要删掉旧的 build 目录吗？');
+  h.hold('bg', false);
+  x = await until(() => { const v = h.task(sid); return v.status === 'waiting' && v; }, 15000, '这一轮结束后停在等你确认');
+  assert.equal(x.question, '要删掉旧的 build 目录吗？');
+  assert.equal(h.op('tasks', {}).bg, 0, '不再让云电脑醒着');
+  assert.equal(h.locked('task_tell', { sid, text: '删吧' }).ok, true);
+  await until(() => h.task(sid).status === 'done', 15000, '接着做完');
+  const last = bgCalls(h).at(-1).args;
+  assert.ok(last.includes('用户回复：删吧') && last.includes('要删掉旧的 build 目录吗？'), last.slice(-300));
+});
+
+test('到点那一刻站长回答：答案进收件箱，下一轮带上，不丢', async t => {
+  const h = home(t);
+  const { sid, run } = await askingTask(h);
+  h.locked('task_approval_expire', { sid, run, id: 'a1' });
+  assert.equal(h.locked('task_tell', { sid, text: '留着别删' }).ok, true);
+  h.hold('bg', false);
+  await until(() => bgCalls(h).length >= 2, 15000, '下一轮');
+  assert.ok(bgCalls(h)[1].args.includes('留着别删'));
+});

@@ -1011,21 +1011,32 @@ function taskMcpFlags(t) {
   }
   return flags;
 }
+/* 后台模型中途问站长（requestUserInput）：等回答期间任务算「后台在忙」，Worker 一直续租约、云电脑一直醒着。
+   照 Agent HUD（src/crates/core/src/requests.rs 的 hold_ms: 600_000）：最多挂 10 分钟，没人回就把问题记成「等你确认」，
+   让模型结束这一轮；站长之后回答走 task_tell，接着同一个会话做。 */
+export const APPROVAL_HOLD_MS = Number(process.env.XIN_APPROVAL_HOLD_MS) || 600000;
+export const INPUT_TIMEOUT_TEXT = '（用户 10 分钟内没有回复。问题已经记下，用户回复后会接着叫你。现在结束这一轮：最后一条消息写清楚做到哪了、要用户确认什么。）';
+export async function awaitTaskInput({ id, holdMs = APPROVAL_HOLD_MS, read, expire, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  const until = Date.now() + holdMs;
+  for (;;) {
+    await sleep(350);
+    const m = read();
+    if (!m || m.stopped || m.ended) return { ended: true };
+    const reply = (m.approvalReplies || {})[id];
+    if (reply) return { reply };
+    if (Date.now() >= until) { await expire(); return { expired: true }; }
+  }
+}
 async function approvalRequest(run, meta, request) {
   // File-system escalation is never granted by a background model or its prompt.
   if (request.method === 'item/permissions/requestApproval') return { permissions: {}, scope: 'turn' };
   if (request.method === 'mcpServer/elicitation/request') return { action: 'decline' };
   if (!meta.task || request.method !== 'item/tool/requestUserInput') return { decision: 'decline' };
   const id = rid('a');
-  const p = request.params || {};
+  const p = request.params || {}, answer = text => ({ answers: Object.fromEntries((p.questions || []).map(q => [q.id, { answers: [text] }])) });
   lockedCall('tasks', 'task_approval', { sid: meta.sid, run, id, method: request.method, kind: 'input', question: cut((p.questions || []).map(q => q.question).join('\n'), 450) });
-  for (;;) {
-    await new Promise(resolve => setTimeout(resolve, 350));
-    const m = readJ(metaF(run));
-    if (!m || m.stopped || m.ended) return { answers: {} };
-    const reply = (m.approvalReplies || {})[id];
-    if (reply) return { answers: Object.fromEntries((p.questions || []).map(q => [q.id, { answers: [reply] }])) };
-  }
+  const r = await awaitTaskInput({ id, read: () => readJ(metaF(run)), expire: () => lockedCall('tasks', 'task_approval_expire', { sid: meta.sid, run, id }) });
+  return r.reply ? answer(r.reply) : r.expired ? answer(INPUT_TIMEOUT_TEXT) : { answers: {} };
 }
 export function mcpFlags() {
   const st = pluginState(), have = mcpUser(), out = [];
@@ -2419,6 +2430,13 @@ const iops = {
     const t = readJ(sessF(a.sid));
     if (!isTask(t) || lastRun(t) !== a.run || !occupiesTask(t)) return { error: 'stale' };
     t.approval = { id: a.id, method: a.method, kind: a.kind }; t.status = 'waiting'; t.question = a.question; saveTask(t);
+    return { ok: true };
+  },
+  // 等回答到点：问题照 xin task ask 记下，这一轮结束前仍占名额；结束后停在「等你确认」，进程退出、租约释放
+  task_approval_expire(a) {
+    const t = readJ(sessF(a.sid));
+    if (!isTask(t) || lastRun(t) !== a.run || t.approval?.id !== a.id) return {};
+    delete t.approval; Object.assign(t, { status: 'running', pendingQuestion: t.question }); saveTask(t);
     return { ok: true };
   },
   steer_ack(a) {
