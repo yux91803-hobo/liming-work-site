@@ -568,6 +568,26 @@ export async function frontTurn(o) {
       {type:'function_call_output',call_id,output:JSON.stringify(result??{error:'没有查询结果'})});
     return lookedUp;
   };
+  const textOf = data => (data?.output || []).filter(x => x.type === 'message').flatMap(x => x.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('\n').trim();
+  // 工作已经交出去以后要一句回兄弟的话：带上回执，tool_choice none；失败、超时、又想调工具都只是要不到这句话
+  const ownWords = async (payload, calls, i, call, result) => {
+    try {
+      input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify({ok:true,title:result.task.title,status:result.task.status})});
+      for (const c of calls.slice(i + 1)) input.push({type:'function_call_output',call_id:c.call_id,output:JSON.stringify({skipped:true})});
+      input.push({role:'user',content:'已经交出去了。用你自己的话简短回兄弟一句，别套固定说法，别提编号、模型和分身；不要再调用工具。'});
+      const req = {...payload, input, tool_choice:'none'};
+      let data;
+      if (o.request) data = await o.request(req, abort.signal);
+      else {
+        const response = await (o.fetch||fetch)(o.baseURL.replace(/\/$/,'')+'/responses',{method:'POST',signal:abort.signal,headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},body:JSON.stringify(req)});
+        if (!response.ok) return '';
+        data = await response.json();
+      }
+      o.usage?.(data.usage);
+      const text = textOf(data);
+      return text && !claimsLookup(text) ? text.slice(0, 2000) : '';
+    } catch { return ''; }
+  };
   try {
     // Factual daily questions always use a fresh, real read before the first model answer.
     if(o.lookupBeforeAnswer&&!await lookup())return '我还没查到可靠的当天记录，暂时不能确认。';
@@ -619,7 +639,14 @@ export async function frontTurn(o) {
           : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop、xin remember/forget/recall 和小芯自己的表情、好感度、开场白、动作。'};
         o.trace?.(call.name, args, result);
         if(call.name==='xin'&&isLookup(args?.argv)&&result&&!result.error)lookedUp=true;
-        if (result.terminal) return result.text;
+        if (result.terminal) {
+          // 派活、转达、停下之后用它自己的话回兄弟，不套「好，我这就去弄」（站长 2026-11-11）：
+          // 同一条回复里写了话就用；没写就再要一句，不许再调工具；要不到才用控制器的那句。
+          if (o.handoff || !result.task || !result.text) return result.text;
+          if (said && !claimsLookup(said)) return said.trim().slice(0, 2000);
+          const own = await ownWords(payload, calls, i, call, result);
+          return own || result.text;
+        }
         input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)});
       }
     }

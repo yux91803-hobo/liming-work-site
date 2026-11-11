@@ -71,7 +71,9 @@ export function memoryBlockedText(text, at=Date.now()) {
   return false;
 }
 
-export const memoryPreferences=()=>({followups:memoryMeta('preferences',{}).followups!==false,learning:memoryMeta('preferences',{}).learning!==false});
+// 学习记录、主动跟进（下次见面的开场白）：站长 2026-11-11 说小芯不是专门为学习做的，这两项不要。网页上不再有开关，默认关；
+// 代码和已存数据都留着，只有明确设成 true 才会再开。
+export const memoryPreferences=()=>({followups:memoryMeta('preferences',{}).followups===true,learning:memoryMeta('preferences',{}).learning===true});
 export function setMemoryPreferences(changes) {
   const keys=['followups','learning'].filter(k=>Object.hasOwn(changes||{},k));
   if(!keys.length||keys.some(k=>typeof changes[k]!=='boolean'))return {error:'bad_setting',msg:'开关值不对'};

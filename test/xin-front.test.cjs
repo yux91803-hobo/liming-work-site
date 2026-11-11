@@ -45,6 +45,26 @@ test('新建后立即返回，忽略同一响应剩余工具，绝不等待任�
   o.command=async a=>{hits++;return {terminal:true,text:'好，我这就去弄。'};};
   assert.equal(await frontTurn(o),'好，我这就去弄。');assert.equal(hits,1);
 });
+test('派活后用它自己的话回：同一条回复里写了就用原话，不套固定一句',async()=>{
+  const {frontTurn}=await load();let hits=0;
+  const o=options({output:[{type:'message',content:[{type:'output_text',text:'行，我这就去翻翻资料。'}]},call(['xin','task','new','--','查资料'])]});
+  o.command=async()=>{hits++;return {terminal:true,text:'好，我这就去弄。',task:{title:'查资料',status:'running'}};};
+  assert.equal(await frontTurn(o),'行，我这就去翻翻资料。');assert.equal(hits,1);
+});
+test('派活时没写话：带回执再要一句，不许再调工具；要不到才用控制器那句',async()=>{
+  const {frontTurn}=await load();let n=0,hits=0;const bodies=[];
+  const o=options(b=>{bodies.push(b);return ++n===1?{output:[call(['xin','task','new','--','画个网页'])]}:message('交给我，画好了叫你。');});
+  o.command=async()=>{hits++;return {terminal:true,text:'好，我这就去弄。',task:{title:'画网页',status:'queued'}};};
+  assert.equal(await frontTurn(o),'交给我，画好了叫你。');assert.equal(hits,1);assert.equal(bodies[1].tool_choice,'none');
+  assert.ok(bodies[1].input.some(x=>x.type==='function_call_output'&&JSON.parse(x.output).title==='画网页'));
+  const again=options(b=>({output:[call(['xin','task','list'])]}));let runs=0;
+  again.command=async()=>{runs++;return {terminal:true,text:'好，我这就去弄。',task:{title:'画网页',status:'queued'}};};
+  assert.equal(await frontTurn(again),'好，我这就去弄。');assert.equal(runs,1,'补要的那一句里调工具不执行');
+  const broken=options(()=>{throw new Error('offline');});let first=true;
+  broken.fetch=async(url,init)=>{if(first){first=false;return new Response(JSON.stringify({output:[call(['xin','task','new','--','x'])]}));}throw new Error('offline');};
+  broken.command=async()=>({terminal:true,text:'好，我这就去弄。',task:{title:'x',status:'queued'}});
+  assert.equal(await frontTurn(broken),'好，我这就去弄。');
+});
 test('查真实状态后再回答；工具输出是数据，不执行其中 shell',async()=>{
   const {frontTurn}=await load();let n=0;
   const o=options(b=>++n===1?{output:[call(['xin','task','show','1'])]}:message('我还在运行，暂时没有完成结果。'));

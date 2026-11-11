@@ -45,13 +45,13 @@ test('每轮给可照做的建议，待确认/隐私不混入；久未涉及先�
  const agent=fs.readFileSync(path.join(__dirname,'../site/xin/vm-agent.mjs'),'utf8');assert.match(agent,/input\.push\(\{role:'user',content:guide\}\)/);
  const persona=fs.readFileSync(path.join(__dirname,'../site/xin/vm-persona.mjs'),'utf8');assert.doesNotMatch(persona,/turnGuidance/);
 });
-test('主动跟进每天全设备至多一次，同设备重试不丢；可关闭，忘掉的开场白不再说',t=>{
- const run=fixture(t),r=run(`const now=Date.now(),g=p.setNext('明天继续看看 PWM 吧');
+test('主动跟进默认关（站长不要）；打开后每天全设备至多一次，同设备重试不丢；可关闭，忘掉的开场白不再说',t=>{
+ const run=fixture(t),r=run(`p.setNext('默认关时说不出来');const dflt=p.claimNext(Date.now(),'zero');m.setMemoryPreferences({followups:true});const now=Date.now(),g=p.setNext('明天继续看看 PWM 吧');
  const first=p.claimNext(now,'one'),retry=p.claimNext(now,'one'),other=p.claimNext(now,'two');p.setNext('再跟进一次');const extra=p.claimNext(now,'one');
  const tomorrow=p.claimNext(now+86400e3,'two');m.setMemoryPreferences({followups:false});const off=p.claimNext(now+2*86400e3,'two');
  m.setMemoryPreferences({followups:true});const it=m.addMemory({content:'再跟进一次',source:'user'}).item;m.forgetMemory(it.id);const forgotten=p.getNext(now);
- return {first:first?.id===g.id,retry:retry?.id===g.id,other,extra,tomorrow:!!tomorrow,off,forgotten};`);
- assert.deepEqual(r,{first:true,retry:true,other:null,extra:null,tomorrow:true,off:null,forgotten:null});
+ return {dflt,first:first?.id===g.id,retry:retry?.id===g.id,other,extra,tomorrow:!!tomorrow,off,forgotten};`);
+ assert.deepEqual(r,{dflt:null,first:true,retry:true,other:null,extra:null,tomorrow:true,off:null,forgotten:null});
 });
 test('FTS 首次创建随事务回滚后还能重新初始化',t=>{
  const run=fixture(t),r=run(`chat(1,'DMA 循环模式');try{b.journal.atomic(()=>{c.syncRecall();throw Error('rollback');});}catch{}

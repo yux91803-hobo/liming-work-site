@@ -517,20 +517,23 @@ test('wrangler：正式站有两个定时任务，测试站一个都没有', () 
   assert.match(stg, /"triggers":\s*\{\s*"crons":\s*\[\]\s*\}/);
 });
 
-test('开场白：xin next 写一句，3 天内有效；设定里教了 xin next 和每日任务清单', async () => {
+test('开场白：xin next 写一句，3 天内有效（主动跟进默认关，打开才说）；设定里不再教 xin next，每日任务清单照旧', async () => {
   const { setNext, getNext, systemPrompt, dailyPrompt, DAILY_FILE } = await load('../site/xin/vm-agent.mjs');
   assert.strictEqual(setNext('  '), null);
   const g = setNext('今天签到好啦\n连签 10 天');
   assert.strictEqual(g.text, '今天签到好啦 连签 10 天');
+  assert.strictEqual(getNext(), null, '主动跟进默认关（站长 2026-11-11 不要），开场白不说');
+  const { setMemoryPreferences } = await load('../site/xin/vm-memory.mjs');
+  setMemoryPreferences({ followups: true });
   assert.deepStrictEqual(getNext(), g);
   assert.strictEqual(getNext(Date.now() + 4 * 86400e3), null);
   const p = systemPrompt('');
-  assert.ok(p.includes('xin next') && p.includes(DAILY_FILE()) && p.includes('别自己用 cron'));
+  assert.ok(!p.includes('xin next') && p.includes(DAILY_FILE()) && p.includes('别自己用 cron'));
   const d = dailyPrompt('- 网关签到');
-  assert.ok(d.includes('<<<每日任务\n- 网关签到\n每日任务>>>') && d.includes('xin next') && d.includes('别问问题'));
+  assert.ok(d.includes('<<<每日任务\n- 网关签到\n每日任务>>>') && !d.includes('xin next') && d.includes('别问问题'));
 });
 
-test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做完；记下今天做过，再叫就跳过；开场白取得到', async () => {
+test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做完；记下今天做过，再叫就跳过；开场白默认不说，打开主动跟进才取得到', async () => {
   const { execFileSync } = require('node:child_process');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-daily-')), bin = path.join(home, 'fakebin');
@@ -563,6 +566,8 @@ test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做�
   assert.strictEqual(p.events[3].ok, true);
   assert.strictEqual(op('daily').skipped, 'done');
   assert.strictEqual(op('daily_get').done.run, r.run);
+  assert.strictEqual(op('greet').text, undefined, '主动跟进默认关：每日任务留的开场白不说');
+  op('memory_preferences_set', { followups: true });
   assert.strictEqual(op('greet').text, '今天签到好啦');
   const sess = op('tasks', { all: true }).tasks.find(s => s.sid === r.sid);
   assert.match(sess.title, /^每日任务 · \d\d-\d\d$/);
@@ -1056,7 +1061,7 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   const front = await until(() => { const p = op('poll', { run: r.run, off: 0 }); return p.done && p; }, 15000, '前台这一轮');
   const card = front.events.find(e => e.t === 'task');
   assert.ok(card && card.no === 1 && card.title === '编译 LED' && card.kind === 'code' && card.model === 'glm-5.3', JSON.stringify(front.events));
-  assert.deepStrictEqual(front.events.filter(e => e.t === 'text').map(e => e.text), ['好，我这就去弄。']);
+  assert.deepStrictEqual(front.events.filter(e => e.t === 'text').map(e => e.text), ['好的'], '派活后用模型自己的话，不套固定一句');
   assert.ok(!fs.existsSync(path.join(fc.log,'xin-out')), '前台不执行 shell');
   const done = await until(() => { const d = op('tasks', { sid: r.sid }); return d.tasks[0] && d.tasks[0].status === 'done' && d.tasks[0].delivery?.state==='delivered' && d; }, 15000, '任务做完并自动交付');
   const t = done.tasks[0];
@@ -1914,12 +1919,12 @@ test('记事本超过上限：保留开头和最新的记录，只省略中间',
   assert.ok(systemPrompt(lines.join('\n')).includes('第 999 条记录'));
 });
 
-test('默认模式前台：只留必要规则，不规定语气和性格（不带会变的分数，保持缓存），表情、开场白仍是可用工具；好感度不再出现，记忆自己打理', async () => {
+test('默认模式前台：只留必要规则，不规定语气和性格（不带会变的分数，保持缓存），表情仍是可用工具；好感度、开场白不再出现，记忆自己打理', async () => {
   const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
   const p = systemPrompt('', { tasks: true });
   assert.ok(p.includes('兄弟') && p.includes('北京时间') && p.includes('原话照传') && p.includes('明确同意') && p.includes('我查了') && p.includes('密钥'));
   assert.ok(!p.includes('你和用户现在的关系') && !p.includes('亲近程度') && !p.includes('简短回答'));
   assert.ok(!/好感度 \d/.test(p));
-  assert.ok(!p.includes('"bond"') && p.includes('["xin","next","一句话"]') && p.includes('["xin","dance"]'));
+  assert.ok(!p.includes('"bond"') && !p.includes('["xin","next"') && p.includes('["xin","dance"]'));
   assert.ok(p.includes('"--quote"') && p.includes('由你自己打理') && !p.includes('待兄弟确认'));
 });
