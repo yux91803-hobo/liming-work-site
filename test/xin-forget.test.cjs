@@ -1,5 +1,6 @@
 // 删对话时连它在状态库之外留下的东西一起删（审查问题 5）；别的对话的不动。每日清理只删过期的写回备份和推送条目。
 const test = require('node:test');
+const { platformTimeout } = require('./helpers/timeout.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -16,7 +17,7 @@ function home(t) {
   const env = { ...process.env, TMPDIR: tmp, XIN_HOME: xin, XIN_WORK: path.join(dir, 'work'), XIN_DSH: path.join(dir, 'no-dsh'), XIN_FRONT_PROVIDER: 'deepseek',
     XIN_AGY_HOME: dir, XIN_ANTIGRAVITY_BIN: '', CODEX_HOME: path.join(dir, 'codex'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), PATH: bin + ':' + process.env.PATH };
   const op = (name, args = {}) => { const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
-  const settle = run => { for (let i = 0; i < 200; i++) { if (op('poll', { run, off: 0 }).done) return; spawnSync('sleep', ['0.1']); } assert.fail('这一轮没有结束'); };
+  const settle = run => { for (const end = Date.now() + platformTimeout(20000); Date.now() < end;) { if (op('poll', { run, off: 0 }).done) return; spawnSync('sleep', ['0.1']); } assert.fail('这一轮没有结束'); };
   t.after(() => stopOwned(xin, dir));
   const put = (p, v) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, typeof v === 'string' ? v : JSON.stringify(v)); return p; };
   return { xin, tmp, op, settle, put };

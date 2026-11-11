@@ -42,6 +42,21 @@ async def tool_frame(pg):
         await pg.wait_for_timeout(100)
     raise RuntimeError('stm32 iframe not ready')
 
+async def wait_panel(pg, cond):
+    """等学习台面板的层数和历史记录到位；超时时把现场带进报错（层数、history.state、历史条数、路由、目录和搜索是否开着），
+    像 Playwright 建议的那样保留 CI 失败现场，而不是加长等待（站长 2026-11-11：CI 上偶发卡在「快速收目录后搜索」）。"""
+    try:
+        await pg.wait_for_function(cond)
+    except Exception as e:
+        try:
+            state = await pg.evaluate("""() => { const p = document.querySelector('.panel.show'); const fr = p && p.querySelector('iframe');
+              let inner = {}; try { const d = fr.contentDocument, a = fr.contentWindow.STM.app; inner = {route: a.route(), drawer: d.documentElement.classList.contains('drawer'),
+                search: !!d.querySelector('.search'), sheet: !!d.querySelector('.sheet.on')}; } catch (err) { inner = {error: String(err)}; }
+              return {depth: p && p._depth, pending: !!(p && p._pendingBack), state: history.state, length: history.length, url: location.pathname + location.search, inner}; }""")
+        except Exception as err:
+            state = {'evaluate': str(err)}
+        raise RuntimeError('panel wait timed out: ' + cond + ' :: ' + json.dumps(state, ensure_ascii=False)) from e
+
 async def wait_img(f, timeout=10000):
     await f.wait_for_function("(() => { const i = document.querySelector('.viewer.on .zoom-content img'); return i && i.naturalWidth > 0; })()", timeout=timeout)
 
@@ -372,36 +387,36 @@ async def stm32_operation_regressions(b):
     for w in [390, 768]:
         pg = await page(b, w, 844, mobile=True)
         await pg.goto(BASE + '/stm32?v=topic&t=usart'); f = await tool_frame(pg)
-        await pg.wait_for_function('document.querySelector(".panel.show")?._depth === 1')
+        await wait_panel(pg, 'document.querySelector(".panel.show")?._depth === 1')
         for native in [False, True]:
             await f.locator('.bar-menu').click()
-            await pg.wait_for_function('document.querySelector(".panel.show")?._depth === 2')
+            await wait_panel(pg, 'document.querySelector(".panel.show")?._depth === 2')
             await pg.go_back() if native else await pg.locator('.panel.show .back').click()
             await f.wait_for_function('!document.documentElement.classList.contains("drawer")')
-            await pg.wait_for_function('document.querySelector(".panel.show")?._depth === 1 && history.state?.sub')
+            await wait_panel(pg, 'document.querySelector(".panel.show")?._depth === 1 && history.state?.sub')
             check(f'{w}：' + ('浏览器返回' if native else '工具箱返回') + '先收目录，留在 USART 外设页', await f.evaluate('STM.app.route().t === "usart"'))
         await pg.go_back(); await f.wait_for_selector('.boardh')
-        await pg.wait_for_function('document.querySelector(".panel.show")?._depth === 0 && !history.state?.sub')
+        await wait_panel(pg, 'document.querySelector(".panel.show")?._depth === 0 && !history.state?.sub')
         await f.locator('.bar-menu').click()
-        await pg.wait_for_function('document.querySelector(".panel.show")?._depth === 1')
+        await wait_panel(pg, 'document.querySelector(".panel.show")?._depth === 1')
         await pg.go_back(); await f.wait_for_function('!document.documentElement.classList.contains("drawer")')
         check(f'{w}：首页目录返回只收目录，学习台保持打开', await f.evaluate('STM.app.route().v === "home"') and await pg.locator('.panel.show').count() == 1)
-        await pg.wait_for_function('document.querySelector(".panel.show")?._depth === 0 && !history.state?.sub')
+        await wait_panel(pg, 'document.querySelector(".panel.show")?._depth === 0 && !history.state?.sub')
         await f.locator('.bar-menu').click(); await f.evaluate('STM.app.openSearch()')
-        await pg.wait_for_function('document.querySelector(".panel.show")?._depth === 2')
+        await wait_panel(pg, 'document.querySelector(".panel.show")?._depth === 2')
         await pg.go_back(); await f.wait_for_function('!document.querySelector(".search")')
         first = await f.evaluate('document.documentElement.classList.contains("drawer") && STM.app.route().v === "home"')
-        await pg.wait_for_function('document.querySelector(".panel.show")?._depth === 1 && history.state?.sub')
+        await wait_panel(pg, 'document.querySelector(".panel.show")?._depth === 1 && history.state?.sub')
         await pg.go_back(); await f.wait_for_function('!document.documentElement.classList.contains("drawer")')
         check(f'{w}：目录上搜索，返回依次关搜索、收目录，页面不退', first and await pg.locator('.panel.show').count() == 1)
-        await pg.wait_for_function('document.querySelector(".panel.show")?._depth === 0 && !history.state?.sub')
+        await wait_panel(pg, 'document.querySelector(".panel.show")?._depth === 0 && !history.state?.sub')
         await f.locator('.bar-menu').click(); await f.locator('.scrim').click(position={'x': w - 16, 'y': 80})
         await f.evaluate('STM.app.openSearch()')
         await f.locator('.search-in').fill('USART_BRR'); await f.wait_for_selector('.search-it')
         await pg.keyboard.press('Enter'); await f.wait_for_selector('.sheet.on')
-        await pg.wait_for_function('document.querySelector(".panel.show")?._depth > 0 && history.state?.sub')
+        await wait_panel(pg, 'document.querySelector(".panel.show")?._depth > 0 && history.state?.sub')
         await pg.go_back(); await f.wait_for_function('!STM.app.route().reg')
-        await pg.wait_for_function('document.querySelector(".panel.show")?._depth === 0 && !history.state?.sub')
+        await wait_panel(pg, 'document.querySelector(".panel.show")?._depth === 0 && !history.state?.sub')
         check(f'{w}：快速收目录后搜索，返回仍只关寄存器且没有多余历史', await f.evaluate('STM.app.route().v === "home"') and await pg.locator('.panel.show').count() == 1)
         await pg.locator('.panel.show .back').click()
         await pg.wait_for_function('!document.body.classList.contains("tool-open")')

@@ -1,5 +1,6 @@
 // 临时配置、假的 CLI；不读取或清理开发机的真实 AI 会话。
 const test = require('node:test');
+const { platformTimeout } = require('./helpers/timeout.cjs');
 const { stopOwned } = require('./helpers/stop-owned.cjs');
 process.env.XIN_CODEX_TRANSPORT = 'exec';
 const assert = require('node:assert/strict');
@@ -105,7 +106,7 @@ function fixture(t, extra = {}) {
   });
   const wait = async run => {
     const log = path.join(env.XIN_HOME, 'runs', run + '.jsonl'), meta = path.join(env.XIN_HOME, 'runs', run + '.json');
-    for (let i = 0; i < 400; i++) {
+    for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) {
       let events = [], ended = false;
       try { events = fs.readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l)); ended = !!JSON.parse(fs.readFileSync(meta, 'utf8')).ended; } catch { /* 正在写 */ }
       if (ended && events.some(e => e.t === 'done')) return events;
