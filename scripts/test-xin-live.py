@@ -7,7 +7,7 @@ import json
 import os
 import time
 import uuid
-from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke
+from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape
 from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
@@ -151,8 +151,9 @@ async def main():
             await page.locator('.xc-row textarea').fill('只回复 ' + reply_marker + '，不要执行命令，也不要等待后台。')
             await page.locator('.xc-send').click()
             await settle('!LimingXinChat.state.run && !LimingXinChat.state.sending', 180000)
-            if not any(reply_marker in text for text in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()):
-                raise RuntimeError('Foreground reply missing: ' + await front_diagnosis(sid))
+            shown = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()
+            if not any(reply_marker in text for text in shown):
+                raise RuntimeError('Foreground reply missing: ' + await front_diagnosis(sid) + ' shape=' + json.dumps(reply_shape(shown, reply_marker)))
             print('PASS foreground real-model reply during background work', flush=True)
             # Only pixels contain the random answer; neither the prompt nor the filename reveals it.
             visual_token = 'READ-' + uuid.uuid4().hex[:10].upper()
@@ -276,7 +277,8 @@ async def main():
                         + ' typing=' + str(await page.locator('.xc-ai.xc-typing').count())
                         + ' events=' + ','.join(k + ':' + str(kinds[k]) for k in sorted(kinds))
                         + ' doneOk=' + str(bool(done and done[-1].get('ok')))
-                        + ' savedAssistantHasMarker=' + str(bool(assistant_has_marker)))
+                        + ' savedAssistantHasMarker=' + str(bool(assistant_has_marker))
+                        + ' shape=' + json.dumps(reply_shape(bubbles, second_marker, first_marker)))
                 limit=time.monotonic()+120
                 while True:
                     old=await call('history',{'sid':sid})

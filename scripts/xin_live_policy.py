@@ -36,3 +36,16 @@ SMOKE_TITLES = ('这是发布后的真实联调，使用默认后台安排，', 
 def is_leftover_smoke(session):
     """Only the owner's non-main conversations whose title is one of this script's own opening lines."""
     return isinstance(session, dict) and not session.get('main') and str(session.get('title') or '').startswith(SMOKE_TITLES)
+
+
+def reply_shape(texts, marker, other=None):
+    """Shape of the visible replies when the expected marker is missing, without printing any reply or marker.
+    Tells apart: an empty or long answer, a marker with altered dashes, the hex part alone, an echo of the other marker."""
+    texts = [str(t or '') for t in (texts or [])]
+    last = texts[-1] if texts else ''
+    tail = marker.rsplit('-', 1)[-1]
+    prefix = marker[:marker.rfind('-') + 1] if '-' in marker else marker
+    dashes = '‐‑‒–—―−－'
+    return {'replies': len(texts), 'chars': len(last), 'lines': len(last.splitlines()) if last else 0, 'ascii': last.isascii(),
+            'marker': marker in last, 'hex': tail in last, 'prefix': prefix in last, 'otherMarker': bool(other) and other in last,
+            'oddDash': any(d in last for d in dashes), 'anyReplyHasMarker': any(marker in t for t in texts)}
