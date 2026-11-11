@@ -1471,9 +1471,15 @@ function startTask(t, all) {
     if(rt.error){t.status='waiting';t.question=rt.note;t.endedAt=Date.now();t.frontSeen=false;saveTask(t);return false;}
     t.model = rt.model; t.fallbacks = t.strictModel?[]:rt.fallbacks; t.why = rt.why;
   }
+  // 项目副本和任务自己的会话都在系统临时目录里；电脑重启后它们可能已经没了（审查问题 16）。
+  // 这时副本会按原项目重新拷一份，旧会话也续接不上：不再续接，开新会话，并把原要求和现状说清楚，而不是直接算没做成。
+  const lost = !first && !t.dailyDate && !!t.workspace && !fs.existsSync(t.workspace.work);
   try { if (!t.dailyDate) t.workspace = runtime.prepareWorkspace(t, BASE); }
   catch (e) { failTask(t, '没有启动任务：' + e.message); return false; }
-  const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps) : forAgent(t.next || '接着做。', '');
+  if (lost) { t.agentSid = null; t.started = false; delete t.antigravityConversation; }
+  const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps)
+    : lost ? forAgent('电脑重启过，上一轮的项目副本和过程记录都没了，现在的目录是按原项目重新拷贝的。原来的要求：\n' + cut(t.goal || '', 10000) + '\n先看看现在的文件，再接着做' + (t.next ? '：' + t.next : '。'), '')
+    : forAgent(t.next || '接着做。', '');
   const userText = first ? t.goal : String(t.nextShow || t.next || '接着做');
   const cm = codexModel(t.model);
   Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, startedAt: t.startedAt || Date.now() });

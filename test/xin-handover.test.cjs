@@ -60,3 +60,25 @@ test('记录里的路径不像控制器入口（别的目录、别的名字）�
     assert.ok(!fs.existsSync(marker));
   }
 });
+
+// 审查问题 16：任务的项目副本和会话在系统临时目录里，电脑重启后可能没了。接着做时不再续接已经不存在的旧会话。
+test('接着做一个中途断了的任务、副本已经不在了：重新拷贝原项目，开新会话，并说明原要求和现状', t => {
+  const { dir, xin, env } = setup(t);
+  const project = path.join(dir, 'work', 'blink'); fs.mkdirSync(project, { recursive: true }); fs.writeFileSync(path.join(project, 'main.c'), 'int main(){}');
+  fs.mkdirSync(path.join(xin, 'sessions'), { recursive: true }); fs.mkdirSync(path.join(xin, 'runs'), { recursive: true });
+  const old = 'roldturn0001', gone = path.join(dir, 'tmp-wiped', 'xin-task-staskreboot1');
+  fs.writeFileSync(path.join(xin, 'runs', old + '.json'), JSON.stringify({ run: old, sid: 'staskreboot1', agent: 'codex', task: true, started: 1, ended: 2, code: 1 }));
+  fs.writeFileSync(path.join(xin, 'runs', old + '.jsonl'), JSON.stringify({ t: 'done', ok: false }) + '\n');
+  fs.writeFileSync(path.join(xin, 'sessions', 'staskreboot1.json'), JSON.stringify({ sid: 'staskreboot1', kind: 'task', agent: 'codex', parent: 'sparent0001', no: 1, title: '点灯', tkind: 'code',
+    goal: '把 PA0 的灯点亮', dir: project, status: 'queued', runs: [old], created: 1, model: 'glm-5.3', why: 'code', fallbacks: [], after: [],
+    next: '刚才电脑暂停或重启，这一轮中途断了', agentSid: '019a0000-0000-7000-8000-000000000000', started: true,
+    workspace: { work: path.join(gone, 'work'), io: path.join(gone, 'io'), home: path.join(gone, 'home'), tmp: path.join(gone, 'tmp'), manifest: path.join(xin, 'workspaces', 'staskreboot1.json') } }));
+  const r = spawnSync(process.execPath, [path.join(dir, 'agent', 'vm-agent.mjs'), 'tasks'], { env: { ...env, XIN_TASK_SANDBOX: '0' }, input: JSON.stringify({ all: true }), encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const task = JSON.parse(fs.readFileSync(path.join(xin, 'sessions', 'staskreboot1.json'), 'utf8'));
+  assert.equal(task.runs.length, 2, JSON.stringify(task.status));
+  const meta = JSON.parse(fs.readFileSync(path.join(xin, 'runs', task.runs[1] + '.json'), 'utf8'));
+  assert.match(meta.text, /电脑重启过/); assert.match(meta.text, /把 PA0 的灯点亮/); assert.match(meta.text, /这一轮中途断了/);
+  assert.equal(task.agentSid ?? null, null, '不再续接旧会话');
+  assert.ok(fs.existsSync(path.join(task.workspace.work, 'main.c')), '按原项目重新拷了副本');
+});
