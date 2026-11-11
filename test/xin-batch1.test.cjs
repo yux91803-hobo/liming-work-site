@@ -25,7 +25,8 @@ function fakeCodex(dir) {
     'printf \'{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-%012d"}\\n\' $n',
     'echo \'{"type":"turn.started"}\'',
     'case "$*" in',
-    '  *到点做每日任务了*) while [ -f "$L/hold-daily" ]; do sleep 0.1; done;;',
+    '  *到点做每日任务了*) while [ -f "$L/hold-daily" ]; do sleep 0.1; done',
+    '    if [ -f "$L/daily-fail" ]; then echo \'{"type":"item.completed","item":{"id":"c1","type":"command_execution","command":"curl","aggregated_output":"","exit_code":0,"status":"completed"}}\'; echo \'{"type":"turn.failed","error":{"message":"stream disconnected before completion"}}\'; exit 1; fi;;',
     '  *【你现在在后台】*)',
     '    while [ -f "$L/hold-bg" ]; do sleep 0.1; done',
     '    exec 9>"$L/script.lock"; flock 9',
@@ -246,4 +247,15 @@ test('不带 pos 的旧请求照常按条数读', async t => {
   p.add([{ t: 'text', text: '甲' }, { t: 'text', text: '乙' }]);
   const r = h.op('poll', { run: p.run, off: 1 });
   assert.deepEqual(r.events.map(e => e.text), ['乙']); assert.equal(r.off, 2);
+});
+
+test('每日任务重试时过了时限：按超时收尾，并记下今天的每日任务没做成', async t => {
+  const h = home(t, { XIN_RETRY_DELAYS_MS: '3000', XIN_TASK_TIMEOUT_MS: '1500' });
+  h.op('daily_set', { text: '- 网关签到' });
+  fs.writeFileSync(path.join(h.fc.log, 'daily-fail'), '');
+  const d = h.op('daily', {});
+  const x = await until(() => { const v = h.task(d.sid); return v.status === 'failed' && v; }, 30000, '按超时失败');
+  assert.match(x.result.err, /超时/);
+  const last = h.op('daily_get', {}).last;
+  assert.equal(last.sid, d.sid); assert.equal(last.ok, false, JSON.stringify(last));
 });

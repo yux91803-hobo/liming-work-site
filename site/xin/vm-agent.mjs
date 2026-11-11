@@ -1540,6 +1540,8 @@ function startTask(t, all) {
 }
 function failTask(t, why, err = '') {
   Object.assign(t, { status: 'failed', result: { ok: false, text: why, err, at: Date.now() }, endedAt: Date.now(), frontSeen: false });
+  // 每日任务在调度时就失败（比如重试时已过时限）也要记下今天没做成，不然「最近一次」一直显示进行中
+  if (t.dailyDate) dailyDone(lastRun(t), { sid: t.sid, dailyDate: t.dailyDate }, false);
   saveTask(t);
 }
 // 排队的能开始就开始（在 tasks 锁里）

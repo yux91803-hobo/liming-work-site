@@ -213,15 +213,18 @@ export function publishWorkspace(t, controller, approved = false) {
     }
     for (const name of plan.deleted) { fs.unlinkSync(path.join(plan.original, name)); step(name); }
   } catch (e) {
+    const failed = [];
     for (const name of done) {
       const dst = path.join(plan.original, name), saved = path.join(backup, name);
       try {
+        if (process.env.XIN_TEST_RESTORE_FAIL === name) throw new Error('测试：模拟还原失败');
         if (fs.existsSync(saved)) { mkdir(path.dirname(dst)); const tmp = dst + '.xin-restore-' + process.pid; fs.copyFileSync(saved, tmp); fs.renameSync(tmp, dst); }
         else fs.rmSync(dst, { force: true });
-      } catch { /* 还原不了的留在备份目录里，publish.json 记着清单 */ }
+      } catch { failed.push(name); }   // 磁盘满时还原也可能失败：如实说，备份目录和 publish.json 留着清单
     }
-    record('rolled_back');
-    throw new Error('写回中途失败，原项目已还原：' + e.message);
+    try { record(failed.length ? 'rollback_incomplete' : 'rolled_back'); } catch { /* 记不下来也要把真实情况告诉调用方 */ }
+    throw new Error(failed.length ? '写回中途失败，有 ' + failed.length + ' 个文件没能还原（' + failed.slice(0, 10).join('、') + '），写回前的备份在 ' + backup + '：' + e.message
+      : '写回中途失败，原项目已还原：' + e.message);
   }
   record('done');
   return { ok: true, files: plan.changes.length, deleted: plan.deleted.length, backup };

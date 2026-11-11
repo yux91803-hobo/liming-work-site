@@ -679,3 +679,18 @@ test('写回一半后被杀：再收尾时已写回的源码改动照样算 STM3
   assert.equal(v.error, undefined, v.error);
   assert.equal(v.applicable, true);
 });
+
+test('写回失败而且有文件没能还原：如实说哪些没还原、备份在哪，不说已还原', async t => {
+  const f = fixture(t), r = await load();
+  for (const [n, v] of [['a.c', 'A0'], ['b.c', 'B0']]) fs.writeFileSync(path.join(f.task.dir, n), v);
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  fs.writeFileSync(path.join(f.task.workspace.work, 'a.c'), 'A1'); fs.writeFileSync(path.join(f.task.workspace.work, 'b.c'), 'B1');
+  process.env.XIN_TEST_PUBLISH_FAIL_AFTER = '2'; process.env.XIN_TEST_RESTORE_FAIL = 'b.c';
+  t.after(() => { delete process.env.XIN_TEST_PUBLISH_FAIL_AFTER; delete process.env.XIN_TEST_RESTORE_FAIL; });
+  let msg = '';
+  try { r.publishWorkspace(f.task, f.control, true); } catch (e) { msg = e.message; }
+  assert.match(msg, /写回中途失败/); assert.doesNotMatch(msg, /已还原/); assert.match(msg, /b\.c/); assert.match(msg, /backups/);
+  assert.equal(fs.readFileSync(path.join(f.task.dir, 'a.c'), 'utf8'), 'A0', '能还原的照样还原');
+  const backups = fs.readdirSync(path.join(f.control, 'backups'));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.control, 'backups', backups.at(-1), 'publish.json'), 'utf8')).state, 'rollback_incomplete');
+});
