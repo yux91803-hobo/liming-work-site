@@ -64,6 +64,15 @@ async def main():
                     await asyncio.sleep(min(15, max(2, d.get('retryAfter', 3))))
                     continue
                 raise RuntimeError('Production call failed: ' + op + ' HTTP ' + str(response.status) + ' state=' + str(d.get('state', d.get('data', {}).get('error', 'unknown'))))
+        async def front_diagnosis(sid):
+            # Cleanup deletes the conversation and its front log entries, so read the last turn's diagnosis first.
+            # The controller's diagnosis has only event kinds, byte counts and error categories: no text, no markers.
+            try:
+                d = ((await call('history', {'sid': sid, 'diagnose': True})).get('runs') or [{}])[-1].get('diagnostics') or {}
+                return json.dumps({'events': [e.get('t', '?') + (':' + e['errorType'] if e.get('errorType') else '') for e in d.get('events', [])],
+                                   'traces': [str(t.get('outcome')) + ':' + str(t.get('errorType')) for t in d.get('traces', [])]})
+            except Exception:
+                return 'diagnosis unavailable'
         async def check_front(done):
             quota = (await call('tasks', {'all': True})).get('frontAntigravity') if done.get('model') == 'deepseek-v4.1-flash' else None
             return validate_front_model(done, quota, time.time() * 1000)
@@ -119,7 +128,7 @@ async def main():
             await page.locator('.xc-send').click()
             await settle('!LimingXinChat.state.run && !LimingXinChat.state.sending', 180000)
             if not any(reply_marker in text for text in await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()):
-                raise RuntimeError('Foreground reply missing')
+                raise RuntimeError('Foreground reply missing: ' + await front_diagnosis(sid))
             print('PASS foreground real-model reply during background work', flush=True)
             # Only pixels contain the random answer; neither the prompt nor the filename reveals it.
             visual_token = 'READ-' + uuid.uuid4().hex[:10].upper()

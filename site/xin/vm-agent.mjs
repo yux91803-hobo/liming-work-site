@@ -441,7 +441,7 @@ export function frontLog(entry) {
   } catch { /* diagnostics never break a turn */ }
 }
 export function frontDiagnostics(meta,events,logs=[]){
-  const kind=s=>/sqlite|database.*lock/i.test(s)?'database':/abort|cancel/i.test(s)?'cancelled':/time.?out|超时/i.test(s)?'timeout':/fetch|HTTP|network|网关|gateway|socket/i.test(s)?'gateway':s?'controller':null;
+  const kind=s=>/sqlite|database.*lock/i.test(s)?'database':/abort|cancel/i.test(s)?'cancelled':/time.?out|超时/i.test(s)?'timeout':/额度|quota/i.test(s)?'quota':/fetch|HTTP|network|网关|gateway|socket/i.test(s)?'gateway':s?'controller':null;
   return {ended:!!meta.ended,stopped:!!meta.stopped,replyBytes:Buffer.byteLength(String(meta.reply||'')),
     events:events.map(e=>({t:e.t,...(e.t==='done'?{ok:e.ok,stopped:!!e.stopped,ms:e.ms}:{}),...(['text','err'].includes(e.t)?{bytes:Buffer.byteLength(String(e.text||'')),...(e.t==='err'?{errorType:kind(e.text||'')}:{} )}:{})})),
     traces:logs.filter(l=>l.run===meta.run).map(l=>({outcome:l.outcome,errorType:kind(l.error||''),calls:(l.calls||[]).map(c=>({call:c.call,...(c.error?{errorType:kind(c.error)}:{})}))}))};

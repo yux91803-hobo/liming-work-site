@@ -17,6 +17,7 @@ function fixture(t,mode='ok'){
  const rows=()=>fs.readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse);
  if(a.includes('/usage')){const count=rows().filter(x=>x.argv?.includes('/usage')).length;console.log(JSON.stringify({event:'result',result:{command:{data:{groups:[
  {buckets:[{id:'gemini-5h',remaining_fraction:0,reset_time:new Date(Date.now()+3600000).toISOString()}]},
+ mode==='weekly'?{buckets:[{id:'3p-weekly',remaining_fraction:0,reset_time:new Date(Date.now()+4*86400000).toISOString()},{id:'3p-5h',window:'5h',disabled:true,remaining_fraction:.857}]}:
  {buckets:[{id:'3p-5h',remaining_fraction:mode==='blocked'||mode==='midquota'&&count>1?0:1,reset_time:new Date(Date.now()+3600000).toISOString()},
  {id:'3p-weekly',remaining_fraction:1,reset_time:new Date(Date.now()+7*86400000).toISOString()}]}]}}}}));process.exit(0);}
  if(a.includes('--help')){console.log('acp --agent --settings');process.exit(0);}
@@ -142,6 +143,12 @@ test('确认 Claude 额度耗尽才切 DeepSeek，同一份图片与原话继续
  const q=JSON.parse(fs.readFileSync(f.control+'/front-antigravity-quota.json'));assert.ok(q.blocked&&q.retryAt>Date.now());
  q.retryAt=Date.now()-1;fs.writeFileSync(f.control+'/front-antigravity-quota.json',JSON.stringify(q));fs.writeFileSync(f.root+'/mode','ok');
  const recovered=f.call('send',{sid:sent.sid,text:'额度恢复后继续聊'}),after=await f.wait(recovered.run);assert.equal(after.events.find(e=>e.t==='done').model,'claude-opus-4.6');
+});
+test('Claude 周限额用完、五小时限额被停用且不带恢复时间：照常改用 DeepSeek 回复，不报额度字段不完整',async t=>{
+ const f=fixture(t,'weekly'),sent=f.call('send',{agent:'codex',text:'只回复 front-weekly'}),done=await f.wait(sent.run);
+ const end=done.events.find(e=>e.t==='done');assert.equal(end.ok,true,JSON.stringify(done.events));assert.equal(end.model,'deepseek-v4.1-flash');
+ assert.equal(done.events.find(e=>e.t==='text').text,'deepseek-quota-answer');assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,0);
+ const q=JSON.parse(fs.readFileSync(f.control+'/front-antigravity-quota.json'));assert.ok(q.blocked&&q.retryAt>Date.now()+3*86400000);assert.deepEqual(q.buckets.map(b=>b.id),['3p-weekly']);
 });
 test('中途真实耗尽按同一上下文接给 DeepSeek，已执行的记忆调用不重复执行',async t=>{
  const f=fixture(t,'midquota'),sent=f.call('send',{agent:'codex',text:'请记住：喜欢先看时序图'}),done=await f.wait(sent.run);
