@@ -745,6 +745,9 @@ function runner(run) {
     try {
       // 会变的资料（记忆、每日记录、当前时间）放在历史之后：系统提示和历史这段前缀每轮不变，缓存才命中
       input.push({role:'user',content:frontMaterials()});
+      // 后台任务快照单独一条、放在兄弟这句话前面，他的原话永远是最后一条。以前接在他的话后面，
+      // DeepSeek 会把快照当成这一句要回的内容（联调 #113、#114：「只回复 三个词」被答成了进度）
+      if(meta.frontTaskNotes)input.push({role:'user',content:meta.frontTaskNotes});
       if(!meta.handoff){const guide=turnGuidance({sid:meta.sid,text:meta.frontRequest||'',context:meta.context||''});if(guide)input.push({role:'user',content:guide});}
       input.push(frontUserInput(meta));
     }
@@ -1786,7 +1789,6 @@ function deviceWatching(sid,id) {
   return watching;
 }
 // 前台下一句带上的后台任务情况：做完 / 没做成 / 停了但前台还不知道的写结果，等确认的写问题，进行中、排队的写一句。
-// 进行中的只当参考：兄弟说的事和它无关时不用插一句进度（站长要的是别套话；联调 #113 里「只回复…」被答成了进度）
 export function isWebRequest(text){return /(?:画|绘制|制作|生成|做).{0,24}(?:奶龙|动画|交互|网页|页面|网站)|(?:网页|动画|交互).{0,12}(?:做|制作|生成|画)/i.test(String(text||''))&&!/^(?:什么是|解释|怎么|如何|为什么)/.test(String(text||'').trim());}
 function pumpHandoffs(){
   for(const h of journal.dueHandoffs())lockedCall(h.parent,'handoff_start',{id:h.id,sid:h.parent});
@@ -1927,7 +1929,8 @@ export function taskNotes(sid, all) {
     else if (t.status === 'running') lines.push(head + '进行中（' + Math.max(1, Math.round((Date.now() - (t.startedAt || t.created)) / 60e3)) + ' 分钟）');
     else if (t.status === 'queued') lines.push(head + '排队中' + (t.after && t.after.length ? '（等任务 ' + t.after.join('、') + ' 做完）' : ''));
   }
-  return { text: lines.length ? '\n\n【后台任务的最新情况（真实快照，供你参考；做完、没做成、在等确认的，兄弟还不知道就用第一人称告诉他；进行中、排队中的，兄弟问起或和这句话有关才提，不要每句都报进度，也不猜百分比；要细节用 xin task show 编号，编号和模型不主动展示）】\n' + lines.join('\n') : '', seen };
+  // 像 opencode 的 <subagent>、Codex 的 <subagent_notification>：快照只放状态，单独一条带标签；怎么对待它写在系统提示里（TASK_GUIDE）
+  return { text: lines.length ? '<后台任务>\n' + lines.join('\n') + '\n</后台任务>' : '', seen };
 }
 // 网站该不该替电脑续「有活在干」的租约（任务在后台跑，等模型回话时电脑看起来像闲着）：有任务就每 20 分钟续一次，没了就撤
 const LEASE_F = () => path.join(BASE, 'tasks-lease.json');
@@ -2064,7 +2067,7 @@ const ops = {
     // 默认模式：带上这个对话的后台任务情况（做完的结果前台还不知道的、在等确认的、在做的）
     const all = s.agent === 'codex' ? listTasks() : [];
     const tn = s.agent === 'codex' ? taskNotes(s.sid, all) : { text: '', seen: [] };
-    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint + tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
+    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, frontTaskNotes: tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
       cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
     const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, s.main ? { main: true, turns: s.runs.length } : {}, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
     if (receipt) { mk(path.dirname(receipt)); writeJ(receipt, result); }
