@@ -63,6 +63,7 @@ import {reportLearning,learningEvidence} from './vm-learning.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 import { transientFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
+import { quotaWindows, glowLevel, forecast, usageSummary } from './vm-usage.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
@@ -354,7 +355,7 @@ function statAdd(rec) {
     const f = STATS_F();
     if (rec.run && readText(f).split('\n').some(line => { try { return JSON.parse(line).run === rec.run; } catch { return false; } })) return;
     fs.appendFileSync(f, JSON.stringify(rec) + '\n');
-    if (fs.statSync(f).size > 1024 * 1024) { const lines = readText(f).trim().split('\n'), tmp=f+'.'+process.pid+'.tmp'; fs.writeFileSync(tmp, lines.slice(-3000).join('\n') + '\n');fs.renameSync(tmp,f); }
+    if (fs.statSync(f).size > 2 * 1024 * 1024) { const lines = readText(f).trim().split('\n'), tmp=f+'.'+process.pid+'.tmp'; fs.writeFileSync(tmp, lines.slice(-8000).join('\n') + '\n');fs.renameSync(tmp,f); }   // 用量页要看 30 天
   } catch { /* 记不下来不影响干活 */ }
 }
 export function modelStats(days = 14) {
@@ -1996,12 +1997,37 @@ function leaseHint(bg) {
   if (!bg && l.on) { writeJ(LEASE_F(), { on: false, at: Date.now() }); return 'drop'; }
   return null;
 }
+/* ---------- 用量看板（vm-usage.mjs）：额度光环、额度卡、工作台「用量」页 ---------- */
+const QUOTA_FILES = [{ key: 'opus', name: 'Opus', file: 'front-antigravity-quota.json' }, { key: 'gemini', name: 'Gemini', file: 'antigravity-quota.json' }];
+const QUOTA_HIST_F = () => path.join(BASE, 'quota-history.jsonl');
+const quotaReadings = () => QUOTA_FILES.map(q => ({ ...q, quota: readJ(path.join(BASE, q.file), null) }));
+// 每次读到新额度记一行（算消耗速率用），留 14 天、最多 2000 行
+function quotaSample(model, quota) {
+  try {
+    const at = quota?.checkedAt || Date.now(), rows = (quota?.buckets || []).filter(b => b && b.id).map(b => JSON.stringify({ at, model, id: b.id, remaining: b.remaining, resetAt: b.resetAt }));
+    if (!rows.length) return;
+    const f = QUOTA_HIST_F(), since = Date.now() - 14 * 86400e3;
+    let lines = readText(f).split('\n').filter(Boolean).concat(rows);
+    if (lines.length > 2000 || lines.length % 50 === 0) lines = lines.filter(l => { try { return JSON.parse(l).at >= since; } catch { return false; } }).slice(-2000);
+    const tmp = f + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, lines.join('\n') + '\n'); fs.renameSync(tmp, f);
+  } catch { /* 记不下来只是少一个预测点 */ }
+}
+function usageView(now = Date.now()) {
+  const samples = readText(QUOTA_HIST_F()).split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+  const quotas = quotaReadings().filter(q => quotaWindows(q.quota, now).length).map(q => ({ key: q.key, name: q.name, checkedAt: q.quota.checkedAt || 0,
+    windows: quotaWindows(q.quota, now).map(w => ({ ...w, forecastAt: forecast(samples.filter(x => x.model === q.quota.model), w, now) })) }));
+  const stats = readText(STATS_F()).split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+  const summary = usageSummary(stats, now), names = {};
+  for (const d of summary.days) for (const id of Object.keys(d.models)) names[id] = modelLabel(id);
+  return { quotas, ...summary, names, now };
+}
 function bgInfo(all) {
   const state = readJ(path.join(BASE, 'controller-event.json'));
   const bg = (all || listTasks()).filter(isBackground).length+journal.handoffCount();
   const lease = leaseHint(bg);
   const version = state?.version || 0;
-  return lease ? { bg, lease, version } : { bg, version };
+  const glow = glowLevel(quotaReadings().map(q => q.quota));   // 头像光环：额度用得最多的那项
+  return lease ? { bg, lease, version, glow } : { bg, version, glow };
 }
 const ops = {
   // 网站发现控制器脚本被改过并已重传（src/xin.js 的 verifyAgent）：记下来
@@ -2012,6 +2038,8 @@ const ops = {
   memory_preferences(){return memoryPreferences();},
   memory_preferences_set(a){return setMemoryPreferences(a);},
   preview_asset(a){return runtime.previewAsset(BASE,a);},
+  // 用量看板：各模型额度（已用、重置时间、预计用完）、最近 30 个北京日按模型的 token、今天 / 7 天 / 30 天合计
+  usage() { return usageView(); },
   steer(a) {
     if (!okId(a.sid, 's') || !okId(a.run, 'r')) return { error: 'bad_id', msg: '对话或轮次不对' };
     const s = readJ(sessF(a.sid)), m = readJ(metaF(a.run));
@@ -2399,14 +2427,14 @@ const iops = {
   front_quota(a){
     if(a.quota?.model!==OPUS_FRONT_MODEL||!Array.isArray(a.quota.buckets))return {error:'bad_quota'};
     const f=path.join(BASE,'front-antigravity-quota.json'),old=readJ(f),quota=runtime.mergeAntigravityQuota(old,a.quota);
-    writeJ(f,quota);return {quota};
+    writeJ(f,quota);quotaSample(OPUS_FRONT_MODEL,a.quota);return {quota};
   },
   front_reply(a){const m=readJ(metaF(a.run));if(!m||m.task||m.stopped||m.ended)return {};if(m.reply!==undefined)return {already:true};m.reply=String(a.text||'').slice(0,TEXT_MAX);writeJ(metaF(a.run),m);if(m.reply)emit(a.run,{t:'text',text:m.reply});return {ok:true};},
   handoff_start:handoffStart,handoff_finish:handoffFinish,
   front_immediate:frontImmediate,
   task_stage(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run||!['working','checking'].includes(a.stage))return {error:'stale'};t.stage=a.stage;saveTask(t);return {ok:true};},
   task_model(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run)return {error:'stale'};if(a.worked&&t.model!==a.model)t.actualModels=[...new Set([...(t.actualModels||[]),t.model])];if(t.model===runtime.AGY_MODEL){t.agentSid=null;t.started=false;}t.model=t.actualModel=a.model;saveTask(t);return {ok:true};},
-  agy_quota(a){const f=path.join(BASE,'antigravity-quota.json');writeJ(f,runtime.mergeAntigravityQuota(readJ(f),a.quota));return {ok:true};},
+  agy_quota(a){const f=path.join(BASE,'antigravity-quota.json');writeJ(f,runtime.mergeAntigravityQuota(readJ(f),a.quota));quotaSample(runtime.AGY_MODEL,a.quota);return {ok:true};},
   agy_conversation(a){const t=readJ(sessF(a.sid));if(!isTask(t)||lastRun(t)!==a.run||!UUID_RE.test(a.id||''))return {error:'stale'};t.antigravityConversation=a.id;saveTask(t);return {ok:true};},
   run_stat(a){statAdd(a);return {ok:true};},
   controller_ack(a){const f=path.join(BASE,'controller-event.json'),s=readJ(f);if(s?.version===a.version){s.acknowledged=true;writeJ(f,s);}return {ok:true};},
