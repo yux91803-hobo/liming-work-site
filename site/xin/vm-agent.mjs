@@ -1195,7 +1195,13 @@ function runDone(run) {
 }
 function summary(s) {
   const r = lastRun(s);
-  return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null, archived: !!s.archived, model: s.model || null };
+  return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null, archived: !!s.archived, model: s.model || null, ...(s.main ? { main: true } : {}) };
+}
+// 主对话：一直聊下去的那一个（默认模式），所有设备共用。别的对话照常新建。归档后它变回普通对话，下一句再开一个新的主对话。
+const MAIN_F = () => path.join(BASE, 'main.json');
+export function mainSid() {
+  const m = readJ(MAIN_F()), s = m && okId(m.sid, 's') ? readJ(sessF(m.sid)) : null;
+  return s && s.main && !s.archived && s.agent === 'codex' && !isTask(s) ? s.sid : null;
 }
 
 /* ---------- 后台任务（分身） ----------
@@ -1958,8 +1964,12 @@ const ops = {
       // No mode named: the default mode, never the fully privileged one. The retired Claude mode only continues old conversations.
       if (a.agent === 'claude') return { error: 'retired', msg: 'Claude 旧模式不再新建对话，以前的对话可以接着聊' };
       const agent = AGENTS.includes(a.agent) ? a.agent : 'codex';
-      s = { sid: rid('s'), agent, title: (text || files.map(f => f.name).join('、')).replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
+      // 两台设备同时发出主对话的第一句：后到的这一句不再另开一个，让网页打开已有的那个再发
+      const main = a.main && agent === 'codex', existing = main ? mainSid() : null;
+      if (existing) return { error: 'busy', msg: '请再发一次', sid: existing };
+      s = { ...(main ? { main: true } : {}), sid: rid('s'), agent, title: (text || files.map(f => f.name).join('、')).replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
     }
+    if (s.main && !a.sid) writeJ(MAIN_F(), { sid: s.sid });
     const ctxLabel = String(a.ctxLabel || '').slice(0, 160);
     if (s.agent !== 'harness') try { bondAdd('chat', 1, '陪我聊天'); } catch { /* 好感度记不下来不影响聊天 */ }   // 天启聊天不算小芯的好感
     // 只发了文件没说话：给 AI 的话里补一句
@@ -1983,7 +1993,7 @@ const ops = {
     const tn = s.agent === 'codex' ? taskNotes(s.sid, all) : { text: '', seen: [] };
     const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint + tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
       cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
-    const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
+    const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, s.main ? { main: true, turns: s.runs.length } : {}, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
     if (receipt) { mk(path.dirname(receipt)); writeJ(receipt, result); }
     return result;
   },
@@ -2027,7 +2037,7 @@ const ops = {
     if(a.agent!=='harness')try { bondAdd('visit', 1, '今天来看我了'); bond = bondInfo(); } catch { /* 记不下来就不带 */ }
     let bg = {};
     try { tickTasks(); bg = bgInfo(); } catch { /* 收拾不了就算了 */ }
-    return Object.assign({ warming, bond, moves: readMoves() }, bg, g || {});
+    return Object.assign({ warming, bond, moves: readMoves(), main: mainSid() }, bg, g || {});
   },
   moves() { return { moves: readMoves() }; },
   bond() { return bondInfo(); },
@@ -2101,6 +2111,8 @@ const ops = {
     const s = readJ(sessF(a.sid));
     if (!s) return { error: 'no_session', msg: '找不到这个对话' };
     if (a.on === false) { delete s.archived; delete s.archivedAt; } else { s.archived = true; s.archivedAt = Date.now(); }
+    // 主对话归档 = 重新开始：这一个变回普通对话（记录都在），下一句会开一个新的主对话
+    if (s.main && s.archived) { delete s.main; writeJ(MAIN_F(), {}); }
     if(isTask(s))saveTask(s);else writeJ(sessF(a.sid),s);
     return { ok: true, session: summary(s) };
   },
@@ -2108,6 +2120,7 @@ const ops = {
     if (!okId(a.sid, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
     const s = readJ(sessF(a.sid));
     if (!s) return { ok: true, already: true };
+    if (s.main) return { error: 'main', msg: '这是一直聊的那个对话，不能直接删；想重新开始先归档' };
     const r = lastRun(s);
     if (r && !runDone(r)) return { error: 'busy', msg: '这个对话还在进行中，先停下来再删' };
     if (isTask(s)) return { error: 'bad_sid', msg: '后台任务跟着它的对话一起删' };
@@ -2184,7 +2197,7 @@ const ops = {
   sessions() {
     mk(SESS);
     const list = fs.readdirSync(SESS).filter(f => /^s[0-9a-z]+\.json$/.test(f)).map(f => readJ(path.join(SESS, f))).filter(s => s && !isTask(s));
-    list.sort((x, y) => (y.updated || 0) - (x.updated || 0));
+    list.sort((x, y) => (y.main ? 1 : 0) - (x.main ? 1 : 0) || (y.updated || 0) - (x.updated || 0));
     // 没归档的、归档的各给最近 60 个（归档的多了也不会把正在用的挤出去）
     return { sessions: list.filter(s => !s.archived).slice(0, 60).concat(list.filter(s => s.archived).slice(0, 60)).map(summary) };
   },
@@ -2192,13 +2205,15 @@ const ops = {
     if (!okId(a.sid, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
     const s = readJ(sessF(a.sid));
     if (!s) return { error: 'no_session', msg: '找不到这个对话' };
-    const runs = (s.runs || []).slice(-30);
+    // 一页 30 轮；before：再往前翻（主对话一直聊下去，早先的也要看得到）
+    const allRuns = s.runs || [], at = okId(a.before, 'r') ? allRuns.indexOf(a.before) : -1, end = at >= 0 ? at : allRuns.length;
+    const runs = allRuns.slice(Math.max(0, end - 30), end);
     // started：每一轮什么时候开始的（后台任务的结果卡片按时间插在这些轮之间）
     const diagnostics=a.diagnose?readText(path.join(BASE,'logs','front.jsonl')).split('\n').flatMap(l=>{try{return [JSON.parse(l)];}catch{return [];}}):[];
     const out = runs.map(r => { runDone(r); const evs=events(r),m=readJ(metaF(r))||{};return {run:r,events:evs,done:evs.some(e=>e&&e.t==='done'),started:m.started||0,...(a.diagnose?{diagnostics:frontDiagnostics(m,evs,diagnostics)}:{})}; });
     const last = out[out.length - 1];
     // active.started：网页重新打开面板时，「思考中 · N 秒」接着算，不从 0 开始
-    const res = { session: summary(s), usage: sessionUsage(s), runs: out, active: last && !last.done ? { run: last.run, off: last.events.length, started: last.started } : null };
+    const res = { session: summary(s), usage: sessionUsage(s), runs: out, more: end > 30, active: at < 0 && last && !last.done ? { run: last.run, off: last.events.length, started: last.started } : null };
     if (isTask(s)) res.task = taskSummary(s, true);                                   // 看一个后台任务的过程
     else if (s.agent === 'codex') res.tasks = listTasks().filter(t => t.parent === s.sid).map(t => taskSummary(t));   // 这个对话派出去的任务
     return res;
@@ -2622,6 +2637,8 @@ function main() {
     process.stdout.write(JSON.stringify(res || {})); return;
   }
   if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
+  // 发给主对话的话不带编号：先认出是哪一个，按它自己的锁排队（重发时的摘要仍按「没带编号」算，见 transactionalOp）
+  if (op === 'send' && !args.sid && args.main && !args.mainSid) { const m = mainSid(); if (m) { args.sid = m; args.mainSid = m; } }
   const key = ['push_key','push_sub','push_unsub'].includes(op) ? 'tasks' : op === 'daily' ? 'daily' : ['send', 'steer', 'rename', 'archive', 'forget'].includes(op)
     ? (okId(args.sid, 's') ? isTask(readJ(sessF(args.sid))) ? 'tasks' : args.sid : op === 'send' && !args.sid ? 'new' : null) : null;
   if (!locked && key) { process.stdout.write(JSON.stringify(lockedCall(key, op, args))); return; }
@@ -2639,7 +2656,7 @@ function transactionalOp(op,args,fn){
   let command=null;
   if(op==='send'&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
     const {sid,agent,text,effort,model,context,ctxLabel,files}=args;
-    command={id:'send:'+args.clientId,digest:inputDigest({sid:sid||null,agent:agent||null,text:text||'',effort:effort||null,model:model||null,context:context||'',ctxLabel:ctxLabel||'',files:files||[]})};
+    command={id:'send:'+args.clientId,digest:inputDigest({sid:args.mainSid?null:sid||null,agent:agent||null,text:text||'',effort:effort||null,model:model||null,context:context||'',ctxLabel:ctxLabel||'',files:files||[],...(args.main?{main:true}:{})})};
   }else if(['task_tell','task_stop'].includes(op)&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
     command={id:op+':'+args.clientId,digest:inputDigest(args)};
   }else if(op==='front_action'&&(['remember','forget','task','bond','next','move'].includes(args.argv?.[1])||Object.hasOwn(ACTS,args.argv?.[1]||''))&&!['list','show'].includes(args.argv?.[2])){

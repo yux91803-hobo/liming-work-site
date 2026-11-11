@@ -1270,8 +1270,11 @@ async def main():
         pg = await page(b)
         await pg.goto(BASE + '/'); await pg.wait_for_timeout(2600)
         await pg.evaluate("LimingXin.music(true)"); await pg.wait_for_timeout(300)
-        await pg.evaluate("LimingXin.bore(); LimingXin.rage('phones')"); await pg.wait_for_timeout(3800)
-        st = await pg.evaluate("[!!document.querySelector('.xin-k') || true, LimingXin.el.querySelector('rect.c-hp') === null]")
+        # rage() 只在小芯站着、走着或玩着时马上开始，否则排到下一次空闲（CI 机器忙时开场动作可能还没完）：等到耳机真的没了，不按固定秒数
+        await pg.evaluate("LimingXin.bore(); LimingXin.rage('phones')")
+        try: await pg.wait_for_function("LimingXin.el.querySelector('rect.c-hp') === null", timeout=15000)
+        except Exception: pass
+        st = await pg.evaluate("[LimingXin.mode, LimingXin.el.querySelector('rect.c-hp') === null]")
         check('听歌听烦了：把耳机扯下来砸了（耳机没了）', st[1], st)
         await pg.wait_for_timeout(5000)
         await pg.evaluate("LimingXin.bag()"); await pg.click('.xin-bag .xin-it:has-text("耳机")'); await pg.wait_for_timeout(300)
@@ -1576,7 +1579,7 @@ async def main():
         st = await pg.evaluate("""[document.querySelector('.xc-tianqi .xc-sw').getAttribute('aria-checked'), document.querySelector('.xc-tianqi .xc-tg-t b').textContent, document.querySelector('.xc-tianqi .xc-tg-t span').textContent,
           !!document.querySelector('.xc-set [data-agent]'), document.querySelector('.xc-set').textContent.includes('Claude'), !!document.querySelector('.xc-set .xc-effort, .xc-set .xc-cxmodel'), localStorage.getItem('lm.xin.agent')]""")
         check('设置里是「天启模式」开关（开着 = Harness，带一句说明），没有三选一、没有 Claude；思考强度、模型不在设置里；面板按 Esc 关、聊天不关',
-              st == ['true', '天启模式', '打开后新对话用 Harness，自己选模型和思考强度', False, False, False, 'harness'] and st0 == [True, True], (st, st0))
+              st == ['true', '天启模式', '新对话自己选模型', False, False, False, 'harness'] and st0 == [True, True], (st, st0))
         await pg.click('.xc-tianqi .xc-sw'); await pg.wait_for_timeout(100)
         await close_dr()
         st = await pg.evaluate("[document.querySelector('.xc-mdl').textContent, localStorage.getItem('lm.xin.agent'), localStorage.getItem('lm.xin.agent.v')]")
@@ -1627,12 +1630,15 @@ async def main():
         check('做完一轮：输入框底下显示这个对话的用量（上下文 12%、消耗 6.2万 token、缓存命中 80%）', use == [False, ['上下文 12%', '消耗 6.2万 token', '缓存命中 80%'], '12%'], use)
         items = await pg.evaluate("(LimingXin.bag(), [...document.querySelectorAll('.xin-bag .xin-it span')].map(s => s.textContent))")
         check('登录以后背包里有「聊天」', '聊天' in items, items)
-        check('记事本：小芯记了一笔，聊天里一个小提示「记住了：…」', st[5] == ['记住了：用户在做 blink 点灯'], st[5])
+        check('记忆是小芯自己的事：它记了一笔，聊天里不出现「记住了」的提示', st[5] == [], st[5])
         await pg.keyboard.press('Escape')
         await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-si')
-        await pg.click('.xc-memb'); await pg.wait_for_selector('.xm-it')
+        dr = await pg.evaluate("[[...document.querySelectorAll('.xc-nav .xc-memb')].map(b => b.textContent), !!document.querySelector('.xc-bond, .xc-filesb, .xc-tasksb'), document.querySelector('.xc-dr').textContent.includes('记忆'), document.querySelector('.xc-dr').textContent.includes('好感度')]")
+        check('侧边栏没有记忆、文件、我在做的事、好感度的入口，只留每日任务', dr == [['每日任务'], False, False, False], dr)
+        await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')")
+        await pg.evaluate("LimingXinChat.page('mem')"); await pg.wait_for_selector('.xm-it')
         memv = await pg.evaluate("[[...document.querySelectorAll('.xm-h')].map(e => e.textContent), document.querySelector('.xm-sec.pend .xm-txt').textContent, (document.querySelector('.xm-src') || {}).textContent, (document.querySelector('.xm-sec:not(.pend) .xm-quote') || {}).textContent]")
-        check('记忆：侧边栏「小芯的记忆」：待确认排在最前（以前的记事本），确认过的按类型分组，带出处和原话', memv == [['待确认（1）', '关于你（1）'], '用户在学定时器', '来自「看看目录」', '“以后讲代码先给我结论”'], memv)
+        check('记忆页（没有入口，功能还在）：待确认排在最前（以前的记事本），确认过的按类型分组，带出处和原话', memv == [['待确认（1）', '关于你（1）'], '用户在学定时器', '来自「看看目录」', '“以后讲代码先给我结论”'], memv)
         await pg.click('.xm-sec.pend .xm-b.ok'); await pg.wait_for_function("!document.querySelector('.xm-sec.pend') && document.querySelector('.xm-msg')?.textContent === '确认了'")
         await pg.fill('.xm-in', '喜欢先看代码'); await pg.select_option('.xm-sel', 'learning'); await pg.click('.xm-add .xc-btn')
         await pg.wait_for_function("[...document.querySelectorAll('.xm-txt')].some(e => e.textContent === '喜欢先看代码')")
@@ -1753,7 +1759,7 @@ async def main():
         dr = await pf.evaluate("""(() => { const d = document.querySelector('.xc-drawer').getBoundingClientRect(), p = document.querySelector('.xc').getBoundingClientRect();
           return [document.querySelector('.xc').classList.contains('dr-open'), Math.round(d.left - p.left), d.width < p.width, !!document.querySelector('.xc-dr .xc-dr-new'), document.querySelector('.xc-set').hidden,
             getComputedStyle(document.querySelector('.xc-scrim')).opacity, document.querySelector('.xc-list-b').getAttribute('aria-expanded'), !document.querySelector('.xc-body').hidden]; })()""")
-        check('☰ 拉开侧边栏：从面板左边滑出来、比面板窄，后面一层遮罩，聊天还在下面；上面「新对话」，四个入口：小芯的记忆、每日任务、后台任务、小芯的文件；设置收着', tiles == ['小芯的记忆', '每日任务', '我在做的事', '小芯的文件'] and 0 <= dr[1] <= 2 and dr[:1] + dr[2:] == [True, True, True, True, '1', 'true', True], (tiles, dr))   # 宽屏面板左边有 2px 边框，侧边栏贴着它
+        check('☰ 拉开侧边栏：从面板左边滑出来、比面板窄，后面一层遮罩，聊天还在下面；上面「新对话」「主对话」，入口只剩每日任务；设置收着', tiles == ['每日任务'] and await pf.is_visible('.xc-mainb') and 0 <= dr[1] <= 2 and dr[:1] + dr[2:] == [True, True, True, True, '1', 'true', True], (tiles, dr))   # 宽屏面板左边有 2px 边框，侧边栏贴着它
         await pf.click('.xc-sli:nth-child(1) .xc-si-more'); await pf.wait_for_selector('.xc-sa input')
         await pf.fill('.xc-sa input', '点灯程序'); await pf.click('.xc-sa-b:has-text("改名")'); await pf.wait_for_timeout(300)
         t = await pf.text_content('.xc-sli:nth-child(1) .xc-si-t')
@@ -1764,7 +1770,7 @@ async def main():
         await pf.click('.xc-sa-del'); await pf.wait_for_timeout(300)
         n2 = await pf.evaluate("document.querySelectorAll('.xc-sli').length")
         check('对话 ⋯ 删除：第一下变「确定删除？」，第二下才删', armed == '确定删除？' and n1 == 2 and n2 == 1 and xf['forgot'] == {'sid': 'sold000001'}, (armed, n1, n2, xf['forgot']))
-        await pf.click('.xc-filesb'); await pf.wait_for_selector('.xc-fi')
+        await pf.evaluate("LimingXinChat.page('files')"); await pf.wait_for_selector('.xc-fi')
         names = await pf.evaluate("[...document.querySelectorAll('.xc-fi-n')].map(e => e.textContent)")
         await pf.click('.xc-fi:has-text("blink")'); await pf.wait_for_selector('.xc-crumb')
         await pf.click('.xc-fi:has-text("build")'); await pf.wait_for_selector('.xc-fi:has-text("app.hex")')
@@ -1811,7 +1817,7 @@ async def main():
         await pf.click('.xc-sa-del'); await pf.click('.xc-sa-del'); await pf.wait_for_timeout(300)
         f4 = await pf.evaluate("[" + vis + ", document.querySelector('.xc-more-b').textContent]")
         check('对话多了侧边栏不拉长：只露最近 5 个和正在看的那个（排第 7），「更多对话（3）」展开全部、「收起」收回；删掉一个后面的补上来',
-              f1 == [['对话 1', '对话 2', '对话 3', '对话 4', '对话 5', '对话 7'], '更多对话（3）', '最近的对话 · 9', 9] and f2 == [9, '收起', 'true'] and f3 == 6
+              f1 == [['对话 1', '对话 2', '对话 3', '对话 4', '对话 5', '对话 7'], '更多对话（3）', '对话 · 9', 9] and f2 == [9, '收起', 'true'] and f3 == 6
               and f4 == [['对话 2', '对话 3', '对话 4', '对话 5', '对话 6', '对话 7'], '更多对话（2）'], (f1, f2, f3, f4))
         await pf.click('.xc-dr-x'); await pf.wait_for_timeout(300)
         xf['many'] = 0
@@ -1856,18 +1862,16 @@ async def main():
         await pm.evaluate("LimingXin.bag()"); await pm.click('.xin-bag .xin-it:has-text("饼干")'); await pm.wait_for_timeout(400)
         check('好感度：在网页上喂小芯吃饼干，告诉它的电脑（加好感）', xm.get('played') == {'kind': 'cookie'}, xm.get('played'))
         await pm.evaluate("LimingXinChat.open()"); await pm.wait_for_selector('.xc.show')
-        await pm.click('.xc-list-b'); await pm.wait_for_selector('.xc-bond-b')
-        bt = await pm.text_content('.xc-bond-b')
-        await pm.click('.xc-bond-b'); await pm.wait_for_timeout(150)
-        logs = await pm.evaluate("[...document.querySelectorAll('.xc-bond-log li')].map(l => l.textContent)")
-        check('对话列表上面显示关系和好感度，点开看最近的变化', bt.startswith('♥♥♥♡ 好朋友 · 好感度 5') and '升一级' in bt and len(logs) == 2 and '+1陪我聊天' in logs[0] and '-1你凶我' in logs[1], (bt, logs))
+        await pm.click('.xc-list-b'); await pm.wait_for_selector('.xc-dr-new')
+        bt = await pm.evaluate("[!!document.querySelector('.xc-bond, .xc-bond-b, .xc-hearts'), document.querySelector('.xc-dr').textContent.includes('好感度'), LimingXinChat.state.bond && LimingXinChat.state.bond.level]")
+        check('好感度不显示：侧边栏里没有关系和好感度那一行，数值照样拿到（只管页面上的小芯有多听话）', bt == [False, False, 2], bt)
         await pm.click('.xc-dr-new'); await pm.wait_for_selector('.xc-hello')   # 侧边栏里的「新对话」：开新对话并收起侧边栏
         check('侧边栏里点「新对话」：开新对话、侧边栏收起', not await pm.evaluate("document.querySelector('.xc').classList.contains('dr-open')"))
         await pm.fill('.xc-row textarea', '学个转圈'); await pm.keyboard.press('Enter')
         await pm.wait_for_function(CHAT_DONE, timeout=8000); await pm.wait_for_timeout(200)
         notes = await pm.evaluate("[...document.querySelectorAll('.xc-sys')].map(n => n.textContent)")
         st = await pm.evaluate("[LimingXin.learned, LimingXinChat.state.bond.score]")
-        check('聊天里小芯学会新动作（马上教给页面上的小芯）、好感度 +2，各一个小提示', '学会了新动作：转圈' in notes and '好感度 +2 · 你教我新动作' in notes and st == [['打招呼', '转圈'], 54], (notes, st))
+        check('聊天里小芯学会新动作（马上教给页面上的小芯，一个小提示）；好感度 +2 记下了但聊天里不报', notes == ['学会了新动作：转圈'] and st == [['打招呼', '转圈'], 54], (notes, st))
         await pm.context.close()
         # 小芯的屏幕：观看 → 接管 → 关掉（接管过就作废链接）
         pw = await page(b)
@@ -1999,8 +2003,19 @@ async def main():
         await pt.wait_for_function(CHAT_DONE, timeout=8000)
         await pt.wait_for_function("document.querySelector('.xc-task-a') && document.querySelector('.xc-task-a').textContent === '在执行：make'", timeout=8000)
         cd = await pt.evaluate(TASK_CARD_JS)
-        check('后台任务：派出去的地方一张卡片（任务 1 · 编译 LED、进行中 · 2 分钟、写代码 · GLM-5.3、在干什么、看过程 / 停止）；输入框上面一条「后台 1 个任务在做」',
-              cd == ['我在做：编译 LED', '进行中 · 2 分钟', '写代码', '在执行：make', ['看过程', '停止'], True, True, '我正在做 1 件事'], cd)
+        check('后台任务：派出去的地方一张卡片（任务 1 · 编译 LED、进行中 · 2 分钟、写代码 · GLM-5.3、在干什么、看过程 / 改一下 / 停止）；输入框上面一条「后台 1 个任务在做」',
+              cd == ['我在做：编译 LED', '进行中 · 2 分钟', '写代码', '在执行：make', ['看过程', '改一下', '停止'], True, True, '我正在做 1 件事'], cd)
+        # 还在做的时候改要求：卡片上「改一下」直接到输入框，写了发给它（它手上这一步做完就按新的来），同一页也能停
+        await pt.click('.xc-task .xc-task-tell'); await pt.wait_for_selector('.xc-sheet .xc-tk-in')
+        await pt.wait_for_function("document.activeElement === document.querySelector('.xc-sheet .xc-tk-in')", timeout=3000)
+        live = await pt.evaluate("[document.querySelector('.xc-tk-in').placeholder, [...document.querySelectorAll('.xc-tk-act button')].map(b => b.textContent)]")
+        await pt.keyboard.type('先别编译，改成 PA1'); await pt.keyboard.press('Enter')
+        await pt.wait_for_function("document.querySelector('.xc-tk-note') && document.querySelector('.xc-tk-note').textContent === '任务 1 接着做了'")
+        tell = xt.get('task_tell') or {}
+        check('任务还在做时改要求：「改一下」打开就能打字，回车发给那个任务（带稳定重试标识），旁边还有停止',
+              live == ['补充或改要求…', ['发给它', '停止这个任务']] and tell.get('sid') == 'stask00001' and tell.get('text') == '先别编译，改成 PA1' and len(tell.get('clientId', '')) == 36, (live, tell))
+        xt['task_tell'] = None; T1['status'] = 'running'
+        await pt.click('.xc-sh-x'); await pt.wait_for_timeout(300)
         T1.update({'status': 'done', 'endedAt': now, 'activity': '', 'result': {'ok': True, 'text': '我编好了：`/data/workspace/blink/build/app.hex`，直接烧录就行。', 'err': '', 'at': now}})
         await pt.evaluate("LimingXinChat.tasks()")
         await pt.wait_for_selector('.xc-tres')
@@ -2032,14 +2047,13 @@ async def main():
         q2 = await pt.evaluate("[...document.querySelectorAll('.xc-me .xc-bub')].map(b => b.textContent).slice(-2)")
         check('小芯在回上一句：输入框有话按钮是「排队发送」，发了先排着（灰色气泡写「排队中」，能 ✕），这一句回完自动发出去',
               q0 == '排队发送' and q1[:3] == [1, '排队中 · 小芯说完这句就发✕', '停止'] and q1[3] == '' and xt['sent'].get('text') == '再顺便看看那个' and q2 == ['先看看这个', '再顺便看看那个'], (q0, q1, xt['sent'], q2))
-        # 任务中心（侧边栏「后台任务」）：所有对话的任务（还没做完的 / 最近的，写着哪个对话派的）、每日任务、各模型最近 14 天
+        # 全部任务那一页（侧边栏不再放入口，按名字还能打开）：所有对话的任务（还没做完的 / 最近的，写着哪个对话派的）、每日任务、各模型最近 14 天
         T1.update({'status': 'done'})
         xt['tasks'].append({'sid': 'stask00002', 'no': 2, 'parent': 'snew000001', 'title': '检查：编译 LED', 'kind': 'review', 'model': 'kimi-k3.1-pro', 'why': 'review', 'status': 'queued',
                             'created': now, 'startedAt': 0, 'endedAt': 0, 'dir': '/data/workspace/blink', 'after': [1], 'turns': 0, 'question': ''})
-        await pt.click('.xc-list-b'); await pt.wait_for_selector('.xc-tasksb')
-        await pt.click('.xc-tasksb'); await pt.wait_for_selector('.xc-sess .xc-tl-i')
+        await pt.evaluate("LimingXinChat.page('tasks')"); await pt.wait_for_selector('.xc-sess .xc-tl-i')
         tc = await pt.evaluate(TASK_CENTER_JS)
-        check('任务中心：侧边栏「后台任务」打开，还没做完的在上（等任务 1 做完 · 检查 · Kimi）、最近的在下，写着在哪个对话派的；每日任务做得怎么样；各模型最近 14 天（用了几次、成了几次、平均多久、换过几次模型）',
+        check('全部任务那一页（没有入口，功能还在）：还没做完的在上（等任务 1 做完 · 检查 · Kimi）、最近的在下，写着在哪个对话派的；每日任务做得怎么样；各模型最近 14 天（用了几次、成了几次、平均多久、换过几次模型）',
               tc[0] == ['还没做完的', '最近的', '每日任务'] and tc[1] == ['我在做：检查：编译 LED', '我在做：编译 LED'] and tc[2][0] == '等前一步做完检查'
               and tc[3] == ['在「编译一下 blink」里提到的', '在「编译一下 blink」里提到的'] and tc[4].startswith('最近一次：11-06 做完了') and tc[5] == [], tc)
         await pt.click('.xc-sess .xc-tl-i[data-tsid=stask00001]'); await pt.wait_for_selector('.xc-sheet .xc-tk-log')
