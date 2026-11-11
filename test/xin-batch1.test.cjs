@@ -192,6 +192,6 @@ test('到点那一刻站长回答：答案进收件箱，下一轮带上，不�
   h.locked('task_approval_expire', { sid, run, id: 'a1' });
   assert.equal(h.locked('task_tell', { sid, text: '留着别删' }).ok, true);
   h.hold('bg', false);
-  await until(() => bgCalls(h).length >= 2, 15000, '下一轮');
+  await until(() => bgCalls(h).length >= 2, 15000, '下一轮').catch(e => { const x = h.task(sid); throw new Error(e.message + ' DIAG ' + JSON.stringify({ status: x.status, inbox: x.inbox, q: x.question, pq: x.pendingQuestion, runs: x.runs, fin: x.finishedRun, calls: h.fc.calls().map(c => c.args.slice(-80)) })); });
   assert.ok(bgCalls(h)[1].args.includes('留着别删'));
 });
