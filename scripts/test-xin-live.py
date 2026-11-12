@@ -3,6 +3,7 @@ Credentials come only from Actions Secrets. Never emit response bodies, cookies,
 """
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import time
@@ -64,6 +65,32 @@ async def main():
                     await asyncio.sleep(min(15, max(2, d.get('retryAfter', 3))))
                     continue
                 raise RuntimeError('Production call failed: ' + op + ' HTTP ' + str(response.status) + ' state=' + str(d.get('state', d.get('data', {}).get('error', 'unknown'))))
+        async def backup_check():
+            # Off-machine backup, end to end on production: make today's backup now (an existing one is kept), find it in
+            # the list, download it decrypted with the current owner credential and compare size, sha256 and the gzip magic.
+            # Only error codes are reported; the archive is never written or printed.
+            limit = time.monotonic() + 240
+            while True:
+                response = await raw('backup', lambda: context.request.post(BASE + '/api/xin/backup', headers={'X-Xin': '1', 'Content-Type': 'application/json'}, data='{}', timeout=150000), True)
+                try:
+                    d = await response.json()
+                except Exception:
+                    d = {}
+                if response.status == 200 and (d.get('ok') or d.get('skipped') == 'exists'):
+                    break
+                if d.get('state') in ('waking', 'busy') and time.monotonic() < limit:
+                    await asyncio.sleep(10)
+                    continue
+                raise RuntimeError('Production backup failed: HTTP ' + str(response.status) + ' error=' + str(d.get('error', 'unknown')) + ' state=' + str(d.get('state', '')))
+            listed = await raw('backups', lambda: context.request.get(BASE + '/api/xin/backups', timeout=60000), True)
+            meta = next((b for b in ((await listed.json()).get('backups') or []) if b.get('date') == d.get('date')), None) if listed.status == 200 else None
+            if not meta:
+                raise RuntimeError('Production backup missing from the list: HTTP ' + str(listed.status))
+            got = await raw('backup download', lambda: context.request.get(BASE + '/api/xin/backup?date=' + meta['date'], timeout=120000), True)
+            body = await got.body() if got.status == 200 else b''
+            if len(body) != meta.get('size') or hashlib.sha256(body).hexdigest() != meta.get('sha256') or body[:2] != b'\x1f\x8b':
+                raise RuntimeError('Production backup did not decrypt to the recorded archive: HTTP ' + str(got.status) + ' bytes=' + str(len(body)))
+            return 'new' if d.get('ok') else 'existing'
         async def forget_owned(owned_sid, own_task):
             h = await call('history', {'sid': owned_sid})
             if h.get('active'):
@@ -105,6 +132,7 @@ async def main():
                     print('Removed a smoke conversation left by an earlier run', flush=True)
                 except Exception as error:
                     print('Could not remove an earlier smoke conversation: ' + (str(error)[:160] if isinstance(error, RuntimeError) else type(error).__name__), flush=True)
+            print('PASS off-machine encrypted backup (' + await backup_check() + ') listed and restorable with the owner credential', flush=True)
             # A fresh browser lands on the owner's always-on main conversation. That is the owner's, not a fixture:
             # every turn of this run goes to conversations it creates itself (and deletes at the end).
             await page.locator('.xc-new-b').click()

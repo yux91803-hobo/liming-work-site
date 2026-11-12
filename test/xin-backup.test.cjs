@@ -55,9 +55,10 @@ test('每天备份：取今天的导出、核对 sha256、加密存进 xin-backu
     assert.ok(![...(storages['xin-tasks']?.map.keys() || [])].some(k => k.startsWith('backup')), '不写任务租约那个实例');
     const st = storages['xin-backups'].map, rec = st.get('backup:2026-11-12'), meta = st.get('backup-meta:2026-11-12');
     assert.deepEqual(meta, { v: 1, date: '2026-11-12', at: NOW, size: DB.length, sha256: sha(DB) });
-    assert.ok(rec && typeof rec.data === 'string' && rec.salt && rec.iv);
-    const stored = JSON.stringify([...st.values()]);
-    assert.ok(!stored.includes('讲代码先给结论') && !stored.includes(Buffer.from('讲代码先给结论').toString('base64')), '存的是密文');
+    // 密文按二进制存（不转 base64：免费版每次调用 CPU 只有 10 ms，0.6 MB 转 base64 就要 30 多 ms）；AES-GCM 多 16 字节校验
+    assert.ok(rec && rec.data instanceof Uint8Array && rec.data.length === DB.length + 16 && rec.salt && rec.iv, '密文是二进制');
+    assert.ok(!Buffer.from(rec.data).includes(Buffer.from('讲代码先给结论')), '存的是密文');
+    assert.ok(!JSON.stringify(meta).includes('讲代码先给结论'));
     const before = box.calls.length;
     assert.deepEqual(await m.backupNow(e, null, NOW + 12 * 3600e3), { skipped: 'exists', date: '2026-11-12' });
     assert.equal(box.calls.length, before, '今天已有就不再导出');
@@ -86,7 +87,7 @@ test('只留 30 天：存新的时删掉 30 天前的（密文和摘要一起删
   const m = await worker(), { e, storages } = env(m), box = fakeBox(DB);
   try {
     const st = storages['xin-backups'] = fakeStorage();
-    for (const d of ['2026-10-12', '2026-10-13', '2026-11-01']) { st.map.set('backup:' + d, { date: d, data: 'x' }); st.map.set('backup-meta:' + d, { date: d }); }
+    for (const d of ['2026-10-12', '2026-10-13', '2026-11-01']) { st.map.set('backup:' + d, { date: d, data: new Uint8Array(4) }); st.map.set('backup-meta:' + d, { date: d }); }
     const r = await m.backupNow(e, null, NOW);
     assert.equal(r.removed, 1);
     assert.deepEqual([...st.map.keys()].filter(k => k.startsWith('backup-meta:')).sort(), ['backup-meta:2026-10-13', 'backup-meta:2026-11-01', 'backup-meta:2026-11-12']);
@@ -118,7 +119,8 @@ test('取回：登录后列出、按日期解密下载（和原文件一模一�
     assert.equal((await old.json()).error, 'old_password');
     const raw = await m.handleXin(new Request(ORIGIN + '/api/xin/backup?date=2026-11-12&raw=1', { headers: { cookie: cookie2 } }), e2, null, NOW);
     assert.equal(raw.status, 200);
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-backup-')), rec = path.join(tmp, 'rec.json'), out = path.join(tmp, 'out.sqlite');
+    assert.match(raw.headers.get('content-disposition'), /attachment; filename="xin-state-20261112\.backup"/);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-backup-')), rec = path.join(tmp, 'rec.backup'), out = path.join(tmp, 'out.tar.gz');
     fs.writeFileSync(rec, Buffer.from(await raw.arrayBuffer()));
     const script = path.join(__dirname, '../scripts/xin-backup-decrypt.mjs');
     const bad = spawnSync(process.execPath, [script, rec, out], { env: { ...process.env, XIN_BACKUP_PASSWORD: 'wrong password!!' }, encoding: 'utf8' });
@@ -126,6 +128,23 @@ test('取回：登录后列出、按日期解密下载（和原文件一模一�
     const good = spawnSync(process.execPath, [script, rec, out], { env: { ...process.env, XIN_BACKUP_PASSWORD: e.OWNER_PASSWORD }, encoding: 'utf8' });
     assert.equal(good.status, 0, good.stderr);
     assert.ok(fs.readFileSync(out).equals(DB));
+  } finally { box.restore(); }
+});
+
+test('现在备份（POST /api/xin/backup）：要登录、要本站页面发的 JSON；做今天的备份，已有就跳过（正式站发布后的联调用它）', async () => {
+  const m = await worker(), { e, storages } = env(m), box = fakeBox(DB);
+  try {
+    const post = (headers) => m.handleXin(new Request(ORIGIN + '/api/xin/backup', { method: 'POST', headers: { 'content-type': 'application/json', 'x-xin': '1', origin: ORIGIN, ...headers }, body: '{}' }), e, null, NOW);
+    assert.equal((await post({})).status, 401);
+    const cookie = await login(m, e);
+    assert.equal((await post({ cookie, origin: 'https://evil.example' })).status, 403);
+    assert.equal((await post({ cookie, 'x-xin': '' })).status, 403);
+    assert.equal([...(storages['xin-backups']?.map.keys() || [])].length, 0, '没登录、跨站都不做');
+    const r = await post({ cookie });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { ok: true, date: '2026-11-12', size: DB.length, removed: 0 });
+    assert.ok(storages['xin-backups'].map.has('backup:2026-11-12'));
+    assert.deepEqual(await (await post({ cookie })).json(), { skipped: 'exists', date: '2026-11-12' });
   } finally { box.restore(); }
 });
 

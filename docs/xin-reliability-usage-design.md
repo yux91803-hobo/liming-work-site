@@ -136,16 +136,17 @@
 **流程**：
 1. Worker 调云电脑上的新操作 `backup_export`：打今天的包（已经有了就复用，本地只留 3 份），返回路径、大小、sha256。
 2. Worker 经 InstaBox 的 `files/content` 取原始字节，核对大小和 sha256。
-3. 加密：AES-256-GCM。密钥 = HKDF-SHA256（站长登录密码，每份随机 16 字节盐，`liming-xin-backup-v1`），每份随机 12 字节 IV。不压缩：免费版每次调用的 CPU 只有 10 ms。
-4. 存成 `backup:YYYY-MM-DD`，带版本、日期、时间、大小、sha256、盐、IV 和密文。
+3. 加密：AES-256-GCM。密钥 = HKDF-SHA256（站长登录密码，每份随机 16 字节盐，`liming-xin-backup-v1`），每份随机 12 字节 IV。不压缩：免费版每次调用的 CPU 只有 10 ms；同样的原因，密文全程按二进制传、按二进制存，不转 base64（0.6 MB 转一次就要 30 多 ms）。
+4. 存成 `backup:YYYY-MM-DD`：版本、日期、时间、大小、sha256、盐、IV，加二进制密文。
 5. 删 30 天前的备份，和写回备份的 30 天一致。
 
-**密钥**：从站长密码派生，备份旁边不存密钥。改了密码以后，以前的备份要用当时的密码解，取回接口可以带上旧密码。
+**密钥**：从站长密码派生，备份旁边不存密钥。改了密码以后，以前的备份要用当时的密码解：网页上不收旧密码（不多开一个能试密码的口子），下载加密原件后用 `scripts/xin-backup-decrypt.mjs` 离线解。
 
 **取回**（都要先登录）：
 - `GET /api/xin/backups`：列出所有备份（日期、大小、sha256）。
 - `GET /api/xin/backup?date=YYYY-MM-DD`：解密后下载。
-- `POST /api/xin/backup`，带 `{date, password}`：改过密码时用旧密码解。
+- `GET /api/xin/backup?date=YYYY-MM-DD&raw=1`：下载加密原件 `.backup`（第一行是参数 JSON，换行后是密文；改过密码、网页上解不开时用）。
+- `POST /api/xin/backup`（本站页面发的 JSON）：现在就做今天的备份，已有就跳过。正式站每次发布后的联调用它当场走一遍：导出、取回、加密、存、列出、解密下载，核对大小和 sha256。
 
 **恢复**：新云电脑上把下载的包解进空的 `~/.xin`（`tar xzf xin-state-YYYYMMDD.tar.gz -C ~/.xin`），网关密钥照 `MACHINE.md` 重新配；控制器脚本由 Worker 下一次调用时自动装上。包里有备份那一刻排着的启动记录，恢复后可能会把当时没做完的那一轮再跑一次。
 

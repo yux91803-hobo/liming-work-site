@@ -85,7 +85,11 @@ async def main():
         await open_settings(pg)
         await pg.wait_for_timeout(800)
         hidden = await pg.evaluate("(() => { const r = document.querySelector('.xc-set .xc-bk'); return !r || r.hidden; })()")
-        ui.check('没开备份：这一行不出现', hidden)
+        # 这一次的 404 是故意的（网站没开备份时 Worker 就这么回）：必须出现，且只把它从「本站资源失败」里拿掉
+        expected = [e for e in ui.local_fail if e.startswith('404 ') and e.endswith('/api/xin/backups')]
+        for e in expected:
+            ui.local_fail.remove(e)
+        ui.check('没开备份：这一行不出现', hidden and len(expected) == 1, (hidden, len(expected)))
         await pg.context.close()
 
         # 5. 平板、手机宽度，深色：这一行能用、不横向溢出
@@ -103,6 +107,8 @@ async def main():
     print('\n==== %d/%d 通过 ====' % (len(ui.results) - len(bad), len(ui.results)))
     if real:
         print('JS 报错：', real[:5])
+    if ui.local_fail:
+        print('本站资源失败：', ui.local_fail[:5])
     return not bad and not real and not ui.local_fail
 
 
