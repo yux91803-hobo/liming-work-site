@@ -67,3 +67,14 @@ def reply_shape(texts, marker, other=None):
     return {'replies': len(texts), 'chars': len(last), 'lines': len(last.splitlines()) if last else 0, 'ascii': last.isascii(),
             'words': sum(w in last for w in words), 'of': len(words), 'otherWords': sum(w in last for w in str(other or '').split()),
             'oddDash': any(d in last for d in dashes), 'anyReplySays': any(says(t, marker) for t in texts)}
+
+
+# 回执要用第一人称（站长的规矩：进度和完成用「我」说，不讲分身、后台、模型）。中文常省略主语：
+# 「好嘞，这就去画这只小奶龙」就是第一人称（2026-11-12 #125 联调里 DeepSeek 这样回，被只查「我」字的检查判失败）。
+# 真正要拦的是把自己说成第三人称、或者说交给了别人去做。
+THIRD_PERSON = ('小芯', '分身', '后台', '同事', '助手', '交给')
+
+
+def first_person_receipt(reply):
+    reply = str(reply or '').strip()
+    return bool(reply) and not any(x in reply for x in THIRD_PERSON)

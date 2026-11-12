@@ -36,6 +36,7 @@ function fakeCodex(dir) {
     '    case "$act" in fail:*)',
     '      echo \'{"type":"item.completed","item":{"id":"c1","type":"command_execution","command":"make","aggregated_output":"ok","exit_code":0,"status":"completed"}}\'',
     '      printf \'{"type":"turn.failed","error":{"message":"%s"}}\\n\' "${act#fail:}"; exit 1;;',
+    '      early:*) printf \'{"type":"turn.failed","error":{"message":"%s"}}\\n\' "${act#early:}"; exit 1;;',
     '    esac;;',
     'esac',
     'echo \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"做好了"}}\'',
@@ -216,6 +217,18 @@ test('到点那一刻站长回答：答案进收件箱，下一轮带上，不�
   h.hold('bg', false);
   await until(() => bgCalls(h).length >= 2, 15000, '下一轮').catch(e => { const x = h.task(sid); throw new Error(e.message + ' DIAG ' + JSON.stringify({ status: x.status, inbox: x.inbox, q: x.question, pq: x.pendingQuestion, runs: x.runs, fin: x.finishedRun, calls: h.fc.calls().map(c => c.args.slice(-80)) })); });
   assert.ok(bgCalls(h)[1].args.includes('留着别删'));
+});
+
+test('模型还没开工就失败、换下一个候选：失败原因记进 model-stats（fromErr），正式站联调失败时查得到', async t => {
+  const h = home(t);
+  h.script(['early:upstream connect error 503 from gateway']);
+  const n = h.locked('task_new', { kind: 'code', title: '换模型', goal: '编译工程' });
+  await until(() => h.task(n.task.sid).status === 'done', 20000, '换了模型做完');
+  const stats = fs.readFileSync(path.join(h.xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(x => x.kind === 'code');
+  const last = stats.at(-1);
+  assert.equal(last.from, 'glm-5.3', JSON.stringify(stats));
+  assert.equal(last.model, 'kimi-k3.1-pro');
+  assert.match(last.fromErr || '', /503/);
 });
 
 test('做完的任务记住用量：副本删了以后 history 照样有用量', async t => {

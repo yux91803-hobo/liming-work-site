@@ -46,7 +46,7 @@ import { StateJournal, inputDigest } from './vm-state.mjs';
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
 import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
-import { bareCmd, screenLog, openScreen, setScreenTag } from './vm-screen.mjs';
+import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
 import { fromClaude, fromCodex, fromHarness } from './vm-events.mjs';
 import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
 import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
@@ -492,6 +492,8 @@ export function frontDiagnostics(meta,events,logs=[]){
    - exports/：每天把状态库（含记忆）整份导出一次，留最近 7 份。
    只记时间、对话和命令开头，不记输出。 */
 const BOUNDARY_F = () => path.join(BASE, 'logs', 'boundary.jsonl'), INTEGRITY_F = () => path.join(BASE, 'logs', 'integrity.jsonl');
+// 后台任务这一轮的浏览器（docs/xin-browser-v1-design.md）：开在桌面上，站长点「屏幕」能看（开不出来就无头）；每一步记进 logs/browser.jsonl
+const browserOpts = (sid, run) => ({ display: process.env.XIN_BROWSER_HEADLESS ? '' : screenDisplay(), log: e => logLine(path.join(BASE, 'logs', 'browser.jsonl'), { at: Date.now(), task: sid, run, ...e }) });
 function logLine(file, entry, keep = 500) {
   try {
     mk(path.dirname(file));
@@ -643,7 +645,7 @@ function runner(run) {
     // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
     const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
     if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {}, meta.providerModel ? {providerModel:meta.providerModel} : {});
-    const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0)),...(doneEv.usage.incl?{incl:true}:{})}}:{}) } : null;
+    const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,fromErr:meta.fromErr||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0)),...(doneEv.usage.incl?{incl:true}:{})}}:{}) } : null;
     const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv,stat});
     if(completion.error){finished=false;setTimeout(()=>finish(code,why),1000);return;}
     if(completion.done){Object.assign(doneEv,completion.done);ok=doneEv.ok;stopped=doneEv.stopped;}
@@ -717,7 +719,7 @@ function runner(run) {
         let container;
         if(meta.sandbox){
           // Private network: the container reaches only the pinned inference proxy and public-web egress.
-          proxy=await runtime.taskNetwork(currentSession.workspace,{baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model,takeBudget:workBudget(meta.sid)});
+          proxy=await runtime.taskNetwork(currentSession.workspace,{baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model,takeBudget:workBudget(meta.sid)},browserOpts(meta.sid,run));
           container=runtime.containerAppServer(currentSession,config,{proxy,catalog:codexCatalog()});
         }
         app = runtime.appServer(container?.command || cmd, config, { commandArgs:container?.args, spawn: { ...spawnOptions, stdio: ['pipe', 'pipe', 'pipe'] }, cwd,
@@ -766,8 +768,10 @@ function runner(run) {
         const from = meta.model;
         const candidates=safeFallbacks();
         if(!candidates.length){finish(c,'独立复核候选已改变，未回退到实际作者模型。');return;}
-        state.switched = true; meta.from = from; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);meta.effort=AUTO_EFFORT;
-        patchRun(run,{model:meta.model,effort:meta.effort,from,fallbacks:meta.fallbacks});
+        // 记下为什么换（2026-11-12 正式站联调里点名 Gemini 的任务开工前失败换了模型，原因没处查）
+        const fromErr=cut(String(state.heldErr?.text||state.lastErr||stderr||'').trim().split('\n').filter(Boolean).slice(-3).join(' '),300);
+        state.switched = true; meta.from = from; meta.fromErr = fromErr; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);meta.effort=AUTO_EFFORT;
+        patchRun(run,{model:meta.model,effort:meta.effort,from,fromErr,fallbacks:meta.fallbacks});
         if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
         emit(run, { t: 'status', text: from===runtime.AGY_MODEL?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
@@ -2888,7 +2892,7 @@ function main() {
     const run=process.argv[3],m=readJ(metaF(run)),t=m&&readJ(sessF(m.sid));
     if(!m?.task||!t?.workspace||m.model!==runtime.AGY_MODEL){process.exitCode=1;return;}
     const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
-    runtime.antigravityWork(t,{clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}})})
+    runtime.antigravityWork(t,{clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run)})
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }

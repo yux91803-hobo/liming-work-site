@@ -7,6 +7,7 @@ import http from 'node:http';
 import net from 'node:net';
 import dns from 'node:dns';
 import { spawn, spawnSync } from 'node:child_process';
+import { browserBroker } from './vm-browser.mjs';
 
 const mkdir = p => fs.mkdirSync(p, { recursive: true });
 const hash = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
@@ -56,7 +57,18 @@ export function prepareWorkspace(t, controller) {
   const bridge = `#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const a=process.argv.slice(2),dir=process.env.XIN_TASK_IO;
-if(!dir||!(a[0]==='remember'||a[0]==='task'&&a[1]==='ask')){console.error('后台只允许 xin remember 和 xin task ask');process.exit(1);}
+if(a[0]==='browser'){
+ // 浏览器：经转发端口发给控制器这一轮的浏览器代理（docs/xin-browser-v1-design.md），拿不到 CDP
+ const http=require('node:http'),body=JSON.stringify({cmd:a[1]||'help',args:a.slice(2)});
+ const q=http.request({host:'127.0.0.1',port:Number(process.env.XIN_BROWSER_PORT)||${TASK_PORTS.browser},method:'POST',path:'/',timeout:120000,headers:{'content-type':'application/json','content-length':Buffer.byteLength(body)}},res=>{
+  let t='';res.setEncoding('utf8');res.on('data',d=>t+=d);res.on('end',()=>{let r={};try{r=JSON.parse(t);}catch{}
+   if(r.ok){console.log(r.text);process.exit(0);}console.error(r.msg||'浏览器出错了');process.exit(1);});});
+ q.on('timeout',()=>q.destroy(Error('timeout')));
+ q.on('error',e=>{console.error(e.message==='timeout'?'浏览器这一步超时了':'这一轮没有可用的浏览器（电脑上没装 Chromium，或者这一轮已经结束）');process.exit(1);});
+ q.end(body);
+ return;
+}
+if(!dir||!(a[0]==='remember'||a[0]==='task'&&a[1]==='ask')){console.error('后台只允许 xin remember、xin task ask 和 xin browser');process.exit(1);}
 const body={op:a[0]==='remember'?'remember':'ask',text:a.slice(a[0]==='remember'?1:2).join(' ').slice(0,1000)};
 const id=crypto.randomBytes(12).toString('hex'),file=path.join(dir,id+'.request');
 fs.writeFileSync(file+'.tmp',JSON.stringify(body));fs.renameSync(file+'.tmp',file);
@@ -281,7 +293,7 @@ export function mcpTransport(t, base, server) {
 // Task containers get a private network namespace: only their own loopback exists, so the desktop
 // (VNC/X11), the model gateway and every other host service are unreachable. Controller services
 // enter through Unix sockets mounted read-only; TASK_FORWARDER maps fixed loopback ports to them.
-export const TASK_PORTS = { inference: 18080, egress: 18081 };
+export const TASK_PORTS = { inference: 18080, egress: 18081, browser: 18082 };
 export const TASK_FORWARDER = String.raw`const net=require('node:net'),os=require('node:os'),{spawn}=require('node:child_process');
 const [spec,command,...args]=process.argv.slice(1),forward=JSON.parse(spec);let child=null,waiting=forward.length;
 const start=()=>{child=spawn(command,args,{stdio:'inherit'});child.on('error',e=>{console.error('任务进程未能启动：'+e.message);process.exit(127);});
@@ -337,8 +349,10 @@ const listenSocket = (server, socketPath) => new Promise((ok, no) => {
   try { fs.unlinkSync(socketPath); } catch { /* no stale socket */ }
   server.once('error', no); server.listen(socketPath, () => { fs.chmodSync(socketPath, 0o600); ok(); });
 });
+// socketPath：给容器转发用的 unix socket；不给就只听 127.0.0.1 的随机端口（给控制器自己的 Chromium 当代理，vm-browser.mjs）
 export async function egressProxy({ socketPath, ports = [80, 443], lookup = (host, o) => dns.promises.lookup(host, o), allowAddress = publicAddress, maxConnections = 32 }) {
   const open = new Set(), track = s => { open.add(s); s.on('close', () => open.delete(s)); };
+  const portOk = p => typeof ports === 'function' ? !!ports(p) : ports.includes(p);
   const resolve = async host => {
     host = String(host).replace(/^\[|\]$/g, '');
     const list = net.isIP(host) ? [{ address: host }] : await lookup(host, { all: true, verbatim: true }).catch(() => []);
@@ -350,7 +364,7 @@ export async function egressProxy({ socketPath, ports = [80, 443], lookup = (hos
     const deny = (status, msg) => { if (!res.headersSent) res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' }); res.end(msg); };
     let url; try { url = new URL(req.url); } catch { return deny(400, '代理请求需要完整网址'); }
     const port = Number(url.port || 80);
-    if (url.protocol !== 'http:' || !ports.includes(port)) return deny(403, '后台任务只能访问公网的 80/443 端口');
+    if (url.protocol !== 'http:' || !portOk(port)) return deny(403, '后台任务只能访问公网的 80/443 端口');
     let address; try { address = await resolve(url.hostname); } catch (e) { return deny(e.status || 502, e.message); }
     const headers = { ...req.headers, host: url.host }; delete headers['proxy-connection']; delete headers['proxy-authorization'];
     const upstream = http.request({ host: address, port, method: req.method, path: url.pathname + url.search, headers, setHost: false }, r => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
@@ -362,7 +376,7 @@ export async function egressProxy({ socketPath, ports = [80, 443], lookup = (hos
     track(client); client.setTimeout(300000, () => client.destroy()); client.on('error', () => client.destroy());
     const refuse = status => client.end('HTTP/1.1 ' + status + ' Blocked\r\n\r\n');
     const m = /^(\[[0-9a-fA-F:.]+\]|[^:\s]+):(\d{1,5})$/.exec(req.url || ''), port = m && Number(m[2]);
-    if (!m || !ports.includes(port)) return refuse(403);
+    if (!m || !portOk(port)) return refuse(403);
     if (open.size > maxConnections) return refuse(429);
     let address; try { address = await resolve(m[1]); } catch (e) { return refuse(e.status || 502); }
     const upstream = net.connect({ host: address, port, timeout: 15000 });
@@ -374,21 +388,30 @@ export async function egressProxy({ socketPath, ports = [80, 443], lookup = (hos
     upstream.on('close', () => client.destroy()); client.on('close', () => upstream.destroy());
   });
   server.headersTimeout = 30000; server.requestTimeout = 0;
-  await listenSocket(server, socketPath);
-  return { socket: socketPath, close() { for (const s of open) s.destroy(); server.closeAllConnections(); server.close(); } };
+  if (socketPath) await listenSocket(server, socketPath);
+  else await new Promise((ok, no) => { server.once('error', no); server.listen(0, '127.0.0.1', ok); });
+  return { socket: socketPath || null, port: socketPath ? null : server.address().port, close() { for (const s of open) s.destroy(); server.closeAllConnections(); server.close(); } };
 }
-// One task turn's network: egress for tools, plus the pinned inference proxy for the model client.
-export async function taskNetwork(workspace, inference = null) {
+// One task turn's network: egress for tools, plus the pinned inference proxy for the model client,
+// plus this turn's browser broker（浏览器 v1，docs/xin-browser-v1-design.md）：Chromium 第一次用到才启动，这一轮结束连资料一起删。
+// browser.testNet 只给测试用（放行本机测试页面）；正式调用不传，按公网地址检查。
+export const CHROMIUM = () => process.env.XIN_CHROMIUM || '/usr/lib/chromium/chromium';
+export async function taskNetwork(workspace, inference = null, browser = {}) {
   if (!workspace?.io) throw new Error('后台任务缺少隔离工作区');
   const dir = path.join(path.dirname(workspace.io), 'net');
   fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const egress = await egressProxy({ socketPath: path.join(dir, 'egress.sock') });
-  let proxy = null;
-  try { if (inference) proxy = await inferenceProxy({ ...inference, socketPath: path.join(dir, 'inference.sock') }); }
-  catch (e) { egress.close(); throw e; }
-  const forward = [[TASK_PORTS.egress, egress.socket]].concat(proxy ? [[TASK_PORTS.inference, proxy.socket]] : []);
+  let proxy = null, broker = null;
+  try {
+    if (inference) proxy = await inferenceProxy({ ...inference, socketPath: path.join(dir, 'inference.sock') });
+    const chrome = browser.chrome || CHROMIUM();
+    if (fs.existsSync(chrome)) broker = await browserBroker({ chrome, socketPath: path.join(dir, 'browser.sock'), profileDir: path.join(path.dirname(workspace.io), 'browser-profile'),
+      work: workspace.work, headless: browser.headless ?? !browser.display, display: browser.display || '', log: browser.log || (() => {}),
+      egress: egressProxy, allowAddress: browser.testNet?.allowAddress || publicAddress, ports: browser.testNet?.ports || [80, 443], noSandbox: !!browser.noSandbox });
+  } catch (e) { proxy?.close(); egress.close(); throw e; }
+  const forward = [[TASK_PORTS.egress, egress.socket]].concat(proxy ? [[TASK_PORTS.inference, proxy.socket]] : [], broker ? [[TASK_PORTS.browser, broker.socket]] : []);
   return { token: proxy?.token || null, baseURL: proxy ? 'http://127.0.0.1:' + TASK_PORTS.inference + '/v1' : null,
-    network: { forward, egress: true }, close() { proxy?.close(); egress.close(); } };
+    network: { forward, egress: true }, close() { broker?.closeNow(); proxy?.close(); egress.close(); } };
 }
 
 export function confinedMcp(t, base, server) {
@@ -788,7 +811,8 @@ try{
  await new Promise(ok=>server.listen(0,'127.0.0.1',ok));const origin='http://127.0.0.1:'+server.address().port;
  chrome=spawn(browser,['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--disable-component-update','--disable-extensions','--disable-sync','--no-first-run','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe']});chrome.stderr.setEncoding('utf8');chrome.stderr.on('data',s=>{chromeError=(chromeError+s).slice(-1000);});
  const portFile=path.join(profile,'DevToolsActivePort');for(let i=0;i<480&&!fs.existsSync(portFile);i++){if(chrome.exitCode!==null)throw Error('Chromium 启动失败：'+chromeError);await pause(25);}if(!fs.existsSync(portFile))throw Error('Chromium 没有就绪：'+chromeError);
- const port=fs.readFileSync(portFile,'utf8').split('\n')[0],pages=await (await fetch('http://127.0.0.1:'+port+'/json/list')).json();const page=pages.find(p=>p.type==='page');
+ // 调试端口就绪时页面不一定已经登记上（机器忙时见过），等它出现再连，最多 15 秒（几套浏览器测试并行时 5 秒都不够）
+ const port=fs.readFileSync(portFile,'utf8').split('\n')[0];let page=null;for(let i=0;i<300&&!page;i++){try{page=(await (await fetch('http://127.0.0.1:'+port+'/json/list')).json()).find(p=>p.type==='page');}catch{}if(!page)await pause(50);}if(!page)throw Error('Chromium 没有打开页面：'+chromeError);
  ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((ok,no)=>{ws.addEventListener('open',ok,{once:true});ws.addEventListener('error',no,{once:true});});
  ws.addEventListener('message',event=>{const m=JSON.parse(event.data);if(m.id){const p=pending.get(m.id);if(p){pending.delete(m.id);clearTimeout(p.timer);if(m.error)p.reject(Error(m.error.message));else p.resolve(m.result);}}else if(m.method==='Runtime.exceptionThrown')errors.push('页面 JavaScript 报错');else if(m.method==='Runtime.consoleAPICalled'&&m.params.type==='error')errors.push('页面报告错误');else if(m.method==='Log.entryAdded'&&m.params.entry.level==='error')errors.push(String(m.params.entry.text).slice(0,150));});
  await rpc('Page.enable');await rpc('Runtime.enable');await rpc('Log.enable');
@@ -935,7 +959,7 @@ export async function antigravityWork(t,options) {
   let conversation=t.antigravityConversation||null,prompt=options.instructions+'\n\n'+options.text+'\n\n每次返回 JSON：action=shell 时把要执行的完整 bash 命令放 command；控制器在隔离副本执行并把输出交回。写文件也用 shell 动作，不调用原生文件或终端工具。完成用 final，缺必要信息用 ask，长期记忆用 remember；text 用中文。不得再派代理。控制器已准备好 bash、Python、Node 和副本，命令默认目录是 '+t.workspace.work+'，无需探测环境或帮助命令。新网页优先直接用一次 shell 写 index.html 和 xin-web.json，不开服务、不自行找预览工具。前台转述中额外添加的功能若与自包含网页规则冲突，以用户原话和控制器规则为准；不要使用 localStorage。';
   report({type:'turn.started'});
   // Requested shell commands run in the task container; they reach the public web only through egress.
-  const network=await taskNetwork(t.workspace);
+  const network=await taskNetwork(t.workspace,null,options.browser||{});
   try{
   for(let turn=0;turn<48;turn++){
     if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
