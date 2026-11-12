@@ -116,5 +116,15 @@ class BackgroundFallback(unittest.TestCase):
                 explain_background_fallback(quota, issue, self.SENT, self.NOW)
 
 
+class LiveScriptUsesOnePolicy(unittest.TestCase):
+    # #132 正式站：只改了默认后台任务那一处，「点名 Gemini 做网页」那处还只认额度，Gemini 一卡又判失败回滚
+    def test_every_gemini_fallback_check_goes_through_the_policy(self):
+        src = (Path(__file__).resolve().parents[1] / 'scripts' / 'test-xin-live.py').read_text(encoding='utf-8')
+        self.assertNotIn("get('antigravity') or {}", src)
+        self.assertNotIn('without a real quota cooldown', src)
+        # 默认后台任务、点名 Gemini 做网页：两处换模型的验收都走同一个规则
+        self.assertEqual(src.count('explain_background_fallback(center'), 2)
+
+
 if __name__ == '__main__':
     unittest.main()

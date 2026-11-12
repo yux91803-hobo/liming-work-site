@@ -67,6 +67,11 @@
   - `test/xin-antigravity.test.cjs` 再加 2 项：回了没做完 / 命令没跑起来；
   - 「不出声」那项加查 `antigravityIssue`；
   - `test/xin_live_policy_test.py` 加 3 项。
+- **#132 正式站联调又回滚一次（2026-11-13 07:24，北京时间）**：
+  - 第一处检查（默认后台任务）这次真用上了 Gemini，过了。
+  - 「点名 Gemini 做网页」那处：Gemini 3.8 Flash 120 秒没出声，控制器照新规矩记下、换 GLM-5.3 做完。但那处检查我上次漏改了，还是只认额度，于是又判失败。
+  - 改法：`scripts/test-xin-live.py` 的两处都走同一个 `explain_background_fallback`，按这个任务自己的派出时间算 15 分钟。
+  - `test/xin_live_policy_test.py` 加一项守住：脚本里不能再有只认额度的换模型检查，两处都得走这个规则（对 main 上的脚本会报错）。
 - 顺手：#131 从工作树提交时，误带进了一个 `node_modules` 软链接。`.gitignore` 写的是 `node_modules/`，只匹配目录，不匹配软链接。现已删掉，规则改成 `node_modules`。
 
 **测试**：`test/xin-antigravity.test.cjs` 加 2 项（假 Gemini 不出声、出一段后不再出声）：
