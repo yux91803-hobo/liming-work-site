@@ -1860,6 +1860,30 @@ test('小芯的屏幕：开桌面 → 桌面上开终端 → 要观看链接（�
   } finally { ib.restore(); }
 });
 
+test('登录窗口（浏览器第二步）：先开桌面，云电脑开登录窗口，回能接管的链接（15 分钟）；窗口开不起来说清楚、不给链接；网站登录的几个操作放行', async () => {
+  const m = await fresh(), env = mkEnv(), ck = await login(m, env);
+  const ib = fakeIB({
+    'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/desktop': [{ body: { installed: true, running: true } }, { body: { installed: true, running: true } }],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true,"site":"bilibili.com"}', stderr: '', exitCode: 0 } }, { body: { stdout: '{"error":"failed","msg":"登录窗口开不了沙盒"}', stderr: '', exitCode: 0 } },
+      { body: { stdout: '{"ok":true,"sites":[],"window":null}', stderr: '', exitCode: 0 } }],
+    'POST /v1/machines/m_abc/desktop/stream': [(u, init) => new Response(JSON.stringify({ url: 'https://dashboard.instabox.sh/desktop/m_abc#token=' + (JSON.parse(init.body).viewOnly ? 'v' : 'c'), expiresAt: 'z' }))]
+  });
+  const call = async (op, args) => (await m.handleXin(req('/api/xin/call', { body: { op, args }, headers: { cookie: ck } }), env, null)).json();
+  try {
+    const r = await call('login_open', { sid: 'stask0000001' });
+    assert.deepStrictEqual(r, { ok: true, data: { url: 'https://dashboard.instabox.sh/desktop/m_abc#token=c', expiresAt: 'z', control: true, terminal: false, site: 'bilibili.com' } });
+    const ex = JSON.parse(ib.calls.find(x => x.key.endsWith('/exec')).body);
+    assert.deepStrictEqual([ex.argv[2], JSON.parse(ex.stdin)], ['login_open', { sid: 'stask0000001' }]);
+    assert.ok(ib.calls.findIndex(x => x.key.endsWith('/desktop')) < ib.calls.findIndex(x => x.key.endsWith('/exec')), '先开桌面再开窗口');
+    assert.deepStrictEqual(JSON.parse(ib.calls.find(x => x.key.endsWith('/desktop/stream')).body), { viewOnly: false, ttlSeconds: 900 });
+    const bad = await call('login_open', { url: 'https://www.bilibili.com/' });
+    assert.deepStrictEqual([bad.ok, bad.msg], [false, '登录窗口开不了沙盒']);
+    assert.strictEqual(ib.calls.filter(x => x.key.endsWith('/desktop/stream')).length, 1, '窗口没开起来就不给接管链接');
+    assert.deepStrictEqual((await call('logins', {})).data, { ok: true, sites: [], window: null });
+  } finally { ib.restore(); }
+});
+
 test('小芯的屏幕：电脑在睡就叫醒（waking）；桌面在装回 waking；key 不是创建者自己的给出明白的说法；开不了终端也照样给链接', async () => {
   const m = await fresh(), env = mkEnv(), ck = await login(m, env);
   const call = async (op, args) => (await m.handleXin(req('/api/xin/call', { body: { op, args }, headers: { cookie: ck } }), env, null)).json();
