@@ -630,7 +630,7 @@ export async function frontTurn(o) {
     try {
       input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify({ok:true,title:result.task.title,status:result.task.status})});
       for (const c of calls.slice(i + 1)) input.push({type:'function_call_output',call_id:c.call_id,output:JSON.stringify({skipped:true})});
-      input.push({role:'user',content:'已经交出去了。用你自己的话简短回兄弟一句，别套固定说法，别提编号、模型和分身；不要再调用工具。'});
+      input.push({role:'user',content:'已经交出去了。用你自己的话简短回兄弟一句，像朋友顺口应一声那样接住他这句话里的具体内容；别套固定说法，别预告结果和要多久，别提编号、模型和分身；不要再调用工具。'});
       const req = {...payload, input, tool_choice:'none'};
       let data;
       if (o.request) data = await o.request(req, abort.signal);
@@ -650,8 +650,8 @@ export async function frontTurn(o) {
     while (steps < max && rounds++ < max + 2) {
       if(o.takeBudget&&!o.takeBudget())throw Error('本项工作的推理预算已用完，保留现有结果');
       const payload={model:FRONT_MODEL, stream:false, reasoning:{effort:'max'}, instructions:o.instructions, input,
-          max_output_tokens:1800, tools:[{type:'function',name:'xin',description:'调度工作、查看真实进度、转达用户回复、记事；也能做表情动作、调整好感度、留下次见面的开场白。argv 是参数数组，不是 shell；新建或转达工作后本轮立即结束。',
-            parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true},...(o.handoff?[{type:'function',name:'finish_event',description:'对内部完成事件作最终决定：向用户交付真实结果或保持安静。',strict:true,parameters:{type:'object',properties:{action:{type:'string',enum:['deliver','silent']},text:{type:'string'}},required:['action','text'],additionalProperties:false}}]:[])]};
+          max_output_tokens:1800, tools:[{type:'function',name:'xin',description:'把要动手的事派给后台、查后台工作的真实进度、把兄弟的回复转给后台、记事和查以前的原话；也能做表情动作、留下次见面的开场白。argv 是参数数组，不是 shell。这一轮真的需要时才调用，没调用就不说查过；新建或转达工作后本轮立即结束，不预告结果和时间。',
+            parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true},...(o.handoff?[{type:'function',name:'finish_event',description:'对后台结果做最终决定：deliver 用自己的话把兄弟要的、或他该知道的新结果告诉他（text 就是给他的话，要紧的说全）；silent 用于重复、过期、已经说过、没有新东西的。',strict:true,parameters:{type:'object',properties:{action:{type:'string',enum:['deliver','silent']},text:{type:'string'}},required:['action','text'],additionalProperties:false}}]:[])]};
       let data;
       if(o.request)data=await o.request(payload,abort.signal);
       else{

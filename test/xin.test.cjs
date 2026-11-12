@@ -442,7 +442,7 @@ test('记忆：设定里带记忆库的内容；空的写「还是空的」；�
   assert.ok(systemPrompt('- 用户叫小李').includes('<<<记忆\n- 用户叫小李\n记忆>>>'));
   assert.ok(systemPrompt('').includes('（还是空的）'));
   const long = systemPrompt('x'.repeat(20000));
-  assert.ok(long.includes('该整理了') && long.length < 12000);
+  assert.ok(long.includes('该整理了') && long.length < systemPrompt('').length + 8200, '长记忆截断到上限以内');
   for (const p of [systemPrompt(''), systemPrompt('', { tasks: true })]) assert.ok(p.includes('xin remember') && p.includes('stated') && p.includes('inferred') && p.includes('xin') && p.includes('forget'));
 });
 
@@ -1831,7 +1831,8 @@ test('好感度、新动作进了设定；greet 顺便带回去；xin bond 在�
   assert.deepStrictEqual([ev.t, ev.d, ev.why, ev.score, ev.name], ['bond', 2, '答对了定时器的题', 3, '刚认识']);
   assert.strictEqual(op('bond_play', { kind: 'cookie' }).info.log[0].why, '喂我吃饼干');
   const p = spawnSync(process.execPath, ['--input-type=module', '-e', `import { systemPrompt } from ${JSON.stringify(require('node:url').pathToFileURL(agent).href)}; process.stdout.write(systemPrompt(''));`], { env, encoding: 'utf8' }).stdout;
-  assert.ok(p.includes('你和用户现在的关系：刚认识（好感度 4）') && p.includes('xin bond +1 理由') && p.includes('xin move help') && p.includes('已经会的：还没有'), p.slice(-600));
+  // 2026-11-12 站长：提示词照 Muse 来，Muse 没有亲密度就不用——设定里不再按好感度定语气；xin bond 和页面上的小芯照旧
+  assert.ok(!p.includes('你和用户现在的关系') && !p.includes('xin bond') && p.includes('xin move help') && p.includes('已经会的：还没有'), p.slice(-600));
 });
 
 /* ---------- 小芯的屏幕 ---------- */
@@ -1965,11 +1966,14 @@ test('记事本超过上限：保留开头和最新的记录，只省略中间',
   assert.ok(systemPrompt(lines.join('\n')).includes('第 999 条记录'));
 });
 
-test('默认模式前台：只留必要规则，不规定语气和性格（不带会变的分数，保持缓存），表情仍是可用工具；好感度、开场白不再出现，记忆自己打理', async () => {
+// 2026-11-12 站长：「按 Muse 的来……能抄他的就抄他的」。前台加回 Muse 式的人设和说话方式（你是谁、看重什么、怎么说话），
+// 推翻 11-10「前台少限定」的做法（那时前台是 Claude Opus，现在是 DeepSeek）；Muse 没有亲密度，所以仍不带关系等级和好感度
+test('默认模式前台：Muse 式人设和说话方式，不带会变的分数（保持缓存），表情仍是可用工具；好感度、开场白不出现，记忆自己打理', async () => {
   const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
   const p = systemPrompt('', { tasks: true });
   assert.ok(p.includes('兄弟') && p.includes('北京时间') && p.includes('原话照传') && p.includes('明确同意') && p.includes('我查了') && p.includes('密钥'));
-  assert.ok(!p.includes('你和用户现在的关系') && !p.includes('亲近程度') && !p.includes('简短回答'));
+  assert.ok(p.includes('## 你是谁') && p.includes('## 你看重的') && p.includes('## 怎么说话') && p.includes('像朋友在聊天软件里发消息'));
+  assert.ok(!p.includes('你和用户现在的关系') && !p.includes('亲近程度'));
   assert.ok(!/好感度 \d/.test(p));
   assert.ok(!p.includes('"bond"') && !p.includes('["xin","next"') && p.includes('["xin","dance"]'));
   assert.ok(p.includes('"--quote"') && p.includes('由你自己打理') && !p.includes('待兄弟确认'));
