@@ -46,3 +46,20 @@ test('xin task new --dir 指到上传目录：不派，说清楚改用 --file �
   assert.match(xinTask('new', '--title', 'X', '--dir', 'uploads/new-day', '--', 'x'), /不能把/);
   assert.ok(!fs.existsSync(path.join(work, 'uploads', 'new-day')), '没在上传目录里建出空目录');
 });
+
+test('以前做完的 Gemini（Antigravity）任务：存下的用量是「输入不含缓存」的旧口径，取出来时换算，缓存命中不超过 100%；别的模型、已换算的照旧', () => {
+  const { xin, op } = agentEnv();
+  fs.mkdirSync(path.join(xin, 'sessions'), { recursive: true });
+  const put = (sid, model, usage) => fs.writeFileSync(path.join(xin, 'sessions', sid + '.json'), JSON.stringify({ sid, kind: 'task', agent: 'codex', no: 1, title: '用量', status: 'done', runs: [], created: 1, endedAt: 2, model, started: true, usage }));
+  // 正式机 #123 前的真实形状：input 54735 不含缓存读取 149606，total = 输入 + 输出
+  put('sagyold0001', 'gemini-3.8-flash-high', { input: 54735, cached: 149606, output: 39807, total: 94542, ctx: 0, win: 1000000 });
+  const u = op('history', { sid: 'sagyold0001' }).usage;
+  assert.deepEqual([u.input, u.cached, u.output, u.total, u.incl], [204341, 149606, 39807, 244148, true]);
+  assert.ok(u.cached / u.input <= 1);
+  const fresh = { input: 204341, cached: 149606, output: 39807, total: 244148, ctx: 0, win: 1000000, incl: true };
+  put('sagynew0001', 'gemini-3.8-flash-high', fresh);
+  assert.deepEqual(op('history', { sid: 'sagynew0001' }).usage, fresh, '已换算的不再加一次');
+  const codex = { input: 120, cached: 60, output: 30, total: 150, ctx: 40, win: 200000 };
+  put('scodex00001', 'glm-5.3', codex);
+  assert.deepEqual(op('history', { sid: 'scodex00001' }).usage, codex, 'Codex 的输入本来就含缓存');
+});

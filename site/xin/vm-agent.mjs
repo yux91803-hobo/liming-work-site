@@ -63,7 +63,7 @@ import {reportLearning,learningEvidence} from './vm-learning.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 import { transientFailure, finalFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
-import { quotaWindows, glowLevel, forecast, usageSummary, agyUsage } from './vm-usage.mjs';
+import { quotaWindows, glowLevel, forecast, usageSummary, agyUsage, inclusive } from './vm-usage.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
@@ -1257,7 +1257,7 @@ function claudeUsage(id, win) {
 }
 export function sessionUsage(s) {
   try {
-    if (isTask(s) && ['done', 'failed', 'stopped'].includes(s.status) && s.usage) return s.usage;
+    if (isTask(s) && ['done', 'failed', 'stopped'].includes(s.status) && s.usage) return inclusive(s.model, s.usage);   // #123 以前做完的 Gemini 任务是旧口径
     if(isTask(s)&&s.antigravityConversation){const b=readJ(path.join(BASE,'budgets',s.sid+'.json'));if(b?.total)return agyUsage(b,s.frontUsage?.ctx||0);}   // Antigravity 的输入不含缓存，换算后标 incl
     if (s?.agent === 'codex' && s.frontUsage) return s.frontUsage;
     if (!s || !okAgentSid(s.agent, s.agentSid) || !s.started) return null;

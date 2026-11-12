@@ -43,7 +43,12 @@ export function agyUsage(b, ctx = 0) {
   const input = (b.input || 0) + (b.cached || 0), output = b.output || 0;
   return { input, cached: b.cached || 0, output, total: input + output, ctx, win: 1000000, incl: true };
 }
-const inclusive = (model, u) => AGY_MODELS.includes(model) && !u.incl ? { ...u, input: (u.input || 0) + (u.cached || 0) } : u;
+// 旧口径的 Antigravity 用量（输入不含缓存、没有 incl）换成「输入含缓存」：统计汇总和以前做完的任务取用量都用它
+export const inclusive = (model, u) => {
+  if (!AGY_MODELS.includes(model) || !u || u.incl) return u;
+  const input = (u.input || 0) + (u.cached || 0);
+  return { ...u, input, total: input + (u.output || 0), incl: true };
+};
 const bjDate = at => new Date(at + BJ).toISOString().slice(0, 10);
 const zero = () => ({ input: 0, cached: 0, output: 0, runs: 0 });
 // model-stats.jsonl 的记录 → 最近 30 个北京日（按模型）和今天 / 7 天 / 30 天合计。没有用量的轮次只算轮数。
