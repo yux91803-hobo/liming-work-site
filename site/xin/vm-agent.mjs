@@ -63,7 +63,7 @@ import {reportLearning,learningEvidence} from './vm-learning.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 import { transientFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
-import { quotaWindows, glowLevel, forecast, usageSummary } from './vm-usage.mjs';
+import { quotaWindows, glowLevel, forecast, usageSummary, agyUsage } from './vm-usage.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
@@ -606,7 +606,7 @@ function runner(run) {
     // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
     const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
     if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {}, meta.providerModel ? {providerModel:meta.providerModel} : {});
-    const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0))}}:{}) } : null;
+    const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0)),...(doneEv.usage.incl?{incl:true}:{})}}:{}) } : null;
     const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv,stat});
     if(completion.error){finished=false;setTimeout(()=>finish(code,why),1000);return;}
     if(completion.done){Object.assign(doneEv,completion.done);ok=doneEv.ok;stopped=doneEv.stopped;}
@@ -1216,7 +1216,7 @@ function claudeUsage(id, win) {
 export function sessionUsage(s) {
   try {
     if (isTask(s) && ['done', 'failed', 'stopped'].includes(s.status) && s.usage) return s.usage;
-    if(isTask(s)&&s.antigravityConversation){const b=readJ(path.join(BASE,'budgets',s.sid+'.json'));if(b?.total)return {input:b.input||0,output:b.output||0,cached:b.cached||0,total:b.total,ctx:s.frontUsage?.ctx||0,win:1000000};}
+    if(isTask(s)&&s.antigravityConversation){const b=readJ(path.join(BASE,'budgets',s.sid+'.json'));if(b?.total)return agyUsage(b,s.frontUsage?.ctx||0);}   // Antigravity 的输入不含缓存，换算后标 incl
     if (s?.agent === 'codex' && s.frontUsage) return s.frontUsage;
     if (!s || !okAgentSid(s.agent, s.agentSid) || !s.started) return null;
     if (s.agent === 'harness') return s.hUsage && s.hUsage.total ? s.hUsage : null;

@@ -33,6 +33,16 @@ export function forecast(samples, window, now = Date.now()) {
   return at < window.resetAt ? at : null;
 }
 
+// 用量口径：一律按「输入里含缓存命中」记（Codex / OpenAI 的口径）。Antigravity（agy）不一样：它的 input_tokens 不含缓存读取，
+// total_tokens = 输入 + 输出（2026-11-12 在正式机核对：input 54735、cache_read 149606、output 39807、total 94542），
+// 直接用会让缓存命中超过 100%。所以记账时换算，并标 incl；以前没换算的旧记录（这些模型、没有 incl）读的时候补上。
+// 和 vm-runtime.mjs 的 AGY_MODEL 保持一致（测试会核对）。
+export const AGY_MODELS = ['gemini-3.8-flash-high'];
+export function agyUsage(b, ctx = 0) {
+  const input = (b.input || 0) + (b.cached || 0), output = b.output || 0;
+  return { input, cached: b.cached || 0, output, total: input + output, ctx, win: 1000000, incl: true };
+}
+const inclusive = (model, u) => AGY_MODELS.includes(model) && !u.incl ? { ...u, input: (u.input || 0) + (u.cached || 0) } : u;
 const bjDate = at => new Date(at + BJ).toISOString().slice(0, 10);
 const zero = () => ({ input: 0, cached: 0, output: 0, runs: 0 });
 // model-stats.jsonl 的记录 → 最近 30 个北京日（按模型）和今天 / 7 天 / 30 天合计。没有用量的轮次只算轮数。
@@ -47,7 +57,7 @@ export function usageSummary(lines, now = Date.now()) {
     since = since == null ? r.at : Math.min(since, r.at);
     const date = bjDate(r.at), day = byDate.get(date);
     if (!day) continue;
-    const u = r.usage || {}, add = t => { t.input += u.input || 0; t.cached += u.cached || 0; t.output += u.output || 0; t.runs++; };
+    const u = inclusive(r.model, r.usage || {}), add = t => { t.input += u.input || 0; t.cached += u.cached || 0; t.output += u.output || 0; t.runs++; };
     add(day[r.model] || (day[r.model] = zero()));
     add(totals.d30); if (seven.has(date)) add(totals.d7); if (date === today) add(totals.today);
   }
