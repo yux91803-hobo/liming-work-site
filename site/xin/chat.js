@@ -519,7 +519,7 @@
     mm.addEventListener('click', function () {
       var old = mrow.querySelector('.xc-sa'); if (old) { old.remove(); mm.setAttribute('aria-expanded', 'false'); return; }
       mm.setAttribute('aria-expanded', 'true');
-      var row = h('div', 'xc-sa'), go = h('button', 'xc-sa-b', '归档，重新开始'), msg = h('p', 'xc-sa-m'); go.type = 'button';
+      var row = h('div', 'xc-sa'), go = h('button', 'xc-sa-b', '归档并新建'), msg = h('p', 'xc-sa-m'); go.type = 'button';
       go.addEventListener('click', function () {
         var sid = S.main; if (!sid) return;
         go.disabled = true; msg.textContent = '';
@@ -690,7 +690,7 @@
     scrEl._ctl = control; if (control) scrUsedCtl = true;
     scrEl.classList.toggle('ctl', control);
     [].forEach.call(scrEl.querySelectorAll('.xs-mode .xc-ag'), function (b) { b.setAttribute('aria-checked', (b.getAttribute('data-mode') === 'ctl') === control ? 'true' : 'false'); });
-    scrEl.querySelector('.xs-tip').textContent = first ? '在登录窗口里自己登录（输密码、扫码都行），小芯看不到你输的东西。登好后关掉屏幕，点「好了，接着做」或「登好了」。'
+    scrEl.querySelector('.xs-tip').textContent = first ? '在登录窗口里自己登录（输密码、扫码都行），小芯看不到你输的东西。登录后关掉屏幕，点「已登录，继续」或「保存登录」。'
       : control ? '接管中：你的鼠标、键盘会直接操作小芯的电脑。用完点「观看」或关掉。' : '只看不动：中间那个终端实时显示小芯在干什么。想自己动手，点「接管」。';
     fr.hidden = true; fr.src = 'about:blank';
     msg.hidden = false; msg.textContent = first ? '正在打开登录窗口…' : '正在打开屏幕…';
@@ -755,20 +755,20 @@
       lgBody.innerHTML = ''; lgBody.hidden = false;
       var list = h('ul', 'xc-lg-l');
       (d.sites || []).forEach(function (x) {
-        var li = h('li'), rm = h('button', 'xc-lnk', '删掉'); rm.type = 'button'; rm.setAttribute('aria-label', '删掉 ' + x.site + ' 的登录');
+        var li = h('li'), rm = h('button', 'xc-lnk', '删除'); rm.type = 'button'; rm.setAttribute('aria-label', '删除 ' + x.site + ' 的登录');
         li.appendChild(h('span', '', x.site)); li.appendChild(h('small', '', lgDay(x.saved))); li.appendChild(rm);
-        rm.addEventListener('click', function () { rm.disabled = true; call('login_remove', { site: x.site }, 30000).then(lgRender, function (e) { rm.disabled = false; lgNote.textContent = '没删掉：' + e.message; }); });
+        rm.addEventListener('click', function () { rm.disabled = true; call('login_remove', { site: x.site }, 30000).then(lgRender, function (e) { rm.disabled = false; lgNote.textContent = '删除失败：' + e.message; }); });
         list.appendChild(li);
       });
       if (!(d.sites || []).length) lgBody.appendChild(h('p', 'xc-lg-e', '还没有保存的登录'));
       else lgBody.appendChild(list);
-      var add = h('div', 'xc-lg-add'), inp = h('input', 'xc-lg-in'), go = h('button', 'xc-btn', '登录新网站'), done = h('button', 'xc-btn sec', '登好了');
+      var add = h('div', 'xc-lg-add'), inp = h('input', 'xc-lg-in'), go = h('button', 'xc-btn', '登录新网站'), done = h('button', 'xc-btn sec', '保存登录');
       inp.type = 'url'; inp.placeholder = '网址，比如 https://www.bilibili.com'; inp.setAttribute('aria-label', '要登录的网址');
       go.type = 'button'; done.type = 'button'; done.hidden = !d.window;
       go.addEventListener('click', function () { if (!inp.value.trim()) { inp.focus(); return; } openLogin({ url: inp.value.trim() }); done.hidden = false; });
       done.addEventListener('click', function () { done.disabled = true; call('login_done', {}, 30000).then(function () { return call('logins', {}, 30000); }).then(lgRender, function (e) { done.disabled = false; lgNote.textContent = '没存上：' + e.message; }); });
       add.appendChild(inp); add.appendChild(go); add.appendChild(done); lgBody.appendChild(add);
-      var lgNote = h('p', 'xc-tg-n', d.window ? '登录窗口开着：' + d.window.site + '，登好后点「登好了」' : '删掉只删小芯电脑上保存的登录；网站那边的登录设备要你自己去网站上退。');
+      var lgNote = h('p', 'xc-tg-n', d.window ? '登录窗口开着：' + d.window.site + '，登录后点「保存登录」' : '删除只删小芯电脑上保存的登录；网站那边的登录设备要你自己去网站上退出。');
       lgBody.appendChild(lgNote);
     }
     lgBtn.addEventListener('click', function () {
@@ -901,7 +901,7 @@
         S.sessList = (S.sessList || []).filter(function (x) { return x !== s; });
         if (s.sid === S.sid) newChat(true);
         renderSess();
-      }).catch(function (e) { del.disabled = false; armed = 0; del.textContent = '删除'; del.classList.remove('armed'); msg.textContent = '没删掉：' + e.message; });
+      }).catch(function (e) { del.disabled = false; armed = 0; del.textContent = '删除'; del.classList.remove('armed'); msg.textContent = '删除失败：' + e.message; });
     });
     row.appendChild(inp); row.appendChild(ren); row.appendChild(arc); row.appendChild(del); row.appendChild(msg);
     li.appendChild(row);
@@ -925,7 +925,7 @@
       sessEl.appendChild(backBtn(S.filesFrom !== 'chat'));
       if (d.error) {
         sessEl.appendChild(h('p', 'xc-hint', d.msg || d.error));
-        var home = h('button', 'xc-link xc-inl', '去工作目录'); home.type = 'button';
+        var home = h('button', 'xc-link xc-inl', '打开工作目录'); home.type = 'button';
         home.addEventListener('click', function () { loadFiles(WORK); });
         sessEl.appendChild(home);
         return;
@@ -1045,7 +1045,7 @@
       // 每日任务
       var dl = d.daily && d.daily.last, dst = h('p', 'xc-dailyst');
       dst.appendChild(document.createTextNode('最近一次：' + (dl && dl.date ? dl.date.slice(5) + ' ' + (dl.ok === null ? '进行中' : dl.ok ? '已完成' : '失败') : '还没做过') + '　'));
-      if (dl && dl.sid) { var lk = h('button', 'xc-link xc-inl', '看看'); lk.type = 'button'; lk.addEventListener('click', function () { openSession(dl.sid); }); dst.appendChild(lk); }
+      if (dl && dl.sid) { var lk = h('button', 'xc-link xc-inl', '查看'); lk.type = 'button'; lk.addEventListener('click', function () { openSession(dl.sid); }); dst.appendChild(lk); }
       sessEl.appendChild(h('p', 'xc-set-h xc-tv-h', '每日任务'));
       sessEl.appendChild(dst);
       // 各模型最近 14 天
@@ -1075,14 +1075,14 @@
       sessEl.appendChild(backBtn(true));
       sessEl.appendChild(h('p', 'xc-hint', '每天 9:10 执行，失败时 21:10 重试。每行一项。'));
       if (d.last && d.last.date) {
-        var st = h('p', 'xc-dailyst'), lk = h('button', 'xc-link xc-inl', '看看'); lk.type = 'button';
+        var st = h('p', 'xc-dailyst'), lk = h('button', 'xc-link xc-inl', '查看'); lk.type = 'button';
         st.appendChild(document.createTextNode('最近一次：' + d.last.date.slice(5) + ' ' + (d.last.ok === null ? '进行中' : d.last.ok ? '已完成' : '失败') + '　'));
         lk.addEventListener('click', function () { openSession(d.last.sid); });
         st.appendChild(lk); sessEl.appendChild(st);
       }
       var ta = h('textarea', 'xc-memt'); ta.value = d.text || ''; ta.placeholder = '比如：\n- 看看网关今天签到成没成，没成就补签，记下积分和连签天数'; ta.setAttribute('aria-label', '每日任务清单');
       sessEl.appendChild(ta);
-      var row = h('div', 'xc-memrow'), save = h('button', 'xc-btn', '保存'), now = h('button', 'xc-btn xc-btn2', '现在就做一遍'), msg = h('span', 'xc-hint', '');
+      var row = h('div', 'xc-memrow'), save = h('button', 'xc-btn', '保存'), now = h('button', 'xc-btn xc-btn2', '立即执行'), msg = h('span', 'xc-hint', '');
       save.type = now.type = 'button';
       var saveIt = function () { return call('daily_set', { text: ta.value }, 60000); };
       save.addEventListener('click', function () {
@@ -1333,11 +1333,16 @@
      - 做完（或者在等你确认）时，聊天最后小芯说一条结果；你不在看这个对话时页面上的小芯冒个气泡（关着网页就推送，vm-agent 发）。
      - 「详情」：一页里看它每一步说的话、执行的命令和结果；在做的能改要求、能停，做完的、停了的能补充后继续，等确认的直接回复。
      状态靠轮询 tasks：看着有任务在做的对话时 4 秒一次，别的时候有任务在做 20 秒一次，没有就不轮询。 */
-  var TSTAT = { queued: '排队中', running: '进行中', stopping: '停止中', waiting: '待确认', done: '已完成', failed: '失败', stopped: '已停止' };
+  var TSTAT = { queued: '排队中', running: '进行中', stopping: '停止中', waiting: '待处理', done: '已完成', failed: '失败', stopped: '已停止' };
   var TKIND = { quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务', system: '电脑维护' };
   var TICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>';
   S.tinfo = {}; S.tactive = []; S.bg = 0; S.queue = [];
   function tLive(t) { return t.status === 'queued' || t.status === 'running' || t.status === 'stopping'; }
+  // 待处理最多等 30 分钟（控制器给 waitUntil），过了任务自己停下；这里显示还剩多久
+  function waitLeft(t) { return t.status === 'waiting' && t.waitUntil ? '剩 ' + Math.max(1, Math.ceil((t.waitUntil - Date.now()) / 60000)) + ' 分钟' : ''; }
+  // 待处理的三种：登录、审批（要批准的操作、写回）、回复（问题）
+  function waitAction(t) { return t.browserStep ? '登录' : t.approval && t.approval.kind !== 'input' ? '审批' : '回复'; }
+  function stopLine(t) { return t.expired ? '已停止：等待超时' : '已停止'; }
   function dur(ms) { var s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + ' 秒' : s < 3600 ? Math.round(s / 60) + ' 分钟' : (s / 3600).toFixed(1).replace(/\.0$/, '') + ' 小时'; }
   function bareCmd(d) { var m = /^\/(?:usr\/)?bin\/(?:ba)?sh -l?c (['"])([\s\S]*)\1$/.exec(String(d || '').trim()); return m ? m[2] : String(d || ''); }
   function tStatText(t) {
@@ -1365,12 +1370,12 @@
     e.appendChild(st);
     var line = tLine(t); if (line) e.appendChild(h('div', 'xc-task-a', line));
     var ft = h('div', 'xc-task-b');
-    var v = h('button', 'xc-task-btn', t.status === 'waiting' ? '回复' : '查看详情'); v.type = 'button';
+    var v = h('button', 'xc-task-btn', t.status === 'waiting' ? waitAction(t) : '查看详情'); v.type = 'button';
     v.addEventListener('click', function () { openTask(t.sid); });
     ft.appendChild(v);
     var preview=previewLink(t);if(preview)ft.appendChild(preview);
     // 还在做：随时能改要求（点开直接写）、能停
-    if (tLive(t) && t.status !== 'stopping') { var c = h('button', 'xc-task-btn xc-task-tell', '改一下'); c.type = 'button'; c.addEventListener('click', function () { openTask(t.sid, true); }); ft.appendChild(c); }
+    if (tLive(t) && t.status !== 'stopping') { var c = h('button', 'xc-task-btn xc-task-tell', '修改'); c.type = 'button'; c.addEventListener('click', function () { openTask(t.sid, true); }); ft.appendChild(c); }
     if (tLive(t)) { var x = h('button', 'xc-task-btn', '停止'); x.type = 'button'; x.addEventListener('click', function () { stopTask(t.sid, x); }); ft.appendChild(x); }
     e.appendChild(ft);
   }
@@ -1388,12 +1393,12 @@
     var m = aiMsg('task-' + t.sid, t.status === 'failed' || t.status === 'stopped' ? 'tbad' : '');
     m.e.classList.add('xc-tres'); m.e.dataset.tres = key;
     var head = h('div', 'xc-tres-h'); head.appendChild(h('span', '', t.title)); if (t.status !== 'done') head.appendChild(h('em', 'xc-tres-st', TSTAT[t.status] || t.status)); m.b.appendChild(head);
-    if (t.status === 'waiting') m.b.appendChild(h('p', 'xc-tres-q', t.question || '在等你确认'));
+    if (t.status === 'waiting') m.b.appendChild(h('p', 'xc-tres-q', t.question || '待处理'));
     else if (t.result && t.result.text) m.b.appendChild(md(t.result.text));
     if (t.status === 'failed' && t.result && t.result.err) m.b.appendChild(h('p', 'xc-tres-err', t.result.err));
     var ft = h('div', 'xc-tres-f');
     ft.appendChild(h('span', '', (t.startedAt && t.endedAt ? '用时 ' + dur(t.endedAt - t.startedAt) : '')));
-    var b = h('button', 'xc-task-btn', t.status === 'waiting' ? '回复' : '查看详情'); b.type = 'button';
+    var b = h('button', 'xc-task-btn', t.status === 'waiting' ? waitAction(t) : '查看详情'); b.type = 'button';
     b.addEventListener('click', function () { openTask(t.sid); });
     ft.appendChild(b); m.b.appendChild(ft);
     var preview=previewLink(t);if(preview)ft.appendChild(preview);
@@ -1435,7 +1440,8 @@
       S.bg = d.bg || 0; S.tactive = d.active || []; glowFrom(d);
       setTasks((d.active || []).concat(d.recent || [], sid === S.sid ? d.tasks || [] : []), true);
       renderStrip(); renderWork(); renderHome();
-      var next = S.open && convLive() ? 4000 : S.bg > 0 ? 20000 : 0;
+      var waits = (d.active || []).some(function (t) { return t.status === 'waiting'; });
+      var next = S.open && convLive() ? 4000 : S.bg > 0 ? 20000 : waits ? 60000 : 0;
       if (next) tpTm = setTimeout(pollTasks, next);
     }, function () { tpTm = setTimeout(pollTasks, 30000); });
   }
@@ -1445,7 +1451,7 @@
     el.hidden = !(n || w) || !S.authed;
     if (el.hidden) return;
     el.innerHTML = TICON;
-    el.appendChild(h('span', '', (n ? n + ' 个任务进行中' : '') + (n && w ? '，' : '') + (w ? w + ' 个待确认' : '')));
+    el.appendChild(h('span', '', (n ? n + ' 个任务进行中' : '') + (n && w ? '，' : '') + (w ? w + ' 个待处理' : '')));
     el.classList.toggle('busy', !!n); el.classList.toggle('wait', !!w);
     el.setAttribute('aria-label', '任务：' + el.textContent);
   }
@@ -1540,8 +1546,9 @@
     var act = h('div', 'xc-tk-act'), note = h('p', 'xc-tk-note');
     if (t.approval && t.approval.kind !== 'input') {
       act.appendChild(h('p', 'xc-tk-q', t.question || '允许这一次操作吗？'));
+      if (waitLeft(t)) act.appendChild(h('p', 'xc-tk-due', waitLeft(t) + '，未处理将自动停止'));
       ['approve', 'deny'].forEach(function (decision) {
-        var button = h('button', 'xc-btn', decision === 'approve' ? '允许' : '拒绝'); button.type = 'button';
+        var button = h('button', 'xc-btn' + (decision === 'deny' ? ' sec' : ''), decision === 'approve' ? '批准' : '拒绝'); button.type = 'button';
         button.addEventListener('click', function () { tellTask(t.sid, '', button, note, decision); });
         act.appendChild(button);
       });
@@ -1561,10 +1568,11 @@
       act.appendChild(stopB);
     } else {
       if (t.status === 'waiting' && t.question) act.appendChild(h('p', 'xc-tk-q', t.question));
-      // 等你登录：打开登录窗口（屏幕接管）→ 自己登 → 好了，接着做；不用了。也可以直接回一句话
+      if (waitLeft(t)) act.appendChild(h('p', 'xc-tk-due', waitLeft(t) + '，未处理将自动停止'));
+      // 等你登录：打开登录窗口（屏幕接管）→ 自己登 →「已登录，继续」；「跳过登录」。也可以直接回一句话
       if (t.status === 'waiting' && t.browserStep) {
         var lg = h('div', 'xc-tk-login');
-        var openB = h('button', 'xc-btn', '打开登录窗口'), okB = h('button', 'xc-btn', '好了，接着做'), noB = h('button', 'xc-btn sec', '不用了');
+        var openB = h('button', 'xc-btn', '打开登录窗口'), okB = h('button', 'xc-btn', '已登录，继续'), noB = h('button', 'xc-btn sec', '跳过登录');
         [openB, okB, noB].forEach(function (b) { b.type = 'button'; lg.appendChild(b); });
         openB.addEventListener('click', function () { openLogin({ sid: t.sid }); });
         okB.addEventListener('click', function () { okB.disabled = noB.disabled = true; tellTask(t.sid, '', okB, note, 'approve'); });
@@ -1818,19 +1826,19 @@
     var head = h('div', 'wk-hd');
     head.appendChild(h('b', 'wk-t', t.title));
     var line = kind === 'live' ? (t.status === 'stopping' ? '停止中' : t.status === 'queued' ? (t.retryAt > Date.now() ? '连接出错，稍后接着做' : '排队中') : t.activity || '准备中')
-      : kind === 'wait' ? t.question || '待确认'
+      : kind === 'wait' ? t.question || '待处理'
       : t.status === 'failed' ? '失败' + (t.result && (t.result.err || firstLine(t.result.text)) ? '：' + (t.result.err || firstLine(t.result.text)) : '')
-      : t.status === 'stopped' ? '已停止' : t.result ? firstLine(t.result.text) : '';
+      : t.status === 'stopped' ? stopLine(t) : t.result ? firstLine(t.result.text) : '';
     if (line && !im) head.appendChild(h('p', 'wk-line', line));
     c.appendChild(head);
-    c.appendChild(h('span', 'wk-time', kind === 'live' ? (t.status === 'queued' ? '' : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : ago(t.endedAt || t.created || Date.now())));
+    c.appendChild(h('span', 'wk-time', kind === 'live' ? (t.status === 'queued' ? '' : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : kind === 'wait' && waitLeft(t) ? waitLeft(t) : ago(t.endedAt || t.created || Date.now())));
     var act = h('div', 'wk-act');
     if (kind === 'live' && t.status !== 'stopping') {
       var tell = h('button', 'wk-b', '修改'); tell.type = 'button'; tell.addEventListener('click', function () { openTask(t.sid, true); });
       var stopB = h('button', 'wk-b', '停止'); stopB.type = 'button'; stopB.addEventListener('click', function () { stopTask(t.sid, stopB); });
       act.appendChild(tell); act.appendChild(stopB);
     } else if (kind === 'wait') {
-      var rep_ = h('button', 'wk-b on', t.browserStep ? '去登录' : '回复'); rep_.type = 'button'; rep_.addEventListener('click', open_); act.appendChild(rep_);
+      var rep_ = h('button', 'wk-b on', waitAction(t)); rep_.type = 'button'; rep_.addEventListener('click', open_); act.appendChild(rep_);
     } else if (previewId(t)) {
       var a = h('a', 'wk-b', '打开网页'); a.href = t.preview.url; a.target = '_blank'; a.rel = 'noopener'; act.appendChild(a);
     }
@@ -1867,7 +1875,7 @@
     var present = WK_CATS.filter(function (c) { return (g.cats[c[0]] || []).length; });
     var cat = S.wkCat && S.wkCat !== 'all' && present.some(function (c) { return c[0] === S.wkCat; }) ? S.wkCat : 'all';
     box.textContent = '';
-    // 类别：有两类以上成果才出现；只筛成果，进行中和待确认总在上面
+    // 类别：有两类以上成果才出现；只筛成果，进行中和待处理总在上面
     if (present.length > 1) {
       var seg = h('div', 'wk-seg'); seg.setAttribute('role', 'tablist'); seg.setAttribute('aria-label', '成果类别');
       [['all', '全部', g.done.length]].concat(present.map(function (c) { return [c[0], c[1], g.cats[c[0]].length]; })).forEach(function (c) {
@@ -1883,7 +1891,7 @@
     var sec = function (name, n) { var hd = h('p', 'wk-h'); hd.appendChild(document.createTextNode(name)); hd.appendChild(h('i', '', String(n))); body.appendChild(hd); };
     var group = function (list, kind, cls, max) { var wrap = h('div', 'wk-list ' + kind + (cls ? ' ' + cls : '')); list.slice(0, max).forEach(function (t) { wrap.appendChild(wkCard(t, kind)); }); body.appendChild(wrap); };
     if (g.live.length) { sec('进行中', g.live.length); group(g.live, 'live', '', 20); }
-    if (g.wait.length) { sec('待确认', g.wait.length); group(g.wait, 'wait', '', 20); }
+    if (g.wait.length) { sec('待处理', g.wait.length); group(g.wait, 'wait', '', 20); }
     (cat === 'all' ? present : present.filter(function (c) { return c[0] === cat; })).forEach(function (c) {
       var list = g.cats[c[0]];
       sec(c[1], list.length);
@@ -2162,7 +2170,7 @@
     }
     [].forEach.call(ul.querySelectorAll('.xw-t'), function (b) {
       var t = S.tinfo[b.dataset.tsid] || rows.filter(function (x) { return x.sid === b.dataset.tsid; })[0]; if (!t) return;
-      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? (t.retryAt > Date.now() ? '稍后接着做' : '排队中') : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? '待确认' : ago(t.endedAt || t.created || Date.now());
+      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? (t.retryAt > Date.now() ? '稍后接着做' : '排队中') : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? (waitLeft(t) || '待处理') : ago(t.endedAt || t.created || Date.now());
     });
     ul.hidden = !rows.length;
   }

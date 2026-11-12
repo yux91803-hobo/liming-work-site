@@ -1745,7 +1745,7 @@ async def main():
         await pgr.reload(); await pgr.wait_for_timeout(2500)
         again = await pgr.evaluate("(() => { const b = document.querySelector('.xin-say'); return !!b && b.textContent.includes('签到好啦'); })()")
         check('见面打招呼：同一句刷新以后不再说', not again)
-        # 每日任务页：看清单、改了保存、现在就做一遍（打开那段对话）
+        # 每日任务页：看清单、改了保存、立即执行（打开那段对话）
         await pgr.evaluate("LimingXinChat.open()"); await pgr.wait_for_selector('.xc.show')
         await pgr.click('.xc-list-b'); await pgr.wait_for_selector('.xc-dailyb')
         await pgr.click('.xc-dailyb'); await pgr.wait_for_selector('.xc-memt')
@@ -1753,8 +1753,9 @@ async def main():
         stt = await pgr.text_content('.xc-dailyst')
         await pgr.fill('.xc-memt', v + '- 提醒我复习定时器\n'); await pgr.click('.xc-memrow .xc-btn:not(.xc-btn2)'); await pgr.wait_for_timeout(300)
         check('每日任务页：看到清单和最近一次结果，改了能保存', '签到' in v and '已完成' in stt and xg['daily'].endswith('提醒我复习定时器\n'), (v, stt, xg['daily']))
+        lbl = await pgr.text_content('.xc-memrow .xc-btn2')
         await pgr.click('.xc-btn2'); await pgr.wait_for_selector('.xc.show .xc-body:not([hidden]) .xc-code')
-        check('每日任务页：「现在就做一遍」强制开一轮，并打开那段对话', xg['daily_args'] == {'force': True} and await pgr.evaluate("LimingXinChat.state.view") == 'chat', xg['daily_args'])
+        check('每日任务页：「立即执行」强制开一轮，并打开那段对话', lbl == '立即执行' and xg['daily_args'] == {'force': True} and await pgr.evaluate("LimingXinChat.state.view") == 'chat', xg['daily_args'])
         await pgr.context.close()
         # 对话改名 / 删除、小芯的文件（预览、下载）、回答里的路径点了打开
         pf = await page(b)
