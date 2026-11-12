@@ -48,7 +48,7 @@ async def main():
         print('PASS native steer uses the saved message id and preserves the current turn', flush=True)
         now = int(time.time()*1000)
         task = {'sid':'stask00001','no':1,'parent':'snew000001','title':'发布有冲突的改动','kind':'code','model':'glm-5.3','status':'waiting',
-                'created':now,'endedAt':now,'dir':'/data/workspace/demo','after':[],'turns':1,'question':'将删除 1 个原文件，允许这次写回吗？',
+                'created':now,'endedAt':now,'dir':'/data/workspace/demo','after':[],'turns':1,'question':'将删除 1 个原文件，批准这次写回吗？',
                 'approval':{'kind':'publish','id':'publish'},'result':{'ok':False,'text':'结果已准备','at':now}}
         st['tasks']=[task]
         await pg.evaluate('LimingXinChat.tasks()')
@@ -57,7 +57,7 @@ async def main():
         await pg.wait_for_selector('.xc-tl-i')
         await pg.locator('.xc-tl-i').click()
         await pg.wait_for_selector('.xc-tk-act .xc-btn')
-        assert await pg.locator('.xc-tk-act .xc-btn').all_text_contents() == ['允许','拒绝']
+        assert await pg.locator('.xc-tk-act .xc-btn').all_text_contents() == ['批准','拒绝']
         assert await pg.locator('.xc-tk-in').count() == 0
         await pg.get_by_role('button', name='拒绝', exact=True).click()
         await pg.wait_for_function("document.querySelector('.xc-tk-note').textContent.length > 0")

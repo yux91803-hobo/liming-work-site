@@ -451,7 +451,7 @@ export function agentArgs(agent, sess, text, effort, extra) {
     : ['--dangerously-bypass-approvals-and-sandbox'];
   // Native agents bypass our task tree, queue and budget accounting; dispatch only through xin task.
   const common = ['--json', '--skip-git-repo-check'].concat(sandbox, codexRoute(M.id), ['-c', 'features.multi_agent=false', '-c', 'features.multi_agent_v2=false', '-c', 'developer_instructions=' + JSON.stringify(dev)])
-    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], boxed ? taskMcpFlags(sess) : ['-c', 'shell_environment_policy.set.BASH_ENV=' + JSON.stringify(path.join(BASE, 'shell-env.sh'))].concat(mcpFlags(), sess.dailyDate ? dailyMcpOff() : []));
+    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], boxed ? taskMcpFlags(sess) : ['-c', 'shell_environment_policy.set.BASH_ENV=' + JSON.stringify(path.join(BASE, 'shell-env.sh'))].concat(mcpFlags(), hostTask(sess) ? dailyMcpOff() : []));
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(imgs, common, [sess.agentSid, text])];
   return ['codex', ['exec'].concat(imgs, common, ['-C', (role === 'task' && (sess.workspace?.work || sess.dir)) || WORK, text])];
 }
@@ -502,7 +502,7 @@ export const LOGINS_DIR = () => path.join(BASE, 'browser-logins');
 const LOGIN_WIN = () => path.join(BASE, 'login-window.json'), LOGIN_WIN_DONE = () => path.join(BASE, 'login-window.done'), LOGIN_WIN_LAST = () => path.join(BASE, 'login-window.last.json');
 export const SITES_MAX = 5;
 /* 登录窗口（docs/xin-browser-v2-design.md 第 7 节）：Worker 先把桌面开起来，这里起一个脱离这次调用的进程（login-window），
-   Chromium 开在桌面上给站长自己登录；同一时间只开一个。「好了，接着做」/「登好了」写一个标记，它存好 cookie 再关。 */
+   Chromium 开在桌面上给站长自己登录；同一时间只开一个。「已登录，继续」/「保存登录」写一个标记，它存好 cookie 再关。 */
 const sleepMs = ms => new Promise(ok => setTimeout(ok, ms));
 async function loginDone() {
   const w = readJ(LOGIN_WIN());
@@ -1449,11 +1449,15 @@ export function mainSid() {
    - 所有任务记录的读改写都在同一把锁（tasks）里做；推送在锁外发。 */
 const TASK_MAX = Number(process.env.XIN_TASK_MAX) || 2;
 const TASK_MIN = 60, TASK_MIN_MAX = 180;
-export const TASK_KINDS = ['quick', 'code', 'research', 'hard', 'vision', 'review'];
+export const TASK_KINDS = ['quick', 'code', 'research', 'hard', 'vision', 'review', 'system'];
 export const TASK_STATUS = { queued: '排队中', running: '进行中', stopping: '正在停止', waiting: '等你确认', done: '做完了', failed: '没做成', stopped: '已停止' };
 const TASKS_DIR = () => path.join(WORK, 'tasks');
 // 每日任务自己的目录：以前用整个 WORK，调度规则「目录有包含关系就不同时跑」让它和所有后台任务互相排队（最长 180 分钟）
 export const DAILY_DIR = () => path.join(WORK, 'daily');
+// 电脑维护（--kind system）：不进容器，直接在这台电脑上查、修（能 sudo）。几个电脑维护任务共用这一个目录，按目录排队，同一时间只做一个
+export const SYSTEM_DIR = () => path.join(WORK, 'system');
+// 不进容器、不建项目副本的任务：每日任务和电脑维护
+export const hostTask = t => !!(t && (t.dailyDate || t.tkind === 'system'));
 const TASK_SEQ = () => path.join(BASE, 'task-seq.json');
 const RESUME_TEXT = '（刚才电脑暂停或重启，这一轮中途断了。先检查现在的状态——看看文件、编译结果、还在不在跑的进程——已经做过的有副作用的事别再做一遍，然后接着把任务做完。）';
 const isTask = s => !!s && s.kind === 'task';
@@ -1471,7 +1475,7 @@ function occupiesTask(t) {
 }
 function taskIndexEntry(t){
   if(!isFinished(t))return t;
-  const out={};for(const k of ['sid','no','parent','kind','tkind','title','model','requestedModel','requestedNamed','strictModel','actualModel','actualModels','reviewAuthors','why','status','created','updated','startedAt','endedAt','dir','after','frontSeen','question','note','verification','dailyDate','web','preview','stage','frontRun','processesCleaned','temporaryCleaned','delivery','autoContinues'])if(t[k]!==undefined)out[k]=t[k];
+  const out={};for(const k of ['sid','no','parent','kind','tkind','title','model','requestedModel','requestedNamed','strictModel','actualModel','actualModels','reviewAuthors','why','status','created','updated','startedAt','endedAt','dir','after','frontSeen','question','note','verification','dailyDate','web','preview','stage','frontRun','processesCleaned','temporaryCleaned','delivery','autoContinues','approval','expired'])if(t[k]!==undefined)out[k]=t[k];
   out.runs=lastRun(t)?[lastRun(t)]:[];out.turnsCount=t.turnsCount??(t.runs||[]).length;
   if(t.result)out.result={...t.result,text:cut(t.result.text,2000)};return out;
 }
@@ -1574,6 +1578,8 @@ export function taskSummary(t, full) {
   if(t.strictModel)out.strictModel=true;
   if(t.stage)out.stage=t.stage;
   if(t.sites?.length)out.sites=t.sites;
+  if(waitUntil(t))out.waitUntil=waitUntil(t);
+  if(t.expired)out.expired=t.expired;
   if(t.status==='waiting'&&t.browserStep)out.browserStep={kind:t.browserStep.kind,site:t.browserStep.site,saved:!!t.browserStep.saved};
   if(t.preview&&t.preview.run===r)out.preview=t.preview;
   if(t.delivery)out.delivery=t.delivery;
@@ -1583,7 +1589,7 @@ export function taskSummary(t, full) {
 }
 // 集合目录不能当项目目录（研究笔记 3.2）：容器能读整个项目目录，指到集合目录就能读到不相干的东西。
 // 上传的文件（uploads 和下面每一天）、STM32 空工程：本身和里面都不行；任务目录、每日任务目录：本身不行，里面各自的项目照常
-const COLLECTIONS = [['uploads', true], ['stm32-template', true], ['tasks', false], ['daily', false]];
+const COLLECTIONS = [['uploads', true], ['stm32-template', true], ['tasks', false], ['daily', false], ['system', false]];
 export function collectionDir(real) {
   for (const [name, deep] of COLLECTIONS) {
     let root = path.resolve(WORK, name); try { root = fs.realpathSync(root); } catch { /* 还没建 */ }
@@ -1620,8 +1626,9 @@ function taskNew(a) {
   const goal = String(a.goal || '').trim().slice(0, a.frontRun ? TEXT_MAX : 12000);
   if (!goal) return { error: 'empty', msg: '要写清楚让分身做什么（xin task new --title 标题 -- 要求，或者从标准输入给）' };
   const kind = a.daily ? 'daily' : TASK_KINDS.includes(a.kind) ? a.kind : 'code';
+  const host = !!a.daily || kind === 'system';   // 电脑维护不带网页成品、网站登录、插件：那些在容器里做
   const sites = [];
-  for (const x of Array.isArray(a.sites) ? a.sites : []) { const site = normalizeSite(x); if (!site) return { error: 'bad_site', msg: '认不出是哪个网站：' + x }; if (!sites.includes(site)) sites.push(site); }
+  for (const x of host ? [] : Array.isArray(a.sites) ? a.sites : []) { const site = normalizeSite(x); if (!site) return { error: 'bad_site', msg: '认不出是哪个网站：' + x }; if (!sites.includes(site)) sites.push(site); }
   if (sites.length > SITES_MAX) return { error: 'bad_site', msg: '一个任务最多带 ' + SITES_MAX + ' 个网站的登录' };
   const title = (String(a.title || '').replace(/\s+/g, ' ').trim() || goal.replace(/\s+/g, ' ')).slice(0, 40);
   const all = listTasks();
@@ -1644,15 +1651,15 @@ function taskNew(a) {
   if(rt.error)return {error:rt.error,msg:rt.note};
   const seq = (readJ(TASK_SEQ(), {}) || {}).n || all.reduce((m, t) => Math.max(m, t.no || 0), 0);
   const no = seq + 1;
-  if (a.daily) mk(DAILY_DIR());
-  const d = a.daily ? { dir: fs.realpathSync(DAILY_DIR()) } : taskDir(no, title, a.dir);
+  if (a.daily) mk(DAILY_DIR()); else if (kind === 'system') mk(SYSTEM_DIR());
+  const d = a.daily ? { dir: fs.realpathSync(DAILY_DIR()) } : kind === 'system' ? { dir: fs.realpathSync(SYSTEM_DIR()) } : taskDir(no, title, a.dir);
   if (d.error) return { error: 'bad_dir', msg: d.error };
   writeJ(TASK_SEQ(), { n: no });
   const minutes = Math.min(TASK_MIN_MAX, Math.max(5, Math.round(Number(a.minutes) || TASK_MIN)));
   const t = { sid: rid('s'), kind: 'task', no, parent: okId(a.parent, 's') ? a.parent : null, agent: 'codex', title, goal, userRequest:String(a.userRequest||'').slice(0,TEXT_MAX), tkind: kind,
     model: rt.model, requestedModel:a.model||null,requestedNamed:!!a.named,actualModel:null,actualModels:[],reviewAuthors:[],why: rt.why, fallbacks: rt.fallbacks, note: rt.note || '', files, dir: d.dir, after, minutes,
-    plugins: [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
-    frontRun:a.frontRun||null,web:!!a.web,strictModel:!!a.strictModel&&rt.model!==runtime.AGY_MODEL,...(sites.length?{sites}:{}),status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
+    plugins: host ? [] : [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
+    frontRun:a.frontRun||null,web:!!a.web&&!host,strictModel:!!a.strictModel&&rt.model!==runtime.AGY_MODEL,...(sites.length?{sites}:{}),status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
   if(t.strictModel)t.fallbacks=[];
   saveTask(t);
   memoryActivity();
@@ -1683,15 +1690,15 @@ function startTask(t, all) {
   // The author might have fallen back to a different model after the review was queued.
   if (t.tkind === 'review') {
     t.reviewAuthors=[...new Set((first?[]:t.reviewAuthors||[]).concat(authorModels(deps)))];
-    if(deps.some(d=>!authorModels([d]).length)){t.status='waiting';t.question='作者实际模型未知，不能验证独立复核，请补全作者信息。';saveTask(t);return false;}
+    if(deps.some(d=>!authorModels([d]).length)){failTask(t,'没有开始：被检查的任务不知道实际用的哪个模型，做不了独立复核。');return false;}
     const rt = route({ kind: 'review',want:t.requestedModel||(t.why==='named'?t.model:null),named:t.requestedNamed??t.why==='named', images: (t.files || []).some(f => f.image), avoid:t.reviewAuthors });
-    if(rt.error){t.status='waiting';t.question=rt.note;t.endedAt=Date.now();t.frontSeen=false;saveTask(t);return false;}
+    if(rt.error){failTask(t,'没有开始：'+rt.note);return false;}
     t.model = rt.model; t.fallbacks = t.strictModel?[]:rt.fallbacks; t.why = rt.why;
   }
   // 项目副本和任务自己的会话都在系统临时目录里；电脑重启后它们可能已经没了（审查问题 16）。
   // 这时副本会按原项目重新拷一份，旧会话也续接不上：不再续接，开新会话，并把原要求和现状说清楚，而不是直接算没做成。
-  const lost = !first && !t.dailyDate && !!t.workspace && !fs.existsSync(t.workspace.work);
-  try { if (!t.dailyDate) t.workspace = runtime.prepareWorkspace(t, BASE); }
+  const lost = !first && !hostTask(t) && !!t.workspace && !fs.existsSync(t.workspace.work);
+  try { if (!hostTask(t)) t.workspace = runtime.prepareWorkspace(t, BASE); }
   catch (e) { failTask(t, '没有启动任务：' + e.message); return false; }
   if (lost) { t.agentSid = null; t.started = false; delete t.antigravityConversation; }
   const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps)
@@ -1701,7 +1708,7 @@ function startTask(t, all) {
   const cm = codexModel(t.model);
   Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, retryAt: 0, startedAt: t.startedAt || Date.now() });
   const run = launch(t, { text, effort: t.model===runtime.AGY_MODEL?'high':AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||t.model===runtime.AGY_MODEL ? t.fallbacks || [] : [],
-    images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !t.dailyDate && TASK_SANDBOX(),
+    images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !hostTask(t) && TASK_SANDBOX(),
     deadline: t.deadline }, { t: 'user', text: userText, at: Date.now() });
   if (t.dailyDate) writeJ(DAILY_LAST(), { date: t.dailyDate, run, sid: t.sid, at: Date.now(), ok: null });
 }
@@ -1760,8 +1767,10 @@ function taskFinish(a) {
   } else if (a.died) {                                                                              // 电脑重启、进程被杀
     if ((t.resumes || 0) < 1) Object.assign(t, { resumes: (t.resumes || 0) + 1, next: RESUME_TEXT, nextShow: '（中途断了，接着做）', status: 'queued', queuedAt: Date.now() });
     else {
-      Object.assign(t, { status: 'waiting', question: '这个任务中途断了两次（电脑暂停或重启），要接着做吗？', endedAt: Date.now(), frontSeen: false });
-      notify = taskPush(t, '我这边中途断了：' + t.title, t.question);
+      // 不是要站长拿主意的事，不停在「等你确认」：算没做成，站长回一句照样接着做
+      const why = '这个任务中途断了两次（电脑暂停或重启），没做完。要接着做，回复一句就行。';
+      Object.assign(t, { status: 'failed', question: '', result: { ok: false, text: why, err: '中途断了两次', at: Date.now() }, endedAt: Date.now(), frontSeen: false });
+      notify = taskPush(t, '我没做成：' + t.title, why);
     }
   } else if (a.transient && !a.stopped && !a.timeout && (t.transientRetries || 0) < retryDelays().length) {   // 断线、网关暂时不可用：等一会儿用同一个会话接着做
     const n = (t.transientRetries || 0) + 1;
@@ -1801,7 +1810,7 @@ function taskFinish(a) {
     if (publication?.pending) {
       t.status = 'waiting'; t.publication = publication;
       t.question = '结果还未写回项目：' + (publication.deleted.length ? '将删除 ' + publication.deleted.length + ' 个原文件；' : '') +
-        (publication.conflicts.length ? publication.conflicts.length + ' 个文件在任务期间被改过；' : '') + '允许这次写回吗？';
+        (publication.conflicts.length ? publication.conflicts.length + ' 个文件在任务期间被改过；' : '') + '批准这次写回吗？';
       t.result.ok = false;
     } else if (publication?.ok) t.publicationReceipt = publication;
     Object.assign(t, { endedAt: Date.now(), frontSeen: false });
@@ -1823,13 +1832,13 @@ function taskTell(a) {
   const t = findTask(a);
   if (!t) return { error: 'no_task', msg: '找不到这个任务' };
   if (t.approval) {
-    if (t.approval.kind !== 'input' && !['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '请点「允许这一次」或「拒绝」' };
+    if (t.approval.kind !== 'input' && !['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '请点「批准」或「拒绝」' };
     if (t.approval.kind === 'input' && !String(a.text || '').trim()) return { error: 'empty', msg: '请回复问题' };
     const r = lastRun(t), m = readJ(metaF(r));
     if (!m || runDone(r)) return { error: 'ended', msg: '这一轮已经结束，不能再批准' };
     m.approvalReplies = { ...(m.approvalReplies || {}), [t.approval.id]: t.approval.kind === 'input' ? String(a.text).slice(0,4000) : a.decision }; writeJ(metaF(r), m);
     delete t.approval; t.question = ''; t.status = 'running'; saveTask(t);
-    return { ok: true, msg: a.decision === 'approve' ? '已允许这一次' : '已拒绝', task: taskSummary(t) };
+    return { ok: true, msg: a.decision === 'approve' ? '已批准' : '已拒绝', task: taskSummary(t) };
   }
   if (t.publication) {
     if (!['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '结果涉及删除或覆盖冲突，请明确选择是否允许' };
@@ -1842,7 +1851,7 @@ function taskTell(a) {
     return { ok: true, msg: a.decision === 'approve' ? '结果已写回' : '已保留原文件', task: taskSummary(t) };
   }
   if(t.status==='stopping')return {error:'busy',msg:'任务正在停止，退出后再继续'};
-  // 等站长登录（docs/xin-browser-v2-design.md 第 6 节）：「好了，接着做」把网站加进任务，下一轮浏览器带上它的登录；「不用了」不加；直接回话当普通回复
+  // 等站长登录（docs/xin-browser-v2-design.md 第 6 节）：「已登录，继续」把网站加进任务，下一轮浏览器带上它的登录；「跳过登录」不加；直接回话当普通回复
   let decided = '';
   if (t.browserStep) {
     const site = t.browserStep.site;
@@ -1870,7 +1879,8 @@ function taskTell(a) {
     return { ok: true, msg: '任务 ' + t.no + ' 还没开始，补充的要求并进去了', task: taskSummary(t) };
   }
   if (t.status === 'queued') { t.next = (t.next ? t.next + '\n' : '') + '用户又说：' + text; t.nextShow = (t.nextShow ? t.nextShow + '\n' : '') + text; saveTask(t); return { ok: true, msg: '记下了', task: taskSummary(t) }; }
-  const waiting = t.status === 'waiting', interrupted = waiting && /中途断了/.test(t.question || '');
+  const waiting = t.status === 'waiting', interrupted = waiting && /中途断了/.test(t.question || '') || t.result?.err === '中途断了两次';
+  const expired = t.expired; delete t.expired;
   if (isFinished(t)) { if(t.status==='done') { t.workspace = null; t.started = false; t.agentSid = null; } t.deadline = null; t.validationRetries = 0; delete t.publicationError; }
   const active = lastRun(t);
   if (active && !runDone(active)) {
@@ -1883,7 +1893,7 @@ function taskTell(a) {
   // 不留在收件箱里等这一轮做完再翻出来重新开工（站长回「不用了」后任务又被旧补充叫起来，2026-11-12）。
   // 参考 Codex codex-rs/core/src/session/input_queue.rs：补充一次取完、和下一轮一起交出去。
   const held = (t.inbox || []).map(x => '- ' + x.text);
-  Object.assign(t, { next: (held.length ? '你停下前用户补充过（按先后）：\n' + held.join('\n') + '\n' : '') + (waiting ? '用户回复：' : '用户又说：') + text + (waiting && t.question ? '\n（你之前问的是：' + t.question + '）' : '') + (held.length ? '\n以用户最后的回复为准。' : ''), nextShow: text,
+  Object.assign(t, { next: (held.length ? '你停下前用户补充过（按先后）：\n' + held.join('\n') + '\n' : '') + (waiting || expired ? '用户回复：' : '用户又说：') + text + (waiting && t.question ? '\n（你之前问的是：' + t.question + '）' : expired?.question ? '\n（你之前问的是：' + expired.question + '）' : '') + (held.length ? '\n以用户最后的回复为准。' : ''), nextShow: text,
     inbox: [], status: 'queued', queuedAt: Date.now(), question: '', frontSeen: true });
   if (waiting) t.deadline = null;
   if (interrupted) t.resumes = 0;
@@ -1905,7 +1915,30 @@ function taskStop(a) {
   scheduleNow();
   return { ok: true, task: taskSummary(t) };
 }
-// 分身遇到要用户确认的事：记下问题，这一轮结束后任务停在「等你确认」
+/* 停下来等站长（要批准的事、登录、写回确认）最多等 30 分钟，过了就停下、不再挂着（站长 2026-11-12「这种东西有什么意义吗」）。
+   参考 OpenMuse apps/server/src/actions.ts：批准请求带 expiresAt，30 分钟没处理就作废；Grok Bot 的后台子任务没有「等用户」这一状态。
+   停下不再提醒（frontSeen 记成看过：Grok Bot 对过时、站长没在等的结果不说话）；站长之后回一句，照样接着做（taskTell）。
+   这一轮还活着、模型在等回答的（t.approval）不算：它有自己的 10 分钟（APPROVAL_HOLD_MS）。 */
+export const WAIT_TTL_MS = () => Number(process.env.XIN_WAIT_TTL_MS) || 30 * 60e3;
+export const waitUntil = t => t && t.status === 'waiting' && !t.approval && t.endedAt ? t.endedAt + WAIT_TTL_MS() : 0;
+function expireWait(t, now = Date.now()) {
+  const q = t.question || '', parts = [t.result?.text || ''];
+  if (t.publication) { delete t.publication; parts.push('原项目未更改，任务副本保留。'); }
+  delete t.browserStep; delete t.pendingQuestion;
+  parts.push('等确认超过 ' + Math.round(WAIT_TTL_MS() / 60e3) + ' 分钟没有回复，先停下了' + (q ? '（' + q + '）' : '') + '。要接着做，回复一句就行。');
+  t.result = { ...(t.result || {}), ok: false, text: cut(parts.filter(Boolean).join('\n\n'), 8000), at: now };
+  Object.assign(t, { status: 'stopped', expired: { question: q, at: now }, question: '', endedAt: now, frontSeen: true });
+  cleanupFinishedTask(t);
+  saveTask(t);
+}
+function expireWaits(now = Date.now()) {
+  for (const x of listTasks()) {
+    if (!(waitUntil(x) && now >= waitUntil(x))) continue;
+    const t = readJ(sessF(x.sid));
+    if (isTask(t) && waitUntil(t) && now >= waitUntil(t)) expireWait(t, now);
+  }
+}
+// 分身遇到要用户确认的事：记下问题，这一轮结束后任务停在「等你确认」（最多等 WAIT_TTL_MS）
 function taskAsk(a) {
   const t = findTask(a);
   if (!t) return { error: 'no_task', msg: '找不到这个任务' };
@@ -1926,6 +1959,7 @@ function taskSeen(a) {
 // 收拾（在 tasks 锁里）：进程没了的接着做或等用户；做完却没收尾的补上；再排一次队
 function taskTick() {
   const out = [];
+  try { expireWaits(); } catch { /* 过期处理出错不挡收拾 */ }
   for (const t of listTasks().filter(t=>t.status==='running'||t.status==='stopping'||t.status==='waiting'&&t.approval)) {
     const r = lastRun(t), m = r && readJ(metaF(r));
     if (!r || !m || !runDone(r)) continue;
@@ -2211,6 +2245,8 @@ export function frontTaskByNo(sid, no, all) {
   all = all || listTasks();
   return all.find(t => t.parent === sid && String(t.no) === String(no)) || all.find(t => String(t.no) === String(no)) || null;
 }
+// 前台转述时说明还能等多久（过了就停下，见 WAIT_TTL_MS）
+const waitLeft = t => { const u = waitUntil(t); return u ? '（' + Math.max(1, Math.ceil((u - Date.now()) / 60e3)) + ' 分钟内没回复就先停下，之后回一句照样能接着做）' : ''; };
 export function taskNotes(sid, all, { active = true } = {}) {
   all = all || listTasks();
   const mine = all.filter(t => t.parent === sid);
@@ -2218,12 +2254,12 @@ export function taskNotes(sid, all, { active = true } = {}) {
   for (const t of mine) {
     const head = '- 任务 ' + t.no + '「' + t.title + '」';
     if (isFinished(t) && !t.frontSeen) { lines.push(head + (TASK_STATUS[t.status] || t.status) + '：' + cut(t.result ? t.result.text : '', 1500).replace(/\n{2,}/g, '\n')+(t.preview?.ready?' 真实预览地址：'+t.preview.url:'')); seen.push({ sid: t.sid, version: taskVersion(t) }); }
-    else if (t.status === 'waiting') { lines.push(head + '在等用户确认：' + t.question); if (!t.frontSeen) seen.push({ sid: t.sid, version: taskVersion(t) }); }
+    else if (t.status === 'waiting') { lines.push(head + '在等用户确认：' + t.question + waitLeft(t)); if (!t.frontSeen) seen.push({ sid: t.sid, version: taskVersion(t) }); }
     else if (active && t.status === 'running') lines.push(head + '进行中（' + Math.max(1, Math.round((Date.now() - (t.startedAt || t.created)) / 60e3)) + ' 分钟）');
     else if (active && t.status === 'queued') lines.push(head + '排队中' + (t.after && t.after.length ? '（等任务 ' + t.after.join('、') + ' 做完）' : ''));
   }
   // 别的对话里在等确认的也说一句（网页上「N 个待确认」数的是所有对话）；不算这个对话看过，结果还是回原来那个对话说
-  for (const t of all) if (t.parent !== sid && t.kind === 'task' && t.status === 'waiting' && !t.dailyDate) lines.push('- 任务 ' + t.no + '「' + t.title + '」（别的对话里派的）在等用户确认：' + t.question);
+  for (const t of all) if (t.parent !== sid && t.kind === 'task' && t.status === 'waiting' && !t.dailyDate) lines.push('- 任务 ' + t.no + '「' + t.title + '」（别的对话里派的）在等用户确认：' + t.question + waitLeft(t));
   // 像 opencode 的 <subagent>、Codex 的 <subagent_notification>：快照只放状态，单独一条带标签；怎么对待它写在系统提示里（默认模式规则 6）
   return { text: lines.length ? '<后台任务>\n' + lines.join('\n') + '\n</后台任务>' : '', seen };
 }
@@ -2655,7 +2691,7 @@ const ops = {
   },
   task_stop(a) { return lockedCall('tasks', 'task_stop', { sid: a.sid, no: a.no,clientId:a.clientId }); },
   async task_tell(a) {
-    // 「好了，接着做」：先把登录窗口存好关掉（锁外，最多等 12 秒），下一轮浏览器才拿得到刚登好的 cookie
+    // 「已登录，继续」：先把登录窗口存好关掉（锁外，最多等 12 秒），下一轮浏览器才拿得到刚登好的 cookie
     if (a.decision === 'approve' && okId(a.sid, 's') && readJ(sessF(a.sid))?.browserStep) await loginDone();
     return lockedCall('tasks', 'task_tell', { sid: a.sid, no: a.no, text: a.text, decision: a.decision,clientId:a.clientId });
   },
@@ -2742,7 +2778,7 @@ const iops = {
     for (const q of pending) q.state = 'consumed'; writeJ(metaF(a.run), m);
     return ops.send({ sid: a.sid, text: pending.map(x => x.text).join('\n') });
   },
-  front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick,
+  front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick, task_expire: () => { expireWaits(); return { ok: true }; },
   // 浏览器代理请站长登录（vm-browser.mjs 的 loginStep）：照 xin task ask 记一个问题，这一轮结束后任务停成「等你登录」
   task_browser_step(a) {
     const t = findTask(a), st = a.step || {};
@@ -2752,8 +2788,8 @@ const iops = {
     if (!site || site !== st.site) return { error: 'bad_site', msg: '认不出是哪个网站' };
     const url = /^https?:\/\//i.test(String(st.url || '')) ? String(st.url).slice(0, 2000) : 'https://' + site + '/';
     t.browserStep = { kind: 'login', site, url, saved: !!st.saved, at: Date.now() };
-    const q = st.saved ? '任务想用你在 ' + site + ' 的登录（之前登过）。同意就点「好了，接着做」；登录过期了就先点「打开登录窗口」重新登。'
-      : '要你登录 ' + site + '：点「打开登录窗口」，在小芯的屏幕上自己登录（它看不到你输的密码、验证码），登好后点「好了，接着做」。';
+    const q = st.saved ? '任务想用你在 ' + site + ' 的登录（之前登过）。同意就点「已登录，继续」；登录过期了就先点「打开登录窗口」重新登录。'
+      : '要你登录 ' + site + '：点「打开登录窗口」，在小芯的屏幕上自己登录（它看不到你输的密码、验证码），登录后点「已登录，继续」。';
     Object.assign(t, { pendingQuestion: q, question: q }); saveTask(t);
     return { ok: true };
   },
@@ -3080,7 +3116,8 @@ function main() {
   if (op === 'callback') { flushControllerEvent().catch(() => {}); return; }
   if (op === 'watchdog') { watchdog().catch(() => {}); return; }
   if (op === 'login-window') { runLoginWindow().catch(() => {}); return; }
-  if (op === 'reap') { reapNow(); return; }
+  // 清理定时器顺带把过期的等待停下：没人开网页、也没有任务在跑时，电脑醒着就照样按时停
+  if (op === 'reap') { reapNow(); try { lockedCall('tasks', 'task_expire', {}); } catch { /* 锁忙就等下次 */ } return; }
   if (op === 'xin') { process.exitCode = xinCmd(process.argv.slice(3)); return; }
   if (op === 'pushq') { let m = null; try { m = JSON.parse(process.argv[3] || ''); } catch { /* 坏的就不发 */ } if (m) pushAll(m).catch(() => {}); return; }
   const internal = locked && Object.prototype.hasOwnProperty.call(iops, op);

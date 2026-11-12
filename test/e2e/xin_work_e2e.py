@@ -4,7 +4,7 @@
 - 网站没开小芯聊天时首页没有这一块；开了没登录：有，点了先登录。
 - 首页卡片：最近在做的、等你的、做好的最多三行；点任务打开工作台并打开那个任务；最后一行打字回车，发到主对话。
 - 工作台：≥1180 左边对话、中间聊天、右边进行中和成果；900–1179 没有左栏；更窄只有聊天，方格按钮把右栏滑进来。
-- 右栏：在做的能「改一下」（直接打字，送进那个任务）和停止；网页成品显示截图，点「打开」是预览。
+- 右栏：在做的能「修改」（直接打字，送进那个任务）和停止；网页成品显示截图，点「打开」是预览。
 - 关掉回到首页；#xin-work 直接打开工作台；面板里的展开按钮也能进工作台。
 
 运行：先起本地预览（5173），再 python3 test/e2e/xin_work_e2e.py
@@ -29,7 +29,7 @@ def tasks():
     return [
         {'sid': 'stasklive01', 'no': 1, 'parent': 'shist00001', 'title': 'PA0 点灯工程', 'kind': 'code', 'status': 'running', 'created': NOW - 200000, 'startedAt': NOW - 180000,
          'activity': '正在编译 main.c', 'dir': '/data/workspace/blink', 'turns': 1, 'after': []},
-        {'sid': 'staskwait01', 'no': 2, 'parent': 'shist00001', 'title': '删掉旧工程', 'kind': 'quick', 'status': 'waiting', 'created': NOW - 900000, 'endedAt': NOW - 800000,
+        {'sid': 'staskwait01', 'no': 2, 'parent': 'shist00001', 'title': '删掉旧工程', 'kind': 'quick', 'status': 'waiting', 'created': NOW - 900000, 'endedAt': NOW - 800000, 'waitUntil': NOW + 1000000,
          'question': '要删掉 /data/workspace/old 吗？', 'turns': 1, 'after': []},
         {'sid': 'staskweb001', 'no': 3, 'parent': 'shist00001', 'title': '奶龙互动网页', 'kind': 'code', 'status': 'done', 'created': NOW - 7200000, 'startedAt': NOW - 7100000, 'endedAt': NOW - 6800000,
          'turns': 1, 'web': True, 'result': {'ok': True, 'text': '我画好了，点下面的预览就能看。', 'at': NOW - 6800000}, 'preview': {'ready': True, 'url': '/xin/preview.html?id=' + PID}, 'delivery': {'state': 'delivered'}},
@@ -98,7 +98,7 @@ async def main():
         await pg.wait_for_function("document.querySelectorAll('.xw-t').length === 3", timeout=10000)
         rows = await pg.evaluate("[...document.querySelectorAll('.xw-t')].map(b => [b.classList[1], b.querySelector('.xw-tt').textContent, b.querySelector('.xw-tm').textContent])")
         ui.check('登录后首页：在做的、等你的、做好的三行，在做的写用了多久', [r[:2] for r in rows] == [['run', 'PA0 点灯工程'], ['wait', '删掉旧工程'], ['ok', '奶龙互动网页']]
-                 and rows[0][2] == '3 分钟' and rows[1][2] == '待确认' and rows[2][2] == '1 小时前' and await pg.text_content('.xw-st') == '在忙', rows)
+                 and rows[0][2] == '3 分钟' and rows[1][2] in ('剩 16 分钟', '剩 17 分钟') and rows[2][2] == '1 小时前' and await pg.text_content('.xw-st') == '在忙', rows)
         fit = await pg.evaluate("document.documentElement.scrollWidth <= innerWidth")
         ui.check('手机首页不横向滚动', fit)
 
@@ -120,7 +120,9 @@ async def main():
         col = await pg.evaluate("""[[...document.querySelectorAll('.wk-h')].map(e => e.textContent), [...document.querySelectorAll('.wk-sg')].map(e => e.textContent), [...document.querySelectorAll('.wk-c')].map(c => c.dataset.tsid),
           (() => { const r = document.querySelector('.xc-work').getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right) === innerWidth]; })(), document.documentElement.scrollWidth <= innerWidth]""")
         ui.check('右栏滑进来盖满聊天：在做 1、等你 1，成果按类别分（网页 1、资料 1，上面能切换类别），顺序对，不横向滚动',
-                 col == [['进行中1', '待确认1', '网页1', '资料1'], ['全部', '网页', '资料'], ['stasklive01', 'staskwait01', 'staskweb001', 'staskdone01'], [0, True], True], col)
+                 col == [['进行中1', '待处理1', '网页1', '资料1'], ['全部', '网页', '资料'], ['stasklive01', 'staskwait01', 'staskweb001', 'staskdone01'], [0, True], True], col)
+        wc = await pg.evaluate("(() => { const c = document.querySelector('.wk-c.wait'); return [c.querySelector('.wk-line').textContent, c.querySelector('.wk-time').textContent, [...c.querySelectorAll('.wk-b')].map(b => b.textContent)]; })()")
+        ui.check('待处理：一行写问题、右边写还剩几分钟（30 分钟没处理任务自己停下），按钮「回复」', wc[0] == '要删掉 /data/workspace/old 吗？' and wc[1] in ('剩 16 分钟', '剩 17 分钟') and wc[2] == ['回复'], wc)
         await pg.keyboard.press('Escape')
         await pg.wait_for_function("!document.querySelector('.xc').classList.contains('work-open') && document.querySelector('.xc').classList.contains('show')")
         ui.check('Esc 先收起右栏，工作台还开着', True)
@@ -170,7 +172,7 @@ async def main():
             await pg.keyboard.press('Enter')
             await pg.wait_for_function("document.querySelector('.xc-tk-note') && document.querySelector('.xc-tk-note').textContent")
             tell = st.get('task_tell') or {}
-            ui.check('%d 宽：右栏「改一下」：看过程盖在右栏上（不挡聊天、没有遮罩），输入框拿到焦点，回车送进那个任务' % width,
+            ui.check('%d 宽：右栏「修改」：看过程盖在右栏上（不挡聊天、没有遮罩），输入框拿到焦点，回车送进那个任务' % width,
                      sheet == [width - 340, 340, 'none'] and tell.get('sid') == 'stasklive01' and tell.get('text') == '改成 PA1', (sheet, tell))
             # 看过程开着也能接着聊：聊天没被挡
             await pg.fill('.xc-row textarea', '顺便问一句')

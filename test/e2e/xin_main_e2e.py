@@ -4,7 +4,7 @@
 - 新设备第一次打开：落在主对话的空白页，第一句带 main 发出去；之后刷新直接回到主对话。
 - 云电脑上已经有主对话（别的设备开过）：打开网页就读出来，接着聊，不用带编号以外的东西。
 - 「新对话」另开一个，不带 main；侧边栏第一行「主对话」随时回去。
-- 主对话不在普通对话列表里，⋯ 只有「归档，重新开始」；归档后回到空白页，下一句又是 main。
+- 主对话不在普通对话列表里，⋯ 只有「归档并新建」；归档后回到空白页，下一句又是 main。
 - 天启模式开着时，空白页是天启的新对话，不会把天启的话发进主对话。
 - 历史一页 30 轮：「更早的消息」往前翻，画在最前面，页面停在原来的位置。
 
@@ -126,8 +126,8 @@ async def main():
         await pg.click('.xc-send')
         await pg.wait_for_function(ui.CHAT_DONE + ' && !!LimingXinChat.state.sid', timeout=10000)
         again = st['sends'][-1]
-        ui.check('主对话的 ⋯ 只有「归档，重新开始」（没有删除）；归档后回到空白页，下一句又开出主对话',
-                 acts == ['归档，重新开始'] and st['archived_main'] == 1 and again.get('main') is True and 'sid' not in again, (acts, st['archived_main'], again))
+        ui.check('主对话的 ⋯ 只有「归档并新建」（没有删除）；归档后回到空白页，下一句又开出主对话',
+                 acts == ['归档并新建'] and st['archived_main'] == 1 and again.get('main') is True and 'sid' not in again, (acts, st['archived_main'], again))
         await pg.context.close()
 
         # 4. 别的设备已经聊了 70 轮：新设备打开就读出来；往前翻页

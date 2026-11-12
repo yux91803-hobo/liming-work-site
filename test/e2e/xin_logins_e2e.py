@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """浏览器第二步：用站长的登录（docs/xin-browser-v2-design.md）。
 
-- 任务等你登录：右栏卡片按钮写「去登录」；详情里写着要登录哪个网站，三个按钮：
-  「打开登录窗口」（login_open {sid}，小芯的屏幕直接以接管打开登录窗口）、「好了，接着做」（task_tell approve）、「不用了」（task_tell deny）。
+- 任务等你登录：右栏卡片按钮写「登录」；详情里写着要登录哪个网站，三个按钮：
+  「打开登录窗口」（login_open {sid}，小芯的屏幕直接以接管打开登录窗口）、「已登录，继续」（task_tell approve）、「跳过登录」（task_tell deny）。
 - 详情里写「用你的登录：…」（任务点名的网站）。
-- 设置里「网站登录」：点「查看」才去取列表（不打开不叫醒电脑）；列出网站和保存日期；「删掉」；填网址「登录新网站」打开登录窗口，「登好了」存好。
+- 设置里「网站登录」：点「查看」才去取列表（不打开不叫醒电脑）；列出网站和保存日期；「删除」；填网址「登录新网站」打开登录窗口，「保存登录」存好。
 - 电脑、平板、手机宽度，浅色深色：不横向溢出。
 
 运行：先起本地预览（5173），再 python3 test/e2e/xin_logins_e2e.py
@@ -21,7 +21,7 @@ import xin_work_e2e as wk  # noqa: E402
 from playwright.async_api import async_playwright  # noqa: E402
 
 NOW = int(time.time() * 1000)
-Q = '要你登录 bilibili.com：点「打开登录窗口」，在小芯的屏幕上自己登录（它看不到你输的密码、验证码），登好后点「好了，接着做」。'
+Q = '要你登录 bilibili.com：点「打开登录窗口」，在小芯的屏幕上自己登录（它看不到你输的密码、验证码），登录后点「已登录，继续」。'
 
 
 async def setup(browser, w=1280, h=860, mobile=False, theme='light'):
@@ -61,14 +61,14 @@ async def main():
             pg, st = await setup(browser, theme=theme)
             card = pg.locator('.wk-c[data-tsid=staskwait01] .wk-b')
             await card.wait_for(timeout=10000)
-            ui.check('%s：右栏等你登录的任务，按钮写「去登录」' % theme, (await card.inner_text()).strip() == '去登录', await card.inner_text())
+            ui.check('%s：右栏等你登录的任务，按钮写「登录」' % theme, (await card.inner_text()).strip() == '登录', await card.inner_text())
             await card.click()
             await pg.wait_for_selector('.xc-sheet:not([hidden]) .xc-tk-login', timeout=10000)
             det = await pg.evaluate("""(() => { const s = document.querySelector('.xc-sheet');
               return {q: s.querySelector('.xc-tk-q').textContent, btn: [...s.querySelectorAll('.xc-tk-login button')].map(b => b.textContent),
                 sites: [...s.querySelectorAll('.xc-tk-dir')].map(p => p.textContent).join('|'), reply: !!s.querySelector('.xc-tk-in'),
                 fit: document.documentElement.scrollWidth <= innerWidth}; })()""")
-            ok = 'bilibili.com' in det['q'] and det['btn'] == ['打开登录窗口', '好了，接着做', '不用了'] and '用你的登录：lcsc.com.cn' in det['sites'] and det['reply'] and det['fit']
+            ok = 'bilibili.com' in det['q'] and det['btn'] == ['打开登录窗口', '已登录，继续', '跳过登录'] and '用你的登录：lcsc.com.cn' in det['sites'] and det['reply'] and det['fit']
             ui.check('%s：详情写要登录哪个网站，三个按钮；写着任务带哪些网站的登录；也能直接回一句' % theme, ok, det)
             await pg.click('.xc-tk-login button:has-text("打开登录窗口")')
             await pg.wait_for_selector('.xs:not([hidden]) .xs-fr:not([hidden])', timeout=10000)
@@ -79,15 +79,15 @@ async def main():
             await pg.wait_for_timeout(300)
             ui.check('%s：关掉屏幕：接管过，链接作废' % theme, 'screen_off' in st['ops'], st['ops'][-3:])
             if theme == 'light':
-                await pg.click('.xc-tk-login button:has-text("好了，接着做")')
+                await pg.click('.xc-tk-login button:has-text("已登录，继续")')
                 await pg.wait_for_function("document.querySelector('.xc-tk-note') && document.querySelector('.xc-tk-note').textContent", timeout=10000)
                 tell = {k: v for k, v in (st.get('task_tell') or {}).items() if k != 'clientId'}
-                ui.check('「好了，接着做」→ task_tell approve', tell == {'sid': 'staskwait01', 'decision': 'approve'}, st.get('task_tell'))
+                ui.check('「已登录，继续」→ task_tell approve', tell == {'sid': 'staskwait01', 'decision': 'approve'}, st.get('task_tell'))
             else:
-                await pg.click('.xc-tk-login button:has-text("不用了")')
+                await pg.click('.xc-tk-login button:has-text("跳过登录")')
                 await pg.wait_for_function("document.querySelector('.xc-tk-note') && document.querySelector('.xc-tk-note').textContent", timeout=10000)
                 tell = {k: v for k, v in (st.get('task_tell') or {}).items() if k != 'clientId'}
-                ui.check('「不用了」→ task_tell deny', tell == {'sid': 'staskwait01', 'decision': 'deny'}, st.get('task_tell'))
+                ui.check('「跳过登录」→ task_tell deny', tell == {'sid': 'staskwait01', 'decision': 'deny'}, st.get('task_tell'))
             await pg.context.close()
 
         # 2. 设置里「网站登录」：电脑、平板、手机
@@ -103,25 +103,25 @@ async def main():
             await pg.click('.xc-set .xc-lg > .xc-btn')
             await pg.wait_for_selector('.xc-set .xc-lg-l li', timeout=10000)
             rows = await pg.evaluate("[...document.querySelectorAll('.xc-set .xc-lg-l li')].map(li => [li.querySelector('span').textContent, li.querySelector('small').textContent, li.querySelector('button').textContent])")
-            ui.check('%d 宽：「查看」列出保存了登录的网站和日期，各有「删掉」' % w, [r[0] for r in rows] == ['bilibili.com', 'lcsc.com.cn'] and all(r[2] == '删掉' and '月' in r[1] for r in rows), rows)
+            ui.check('%d 宽：「查看」列出保存了登录的网站和日期，各有「删除」' % w, [r[0] for r in rows] == ['bilibili.com', 'lcsc.com.cn'] and all(r[2] == '删除' and '月' in r[1] for r in rows), rows)
             fit = await pg.evaluate("(() => { const r = document.querySelector('.xc-set .xc-lg').getBoundingClientRect(); return [Math.round(r.right) <= innerWidth, document.documentElement.scrollWidth <= innerWidth]; })()")
             ui.check('%d 宽%s：网站登录这一行在屏幕里、不横向溢出' % (w, '深色' if theme == 'dark' else ''), fit == [True, True], fit)
             if w == 1280:
                 await pg.click('.xc-set .xc-lg-l li:first-child button')
                 await pg.wait_for_function("document.querySelectorAll('.xc-set .xc-lg-l li').length === 1", timeout=10000)
-                ui.check('「删掉」：只删那一个网站', ['login_remove', {'site': 'bilibili.com'}] in st['login_ops'], st['login_ops'])
+                ui.check('「删除」：只删那一个网站', ['login_remove', {'site': 'bilibili.com'}] in st['login_ops'], st['login_ops'])
                 await pg.fill('.xc-set .xc-lg-in', 'https://www.bilibili.com')
                 await pg.click('.xc-set .xc-lg-add .xc-btn:has-text("登录新网站")')
                 await pg.wait_for_selector('.xs:not([hidden]) .xs-fr:not([hidden])', timeout=10000)
                 ui.check('「登录新网站」：带网址打开登录窗口', ['login_open', {'url': 'https://www.bilibili.com'}] in st['login_ops'], st['login_ops'])
                 await pg.click('.xs-x')
-                await pg.click('.xc-set .xc-lg-add .xc-btn:has-text("登好了")')
+                await pg.click('.xc-set .xc-lg-add .xc-btn:has-text("保存登录")')
                 for _ in range(50):
                     if [o[0] for o in st['login_ops']][-2:] == ['login_done', 'logins']:
                         break
                     await pg.wait_for_timeout(100)
                 ops = [o[0] for o in st['login_ops']]
-                ui.check('「登好了」：存好关掉登录窗口，再取一次列表', ops[-2:] == ['login_done', 'logins'], ops)
+                ui.check('「保存登录」：存好关掉登录窗口，再取一次列表', ops[-2:] == ['login_done', 'logins'], ops)
             await pg.context.close()
 
         await browser.close()

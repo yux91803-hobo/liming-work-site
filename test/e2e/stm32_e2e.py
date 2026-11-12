@@ -1238,9 +1238,12 @@ async def main():
         check('扔到下面没有落脚点：射一根线吊住，吓得发抖', hang == ['hang', 'scared', 'block'], hang)
         # 吊住 → 下坠回弹 → 发抖 0.9 秒 → 往上爬（最长 2.6 秒）→ 跳回平台（最长 0.9 秒），按代码算最长约 5 秒；
         # 以前固定等 5 秒，只剩半秒余量，执行机一忙就判失败（2026-11-12 #128 上线时）。等它真的站定，最多 12 秒
-        try: await pg.wait_for_function("LimingXin.mode === 'idle' && !!LimingXin.plat", timeout=12000)
+        # 按 100 毫秒间隔查（不靠动画帧，页面不出帧时也按时判）；没过就把当时的状态和用了多久记下来（#130 上线时这一项卡了 61 秒，没留现场）
+        t0 = time.time()
+        try: await pg.wait_for_function("LimingXin.mode === 'idle' && !!LimingXin.plat", timeout=12000, polling=100)
         except Exception: pass
-        check('顺着线爬上去，再跳回能站的地方', await pg.evaluate("[LimingXin.mode, !!LimingXin.plat]") == ['idle', True])
+        got = await pg.evaluate("[LimingXin.mode, !!LimingXin.plat, LimingXin.mood, getComputedStyle(document.querySelector('.xin-thread')).display]")
+        check('顺着线爬上去，再跳回能站的地方', got[:2] == ['idle', True], (got, '%.1f 秒' % (time.time() - t0)))
         await pg.context.close()
 
         # 电脑：右键打开背包；让它睡以后鼠标在旁边晃、点别处都不吵醒它，点它才醒；玩灯时表情不跟着灯来回变
@@ -1745,7 +1748,7 @@ async def main():
         await pgr.reload(); await pgr.wait_for_timeout(2500)
         again = await pgr.evaluate("(() => { const b = document.querySelector('.xin-say'); return !!b && b.textContent.includes('签到好啦'); })()")
         check('见面打招呼：同一句刷新以后不再说', not again)
-        # 每日任务页：看清单、改了保存、现在就做一遍（打开那段对话）
+        # 每日任务页：看清单、改了保存、立即执行（打开那段对话）
         await pgr.evaluate("LimingXinChat.open()"); await pgr.wait_for_selector('.xc.show')
         await pgr.click('.xc-list-b'); await pgr.wait_for_selector('.xc-dailyb')
         await pgr.click('.xc-dailyb'); await pgr.wait_for_selector('.xc-memt')
@@ -1753,8 +1756,9 @@ async def main():
         stt = await pgr.text_content('.xc-dailyst')
         await pgr.fill('.xc-memt', v + '- 提醒我复习定时器\n'); await pgr.click('.xc-memrow .xc-btn:not(.xc-btn2)'); await pgr.wait_for_timeout(300)
         check('每日任务页：看到清单和最近一次结果，改了能保存', '签到' in v and '已完成' in stt and xg['daily'].endswith('提醒我复习定时器\n'), (v, stt, xg['daily']))
+        lbl = await pgr.text_content('.xc-memrow .xc-btn2')
         await pgr.click('.xc-btn2'); await pgr.wait_for_selector('.xc.show .xc-body:not([hidden]) .xc-code')
-        check('每日任务页：「现在就做一遍」强制开一轮，并打开那段对话', xg['daily_args'] == {'force': True} and await pgr.evaluate("LimingXinChat.state.view") == 'chat', xg['daily_args'])
+        check('每日任务页：「立即执行」强制开一轮，并打开那段对话', lbl == '立即执行' and xg['daily_args'] == {'force': True} and await pgr.evaluate("LimingXinChat.state.view") == 'chat', xg['daily_args'])
         await pgr.context.close()
         # 对话改名 / 删除、小芯的文件（预览、下载）、回答里的路径点了打开
         pf = await page(b)
