@@ -1238,9 +1238,12 @@ async def main():
         check('扔到下面没有落脚点：射一根线吊住，吓得发抖', hang == ['hang', 'scared', 'block'], hang)
         # 吊住 → 下坠回弹 → 发抖 0.9 秒 → 往上爬（最长 2.6 秒）→ 跳回平台（最长 0.9 秒），按代码算最长约 5 秒；
         # 以前固定等 5 秒，只剩半秒余量，执行机一忙就判失败（2026-11-12 #128 上线时）。等它真的站定，最多 12 秒
-        try: await pg.wait_for_function("LimingXin.mode === 'idle' && !!LimingXin.plat", timeout=12000)
+        # 按 100 毫秒间隔查（不靠动画帧，页面不出帧时也按时判）；没过就把当时的状态和用了多久记下来（#130 上线时这一项卡了 61 秒，没留现场）
+        t0 = time.time()
+        try: await pg.wait_for_function("LimingXin.mode === 'idle' && !!LimingXin.plat", timeout=12000, polling=100)
         except Exception: pass
-        check('顺着线爬上去，再跳回能站的地方', await pg.evaluate("[LimingXin.mode, !!LimingXin.plat]") == ['idle', True])
+        got = await pg.evaluate("[LimingXin.mode, !!LimingXin.plat, LimingXin.mood, getComputedStyle(document.querySelector('.xin-thread')).display]")
+        check('顺着线爬上去，再跳回能站的地方', got[:2] == ['idle', True], (got, '%.1f 秒' % (time.time() - t0)))
         await pg.context.close()
 
         # 电脑：右键打开背包；让它睡以后鼠标在旁边晃、点别处都不吵醒它，点它才醒；玩灯时表情不跟着灯来回变
