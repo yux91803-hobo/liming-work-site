@@ -36,6 +36,7 @@ export function forecast(samples, window, now = Date.now()) {
 // 用量口径：一律按「输入里含缓存命中」记（Codex / OpenAI 的口径）。Antigravity（agy）不一样：它的 input_tokens 不含缓存读取，
 // total_tokens = 输入 + 输出（2026-11-12 在正式机核对：input 54735、cache_read 149606、output 39807、total 94542），
 // 直接用会让缓存命中超过 100%。所以记账时换算，并标 incl；以前没换算的旧记录（这些模型、没有 incl）读的时候补上。
+// 参考 opencode packages/core/src/session/usage.ts：各家口径在入口处换成同一种。
 // 和 vm-runtime.mjs 的 AGY_MODEL 保持一致（测试会核对）。
 export const AGY_MODELS = ['gemini-3.8-flash-high'];
 export function agyUsage(b, ctx = 0) {

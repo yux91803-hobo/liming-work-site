@@ -1,3 +1,15 @@
+# 修改清单 · 2026-11-12（后台可靠性第二批：刚醒时前台等预热、用量口径统一、第一批留下的三个小问题、每日任务关 instabox 插件）
+
+站长 2026-11-12 说「按你觉得对的来」：这一批做研究笔记第二批里不用新存储的部分，加上 #121 上线时发现的问题。机外备份（R2）单独做。
+
+- **云电脑刚醒时前台先等网关预热**（`vm-agent.mjs` 的 `waitWarm`）：#121 第一次上线联调失败——云电脑睡了一夜被叫醒，网关第一个请求卡了 126 秒（预热），前台同时发出的 DeepSeek 请求 25 秒到点放弃，回「这句话已保存，但我暂时没能安排好，请重试」。现在预热在跑（`warm.json` 标着 running、不超过 200 秒）就先等它做完再开始算前台的时限，等的时候每 5 秒告诉网页「电脑刚醒，网络在热身，稍等一下」；预热记录卡死超过 200 秒不等。参考 Codex `codex-rs/model-provider-info/src/lib.rs`（慢的流默认等 300 秒、请求重试 4 次、流重试 5 次）和 opencode `packages/core/src/model-retry.ts`（可恢复的错误从 2 秒起退避重试）：都不在模型慢的时候急着放弃。
+- **用量口径统一**（`vm-usage.mjs` 的 `agyUsage`、`AGY_MODELS`）：在正式机核对，Antigravity（agy）返回的 `input_tokens` 不含缓存读取，`total_tokens` = 输入 + 输出（例：input 54735、cache_read 149606、output 39807、total 94542）；Codex 的输入含缓存。两种混在一起，用量页今天的缓存命中算成 100.3%。现在 Antigravity 任务的用量换算成「输入 = input + cache_read」并标 `incl`；`model-stats.jsonl` 里以前没换算的 Gemini 记录在汇总时补上，有 `incl` 的不重复加。没有改写已有的记录文件。参考 opencode `packages/core/src/session/usage.ts`：各家用量先换成同一种形状（不含缓存的输入、缓存读取分开记，合计时再加），在入口处统一口径。
+- **等回答到点「记下问题」抢不到锁就再试**（`awaitTaskInput`）：以前拿不到 tasks 锁（别的进程在做重活，超过 20 秒）就照样交还，问题没记成「等你确认」，等待一直挂着，后台算在忙、云电脑不睡。现在隔 5 秒再试，期间来了回答就用回答，试满 2 分钟才放弃。参考 opencode `model-retry.ts`（按间隔重试、有总时限）。
+- **删 7 天前任务副本放进任务锁里**（新的锁内操作 `task_copies_prune`）：以前列任务在锁里、删副本在锁外，中间站长恰好让这个任务接着做，新一轮会用上马上被删的副本。现在列和删都在 tasks 锁里，和 `task_tell` 互斥。这个竞争没法从外面稳定复现，测试只钉住新的锁内操作和每日清理。
+- **判断要不要重试只看结束这一轮的那个错误**（`vm-retry.mjs` 的 `finalFailure`）：以前把这一轮所有错误事件和 stderr 后 2000 字一起判断，前面已经恢复的断线重连字样会让后来真正的失败也被当成临时错误，白重试三次、最长等 20 分钟。参考 Grok Bot `transient-stream-error.ts`（只判断结束这次流的那个错误）。
+- **每日任务关掉云电脑管理插件 instabox**（`dailyMcpOff`）：研究笔记 3.3。每日任务不进容器（补签可能要操作桌面），以前电脑自带的 instabox 插件（开关机、快照、删机器）也开着。核对过 `~/.xin/daily.md`（网关签到核对和补签、AI 日报、推送、留一句话）里没有管云电脑的步骤，只关 instabox，桌面操作插件留着。
+- **测试**：新文件 `test/xin-batch2.test.cjs`（刚醒等预热、预热记录卡死不等、记问题重试、锁内删副本、每日任务插件）；`xin-usage` 加口径换算，`xin-retry` 加 `finalFailure`；测试用假网关 `front-responses.cjs` 加「刚醒时请求卡住」开关。
+
 # 修改清单 · 2026-11-12（小芯用量看板：额度光环、额度卡、用量页）
 
 站长 2026-11-11 选的「光环 + 额度卡 + 简版统计」（设计 `docs/xin-reliability-usage-design.md` 的 B 部分，计划 `docs/superpowers/plans/2026-11-11-xin-usage-dashboard.md`）。照 Agent HUD Open 的统计看板和额度光环做，按本站取舍成三块。
