@@ -8,7 +8,7 @@ import json
 import os
 import time
 import uuid
-from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says
+from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt
 from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
@@ -345,10 +345,10 @@ async def main():
                 raise RuntimeError('Named web receipt did not retain exactly one original request')
             receipt_done = next((e for e in reversed(receipt_runs[0]['events']) if e.get('t') == 'done'), {})
             receipt_model = await check_front(receipt_done)
-            if ack_seconds > front_reply_limit(receipt_model) or '我' not in reply or any(x in reply.lower() for x in LEAKS):
+            if ack_seconds > front_reply_limit(receipt_model) or not first_person_receipt(reply) or any(x in reply.lower() for x in LEAKS):
                 raise RuntimeError('Named web work did not receive a bounded first-person receipt'
                     + ' seconds=' + str(round(ack_seconds, 2)) + ' model=' + receipt_model
-                    + ' firstPerson=' + str('我' in reply)
+                    + ' firstPerson=' + str(first_person_receipt(reply))
                     + ' leaks=' + str(any(x in reply.lower() for x in LEAKS)))
             ts = (await call('tasks', {'sid': alternate_sid}))['tasks']
             web = [t for t in ts if t.get('parent') == alternate_sid and t.get('web')]

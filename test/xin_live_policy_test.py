@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import OPUS, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN
+from xin_live_policy import OPUS, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt
 
 
 class SpokenMarker(unittest.TestCase):
@@ -82,6 +82,15 @@ class FrontPolicy(unittest.TestCase):
         self.assertLessEqual(front_reply_limit(DEEPSEEK), 30)
         with self.assertRaises(RuntimeError):
             front_reply_limit('kimi-k3.1-pro')
+
+    def test_first_person_receipt_allows_dropped_subject_but_not_third_person(self):
+        # 2026-11-12 #125 上线联调：DeepSeek 回执省略了主语「我」，是自然的第一人称，被只查「我」字的检查判失败
+        for ok in ('好，我来。', '好嘞，这就去画这只黄乎乎的小奶龙，跳个舞、挥个手，手机上点开就能玩。', '收到，马上开始画。'):
+            with self.subTest(reply=ok):
+                self.assertTrue(first_person_receipt(ok))
+        for bad in ('', '   ', '小芯会帮你画一只奶龙。', '已经交给后台去画了。', '我让分身去画了。', '交给同事处理。', '助手正在制作。'):
+            with self.subTest(reply=bad):
+                self.assertFalse(first_person_receipt(bad))
 
 
 if __name__ == '__main__':
