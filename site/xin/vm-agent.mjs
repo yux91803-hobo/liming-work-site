@@ -940,7 +940,7 @@ function runner(run) {
         if(vision.terminal)return vision.text;
         throw Error('当前前台没有视觉输入，无法读取图片');
       }
-      return runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,request:provider.request,ms:meta.model===runtime.FRONT_MODEL?25000:65000,
+      return runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,request:provider.request,ms:meta.model===runtime.FRONT_MODEL?45000:65000,
       instructions:systemPrompt(undefined,{tasks:true,materials:false}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,lookupBeforeAnswer:!meta.handoff&&runtime.frontLookupRequired(meta.frontRequest||''),deliver,takeBudget:handoffBudget,
       usage:u=>{if(u){
         handoffBudget?.recordUsage(u);

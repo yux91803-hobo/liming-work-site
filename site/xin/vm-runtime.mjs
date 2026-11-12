@@ -650,7 +650,8 @@ export async function frontTurn(o) {
     while (steps < max && rounds++ < max + 2) {
       if(o.takeBudget&&!o.takeBudget())throw Error('本项工作的推理预算已用完，保留现有结果');
       const payload={model:FRONT_MODEL, stream:false, reasoning:{effort:'max'}, instructions:o.instructions, input,
-          max_output_tokens:1800, tools:[{type:'function',name:'xin',description:'把要动手的事派给后台、查后台工作的真实进度、把兄弟的回复转给后台、记事和查以前的原话；也能做表情动作、留下次见面的开场白。argv 是参数数组，不是 shell。这一轮真的需要时才调用，没调用就不说查过；新建或转达工作后本轮立即结束，不预告结果和时间。',
+          // 提示词 v2 以后 DeepSeek 想得更久（真实模型实测思考 1000–1700 token），1800 的上限一半被截断；放到 4000（docs/xin-prompt-v2.md）
+          max_output_tokens:4000, tools:[{type:'function',name:'xin',description:'把要动手的事派给后台、查后台工作的真实进度、把兄弟的回复转给后台、记事和查以前的原话；也能做表情动作、留下次见面的开场白。argv 是参数数组，不是 shell。这一轮真的需要时才调用，没调用就不说查过；新建或转达工作后本轮立即结束，不预告结果和时间。',
             parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true},...(o.handoff?[{type:'function',name:'finish_event',description:'对后台结果做最终决定：deliver 用自己的话把兄弟要的、或他该知道的新结果告诉他（text 就是给他的话，要紧的说全）；silent 用于重复、过期、已经说过、没有新东西的。',strict:true,parameters:{type:'object',properties:{action:{type:'string',enum:['deliver','silent']},text:{type:'string'}},required:['action','text'],additionalProperties:false}}]:[])]};
       let data;
       if(o.request)data=await o.request(payload,abort.signal);
