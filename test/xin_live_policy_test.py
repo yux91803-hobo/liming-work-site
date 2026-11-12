@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import OPUS, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt
+from xin_live_policy import OPUS, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback
 
 
 class SpokenMarker(unittest.TestCase):
@@ -91,6 +91,29 @@ class FrontPolicy(unittest.TestCase):
         for bad in ('', '   ', '小芯会帮你画一只奶龙。', '已经交给后台去画了。', '我让分身去画了。', '交给同事处理。', '助手正在制作。'):
             with self.subTest(reply=bad):
                 self.assertFalse(first_person_receipt(bad))
+
+
+class BackgroundFallback(unittest.TestCase):
+    # 2026-11-13 #131 正式站：Gemini 回了不是 SUCCESS 的状态，控制器换 Kimi 做完了，联调只认额度、判失败回滚
+    NOW = 1_800_000_000_000
+    SENT = NOW - 4 * 60_000
+
+    def test_real_quota_cooldown_explains_it(self):
+        self.assertEqual(explain_background_fallback({'blocked': True, 'retryAt': self.NOW + 60_000}, None, self.SENT, self.NOW), 'quota')
+
+    def test_recorded_gemini_outage_in_this_run_or_the_15_minutes_before_explains_it(self):
+        for issue in ({'kind': 'stall', 'at': self.SENT + 120_000}, {'kind': 'status', 'status': 'ERROR', 'at': self.SENT + 125_000},
+                      {'kind': 'stall', 'at': self.SENT - 14 * 60_000}, {'kind': 'stall', 'at': self.NOW + 30_000}):
+            with self.subTest(issue=issue):
+                self.assertTrue(explain_background_fallback({}, issue, self.SENT, self.NOW).startswith('gemini '))
+        self.assertEqual(explain_background_fallback(None, {'kind': 'status', 'status': 'ERROR', 'at': self.SENT}, self.SENT, self.NOW), 'gemini status ERROR')
+
+    def test_unexplained_fallback_still_fails(self):
+        for quota, issue in (({}, None), ({'blocked': True, 'retryAt': self.NOW - 1}, None),
+                             ({}, {'kind': 'stall', 'at': self.SENT - 16 * 60_000}),
+                             ({}, {'kind': 'crash', 'at': self.SENT + 1000}), ({}, {'kind': 'status', 'at': self.NOW + 5 * 60_000})):
+            with self.subTest(quota=quota, issue=issue), self.assertRaises(RuntimeError):
+                explain_background_fallback(quota, issue, self.SENT, self.NOW)
 
 
 if __name__ == '__main__':

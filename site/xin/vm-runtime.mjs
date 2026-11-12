@@ -630,7 +630,7 @@ export async function frontTurn(o) {
     try {
       input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify({ok:true,title:result.task.title,status:result.task.status})});
       for (const c of calls.slice(i + 1)) input.push({type:'function_call_output',call_id:c.call_id,output:JSON.stringify({skipped:true})});
-      input.push({role:'user',content:'已经交出去了。用你自己的话简短回兄弟一句，别套固定说法，别提编号、模型和分身；不要再调用工具。'});
+      input.push({role:'user',content:'已经交出去了。用你自己的话简短回兄弟一句，像朋友顺口应一声那样接住他这句话里的具体内容；别套固定说法，别预告结果和要多久，别提编号、模型和分身；不要再调用工具。'});
       const req = {...payload, input, tool_choice:'none'};
       let data;
       if (o.request) data = await o.request(req, abort.signal);
@@ -650,8 +650,9 @@ export async function frontTurn(o) {
     while (steps < max && rounds++ < max + 2) {
       if(o.takeBudget&&!o.takeBudget())throw Error('本项工作的推理预算已用完，保留现有结果');
       const payload={model:FRONT_MODEL, stream:false, reasoning:{effort:'max'}, instructions:o.instructions, input,
-          max_output_tokens:1800, tools:[{type:'function',name:'xin',description:'调度工作、查看真实进度、转达用户回复、记事；也能做表情动作、调整好感度、留下次见面的开场白。argv 是参数数组，不是 shell；新建或转达工作后本轮立即结束。',
-            parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true},...(o.handoff?[{type:'function',name:'finish_event',description:'对内部完成事件作最终决定：向用户交付真实结果或保持安静。',strict:true,parameters:{type:'object',properties:{action:{type:'string',enum:['deliver','silent']},text:{type:'string'}},required:['action','text'],additionalProperties:false}}]:[])]};
+          // 提示词 v2 以后 DeepSeek 想得更久（真实模型实测思考 1000–1700 token），1800 的上限一半被截断；放到 4000（docs/xin-prompt-v2.md）
+          max_output_tokens:4000, tools:[{type:'function',name:'xin',description:'把要动手的事派给后台、查后台工作的真实进度、把兄弟的回复转给后台、记事和查以前的原话；也能做表情动作、留下次见面的开场白。argv 是参数数组，不是 shell。这一轮真的需要时才调用，没调用就不说查过；新建或转达工作后本轮立即结束，不预告结果和时间。',
+            parameters:{type:'object',properties:{argv:{type:'array',items:{type:'string'}}},required:['argv'],additionalProperties:false},strict:true},...(o.handoff?[{type:'function',name:'finish_event',description:'对后台结果做最终决定：deliver 用自己的话把兄弟要的、或他该知道的新结果告诉他（text 就是给他的话，要紧的说全）；silent 用于重复、过期、已经说过、没有新东西的。',strict:true,parameters:{type:'object',properties:{action:{type:'string',enum:['deliver','silent']},text:{type:'string'}},required:['action','text'],additionalProperties:false}}]:[])]};
       let data;
       if(o.request)data=await o.request(payload,abort.signal);
       else{
@@ -929,16 +930,21 @@ export function mergeAntigravityQuota(old,next,now=Date.now()) {
   const exhausted=buckets.filter(b=>b.remaining<=0);return {...next,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};
 }
 const AGY_SCHEMA={type:'object',properties:{action:{type:'string',enum:['shell','final','ask','remember']},command:{type:'string'},text:{type:'string'}},required:['action','command','text'],additionalProperties:false};
-function agyProcess(binary,args,cwd,onEvent=()=>{}) {
+/* Gemini（Antigravity）一直不出声（2026-11-12 正式站联调：2 分 20 秒一个字不回）：idleMs 内 stdout 什么都没有就当卡住，杀掉、回 stalled。
+   参考 opencode 的 chunkTimeout（两段输出之间等不到就中止）、Codex 的 stream_idle_timeout_ms。正常的第一步 16–101 秒（11-12 的 cli.log），取 2 分钟 */
+export const AGY_IDLE_MS = () => Number(process.env.XIN_AGY_IDLE_MS) || 120000;
+function agyProcess(binary,args,cwd,onEvent=()=>{},idleMs=0) {
   return new Promise((resolve,reject)=>{
     const child=spawn(binary,args,{cwd,stdio:['ignore','pipe','pipe'],env:{HOME:process.env.XIN_AGY_HOME||os.homedir(),PATH:process.env.PATH||'/usr/local/bin:/usr/bin:/bin',LANG:'C.UTF-8'}});
-    let buf='',stderr='',result=null,model=null,bytes=0;
+    let buf='',stderr='',result=null,model=null,bytes=0,stalled=false,idle=null;
     const timer=setTimeout(()=>child.kill('SIGKILL'),260000);timer.unref();
+    const poke=()=>{if(!idleMs)return;clearTimeout(idle);idle=setTimeout(()=>{stalled=true;child.kill('SIGKILL');},idleMs);idle.unref?.();};
+    poke();
     child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
-    child.stdout.on('data',s=>{bytes+=Buffer.byteLength(s);if(bytes>4*1024*1024){child.kill('SIGKILL');return;}buf+=s;let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);try{const o=JSON.parse(line);if(o.event==='init')model=o.init?.model;if(o.event==='result')result=o.result;onEvent(o);}catch{}}});
+    child.stdout.on('data',s=>{poke();bytes+=Buffer.byteLength(s);if(bytes>4*1024*1024){child.kill('SIGKILL');return;}buf+=s;let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);try{const o=JSON.parse(line);if(o.event==='init')model=o.init?.model;if(o.event==='result')result=o.result;onEvent(o);}catch{}}});
     child.stderr.on('data',s=>{stderr=(stderr+s).slice(-4000);});
-    child.on('error',e=>{clearTimeout(timer);reject(e);});
-    child.on('close',code=>{clearTimeout(timer);resolve({code,result,model,stderr});});
+    child.on('error',e=>{clearTimeout(timer);clearTimeout(idle);reject(e);});
+    child.on('close',code=>{clearTimeout(timer);clearTimeout(idle);resolve({code,result,model,stderr,stalled});});
   });
 }
 export async function readAntigravityQuota(binary,cwd) {
@@ -965,14 +971,21 @@ export async function antigravityWork(t,options) {
   for(let turn=0;turn<48;turn++){
     if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
     const args=['-p',prompt,'--agent','xin-confined-worker','--model',AGY_MODEL,'--effort','high','--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
-    const r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(s?.state==='DONE'&&['search_web','read_url_content'].includes(name))report({type:'item.completed',item:{id:'web-'+turn+'-'+s.step_index,type:'web_search',query:s.tool_info?.parameters?.query||s.tool_info?.parameters?.url||name}});});
-    const result=r.result;if(r.model!==AGY_MODEL)throw Error('Antigravity 实际模型与固定模型不一致');
+    const r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(s?.state==='DONE'&&['search_web','read_url_content'].includes(name))report({type:'item.completed',item:{id:'web-'+turn+'-'+s.step_index,type:'web_search',query:s.tool_info?.parameters?.query||s.tool_info?.parameters?.url||name}});},AGY_IDLE_MS());
+    // 卡住：退出码 76，控制器换候选里的下一个模型，让它先读副本里的现有文件再接着做（和额度用尽 75 一样）；15 分钟内新任务先不派给 Gemini
+    if(r.stalled){options.unavailable?.({kind:'stall'});report({type:'error',message:'Gemini（Antigravity）'+Math.round(AGY_IDLE_MS()/1000)+' 秒没有任何回应，换别的模型接着做。'});return 76;}
+    // 命令自己没跑起来（没有结果、退出码不为 0）：多半是我们这边调用出了问题（参数、版本），写明退出码，不记成 Gemini 不可用
+    const result=r.result;if(!result&&r.code!==0)throw Error('Antigravity 没有返回结果，退出码 '+r.code+'，已保留进度');
+    if(r.model!==AGY_MODEL)throw Error('Antigravity 实际模型与固定模型不一致');
     if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);report({type:'xin.usage',usage:delta});}
     else options.budget.recordUsage?.(null);
     if(r.code!==0||result?.status!=='SUCCESS'){
       try{quota=await readAntigravityQuota(binary,clientDir);options.quota(quota);}catch{}
       if(quota?.blocked||/quota|rate.limit|resource.exhausted/i.test(JSON.stringify(result||{})+' '+r.stderr)){report({type:'error',message:'Antigravity 额度已用尽，已保留当前文件和额度记录。'});return 75;}
-      throw Error('Antigravity 本轮未完成，已保留进度');
+      // 服务答了但没做完（2026-11-13 正式站：约 2 分钟后回了不是 SUCCESS 的状态，同时只回「OK」也要 118 秒）：和不出声一样记下，15 分钟内新任务先不派给它
+      const status=String(result?.status||'').replace(/[^A-Za-z_]/g,'').slice(0,32)||'空';
+      if(result)options.unavailable?.({kind:'status',status});
+      throw Error('Antigravity 本轮未完成（'+(result?'状态 '+status:'没有返回结果，退出码 '+r.code)+'），已保留进度');
     }
     conversation=result.conversation_id||conversation;if(conversation)options.conversation(conversation);
     let a=result.structured_output;try{a=a||JSON.parse(result.response);}catch{throw Error('Antigravity 未返回可执行的结构化动作');}
