@@ -2685,6 +2685,8 @@ const ops = {
       // 任务中心：各模型最近 14 天用得怎么样、每个任务是哪个对话派的、每日任务做得怎么样
       out.stats = modelStats();
       out.antigravity = readJ(path.join(BASE,'antigravity-quota.json')) || null;
+      // Gemini 最近一次不可用（不出声 stall、回了没做完 status）：正式站联调据此认可换模型，不当成我们这边出错
+      const issue = readJ(AGY_STALL_F()); out.antigravityIssue = issue ? { at: issue.at, kind: issue.kind || 'stall', ...(issue.status ? { status: issue.status } : {}) } : null;
       out.frontAntigravity = readJ(path.join(BASE,'front-antigravity-quota.json')) || null;
       const titles = {};
       for (const t of mine) if (t.parent && !(t.parent in titles)) titles[t.parent] = (readJ(sessF(t.parent)) || {}).title || '';
@@ -3114,7 +3116,7 @@ function main() {
     const run=process.argv[3],m=readJ(metaF(run)),t=m&&readJ(sessF(m.sid));
     if(!m?.task||!t?.workspace||m.model!==runtime.AGY_MODEL){process.exitCode=1;return;}
     const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
-    runtime.antigravityWork(t,{clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),stalled:()=>writeJ(AGY_STALL_F(),{at:Date.now(),run})})
+    runtime.antigravityWork(t,{clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why})})
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }

@@ -78,3 +78,23 @@ THIRD_PERSON = ('小芯', '分身', '后台', '同事', '助手', '交给')
 def first_person_receipt(reply):
     reply = str(reply or '').strip()
     return bool(reply) and not any(x in reply for x in THIRD_PERSON)
+
+
+GEMINI_SKIP_MS = 15 * 60 * 1000  # vm-agent AGY_STALL_MS: new tasks skip Gemini this long after an outage
+CLOCK_SKEW_MS = 60 * 1000  # the runner and the cloud computer keep separate clocks
+
+
+def explain_background_fallback(quota, issue, dispatched_ms, now_ms):
+    """Why the default background task did not finish on Gemini, from what the controller recorded.
+
+    Accepted: a quota cooldown still in force, or a Gemini outage (no output = stall, or a non-SUCCESS
+    answer = status) recorded during this run or in the window before it in which new tasks skip Gemini.
+    A local agy failure is never recorded by the controller, so it cannot explain anything here."""
+    quota = quota or {}
+    if quota.get('blocked') is True and isinstance(quota.get('retryAt'), (int, float)) and quota['retryAt'] > now_ms:
+        return 'quota'
+    issue = issue or {}
+    at = issue.get('at')
+    if issue.get('kind') in ('stall', 'status') and isinstance(at, (int, float)) and dispatched_ms - GEMINI_SKIP_MS <= at <= now_ms + CLOCK_SKEW_MS:
+        return 'gemini ' + issue['kind'] + (' ' + str(issue['status']) if issue.get('status') else '')
+    raise RuntimeError('Default Antigravity did not run and no recorded quota cooldown or Gemini outage explains the fallback')

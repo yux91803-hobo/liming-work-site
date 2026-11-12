@@ -32,7 +32,7 @@ test('CLI 续接返回整段累计用量：按持久水位记增量，重启和�
 function fixture(t,mode='ok'){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-agy-test-')),control=root+'/control',profile=root+'/profile',bin=root+'/bin',log=root+'/calls.jsonl';for(const p of [control+'/sessions',control+'/runs',profile,bin])fs.mkdirSync(p,{recursive:true});
  const preload=root+'/preload.cjs';fs.writeFileSync(preload,'require("node:os").homedir=()=>'+JSON.stringify(profile)+';require("node:module").syncBuiltinESMExports();');
- const agy=bin+'/agy';fs.writeFileSync(agy,'#!'+process.execPath+'\n'+`const fs=require('node:fs'),a=process.argv.slice(2),quota=a[a.indexOf('-p')+1]==='/usage',log=${JSON.stringify(log)},mode=${JSON.stringify(mode)};fs.appendFileSync(log,JSON.stringify({quota,args:a.filter((_,i)=>i===a.indexOf('--model')+1||i===a.indexOf('--effort')+1),key:!!process.env.XIN_CODEX_KEY,cwd:process.cwd()})+'\\n');const count=fs.readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(x=>x.quota).length;const send=o=>console.log(JSON.stringify(o));if(quota){send({event:'result',result:{status:'SUCCESS',command:{data:{groups:[{buckets:[{id:'gemini-5h',remaining_fraction:mode==='quota'&&count>1?0:1,reset_time:new Date(Date.now()+3600000).toISOString()},{id:'gemini-weekly',remaining_fraction:1,reset_time:new Date(Date.now()+604800000).toISOString()}]}]}}}});process.exit(0);}send({event:'init',init:{model:mode==='wrong'?'another-model':'gemini-3.8-flash-high'}});const turns=fs.readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(x=>!x.quota).length;if(mode==='stall'||mode==='stall2'&&turns>1){setInterval(()=>{},1e9);return;}if(mode==='stall2'){send({event:'result',result:{conversation_id:'12345678-1234-1234-1234-123456789abc',status:'SUCCESS',structured_output:{action:'shell',command:'echo half > half.txt',text:''},usage:{input_tokens:20,output_tokens:8}}});process.exit(0);}if(mode==='quota')send({event:'step_update',step_update:{state:'DONE',step_type:'search_web',step_index:1}});send({event:'result',result:{conversation_id:'12345678-1234-1234-1234-123456789abc',status:mode==='quota'?'ERROR':'SUCCESS',structured_output:{action:'final',command:'',text:'真实入口完成'},usage:{input_tokens:20,output_tokens:8}}});`,{mode:0o755});
+ const agy=bin+'/agy';fs.writeFileSync(agy,'#!'+process.execPath+'\n'+`const fs=require('node:fs'),a=process.argv.slice(2),quota=a[a.indexOf('-p')+1]==='/usage',log=${JSON.stringify(log)},mode=${JSON.stringify(mode)};fs.appendFileSync(log,JSON.stringify({quota,args:a.filter((_,i)=>i===a.indexOf('--model')+1||i===a.indexOf('--effort')+1),key:!!process.env.XIN_CODEX_KEY,cwd:process.cwd()})+'\\n');const count=fs.readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(x=>x.quota).length;const send=o=>console.log(JSON.stringify(o));if(quota){send({event:'result',result:{status:'SUCCESS',command:{data:{groups:[{buckets:[{id:'gemini-5h',remaining_fraction:mode==='quota'&&count>1?0:1,reset_time:new Date(Date.now()+3600000).toISOString()},{id:'gemini-weekly',remaining_fraction:1,reset_time:new Date(Date.now()+604800000).toISOString()}]}]}}}});process.exit(0);}if(mode==='crash'){process.stderr.write('unknown flag');process.exit(2);}send({event:'init',init:{model:mode==='wrong'?'another-model':'gemini-3.8-flash-high'}});if(mode==='unfinished'){send({event:'result',result:{conversation_id:'12345678-1234-1234-1234-123456789abc',status:'ERROR',response:''}});process.exit(0);}const turns=fs.readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(x=>!x.quota).length;if(mode==='stall'||mode==='stall2'&&turns>1){setInterval(()=>{},1e9);return;}if(mode==='stall2'){send({event:'result',result:{conversation_id:'12345678-1234-1234-1234-123456789abc',status:'SUCCESS',structured_output:{action:'shell',command:'echo half > half.txt',text:''},usage:{input_tokens:20,output_tokens:8}}});process.exit(0);}if(mode==='quota')send({event:'step_update',step_update:{state:'DONE',step_type:'search_web',step_index:1}});send({event:'result',result:{conversation_id:'12345678-1234-1234-1234-123456789abc',status:mode==='quota'?'ERROR':'SUCCESS',structured_output:{action:'final',command:'',text:'真实入口完成'},usage:{input_tokens:20,output_tokens:8}}});`,{mode:0o755});
  fs.writeFileSync(bin+'/codex','#!'+process.execPath+'\n'+`const fs=require('node:fs');fs.appendFileSync(${JSON.stringify(root+'/fallback.log')},'codex\\n');fs.appendFileSync(${JSON.stringify(root+'/fallback.args')},process.argv.slice(2).join(' ')+'\\n');console.log(JSON.stringify({type:'turn.started'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'保留原进度后完成'}}));`,{mode:0o755});
  const env={...process.env,PATH:bin+':'+process.env.PATH,NODE_OPTIONS:'--require='+preload,XIN_HOME:control,XIN_WORK:root+'/work',CODEX_HOME:profile+'/.codex',XIN_AGY_HOME:profile,XIN_ANTIGRAVITY_BIN:agy,XIN_CODEX_TRANSPORT:'exec',XIN_TASK_SANDBOX:'0',XIN_CODEX_KEY:'must-not-reach-agy',XIN_AGY_IDLE_MS:'1500'};
  const call=(op,args={})=>{const r=spawnSync(process.execPath,[agent,'locked',op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
@@ -65,6 +65,7 @@ test('Gemini 一直不出声：到了闲置时限就换别的模型接着做，�
  assert.match(fs.readFileSync(f.root+'/fallback.log','utf8'),/codex/);
  const stats=fs.readFileSync(f.control+'/model-stats.jsonl','utf8').trim().split('\n').map(JSON.parse),last=stats.at(-1);
  assert.equal(last.from,'gemini-3.8-flash-high');assert.match(last.fromErr||'',/没有任何回应/);
+ const issue=f.call('tasks',{all:true}).antigravityIssue;assert.equal(issue.kind,'stall');assert.ok(Date.now()-issue.at<platformTimeout(15000));
  const next=f.call('task_new',{kind:'research',goal:'after stall'}).task;assert.notEqual(next.model,'gemini-3.8-flash-high','刚卡过，先不派给 Gemini');await f.wait(next.sid);
  const st=JSON.parse(fs.readFileSync(f.control+'/antigravity-stall.json'));st.at=Date.now()-16*60e3;fs.writeFileSync(f.control+'/antigravity-stall.json',JSON.stringify(st));
  assert.equal(f.call('task_new',{kind:'research',goal:'later'}).task.model,'gemini-3.8-flash-high','过了 15 分钟照常');
@@ -76,4 +77,23 @@ test('Gemini 干了一步以后才卡住：一样换模型，接手的模型先�
  assert.equal(meta.from,'gemini-3.8-flash-high');
  const ev=fs.readFileSync(f.control+'/runs/'+runs.at(-1)+'.jsonl','utf8');assert.match(ev,/echo half/,'Gemini 做过的那一步留在过程里');
  assert.match(fs.readFileSync(f.root+'/fallback.args','utf8'),/先读取同一项目副本中的现有文件/);
+});
+
+// 2026-11-13 #131 正式站联调：Gemini 约 2 分钟后回了「没做完」（状态不是 SUCCESS），控制器换 Kimi 做完了，联调却因为「不是额度原因」判失败、回滚。
+// 同一时间单独探测：只回「OK」也要 118 秒（平时 40 多秒），是 Gemini 服务那边慢。和不出声一样记下来，联调据此认可这次换模型。
+test('Gemini 回了没做完（状态不是 SUCCESS）：错误里写明状态，记下来，15 分钟内新任务先不派给它；换别的模型做完',async t=>{
+ const f=fixture(t,'unfinished'),task=f.call('task_new',{kind:'research',goal:'unfinished research'}).task;assert.equal(task.model,'gemini-3.8-flash-high');
+ const done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-3.8-flash-high');
+ const last=fs.readFileSync(f.control+'/model-stats.jsonl','utf8').trim().split('\n').map(JSON.parse).at(-1);
+ assert.equal(last.from,'gemini-3.8-flash-high');assert.match(last.fromErr||'',/状态 ERROR/);
+ const issue=f.call('tasks',{all:true}).antigravityIssue;assert.equal(issue.kind,'status');assert.equal(issue.status,'ERROR');
+ assert.notEqual(f.call('task_new',{kind:'research',goal:'after unfinished'}).task.model,'gemini-3.8-flash-high');
+});
+test('agy 命令自己没跑起来（没有结果、退出码不为 0）：多半是我们这边调用出错，错误里写明退出码，不记成 Gemini 不可用',async t=>{
+ const f=fixture(t,'crash'),task=f.call('task_new',{kind:'research',goal:'crash research'}).task;assert.equal(task.model,'gemini-3.8-flash-high');
+ await f.wait(task.sid);
+ const last=fs.readFileSync(f.control+'/model-stats.jsonl','utf8').trim().split('\n').map(JSON.parse).at(-1);
+ assert.equal(last.from,'gemini-3.8-flash-high');assert.match(last.fromErr||'',/没有返回结果，退出码 2/);
+ assert.equal(f.call('tasks',{all:true}).antigravityIssue,null);
+ assert.equal(f.call('task_new',{kind:'research',goal:'after crash'}).task.model,'gemini-3.8-flash-high','照常派给 Gemini');
 });

@@ -973,14 +973,19 @@ export async function antigravityWork(t,options) {
     const args=['-p',prompt,'--agent','xin-confined-worker','--model',AGY_MODEL,'--effort','high','--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
     const r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(s?.state==='DONE'&&['search_web','read_url_content'].includes(name))report({type:'item.completed',item:{id:'web-'+turn+'-'+s.step_index,type:'web_search',query:s.tool_info?.parameters?.query||s.tool_info?.parameters?.url||name}});},AGY_IDLE_MS());
     // 卡住：退出码 76，控制器换候选里的下一个模型，让它先读副本里的现有文件再接着做（和额度用尽 75 一样）；15 分钟内新任务先不派给 Gemini
-    if(r.stalled){options.stalled?.();report({type:'error',message:'Gemini（Antigravity）'+Math.round(AGY_IDLE_MS()/1000)+' 秒没有任何回应，换别的模型接着做。'});return 76;}
-    const result=r.result;if(r.model!==AGY_MODEL)throw Error('Antigravity 实际模型与固定模型不一致');
+    if(r.stalled){options.unavailable?.({kind:'stall'});report({type:'error',message:'Gemini（Antigravity）'+Math.round(AGY_IDLE_MS()/1000)+' 秒没有任何回应，换别的模型接着做。'});return 76;}
+    // 命令自己没跑起来（没有结果、退出码不为 0）：多半是我们这边调用出了问题（参数、版本），写明退出码，不记成 Gemini 不可用
+    const result=r.result;if(!result&&r.code!==0)throw Error('Antigravity 没有返回结果，退出码 '+r.code+'，已保留进度');
+    if(r.model!==AGY_MODEL)throw Error('Antigravity 实际模型与固定模型不一致');
     if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);report({type:'xin.usage',usage:delta});}
     else options.budget.recordUsage?.(null);
     if(r.code!==0||result?.status!=='SUCCESS'){
       try{quota=await readAntigravityQuota(binary,clientDir);options.quota(quota);}catch{}
       if(quota?.blocked||/quota|rate.limit|resource.exhausted/i.test(JSON.stringify(result||{})+' '+r.stderr)){report({type:'error',message:'Antigravity 额度已用尽，已保留当前文件和额度记录。'});return 75;}
-      throw Error('Antigravity 本轮未完成，已保留进度');
+      // 服务答了但没做完（2026-11-13 正式站：约 2 分钟后回了不是 SUCCESS 的状态，同时只回「OK」也要 118 秒）：和不出声一样记下，15 分钟内新任务先不派给它
+      const status=String(result?.status||'').replace(/[^A-Za-z_]/g,'').slice(0,32)||'空';
+      if(result)options.unavailable?.({kind:'status',status});
+      throw Error('Antigravity 本轮未完成（'+(result?'状态 '+status:'没有返回结果，退出码 '+r.code)+'），已保留进度');
     }
     conversation=result.conversation_id||conversation;if(conversation)options.conversation(conversation);
     let a=result.structured_output;try{a=a||JSON.parse(result.response);}catch{throw Error('Antigravity 未返回可执行的结构化动作');}

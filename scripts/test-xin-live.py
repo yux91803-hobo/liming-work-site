@@ -8,7 +8,7 @@ import json
 import os
 import time
 import uuid
-from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt
+from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback
 from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
@@ -161,6 +161,7 @@ async def main():
                         server_done = None
                 raise RuntimeError('Chat state did not settle: sid=%s run=%s sending=%s polling=%s server_run_done=%s' % (
                     bool(state.get('sid')), bool(state.get('run')), state.get('sending'), state.get('polling'), server_done)) from failure
+            dispatched_ms = time.time() * 1000
             await page.locator('.xc-row textarea').fill(request)
             await page.locator('.xc-send').click()
             await settle('LimingXinChat.state.sid && !LimingXinChat.state.run && !LimingXinChat.state.sending', 240000)
@@ -240,10 +241,14 @@ async def main():
                     raise RuntimeError('Antigravity was not fixed at High')
                 print('PASS real default Antigravity Gemini 3.8 Flash High and confined file output', flush=True)
             else:
-                quota = (await call('tasks', {'all': True})).get('antigravity') or {}
-                if not quota.get('blocked') or quota.get('retryAt', 0) <= time.time() * 1000:
-                    raise RuntimeError('Default Antigravity did not run and no real quota cooldown explains the fallback')
-                print('PASS real quota cooldown retained and fallback produced the verified file', flush=True)
+                # Only a cause the controller itself recorded explains a fallback: a real quota cooldown, or Gemini being
+                # unavailable (no output at all = stall, or it answered with a non-SUCCESS status) during this run or in the
+                # 15 minutes before it (new tasks skip Gemini then). A local agy failure (no result, non-zero exit) is never
+                # recorded, so a broken integration on our side still fails here.
+                center = await call('tasks', {'all': True})
+                why = explain_background_fallback(center.get('antigravity'), center.get('antigravityIssue'), dispatched_ms, time.time() * 1000)
+                print('PASS ' + ('real quota cooldown retained' if why == 'quota' else why + ' recorded by the controller') +
+                      ' and fallback produced the verified file', flush=True)
             if errors:
                 raise RuntimeError('Browser JavaScript errors')
             print('PASS closed-page completion, published file download and stable single-turn result', flush=True)
