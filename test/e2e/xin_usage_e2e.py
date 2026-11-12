@@ -55,8 +55,10 @@ def usage():
         'names': {'claude-opus-4.6': 'Claude Opus 4.6', 'gemini-3.8-flash-high': 'Gemini 3.8 Flash High', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash'}}
 
 
-async def setup(browser, w=1280, h=860, mobile=False, theme='light', glow='warn', live=False, reduced=False):
+async def setup(browser, w=1280, h=860, mobile=False, theme='light', glow='warn', live=False, reduced=False, clock=False):
     pg = await ui.page(browser, w, h, mobile=mobile, theme=theme)
+    if clock:
+        await pg.clock.install()
     if reduced:
         await pg.emulate_media(reduced_motion='reduce')
     st = await wk.backend(pg, main='smain000001')
@@ -157,6 +159,24 @@ async def main():
         ui.check('切换范围不再请求', st.get('usage_calls') == calls, (calls, st.get('usage_calls')))
         tip = await pg.evaluate("(() => { const d = document.querySelectorAll('.xc-sheet .xu-day'); return d.length ? d[d.length - 1].getAttribute('aria-label') : ''; })()")
         ui.check('柱子有读屏说明（日期和用量）', '今天' in (tip or '') or '月' in (tip or ''), tip)
+        await pg.context.close()
+
+        # 5b. 用量页每分钟刷新一次：数据换了，读到一半的位置不跳回顶部；头像弹出的卡片标着展开状态
+        pg, st = await setup(browser, clock=True)
+        av = pg.locator('#xinWork .xc-glow')
+        ui.check('额度卡关着时头像标着未展开', await av.get_attribute('aria-expanded') == 'false', await av.get_attribute('aria-expanded'))
+        await av.click()
+        await pg.wait_for_selector('.xq .xq-more', timeout=10000)
+        ui.check('额度卡开着时头像标着已展开', await av.get_attribute('aria-expanded') == 'true', await av.get_attribute('aria-expanded'))
+        await pg.click('.xq .xq-more')
+        await pg.wait_for_selector('.xc-sheet:not([hidden]) .xu-ms', timeout=15000)
+        top = await pg.evaluate("(() => { const b = document.querySelector('.xc-sheet .xu'); b.scrollTop = b.scrollHeight; return b.scrollTop; })()")
+        calls = st.get('usage_calls')
+        st['usage']['totals']['d7']['runs'] += 1
+        await pg.clock.fast_forward(61000)
+        await pg.wait_for_function("document.querySelector('.xc-sheet .xu-sum') && /%d 轮/.test(document.querySelector('.xc-sheet .xu-sum').textContent)" % st['usage']['totals']['d7']['runs'], timeout=10000)
+        after = await pg.evaluate("document.querySelector('.xc-sheet .xu').scrollTop")
+        ui.check('用量页每分钟刷新，滚到的位置不跳回顶部', top > 0 and st.get('usage_calls') > calls and abs(after - top) <= 1, (top, after, calls, st.get('usage_calls')))
         await pg.context.close()
 
         # 6. 各宽度、浅色深色：额度卡和用量页不横向溢出；手机上额度卡贴底

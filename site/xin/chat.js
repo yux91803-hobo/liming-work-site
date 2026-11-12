@@ -1842,7 +1842,8 @@
      点头像出额度卡（每个模型 5 小时 / 每周、几点重置、照现在的速度几点用完）；卡片底部「用量」打开工作台里的用量页。 */
   var GLOW_TXT = { ok: '额度充足', warn: '有一项用了七成以上', high: '有一项快用完了', out: '有一项用完了' };
   S.glow = '';
-  function glowFrom(d) { if (d && Object.prototype.hasOwnProperty.call(d, 'glow')) { S.glow = GLOW_TXT[d.glow] ? d.glow : ''; paintGlow(); } }
+  // 旧控制器不带 glow：颜色不动，但「有没有活在做」照样跟着刷新
+  function glowFrom(d) { if (d && Object.prototype.hasOwnProperty.call(d, 'glow')) S.glow = GLOW_TXT[d.glow] ? d.glow : ''; paintGlow(); }
   // 新建的头像还没挂到页面上时 querySelectorAll 找不到它，所以 glowAv 建好就先按当前状态涂一次
   function paintOne(b) {
     b.classList.remove('g-ok', 'g-warn', 'g-high', 'g-out');
@@ -1852,7 +1853,7 @@
   }
   function paintGlow() { [].forEach.call(document.querySelectorAll('.xc-glow'), paintOne); }
   function glowAv(cls, avCls) {
-    var b = h('button', 'xc-glow' + (cls ? ' ' + cls : '')); b.type = 'button'; b.setAttribute('aria-haspopup', 'dialog'); b.setAttribute('aria-label', '额度');
+    var b = h('button', 'xc-glow' + (cls ? ' ' + cls : '')); b.type = 'button'; b.setAttribute('aria-haspopup', 'dialog'); b.setAttribute('aria-expanded', 'false'); b.setAttribute('aria-label', '额度');
     b.appendChild(avatar(avCls || ''));
     b.addEventListener('click', function (e) { e.stopPropagation(); if (!S.authed) { work(); return; } openQuota(b); });
     paintOne(b);
@@ -1897,6 +1898,7 @@
     quotaEl.remove(); quotaEl = null;
     document.removeEventListener('keydown', quotaKey, true); document.removeEventListener('pointerdown', quotaOut, true); removeEventListener('resize', closeQuota);
     var from = quotaFrom; quotaFrom = null;
+    if (from) from.setAttribute('aria-expanded', 'false');
     if (!keepFocus && from && from.isConnected) from.focus();
   }
   // 电脑、平板贴着头像弹出；手机从底部升起来（CSS 管）
@@ -1909,7 +1911,7 @@
   }
   function openQuota(btn) {
     if (quotaEl) { var same = quotaFrom === btn; closeQuota(); if (same) return; }
-    quotaFrom = btn;
+    quotaFrom = btn; btn.setAttribute('aria-expanded', 'true');
     var wrap = h('div', 'xq-wrap'), card = h('section', 'xq');
     card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', '额度'); card.tabIndex = -1;
     card.appendChild(h('p', 'xq-hint', '正在读取…'));
