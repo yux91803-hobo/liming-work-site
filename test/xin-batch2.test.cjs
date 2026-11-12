@@ -50,3 +50,29 @@ test('预热记录坏了或卡死（超过 200 秒还标着在跑）：前台不
   assert.ok(!p.events.some(e => e.t === 'status' && /刚醒/.test(e.text)), '没有等');
   assert.ok(Date.now() - t0 < platformTimeout(10000));
 });
+
+/* ---------- 第一批留下的小问题 ---------- */
+const AGENT = path.join(__dirname, '../site/xin/vm-agent.mjs');
+const loadAgent = () => { process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-b2-import-')); return import(require('node:url').pathToFileURL(AGENT).href); };
+
+test('等回答到点时「记下问题」抢不到锁：隔几秒再试，记下了才交还；重试期间来了回答就用回答', async () => {
+  const { awaitTaskInput } = await loadAgent();
+  let t = 0, tries = 0;
+  const now = () => t, sleep = ms => { t += ms; return Promise.resolve(); };
+  // 前两次锁忙（lockedCall 返回 error），第三次记下
+  const r = await awaitTaskInput({ id: 'a1', holdMs: 1000, read: () => ({}), now, sleep, expire: () => (++tries < 3 ? { error: 'busy', msg: '锁忙' } : { ok: true }) });
+  assert.deepEqual(r, { expired: true });
+  assert.equal(tries, 3, '失败的要重试');
+  assert.ok(t >= 1000 + 2 * 5000, '两次重试之间至少隔 5 秒');
+  // 重试期间站长回答了：用回答，不再记问题
+  t = 0; tries = 0; let answered = false;
+  const r2 = await awaitTaskInput({ id: 'a1', holdMs: 1000, read: () => (answered ? { approvalReplies: { a1: '好' } } : {}), now, sleep,
+    expire: () => { tries++; answered = true; return { error: 'busy' }; } });
+  assert.deepEqual(r2, { reply: '好' });
+  assert.equal(tries, 1);
+  // 一直记不下（比如状态库坏了）：最多试 2 分钟，然后照样交还，不卡住这一轮
+  t = 0; tries = 0;
+  const r3 = await awaitTaskInput({ id: 'a1', holdMs: 1000, read: () => ({}), now, sleep, expire: () => { tries++; return { error: 'busy' }; } });
+  assert.deepEqual(r3, { expired: true, unsaved: true });
+  assert.ok(t <= 1000 + 125e3 && tries >= 20, JSON.stringify({ t, tries }));
+});

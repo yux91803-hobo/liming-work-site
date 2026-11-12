@@ -1054,15 +1054,24 @@ function taskMcpFlags(t) {
    让模型结束这一轮；站长之后回答走 task_tell，接着同一个会话做。 */
 export const APPROVAL_HOLD_MS = Number(process.env.XIN_APPROVAL_HOLD_MS) || 600000;
 export const INPUT_TIMEOUT_TEXT = '（用户 10 分钟内没有回复。问题已经记下，用户回复后会接着叫你。现在结束这一轮：最后一条消息写清楚做到哪了、要用户确认什么。）';
-export async function awaitTaskInput({ id, holdMs = APPROVAL_HOLD_MS, read, expire, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
-  const until = Date.now() + holdMs;
+// 到点「记下问题」要拿 tasks 锁，锁忙（别的进程在做重活）时 lockedCall 返回 error：以前照样交还，问题没记下，
+// 这个等待一直挂在任务上（后台算在忙、云电脑不睡）。现在隔 5 秒再试，期间来了回答就用回答；试满 2 分钟还记不下才放弃。
+const EXPIRE_RETRY_MS = 5000, EXPIRE_RETRY_FOR = 120e3;
+export async function awaitTaskInput({ id, holdMs = APPROVAL_HOLD_MS, read, expire, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  const until = now() + holdMs;
+  let nextTry = until, giveUp = until + EXPIRE_RETRY_FOR;
   for (;;) {
     await sleep(350);
     const m = read();
     if (!m || m.stopped || m.ended) return { ended: true };
     const reply = (m.approvalReplies || {})[id];
     if (reply) return { reply };
-    if (Date.now() >= until) { await expire(); return { expired: true }; }
+    if (now() >= nextTry) {
+      const r = await expire();
+      if (!r || !r.error) return { expired: true };
+      if (now() >= giveUp) return { expired: true, unsaved: true };
+      nextTry = now() + EXPIRE_RETRY_MS;
+    }
   }
 }
 async function approvalRequest(run, meta, request) {
