@@ -489,7 +489,8 @@ export async function runCron(cron, env, ctx, opt = {}) {
     await wait(Math.min(30, Math.max(5, r.retryAfter || 5)) * 1000);
   }
   // 每日任务那两次顺手做机外备份（今天已有就跳过）；备份没成不影响每日任务的结果，下一次再来
-  if (op === 'daily' && r && r.ok) { try { r.backup = await backupNow(env, ctx, opt.now || Date.now()); } catch (e) { r.backup = { error: 'backup_failed', msg: String(e && e.message || e).slice(0, 200) }; } }
+  // （结果不挂在返回值上：每日任务的返回格式不变；做没做成看设置里「机外备份」那一行）
+  if (op === 'daily' && r && r.ok) { try { await backupNow(env, ctx, opt.now || Date.now()); } catch { /* 下一次再来 */ } }
   return r;
 }
 
