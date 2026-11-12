@@ -8,6 +8,9 @@ global.fetch = async function(url, init) {
   if (!String(url).endsWith('/v1/responses')) return real(url, init);
   const body = JSON.parse(init.body);
   if (process.env.XIN_FRONT_TEST_LOG) fs.appendFileSync(process.env.XIN_FRONT_TEST_LOG, JSON.stringify(body)+'\n');
+  // 网关刚醒：这个文件在的时候到达的请求一直卡着（正式机实测第一个请求卡 124–126 秒），直到被取消
+  if (process.env.XIN_FRONT_TEST_COLD && fs.existsSync(process.env.XIN_FRONT_TEST_COLD))
+    await new Promise((_, no) => init.signal?.addEventListener('abort', () => no(new Error('aborted')), { once: true }));
   const delay = Number(process.env.XIN_TEST_DELAY_MS || process.env.XIN_FRONT_TEST_DELAY || 0);
   if (delay) await new Promise(r=>setTimeout(r,delay));
   const content = [...body.input].reverse().find(x=>x.role==='user')?.content || '';

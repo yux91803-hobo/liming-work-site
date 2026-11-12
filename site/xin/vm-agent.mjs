@@ -99,6 +99,21 @@ function maybeWarm() {
   spawn(process.execPath, [SELF, 'warm'], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref();
   return true;
 }
+// 前台等预热：网关刚醒时预热那个请求正卡着，前台这时发出的请求也会卡一两分钟，25 秒的时限一到就只能回「请重试」
+// （2026-11-12 正式站联调实测：预热 126 秒，前台 25 秒放弃）。所以预热在跑就先等它做完，再开始算前台的时限。
+// 参考 Codex（codex-rs/model-provider-info：慢的流默认等 300 秒、请求重试 4 次）和 opencode
+// （packages/core/src/model-retry.ts：可恢复的错误退避重试）：都不在模型慢的时候急着放弃。预热自己 200 秒被杀，最多等这么久。
+const WARM_WAIT_MAX = 200e3;
+export async function waitWarm({ read = () => readJ(WARM_FILE()), now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), notify = () => {}, signal } = {}) {
+  const busy = w => !!(w && w.running && Number.isFinite(w.at) && now() - w.at < WARM_WAIT_MAX);
+  if (!busy(read())) return false;
+  notify(); let told = now();
+  while (busy(read()) && !signal?.aborted) {
+    if (now() - told >= 5000) { notify(); told = now(); }
+    await sleep(500);
+  }
+  return true;
+}
 function warm() {
   const t0 = Date.now();
   // 默认模式用 Codex：有 codex 就用它、用前台聊天的默认模型预热（和 Harness 走同一个网关）；没有才用 Harness
@@ -816,7 +831,7 @@ function runner(run) {
         patchRun(run,{frontUsage:state.frontUsage});
       }}
     });};
-    infer().then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
+    waitWarm({signal:controller.signal,notify:()=>emit(run,{t:'status',text:'电脑刚醒，网络在热身，稍等一下'})}).then(()=>infer()).then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
       .catch(e=>{if(!finished){frontLog({run,outcome:usedFallback?'fallback':'error',error:String(e.message||e).slice(0,300),calls,...(Object.keys(protocol).length?{protocol}:{})});state.failed=true;finish(1,e.message);}})
       .finally(()=>provider?.close());
   } else start();
