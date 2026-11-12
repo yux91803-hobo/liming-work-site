@@ -148,7 +148,7 @@
 - `GET /api/xin/backup?date=YYYY-MM-DD&raw=1`：下载加密原件 `.backup`（第一行是参数 JSON，换行后是密文；改过密码、网页上解不开时用）。
 - `POST /api/xin/backup`（本站页面发的 JSON）：现在就做今天的备份，已有就跳过。正式站每次发布后的联调用它当场走一遍：导出、取回、加密、存、列出、解密下载，核对大小和 sha256。
 
-**恢复**：新云电脑上把下载的包解进空的 `~/.xin`（`tar xzf xin-state-YYYYMMDD.tar.gz -C ~/.xin`），网关密钥照 `MACHINE.md` 重新配；控制器脚本由 Worker 下一次调用时自动装上。包里有备份那一刻排着的启动记录，恢复后可能会把当时没做完的那一轮再跑一次。
+**恢复**：新云电脑上把下载的包解进空的 `~/.xin`（`tar xzf xin-state-YYYYMMDD.tar.gz -C ~/.xin`），网关密钥照 `MACHINE.md` 重新配；控制器脚本由 Worker 下一次调用时自动装上。备份那一刻没做完的几轮（排着的、在做的）恢复后不重跑：打包时快照里把它们放回「排着」并记进 `restore-stop.json`，恢复后第一次调用标成停了，说明一句（聊天显示已停止，任务变成停了、能接着做）。
 
 **参考**：
 - Grok Bot `box-store-sync/`：云电脑里的状态同步到云端存储，坏了能整体恢复。
