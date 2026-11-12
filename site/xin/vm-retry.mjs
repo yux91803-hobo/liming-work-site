@@ -16,6 +16,15 @@ export function transientFailure(text) {
   if (!s.trim() || TERMINAL.some(r => r.test(s))) return false;
   return TRANSIENT.some(r => r.test(s));
 }
+// 拿去判断的只是「让这一轮结束的那个错误」：结束原因；没有就是最后一条错误事件；都没有才看 stderr 最后 6 行。
+// 以前把这一轮所有错误事件和 stderr 后 2000 字一起判断，前面已经恢复了的断线重连字样会让后来真正的失败也被当成临时的，
+// 白白重试三次（最长等 20 分钟）。Grok Bot 也只看结束这次流的那个错误（transient-stream-error.ts 的 isTransientStreamError(err)）。
+export function finalFailure({ why = '', errs = [], stderr = '' } = {}) {
+  if (String(why || '').trim()) return String(why);
+  const last = (errs || []).filter(x => String(x || '').trim()).at(-1);
+  if (last) return String(last);
+  return String(stderr || '').trim().split('\n').slice(-6).join('\n');
+}
 const DEFAULT_DELAYS = [60000, 240000, 900000];
 // 第 n 次重试前等多久（毫秒）；次数上限就是这张表的长度。XIN_RETRY_DELAYS_MS（逗号分隔）给测试调短。
 export function retryDelays(env = process.env) {

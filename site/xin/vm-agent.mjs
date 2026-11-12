@@ -62,7 +62,7 @@ import {openFrontProvider,preferredFrontModel,frontModelInfo,OPUS_FRONT_MODEL} f
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
-import { transientFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
+import { transientFailure, finalFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
 import { quotaWindows, glowLevel, forecast, usageSummary, agyUsage } from './vm-usage.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -614,7 +614,7 @@ function runner(run) {
       killTree(child); // 收掉本轮进程组，包括仍持有临时预览端口的子进程
       // 后台任务：结果先存进任务记录（接着做、等确认还是收尾、排下一个），要推送的在锁外发
       // 临时错误（断线、网关 5xx、限流）由控制器等一会儿接着做，见 vm-retry.mjs
-      const transient = !ok && !stopped && !state.timeout && transientFailure([why, ...tailEvents(run, 16384).filter(e => e.t === 'err').map(e => e.text), stderr.slice(-2000)].join('\n'));
+      const transient = !ok && !stopped && !state.timeout && transientFailure(finalFailure({ why, errs: tailEvents(run, 16384).filter(e => e.t === 'err').map(e => e.text), stderr }));
       const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model, transient });
       if (r && r.notice) { setTimeout(() => process.exit(0), 20000).unref(); deliverNotice(r.notice).catch(() => {}); }
       return;
