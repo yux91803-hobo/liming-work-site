@@ -2600,7 +2600,7 @@ const ops = {
     loginStore(LOGINS_DIR()).remove(site);
     return { ok: true, sites: loginStore(LOGINS_DIR()).list() };
   },
-  login_open: loginOpen,
+  login_open(a) { return loginOpen(a); },
   async login_done() { return { ok: true, ...(await loginDone()) }; },
 };
 // 只在 tasks 锁里跑的（main 里分派）
@@ -2736,7 +2736,7 @@ function readStdin() {
   try { const st = fs.fstatSync(0); if (!st.isFIFO() && !st.isFile()) return ''; return fs.readFileSync(0, 'utf8'); } catch { return ''; }
 }
 export function parseTaskArgs(argv) {
-  const o = { files: [], after: [], plugins: [], sites: [] }, rest = [];
+  const o = { files: [], after: [], plugins: [] }, rest = [];
   const alias = { k: 'kind', t: 'title', m: 'model', d: 'dir', f: 'file', a: 'after' };
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i];
@@ -2749,7 +2749,7 @@ export function parseTaskArgs(argv) {
     if (v === undefined) return { error: '--' + k + ' 后面要写值' };
     if (k === 'file') o.files.push(v);
     else if (k === 'plugin') o.plugins.push(v);
-    else if (k === 'site') { const site = normalizeSite(v); if (!site) return { error: '认不出 --site ' + v + ' 是哪个网站（写域名，比如 bilibili.com）' }; if (!o.sites.includes(site)) o.sites.push(site); if (o.sites.length > SITES_MAX) return { error: '--site 最多写 ' + SITES_MAX + ' 个网站' }; }
+    else if (k === 'site') { const site = normalizeSite(v); if (!site) return { error: '认不出 --site ' + v + ' 是哪个网站（写域名，比如 bilibili.com）' }; o.sites ||= []; if (!o.sites.includes(site)) o.sites.push(site); if (o.sites.length > SITES_MAX) return { error: '--site 最多写 ' + SITES_MAX + ' 个网站' }; }
     else if (k === 'after') o.after.push(...String(v).split(/[,，、\s]+/).filter(Boolean).map(Number));
     else if (['kind', 'title', 'model', 'dir', 'minutes'].includes(k)) o[k] = v;
     else return { error: '不认识的选项：--' + k };

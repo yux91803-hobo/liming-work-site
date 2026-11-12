@@ -533,6 +533,7 @@ body.xs-open{overflow:hidden}
 @media (hover:hover){.xc-btn.sec:hover{border-color:var(--ink-3)}}
 .xc-tk-q{flex-basis:100%;margin:0;font-weight:600}
 .xc-tk-login{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px}
+.xc-tk-act .xc-tk-login .xc-btn{padding:0 14px}
 .xc-tk-in{flex:1;min-width:0;min-height:44px;padding:8px 10px;border:1px solid var(--line-2);border-radius:10px !important;background:var(--bg);font:13.5px/1.5 var(--sans);color:var(--ink);resize:vertical}
 .xc-tk-note{flex-basis:100%;margin:0;font-size:12px;color:var(--clay)}
 .xc-tk-note:empty{display:none}

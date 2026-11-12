@@ -339,7 +339,7 @@ test('xin task new --site：可以写多个，写域名或网址都行，认成�
   assert.equal(o.goal, '看看订单');
   assert.match(m.parseTaskArgs(['--site', '127.0.0.1', '--', 'x']).error, /网站/);
   assert.match(m.parseTaskArgs(['--site', 'a.com', '--site', 'b.com', '--site', 'c.com', '--site', 'd.com', '--site', 'e.com', '--site', 'f.com', '--', 'x']).error, /5/);
-  assert.deepEqual(m.parseTaskArgs(['--', '不点名']).sites, []);
+  assert.equal(m.parseTaskArgs(['--', '不点名']).sites, undefined, '没点名网站就不带这一项');
 });
 
 test('派任务时点名的网站记在任务上（重复的合并），任务列表里看得到；这一轮浏览器带上这些网站的登录、能请站长登录', async t => {

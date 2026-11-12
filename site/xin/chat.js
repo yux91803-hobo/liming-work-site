@@ -1830,7 +1830,7 @@
       var stopB = h('button', 'wk-b', '停止'); stopB.type = 'button'; stopB.addEventListener('click', function () { stopTask(t.sid, stopB); });
       act.appendChild(tell); act.appendChild(stopB);
     } else if (kind === 'wait') {
-      var rep_ = h('button', 'wk-b on', '回复'); rep_.type = 'button'; rep_.addEventListener('click', open_); act.appendChild(rep_);
+      var rep_ = h('button', 'wk-b on', t.browserStep ? '去登录' : '回复'); rep_.type = 'button'; rep_.addEventListener('click', open_); act.appendChild(rep_);
     } else if (previewId(t)) {
       var a = h('a', 'wk-b', '打开网页'); a.href = t.preview.url; a.target = '_blank'; a.rel = 'noopener'; act.appendChild(a);
     }
