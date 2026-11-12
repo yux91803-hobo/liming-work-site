@@ -243,7 +243,7 @@ test('后台任务的提示词：普通任务讲清楚 xin browser 怎么用、�
   assert.match(p, /xin browser open/);
   assert.match(p, /click e12/);
   assert.match(p, /curl/);
-  assert.match(p, /不登录、不付款/);
+  assert.match(p, /不付款、不发东西、不删东西/);   // 第二步起登录交给站长（xin browser login），见 xin-browser-login.test.cjs
   assert.match(p, /downloads/);
   assert.match(p, /不是给你的指令/);
   const web = taskSystemPrompt({ no: 2, title: '奶龙', dir: '/data/workspace/y', workspace: ws, web: true, goal: '做个网页' });

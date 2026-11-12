@@ -12,6 +12,7 @@
 //                                       | push_key | push_sub | push_unsub | push_test（做完提醒）| moves（新动作）| bond | bond_play（好感度）
 //                                       | screen {control?}（小芯的屏幕：开桌面、桌面上开终端、要一个短时的桌面链接）| screen_off（作废桌面链接）
 //                                       | tasks {sid?, all?} | task_stop {sid} | task_tell {sid, text}（后台任务：卡片、看过程、停、补充）
+//                                       | logins | login_remove {site} | login_open {sid?|url?} | login_done（站长的网站登录，docs/xin-browser-v2-design.md）
 //                                       | usage（用量看板：额度、预计用完、每天的 token）
 //   GET  /api/xin/file?path=/data/workspace/…   下载小芯电脑里的一个文件（先让 vm-agent 核对在工作目录里，再从 InstaBox 原样转过来）
 // status、wake 直接调 InstaBox 的机器接口（wake：打开网页时把睡着的云电脑叫醒，已经醒着就什么都不做）；其余都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
@@ -22,7 +23,8 @@ const SESSION_SEC = 30 * 86400;
 const AGENT_ASSET = '/xin/vm-agent.mjs';
 const VM_DIR = '/data/home/.xin/agent';
 export const OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'memory_list', 'memory_add', 'memory_update', 'memory_forget','memory_preferences','memory_preferences_set','learning_report', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
-  'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off', 'tasks', 'task_stop', 'task_tell', 'usage']);
+  'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off', 'tasks', 'task_stop', 'task_tell', 'usage',
+  'logins', 'login_open', 'login_done', 'login_remove']);
 const SCREEN_W = 1280, SCREEN_H = 800, SCREEN_VIEW_TTL = 1800, SCREEN_CTL_TTL = 900;   // 桌面大小；链接多久内能打开（秒）
 const FILE_MAX = 100 * 1024 * 1024;   // 下载最大 100 MB（和上传一样大：发给小芯的文件也能原样下回来）
 const UPLOAD_MAX = 100 * 1024 * 1024, UPLOAD_DIR = '/data/workspace/uploads';   // 给小芯发文件：一个最大 100 MB（Cloudflare Worker 收请求的上限），放在它工作目录的 uploads/日期/ 下面
@@ -224,7 +226,8 @@ async function call(env, origin, op, args, ctx, now) {
   }
   /* 小芯的屏幕：先把桌面开起来（已经开着就什么都不做），在桌面上开那个滚动显示它在干什么的终端（开不了也不影响看），
      再要一个短时链接（InstaBox 的桌面查看页，能嵌进 iframe）：观看时服务器丢掉键盘鼠标，接管时能操作。screen_off 把链接全部作废 */
-  if (op === 'screen') {
+  /* 登录窗口（docs/xin-browser-v2-design.md 第 7 节）：和「屏幕」一样先把桌面开起来，云电脑在桌面上开登录窗口，回一个能接管的桌面链接 */
+  if (op === 'screen' || op === 'login_open') {
     const ds = await ib(env, `/v1/machines/${m.id}/desktop`, { method: 'POST', body: JSON.stringify({ action: 'start', width: SCREEN_W, height: SCREEN_H }) });
     if (!ds.ok) {
       const e = await ibErr(ds);
@@ -233,13 +236,18 @@ async function call(env, origin, op, args, ctx, now) {
     }
     const d = await ds.json();
     if (!d.running) return d.installing ? { ok: false, state: 'waking', msg: '正在给电脑装桌面…', retryAfter: 10 } : { ok: false, state: 'error', msg: d.hint || '桌面没开起来' };
-    let term = null;
-    try { term = await exec(env, origin, m.id, 'screen', {}); } catch (e) { term = { error: (e && e.code) || 'exec' }; }
-    const control = !!(args && args.control);
+    let term = null, login = null;
+    if (op === 'login_open') {
+      try { login = await exec(env, origin, m.id, 'login_open', { sid: args && args.sid, url: args && args.url }); } catch (e) { return explain(e); }
+      if (!login || login.error) return { ok: false, state: 'error', msg: (login && login.msg) || '登录窗口没开起来' };
+    } else {
+      try { term = await exec(env, origin, m.id, 'screen', {}); } catch (e) { term = { error: (e && e.code) || 'exec' }; }
+    }
+    const control = op === 'login_open' || !!(args && args.control);
     const r = await ib(env, `/v1/machines/${m.id}/desktop/stream`, { method: 'POST', body: JSON.stringify({ viewOnly: !control, ttlSeconds: control ? SCREEN_CTL_TTL : SCREEN_VIEW_TTL }) });
     if (!r.ok) return explain(await ibErr(r));
     const link = await r.json();
-    return { ok: true, data: { url: link.url, expiresAt: link.expiresAt, control, terminal: !!(term && term.ok) } };
+    return { ok: true, data: { url: link.url, expiresAt: link.expiresAt, control, terminal: !!(term && term.ok), ...(login ? { site: login.site } : {}) } };
   }
   if (op === 'screen_off') {
     const r = await ib(env, `/v1/machines/${m.id}/desktop/stream`, { method: 'DELETE' });

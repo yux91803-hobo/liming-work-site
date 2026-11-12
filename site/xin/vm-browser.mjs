@@ -9,9 +9,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
+import { siteOf, normalizeSite, saveSites } from './vm-logins.mjs';
 // 不 import vm-runtime.mjs：它要 import 这个文件，Worker 装脚本时不允许模块循环引用。出网代理和地址检查由 taskNetwork 传进来
 
-export const BROWSER_LIMITS = { commands: 300, tabs: 5, timeoutMs: 30000, snapshotChars: 12000, textChars: 20000, downloadBytes: 100 * 1024 * 1024, downloadTotal: 300 * 1024 * 1024 };
+export const BROWSER_LIMITS = { commands: 300, tabs: 5, timeoutMs: 30000, snapshotChars: 12000, textChars: 20000, downloadBytes: 100 * 1024 * 1024, downloadTotal: 300 * 1024 * 1024, cookieSaveMs: 10000 };
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 // 浏览器自成一个进程组：杀的时候连渲染、GPU 这些子进程一起杀，不然它们会接着往资料目录里写（压力下见过删目录报 ENOTEMPTY）
 const killGroup = c => { if (!c?.pid) return; try { process.kill(-c.pid, 'SIGKILL'); } catch { try { c.kill('SIGKILL'); } catch { /* 已经没了 */ } } };
@@ -88,9 +89,12 @@ const RISKY = /(付款|支付|购买|下单|结算|结账|删除|移除|清空|�
 const RISKY_LINK = /(付款|支付|购买|下单|结算|结账|删除|注销|\bpay\b|\bbuy\b|purchase|checkout|delete|log ?out|sign ?out)/i;
 const SEARCHY = /(搜索|搜\s*索|查找|检索|查询|search|\bfind\b|\bgo\b)/i;
 const OWNER = why => fail('needs_owner', '这一步要站长自己来：' + why + '。现在只浏览公开网页，不登录、不付款、不发东西、不删东西；把需要站长做的事写进结果。');
+// 登录这一类：有登录回调（后台任务）时交给站长（docs/xin-browser-v2-design.md 第 6 节）；没有就和上面一样拒绝
+const LOGINISH = /(登录|登入|sign ?in|log ?in)/i;
+const LOGIN = why => ({ ...OWNER(why), login: true });
 const ELEMENT_INFO = `function(){const el=this,tag=(el.tagName||'').toLowerCase(),type=String(el.type||'').toLowerCase(),ac=String(el.autocomplete||'').toLowerCase();
  const form=el.form||(el.closest&&el.closest('form'))||null,fields=form?[...form.elements]:[],lab=f=>String(f.innerText||f.value||f.getAttribute&&f.getAttribute('aria-label')||f.title||'').trim().slice(0,80);
- return {tag,type,label:lab(el),secret:type==='password'||/^cc-|one-time-code/.test(ac),inForm:!!form,
+ return {tag,type,label:lab(el),secret:type==='password'||/^cc-|one-time-code/.test(ac),card:/^cc-/.test(ac),inForm:!!form,
   formSecret:fields.some(f=>f.type==='password'),
   formSearch:!!form&&(form.getAttribute('role')==='search'||!!form.closest('[role=search]')||fields.some(f=>f.type==='search')),
   formButtons:fields.filter(f=>f.tagName==='BUTTON'||['submit','image'].includes(f.type)).map(lab).slice(0,8),
@@ -98,13 +102,13 @@ const ELEMENT_INFO = `function(){const el=this,tag=(el.tagName||'').toLowerCase(
 export function clickRisk(name, info) {
   const words = [name, info.label].filter(Boolean).join(' ');
   if (info.isLink && !info.isButton) return RISKY_LINK.test(words) ? OWNER('「' + (name || info.label) + '」会产生外部后果') : null;
-  if (info.inForm && info.formSecret && (info.isButton || info.tag === 'input')) return OWNER('这是登录表单');
-  if (RISKY.test(words) && !SEARCHY.test(words)) return OWNER('「' + (name || info.label) + '」会产生外部后果');
+  if (info.inForm && info.formSecret && (info.isButton || info.tag === 'input')) return LOGIN('这是登录表单');
+  if (RISKY.test(words) && !SEARCHY.test(words)) return (LOGINISH.test(words) ? LOGIN : OWNER)('「' + (name || info.label) + '」会产生外部后果');
   return null;
 }
 export function enterRisk(info) {
   if (!info || !info.inForm || info.tag === 'textarea') return null;
-  if (info.formSecret) return OWNER('在登录表单里按回车就是提交');
+  if (info.formSecret) return LOGIN('在登录表单里按回车就是提交');
   if (info.formSearch) return null;
   const bad = (info.formButtons || []).find(b => RISKY.test(b) && !SEARCHY.test(b));
   return bad ? OWNER('在这个表单里按回车会提交「' + bad + '」') : null;
@@ -116,48 +120,56 @@ const DENIED = /^(后台任务只能访问公网(的 80\/443 端口|地址)|代�
 const BLOCKED = fail('blocked', '打不开：只能访问公网网址（本机、内网地址和 80/443 以外的端口都不行）');
 const okUrl = u => { try { const x = new URL(u); return ['http:', 'https:'].includes(x.protocol) ? x.href : null; } catch { return null; } };
 
+/* ---------- 起 Chromium：CDP 走管道，所有请求走出网代理；渲染进程必须在沙盒里 ---------- */
+async function launch({ chrome, profileDir, proxyPort, headless, display, noSandbox }) {
+  const args = ['--remote-debugging-pipe', '--user-data-dir=' + profileDir, '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
+    '--disable-component-update', '--disable-sync', '--disable-extensions', '--disable-default-apps', '--disable-features=Translate,MediaRouter,OptimizationHints',
+    '--password-store=basic', '--use-mock-keychain', '--disable-dev-shm-usage', '--window-size=1280,860', '--lang=zh-CN', '--disable-quic', '--dns-prefetch-disable',
+    '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--proxy-server=http://127.0.0.1:' + proxyPort, '--proxy-bypass-list=<-loopback>'];
+  if (headless) args.push('--headless=new');
+  if (noSandbox) args.push('--no-sandbox');
+  args.push('about:blank');
+  const env = { ...process.env }; if (!headless && display) env.DISPLAY = display;
+  const c = spawn(chrome, args, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], env, detached: true });
+  let err = ''; c.stderr.setEncoding('utf8'); c.stderr.on('data', s => { err = (err + s).slice(-2000); });
+  const conn = new Cdp(c.stdio[3], c.stdio[4]);
+  // 'close' 在 stderr 读完以后才来：退出原因（比如开不了沙盒）不会丢；子进程攥着管道时最多再等 2 秒
+  const exited = new Promise(ok => { c.once('close', () => ok(null)); c.once('exit', () => setTimeout(() => ok(null), 2000)); });
+  const ready = await Promise.race([conn.send('Browser.getVersion', {}, null, 20000).then(() => true, () => null), exited]);
+  // 一启动就退出、什么都没说：err 是空的，不能拿它当「成功」的判断
+  if (!ready) { killGroup(c); return { ok: false, error: err || '浏览器进程刚启动就退出了' }; }
+  return { ok: true, c, conn };
+}
+const launchError = r => { const why = String(r.error).trim().split('\n').slice(-3).join(' '); return /sandbox/i.test(why) ? '浏览器开不了沙盒，这台电脑上暂时不能浏览（' + why.slice(0, 200) + '）' : '浏览器启动失败：' + why.slice(0, 300); };
+const webUrl = u => { try { const x = new URL(u); return ['http:', 'https:'].includes(x.protocol) ? x : null; } catch { return null; } };
+const urlSite = u => { const x = webUrl(u); return x ? siteOf(x.hostname) : null; };
+
 /* ---------- 代理本体 ---------- */
 // noSandbox 只给以 root 跑的测试用（root 下 Chromium 不带 --no-sandbox 起不来）；正式不传：开不了沙盒就不浏览
-export async function browserBroker({ chrome, profileDir, work, headless = true, display = '', socketPath = '', egress, allowAddress, ports = [80, 443], log = () => {}, limits = {}, noSandbox = false }) {
+// sites：这一轮带登录的网站（任务点名的）。非空时只装这些网站保存的 cookie、主页面只能在这些网站里跳、cookie 写回 logins。
+// step：登录交给站长的回调（控制器记到任务上，任务停成「等你登录」）；没有就照第一步拒绝。
+export async function browserBroker({ chrome, profileDir, work, headless = true, display = '', socketPath = '', egress, allowAddress, ports = [80, 443], log = () => {}, limits = {}, noSandbox = false,
+  sites = [], logins = null, step = null }) {
   if (typeof egress !== 'function' || typeof allowAddress !== 'function') throw Error('浏览器代理缺少出网代理或地址检查');
   const L = { ...BROWSER_LIMITS, ...limits };
-  let child = null, cdp = null, pages = [], current = null, refs = new Map(), refNo = 0, used = 0, queue = Promise.resolve(), proxy = null, server = null, closed = false;
+  sites = [...new Set((sites || []).map(x => siteOf(x)).filter(Boolean))];
+  const scoped = sites.length > 0, asked = new Set();
+  const allowed = u => !scoped || !webUrl(u) || sites.includes(urlSite(u));
+  let child = null, cdp = null, pages = [], current = null, refs = new Map(), refNo = 0, used = 0, queue = Promise.resolve(), proxy = null, server = null, closed = false, lastSave = 0;
   const loads = new Map();   // 下载：guid → {name, bytes}
   const downloads = path.join(work, 'downloads');
 
   async function start() {
     proxy = await egress({ allowAddress, ports });
     removeDir(profileDir); fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
-    const attempt = async (noSandbox, headless) => {
-      const args = ['--remote-debugging-pipe', '--user-data-dir=' + profileDir, '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
-        '--disable-component-update', '--disable-sync', '--disable-extensions', '--disable-default-apps', '--disable-features=Translate,MediaRouter,OptimizationHints',
-        '--password-store=basic', '--use-mock-keychain', '--disable-dev-shm-usage', '--window-size=1280,860', '--lang=zh-CN', '--disable-quic', '--dns-prefetch-disable',
-        '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--proxy-server=http://127.0.0.1:' + proxy.port, '--proxy-bypass-list=<-loopback>'];
-      if (headless) args.push('--headless=new');
-      if (noSandbox) args.push('--no-sandbox');
-      args.push('about:blank');
-      const env = { ...process.env }; if (!headless && display) env.DISPLAY = display;
-      const c = spawn(chrome, args, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], env, detached: true });
-      let err = ''; c.stderr.setEncoding('utf8'); c.stderr.on('data', s => { err = (err + s).slice(-2000); });
-      const conn = new Cdp(c.stdio[3], c.stdio[4]);
-      // 'close' 在 stderr 读完以后才来：退出原因（比如开不了沙盒）不会丢；子进程攥着管道时最多再等 2 秒
-      const exited = new Promise(ok => { c.once('close', () => ok(null)); c.once('exit', () => setTimeout(() => ok(null), 2000)); });
-      const ready = await Promise.race([conn.send('Browser.getVersion', {}, null, 20000).then(() => true, () => null), exited]);
-      // 一启动就退出、什么都没说：err 是空的，不能拿它当「成功」的判断
-      if (!ready) { killGroup(c); return { ok: false, error: err || '浏览器进程刚启动就退出了' }; }
-      return { ok: true, c, conn };
-    };
     // 浏览任意网页，渲染进程一定要在 Chromium 自己的沙盒里：开不了沙盒就不浏览，不退回 --no-sandbox
     // （网页成品检查只开小芯自己写的页面，才用 --no-sandbox）。小芯电脑上实测沙盒能开（box 用户、user namespace 开着）。
     // 桌面上开不出来（没有权限连桌面）就退回无头
-    const tries = [];
-    for (const hl of headless ? [true] : [false, true]) tries.push([noSandbox, hl]);
     let r = { ok: false, error: '' };
-    for (const [ns, hl] of tries) { r = await attempt(ns, hl); if (r.ok) break; }
+    for (const hl of headless ? [true] : [false, true]) { r = await launch({ chrome, profileDir, proxyPort: proxy.port, headless: hl, display, noSandbox }); if (r.ok) break; }
     if (!r.ok) {
       proxy.close(); proxy = null;   // 起不来就别留着代理（下一个命令再试会重新起）
-      const why = String(r.error).trim().split('\n').slice(-3).join(' ');
-      throw Error(/sandbox/i.test(why) ? '浏览器开不了沙盒，这台电脑上暂时不能浏览（' + why.slice(0, 200) + '）' : '浏览器启动失败：' + why.slice(0, 300));
+      throw Error(launchError(r));
     }
     child = r.c; cdp = r.conn;
     // runner 收尾时不一定等得到 close()：进程退出时同步杀掉浏览器、删资料
@@ -165,6 +177,8 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     cdp.listeners.add(onEvent);
     fs.mkdirSync(downloads, { recursive: true });
     await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads, eventsEnabled: true });
+    // 带登录的一轮：只装点名网站保存的 cookie（Playwright MCP 的 --isolated + --storage-state）
+    if (scoped && logins) { const cookies = logins.cookies(sites); if (cookies.length) await cdp.send('Storage.setCookies', { cookies }); }
     await cdp.send('Target.setDiscoverTargets', { discover: true });
     current = await attach(await somePage());
   }
@@ -196,14 +210,22 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     if (!page) return;
     if (m.method === 'Page.frameStartedLoading' && p.frameId === page.frame) page.loading = true;
     if ((m.method === 'Page.loadEventFired' || m.method === 'Page.frameStoppedLoading' && p.frameId === page.frame)) page.loading = false;
-    if (m.method === 'Page.frameNavigated' && !p.frame.parentId) { page.frame = p.frame.id; page.nav = (page.nav || 0) + 1; }
+    if (m.method === 'Page.frameNavigated' && !p.frame.parentId) { page.frame = p.frame.id; page.nav = (page.nav || 0) + 1; if (webUrl(p.frame.url) && allowed(p.frame.url)) page.lastOk = p.frame.url; }
+    // 带登录的一轮：主框架去别的网站的文档请求不发出去（Browser Use domains.py 的 Guard）；子框架、图片脚本这些照常
+    if (m.method === 'Fetch.requestPaused') {
+      const go = p.frameId !== page.frame || allowed(p.request.url);
+      if (!go) page.blocked = p.request.url;
+      cdp.send(go ? 'Fetch.continueRequest' : 'Fetch.failRequest', go ? { requestId: p.requestId } : { requestId: p.requestId, errorReason: 'BlockedByClient' }, m.sessionId).catch(() => {});
+    }
   }
   async function attach(page) {
     if (!page.session) {
       page.session = (await cdp.send('Target.attachToTarget', { targetId: page.id, flatten: true })).sessionId;
       for (const m of ['Page.enable', 'DOM.enable', 'Accessibility.enable']) await cdp.send(m, {}, page.session);
-      page.frame = (await cdp.send('Page.getFrameTree', {}, page.session)).frameTree.frame.id;
-      page.nav = page.nav || 0;
+      const top = (await cdp.send('Page.getFrameTree', {}, page.session)).frameTree.frame;
+      page.frame = top.id; page.nav = page.nav || 0;
+      if (webUrl(top.url) && allowed(top.url)) page.lastOk = top.url;
+      if (scoped) await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }] }, page.session);
     }
     await cdp.send('Target.activateTarget', { targetId: page.id }).catch(() => {});
     return page;
@@ -271,11 +293,58 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     return (await S('Runtime.callFunctionOn', { objectId, functionDeclaration: ELEMENT_INFO, returnByValue: true })).result.value || {};
   }
   const stale = () => fail('stale_ref', '这个编号不是最近一次快照里的（页面变了）：先 xin browser snapshot，用新的编号');
+  const offsite = where => fail('offsite', '这一轮带着站长在 ' + sites.join('、') + ' 的登录，只能在这些网站里浏览' + (where ? '，去 ' + where + ' 被拦下了' : '') +
+    '。公开资料用 curl 查；要用别的网站的账号，让站长在任务里加上。');
+  const here = async () => { try { return String(await evaluate('location.href')); } catch { return current?.url || ''; } };
+  // 登录是站长的这一步（Nanobrowser gate.ts 的 USER_STEP）：不填、不点，请站长登录；同一个网站这一轮只问一次
+  async function loginStep(site, url, risk) {
+    if (!step) return risk ? { error: risk.error, msg: risk.msg } : OWNER('要登录');
+    if (!site) return fail('bad_site', '当前页面不属于哪个网站：先 open 那个网站，或者写 xin browser login 域名');
+    if (!asked.has(site)) {
+      let r; try { r = await step({ kind: 'login', site, url, saved: !!logins?.has(site) }); } catch (e) { r = { error: e.message }; }
+      if (!r || r.error) return fail('needs_owner', '要登录 ' + site + '，但没能请站长（' + (r?.msg || r?.error || '没有回应') + '）：把需要登录才能做的事写进结果。');
+      asked.add(site);
+    }
+    return fail('needs_login', '这一步是登录，要站长自己来：已经请站长登录 ' + site + '（站长在屏幕上自己输密码、验证码，你看不到也不用管）。' +
+      '现在结束这一轮：最后一条消息写清楚做到哪了、登录以后要接着做什么；站长登好后会接着叫你，那时浏览器已经带着 ' + site + ' 的登录。');
+  }
+  const risky = async (risk) => { if (!risk.login) return { error: risk.error, msg: risk.msg }; const u = await here(); return loginStep(urlSite(u), u, risk); };
+  // 每个命令之后：带登录的一轮里，跑到别的网站的标签页清掉（Browser Use 的 sweep）；当前页退回最后一个许可的网址
+  async function sweep() {
+    if (!scoped || !cdp) return null;
+    let hit = null;
+    for (const p of [...pages]) {
+      const u = p.blocked || p.url;
+      if (!p.blocked && allowed(u)) continue;
+      hit = hit || urlSite(u) || u; p.blocked = null;
+      if (pages.length > 1 && p !== pages[0]) {
+        await cdp.send('Target.closeTarget', { targetId: p.id }).catch(() => {});
+        pages = pages.filter(x => x !== p);
+        if (current === p) current = null;
+      } else {
+        const back = p.lastOk || 'about:blank', prev = current;
+        current = await attach(p);
+        await S('Page.navigate', { url: back }, L.timeoutMs).catch(() => {});
+        await settle();
+        if (prev && prev !== p && pages.includes(prev)) current = prev;
+      }
+    }
+    if (!current && pages.length) current = await attach(pages[0]);
+    return hit;
+  }
+  // 带登录的一轮：网站续期、新设的 cookie 写回（至多 cookieSaveMs 一次；进程被杀也只丢最后这一小段）
+  async function saveCookies(force) {
+    if (!scoped || !logins || !cdp || cdp.closed) return;
+    if (!force && Date.now() - lastSave < L.cookieSaveMs) return;
+    lastSave = Date.now();
+    try { saveSites(logins, (await cdp.send('Storage.getCookies', {})).cookies || [], sites); } catch { /* 下次再存 */ }
+  }
 
   const CMDS = {
     async open(url) {
       const u = okUrl(url);
       if (!u) return fail('bad_url', '只能打开 http:// 或 https:// 网址');
+      if (!allowed(u)) return offsite(urlSite(u) || u);
       const r = await S('Page.navigate', { url: u }, L.timeoutMs);
       if (/TUNNEL_CONNECTION_FAILED|PROXY_CONNECTION_FAILED/.test(r.errorText || '')) return BLOCKED;
       if (r.errorText) return fail('nav_failed', '打不开 ' + u + '（' + r.errorText + '）');
@@ -287,7 +356,7 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     async click(ref) {
       const r = element(ref); if (!r) return stale();
       const objectId = await resolve(r), i = await info(objectId);
-      const risk = clickRisk(r.name, i); if (risk) return risk;
+      const risk = clickRisk(r.name, i); if (risk) return risky(risk);
       await S('DOM.scrollIntoViewIfNeeded', { backendNodeId: r.node }).catch(() => {});
       const { quads } = await S('DOM.getContentQuads', { backendNodeId: r.node });
       if (!quads?.length) return fail('not_visible', '这个元素现在看不到，点不了；换一个或者先 scroll');
@@ -301,7 +370,8 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     async fill(ref, ...words) {
       const r = element(ref); if (!r) return stale();
       const objectId = await resolve(r), i = await info(objectId);
-      if (i.secret) return OWNER('这是密码框（或银行卡号、验证码）');
+      if (i.secret && (i.card || !step)) return OWNER('这是密码框（或银行卡号、验证码）');
+      if (i.secret) { const u = await here(); return loginStep(urlSite(u), u); }
       await S('DOM.focus', { backendNodeId: r.node });
       await S('Runtime.callFunctionOn', { objectId, functionDeclaration: "function(){if('value' in this){this.value='';this.dispatchEvent(new Event('input',{bubbles:true}));}else if(this.isContentEditable)this.textContent='';}" });
       await S('Input.insertText', { text: words.join(' ').slice(0, 2000) });
@@ -313,7 +383,7 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
       if (key === 'Enter') {
         let i = null;
         try { const { result } = await S('Runtime.evaluate', { expression: 'document.activeElement' }); if (result.objectId) i = await info(result.objectId); } catch { /* 没有焦点 */ }
-        const risk = enterRisk(i); if (risk) return risk;
+        const risk = enterRisk(i); if (risk) return risky(risk);
       }
       const before = new Set(pages.map(p => p.id)), base = { key, code: key.length === 1 ? 'Key' + key.toUpperCase() : key, windowsVirtualKeyCode: k[0] };
       await S('Input.dispatchKeyEvent', { type: 'keyDown', ...base, ...(k[1] ? { text: k[1] } : {}) });
@@ -368,6 +438,13 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
       return state();
     },
     async close() { await shutdown(); return { ok: true, text: '浏览器关了' }; },
+    // 请站长登录：不写网站就是当前页面的网站
+    async login(target) {
+      if (!target) { const u = await here(); return loginStep(urlSite(u), u); }
+      const site = normalizeSite(target);
+      if (!site) return fail('bad_site', '认不出是哪个网站：' + target + '（写域名，比如 bilibili.com，或者完整网址）');
+      return loginStep(site, /^https?:\/\//i.test(target) ? target : 'https://' + String(target).replace(/^\/+/, ''));
+    },
   };
 
   async function run(cmd, args) {
@@ -375,9 +452,14 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     if (used >= L.commands) return fail('budget', '这一轮浏览器命令已经用了 ' + L.commands + ' 个，不能再用；把已经查到的写进结果');
     used++;
     if (cmd === 'close' && !child) return { ok: true, text: '浏览器没开' };
+    if (cmd === 'login' && args[0]) return CMDS.login(args[0]);   // 点名网站请站长登录：不用开浏览器
     if (!child) await start();
     if (!current) current = await attach(await somePage());
-    return CMDS[cmd](...args);
+    const r = await CMDS[cmd](...args);
+    if (!child) return r;   // close
+    const off = await sweep();
+    await saveCookies(false);
+    return off ? offsite(off) : r;
   }
   function handle({ cmd, args = [] } = {}) {
     // 超时定时器做完就清掉：不然这一轮的进程要多挂 45 秒才退出
@@ -393,6 +475,7 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     });
   }
   async function shutdown() {
+    await saveCookies(true);
     const c = child; child = null; cdp?.listeners.clear();
     if (c) {
       const gone = new Promise(ok => { if (c.exitCode !== null || c.signalCode) ok(); else c.once('exit', ok); });
@@ -432,4 +515,79 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
       removeDir(profileDir);
     },
   };
+}
+
+/* ---------- 登录窗口（docs/xin-browser-v2-design.md 第 7 节） ----------
+   站长在小芯的屏幕（接管）上自己登录用的浏览器：里面没有模型，也不接到任务的容器上。
+   干净资料、走出网代理、必须有沙盒；装上这个网站已保存的 cookie，打开要登录的网址。
+   开着时每 saveMs 存一次（站长直接关窗口也不丢）；finish() 存好再关；开太久（maxMs）自己关。
+   存哪些网站：主页面去过的（页面网址和主框架的文档请求，含跳转经过的，比如经 QQ 登 B 站时的 qq.com），
+   广告、统计这些只在子请求里出现的不存。 */
+export async function loginWindow({ chrome, profileDir, headless = false, display = '', egress, allowAddress, ports = [80, 443], logins, site, url, saveMs = 2000, maxMs = 20 * 60e3, noSandbox = false, log = () => {} }) {
+  if (typeof egress !== 'function' || typeof allowAddress !== 'function') throw Error('登录窗口缺少出网代理或地址检查');
+  site = siteOf(site);
+  if (!site || !logins) throw Error('登录窗口要知道是哪个网站');
+  if (!webUrl(url)) throw Error('登录窗口只能打开 http:// 或 https:// 网址');
+  const proxy = await egress({ allowAddress, ports });
+  removeDir(profileDir); fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+  // 站长要在屏幕上看得到、点得到：有桌面就开在桌面上，不退回无头（测试才无头）
+  const r = await launch({ chrome, profileDir, proxyPort: proxy.port, headless, display, noSandbox });
+  if (!r.ok) { proxy.close(); removeDir(profileDir); throw Error(launchError(r).replace('浏览器', '登录窗口')); }
+  const child = r.c, cdp = r.conn, visited = new Set([site]), saved = new Set(), sessions = new Map();
+  let done = null, timer = null, closing = false;
+  const cleanup = () => { clearInterval(timer); clearTimeout(limit); killGroup(child); try { proxy.close(); } catch { /* 已经关了 */ } removeDir(profileDir); };
+  process.once('exit', cleanup);
+  const visit = u => { const s = urlSite(u); if (s) visited.add(s); };
+  const watch = async targetId => {
+    if (sessions.has(targetId)) return;
+    sessions.set(targetId, null);
+    try {
+      const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+      sessions.set(targetId, sessionId);
+      await cdp.send('Network.enable', {}, sessionId);
+    } catch { /* 页面已经关了 */ }
+  };
+  cdp.listeners.add(m => {
+    const p = m.params || {};
+    if ((m.method === 'Target.targetCreated' || m.method === 'Target.targetInfoChanged') && p.targetInfo.type === 'page') { visit(p.targetInfo.url); if (m.method === 'Target.targetCreated') watch(p.targetInfo.targetId); }
+    // 主框架的文档请求（含跳转经过的）：主框架的编号就是页面的编号
+    if (m.method === 'Network.requestWillBeSent' && p.type === 'Document' && [...sessions.entries()].some(([id, sid]) => sid === m.sessionId && id === p.frameId)) visit(p.request.url);
+  });
+  const save = async () => {
+    if (cdp.closed) return;
+    try { for (const s of saveSites(logins, (await cdp.send('Storage.getCookies', {})).cookies || [], [...visited])) saved.add(s); } catch { /* 下次再存 */ }
+  };
+  let finishOk;
+  const ended = new Promise(ok => { finishOk = ok; });
+  const end = async reason => {
+    if (done) return done;
+    done = (async () => {
+      closing = true;
+      await save();
+      const gone = new Promise(ok => { if (child.exitCode !== null || child.signalCode) ok(); else child.once('exit', ok); });
+      try { await Promise.race([cdp.send('Browser.close', {}, null, 3000), sleep(3000)]); } catch { /* 关不掉就杀 */ }
+      cleanup(); process.removeListener('exit', cleanup);
+      await Promise.race([gone, sleep(3000)]);
+      const out = { reason, saved: [...saved].sort() };
+      log({ cmd: 'login-window', site, reason, saved: out.saved });
+      finishOk(out);
+      return out;
+    })();
+    return done;
+  };
+  const limit = setTimeout(() => end('timeout'), maxMs);
+  child.once('exit', () => { if (!closing) { closing = true; cleanup(); const out = { reason: 'closed', saved: [...saved].sort() }; done = Promise.resolve(out); finishOk(out); } });
+  try {
+    const cookies = logins.cookies([site]);
+    if (cookies.length) await cdp.send('Storage.setCookies', { cookies });
+    await cdp.send('Target.setDiscoverTargets', { discover: true });
+    let page = null;
+    for (let i = 0; i < 60 && !page; i++) { page = (await cdp.send('Target.getTargets')).targetInfos.find(t => t.type === 'page'); if (!page) await sleep(250); }
+    if (!page) page = { targetId: (await cdp.send('Target.createTarget', { url: 'about:blank' })).targetId };
+    await watch(page.targetId);
+    await cdp.send('Page.navigate', { url: webUrl(url).href }, sessions.get(page.targetId), 30000).catch(() => {});
+  } catch (e) { await end('failed'); throw Error('登录窗口没打开：' + e.message); }
+  timer = setInterval(save, saveMs);
+  timer.unref?.(); limit.unref?.();
+  return { pid: () => child.pid, ended, finish: () => end('done'), closeNow() { if (!closing) { closing = true; cleanup(); finishOk({ reason: 'killed', saved: [...saved].sort() }); } } };
 }

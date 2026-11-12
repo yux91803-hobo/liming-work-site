@@ -373,6 +373,25 @@
 .xc-bk-dl:focus-visible{outline:2px solid var(--clay);outline-offset:2px}
 @media (hover:hover){.xc-bk-dl:hover{border-color:var(--ink-3)}}
 @media (pointer:coarse){.xc-bk-dl{height:38px}}
+/* 网站登录（浏览器第二步）：保存了登录的网站、删掉、登录新网站 */
+.xc-lg-b{grid-column:1/-1;display:grid;gap:8px;padding-top:4px}
+.xc-lg-b[hidden]{display:none}
+.xc-lg-l{display:grid;gap:2px;margin:0;padding:0;list-style:none}
+.xc-lg-l li{display:flex;align-items:center;gap:10px;min-height:36px;padding:0 2px;border-bottom:1px dashed var(--line)}
+.xc-lg-l li span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 13px var(--mono, var(--sans))}
+.xc-lg-l li small{font-size:12px;color:var(--ink-3)}
+.xc-lnk{min-height:32px;padding:0 6px;background:none;border:0;font:500 13px var(--sans);color:var(--clay);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.xc-lnk:disabled{opacity:.5;cursor:default}
+.xc-lnk:focus-visible{outline:2px solid var(--clay);outline-offset:2px}
+.xc-lg-e{margin:0;font-size:12px;color:var(--ink-3)}
+.xc-lg-add{display:flex;flex-wrap:wrap;gap:8px}
+.xc-lg-in{flex:1 1 220px;min-width:0;height:40px;padding:0 10px;border:1px solid var(--line-2);border-radius:10px !important;background:var(--bg);font:13.5px var(--sans);color:var(--ink)}
+.xc-lg-add .xc-btn{height:40px;padding:0 14px}
+.xc-lg-add .xc-btn[hidden]{display:none}
+.xc-lg .xc-tg-n{color:var(--ink-3)}
+@media (pointer:coarse){.xc-lg-in{font-size:16px}.xc-lnk{min-height:40px}}
+.xc-tg > .xc-btn.sec{height:32px;padding:0 12px;font-size:13px}
+@media (pointer:coarse){.xc-tg > .xc-btn.sec{height:38px}}
 .xc-sw{position:relative;flex:none;width:44px;height:26px;border:1px solid var(--line-2);border-radius:999px !important;background:var(--sunk);transition:background .15s,border-color .15s}
 .xc-sw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50% !important;background:var(--ink-3);transition:transform .15s,background .15s}
 .xc-sw[aria-checked=true]{background:var(--clay);border-color:var(--clay)}
@@ -513,6 +532,8 @@ body.xs-open{overflow:hidden}
 .xc-btn.sec{border:1px solid var(--line-2);background:transparent;color:var(--ink);font-weight:500}
 @media (hover:hover){.xc-btn.sec:hover{border-color:var(--ink-3)}}
 .xc-tk-q{flex-basis:100%;margin:0;font-weight:600}
+.xc-tk-login{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px}
+.xc-tk-act .xc-tk-login .xc-btn{padding:0 14px}
 .xc-tk-in{flex:1;min-width:0;min-height:44px;padding:8px 10px;border:1px solid var(--line-2);border-radius:10px !important;background:var(--bg);font:13.5px/1.5 var(--sans);color:var(--ink);resize:vertical}
 .xc-tk-note{flex-basis:100%;margin:0;font-size:12px;color:var(--clay)}
 .xc-tk-note:empty{display:none}

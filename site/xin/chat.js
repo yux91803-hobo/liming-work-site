@@ -677,26 +677,30 @@
     });
     scrEl.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeScreen(); });
   }
-  function openScreen(control) {
+  // first：先用别的操作拿链接（登录窗口：login_open 开好窗口回一个接管链接），之后切换观看 / 接管照常用 screen
+  function openScreen(control, first) {
     if (!S.enabled || !S.authed) return;
     if (!scrEl) buildScreen();
     scrEl.hidden = false; document.body.classList.add('xs-open');
-    loadScreen(!!control);
+    loadScreen(!!control, first);
     try { scrEl.querySelector('.xs-x').focus({ preventScroll: true }); } catch (e) { /* 老浏览器 */ }
   }
-  function loadScreen(control) {
+  function loadScreen(control, first) {
     var my = ++scrSeq, fr = scrEl.querySelector('.xs-fr'), msg = scrEl.querySelector('.xs-msg');
     scrEl._ctl = control; if (control) scrUsedCtl = true;
     scrEl.classList.toggle('ctl', control);
     [].forEach.call(scrEl.querySelectorAll('.xs-mode .xc-ag'), function (b) { b.setAttribute('aria-checked', (b.getAttribute('data-mode') === 'ctl') === control ? 'true' : 'false'); });
-    scrEl.querySelector('.xs-tip').textContent = control ? '接管中：你的鼠标、键盘会直接操作小芯的电脑。用完点「观看」或关掉。' : '只看不动：中间那个终端实时显示小芯在干什么。想自己动手，点「接管」。';
+    scrEl.querySelector('.xs-tip').textContent = first ? '在登录窗口里自己登录（输密码、扫码都行），小芯看不到你输的东西。登好后关掉屏幕，点「好了，接着做」或「登好了」。'
+      : control ? '接管中：你的鼠标、键盘会直接操作小芯的电脑。用完点「观看」或关掉。' : '只看不动：中间那个终端实时显示小芯在干什么。想自己动手，点「接管」。';
     fr.hidden = true; fr.src = 'about:blank';
-    msg.hidden = false; msg.textContent = '正在打开屏幕…';
-    call('screen', { control: control }, 90000).then(function (d) {
+    msg.hidden = false; msg.textContent = first ? '正在打开登录窗口…' : '正在打开屏幕…';
+    (first ? first() : call('screen', { control: control }, 90000)).then(function (d) {
       if (my !== scrSeq || scrEl.hidden) return;
       fr.src = d.url; fr.hidden = false; msg.hidden = true;
     }, function (e) { if (my === scrSeq) msg.textContent = '打不开：' + e.message; });
   }
+  // 登录窗口（docs/xin-browser-v2-design.md 第 7 节）：任务等你登录时传 {sid}，设置里登录新网站传 {url}
+  function openLogin(args) { openScreen(true, function () { return call('login_open', args, 90000); }); }
   function closeScreen() {
     if (!scrEl || scrEl.hidden) return;
     scrSeq++;
@@ -741,6 +745,36 @@
     bt.appendChild(h('b', '', '机外备份')); bt.appendChild(bdesc); bk.appendChild(bt); bk.appendChild(dl);
     bk.hidden = true; dl.hidden = true; box.appendChild(bk);
     var bjDay = function (t) { return new Date(t + 8 * 3600e3).toISOString().slice(0, 10); };
+    // 网站登录（docs/xin-browser-v2-design.md 第 8 节）：任务点名网站时带上你在那儿保存的登录。点「查看」才去云电脑取列表
+    var lgRow = h('div', 'xc-tg xc-lg'), lgT = h('div', 'xc-tg-t'), lgBtn = h('button', 'xc-btn sec', '查看'), lgBody = h('div', 'xc-lg-b');
+    lgT.appendChild(h('b', '', '网站登录')); lgT.appendChild(h('span', '', '任务点名哪个网站，就带上你在那儿的登录'));
+    lgBtn.type = 'button'; lgRow.appendChild(lgT); lgRow.appendChild(lgBtn); lgRow.appendChild(lgBody); lgBody.hidden = true;
+    box.appendChild(lgRow);
+    var lgDay = function (t) { var d = new Date(t + 8 * 3600e3); return (d.getUTCMonth() + 1) + '月' + d.getUTCDate() + '日'; };
+    function lgRender(d) {
+      lgBody.innerHTML = ''; lgBody.hidden = false;
+      var list = h('ul', 'xc-lg-l');
+      (d.sites || []).forEach(function (x) {
+        var li = h('li'), rm = h('button', 'xc-lnk', '删掉'); rm.type = 'button'; rm.setAttribute('aria-label', '删掉 ' + x.site + ' 的登录');
+        li.appendChild(h('span', '', x.site)); li.appendChild(h('small', '', lgDay(x.saved))); li.appendChild(rm);
+        rm.addEventListener('click', function () { rm.disabled = true; call('login_remove', { site: x.site }, 30000).then(lgRender, function (e) { rm.disabled = false; lgNote.textContent = '没删掉：' + e.message; }); });
+        list.appendChild(li);
+      });
+      if (!(d.sites || []).length) lgBody.appendChild(h('p', 'xc-lg-e', '还没有保存的登录'));
+      else lgBody.appendChild(list);
+      var add = h('div', 'xc-lg-add'), inp = h('input', 'xc-lg-in'), go = h('button', 'xc-btn', '登录新网站'), done = h('button', 'xc-btn sec', '登好了');
+      inp.type = 'url'; inp.placeholder = '网址，比如 https://www.bilibili.com'; inp.setAttribute('aria-label', '要登录的网址');
+      go.type = 'button'; done.type = 'button'; done.hidden = !d.window;
+      go.addEventListener('click', function () { if (!inp.value.trim()) { inp.focus(); return; } openLogin({ url: inp.value.trim() }); done.hidden = false; });
+      done.addEventListener('click', function () { done.disabled = true; call('login_done', {}, 30000).then(function () { return call('logins', {}, 30000); }).then(lgRender, function (e) { done.disabled = false; lgNote.textContent = '没存上：' + e.message; }); });
+      add.appendChild(inp); add.appendChild(go); add.appendChild(done); lgBody.appendChild(add);
+      var lgNote = h('p', 'xc-tg-n', d.window ? '登录窗口开着：' + d.window.site + '，登好后点「登好了」' : '删掉只删小芯电脑上保存的登录；网站那边的登录设备要你自己去网站上退。');
+      lgBody.appendChild(lgNote);
+    }
+    lgBtn.addEventListener('click', function () {
+      lgBtn.disabled = true; lgBtn.textContent = '取…';
+      call('logins', {}, 60000).then(function (d) { lgBtn.hidden = true; lgRender(d); }, function (e) { lgBtn.disabled = false; lgBtn.textContent = '查看'; lgBody.hidden = false; lgBody.textContent = '取不到：' + e.message; });
+    });
     box.load = function () {
       if (Date.now() - bkAt < 60000) return; bkAt = Date.now();
       fetch('/api/xin/backups', { credentials: 'same-origin' }).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (d) {
@@ -1475,6 +1509,7 @@
     meta.appendChild(h('span', '', [TKIND[t.kind], t.turns > 1 ? t.turns + ' 轮' : ''].filter(Boolean).join(' · ')));
     box.appendChild(meta);
     var preview=previewLink(t);if(preview)box.appendChild(preview);
+    if (t.sites && t.sites.length) box.appendChild(h('p', 'xc-tk-dir', '用你的登录：' + t.sites.join('、')));
     if (t.dir) {
       var dl = h('p', 'xc-tk-dir'); dl.appendChild(document.createTextNode('工作目录 '));
       var a = h('a', 'xc-path', t.dir); a.href = '#'; a.setAttribute('data-path', t.dir);
@@ -1526,6 +1561,16 @@
       act.appendChild(stopB);
     } else {
       if (t.status === 'waiting' && t.question) act.appendChild(h('p', 'xc-tk-q', t.question));
+      // 等你登录：打开登录窗口（屏幕接管）→ 自己登 → 好了，接着做；不用了。也可以直接回一句话
+      if (t.status === 'waiting' && t.browserStep) {
+        var lg = h('div', 'xc-tk-login');
+        var openB = h('button', 'xc-btn', '打开登录窗口'), okB = h('button', 'xc-btn', '好了，接着做'), noB = h('button', 'xc-btn sec', '不用了');
+        [openB, okB, noB].forEach(function (b) { b.type = 'button'; lg.appendChild(b); });
+        openB.addEventListener('click', function () { openLogin({ sid: t.sid }); });
+        okB.addEventListener('click', function () { okB.disabled = noB.disabled = true; tellTask(t.sid, '', okB, note, 'approve'); });
+        noB.addEventListener('click', function () { okB.disabled = noB.disabled = true; tellTask(t.sid, '', noB, note, 'deny'); });
+        act.appendChild(lg);
+      }
       var ta = h('textarea', 'xc-tk-in'); ta.rows = 2; ta.value = draft;
       ta.placeholder = t.status === 'waiting' ? '输入回复' : '补充要求';
       ta.setAttribute('aria-label', ta.placeholder);
@@ -1785,7 +1830,7 @@
       var stopB = h('button', 'wk-b', '停止'); stopB.type = 'button'; stopB.addEventListener('click', function () { stopTask(t.sid, stopB); });
       act.appendChild(tell); act.appendChild(stopB);
     } else if (kind === 'wait') {
-      var rep_ = h('button', 'wk-b on', '回复'); rep_.type = 'button'; rep_.addEventListener('click', open_); act.appendChild(rep_);
+      var rep_ = h('button', 'wk-b on', t.browserStep ? '去登录' : '回复'); rep_.type = 'button'; rep_.addEventListener('click', open_); act.appendChild(rep_);
     } else if (previewId(t)) {
       var a = h('a', 'wk-b', '打开网页'); a.href = t.preview.url; a.target = '_blank'; a.rel = 'noopener'; act.appendChild(a);
     }

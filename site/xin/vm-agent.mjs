@@ -47,6 +47,8 @@ import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundCont
 import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
+import { loginStore, normalizeSite } from './vm-logins.mjs';
+import { loginWindow } from './vm-browser.mjs';
 import { fromClaude, fromCodex, fromHarness } from './vm-events.mjs';
 import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
 import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
@@ -493,7 +495,74 @@ export function frontDiagnostics(meta,events,logs=[]){
    只记时间、对话和命令开头，不记输出。 */
 const BOUNDARY_F = () => path.join(BASE, 'logs', 'boundary.jsonl'), INTEGRITY_F = () => path.join(BASE, 'logs', 'integrity.jsonl');
 // 后台任务这一轮的浏览器（docs/xin-browser-v1-design.md）：开在桌面上，站长点「屏幕」能看（开不出来就无头）；每一步记进 logs/browser.jsonl
-const browserOpts = (sid, run) => ({ display: process.env.XIN_BROWSER_HEADLESS ? '' : screenDisplay(), log: e => logLine(path.join(BASE, 'logs', 'browser.jsonl'), { at: Date.now(), task: sid, run, ...e }) });
+/* 浏览器第二步（docs/xin-browser-v2-design.md）：任务点名的网站（t.sites）的登录装进这一轮的浏览器；登录交给站长（task_browser_step）。
+   保存的登录在 ~/.xin/browser-logins，只有控制器读写，不挂进容器、不进机外备份（BACKUP_ITEMS 里没有它）。 */
+export const LOGINS_DIR = () => path.join(BASE, 'browser-logins');
+const LOGIN_WIN = () => path.join(BASE, 'login-window.json'), LOGIN_WIN_DONE = () => path.join(BASE, 'login-window.done'), LOGIN_WIN_LAST = () => path.join(BASE, 'login-window.last.json');
+export const SITES_MAX = 5;
+/* 登录窗口（docs/xin-browser-v2-design.md 第 7 节）：Worker 先把桌面开起来，这里起一个脱离这次调用的进程（login-window），
+   Chromium 开在桌面上给站长自己登录；同一时间只开一个。「好了，接着做」/「登好了」写一个标记，它存好 cookie 再关。 */
+const sleepMs = ms => new Promise(ok => setTimeout(ok, ms));
+async function loginDone() {
+  const w = readJ(LOGIN_WIN());
+  if (!w) return { saved: [] };
+  if (w.pid && !alive(w.pid)) { for (const f of [LOGIN_WIN(), LOGIN_WIN_DONE()]) { try { fs.unlinkSync(f); } catch { /* 已经没了 */ } } return { saved: [] }; }
+  fs.writeFileSync(LOGIN_WIN_DONE(), String(Date.now()));
+  for (const end = Date.now() + 12000; Date.now() < end && fs.existsSync(LOGIN_WIN());) await sleepMs(150);
+  if (fs.existsSync(LOGIN_WIN())) { try { if (w.pid) process.kill(w.pid, 'SIGTERM'); } catch { /* 已经退了 */ } }
+  return { saved: readJ(LOGIN_WIN_LAST())?.saved || [], site: w.site };
+}
+async function loginOpen(a) {
+  let site, url, sid = null;
+  if (a.sid) {
+    const t = okId(a.sid, 's') ? readJ(sessF(a.sid)) : null, st = t?.browserStep;
+    if (!isTask(t) || !st) return { error: 'no_step', msg: '这个任务现在不用登录' };
+    ({ site, url } = st); sid = t.sid;
+  } else {
+    const raw = String(a.url || '').trim();
+    site = normalizeSite(raw);
+    if (!site) return { error: 'bad_url', msg: '认不出是哪个网站：写网址或域名，比如 https://www.bilibili.com' };
+    url = /^https?:\/\//i.test(raw) ? raw : 'https://' + raw;
+  }
+  if (!fs.existsSync(runtime.CHROMIUM())) return { error: 'no_browser', msg: '小芯的电脑上没装浏览器（Chromium），开不了登录窗口' };
+  await loginDone();   // 同一时间只开一个：旧的先存好关掉
+  try { fs.unlinkSync(LOGIN_WIN_LAST()); } catch { /* 没有 */ }
+  writeJ(LOGIN_WIN(), { site, url, sid, display: process.env.XIN_BROWSER_HEADLESS ? '' : screenDisplay(), at: Date.now(), state: 'starting' });
+  const c = spawn(process.execPath, [SELF, 'login-window'], { detached: true, stdio: 'ignore', env: process.env }); c.unref();
+  // Worker 那次调用最多 40 秒：前面关旧窗口最多 12 秒，这里最多再等 20 秒
+  for (const end = Date.now() + 20000; Date.now() < end; await sleepMs(200)) {
+    const w = readJ(LOGIN_WIN());
+    if (w?.state === 'open') return { ok: true, site };
+    if (!w) return { error: 'failed', msg: readJ(LOGIN_WIN_LAST())?.error || '登录窗口没开起来' };
+  }
+  try { process.kill(c.pid, 'SIGTERM'); } catch { /* 已经退了 */ }
+  try { fs.unlinkSync(LOGIN_WIN()); } catch { /* 已经没了 */ }
+  return { error: 'failed', msg: '登录窗口没开起来（等了 20 秒）' };
+}
+async function runLoginWindow() {
+  const w = readJ(LOGIN_WIN());
+  if (!w) return;
+  writeJ(LOGIN_WIN(), { ...w, pid: process.pid });
+  const end = out => { try { fs.unlinkSync(LOGIN_WIN_DONE()); } catch { /* 没有 */ } writeJ(LOGIN_WIN_LAST(), { site: w.site, at: Date.now(), ...out }); try { fs.unlinkSync(LOGIN_WIN()); } catch { /* 已经没了 */ } };
+  let win;
+  try {
+    win = await loginWindow({ chrome: runtime.CHROMIUM(), profileDir: path.join(BASE, 'login-window-profile'), headless: !w.display, display: w.display || '',
+      egress: runtime.egressProxy, allowAddress: runtime.publicAddress, logins: loginStore(LOGINS_DIR()), site: w.site, url: w.url,
+      log: e => logLine(path.join(BASE, 'logs', 'browser.jsonl'), { at: Date.now(), ...e }) });
+  } catch (e) { end({ error: e.message, saved: [] }); return; }
+  writeJ(LOGIN_WIN(), { ...(readJ(LOGIN_WIN()) || w), pid: process.pid, state: 'open' });
+  const poll = setInterval(() => { if (fs.existsSync(LOGIN_WIN_DONE())) win.finish(); }, 300);
+  process.once('SIGTERM', () => win.finish());
+  const out = await win.ended;
+  clearInterval(poll);
+  end({ reason: out.reason, saved: out.saved });
+  process.exit(0);
+}
+export function browserOpts(sid, run) {
+  const t = readJ(sessF(sid)) || {};
+  return { display: process.env.XIN_BROWSER_HEADLESS ? '' : screenDisplay(), log: e => logLine(path.join(BASE, 'logs', 'browser.jsonl'), { at: Date.now(), task: sid, run, ...e }),
+    sites: Array.isArray(t.sites) ? t.sites : [], logins: loginStore(LOGINS_DIR()), step: x => lockedCall('tasks', 'task_browser_step', { sid, run, step: x }) };
+}
 function logLine(file, entry, keep = 500) {
   try {
     mk(path.dirname(file));
@@ -1290,6 +1359,7 @@ function launch(s, m, userEv) {
   const run = rid('r');
   writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, m));
   if(userEv)emit(run, userEv);
+  if(isTask(s))delete s.browserStep;   // 新的一轮：上一轮请站长登录的那一步已经过去了
   s.runs.push(run); s.updated = Date.now(); if(isTask(s))saveTask(s);else writeJ(sessF(s.sid),s);
   rememberAgentSession(s.agent, s.agentSid);
   journal.enqueueLaunch(run,s.sid,m.kind==='handoff'?1:m.kind==='daily'?2:0);
@@ -1498,6 +1568,8 @@ export function taskSummary(t, full) {
   if(t.web)out.web=true;
   if(t.strictModel)out.strictModel=true;
   if(t.stage)out.stage=t.stage;
+  if(t.sites?.length)out.sites=t.sites;
+  if(t.status==='waiting'&&t.browserStep)out.browserStep={kind:t.browserStep.kind,site:t.browserStep.site,saved:!!t.browserStep.saved};
   if(t.preview&&t.preview.run===r)out.preview=t.preview;
   if(t.delivery)out.delivery=t.delivery;
   if(t.web&&isFinished(t))out.cleanup={processesGone:!!t.processesCleaned,tmpCleaned:!!t.temporaryCleaned};
@@ -1543,6 +1615,9 @@ function taskNew(a) {
   const goal = String(a.goal || '').trim().slice(0, a.frontRun ? TEXT_MAX : 12000);
   if (!goal) return { error: 'empty', msg: '要写清楚让分身做什么（xin task new --title 标题 -- 要求，或者从标准输入给）' };
   const kind = a.daily ? 'daily' : TASK_KINDS.includes(a.kind) ? a.kind : 'code';
+  const sites = [];
+  for (const x of Array.isArray(a.sites) ? a.sites : []) { const site = normalizeSite(x); if (!site) return { error: 'bad_site', msg: '认不出是哪个网站：' + x }; if (!sites.includes(site)) sites.push(site); }
+  if (sites.length > SITES_MAX) return { error: 'bad_site', msg: '一个任务最多带 ' + SITES_MAX + ' 个网站的登录' };
   const title = (String(a.title || '').replace(/\s+/g, ' ').trim() || goal.replace(/\s+/g, ' ')).slice(0, 40);
   const all = listTasks();
   const after = [...new Set((Array.isArray(a.after) ? a.after : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
@@ -1572,7 +1647,7 @@ function taskNew(a) {
   const t = { sid: rid('s'), kind: 'task', no, parent: okId(a.parent, 's') ? a.parent : null, agent: 'codex', title, goal, userRequest:String(a.userRequest||'').slice(0,TEXT_MAX), tkind: kind,
     model: rt.model, requestedModel:a.model||null,requestedNamed:!!a.named,actualModel:null,actualModels:[],reviewAuthors:[],why: rt.why, fallbacks: rt.fallbacks, note: rt.note || '', files, dir: d.dir, after, minutes,
     plugins: [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
-    frontRun:a.frontRun||null,web:!!a.web,strictModel:!!a.strictModel&&rt.model!==runtime.AGY_MODEL,status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
+    frontRun:a.frontRun||null,web:!!a.web,strictModel:!!a.strictModel&&rt.model!==runtime.AGY_MODEL,...(sites.length?{sites}:{}),status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
   if(t.strictModel)t.fallbacks=[];
   saveTask(t);
   memoryActivity();
@@ -1671,7 +1746,7 @@ function taskFinish(a) {
   if (t.status === 'stopping') { t.status = 'stopped'; t.endedAt = Date.now(); }                  // 进程真正退出后才释放目录
   else if ((t.status === 'waiting' || t.pendingQuestion) && !a.died && !a.timeout && !a.stopped) {
     t.status='waiting';t.question=t.pendingQuestion||t.question;delete t.pendingQuestion;
-    Object.assign(t,{endedAt:Date.now(),frontSeen:false});notify=taskPush(t,'我这边需要你确认：'+t.title,t.question);
+    Object.assign(t,{endedAt:Date.now(),frontSeen:false});notify=taskPush(t,(t.browserStep?'我这边需要你登录：':'我这边需要你确认：')+t.title,t.question);
   }
   else if (!a.stopped && !a.timeout && !a.died && t.inbox && t.inbox.length) {                  // 干活时用户补充了话：接着做
     t.next = '用户在你干活时补充了：\n' + t.inbox.map(x => '- ' + x.text).join('\n') + '\n按补充的要求接着做（已经做对的不用重做）。';
@@ -1762,7 +1837,15 @@ function taskTell(a) {
     return { ok: true, msg: a.decision === 'approve' ? '结果已写回' : '已保留原文件', task: taskSummary(t) };
   }
   if(t.status==='stopping')return {error:'busy',msg:'任务正在停止，退出后再继续'};
-  const text = String(a.text || '').trim().slice(0, 4000) || '接着做';
+  // 等站长登录（docs/xin-browser-v2-design.md 第 6 节）：「好了，接着做」把网站加进任务，下一轮浏览器带上它的登录；「不用了」不加；直接回话当普通回复
+  let decided = '';
+  if (t.browserStep) {
+    const site = t.browserStep.site;
+    if (a.decision === 'approve') { t.sites = [...new Set((t.sites || []).concat(site))]; decided = '站长同意用 ' + site + ' 的登录（这一轮浏览器已经带上了），接着做。'; }
+    else if (a.decision === 'deny') decided = '站长不用 ' + site + ' 的登录。别换别的办法登录；做不了的部分写进结果。';
+    delete t.browserStep;
+  }
+  const text = decided || String(a.text || '').trim().slice(0, 4000) || '接着做';
   t.transientRetries = 0;
   if(t.tkind==='review'&&t.status==='waiting'){const requested=namedModel(text);if(requested){t.requestedModel=requested;t.requestedNamed=true;}}
   if (t.status === 'running') {
@@ -1804,7 +1887,7 @@ function taskStop(a) {
   if (!t) return { error: 'no_task', msg: '找不到这个任务' };
   if (isFinished(t)) return { ok: true, already: true, task: taskSummary(t) };
   const activeRun = lastRun(t), wasRunning = !!activeRun && !runDone(activeRun);
-  delete t.approval; delete t.publication; delete t.pendingQuestion;
+  delete t.approval; delete t.publication; delete t.pendingQuestion; delete t.browserStep;
   Object.assign(t, { status: wasRunning ? 'stopping' : 'stopped', result: { ok: false, text: wasRunning ? '做到一半被停下了。' : '还没做完就停了。', at: Date.now() }, endedAt: wasRunning ? 0 : Date.now(), inbox: [], frontSeen: false });
   cleanupFinishedTask(t);
   saveTask(t);
@@ -2504,7 +2587,21 @@ const ops = {
     return out;
   },
   task_stop(a) { return lockedCall('tasks', 'task_stop', { sid: a.sid, no: a.no,clientId:a.clientId }); },
-  task_tell(a) { return lockedCall('tasks', 'task_tell', { sid: a.sid, no: a.no, text: a.text, decision: a.decision,clientId:a.clientId }); }
+  async task_tell(a) {
+    // 「好了，接着做」：先把登录窗口存好关掉（锁外，最多等 12 秒），下一轮浏览器才拿得到刚登好的 cookie
+    if (a.decision === 'approve' && okId(a.sid, 's') && readJ(sessF(a.sid))?.browserStep) await loginDone();
+    return lockedCall('tasks', 'task_tell', { sid: a.sid, no: a.no, text: a.text, decision: a.decision,clientId:a.clientId });
+  },
+  // 设置里的「网站登录」：保存了哪些网站（不出 cookie 的值）、删掉一个；登录窗口开着的话是哪个网站
+  logins() { const w = readJ(LOGIN_WIN()); return { ok: true, sites: loginStore(LOGINS_DIR()).list(), window: w && alive(w.pid) ? { site: w.site } : null }; },
+  login_remove(a) {
+    const site = normalizeSite(a.site);
+    if (!site) return { error: 'bad_site', msg: '认不出是哪个网站' };
+    loginStore(LOGINS_DIR()).remove(site);
+    return { ok: true, sites: loginStore(LOGINS_DIR()).list() };
+  },
+  login_open(a) { return loginOpen(a); },
+  async login_done() { return { ok: true, ...(await loginDone()) }; },
 };
 // 只在 tasks 锁里跑的（main 里分派）
 const iops = {
@@ -2579,6 +2676,20 @@ const iops = {
     return ops.send({ sid: a.sid, text: pending.map(x => x.text).join('\n') });
   },
   front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick,
+  // 浏览器代理请站长登录（vm-browser.mjs 的 loginStep）：照 xin task ask 记一个问题，这一轮结束后任务停成「等你登录」
+  task_browser_step(a) {
+    const t = findTask(a), st = a.step || {};
+    if (!isTask(t) || lastRun(t) !== a.run || runDone(a.run)) return { error: 'stale', msg: '这一轮已经结束' };
+    if (st.kind !== 'login') return { error: 'bad_step', msg: '不认识的浏览器步骤' };
+    const site = normalizeSite(st.site);
+    if (!site || site !== st.site) return { error: 'bad_site', msg: '认不出是哪个网站' };
+    const url = /^https?:\/\//i.test(String(st.url || '')) ? String(st.url).slice(0, 2000) : 'https://' + site + '/';
+    t.browserStep = { kind: 'login', site, url, saved: !!st.saved, at: Date.now() };
+    const q = st.saved ? '任务想用你在 ' + site + ' 的登录（之前登过）。同意就点「好了，接着做」；登录过期了就先点「打开登录窗口」重新登。'
+      : '要你登录 ' + site + '：点「打开登录窗口」，在小芯的屏幕上自己登录（它看不到你输的密码、验证码），登好后点「好了，接着做」。';
+    Object.assign(t, { pendingQuestion: q, question: q }); saveTask(t);
+    return { ok: true };
+  },
   task_approval(a) {
     const t = readJ(sessF(a.sid));
     if (!isTask(t) || lastRun(t) !== a.run || !occupiesTask(t)) return { error: 'stale' };
@@ -2618,7 +2729,7 @@ const iops = {
 };
 
 /* ---------- xin task：前台派分身、看进度、补充、停；分身请用户确认 ----------
-   xin task new [--kind 类型] [--title 标题] [--model 模型] [--dir 项目目录] [--file 文件]… [--after 编号,编号] [--minutes 分钟] [-- 要求…]
+   xin task new [--kind 类型] [--title 标题] [--model 模型] [--dir 项目目录] [--file 文件]… [--site 网站]… [--after 编号,编号] [--minutes 分钟] [-- 要求…]
      （要求也可以从标准输入给：xin task new --title 标题 <<'EOF' … EOF）
    xin task list | show 编号 | tell 编号 补充的话 | stop 编号 | ask 要用户确认的事（只在分身里用） */
 function readStdin() {
@@ -2638,6 +2749,7 @@ export function parseTaskArgs(argv) {
     if (v === undefined) return { error: '--' + k + ' 后面要写值' };
     if (k === 'file') o.files.push(v);
     else if (k === 'plugin') o.plugins.push(v);
+    else if (k === 'site') { const site = normalizeSite(v); if (!site) return { error: '认不出 --site ' + v + ' 是哪个网站（写域名，比如 bilibili.com）' }; o.sites ||= []; if (!o.sites.includes(site)) o.sites.push(site); if (o.sites.length > SITES_MAX) return { error: '--site 最多写 ' + SITES_MAX + ' 个网站' }; }
     else if (k === 'after') o.after.push(...String(v).split(/[,，、\s]+/).filter(Boolean).map(Number));
     else if (['kind', 'title', 'model', 'dir', 'minutes'].includes(k)) o[k] = v;
     else return { error: '不认识的选项：--' + k };
@@ -2647,8 +2759,9 @@ export function parseTaskArgs(argv) {
 }
 const TASK_HELP = [
   '用法：',
-  "  xin task new --kind code --title 标题 [--model 模型] [--dir 项目目录] [--file 文件] [--after 编号] [--review] -- 详细要求",
+  "  xin task new --kind code --title 标题 [--model 模型] [--dir 项目目录] [--file 文件] [--site 网站] [--after 编号] [--review] -- 详细要求",
   '    --after 编号：等那个任务做完再开始（它的结果会交给这个任务）；--review：做完再派一个分身用另一个模型检查一遍',
+  '    --site 网站：站长要用自己的账号在这个网站上做事（看订单、收藏、消息……）时写，可以写多个；只写站长说到的网站',
   "  xin task new --kind code --title 标题 <<'EOF'",
   '  详细要求（写清楚做什么、做到什么程度算完、东西放哪）',
   '  EOF',
@@ -2688,7 +2801,7 @@ function taskCmd(argv) {
     const fromFront=meta.agent==='codex'&&!meta.ended;
     const original=fromFront?frontOriginalRequest(run,meta):o.goal;
     if(!original){console.log('找不到本轮用户原话，不能替用户编写要求');return 1;}
-    const r = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: o.kind, title: o.title, goal: original, frontRun:fromFront?run:undefined,web:o.web,strictModel:!!meta.frontNamed,userRequest:fromFront?original:said, model: o.model, named, dir: o.dir, files: fromFront?[...new Set([...(o.files||[]),...(meta.frontFiles||[]).map(f=>f.path)])]:o.files, after: o.after, minutes: o.minutes, plugins: o.plugins });
+    const r = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: o.kind, title: o.title, goal: original, frontRun:fromFront?run:undefined,web:o.web,strictModel:!!meta.frontNamed,userRequest:fromFront?original:said, model: o.model, named, dir: o.dir, files: fromFront?[...new Set([...(o.files||[]),...(meta.frontFiles||[]).map(f=>f.path)])]:o.files, after: o.after, minutes: o.minutes, plugins: o.plugins, sites: o.sites });
     if (r.error) { console.log(r.msg || r.error); return 1; }
     const t = r.task;
     emit(run, { t: 'task', sid: t.sid, no: t.no, title: t.title, kind: t.kind, model: t.model, why: t.why, status: t.status, after: t.after, at: Date.now() });
@@ -2899,6 +3012,7 @@ function main() {
   if (op === 'memory-idle') { idleMemoryReview().catch(() => {}); return; }
   if (op === 'callback') { flushControllerEvent().catch(() => {}); return; }
   if (op === 'watchdog') { watchdog().catch(() => {}); return; }
+  if (op === 'login-window') { runLoginWindow().catch(() => {}); return; }
   if (op === 'xin') { process.exitCode = xinCmd(process.argv.slice(3)); return; }
   if (op === 'pushq') { let m = null; try { m = JSON.parse(process.argv[3] || ''); } catch { /* 坏的就不发 */ } if (m) pushAll(m).catch(() => {}); return; }
   const internal = locked && Object.prototype.hasOwnProperty.call(iops, op);
