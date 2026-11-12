@@ -501,6 +501,7 @@ const BOUNDARY_F = () => path.join(BASE, 'logs', 'boundary.jsonl'), INTEGRITY_F 
 export const LOGINS_DIR = () => path.join(BASE, 'browser-logins');
 const LOGIN_WIN = () => path.join(BASE, 'login-window.json'), LOGIN_WIN_DONE = () => path.join(BASE, 'login-window.done'), LOGIN_WIN_LAST = () => path.join(BASE, 'login-window.last.json');
 export const SITES_MAX = 5;
+const AGY_STALL_F = () => path.join(BASE, 'antigravity-stall.json'), AGY_STALL_MS = 15 * 60e3;
 /* 登录窗口（docs/xin-browser-v2-design.md 第 7 节）：Worker 先把桌面开起来，这里起一个脱离这次调用的进程（login-window），
    Chromium 开在桌面上给站长自己登录；同一时间只开一个。「已登录，继续」/「保存登录」写一个标记，它存好 cookie 再关。 */
 const sleepMs = ms => new Promise(ok => setTimeout(ok, ms));
@@ -838,7 +839,9 @@ function runner(run) {
       }
       // 模型还没开始干活就失败了：换候选里的下一个模型再试一次（用户自己停的不换）
       const quotaFallback=c===75&&meta.model===runtime.AGY_MODEL&&!state.switched&&!state.timeout&&safeFallbacks().length;
-      if ((c !== 0 || state.failed) && (canSwitch()||quotaFallback) && !(readJ(metaF(run), meta) || {}).stopped) {
+      // Gemini 卡住（vm-runtime.mjs 的 AGY_IDLE_MS）：和额度用尽一样，已经干了一部分也换下一个模型接着做
+      const stallFallback=c===76&&meta.model===runtime.AGY_MODEL&&!state.switched&&!state.timeout&&safeFallbacks().length;
+      if ((c !== 0 || state.failed) && (canSwitch()||quotaFallback||stallFallback) && !(readJ(metaF(run), meta) || {}).stopped) {
         const from = meta.model;
         const candidates=safeFallbacks();
         if(!candidates.length){finish(c,'独立复核候选已改变，未回退到实际作者模型。');return;}
@@ -847,6 +850,7 @@ function runner(run) {
         state.switched = true; meta.from = from; meta.fromErr = fromErr; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);meta.effort=AUTO_EFFORT;
         patchRun(run,{model:meta.model,effort:meta.effort,from,fromErr,fallbacks:meta.fallbacks});
         if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
+        else if(stallFallback)meta.text='原执行入口没有回应。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
         emit(run, { t: 'status', text: from===runtime.AGY_MODEL?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
         Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
@@ -1646,7 +1650,9 @@ function taskNew(a) {
   // 检查别的任务：避开被检查的那个模型（换个模型看，才看得出问题）
   const avoid = kind === 'review' ? authorModels(after.map(n=>all.find(t=>t.no===n)).filter(d=>d?.status==='done')) : [];
   const agyState=readJ(path.join(BASE,'antigravity-quota.json'),{}),images=files.some(f=>f.image);
-  const preferAgy=!a.named&&!a.daily&&!images&&(kind==='quick'||kind==='research'||kind==='code'&&a.web)&&runtime.antigravityBinary()&&(!agyState.blocked||Date.now()>=agyState.retryAt);
+  // 刚卡过（AGY_STALL_MS 内）先不派给 Gemini：不然每个新任务都要先白等 2 分钟
+  const stalledAt=(readJ(AGY_STALL_F(),{})||{}).at||0;
+  const preferAgy=!a.named&&!a.daily&&!images&&(kind==='quick'||kind==='research'||kind==='code'&&a.web)&&runtime.antigravityBinary()&&(!agyState.blocked||Date.now()>=agyState.retryAt)&&Date.now()-stalledAt>=AGY_STALL_MS;
   const rt = route({ kind: images ? (kind === 'review' ? 'review' : 'vision') : kind, want: preferAgy?runtime.AGY_MODEL:a.model||null, named: !!a.named, images, avoid });
   if(rt.error)return {error:rt.error,msg:rt.note};
   const seq = (readJ(TASK_SEQ(), {}) || {}).n || all.reduce((m, t) => Math.max(m, t.no || 0), 0);
@@ -3108,7 +3114,7 @@ function main() {
     const run=process.argv[3],m=readJ(metaF(run)),t=m&&readJ(sessF(m.sid));
     if(!m?.task||!t?.workspace||m.model!==runtime.AGY_MODEL){process.exitCode=1;return;}
     const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
-    runtime.antigravityWork(t,{clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run)})
+    runtime.antigravityWork(t,{clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),stalled:()=>writeJ(AGY_STALL_F(),{at:Date.now(),run})})
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }

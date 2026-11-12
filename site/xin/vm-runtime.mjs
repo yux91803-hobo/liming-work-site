@@ -929,16 +929,21 @@ export function mergeAntigravityQuota(old,next,now=Date.now()) {
   const exhausted=buckets.filter(b=>b.remaining<=0);return {...next,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};
 }
 const AGY_SCHEMA={type:'object',properties:{action:{type:'string',enum:['shell','final','ask','remember']},command:{type:'string'},text:{type:'string'}},required:['action','command','text'],additionalProperties:false};
-function agyProcess(binary,args,cwd,onEvent=()=>{}) {
+/* Gemini（Antigravity）一直不出声（2026-11-12 正式站联调：2 分 20 秒一个字不回）：idleMs 内 stdout 什么都没有就当卡住，杀掉、回 stalled。
+   参考 opencode 的 chunkTimeout（两段输出之间等不到就中止）、Codex 的 stream_idle_timeout_ms。正常的第一步 16–101 秒（11-12 的 cli.log），取 2 分钟 */
+export const AGY_IDLE_MS = () => Number(process.env.XIN_AGY_IDLE_MS) || 120000;
+function agyProcess(binary,args,cwd,onEvent=()=>{},idleMs=0) {
   return new Promise((resolve,reject)=>{
     const child=spawn(binary,args,{cwd,stdio:['ignore','pipe','pipe'],env:{HOME:process.env.XIN_AGY_HOME||os.homedir(),PATH:process.env.PATH||'/usr/local/bin:/usr/bin:/bin',LANG:'C.UTF-8'}});
-    let buf='',stderr='',result=null,model=null,bytes=0;
+    let buf='',stderr='',result=null,model=null,bytes=0,stalled=false,idle=null;
     const timer=setTimeout(()=>child.kill('SIGKILL'),260000);timer.unref();
+    const poke=()=>{if(!idleMs)return;clearTimeout(idle);idle=setTimeout(()=>{stalled=true;child.kill('SIGKILL');},idleMs);idle.unref?.();};
+    poke();
     child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
-    child.stdout.on('data',s=>{bytes+=Buffer.byteLength(s);if(bytes>4*1024*1024){child.kill('SIGKILL');return;}buf+=s;let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);try{const o=JSON.parse(line);if(o.event==='init')model=o.init?.model;if(o.event==='result')result=o.result;onEvent(o);}catch{}}});
+    child.stdout.on('data',s=>{poke();bytes+=Buffer.byteLength(s);if(bytes>4*1024*1024){child.kill('SIGKILL');return;}buf+=s;let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);try{const o=JSON.parse(line);if(o.event==='init')model=o.init?.model;if(o.event==='result')result=o.result;onEvent(o);}catch{}}});
     child.stderr.on('data',s=>{stderr=(stderr+s).slice(-4000);});
-    child.on('error',e=>{clearTimeout(timer);reject(e);});
-    child.on('close',code=>{clearTimeout(timer);resolve({code,result,model,stderr});});
+    child.on('error',e=>{clearTimeout(timer);clearTimeout(idle);reject(e);});
+    child.on('close',code=>{clearTimeout(timer);clearTimeout(idle);resolve({code,result,model,stderr,stalled});});
   });
 }
 export async function readAntigravityQuota(binary,cwd) {
@@ -965,7 +970,9 @@ export async function antigravityWork(t,options) {
   for(let turn=0;turn<48;turn++){
     if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
     const args=['-p',prompt,'--agent','xin-confined-worker','--model',AGY_MODEL,'--effort','high','--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
-    const r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(s?.state==='DONE'&&['search_web','read_url_content'].includes(name))report({type:'item.completed',item:{id:'web-'+turn+'-'+s.step_index,type:'web_search',query:s.tool_info?.parameters?.query||s.tool_info?.parameters?.url||name}});});
+    const r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(s?.state==='DONE'&&['search_web','read_url_content'].includes(name))report({type:'item.completed',item:{id:'web-'+turn+'-'+s.step_index,type:'web_search',query:s.tool_info?.parameters?.query||s.tool_info?.parameters?.url||name}});},AGY_IDLE_MS());
+    // 卡住：退出码 76，控制器换候选里的下一个模型，让它先读副本里的现有文件再接着做（和额度用尽 75 一样）；15 分钟内新任务先不派给 Gemini
+    if(r.stalled){options.stalled?.();report({type:'error',message:'Gemini（Antigravity）'+Math.round(AGY_IDLE_MS()/1000)+' 秒没有任何回应，换别的模型接着做。'});return 76;}
     const result=r.result;if(r.model!==AGY_MODEL)throw Error('Antigravity 实际模型与固定模型不一致');
     if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);report({type:'xin.usage',usage:delta});}
     else options.budget.recordUsage?.(null);
