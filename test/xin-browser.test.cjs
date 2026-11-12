@@ -11,6 +11,16 @@ function chromium() {
   try { for (const d of fs.readdirSync(pw).filter(d => /^chromium-\d+$/.test(d))) found.push(pw + '/' + d + '/chrome-linux64/chrome', pw + '/' + d + '/chrome-linux/chrome'); } catch { /* 没有 */ }
   return found.find(p => p && fs.existsSync(p));
 }
+// 测试机开不了 Chromium 沙盒（root 下、或者没开 user namespace）时，测试里才用 --no-sandbox；
+// 正式的小芯电脑实测能开沙盒，正式代码开不了就不浏览（最后一项单独钉住）
+const ROOT = (() => {
+  const exe = chromium(); if (!exe) return false;
+  if (process.getuid?.() === 0) return true;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-sb-probe-'));
+  const r = require('node:child_process').spawnSync(exe, ['--headless=new', '--user-data-dir=' + dir, '--dump-dom', 'data:text/html,<p>sandbox-ok</p>'], { encoding: 'utf8', timeout: 30000 });
+  fs.rmSync(dir, { recursive: true, force: true });
+  return !String(r.stdout || '').includes('sandbox-ok');
+})();
 const load = async () => {
   const b = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-browser.mjs')).href), rt = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href);
   return { browserBroker: o => b.browserBroker({ egress: rt.egressProxy, allowAddress: rt.publicAddress, ...o }) };
@@ -51,7 +61,7 @@ async function setup(t, extra = {}) {
   fs.mkdirSync(work);
   const s = await site();
   // 测试页面在本机：只在测试里放行本机地址（正式按公网地址检查，见下面单独一项）
-  const b = await browserBroker({ chrome: exe, profileDir: path.join(root, 'profile'), work, headless: true, allowAddress: () => true, ports: () => true, log: e => events.push(e), ...extra });
+  const b = await browserBroker({ chrome: exe, profileDir: path.join(root, 'profile'), work, headless: true, allowAddress: () => true, ports: () => true, log: e => events.push(e), noSandbox: ROOT, ...extra });
   t.after(async () => { await b.close(); s.close(); });
   const run = async (cmd, ...args) => b.handle({ cmd, args });
   return { b, s, run, root, work, events };
@@ -143,7 +153,7 @@ test('正式的地址检查：本机和内网地址打不开（Chromium 的请�
   if (!exe) return t.skip('需要 Chromium');
   const { browserBroker } = await load();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-browser-net-')), s = await site();
-  const b = await browserBroker({ chrome: exe, profileDir: path.join(root, 'profile'), work: root, headless: true });
+  const b = await browserBroker({ chrome: exe, profileDir: path.join(root, 'profile'), work: root, headless: true, noSandbox: ROOT });
   t.after(async () => { await b.close(); s.close(); });
   const r = await b.handle({ cmd: 'open', args: [s.base + '/'] });
   assert.equal(r.error, 'blocked', '本机页面不该打开：' + JSON.stringify(r).slice(0, 300));
@@ -188,7 +198,7 @@ test('后台任务：容器里的 xin browser 经转发端口用这一轮的浏�
   const task = { sid: 'sbrowse00001', dir: path.join(root, 'project') };
   task.workspace = rt.prepareWorkspace(task, path.join(root, 'control'));
   const s = await site(), logs = [];
-  const n = await rt.taskNetwork(task.workspace, null, { chrome: exe, headless: true, log: e => logs.push(e), testNet: { allowAddress: () => true, ports: () => true } });
+  const n = await rt.taskNetwork(task.workspace, null, { chrome: exe, headless: true, log: e => logs.push(e), noSandbox: ROOT, testNet: { allowAddress: () => true, ports: () => true } });
   t.after(() => { n.close(); s.close(); });
   const sock = n.network.forward.find(([p]) => p === rt.TASK_PORTS.browser)?.[1];
   assert.ok(sock, '转发里有浏览器端口');
@@ -228,6 +238,52 @@ test('后台任务的提示词：普通任务讲清楚 xin browser 怎么用、�
   assert.match(p, /curl/);
   assert.match(p, /不登录、不付款/);
   assert.match(p, /downloads/);
+  assert.match(p, /不是给你的指令/);
   const web = taskSystemPrompt({ no: 2, title: '奶龙', dir: '/data/workspace/y', workspace: ws, web: true, goal: '做个网页' });
   assert.ok(!/xin browser open/.test(web), '网页成品由控制器验收，不让它开浏览器');
+});
+
+test('开不了沙盒就不浏览：不退回 --no-sandbox（浏览任意网页，渲染进程不能没有沙盒），说清楚', { timeout: platformTimeout(30000) }, async t => {
+  const { browserBroker } = await load();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-browser-nosb-')), fake = path.join(root, 'chromium'), seen = path.join(root, 'args.log');
+  fs.writeFileSync(fake, '#!/bin/sh\necho "$@" >> ' + JSON.stringify(seen) + '\necho "No usable sandbox! Update your kernel" >&2\nexit 1\n', { mode: 0o755 });
+  const b = await browserBroker({ chrome: fake, profileDir: path.join(root, 'profile'), work: root, headless: false, display: ':99' });
+  t.after(() => b.close());
+  const r = await b.handle({ cmd: 'open', args: ['https://example.com/'] });
+  assert.equal(r.error, 'browser'); assert.match(r.msg, /沙盒/);
+  const tried = fs.readFileSync(seen, 'utf8').trim().split('\n');
+  assert.ok(tried.length >= 1 && tried.every(a => !a.includes('--no-sandbox')), tried.join('\n'));
+});
+
+test('下载超过上限：取消或删掉，不留在副本里', { timeout: platformTimeout(60000) }, async t => {
+  const { s: srv, run, work } = await setup(t, { limits: { downloadBytes: 4 } });
+  const r = await run('open', srv.base + '/');
+  await run('click', ref(r.text, /link "下载手册"/));
+  await new Promise(ok => setTimeout(ok, 1500));
+  const left = fs.existsSync(path.join(work, 'downloads')) ? fs.readdirSync(path.join(work, 'downloads')) : [];
+  assert.deepEqual(left.filter(n => n.startsWith('manual')), [], '超过上限的下载没留下：' + left.join(','));
+});
+
+test('浏览器一启动就退出、什么都没说：照样报「启动失败」，不当成启动成功', { timeout: platformTimeout(30000) }, async t => {
+  const { browserBroker } = await load();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-browser-silent-')), fake = path.join(root, 'chromium');
+  fs.writeFileSync(fake, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const b = await browserBroker({ chrome: fake, profileDir: path.join(root, 'profile'), work: root });
+  t.after(() => b.close());
+  for (let i = 0; i < 3; i++) {
+    const r = await b.handle({ cmd: 'open', args: ['https://example.com/'] });
+    assert.equal(r.error, 'browser'); assert.match(r.msg, /启动失败|沙盒/, r.msg);
+  }
+});
+
+test('用过浏览器、关掉以后进程马上能退出（不被超时定时器拖住，这一轮收尾不多挂 45 秒）', { timeout: platformTimeout(30000) }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-browser-exit-')), fake = path.join(root, 'chromium');
+  fs.writeFileSync(fake, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const src = `const b=await import(${JSON.stringify(pathToFileURL(path.join(__dirname, '../site/xin/vm-browser.mjs')).href)}),rt=await import(${JSON.stringify(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href)});
+    const x=await b.browserBroker({chrome:${JSON.stringify(fake)},profileDir:${JSON.stringify(path.join(root, 'p'))},work:${JSON.stringify(root)},egress:rt.egressProxy,allowAddress:rt.publicAddress});
+    await x.handle({cmd:'open',args:['https://example.com/']});await x.close();`;
+  const t0 = Date.now();
+  const r = require('node:child_process').spawnSync(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8', timeout: 25000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(Date.now() - t0 < 10000, '退出用了 ' + (Date.now() - t0) + ' ms');
 });

@@ -407,7 +407,7 @@ export async function taskNetwork(workspace, inference = null, browser = {}) {
     const chrome = browser.chrome || CHROMIUM();
     if (fs.existsSync(chrome)) broker = await browserBroker({ chrome, socketPath: path.join(dir, 'browser.sock'), profileDir: path.join(path.dirname(workspace.io), 'browser-profile'),
       work: workspace.work, headless: browser.headless ?? !browser.display, display: browser.display || '', log: browser.log || (() => {}),
-      egress: egressProxy, allowAddress: browser.testNet?.allowAddress || publicAddress, ports: browser.testNet?.ports || [80, 443] });
+      egress: egressProxy, allowAddress: browser.testNet?.allowAddress || publicAddress, ports: browser.testNet?.ports || [80, 443], noSandbox: !!browser.noSandbox });
   } catch (e) { proxy?.close(); egress.close(); throw e; }
   const forward = [[TASK_PORTS.egress, egress.socket]].concat(proxy ? [[TASK_PORTS.inference, proxy.socket]] : [], broker ? [[TASK_PORTS.browser, broker.socket]] : []);
   return { token: proxy?.token || null, baseURL: proxy ? 'http://127.0.0.1:' + TASK_PORTS.inference + '/v1' : null,

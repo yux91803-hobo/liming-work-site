@@ -11,7 +11,7 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 // 不 import vm-runtime.mjs：它要 import 这个文件，Worker 装脚本时不允许模块循环引用。出网代理和地址检查由 taskNetwork 传进来
 
-export const BROWSER_LIMITS = { commands: 300, tabs: 5, timeoutMs: 30000, snapshotChars: 12000, textChars: 20000, downloadBytes: 100 * 1024 * 1024 };
+export const BROWSER_LIMITS = { commands: 300, tabs: 5, timeoutMs: 30000, snapshotChars: 12000, textChars: 20000, downloadBytes: 100 * 1024 * 1024, downloadTotal: 300 * 1024 * 1024 };
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 const fail = (error, msg) => ({ error, msg });
 
@@ -19,6 +19,7 @@ const fail = (error, msg) => ({ error, msg });
 class Cdp {
   constructor(write, read) {
     this.write = write; this.id = 0; this.pending = new Map(); this.listeners = new Set(); this.closed = false;
+    write.on('error', () => { this.closed = true; });   // 浏览器已经退了：写管道报 EPIPE，当成关了
     let buf = '';
     read.setEncoding('utf8');
     read.on('data', d => {
@@ -113,10 +114,12 @@ const BLOCKED = fail('blocked', '打不开：只能访问公网网址（本机�
 const okUrl = u => { try { const x = new URL(u); return ['http:', 'https:'].includes(x.protocol) ? x.href : null; } catch { return null; } };
 
 /* ---------- 代理本体 ---------- */
-export async function browserBroker({ chrome, profileDir, work, headless = true, display = '', socketPath = '', egress, allowAddress, ports = [80, 443], log = () => {}, limits = {} }) {
+// noSandbox 只给以 root 跑的测试用（root 下 Chromium 不带 --no-sandbox 起不来）；正式不传：开不了沙盒就不浏览
+export async function browserBroker({ chrome, profileDir, work, headless = true, display = '', socketPath = '', egress, allowAddress, ports = [80, 443], log = () => {}, limits = {}, noSandbox = false }) {
   if (typeof egress !== 'function' || typeof allowAddress !== 'function') throw Error('浏览器代理缺少出网代理或地址检查');
   const L = { ...BROWSER_LIMITS, ...limits };
   let child = null, cdp = null, pages = [], current = null, refs = new Map(), refNo = 0, used = 0, queue = Promise.resolve(), proxy = null, server = null, closed = false;
+  const loads = new Map();   // 下载：guid → {name, bytes}
   const downloads = path.join(work, 'downloads');
 
   async function start() {
@@ -134,18 +137,25 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
       const c = spawn(chrome, args, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], env });
       let err = ''; c.stderr.setEncoding('utf8'); c.stderr.on('data', s => { err = (err + s).slice(-2000); });
       const conn = new Cdp(c.stdio[3], c.stdio[4]);
-      const exited = new Promise(ok => c.once('exit', () => ok(null)));
+      // 'close' 在 stderr 读完以后才来：退出原因（比如开不了沙盒）不会丢；子进程攥着管道时最多再等 2 秒
+      const exited = new Promise(ok => { c.once('close', () => ok(null)); c.once('exit', () => setTimeout(() => ok(null), 2000)); });
       const ready = await Promise.race([conn.send('Browser.getVersion', {}, null, 20000).then(() => true, () => null), exited]);
-      if (!ready) { try { c.kill('SIGKILL'); } catch { /* 已经退了 */ } return { error: err }; }
-      return { c, conn };
+      // 一启动就退出、什么都没说：err 是空的，不能拿它当「成功」的判断
+      if (!ready) { try { c.kill('SIGKILL'); } catch { /* 已经退了 */ } return { ok: false, error: err || '浏览器进程刚启动就退出了' }; }
+      return { ok: true, c, conn };
     };
-    // 先开 Chromium 自己的沙盒；root 或者这台机器开不了沙盒就退回 --no-sandbox（小芯电脑上网页成品检查一直是这样）。
+    // 浏览任意网页，渲染进程一定要在 Chromium 自己的沙盒里：开不了沙盒就不浏览，不退回 --no-sandbox
+    // （网页成品检查只开小芯自己写的页面，才用 --no-sandbox）。小芯电脑上实测沙盒能开（box 用户、user namespace 开着）。
     // 桌面上开不出来（没有权限连桌面）就退回无头
     const tries = [];
-    for (const hl of headless ? [true] : [false, true]) { if (process.getuid?.() !== 0) tries.push([false, hl]); tries.push([true, hl]); }
-    let r = { error: '' };
-    for (const [ns, hl] of tries) { r = await attempt(ns, hl); if (!r.error) break; }
-    if (r.error) throw Error('浏览器启动失败：' + String(r.error).trim().split('\n').slice(-3).join(' '));
+    for (const hl of headless ? [true] : [false, true]) tries.push([noSandbox, hl]);
+    let r = { ok: false, error: '' };
+    for (const [ns, hl] of tries) { r = await attempt(ns, hl); if (r.ok) break; }
+    if (!r.ok) {
+      proxy.close(); proxy = null;   // 起不来就别留着代理（下一个命令再试会重新起）
+      const why = String(r.error).trim().split('\n').slice(-3).join(' ');
+      throw Error(/sandbox/i.test(why) ? '浏览器开不了沙盒，这台电脑上暂时不能浏览（' + why.slice(0, 200) + '）' : '浏览器启动失败：' + why.slice(0, 300));
+    }
     child = r.c; cdp = r.conn;
     // runner 收尾时不一定等得到 close()：进程退出时同步杀掉浏览器、删资料
     process.once('exit', () => { try { child?.kill('SIGKILL'); } catch { /* 没了 */ } try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch { /* 删不掉下一轮开始时再删 */ } });
@@ -162,7 +172,14 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     if (m.method === 'Target.targetCreated' && p.targetInfo.type === 'page' && !pages.some(x => x.id === p.targetInfo.targetId)) pages.push({ id: p.targetInfo.targetId, url: p.targetInfo.url, title: p.targetInfo.title, opener: p.targetInfo.openerId || null, born: Date.now() });
     if (m.method === 'Target.targetInfoChanged') { const x = pages.find(x => x.id === p.targetInfo.targetId); if (x) Object.assign(x, { url: p.targetInfo.url, title: p.targetInfo.title }); }
     if (m.method === 'Target.targetDestroyed') { pages = pages.filter(x => x.id !== p.targetId); if (current?.id === p.targetId) current = null; }
-    if (m.method === 'Browser.downloadProgress' && p.receivedBytes > L.downloadBytes) cdp.send('Browser.cancelDownload', { guid: p.guid }).catch(() => {});
+    // 下载：单个超过上限、这一轮合计超过上限就取消；太小的文件来不及取消，下完再删
+    if (m.method === 'Browser.downloadWillBegin') loads.set(p.guid, { name: path.basename(String(p.suggestedFilename || '')), bytes: 0 });
+    if (m.method === 'Browser.downloadProgress') {
+      const d = loads.get(p.guid) || { name: '', bytes: 0 }; d.bytes = p.receivedBytes || 0; loads.set(p.guid, d);
+      const total = [...loads.values()].reduce((a, x) => a + x.bytes, 0), over = d.bytes > L.downloadBytes || total > L.downloadTotal;
+      if (over && p.state === 'inProgress') cdp.send('Browser.cancelDownload', { guid: p.guid }).catch(() => {});
+      if (over && p.state === 'completed' && d.name) { try { fs.rmSync(path.join(downloads, d.name), { force: true }); } catch { /* 删不掉 */ } d.bytes = 0; }
+    }
     const page = pages.find(x => x.session && x.session === m.sessionId);
     if (!page) return;
     if (m.method === 'Page.frameStartedLoading' && p.frameId === page.frame) page.loading = true;
@@ -351,9 +368,11 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     return CMDS[cmd](...args);
   }
   function handle({ cmd, args = [] } = {}) {
+    // 超时定时器做完就清掉：不然这一轮的进程要多挂 45 秒才退出
+    let timer;
     const t0 = Date.now(), go = queue.then(() => Promise.race([run(String(cmd || ''), (Array.isArray(args) ? args : []).map(String)),
-      sleep(L.timeoutMs + 15000).then(() => fail('timeout', '浏览器这一步超时了'))]))
-      .catch(e => fail('browser', e.message));
+      new Promise(ok => { timer = setTimeout(() => ok(fail('timeout', '浏览器这一步超时了')), L.timeoutMs + 15000); })]))
+      .catch(e => fail('browser', e.message)).finally(() => clearTimeout(timer));
     queue = go.then(() => {}, () => {});
     return go.then(r => {
       const a = cmd === 'fill' ? [args[0], String(args.slice(1).join(' ')).slice(0, 60)] : (args || []).slice(0, 2).map(x => String(x).slice(0, 200));
