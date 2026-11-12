@@ -11,7 +11,10 @@ function chromium() {
   try { for (const d of fs.readdirSync(pw).filter(d => /^chromium-\d+$/.test(d))) found.push(pw + '/' + d + '/chrome-linux64/chrome', pw + '/' + d + '/chrome-linux/chrome'); } catch { /* 没有 */ }
   return found.find(p => p && fs.existsSync(p));
 }
-const load = () => import(pathToFileURL(path.join(__dirname, '../site/xin/vm-browser.mjs')).href);
+const load = async () => {
+  const b = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-browser.mjs')).href), rt = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href);
+  return { browserBroker: o => b.browserBroker({ egress: rt.egressProxy, allowAddress: rt.publicAddress, ...o }) };
+};
 
 const PAGES = {
   '/': `<!doctype html><title>首页</title><h1>小芯测试站</h1>
@@ -164,4 +167,67 @@ test('预算：命令数用完被拒；关掉以后浏览器进程和资料目�
 test('不浏览就不启动浏览器', { timeout: platformTimeout(20000) }, async t => {
   const { b } = await setup(t);
   assert.equal(b.pid(), 0);
+});
+
+/* ---------- 接进后台任务：taskNetwork 起代理、容器里的 xin browser 经转发端口用它 ---------- */
+const rtLoad = () => import(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href);
+const freePort = () => new Promise(ok => { const s = require('node:net').createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => ok(p)); }); });
+// 和容器里一样：转发器把本机端口接到这一轮的 browser.sock，再跑任务目录里的 xin
+function inTask(rt, ws, forward, port, ...args) {
+  const child = require('node:child_process').spawn(process.execPath, ['-e', rt.TASK_FORWARDER, '--', JSON.stringify(forward), process.execPath, path.join(ws.home, 'bin', 'xin'), 'browser', ...args],
+    { env: { PATH: process.env.PATH, XIN_TASK_IO: ws.io, XIN_BROWSER_PORT: String(port) } });
+  let out = '', err = ''; child.stdout.on('data', d => out += d); child.stderr.on('data', d => err += d);
+  return new Promise(ok => child.on('close', code => ok({ code, out, err })));
+}
+
+test('后台任务：容器里的 xin browser 经转发端口用这一轮的浏览器；这一轮结束套接字撤掉、浏览器关掉', { timeout: platformTimeout(60000) }, async t => {
+  const exe = chromium();
+  if (!exe) return t.skip('需要 Chromium');
+  const rt = await rtLoad(), root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-browser-task-'));
+  fs.mkdirSync(path.join(root, 'project')); fs.mkdirSync(path.join(root, 'control'));
+  const task = { sid: 'sbrowse00001', dir: path.join(root, 'project') };
+  task.workspace = rt.prepareWorkspace(task, path.join(root, 'control'));
+  const s = await site(), logs = [];
+  const n = await rt.taskNetwork(task.workspace, null, { chrome: exe, headless: true, log: e => logs.push(e), testNet: { allowAddress: () => true, ports: () => true } });
+  t.after(() => { n.close(); s.close(); });
+  const sock = n.network.forward.find(([p]) => p === rt.TASK_PORTS.browser)?.[1];
+  assert.ok(sock, '转发里有浏览器端口');
+  assert.ok(!sock.startsWith(task.workspace.work) && !sock.startsWith(task.workspace.home), '套接字不在容器能写的地方');
+  const port = await freePort(), fwd = [[port, sock]];
+  let r = await inTask(rt, task.workspace, fwd, port, 'open', s.base + '/');
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /标题：首页/);
+  r = await inTask(rt, task.workspace, fwd, port, 'nope');
+  assert.equal(r.code, 1); assert.match(r.err, /没有这个命令/);
+  assert.ok(logs.some(e => e.cmd === 'open'), '控制器这边记下了');
+  n.close();
+  assert.ok(!fs.existsSync(sock), '套接字撤掉了');
+  assert.ok(!fs.existsSync(path.join(path.dirname(task.workspace.io), 'browser-profile')), '资料目录删了');
+});
+
+test('后台任务：这一轮没有浏览器（电脑上没装）时 xin browser 说清楚，不卡住', { timeout: platformTimeout(30000) }, async t => {
+  const rt = await rtLoad(), root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-browser-none-'));
+  fs.mkdirSync(path.join(root, 'project')); fs.mkdirSync(path.join(root, 'control'));
+  const task = { sid: 'sbrowse00002', dir: path.join(root, 'project') };
+  task.workspace = rt.prepareWorkspace(task, path.join(root, 'control'));
+  const n = await rt.taskNetwork(task.workspace, null, { chrome: path.join(root, 'no-chromium') });
+  t.after(() => n.close());
+  assert.ok(!n.network.forward.some(([p]) => p === rt.TASK_PORTS.browser), '没有浏览器就不转发');
+  const port = await freePort();
+  const r = await inTask(rt, task.workspace, [], port, 'open', 'https://example.com/');
+  assert.equal(r.code, 1); assert.match(r.err, /没有可用的浏览器/);
+});
+
+test('后台任务的提示词：普通任务讲清楚 xin browser 怎么用、哪些会被拒；网页成品任务不让它找浏览器', async () => {
+  process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-browser-prompt-'));
+  const { taskSystemPrompt } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-persona.mjs')).href);
+  const ws = { work: '/w/work', home: '/w/home', tmp: '/w/tmp' };
+  const p = taskSystemPrompt({ no: 1, title: '查手册', dir: '/data/workspace/x', workspace: ws, goal: '找 STM32F103 的参考手册' });
+  assert.match(p, /xin browser open/);
+  assert.match(p, /click e12/);
+  assert.match(p, /curl/);
+  assert.match(p, /不登录、不付款/);
+  assert.match(p, /downloads/);
+  const web = taskSystemPrompt({ no: 2, title: '奶龙', dir: '/data/workspace/y', workspace: ws, web: true, goal: '做个网页' });
+  assert.ok(!/xin browser open/.test(web), '网页成品由控制器验收，不让它开浏览器');
 });

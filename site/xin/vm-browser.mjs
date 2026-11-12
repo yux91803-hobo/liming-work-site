@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { egressProxy, publicAddress } from './vm-runtime.mjs';
+// 不 import vm-runtime.mjs：它要 import 这个文件，Worker 装脚本时不允许模块循环引用。出网代理和地址检查由 taskNetwork 传进来
 
 export const BROWSER_LIMITS = { commands: 300, tabs: 5, timeoutMs: 30000, snapshotChars: 12000, textChars: 20000, downloadBytes: 100 * 1024 * 1024 };
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
@@ -113,15 +113,16 @@ const BLOCKED = fail('blocked', '打不开：只能访问公网网址（本机�
 const okUrl = u => { try { const x = new URL(u); return ['http:', 'https:'].includes(x.protocol) ? x.href : null; } catch { return null; } };
 
 /* ---------- 代理本体 ---------- */
-export async function browserBroker({ chrome, profileDir, work, headless = true, display = '', socketPath = '', allowAddress = publicAddress, ports = [80, 443], log = () => {}, limits = {} }) {
+export async function browserBroker({ chrome, profileDir, work, headless = true, display = '', socketPath = '', egress, allowAddress, ports = [80, 443], log = () => {}, limits = {} }) {
+  if (typeof egress !== 'function' || typeof allowAddress !== 'function') throw Error('浏览器代理缺少出网代理或地址检查');
   const L = { ...BROWSER_LIMITS, ...limits };
   let child = null, cdp = null, pages = [], current = null, refs = new Map(), refNo = 0, used = 0, queue = Promise.resolve(), proxy = null, server = null, closed = false;
   const downloads = path.join(work, 'downloads');
 
   async function start() {
-    proxy = await egressProxy({ allowAddress, ports: typeof ports === 'function' ? ports : ports });
+    proxy = await egress({ allowAddress, ports });
     fs.rmSync(profileDir, { recursive: true, force: true }); fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
-    const attempt = async noSandbox => {
+    const attempt = async (noSandbox, headless) => {
       const args = ['--remote-debugging-pipe', '--user-data-dir=' + profileDir, '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
         '--disable-component-update', '--disable-sync', '--disable-extensions', '--disable-default-apps', '--disable-features=Translate,MediaRouter,OptimizationHints',
         '--password-store=basic', '--use-mock-keychain', '--disable-dev-shm-usage', '--window-size=1280,860', '--lang=zh-CN', '--disable-quic', '--dns-prefetch-disable',
@@ -138,12 +139,16 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
       if (!ready) { try { c.kill('SIGKILL'); } catch { /* 已经退了 */ } return { error: err }; }
       return { c, conn };
     };
-    // 先开 Chromium 自己的沙盒；root 或者这台机器开不了沙盒就退回 --no-sandbox（小芯电脑上网页成品检查一直是这样）
-    let r = process.getuid?.() === 0 ? { error: 'root' } : await attempt(false);
-    if (r.error) r = await attempt(true);
+    // 先开 Chromium 自己的沙盒；root 或者这台机器开不了沙盒就退回 --no-sandbox（小芯电脑上网页成品检查一直是这样）。
+    // 桌面上开不出来（没有权限连桌面）就退回无头
+    const tries = [];
+    for (const hl of headless ? [true] : [false, true]) { if (process.getuid?.() !== 0) tries.push([false, hl]); tries.push([true, hl]); }
+    let r = { error: '' };
+    for (const [ns, hl] of tries) { r = await attempt(ns, hl); if (!r.error) break; }
     if (r.error) throw Error('浏览器启动失败：' + String(r.error).trim().split('\n').slice(-3).join(' '));
     child = r.c; cdp = r.conn;
-    process.once('exit', () => { try { child?.kill('SIGKILL'); } catch { /* 没了 */ } });
+    // runner 收尾时不一定等得到 close()：进程退出时同步杀掉浏览器、删资料
+    process.once('exit', () => { try { child?.kill('SIGKILL'); } catch { /* 没了 */ } try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch { /* 删不掉下一轮开始时再删 */ } });
     cdp.listeners.add(onEvent);
     fs.mkdirSync(downloads, { recursive: true });
     await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads, eventsEnabled: true });
@@ -385,5 +390,14 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
   return {
     socket: socketPath || null, handle, pid: () => child?.pid || 0,
     async close() { if (closed) return; closed = true; await queue; await shutdown(); if (server) { server.closeAllConnections(); server.close(); } },
+    // 一轮结束时 runner 同步收尾（等不到异步关）：撤掉套接字、杀掉浏览器、删资料
+    closeNow() {
+      if (closed) return; closed = true;
+      if (server) { server.closeAllConnections(); server.close(); }
+      if (socketPath) try { fs.unlinkSync(socketPath); } catch { /* 已经没了 */ }
+      cdp?.listeners.clear(); try { child?.kill('SIGKILL'); } catch { /* 已经退了 */ } child = null;
+      proxy?.close(); proxy = null;
+      fs.rmSync(profileDir, { recursive: true, force: true });
+    },
   };
 }

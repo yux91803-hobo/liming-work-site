@@ -7,6 +7,7 @@ import http from 'node:http';
 import net from 'node:net';
 import dns from 'node:dns';
 import { spawn, spawnSync } from 'node:child_process';
+import { browserBroker } from './vm-browser.mjs';
 
 const mkdir = p => fs.mkdirSync(p, { recursive: true });
 const hash = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
@@ -56,7 +57,18 @@ export function prepareWorkspace(t, controller) {
   const bridge = `#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const a=process.argv.slice(2),dir=process.env.XIN_TASK_IO;
-if(!dir||!(a[0]==='remember'||a[0]==='task'&&a[1]==='ask')){console.error('后台只允许 xin remember 和 xin task ask');process.exit(1);}
+if(a[0]==='browser'){
+ // 浏览器：经转发端口发给控制器这一轮的浏览器代理（docs/xin-browser-v1-design.md），拿不到 CDP
+ const http=require('node:http'),body=JSON.stringify({cmd:a[1]||'help',args:a.slice(2)});
+ const q=http.request({host:'127.0.0.1',port:Number(process.env.XIN_BROWSER_PORT)||${TASK_PORTS.browser},method:'POST',path:'/',timeout:120000,headers:{'content-type':'application/json','content-length':Buffer.byteLength(body)}},res=>{
+  let t='';res.setEncoding('utf8');res.on('data',d=>t+=d);res.on('end',()=>{let r={};try{r=JSON.parse(t);}catch{}
+   if(r.ok){console.log(r.text);process.exit(0);}console.error(r.msg||'浏览器出错了');process.exit(1);});});
+ q.on('timeout',()=>q.destroy(Error('timeout')));
+ q.on('error',e=>{console.error(e.message==='timeout'?'浏览器这一步超时了':'这一轮没有可用的浏览器（电脑上没装 Chromium，或者这一轮已经结束）');process.exit(1);});
+ q.end(body);
+ return;
+}
+if(!dir||!(a[0]==='remember'||a[0]==='task'&&a[1]==='ask')){console.error('后台只允许 xin remember、xin task ask 和 xin browser');process.exit(1);}
 const body={op:a[0]==='remember'?'remember':'ask',text:a.slice(a[0]==='remember'?1:2).join(' ').slice(0,1000)};
 const id=crypto.randomBytes(12).toString('hex'),file=path.join(dir,id+'.request');
 fs.writeFileSync(file+'.tmp',JSON.stringify(body));fs.renameSync(file+'.tmp',file);
@@ -281,7 +293,7 @@ export function mcpTransport(t, base, server) {
 // Task containers get a private network namespace: only their own loopback exists, so the desktop
 // (VNC/X11), the model gateway and every other host service are unreachable. Controller services
 // enter through Unix sockets mounted read-only; TASK_FORWARDER maps fixed loopback ports to them.
-export const TASK_PORTS = { inference: 18080, egress: 18081 };
+export const TASK_PORTS = { inference: 18080, egress: 18081, browser: 18082 };
 export const TASK_FORWARDER = String.raw`const net=require('node:net'),os=require('node:os'),{spawn}=require('node:child_process');
 const [spec,command,...args]=process.argv.slice(1),forward=JSON.parse(spec);let child=null,waiting=forward.length;
 const start=()=>{child=spawn(command,args,{stdio:'inherit'});child.on('error',e=>{console.error('任务进程未能启动：'+e.message);process.exit(127);});
@@ -380,18 +392,26 @@ export async function egressProxy({ socketPath, ports = [80, 443], lookup = (hos
   else await new Promise((ok, no) => { server.once('error', no); server.listen(0, '127.0.0.1', ok); });
   return { socket: socketPath || null, port: socketPath ? null : server.address().port, close() { for (const s of open) s.destroy(); server.closeAllConnections(); server.close(); } };
 }
-// One task turn's network: egress for tools, plus the pinned inference proxy for the model client.
-export async function taskNetwork(workspace, inference = null) {
+// One task turn's network: egress for tools, plus the pinned inference proxy for the model client,
+// plus this turn's browser broker（浏览器 v1，docs/xin-browser-v1-design.md）：Chromium 第一次用到才启动，这一轮结束连资料一起删。
+// browser.testNet 只给测试用（放行本机测试页面）；正式调用不传，按公网地址检查。
+export const CHROMIUM = () => process.env.XIN_CHROMIUM || '/usr/lib/chromium/chromium';
+export async function taskNetwork(workspace, inference = null, browser = {}) {
   if (!workspace?.io) throw new Error('后台任务缺少隔离工作区');
   const dir = path.join(path.dirname(workspace.io), 'net');
   fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const egress = await egressProxy({ socketPath: path.join(dir, 'egress.sock') });
-  let proxy = null;
-  try { if (inference) proxy = await inferenceProxy({ ...inference, socketPath: path.join(dir, 'inference.sock') }); }
-  catch (e) { egress.close(); throw e; }
-  const forward = [[TASK_PORTS.egress, egress.socket]].concat(proxy ? [[TASK_PORTS.inference, proxy.socket]] : []);
+  let proxy = null, broker = null;
+  try {
+    if (inference) proxy = await inferenceProxy({ ...inference, socketPath: path.join(dir, 'inference.sock') });
+    const chrome = browser.chrome || CHROMIUM();
+    if (fs.existsSync(chrome)) broker = await browserBroker({ chrome, socketPath: path.join(dir, 'browser.sock'), profileDir: path.join(path.dirname(workspace.io), 'browser-profile'),
+      work: workspace.work, headless: browser.headless ?? !browser.display, display: browser.display || '', log: browser.log || (() => {}),
+      egress: egressProxy, allowAddress: browser.testNet?.allowAddress || publicAddress, ports: browser.testNet?.ports || [80, 443] });
+  } catch (e) { proxy?.close(); egress.close(); throw e; }
+  const forward = [[TASK_PORTS.egress, egress.socket]].concat(proxy ? [[TASK_PORTS.inference, proxy.socket]] : [], broker ? [[TASK_PORTS.browser, broker.socket]] : []);
   return { token: proxy?.token || null, baseURL: proxy ? 'http://127.0.0.1:' + TASK_PORTS.inference + '/v1' : null,
-    network: { forward, egress: true }, close() { proxy?.close(); egress.close(); } };
+    network: { forward, egress: true }, close() { broker?.closeNow(); proxy?.close(); egress.close(); } };
 }
 
 export function confinedMcp(t, base, server) {
@@ -938,7 +958,7 @@ export async function antigravityWork(t,options) {
   let conversation=t.antigravityConversation||null,prompt=options.instructions+'\n\n'+options.text+'\n\n每次返回 JSON：action=shell 时把要执行的完整 bash 命令放 command；控制器在隔离副本执行并把输出交回。写文件也用 shell 动作，不调用原生文件或终端工具。完成用 final，缺必要信息用 ask，长期记忆用 remember；text 用中文。不得再派代理。控制器已准备好 bash、Python、Node 和副本，命令默认目录是 '+t.workspace.work+'，无需探测环境或帮助命令。新网页优先直接用一次 shell 写 index.html 和 xin-web.json，不开服务、不自行找预览工具。前台转述中额外添加的功能若与自包含网页规则冲突，以用户原话和控制器规则为准；不要使用 localStorage。';
   report({type:'turn.started'});
   // Requested shell commands run in the task container; they reach the public web only through egress.
-  const network=await taskNetwork(t.workspace);
+  const network=await taskNetwork(t.workspace,null,options.browser||{});
   try{
   for(let turn=0;turn<48;turn++){
     if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
