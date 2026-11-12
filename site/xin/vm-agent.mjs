@@ -517,6 +517,31 @@ function boundaryNote(meta, ev) {
   const kind = boundaryKind(meta, ev);
   if (kind) logLine(BOUNDARY_F(), { sid: meta.sid, run: meta.run, agent: meta.kind === 'daily' ? 'daily' : meta.agent, kind, cmd: String(ev.detail || '').slice(0, 200) });
 }
+/* 机外备份的包（Worker 每天取走、加密存进 Durable Object，见 docs/xin-reliability-usage-design.md 的 C 部分）：
+   状态库的一致快照（VACUUM INTO，记忆、会话索引都在里面）+ 直接写成文件的对话过程、消息、清单和统计。
+   不放：网关密钥（*.key）、推送私钥和订阅（push/）、回调令牌、控制器脚本、锁、预览、导出、写回备份、终端日志这类能重建或不该外传的。
+   恢复：新云电脑上把包解进空的 ~/.xin（tar xzf … -C ~/.xin），网关密钥按 MACHINE.md 重新配。 */
+const BACKUP_ITEMS = ['sessions', 'runs', 'messages', 'agent-sessions', 'budgets', 'daily.md', 'memory.md', 'model-stats.jsonl', 'quota-history.jsonl',
+  'bond.json', 'next.json', 'moves.json', 'plugins.json', 'daily-done.json', 'daily-last.json', 'task-seq.json', 'tasks-index.json',
+  'front-antigravity-quota.json', 'antigravity-quota.json'];
+export function backupExport(keep = 3) {
+  const dir = path.join(BASE, 'exports'), stamp = today().replace(/-/g, ''), file = path.join(dir, 'state-' + stamp + '.tar.gz');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (!fs.existsSync(file)) {
+    const stage = fs.mkdtempSync(path.join(dir, '.stage-'));
+    try {
+      journal.db.exec("VACUUM INTO '" + path.join(stage, 'workflow.sqlite').replace(/'/g, "''") + "'");
+      const items = BACKUP_ITEMS.filter(n => fs.existsSync(path.join(BASE, n)));
+      const tmp = file + '.' + process.pid + '.tmp';
+      const r = spawnSync('tar', ['-czf', tmp, '--exclude=*.tmp', '--exclude=*.journal-*', '-C', stage, 'workflow.sqlite', '-C', BASE, ...items], { encoding: 'utf8', timeout: 60000 });
+      if (r.status !== 0) { try { fs.unlinkSync(tmp); } catch { /* 没写出来 */ } return { error: 'tar_failed', msg: '打包失败：' + String(r.stderr || r.error?.message || '').trim().slice(0, 200) }; }
+      fs.chmodSync(tmp, 0o600); fs.renameSync(tmp, file);
+    } finally { fs.rmSync(stage, { recursive: true, force: true }); }
+    for (const n of fs.readdirSync(dir).filter(n => /^state-\d{8}\.tar\.gz$/.test(n)).sort().slice(0, -keep)) { try { fs.unlinkSync(path.join(dir, n)); } catch { /* 别处删了 */ } }
+  }
+  const bytes = fs.readFileSync(file);
+  return { ok: true, file, size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), date: today() };
+}
 export function exportState(keep = 7) {
   const dir = path.join(BASE, 'exports'), file = path.join(dir, 'workflow-' + today().replace(/-/g, '') + '.sqlite');
   if (fs.existsSync(file)) return { skipped: 'exists', file };
@@ -2217,6 +2242,7 @@ const ops = {
     const t = readJ(sessF(result.task.sid));
     return { sid: t.sid, run: lastRun(t), agent: 'codex', model: t.model, ...bgInfo() };
   },
+  backup_export() { return backupExport(); },
   greet(a={}) {
     flushNotices().catch(() => {});
     const warming = maybeWarm();

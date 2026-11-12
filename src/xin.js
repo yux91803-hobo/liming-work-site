@@ -381,8 +381,9 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
   }
   if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, env, now) });
   if (p === 'file' && req.method === 'GET') return download(req, env, ctx, url, now);
+  if ((p === 'backups' || p === 'backup') && req.method === 'GET') return backupDownload(req, env, url, now);
   if (p === 'upload' && req.method === 'POST') return upload(req, env, ctx, url, now);
-  if (!['login', 'logout', 'call'].includes(p)) return json({ error: 'not_found' }, 404);
+  if (!['login', 'logout', 'call', 'backup'].includes(p)) return json({ error: 'not_found' }, 404);
   if (req.method !== 'POST') return json({ error: 'method' }, 405);
   // 防跨站：只认本站页面发来的 JSON 请求（cookie 本身也是 SameSite=Strict）
   const origin = req.headers.get('origin');
@@ -403,10 +404,84 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
     return json({ ok: true }, 200, { 'Set-Cookie': cookieHeader(await makeCookie(env, now), SESSION_SEC) });
   }
   if (!(await authed(req, env, now))) return json({ error: 'unauthorized', msg: '要先登录' }, 401);
+  // 现在备份：做今天的机外备份（已有就跳过）；正式站发布后的联调靠它当场验证整条备份链路
+  if (p === 'backup') return json(await backupNow(env, ctx, now));
   const op = String(body.op || '');
   if (!OPS.has(op)) return json({ error: 'bad_op' }, 400);
   const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? body.args : {};
   return json(await call(env, url.origin, op, args, ctx, now));
+}
+
+
+/* ---------- 机外加密备份（设计见 docs/xin-reliability-usage-design.md 的 C 部分） ----------
+   每天把云电脑打的状态包（vm-agent 的 backup_export：状态库快照 + 对话过程、消息、清单，tar.gz）取回来，加密后存进
+   XinTaskSupervisor 的另一个实例 xin-backups（和任务租约的 xin-tasks 分开，不需要迁移），只留 30 天。
+   密钥 = HKDF-SHA256（站长登录密码，每份随机盐，固定标签），AES-256-GCM、每份随机 IV；备份旁边不存密钥。
+   参考 Grok Bot box-store-sync/（云电脑状态同步到云端存储，坏了能整体恢复）。
+   免费版 Worker 每次调用 CPU 只有 10 ms：不压缩、密文全程按二进制传和存（0.6 MB 转一次 base64 就要 30 多 ms），
+   Worker 里只做 sha256、HKDF、AES-GCM 这几样原生运算（合计几 ms）。 */
+// 一份最大 5 MB（Durable Object 一个值连键最多 8 MB）。现在一份约 0.6 MB
+const BACKUP_KEEP_DAYS = 30, BACKUP_MAX = 5 * 1024 * 1024, BACKUP_INFO = 'liming-xin-backup-v1';
+function backupStore(env) { return env.XIN_TASK_SUPERVISOR?.get(env.XIN_TASK_SUPERVISOR.idFromName('xin-backups')); }
+const bjDay = t => new Date(t + 8 * 3600e3).toISOString().slice(0, 10);
+const okDay = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+// 只给 16 字节的盐、12 字节的 IV 用（很短）；密文不经过它
+const b64 = u8 => btoa(String.fromCharCode(...u8));
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function backupKey(password, salt) {
+  const ikm = await crypto.subtle.importKey('raw', enc.encode(password), 'HKDF', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt, info: enc.encode(BACKUP_INFO) }, ikm, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function backupCall(env, action, body) {
+  const r = await backupStore(env).fetch('https://xin.internal/backup/' + action, { method: 'POST', body: JSON.stringify(body || {}) });
+  return r.json();
+}
+// 一份备份的参数（解密要用的盐、IV 等，不含密文）放在 x-backup 头里，密文是请求 / 响应体本身
+async function backupGet(env, date) {
+  const r = await backupStore(env).fetch('https://xin.internal/backup/get', { method: 'POST', body: JSON.stringify({ date }) });
+  if (!r.ok) return null;
+  return { head: JSON.parse(r.headers.get('x-backup') || '{}'), data: new Uint8Array(await r.arrayBuffer()) };
+}
+export async function backupNow(env, ctx, now = Date.now()) {
+  if (!enabled(env)) return { state: 'disabled' };
+  if (!backupStore(env)) return { state: 'no_store' };
+  const date = bjDay(now);
+  if ((await backupCall(env, 'has', { date })).has) return { skipped: 'exists', date };
+  const r = await call(env, CRON_ORIGIN, 'backup_export', {}, ctx, now);
+  if (!r.ok) return { error: 'export_failed', state: r.state, msg: r.msg };
+  const d = r.data || {};
+  if (d.error || typeof d.file !== 'string' || !d.file.startsWith('/') || !Number.isInteger(d.size) || d.size < 1 || d.size > BACKUP_MAX || !/^[a-f0-9]{64}$/.test(d.sha256 || ''))
+    return { error: 'bad_export', msg: d.msg || '导出记录不完整' };
+  let f;
+  try { const m = await machine(env, now); f = await fetch(API + '/v1/machines/' + m.id + '/files/content?path=' + encodeURIComponent(d.file), { headers: { 'X-API-Key': env.INSTABOX_API_KEY } }); }
+  catch (e) { return { error: 'fetch_failed', msg: explain(e || {}).msg }; }
+  if (!f.ok) return { error: 'fetch_failed', msg: explain(await ibErr(f)).msg };
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  if (bytes.length !== d.size || hex(await crypto.subtle.digest('SHA-256', bytes)) !== d.sha256) return { error: 'mismatch', msg: '取回的文件和导出记录对不上' };
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await backupKey(env.OWNER_PASSWORD, salt), bytes));
+  const meta = { v: 1, date, at: now, size: d.size, sha256: d.sha256 };
+  const head = { ...meta, alg: 'AES-256-GCM', kdf: 'HKDF-SHA256', info: BACKUP_INFO, salt: b64(salt), iv: b64(iv) };
+  const saved = await (await backupStore(env).fetch('https://xin.internal/backup/put', { method: 'POST', headers: { 'x-backup': JSON.stringify({ meta, head, keepDays: BACKUP_KEEP_DAYS }) }, body: data })).json();
+  return saved.ok ? { ok: true, date, size: d.size, removed: saved.removed || 0 } : { error: 'store_failed', msg: saved.error };
+}
+// 取回（要先登录）：backups 列出；backup?date= 用现在的密码解密下载；改过密码解不开时 raw=1 下载加密原件
+// （第一行是参数 JSON，换行后是密文），用 scripts/xin-backup-decrypt.mjs 和当时的密码离线解
+async function backupDownload(req, env, url, now) {
+  if (!enabled(env) || !backupStore(env)) return json({ error: 'disabled' }, 404);
+  if (!(await authed(req, env, now))) return json({ error: 'unauthorized', msg: '要先登录' }, 401);
+  if (url.pathname.endsWith('/backups')) return json(await backupCall(env, 'list'));
+  const date = url.searchParams.get('date') || '';
+  if (!okDay(date)) return json({ error: 'bad_date', msg: '日期不对' }, 400);
+  const rec = await backupGet(env, date);
+  if (!rec) return json({ error: 'not_found', msg: '没有这一天的备份' }, 404);
+  const name = 'xin-state-' + date.replace(/-/g, '');
+  const head = type => ({ 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow', 'Content-Security-Policy': "default-src 'none'; sandbox" });
+  if (url.searchParams.get('raw') === '1') return new Response(new Blob([JSON.stringify(rec.head) + '\n', rec.data]), { headers: { ...head('application/octet-stream'), 'Content-Disposition': 'attachment; filename="' + name + '.backup"' } });
+  let plain;
+  try { plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(rec.head.iv) }, await backupKey(env.OWNER_PASSWORD, unb64(rec.head.salt)), rec.data); }
+  catch { return json({ error: 'old_password', msg: '这份备份是用以前的登录密码加密的：加上 &raw=1 下载加密原件，再用 scripts/xin-backup-decrypt.mjs 和当时的密码解开' }, 409); }
+  return new Response(plain, { headers: { ...head('application/octet-stream'), 'Content-Disposition': 'attachment; filename="' + name + '.tar.gz"' } });
 }
 
 /* ---------- 定时任务（Cloudflare Cron，只在正式站配了） ----------
@@ -422,10 +497,13 @@ export async function runCron(cron, env, ctx, opt = {}) {
   let r = null;
   // 云电脑在睡觉 / 正在醒：等一会儿再试，最多等 3 分钟左右
   for (let i = 0; i < 12; i++) {
-    r = await call(env, CRON_ORIGIN, op, {}, ctx, Date.now());
-    if (r.ok || (r.state !== 'waking' && r.state !== 'busy')) return r;
+    r = await call(env, CRON_ORIGIN, op, {}, ctx, opt.now || Date.now());
+    if (r.ok || (r.state !== 'waking' && r.state !== 'busy')) break;
     await wait(Math.min(30, Math.max(5, r.retryAfter || 5)) * 1000);
   }
+  // 每日任务那两次顺手做机外备份（今天已有就跳过）；备份没成不影响每日任务的结果，下一次再来
+  // （结果不挂在返回值上：每日任务的返回格式不变；做没做成看设置里「机外备份」那一行）
+  if (op === 'daily' && r && r.ok) { try { await backupNow(env, ctx, opt.now || Date.now()); } catch { /* 下一次再来 */ } }
   return r;
 }
 
@@ -445,7 +523,33 @@ export class XinTaskSupervisor {
     if (latest.leaseCleanup) await this.state.storage.setAlarm(Date.now() + 60000);
     else await this.state.storage.deleteAlarm();
   }
+  // 机外备份另用一个实例（xin-backups）：摘要 backup-meta:日期（列表只读它）、参数加二进制密文 backup:日期；存新的时删 keepDays 天前的
+  async backup(action, req) {
+    const s = this.state.storage;
+    if (action === 'put') {
+      let a; try { a = JSON.parse(req.headers.get('x-backup') || ''); } catch { a = {}; }
+      const meta = a.meta || {}, head = a.head || {}, data = new Uint8Array(await req.arrayBuffer());
+      if (!okDay(meta.date) || head.date !== meta.date || !data.length) return json({ error: 'bad_backup' });
+      await s.put('backup:' + meta.date, { ...head, data }); await s.put('backup-meta:' + meta.date, meta);
+      const cutoff = new Date(Date.parse(meta.date + 'T00:00:00Z') - (Number(a.keepDays) || BACKUP_KEEP_DAYS) * 86400e3).toISOString().slice(0, 10);
+      const old = [...(await s.list({ prefix: 'backup-meta:' })).keys()].map(k => k.slice('backup-meta:'.length)).filter(d => d < cutoff);
+      if (old.length) await s.delete(old.flatMap(d => ['backup:' + d, 'backup-meta:' + d]));
+      return json({ ok: true, removed: old.length });
+    }
+    const a = await req.json().catch(() => ({}));
+    if (action === 'has') return json({ has: okDay(a.date) && !!(await s.get('backup-meta:' + a.date)) });
+    if (action === 'list') return json({ backups: [...(await s.list({ prefix: 'backup-meta:' })).values()].sort((x, y) => y.date.localeCompare(x.date)) });
+    if (action === 'get') {
+      const rec = okDay(a.date) && await s.get('backup:' + a.date);
+      if (!rec || !(rec.data instanceof Uint8Array || rec.data instanceof ArrayBuffer)) return json({ error: 'not_found' }, 404);
+      const { data, ...head } = rec;
+      return new Response(data, { headers: { 'x-backup': JSON.stringify(head) } });
+    }
+    return json({ error: 'bad_action' }, 400);
+  }
   async fetch(req) {
+    const path = new URL(req.url).pathname;
+    if (path.startsWith('/backup/')) return this.backup(path.slice('/backup/'.length), req);
     const incoming = await req.json(), current = await this.state.storage.get('tasks') || {};
     if (incoming.version != null && current.version != null && (incoming.version < current.version || incoming.version === current.version && incoming.bg !== current.bg)) return json({ ok: true, stale: true });
     // A browser's old read cannot cancel a newer controller callback.

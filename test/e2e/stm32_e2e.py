@@ -1905,7 +1905,7 @@ async def main():
         await pv.click('.xc-set-b'); await pv.wait_for_selector('.xc-set')
         rows = await pv.evaluate("[...document.querySelectorAll('.xc-tg-t b')].map(b => b.textContent)")
         await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false' && !document.querySelector('.xc-push .xc-sw').disabled")
-        check('设置：天启模式、附带正在看的页面、做完提醒（没有学习记录、主动跟进），做完提醒默认关着', rows == ['天启模式', '附带当前页面', '完成通知'] and not await pv.evaluate("!!document.querySelector('.xc-learning, .xc-followups')"), rows)
+        check('设置：天启模式、附带正在看的页面、做完提醒、机外备份（没有学习记录、主动跟进），做完提醒默认关着', rows == ['天启模式', '附带当前页面', '完成通知', '机外备份'] and not await pv.evaluate("!!document.querySelector('.xc-learning, .xc-followups')"), rows)
         await pv.click('.xc-set-b'); await pv.click('.xc-set-b')
         check('重新打开设置：不报错，开关还在', await pv.is_visible('.xc-push .xc-sw'))
         c0 = await pv.evaluate("document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked')")
