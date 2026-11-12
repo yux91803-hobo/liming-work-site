@@ -62,8 +62,8 @@ import {openFrontProvider,preferredFrontModel,frontModelInfo,OPUS_FRONT_MODEL} f
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
-import { transientFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
-import { quotaWindows, glowLevel, forecast, usageSummary } from './vm-usage.mjs';
+import { transientFailure, finalFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
+import { quotaWindows, glowLevel, forecast, usageSummary, agyUsage } from './vm-usage.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
@@ -97,6 +97,21 @@ function maybeWarm() {
   if (Date.now() - lastActivity() < WARM_IDLE || !(hasAgent('harness') || hasCmd('codex'))) return false;
   mk(BASE); writeJ(WARM_FILE(), { at: Date.now(), running: true });
   spawn(process.execPath, [SELF, 'warm'], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref();
+  return true;
+}
+// 前台等预热：网关刚醒时预热那个请求正卡着，前台这时发出的请求也会卡一两分钟，25 秒的时限一到就只能回「请重试」
+// （2026-11-12 正式站联调实测：预热 126 秒，前台 25 秒放弃）。所以预热在跑就先等它做完，再开始算前台的时限。
+// 参考 Codex（codex-rs/model-provider-info：慢的流默认等 300 秒、请求重试 4 次）和 opencode
+// （packages/core/src/model-retry.ts：可恢复的错误退避重试）：都不在模型慢的时候急着放弃。预热自己 200 秒被杀，最多等这么久。
+const WARM_WAIT_MAX = 200e3;
+export async function waitWarm({ read = () => readJ(WARM_FILE()), now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), notify = () => {}, signal } = {}) {
+  const busy = w => !!(w && w.running && Number.isFinite(w.at) && now() - w.at < WARM_WAIT_MAX);
+  if (!busy(read())) return false;
+  notify(); let told = now();
+  while (busy(read()) && !signal?.aborted) {
+    if (now() - told >= 5000) { notify(); told = now(); }
+    await sleep(500);
+  }
   return true;
 }
 function warm() {
@@ -432,7 +447,7 @@ export function agentArgs(agent, sess, text, effort, extra) {
     : ['--dangerously-bypass-approvals-and-sandbox'];
   // Native agents bypass our task tree, queue and budget accounting; dispatch only through xin task.
   const common = ['--json', '--skip-git-repo-check'].concat(sandbox, codexRoute(M.id), ['-c', 'features.multi_agent=false', '-c', 'features.multi_agent_v2=false', '-c', 'developer_instructions=' + JSON.stringify(dev)])
-    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], boxed ? taskMcpFlags(sess) : ['-c', 'shell_environment_policy.set.BASH_ENV=' + JSON.stringify(path.join(BASE, 'shell-env.sh'))].concat(mcpFlags()));
+    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], boxed ? taskMcpFlags(sess) : ['-c', 'shell_environment_policy.set.BASH_ENV=' + JSON.stringify(path.join(BASE, 'shell-env.sh'))].concat(mcpFlags(), sess.dailyDate ? dailyMcpOff() : []));
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(imgs, common, [sess.agentSid, text])];
   return ['codex', ['exec'].concat(imgs, common, ['-C', (role === 'task' && (sess.workspace?.work || sess.dir)) || WORK, text])];
 }
@@ -591,7 +606,7 @@ function runner(run) {
     // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
     const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
     if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {}, meta.providerModel ? {providerModel:meta.providerModel} : {});
-    const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0))}}:{}) } : null;
+    const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0)),...(doneEv.usage.incl?{incl:true}:{})}}:{}) } : null;
     const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv,stat});
     if(completion.error){finished=false;setTimeout(()=>finish(code,why),1000);return;}
     if(completion.done){Object.assign(doneEv,completion.done);ok=doneEv.ok;stopped=doneEv.stopped;}
@@ -599,7 +614,7 @@ function runner(run) {
       killTree(child); // 收掉本轮进程组，包括仍持有临时预览端口的子进程
       // 后台任务：结果先存进任务记录（接着做、等确认还是收尾、排下一个），要推送的在锁外发
       // 临时错误（断线、网关 5xx、限流）由控制器等一会儿接着做，见 vm-retry.mjs
-      const transient = !ok && !stopped && !state.timeout && transientFailure([why, ...tailEvents(run, 16384).filter(e => e.t === 'err').map(e => e.text), stderr.slice(-2000)].join('\n'));
+      const transient = !ok && !stopped && !state.timeout && transientFailure(finalFailure({ why, errs: tailEvents(run, 16384).filter(e => e.t === 'err').map(e => e.text), stderr }));
       const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model, transient });
       if (r && r.notice) { setTimeout(() => process.exit(0), 20000).unref(); deliverNotice(r.notice).catch(() => {}); }
       return;
@@ -816,7 +831,7 @@ function runner(run) {
         patchRun(run,{frontUsage:state.frontUsage});
       }}
     });};
-    infer().then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
+    waitWarm({signal:controller.signal,notify:()=>emit(run,{t:'status',text:'电脑刚醒，网络在热身，稍等一下'})}).then(()=>infer()).then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
       .catch(e=>{if(!finished){frontLog({run,outcome:usedFallback?'fallback':'error',error:String(e.message||e).slice(0,300),calls,...(Object.keys(protocol).length?{protocol}:{})});state.failed=true;finish(1,e.message);}})
       .finally(()=>provider?.close());
   } else start();
@@ -979,7 +994,8 @@ function pruneLogs(minAge = PRUNE_AGE) {
   }
   // 30 天前的写回备份、7 天前已送达的推送条目（返回结果只把字节数算进 bytes，字段不变）
   try { res.bytes += runtime.pruneBackups(BASE).bytes; } catch { /* 下次 */ }
-  try { res.bytes += runtime.pruneTaskCopies(BASE, listTasks()).bytes; } catch { /* 下次 */ }
+  // 删 7 天前做完的任务副本要在 tasks 锁里：和 task_tell 重新打开同一个任务互斥，不会删掉刚开始用的副本
+  try { const pc = taskLockHeld() ? iops.task_copies_prune({}) : lockedCall('tasks', 'task_copies_prune', {}); if (!pc.error) res.bytes += pc.bytes || 0; } catch { /* 下次 */ }
   try { pruneNotices(); } catch { /* 下次 */ }
   return res;
 }
@@ -1039,15 +1055,24 @@ function taskMcpFlags(t) {
    让模型结束这一轮；站长之后回答走 task_tell，接着同一个会话做。 */
 export const APPROVAL_HOLD_MS = Number(process.env.XIN_APPROVAL_HOLD_MS) || 600000;
 export const INPUT_TIMEOUT_TEXT = '（用户 10 分钟内没有回复。问题已经记下，用户回复后会接着叫你。现在结束这一轮：最后一条消息写清楚做到哪了、要用户确认什么。）';
-export async function awaitTaskInput({ id, holdMs = APPROVAL_HOLD_MS, read, expire, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
-  const until = Date.now() + holdMs;
+// 到点「记下问题」要拿 tasks 锁，锁忙（别的进程在做重活）时 lockedCall 返回 error：以前照样交还，问题没记下，
+// 这个等待一直挂在任务上（后台算在忙、云电脑不睡）。现在隔 5 秒再试，期间来了回答就用回答；试满 2 分钟还记不下才放弃。
+const EXPIRE_RETRY_MS = 5000, EXPIRE_RETRY_FOR = 120e3;
+export async function awaitTaskInput({ id, holdMs = APPROVAL_HOLD_MS, read, expire, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  const until = now() + holdMs;
+  let nextTry = until, giveUp = until + EXPIRE_RETRY_FOR;
   for (;;) {
     await sleep(350);
     const m = read();
     if (!m || m.stopped || m.ended) return { ended: true };
     const reply = (m.approvalReplies || {})[id];
     if (reply) return { reply };
-    if (Date.now() >= until) { await expire(); return { expired: true }; }
+    if (now() >= nextTry) {
+      const r = await expire();
+      if (!r || !r.error) return { expired: true };
+      if (now() >= giveUp) return { expired: true, unsaved: true };
+      nextTry = now() + EXPIRE_RETRY_MS;
+    }
   }
 }
 async function approvalRequest(run, meta, request) {
@@ -1061,6 +1086,9 @@ async function approvalRequest(run, meta, request) {
   const r = await awaitTaskInput({ id, read: () => readJ(metaF(run)), expire: () => lockedCall('tasks', 'task_approval_expire', { sid: meta.sid, run, id }) });
   return r.reply ? answer(r.reply) : r.expired ? answer(INPUT_TIMEOUT_TEXT) : { answers: {} };
 }
+// 每日任务不进容器（签到要操作桌面），但用不到电脑自带的云电脑管理插件 instabox（开关机、快照、删机器）：
+// 每天自动访问外部网站的那一轮不该拿着它。清单里没有管云电脑的步骤（2026-11-12 核对）；桌面操作插件留着。
+export function dailyMcpOff() { return mcpBuiltin().has('instabox') ? ['-c', 'mcp_servers.instabox.enabled=false'] : []; }
 export function mcpFlags() {
   const st = pluginState(), have = mcpUser(), out = [];
   for (const n of Object.keys(st)) if (PLUGIN_RE.test(n) && have.has(n) && typeof st[n] === 'boolean') out.push('-c', 'mcp_servers.' + n + '.enabled=' + st[n]);
@@ -1201,7 +1229,7 @@ function claudeUsage(id, win) {
 export function sessionUsage(s) {
   try {
     if (isTask(s) && ['done', 'failed', 'stopped'].includes(s.status) && s.usage) return s.usage;
-    if(isTask(s)&&s.antigravityConversation){const b=readJ(path.join(BASE,'budgets',s.sid+'.json'));if(b?.total)return {input:b.input||0,output:b.output||0,cached:b.cached||0,total:b.total,ctx:s.frontUsage?.ctx||0,win:1000000};}
+    if(isTask(s)&&s.antigravityConversation){const b=readJ(path.join(BASE,'budgets',s.sid+'.json'));if(b?.total)return agyUsage(b,s.frontUsage?.ctx||0);}   // Antigravity 的输入不含缓存，换算后标 incl
     if (s?.agent === 'codex' && s.frontUsage) return s.frontUsage;
     if (!s || !okAgentSid(s.agent, s.agentSid) || !s.started) return null;
     if (s.agent === 'harness') return s.hUsage && s.hUsage.total ? s.hUsage : null;
@@ -2497,6 +2525,8 @@ const iops = {
     return { ok: true };
   },
   // 等回答到点：问题照 xin task ask 记下，这一轮结束前仍占名额；结束后停在「等你确认」，进程退出、租约释放
+  // 每日清理经 lockedCall('tasks') 调它：读任务状态和删副本都在锁里，task_tell 重新打开任务要等它做完
+  task_copies_prune() { return runtime.pruneTaskCopies(BASE, listTasks()); },
   task_approval_expire(a) {
     const t = readJ(sessF(a.sid));
     if (!isTask(t) || lastRun(t) !== a.run || t.approval?.id !== a.id) return {};

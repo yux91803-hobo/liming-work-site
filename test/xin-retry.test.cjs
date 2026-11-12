@@ -27,3 +27,17 @@ test('重试等待时间默认 1、4、15 分钟，可用环境变量调短', as
   assert.deepEqual(retryDelays({ XIN_RETRY_DELAYS_MS: '100,200' }), [100, 200]);
   assert.deepEqual(retryDelays({ XIN_RETRY_DELAYS_MS: 'x' }), [60000, 240000, 900000]);
 });
+
+test('只看让这一轮结束的那个错误：前面已经恢复的断线重连不算数', async () => {
+  const { finalFailure, transientFailure } = await import(require('node:url').pathToFileURL(require('node:path').join(__dirname, '../site/xin/vm-retry.mjs')).href);
+  const noisy = 'stream disconnected - retrying sampling request (1/5)\nReconnecting... 2/5 (stream closed)\n';
+  // 有结束原因就只看它
+  assert.equal(finalFailure({ why: '编译核验没有通过', errs: ['stream disconnected'], stderr: noisy }), '编译核验没有通过');
+  assert.equal(transientFailure(finalFailure({ why: '编译核验没有通过', errs: [], stderr: noisy })), false);
+  // 没有结束原因：看最后一条错误事件
+  assert.equal(finalFailure({ why: '', errs: ['stream disconnected', '工具调用失败：找不到文件'], stderr: noisy }), '工具调用失败：找不到文件');
+  // 都没有：只看 stderr 最后几行
+  assert.equal(finalFailure({ why: '', errs: [], stderr: 'a\nb\nc\nd\ne\nf\ng\nfetch failed\n' }), 'c\nd\ne\nf\ng\nfetch failed');
+  assert.equal(transientFailure(finalFailure({ why: '', errs: [], stderr: 'fetch failed' })), true);
+  assert.equal(finalFailure({}), '');
+});

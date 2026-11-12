@@ -96,3 +96,21 @@ test('前台每次读到额度都记一条读数，用量页据此给出预计�
     assert.equal(week.forecastAt, null, '每周额度没在动');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('Antigravity 的输入不含缓存读取（total = 输入 + 输出）：记账时换算成「输入含缓存」，旧记录读的时候补上，不重复加', async () => {
+  const { usageSummary, agyUsage, AGY_MODELS } = await load();
+  const runtime = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href);
+  assert.ok(AGY_MODELS.includes(runtime.AGY_MODEL), '和 vm-runtime 的 AGY_MODEL 保持一致');
+  // 正式机上真实的累计值：input 54735、cache 149606、output 39807、total 94542（= input + output）
+  assert.deepEqual(agyUsage({ input: 54735, cached: 149606, output: 39807, total: 94542 }, 1200),
+    { input: 204341, cached: 149606, output: 39807, total: 244148, ctx: 1200, win: 1000000, incl: true });
+  const at = Date.parse('2026-11-11T03:00:00Z');
+  const u = usageSummary([
+    { at, model: 'gemini-3.8-flash-high', usage: { input: 100, cached: 300, output: 10 } },              // 旧记录：没换算
+    { at, model: 'gemini-3.8-flash-high', usage: { input: 400, cached: 300, output: 10, incl: true } },  // 新记录：已换算
+    { at, model: 'deepseek-v4.1-flash', usage: { input: 100, cached: 50, output: 5 } }                   // Codex 本来就含缓存
+  ], NOW);
+  assert.deepEqual(u.days.at(-1).models['gemini-3.8-flash-high'], { input: 800, cached: 600, output: 20, runs: 2 });
+  assert.deepEqual(u.days.at(-1).models['deepseek-v4.1-flash'], { input: 100, cached: 50, output: 5, runs: 1 });
+  assert.ok(u.totals.today.hit <= 1, '缓存命中不会超过 100%');
+});
