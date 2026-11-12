@@ -76,3 +76,11 @@ test('等回答到点时「记下问题」抢不到锁：隔几秒再试，记�
   assert.deepEqual(r3, { expired: true, unsaved: true });
   assert.ok(t <= 1000 + 125e3 && tries >= 20, JSON.stringify({ t, tries }));
 });
+
+test('删 7 天前做完的任务副本改由任务锁里的操作来做（和重新打开任务互斥）；每日清理照常', () => {
+  const { op, xin } = agentEnv();
+  fs.mkdirSync(xin, { recursive: true });
+  const r = JSON.parse(execFileSync(process.execPath, [AGENT, 'locked', 'task_copies_prune'], { env: { ...process.env, XIN_HOME: xin }, input: '{}' }).toString());
+  assert.deepEqual(r, { removed: 0, bytes: 0 });
+  assert.equal(typeof op('prune').bytes, 'number');
+});

@@ -994,7 +994,8 @@ function pruneLogs(minAge = PRUNE_AGE) {
   }
   // 30 天前的写回备份、7 天前已送达的推送条目（返回结果只把字节数算进 bytes，字段不变）
   try { res.bytes += runtime.pruneBackups(BASE).bytes; } catch { /* 下次 */ }
-  try { res.bytes += runtime.pruneTaskCopies(BASE, listTasks()).bytes; } catch { /* 下次 */ }
+  // 删 7 天前做完的任务副本要在 tasks 锁里：和 task_tell 重新打开同一个任务互斥，不会删掉刚开始用的副本
+  try { const pc = taskLockHeld() ? iops.task_copies_prune({}) : lockedCall('tasks', 'task_copies_prune', {}); if (!pc.error) res.bytes += pc.bytes || 0; } catch { /* 下次 */ }
   try { pruneNotices(); } catch { /* 下次 */ }
   return res;
 }
@@ -2521,6 +2522,8 @@ const iops = {
     return { ok: true };
   },
   // 等回答到点：问题照 xin task ask 记下，这一轮结束前仍占名额；结束后停在「等你确认」，进程退出、租约释放
+  // 每日清理经 lockedCall('tasks') 调它：读任务状态和删副本都在锁里，task_tell 重新打开任务要等它做完
+  task_copies_prune() { return runtime.pruneTaskCopies(BASE, listTasks()); },
   task_approval_expire(a) {
     const t = readJ(sessF(a.sid));
     if (!isTask(t) || lastRun(t) !== a.run || t.approval?.id !== a.id) return {};
