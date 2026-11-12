@@ -36,6 +36,8 @@ export function memoryView(text, max = MEM_MAX) {
 
 export const DAILY_FILE = () => path.join(BASE, 'daily.md');
 
+// 遗留进程（vm-reaper.mjs）：这一轮起的进程结束 2 小时后还在会被关掉；浏览器开太久、一直空转也会被关掉
+const DESKTOP_TTL = '桌面上开给用户看的窗口、这一轮起的程序，这一轮结束 2 小时后会自动关掉（用 setsid、nohup 也一样），看完不用留着；真要一直跑的服务用 systemd --user 服务装好（systemctl --user），别靠 & 挂在后台。';
 export function dailyPrompt(list) {
   return [
     '⏰ 现在是北京时间 ' + bjNow() + '，到点做每日任务了。用户现在不在，别问问题，自己按清单做完：',
@@ -99,7 +101,7 @@ export function systemPrompt(mem, opt = {}) {
     '你有一份每日任务清单（文件 ' + DAILY_FILE() + '）。每天北京时间 9:10 左右你会被叫醒按清单做一遍（没做成 21:10 再来一次）。用户让你「每天做什么」，就写进这份清单（一条一行，写清楚怎么做、怎么确认做成了）；别自己用 cron 定时，电脑睡着的时候 cron 不会跑。',
     '你的电脑里装好了 STM32 的编译工具（arm-none-eabi-gcc）。' + TEMPLATE() + ' 是 STM32F103ZET6 的空工程，写法和学习台一样（#include "stm32f10x.h"，寄存器名来自 ST 官方头文件，printf、malloc、中断都能用）。要编译程序就复制一份（cp -rL ' + TEMPLATE() + ' ' + WORK + '/起个英文名），改 main.c（多个 .c 放同一目录），在那个目录里 make，生成 build/app.hex（烧录用）。空工程不见了就跑 sh ' + path.join(BASE, 'setup-stm32.sh') + ' 重新装。',
     '用户在网页上「小芯的文件」里能看到你电脑里 ' + WORK + ' 下面的文件，能预览、能下载到手机或电脑上。要给用户的东西（代码、.hex、文档）都放在 ' + WORK + ' 下面；回答里提到文件就写完整路径（比如 `' + WORK + '/blink/build/app.hex`），用户点一下就能打开或下载。编译好了一定告诉用户 .hex 的完整路径。',
-    '用户在网页上能看你电脑的屏幕（桌面是 DISPLAY=' + screenDisplay() + '，上面「小芯在干什么」那个终端会实时显示你执行的命令），也可能接管过去自己操作。想给用户看点什么（网页、图片、程序界面），可以在桌面上打开，比如 `DISPLAY=' + screenDisplay() + ' chromium 网址 >/dev/null 2>&1 &`，告诉他点聊天框上面的「屏幕」看；别关掉「小芯在干什么」那个终端。',
+    '用户在网页上能看你电脑的屏幕（桌面是 DISPLAY=' + screenDisplay() + '，上面「小芯在干什么」那个终端会实时显示你执行的命令），也可能接管过去自己操作。想给用户看点什么（网页、图片、程序界面），可以在桌面上打开，比如 `DISPLAY=' + screenDisplay() + ' chromium 网址 >/dev/null 2>&1 &`，告诉他点聊天框上面的「屏幕」看；别关掉「小芯在干什么」那个终端。' + DESKTOP_TTL,
     '你能自己编新动作：`xin move help` 看怎么写（一串姿势帧），`xin move add 名字 帧` 学会以后网页上的小芯就会做，背包里也有；用户让你学个动作、或者你想表达一个现有动作表达不了的心情时用。已经会的：' + (readMoves().map(m => m.name).join('、') || '还没有') + '。',
     '你的插件（MCP 工具，比如 rea 逆向）用户能在网页聊天框「＋ → 插件」里开关，关掉的从下一句起就不带（省 token）。用户让你开关插件时用 `xin plugin on 名字` / `xin plugin off 名字`，`xin plugin` 看有哪些、开没开；别自己改 ~/.codex/config.toml 来开关插件。用户还能直接给你发文件和图片：消息后面会附【用户发来的文件】和路径（在 ' + UPLOADS() + ' 下面）。'
   ].concat(opt.tasks ? TASK_GUIDE() : [], [bondPart(), memoryPart(mem)]).join('\n');
@@ -115,7 +117,7 @@ export function tianqiPrompt() {
     '用户的消息后面有时会附上网页自动加的【用户正在看】（学习台的哪一页）、【用户选中的内容】、【用户在「验证」里写的代码】。用户说「这行」「这个」「我写的」时指的就是这些；回答时直接针对它们，不用复述。',
     '电脑里装好了 STM32 的编译工具（arm-none-eabi-gcc）。' + TEMPLATE() + ' 是 STM32F103ZET6 的空工程（#include "stm32f10x.h"）。要编译程序就复制一份（cp -rL ' + TEMPLATE() + ' ' + WORK + '/起个英文名），改 main.c，在那个目录里 make，生成 build/app.hex；空工程不见了就跑 sh ' + path.join(BASE, 'setup-stm32.sh') + ' 重新装。',
     '用户在网页的文件面板里能看到 ' + WORK + ' 下面的文件，能预览、能下载。要给用户的东西都放在那里；回答里提到文件就写完整路径，编译好了一定告诉用户 .hex 的完整路径。',
-    '用户能在网页上看你电脑的屏幕（桌面是 DISPLAY=' + screenDisplay() + '），也可能接管过去自己操作。想给用户看点什么，可以在桌面上打开，比如 `DISPLAY=' + screenDisplay() + ' chromium 网址 >/dev/null 2>&1 &`，告诉用户点聊天框上面的「屏幕」看；别关掉桌面上显示命令记录的那个终端。',
+    '用户能在网页上看你电脑的屏幕（桌面是 DISPLAY=' + screenDisplay() + '），也可能接管过去自己操作。想给用户看点什么，可以在桌面上打开，比如 `DISPLAY=' + screenDisplay() + ' chromium 网址 >/dev/null 2>&1 &`，告诉用户点聊天框上面的「屏幕」看；别关掉桌面上显示命令记录的那个终端。' + DESKTOP_TTL,
     '插件由用户在聊天框「＋ → 插件」里开关。用户还能直接给你发文件和图片：消息后面会附【用户发来的文件】和路径（在 ' + UPLOADS() + ' 下面）。'
   ].join('\n');
 }

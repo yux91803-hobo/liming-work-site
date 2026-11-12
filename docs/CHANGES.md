@@ -1,3 +1,46 @@
+# 修改清单 · 2026-11-12（遗留进程：一轮做完，它起的进程不能一直开着）
+
+站长 2026-11-12：「不光是清理掉，以后出现这样的问题得怎么解决，记得去 GitHub 上面看看」。
+
+**起因**：
+- 小芯电脑上一个 Chromium 开了 4 天，显卡进程空转占满一核（4 核里的 1 个），电脑也一直睡不着（空闲 30 分钟本该自己睡）。
+- 查屏幕记录（screen.log）：是 11-07 一轮里模型照提示词「想给用户看点什么，可以在桌面上打开」，用 `setsid env DISPLAY=:1 chromium --user-data-dir=/tmp/chromeprof-… https://hark.com/login &` 开的。这一轮结束后没人关它。
+- 它已经停掉了（`systemctl --user stop app-org.chromium.Chromium-16327.scope`）。同一时间另一个 Chromium scope 里只剩 Antigravity 自己的 `agy --hub`，留着。
+
+**查过的做法**：
+- Codex `codex-rs/utils/pty/src/process_group.rs`：子进程单独一个进程组，加 `PR_SET_PDEATHSIG`，收尾时 `killpg`。管不到用 `setsid` 另起一组甩出去的。
+- Codex `codex-rs/linux-sandbox/src/bwrap.rs`：沙盒里用 `--die-with-parent`。小芯的后台任务已经在 bwrap 容器里；前台、每日任务、天启不在。
+- GitHub Actions runner：作业结束时按作业打的标记清理孤儿进程（日志里的「Cleaning up orphan processes」）。小芯这里每一轮也有环境变量 `XIN_RUN` 当标记，但 Chromium 起来后会清空自己的环境变量，这个标记读不出来。
+- systemd transient scope：cgroup 跟着进程走，`setsid`、两次 fork 都逃不出去，停掉 scope 就全停。在小芯电脑上实测：`setsid` 甩出去、已经挂到 1 号进程下面的 `sleep` 仍在原来的 scope 里，`systemctl --user kill` 能杀掉。
+- 但 Chromium 有用户会话总线时会自己挪进 `app-org.chromium.Chromium-<pid>.scope`（这次那个就是），所以浏览器要另外盯。
+
+**改法**（新文件 `site/xin/vm-reaper.mjs`）：
+- **每一轮放进自己的 scope**：
+  - 控制器起模型命令时包一层 `systemd-run --user --scope --unit=xin-run-<轮次>-a<第几次>`。systemd-run 建好 scope 就直接执行原命令，进程号、进程组号都不变，停止、卡住重连这些照旧。
+  - 没有用户会话的 systemd 时照原样起。
+- **定时清理**：
+  - 控制器在一轮开始时顺手装好 systemd 用户定时器 `xin-reaper.timer`，每 10 分钟跑一次 `vm-agent.mjs reap`。
+  - 部署后控制器路径会变，所以定时器调固定的 `~/.xin/bin/xin-reap`，由它照 `controller-current.json` 找到当前这份；记录里不是 `vm-agent-<摘要>.mjs` 就什么都不跑。
+- **清什么**：
+  - 一轮结束 2 小时后它的 scope 里还有进程 → 停掉 scope（先 SIGTERM，再 SIGKILL，再 stop）。不在一轮结束时马上关，是因为提示词让模型把想给站长看的东西开在桌面上，要给站长留时间看。
+  - 不是小芯自己管的浏览器（自己的：任务浏览器、登录窗口走 CDP 管道，网页成品检查用临时资料 `web-browser-`）：
+    - 开了 2 小时以上、连续半小时以上占 CPU（整个浏览器 30% 以上）→ 关掉；
+    - 不管忙不忙，开了 12 小时以上 → 关掉。
+  - 别的进程连续 2 小时占满（80% 以上）、不是系统服务、不在还在做的那一轮里 → 只记下来（`~/.xin/reaper.json` 的 `alerts`），不杀，可能是站长自己在桌面上开的。
+  - 每次动手都记进 `~/.xin/logs/reaper.jsonl`（哪个单元、什么程序、为什么）。
+- **提示词**：默认模式和天启说明桌面上开的窗口、这一轮起的程序，结束 2 小时后会自动关掉（用 setsid、nohup 也一样）；真要一直跑的服务用 `systemd --user` 装好。
+- **测试**：新文件 `test/xin-reaper.test.cjs`，共 8 项：
+  - 包 scope 的参数；
+  - 结束 2 小时后才清、还在做的和删了记录的分别处理；
+  - 浏览器两条规则，自己的、刚开的、不怎么占的、系统服务都不动；
+  - 别的进程只提醒；
+  - 从 `/proc` 读进程；
+  - 控制器：命令经 `systemd-run` 起、定时器装上、`reap` 停对单元并记日志；
+  - 提示词。
+- **小芯电脑上试过**（放 `/tmp` 单独跑，跑完删掉）：
+  - 包了 `systemd-run` 以后，进程号、进程组号和不包时一样，在自己的 scope 里；
+  - 用真实进程空跑判断，没有一个会被动，Antigravity 的 `agy --hub`、网关、桌面都不在名单上。
+
 # 修改清单 · 2026-11-12（浏览器测试：「顺着线爬上去」等小芯站定再判）
 
 #128 合并后正式站那次 e2e 里「顺着线爬上去，再跳回能站的地方」没过（370/371），#128 没改网页，同一份网页代码在 PR 检查和 #127 合并后都过了。

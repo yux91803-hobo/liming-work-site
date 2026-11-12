@@ -49,6 +49,7 @@ import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, 
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
 import { loginStore, normalizeSite } from './vm-logins.mjs';
 import { loginWindow } from './vm-browser.mjs';
+import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
 import { fromClaude, fromCodex, fromHarness } from './vm-events.mjs';
 import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
 import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
@@ -648,7 +649,8 @@ function runner(run) {
   if (meta.task) setScreenTag('[任务 ' + meta.no + '] ');   // 「小芯在干什么」终端里分得清是哪个分身
   const role = meta.kind === 'daily' ? 'daily' : meta.task ? 'task' : 'front';
   const t0 = Date.now(), usageBefore=sessionUsage(sess), state = {};
-  let finished = false, stderr = '', child = null, app = null, appCode = null, retried = false, restarting = false, stallTm = 0, deadTm = 0;
+  let finished = false, stderr = '', child = null, app = null, appCode = null, retried = false, restarting = false, stallTm = 0, deadTm = 0, scopeSeq = 0;
+  ensureReaperTimer();
   let bridgeTm = 0, steering = false, proxy = null;
   const saveState = () => {
     const changes = {};
@@ -781,6 +783,8 @@ function runner(run) {
         env: Object.assign({}, process.env, meta.agent === 'harness' ? harnessEnv() : meta.agent === 'codex' ? codexKeyEnv() : {}, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
       };
       app = null; appCode = null;
+      // 这一轮的命令放进自己的 systemd scope（vm-reaper.mjs）：setsid、nohup 甩出去的也认得出是这一轮的，结束 2 小时后还在就清掉
+      const unit = 'xin-run-' + run + '-a' + (++scopeSeq);
       if (meta.agent === 'codex' && meta.model!==runtime.AGY_MODEL && process.env.XIN_CODEX_TRANSPORT !== 'exec') {
         const config = [];
         for (let i = 0; i < args.length; i++) if (args[i] === '-c') config.push('-c', args[++i]);
@@ -791,7 +795,8 @@ function runner(run) {
           proxy=await runtime.taskNetwork(currentSession.workspace,{baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model,takeBudget:workBudget(meta.sid)},browserOpts(meta.sid,run));
           container=runtime.containerAppServer(currentSession,config,{proxy,catalog:codexCatalog()});
         }
-        app = runtime.appServer(container?.command || cmd, config, { commandArgs:container?.args, spawn: { ...spawnOptions, stdio: ['pipe', 'pipe', 'pipe'] }, cwd,
+        const w = scoped(container?.command || cmd, container?.args || ['app-server', '--stdio', ...config], { unit, env: spawnOptions.env });
+        app = runtime.appServer(w.cmd, config, { commandArgs: w.args, spawn: { ...spawnOptions, env: w.env, stdio: ['pipe', 'pipe', 'pipe'] }, cwd,
           thread: currentSession.started ? currentSession.agentSid : null, text: meta.text, images: meta.images || [], model: meta.model,
           effort: meta.effort, boxed: false, rollback: !!meta.from && !!meta.turnId && !!currentSession.started, emit: accept,
           turn: (threadId, turnId) => { Object.assign(meta, { threadId, turnId }); patchRun(run,{threadId,turnId,transport:'app-server'}); },
@@ -801,7 +806,7 @@ function runner(run) {
           approve: request => approvalRequest(run, meta, request)
         });
         child = app.child;
-      } else child = spawn(cmd, args, spawnOptions);
+      } else { const w = scoped(cmd, args, { unit, env: spawnOptions.env }); child = spawn(w.cmd, w.args, { ...spawnOptions, env: w.env }); }
       child.xinIdentity=processIdentity(child.pid);
       patchRun(run,{childPid:child.pid,childIdentity:child.xinIdentity});
     } catch (e) { proxy?.close(); proxy=null; finish(127, '启动 ' + cmd + ' 失败：' + e.message); return; }
@@ -1970,6 +1975,47 @@ function ensureMemoryIdle() {
    长期运行的 watchdog 每轮看一眼：网站已经在用更新的那份，就起一个新版 watchdog 接班（等这把锁放开），自己退出，
    不再用旧代码和新代码一起改状态库。正在跑的任务轮次照旧用旧代码跑完这一轮。 */
 const CURRENT_F = () => path.join(BASE, 'controller-current.json');
+/* 遗留进程（vm-reaper.mjs）：systemd 用户定时器每 10 分钟跑一次 reap。部署一次控制器路径就变，定时器调一个固定的小脚本，
+   它照 controller-current.json 找到当前这份再跑。 */
+export function reaperUnits(base, node) {
+  return {
+    shim: '#!/bin/sh\n# 小芯：每 10 分钟清理遗留进程（docs/CHANGES.md 2026-11-12）。找到当前的控制器再跑 reap\n' +
+      'SELF=$(' + node + ' -e \'try{const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).self;if(/\\/vm-agent-[a-f0-9]{12}\\.mjs$/.test(p))process.stdout.write(p)}catch{}\' "' + path.join(base, 'controller-current.json') + '")\n' +
+      '[ -n "$SELF" ] || exit 0\nexec ' + node + ' "$SELF" reap >/dev/null\n',
+    service: '[Unit]\nDescription=Xin: clean up leftover processes\n\n[Service]\nType=oneshot\nNice=10\nExecStart=' + path.join(base, 'bin', 'xin-reap') + '\n',
+    timer: '[Unit]\nDescription=Xin: clean up leftover processes every 10 minutes\n\n[Timer]\nOnBootSec=5min\nOnUnitActiveSec=10min\n\n[Install]\nWantedBy=timers.target\n',
+  };
+}
+function ensureReaperTimer() {
+  try {
+    const uid = process.getuid(), bus = process.env.XIN_SYSTEMD_BUS || '/run/user/' + uid + '/bus', mark = path.join(BASE, 'reaper-timer.json');
+    if (!fs.existsSync(bus)) return;
+    const m = readJ(mark); if (m && m.self === SELF && Date.now() - m.at < 6 * 3600e3) return;
+    const u = reaperUnits(BASE, process.execPath), dir = process.env.XIN_SYSTEMD_USER_DIR || path.join(os.homedir(), '.config', 'systemd', 'user');
+    mk(dir); mk(path.join(BASE, 'bin'));
+    let changed = false;
+    const put = (f, text, mode) => { if (readText(f) !== text) { fs.writeFileSync(f, text, { mode }); fs.chmodSync(f, mode); changed = true; } };
+    put(path.join(BASE, 'bin', 'xin-reap'), u.shim, 0o755); put(path.join(dir, 'xin-reaper.service'), u.service, 0o644); put(path.join(dir, 'xin-reaper.timer'), u.timer, 0o644);
+    const env = { ...process.env, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || '/run/user/' + uid, DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || 'unix:path=' + bus };
+    if (changed) spawnSync('systemctl', ['--user', 'daemon-reload'], { env, timeout: 10000, stdio: 'ignore' });
+    spawnSync('systemctl', ['--user', 'enable', '--now', 'xin-reaper.timer'], { env, timeout: 10000, stdio: 'ignore' });
+    writeJ(mark, { at: Date.now(), self: SELF });
+  } catch { /* 装不上下一轮再试；不耽误这一轮 */ }
+}
+// 这一轮结束的时间：还在做返回 null；找不到记录（对话删了）返回 0
+function runEnded(run) {
+  if (!okId(run, 'r')) return 0;
+  const m = readJ(metaF(run));
+  if (!m) return 0;
+  if (!runDone(run)) return null;
+  let t = 0; try { t = fs.statSync(runF(run)).mtimeMs; } catch { /* 没有过程记录 */ }
+  return Number(m.endedAt) || t || 0;
+}
+function reapNow() {
+  const r = reapOnce({ stateFile: path.join(BASE, 'reaper.json'), ended: runEnded, procs: readProcs({ root: process.env.XIN_PROC_ROOT || '/proc' }),
+    log: e => logLine(path.join(BASE, 'logs', 'reaper.jsonl'), e) });
+  process.stdout.write(JSON.stringify(r));
+}
 function markCurrentController() {
   try {
     if (readJ(CURRENT_F())?.self === SELF) return;
@@ -3034,6 +3080,7 @@ function main() {
   if (op === 'callback') { flushControllerEvent().catch(() => {}); return; }
   if (op === 'watchdog') { watchdog().catch(() => {}); return; }
   if (op === 'login-window') { runLoginWindow().catch(() => {}); return; }
+  if (op === 'reap') { reapNow(); return; }
   if (op === 'xin') { process.exitCode = xinCmd(process.argv.slice(3)); return; }
   if (op === 'pushq') { let m = null; try { m = JSON.parse(process.argv[3] || ''); } catch { /* 坏的就不发 */ } if (m) pushAll(m).catch(() => {}); return; }
   const internal = locked && Object.prototype.hasOwnProperty.call(iops, op);
