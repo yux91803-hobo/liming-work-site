@@ -1874,8 +1874,12 @@ function taskTell(a) {
     saveTask(t);
     return { ok: true, msg: '已收到，当前进程退出后接着做', task: taskSummary(t) };
   }
-  Object.assign(t, { next: (waiting ? '用户回复：' : '用户又说：') + text + (waiting && t.question ? '\n（你之前问的是：' + t.question + '）' : ''), nextShow: text,
-    status: 'queued', queuedAt: Date.now(), question: '', frontSeen: true });
+  // 停下前压着的补充（干活时收到、这一轮结束时停在等确认没顾上的）跟这句一起交给模型，这句放最后、以它为准；
+  // 不留在收件箱里等这一轮做完再翻出来重新开工（站长回「不用了」后任务又被旧补充叫起来，2026-11-12）。
+  // 参考 Codex codex-rs/core/src/session/input_queue.rs：补充一次取完、和下一轮一起交出去。
+  const held = (t.inbox || []).map(x => '- ' + x.text);
+  Object.assign(t, { next: (held.length ? '你停下前用户补充过（按先后）：\n' + held.join('\n') + '\n' : '') + (waiting ? '用户回复：' : '用户又说：') + text + (waiting && t.question ? '\n（你之前问的是：' + t.question + '）' : '') + (held.length ? '\n以用户最后的回复为准。' : ''), nextShow: text,
+    inbox: [], status: 'queued', queuedAt: Date.now(), question: '', frontSeen: true });
   if (waiting) t.deadline = null;
   if (interrupted) t.resumes = 0;
   saveTask(t);
@@ -2087,7 +2091,7 @@ export function frontAction(a) {
   }
   if (act !== 'task') { const c = companionCmd(a.argv.slice(1), a.run); return c && c.code === 0 ? { text: c.text } : { error: c ? c.text : '不支持这个操作' }; }
   const mine = listTasks().filter(t=>t.parent === m.sid);
-  if (sub === 'list') return {tasks:mine.map(taskSummary),daily:dailyEvidence()};
+  if (sub === 'list') return {...frontTaskList(m.sid),daily:dailyEvidence()};
   const mutation = readJ(path.join(RUNS,a.run+'.front.json'));
   if (mutation) return mutation;
   let r;
@@ -2104,8 +2108,8 @@ export function frontAction(a) {
     const requested = m.frontNamed || o.model;
     r = taskNew({parent:m.sid,...o,goal:original,web:!!o.web,strictModel:!!m.frontNamed,frontRun:a.run,files:[...new Set([...(o.files||[]),...(m.frontFiles||[]).map(f=>f.path)])],model:requested,named:!!m.frontNamed,userRequest:original});
   } else {
-    const t = mine.find(t=>String(t.no)===rest[0]);
-    if (!t) return {error:'找不到这个对话里的工作'};
+    const t = frontTaskByNo(m.sid, rest[0]);
+    if (!t) return {error:'找不到任务 '+rest[0]+'（xin task list 看有哪些）'};
     if (sub === 'show') {
       const run = lastRun(t);
       return {task:taskSummary(t),question:t.question,result:t.result,activity:run ? taskActivity(run) : '',updated:t.updated};
@@ -2147,8 +2151,21 @@ export function frontFallback(a) {
 // 像 opencode 后台任务还在跑时不发通知（subagent-completion.ts：status === "running" 就 return）、Codex 只发变了的部分；
 // 每轮都带「进行中」时，DeepSeek 会把任何一句都答成进度（联调 #113–#116）。兄弟问进度时前台用 xin task list/show 查。
 // 完成事件（handoffPrompt）仍带上进行中、排队中的，用来判断依赖。
+/* 前台看任务（2026-11-12 站长反馈）：网页上的「N 个待确认」、工作台是所有对话的任务，前台以前只看得到这个对话派的，
+   新对话里被问到别的对话的任务就一口咬定「没有」。task list 也列出别的对话里没做完的；按编号 show/tell/stop 也认它们。 */
+export function frontTaskList(sid, all) {
+  all = all || listTasks();
+  const others = all.filter(t => t.parent !== sid && !isFinished(t)).map(t => ({ ...taskSummary(t), from: '别的对话里派的' }));
+  return { tasks: all.filter(t => t.parent === sid).map(t => taskSummary(t)), others,
+    note: others.length ? 'others 是别的对话里派的、还没做完的任务（网页上的进行中、待确认也算它们）；兄弟问到时照样能 task show/tell/stop 编号' : '' };
+}
+export function frontTaskByNo(sid, no, all) {
+  all = all || listTasks();
+  return all.find(t => t.parent === sid && String(t.no) === String(no)) || all.find(t => String(t.no) === String(no)) || null;
+}
 export function taskNotes(sid, all, { active = true } = {}) {
-  const mine = (all || listTasks()).filter(t => t.parent === sid);
+  all = all || listTasks();
+  const mine = all.filter(t => t.parent === sid);
   const lines = [], seen = [];
   for (const t of mine) {
     const head = '- 任务 ' + t.no + '「' + t.title + '」';
@@ -2157,6 +2174,8 @@ export function taskNotes(sid, all, { active = true } = {}) {
     else if (active && t.status === 'running') lines.push(head + '进行中（' + Math.max(1, Math.round((Date.now() - (t.startedAt || t.created)) / 60e3)) + ' 分钟）');
     else if (active && t.status === 'queued') lines.push(head + '排队中' + (t.after && t.after.length ? '（等任务 ' + t.after.join('、') + ' 做完）' : ''));
   }
+  // 别的对话里在等确认的也说一句（网页上「N 个待确认」数的是所有对话）；不算这个对话看过，结果还是回原来那个对话说
+  for (const t of all) if (t.parent !== sid && t.kind === 'task' && t.status === 'waiting' && !t.dailyDate) lines.push('- 任务 ' + t.no + '「' + t.title + '」（别的对话里派的）在等用户确认：' + t.question);
   // 像 opencode 的 <subagent>、Codex 的 <subagent_notification>：快照只放状态，单独一条带标签；怎么对待它写在系统提示里（默认模式规则 6）
   return { text: lines.length ? '<后台任务>\n' + lines.join('\n') + '\n</后台任务>' : '', seen };
 }
