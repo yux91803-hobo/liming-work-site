@@ -54,7 +54,6 @@ test('常驻服务：装好以后确认真的在跑、重启后也会起来（�
   const p = await imp('vm-persona.mjs');
   assert.match(p.SYSTEM_TASK_GUIDE('/d/system'), /确认它真的在跑/);
   assert.match(p.systemPrompt(''), /确认它真的在跑/);
-  assert.match(p.tianqiPrompt(), /确认它真的在跑/);
 });
 
 test('星期几：控制器算好写进当前时间（前台资料、每日任务），不让模型猜', async () => {
@@ -66,4 +65,16 @@ test('星期几：控制器算好写进当前时间（前台资料、每日任�
   assert.match(d.dailyContext(), /当前北京时间：\d{4}-\d\d-\d\d \d\d:\d\d（星期[一二三四五六日]）/);
   const p = await imp('vm-persona.mjs');
   assert.match(p.dailyPrompt('- 签到'), /北京时间 \d{4}-\d\d-\d\d \d\d:\d\d（星期[一二三四五六日]）/);
+});
+
+// 站长 2026-11-13：「天启模式不是可以选模型的么，你还搞个看不到模型干嘛，天启的你改啥」
+// 天启是独立的高级模式（自己选模型和思考强度），v2 只改小芯；天启的设定保持原样，不套小芯的段落
+test('天启不跟着小芯的提示词 v2 改：不带「说不准是哪个模型」、不套小芯的段落', async () => {
+  const p = await imp('vm-persona.mjs');
+  const s = p.tianqiPrompt();
+  assert.doesNotMatch(s, /说不准|不要猜/);
+  assert.doesNotMatch(s, /## 你看重的|## 怎么说话|## 说的话要有根据|## 什么事先问/);
+  assert.doesNotMatch(s, /确认它真的在跑/);
+  assert.match(s, /^你是「天启」/);
+  assert.match(s, /用户在这里自己选模型和思考强度/);
 });
