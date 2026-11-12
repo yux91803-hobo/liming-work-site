@@ -63,3 +63,33 @@ test('以前做完的 Gemini（Antigravity）任务：存下的用量是「输�
   put('scodex00001', 'glm-5.3', codex);
   assert.deepEqual(op('history', { sid: 'scodex00001' }).usage, codex, 'Codex 的输入本来就含缓存');
 });
+
+test('备份那一刻没做完的那一轮：恢复后不重跑，标成停了（聊天显示已停止、说明一句）；只处理一次', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-cl-rs-')), cold = path.join(tmp, 'cold');
+  const { xin, work, op } = agentEnv({ XIN_FRONT_TEST_COLD: cold });
+  fs.writeFileSync(cold, '');   // 网关卡着：这一轮一直在做
+  const r = op('send', { agent: 'codex', text: '早上好' });
+  for (const end = Date.now() + platformTimeout(10000); Date.now() < end;) { const m = JSON.parse(fs.readFileSync(path.join(xin, 'runs', r.run + '.json'), 'utf8')); if (m.pid) break; await sleep(100); }
+  const a = op('backup_export');
+  assert.equal(a.ok, true, JSON.stringify(a));
+  // 原来那台电脑上这一轮后来结束了（这里直接停掉），备份里它还是「在做」
+  op('stop', { run: r.run });
+  for (const end = Date.now() + platformTimeout(15000); Date.now() < end && !op('poll', { run: r.run, off: 0 }).done;) await sleep(200);
+  // 新电脑：解进空的 ~/.xin
+  const out = path.join(tmp, 'restored'), log = path.join(tmp, 'front-after.log');
+  fs.mkdirSync(out);
+  execFileSync('tar', ['-xzf', a.file, '-C', out]);
+  const env2 = Object.assign({}, process.env, { XIN_HOME: out, XIN_WORK: work, XIN_FRONT_TEST_LOG: log });
+  env2.NODE_OPTIONS = (env2.NODE_OPTIONS || '') + ' --require=' + path.join(__dirname, 'helpers/front-responses.cjs');
+  const op2 = (name, args) => JSON.parse(execFileSync(process.execPath, [AGENT, name], { env: env2, input: JSON.stringify(args || {}) }).toString());
+  let p = null;
+  for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { p = op2('poll', { run: r.run, off: 0 }); if (p.done) break; await sleep(200); }
+  assert.ok(p && p.done, '恢复后这一轮结束了');
+  const done = p.events.find(e => e.t === 'done');
+  assert.equal(done.stopped, true, JSON.stringify(p.events.slice(-3)));
+  assert.equal(p.events.filter(e => e.t === 'err' && /备份/.test(e.text)).length, 1, '说明一句是备份那一刻没做完的');
+  assert.ok(!fs.existsSync(log), '没有重新发给模型');
+  assert.ok(!fs.existsSync(path.join(out, 'restore-stop.json')), '只处理一次');
+  op2('status');
+  assert.equal(op2('poll', { run: r.run, off: 0 }).events.filter(e => e.t === 'err' && /备份/.test(e.text)).length, 1, '再开不再说一遍');
+});

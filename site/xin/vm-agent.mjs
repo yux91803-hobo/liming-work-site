@@ -39,6 +39,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import * as runtime from './vm-runtime.mjs';
 import { StateJournal, inputDigest } from './vm-state.mjs';
@@ -531,9 +532,20 @@ export function backupExport(keep = 3) {
     const stage = fs.mkdtempSync(path.join(dir, '.stage-'));
     try {
       journal.db.exec("VACUUM INTO '" + path.join(stage, 'workflow.sqlite').replace(/'/g, "''") + "'");
+      // 这一刻没做完的几轮（排着的、在做的）：恢复后不该重跑（可能是几天前的话、早上的每日任务）。快照里把它们放回「排着」，
+      // 另记一份 restore-stop.json，恢复后第一次调用由 restoreStops 标成停了，照「开工前就停了」收尾
+      const staged = new DatabaseSync(path.join(stage, 'workflow.sqlite')), stage2 = ['workflow.sqlite'];
+      try {
+        const open = staged.prepare("SELECT run FROM launches WHERE state IN ('pending','dispatched')").all().map(x => x.run);
+        if (open.length) {
+          staged.prepare("UPDATE launches SET state='pending' WHERE state='dispatched'").run();
+          fs.writeFileSync(path.join(stage, 'restore-stop.json'), JSON.stringify({ at: Date.now(), runs: open }), { mode: 0o600 });
+          stage2.push('restore-stop.json');
+        }
+      } finally { staged.close(); }
       const items = BACKUP_ITEMS.filter(n => fs.existsSync(path.join(BASE, n)));
       const tmp = file + '.' + process.pid + '.tmp';
-      const r = spawnSync('tar', ['-czf', tmp, '--exclude=*.tmp', '--exclude=*.journal-*', '-C', stage, 'workflow.sqlite', '-C', BASE, ...items], { encoding: 'utf8', timeout: 60000 });
+      const r = spawnSync('tar', ['-czf', tmp, '--exclude=*.tmp', '--exclude=*.journal-*', '-C', stage, ...stage2, '-C', BASE, ...items], { encoding: 'utf8', timeout: 60000 });
       if (r.status !== 0) { try { fs.unlinkSync(tmp); } catch { /* 没写出来 */ } return { error: 'tar_failed', msg: '打包失败：' + String(r.stderr || r.error?.message || '').trim().slice(0, 200) }; }
       fs.chmodSync(tmp, 0o600); fs.renameSync(tmp, file);
     } finally { fs.rmSync(stage, { recursive: true, force: true }); }
@@ -2849,8 +2861,25 @@ function xinCmd(argv) {
   return act && act !== '-h' && act !== '--help' ? 2 : 0;
 }
 
+// 用机外备份恢复的电脑：备份那一刻没做完的几轮标成停了（不重跑），说明一句；几个进程同时开时只有一个处理
+export const RESTORE_STOP_TEXT = '这一轮是备份那一刻还没做完的，恢复后没有接着做；要的话再说一遍。';
+function restoreStops() {
+  const f = path.join(BASE, 'restore-stop.json');
+  if (!fs.existsSync(f)) return;
+  const mine = f + '.' + process.pid;
+  try { fs.renameSync(f, mine); } catch { return; }
+  for (const run of (readJ(mine, {}) || {}).runs || []) {
+    const m = readJ(metaF(run));
+    if (!m || m.ended || m.stopped) continue;
+    emit(run, { t: 'err', text: RESTORE_STOP_TEXT });
+    patchRun(run, { stopped: true, restoreStopped: Date.now() });
+  }
+  try { fs.unlinkSync(mine); } catch { /* 别处删了 */ }
+}
+
 function main() {
   journal.recover();
+  restoreStops();
   let op = process.argv[2];
   const locked = op === 'locked';
   if (locked) op = process.argv[3];
