@@ -451,7 +451,7 @@ export function agentArgs(agent, sess, text, effort, extra) {
     : ['--dangerously-bypass-approvals-and-sandbox'];
   // Native agents bypass our task tree, queue and budget accounting; dispatch only through xin task.
   const common = ['--json', '--skip-git-repo-check'].concat(sandbox, codexRoute(M.id), ['-c', 'features.multi_agent=false', '-c', 'features.multi_agent_v2=false', '-c', 'developer_instructions=' + JSON.stringify(dev)])
-    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], boxed ? taskMcpFlags(sess) : ['-c', 'shell_environment_policy.set.BASH_ENV=' + JSON.stringify(path.join(BASE, 'shell-env.sh'))].concat(mcpFlags(), sess.dailyDate ? dailyMcpOff() : []));
+    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], boxed ? taskMcpFlags(sess) : ['-c', 'shell_environment_policy.set.BASH_ENV=' + JSON.stringify(path.join(BASE, 'shell-env.sh'))].concat(mcpFlags(), hostTask(sess) ? dailyMcpOff() : []));
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(imgs, common, [sess.agentSid, text])];
   return ['codex', ['exec'].concat(imgs, common, ['-C', (role === 'task' && (sess.workspace?.work || sess.dir)) || WORK, text])];
 }
@@ -1449,11 +1449,15 @@ export function mainSid() {
    - 所有任务记录的读改写都在同一把锁（tasks）里做；推送在锁外发。 */
 const TASK_MAX = Number(process.env.XIN_TASK_MAX) || 2;
 const TASK_MIN = 60, TASK_MIN_MAX = 180;
-export const TASK_KINDS = ['quick', 'code', 'research', 'hard', 'vision', 'review'];
+export const TASK_KINDS = ['quick', 'code', 'research', 'hard', 'vision', 'review', 'system'];
 export const TASK_STATUS = { queued: '排队中', running: '进行中', stopping: '正在停止', waiting: '等你确认', done: '做完了', failed: '没做成', stopped: '已停止' };
 const TASKS_DIR = () => path.join(WORK, 'tasks');
 // 每日任务自己的目录：以前用整个 WORK，调度规则「目录有包含关系就不同时跑」让它和所有后台任务互相排队（最长 180 分钟）
 export const DAILY_DIR = () => path.join(WORK, 'daily');
+// 电脑维护（--kind system）：不进容器，直接在这台电脑上查、修（能 sudo）。几个电脑维护任务共用这一个目录，按目录排队，同一时间只做一个
+export const SYSTEM_DIR = () => path.join(WORK, 'system');
+// 不进容器、不建项目副本的任务：每日任务和电脑维护
+export const hostTask = t => !!(t && (t.dailyDate || t.tkind === 'system'));
 const TASK_SEQ = () => path.join(BASE, 'task-seq.json');
 const RESUME_TEXT = '（刚才电脑暂停或重启，这一轮中途断了。先检查现在的状态——看看文件、编译结果、还在不在跑的进程——已经做过的有副作用的事别再做一遍，然后接着把任务做完。）';
 const isTask = s => !!s && s.kind === 'task';
@@ -1583,7 +1587,7 @@ export function taskSummary(t, full) {
 }
 // 集合目录不能当项目目录（研究笔记 3.2）：容器能读整个项目目录，指到集合目录就能读到不相干的东西。
 // 上传的文件（uploads 和下面每一天）、STM32 空工程：本身和里面都不行；任务目录、每日任务目录：本身不行，里面各自的项目照常
-const COLLECTIONS = [['uploads', true], ['stm32-template', true], ['tasks', false], ['daily', false]];
+const COLLECTIONS = [['uploads', true], ['stm32-template', true], ['tasks', false], ['daily', false], ['system', false]];
 export function collectionDir(real) {
   for (const [name, deep] of COLLECTIONS) {
     let root = path.resolve(WORK, name); try { root = fs.realpathSync(root); } catch { /* 还没建 */ }
@@ -1620,8 +1624,9 @@ function taskNew(a) {
   const goal = String(a.goal || '').trim().slice(0, a.frontRun ? TEXT_MAX : 12000);
   if (!goal) return { error: 'empty', msg: '要写清楚让分身做什么（xin task new --title 标题 -- 要求，或者从标准输入给）' };
   const kind = a.daily ? 'daily' : TASK_KINDS.includes(a.kind) ? a.kind : 'code';
+  const host = !!a.daily || kind === 'system';   // 电脑维护不带网页成品、网站登录、插件：那些在容器里做
   const sites = [];
-  for (const x of Array.isArray(a.sites) ? a.sites : []) { const site = normalizeSite(x); if (!site) return { error: 'bad_site', msg: '认不出是哪个网站：' + x }; if (!sites.includes(site)) sites.push(site); }
+  for (const x of host ? [] : Array.isArray(a.sites) ? a.sites : []) { const site = normalizeSite(x); if (!site) return { error: 'bad_site', msg: '认不出是哪个网站：' + x }; if (!sites.includes(site)) sites.push(site); }
   if (sites.length > SITES_MAX) return { error: 'bad_site', msg: '一个任务最多带 ' + SITES_MAX + ' 个网站的登录' };
   const title = (String(a.title || '').replace(/\s+/g, ' ').trim() || goal.replace(/\s+/g, ' ')).slice(0, 40);
   const all = listTasks();
@@ -1644,15 +1649,15 @@ function taskNew(a) {
   if(rt.error)return {error:rt.error,msg:rt.note};
   const seq = (readJ(TASK_SEQ(), {}) || {}).n || all.reduce((m, t) => Math.max(m, t.no || 0), 0);
   const no = seq + 1;
-  if (a.daily) mk(DAILY_DIR());
-  const d = a.daily ? { dir: fs.realpathSync(DAILY_DIR()) } : taskDir(no, title, a.dir);
+  if (a.daily) mk(DAILY_DIR()); else if (kind === 'system') mk(SYSTEM_DIR());
+  const d = a.daily ? { dir: fs.realpathSync(DAILY_DIR()) } : kind === 'system' ? { dir: fs.realpathSync(SYSTEM_DIR()) } : taskDir(no, title, a.dir);
   if (d.error) return { error: 'bad_dir', msg: d.error };
   writeJ(TASK_SEQ(), { n: no });
   const minutes = Math.min(TASK_MIN_MAX, Math.max(5, Math.round(Number(a.minutes) || TASK_MIN)));
   const t = { sid: rid('s'), kind: 'task', no, parent: okId(a.parent, 's') ? a.parent : null, agent: 'codex', title, goal, userRequest:String(a.userRequest||'').slice(0,TEXT_MAX), tkind: kind,
     model: rt.model, requestedModel:a.model||null,requestedNamed:!!a.named,actualModel:null,actualModels:[],reviewAuthors:[],why: rt.why, fallbacks: rt.fallbacks, note: rt.note || '', files, dir: d.dir, after, minutes,
-    plugins: [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
-    frontRun:a.frontRun||null,web:!!a.web,strictModel:!!a.strictModel&&rt.model!==runtime.AGY_MODEL,...(sites.length?{sites}:{}),status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
+    plugins: host ? [] : [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
+    frontRun:a.frontRun||null,web:!!a.web&&!host,strictModel:!!a.strictModel&&rt.model!==runtime.AGY_MODEL,...(sites.length?{sites}:{}),status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
   if(t.strictModel)t.fallbacks=[];
   saveTask(t);
   memoryActivity();
@@ -1690,8 +1695,8 @@ function startTask(t, all) {
   }
   // 项目副本和任务自己的会话都在系统临时目录里；电脑重启后它们可能已经没了（审查问题 16）。
   // 这时副本会按原项目重新拷一份，旧会话也续接不上：不再续接，开新会话，并把原要求和现状说清楚，而不是直接算没做成。
-  const lost = !first && !t.dailyDate && !!t.workspace && !fs.existsSync(t.workspace.work);
-  try { if (!t.dailyDate) t.workspace = runtime.prepareWorkspace(t, BASE); }
+  const lost = !first && !hostTask(t) && !!t.workspace && !fs.existsSync(t.workspace.work);
+  try { if (!hostTask(t)) t.workspace = runtime.prepareWorkspace(t, BASE); }
   catch (e) { failTask(t, '没有启动任务：' + e.message); return false; }
   if (lost) { t.agentSid = null; t.started = false; delete t.antigravityConversation; }
   const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps)
@@ -1701,7 +1706,7 @@ function startTask(t, all) {
   const cm = codexModel(t.model);
   Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, retryAt: 0, startedAt: t.startedAt || Date.now() });
   const run = launch(t, { text, effort: t.model===runtime.AGY_MODEL?'high':AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||t.model===runtime.AGY_MODEL ? t.fallbacks || [] : [],
-    images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !t.dailyDate && TASK_SANDBOX(),
+    images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !hostTask(t) && TASK_SANDBOX(),
     deadline: t.deadline }, { t: 'user', text: userText, at: Date.now() });
   if (t.dailyDate) writeJ(DAILY_LAST(), { date: t.dailyDate, run, sid: t.sid, at: Date.now(), ok: null });
 }

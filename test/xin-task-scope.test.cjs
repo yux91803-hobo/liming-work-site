@@ -102,13 +102,13 @@ test('前台看任务：task list 也列出别的对话里没做完的任务（�
   assert.ok(!/任务 75/.test(notes) && !/任务 76/.test(notes), notes);
 });
 
-test('提示词：后台任务知道容器里连不上这台电脑本机的服务，连不上就直说做不了、别反复试、别让用户启动面板；前台知道 task list 也有别的对话的任务、签到积分看每日任务记录回答', async () => {
+test('提示词：后台任务知道容器里连不上这台电脑本机的服务，连不上就直说做不了、别反复试、别让用户启动面板；前台知道 task list 也有别的对话的任务、签到积分派电脑维护（2026-11-12 站长定：小芯要能管自己的电脑）', async () => {
   process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-scope-p-'));
   const { taskSystemPrompt, systemPrompt } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-persona.mjs')).href);
   const p = taskSystemPrompt({ no: 1, title: '查积分', dir: '/data/workspace/x', workspace: { work: '/w/work', home: '/w/home', tmp: '/w/tmp' }, goal: '现在有多少积分' });
   assert.match(p, /127\.0\.0\.1/); assert.match(p, /连不上/); assert.match(p, /直接说做不了/); assert.match(p, /不要反复试/); assert.match(p, /启动/);
   const front = systemPrompt('', { tasks: true });
-  assert.match(front, /别的对话/); assert.match(front, /工作台里点/); assert.match(front, /签到/); assert.match(front, /每日任务/);
+  assert.match(front, /别的对话/); assert.match(front, /工作台里点/); assert.match(front, /签到积分/); assert.match(front, /--kind system/);
 });
 
 test('新对话里问别的对话的任务：task show 看得到；task tell/stop 不跨对话改动，说清楚去工作台或回那个对话', async t => {

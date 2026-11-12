@@ -65,9 +65,10 @@ export const ROUTES = {
   hard: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'],                   // 难题：方案设计、疑难 bug、推理
   vision: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                 // 看图
   review: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'],                 // 检查别的任务的结果（会避开被检查的那个模型）
-  daily: ['glm-5.3', 'deepseek-v4.1-flash', 'kimi-k3.1-pro']                   // 每日任务
+  daily: ['glm-5.3', 'deepseek-v4.1-flash', 'kimi-k3.1-pro'],                  // 每日任务
+  system: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash']                  // 电脑维护：不进容器，直接在电脑上查、修
 };
-export const KIND_NAMES = { chat: '聊天', quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务' };
+export const KIND_NAMES = { chat: '聊天', quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务', system: '电脑维护' };
 // 用户点名：「用 / 换成 / 让 … 模型」或者「模型 来做 / 来看 …」。Flash 要排在同名的前面
 export const MODEL_ALIAS = [
   [runtime.AGY_MODEL,'antigravity\\b|agy\\b|gemini[\\s-]*3\\.8[\\s-]*flash(?:[\\s-]*high)?'],

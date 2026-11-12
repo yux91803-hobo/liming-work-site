@@ -1334,7 +1334,7 @@
      - 「详情」：一页里看它每一步说的话、执行的命令和结果；在做的能改要求、能停，做完的、停了的能补充后继续，等确认的直接回复。
      状态靠轮询 tasks：看着有任务在做的对话时 4 秒一次，别的时候有任务在做 20 秒一次，没有就不轮询。 */
   var TSTAT = { queued: '排队中', running: '进行中', stopping: '停止中', waiting: '待确认', done: '已完成', failed: '失败', stopped: '已停止' };
-  var TKIND = { quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务' };
+  var TKIND = { quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务', system: '电脑维护' };
   var TICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>';
   S.tinfo = {}; S.tactive = []; S.bg = 0; S.queue = [];
   function tLive(t) { return t.status === 'queued' || t.status === 'running' || t.status === 'stopping'; }
