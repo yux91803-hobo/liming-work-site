@@ -187,6 +187,27 @@ test('等回答到点：问题记成等你确认，这一轮结束后不再算�
   assert.ok(last.includes('用户回复：删吧') && last.includes('要删掉旧的 build 目录吗？'), last.slice(-300));
 });
 
+test('到点一直没记下问题（锁忙满 2 分钟）：不对模型说「已经记下」；这一轮结束后照样停在等你确认，回答能接着做', async t => {
+  const { inputTimeoutReply, INPUT_TIMEOUT_TEXT } = await loadAgent();
+  assert.equal(inputTimeoutReply({ expired: true }), INPUT_TIMEOUT_TEXT);
+  const unsaved = inputTimeoutReply({ expired: true, unsaved: true });
+  assert.ok(!/已经记下/.test(unsaved), unsaved);
+  assert.match(unsaved, /最后一条消息/);
+  const h = home(t);
+  const { sid } = await askingTask(h);
+  // task_approval_expire 一直没成功：任务上还挂着这一轮的 approval
+  h.hold('bg', false);
+  const x = await until(() => { const v = h.task(sid); return v.status === 'waiting' && v.finishedRun && v; }, 15000, '这一轮结束后停在等你确认');
+  assert.equal(x.question, '要删掉旧的 build 目录吗？');
+  assert.equal(x.approval, undefined, '这一轮已经结束，不能再按 approval 回复');
+  assert.equal(h.op('tasks', {}).bg, 0, '不再让云电脑醒着');
+  const told = h.locked('task_tell', { sid, text: '删吧' });
+  assert.equal(told.ok, true, JSON.stringify(told));
+  await until(() => h.task(sid).status === 'done', 15000, '接着做完');
+  const last = bgCalls(h).at(-1).args;
+  assert.ok(last.includes('用户回复：删吧') && last.includes('要删掉旧的 build 目录吗？'), last.slice(-300));
+});
+
 test('到点那一刻站长回答：答案进收件箱，下一轮带上，不丢', async t => {
   const h = home(t);
   const { sid, run } = await askingTask(h);

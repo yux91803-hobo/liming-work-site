@@ -1080,6 +1080,10 @@ function taskMcpFlags(t) {
    让模型结束这一轮；站长之后回答走 task_tell，接着同一个会话做。 */
 export const APPROVAL_HOLD_MS = Number(process.env.XIN_APPROVAL_HOLD_MS) || 600000;
 export const INPUT_TIMEOUT_TEXT = '（用户 10 分钟内没有回复。问题已经记下，用户回复后会接着叫你。现在结束这一轮：最后一条消息写清楚做到哪了、要用户确认什么。）';
+// 锁忙满 2 分钟还没记下：不说「已经记下」。这一轮结束后任务照样停在「等你确认」（taskFinish 把挂着的问题转成普通问题），
+// 用户看到的是问题本身和这一轮最后一条消息，所以让模型把要确认的事写进最后一条消息
+const INPUT_UNSAVED_TEXT = '（用户 10 分钟内没有回复。现在结束这一轮：最后一条消息写清楚做到哪了、要用户确认什么，用户会在任务结果里看到，回复后会接着叫你。）';
+export const inputTimeoutReply = r => r.unsaved ? INPUT_UNSAVED_TEXT : INPUT_TIMEOUT_TEXT;
 // 到点「记下问题」要拿 tasks 锁，锁忙（别的进程在做重活）时 lockedCall 返回 error：以前照样交还，问题没记下，
 // 这个等待一直挂在任务上（后台算在忙、云电脑不睡）。现在隔 5 秒再试，期间来了回答就用回答；试满 2 分钟还记不下才放弃。
 const EXPIRE_RETRY_MS = 5000, EXPIRE_RETRY_FOR = 120e3;
@@ -1109,7 +1113,7 @@ async function approvalRequest(run, meta, request) {
   const p = request.params || {}, answer = text => ({ answers: Object.fromEntries((p.questions || []).map(q => [q.id, { answers: [text] }])) });
   lockedCall('tasks', 'task_approval', { sid: meta.sid, run, id, method: request.method, kind: 'input', question: cut((p.questions || []).map(q => q.question).join('\n'), 450) });
   const r = await awaitTaskInput({ id, read: () => readJ(metaF(run)), expire: () => lockedCall('tasks', 'task_approval_expire', { sid: meta.sid, run, id }) });
-  return r.reply ? answer(r.reply) : r.expired ? answer(INPUT_TIMEOUT_TEXT) : { answers: {} };
+  return r.reply ? answer(r.reply) : r.expired ? answer(inputTimeoutReply(r)) : { answers: {} };
 }
 // 每日任务不进容器（签到要操作桌面），但用不到电脑自带的云电脑管理插件 instabox（开关机、快照、删机器）：
 // 每天自动访问外部网站的那一轮不该拿着它。清单里没有管云电脑的步骤（2026-11-12 核对）；桌面操作插件留着。
@@ -1641,7 +1645,9 @@ function taskFinish(a) {
   if(t.web)t.processesCleaned=true;
   const actual=a.model||runMeta.model||t.actualModel||t.model;
   if(actual){t.model=t.actualModel=actual;t.actualModels=[...new Set((t.actualModels||[]).concat(actual))];}
-  if (a.timeout || a.died || a.stopped) delete t.approval;
+  // 这一轮结束了，挂在它上面的问题不能再按 approval 回复（taskTell 会说「这一轮已经结束」）：超时、断了、停了的直接丢掉；
+  // 正常结束的（到点锁忙、问题没记成 pendingQuestion）状态还是 waiting，下面照样停在「等你确认」，回复走普通的接着做
+  delete t.approval;
   const pending = (runMeta.steers || []).filter(x => x.state === 'pending' || x.state === 'next');
   if (pending.length) t.inbox = (t.inbox || []).concat(pending.map(x => ({ text: x.text, at: x.at })));
   const last = evs.filter(e => e.t === 'text').pop(), err = evs.filter(e => e.t === 'err').pop();
