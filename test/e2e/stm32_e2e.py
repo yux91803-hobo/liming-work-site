@@ -1236,7 +1236,10 @@ async def main():
         await touch('touchEnd'); await pg.wait_for_timeout(500)
         hang = await pg.evaluate("[LimingXin.mode, LimingXin.mood, getComputedStyle(document.querySelector('.xin-thread')).display]")
         check('扔到下面没有落脚点：射一根线吊住，吓得发抖', hang == ['hang', 'scared', 'block'], hang)
-        await pg.wait_for_timeout(5000)
+        # 吊住 → 下坠回弹 → 发抖 0.9 秒 → 往上爬（最长 2.6 秒）→ 跳回平台（最长 0.9 秒），按代码算最长约 5 秒；
+        # 以前固定等 5 秒，只剩半秒余量，执行机一忙就判失败（2026-11-12 #128 上线时）。等它真的站定，最多 12 秒
+        try: await pg.wait_for_function("LimingXin.mode === 'idle' && !!LimingXin.plat", timeout=12000)
+        except Exception: pass
         check('顺着线爬上去，再跳回能站的地方', await pg.evaluate("[LimingXin.mode, !!LimingXin.plat]") == ['idle', True])
         await pg.context.close()
 
