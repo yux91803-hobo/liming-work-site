@@ -13,6 +13,9 @@ import { spawn } from 'node:child_process';
 
 export const BROWSER_LIMITS = { commands: 300, tabs: 5, timeoutMs: 30000, snapshotChars: 12000, textChars: 20000, downloadBytes: 100 * 1024 * 1024, downloadTotal: 300 * 1024 * 1024 };
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
+// 浏览器自成一个进程组：杀的时候连渲染、GPU 这些子进程一起杀，不然它们会接着往资料目录里写（压力下见过删目录报 ENOTEMPTY）
+const killGroup = c => { if (!c?.pid) return; try { process.kill(-c.pid, 'SIGKILL'); } catch { try { c.kill('SIGKILL'); } catch { /* 已经没了 */ } } };
+const removeDir = dir => { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); } catch { /* 删不掉下一轮开始时再删 */ } };
 const fail = (error, msg) => ({ error, msg });
 
 /* ---------- CDP（--remote-debugging-pipe：消息是以 \0 结尾的 JSON） ---------- */
@@ -124,7 +127,7 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
 
   async function start() {
     proxy = await egress({ allowAddress, ports });
-    fs.rmSync(profileDir, { recursive: true, force: true }); fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+    removeDir(profileDir); fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
     const attempt = async (noSandbox, headless) => {
       const args = ['--remote-debugging-pipe', '--user-data-dir=' + profileDir, '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
         '--disable-component-update', '--disable-sync', '--disable-extensions', '--disable-default-apps', '--disable-features=Translate,MediaRouter,OptimizationHints',
@@ -134,14 +137,14 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
       if (noSandbox) args.push('--no-sandbox');
       args.push('about:blank');
       const env = { ...process.env }; if (!headless && display) env.DISPLAY = display;
-      const c = spawn(chrome, args, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], env });
+      const c = spawn(chrome, args, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], env, detached: true });
       let err = ''; c.stderr.setEncoding('utf8'); c.stderr.on('data', s => { err = (err + s).slice(-2000); });
       const conn = new Cdp(c.stdio[3], c.stdio[4]);
       // 'close' 在 stderr 读完以后才来：退出原因（比如开不了沙盒）不会丢；子进程攥着管道时最多再等 2 秒
       const exited = new Promise(ok => { c.once('close', () => ok(null)); c.once('exit', () => setTimeout(() => ok(null), 2000)); });
       const ready = await Promise.race([conn.send('Browser.getVersion', {}, null, 20000).then(() => true, () => null), exited]);
       // 一启动就退出、什么都没说：err 是空的，不能拿它当「成功」的判断
-      if (!ready) { try { c.kill('SIGKILL'); } catch { /* 已经退了 */ } return { ok: false, error: err || '浏览器进程刚启动就退出了' }; }
+      if (!ready) { killGroup(c); return { ok: false, error: err || '浏览器进程刚启动就退出了' }; }
       return { ok: true, c, conn };
     };
     // 浏览任意网页，渲染进程一定要在 Chromium 自己的沙盒里：开不了沙盒就不浏览，不退回 --no-sandbox
@@ -158,14 +161,23 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     }
     child = r.c; cdp = r.conn;
     // runner 收尾时不一定等得到 close()：进程退出时同步杀掉浏览器、删资料
-    process.once('exit', () => { try { child?.kill('SIGKILL'); } catch { /* 没了 */ } try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch { /* 删不掉下一轮开始时再删 */ } });
+    process.once('exit', () => { killGroup(child); removeDir(profileDir); });
     cdp.listeners.add(onEvent);
     fs.mkdirSync(downloads, { recursive: true });
     await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads, eventsEnabled: true });
     await cdp.send('Target.setDiscoverTargets', { discover: true });
-    const { targetInfos } = await cdp.send('Target.getTargets');
-    for (const t of targetInfos.filter(t => t.type === 'page')) pages.push({ id: t.targetId, url: t.url, title: t.title, opener: t.openerId || null });
-    current = await attach(pages[0]);
+    current = await attach(await somePage());
+  }
+  // 浏览器刚起来、机器又忙时，开头那一页可能还没登记上（压力测试里见过）：等它出现，最多 15 秒；还没有就自己开一页
+  async function somePage() {
+    for (let i = 0; i < 60; i++) {
+      const { targetInfos } = await cdp.send('Target.getTargets');
+      for (const t of targetInfos.filter(t => t.type === 'page')) if (!pages.some(x => x.id === t.targetId)) pages.push({ id: t.targetId, url: t.url, title: t.title, opener: t.openerId || null });
+      if (pages.length) return pages[0];
+      if (i === 20) await cdp.send('Target.createTarget', { url: 'about:blank' }).catch(() => {});
+      await sleep(250);
+    }
+    throw Error('浏览器起来了，但一直没有能用的页面');
   }
   function onEvent(m) {
     const p = m.params || {};
@@ -364,7 +376,7 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     used++;
     if (cmd === 'close' && !child) return { ok: true, text: '浏览器没开' };
     if (!child) await start();
-    if (!current) current = await attach(pages.find(p => p) || (await (async () => { const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' }); await sleep(100); return pages.find(p => p.id === targetId); })()));
+    if (!current) current = await attach(await somePage());
     return CMDS[cmd](...args);
   }
   function handle({ cmd, args = [] } = {}) {
@@ -386,12 +398,12 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
       const gone = new Promise(ok => { if (c.exitCode !== null || c.signalCode) ok(); else c.once('exit', ok); });
       try { await Promise.race([cdp.send('Browser.close', {}, null, 3000), sleep(3000)]); } catch { /* 关不掉就杀 */ }
       await Promise.race([gone, sleep(3000)]);
-      try { c.kill('SIGKILL'); } catch { /* 已经退了 */ }
+      killGroup(c);
       await Promise.race([gone, sleep(2000)]);
     }
     cdp = null; pages = []; current = null; refs = new Map();
     proxy?.close(); proxy = null;
-    fs.rmSync(profileDir, { recursive: true, force: true });
+    removeDir(profileDir);
   }
   if (socketPath) {
     server = http.createServer((req, res) => {
@@ -410,13 +422,14 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
     socket: socketPath || null, handle, pid: () => child?.pid || 0,
     async close() { if (closed) return; closed = true; await queue; await shutdown(); if (server) { server.closeAllConnections(); server.close(); } },
     // 一轮结束时 runner 同步收尾（等不到异步关）：撤掉套接字、杀掉浏览器、删资料
+    // 这一步在 runner 收尾的路上，任何一处出错都不能抛出去
     closeNow() {
       if (closed) return; closed = true;
-      if (server) { server.closeAllConnections(); server.close(); }
+      try { if (server) { server.closeAllConnections(); server.close(); } } catch { /* 已经关了 */ }
       if (socketPath) try { fs.unlinkSync(socketPath); } catch { /* 已经没了 */ }
-      cdp?.listeners.clear(); try { child?.kill('SIGKILL'); } catch { /* 已经退了 */ } child = null;
-      proxy?.close(); proxy = null;
-      fs.rmSync(profileDir, { recursive: true, force: true });
+      cdp?.listeners.clear(); killGroup(child); child = null;
+      try { proxy?.close(); } catch { /* 已经关了 */ } proxy = null;
+      removeDir(profileDir);
     },
   };
 }

@@ -63,14 +63,17 @@ async function setup(t, extra = {}) {
   // 测试页面在本机：只在测试里放行本机地址（正式按公网地址检查，见下面单独一项）
   const b = await browserBroker({ chrome: exe, profileDir: path.join(root, 'profile'), work, headless: true, allowAddress: () => true, ports: () => true, log: e => events.push(e), noSandbox: ROOT, ...extra });
   t.after(async () => { await b.close(); s.close(); });
-  const run = async (cmd, ...args) => b.handle({ cmd, args });
+  const run = async (cmd, ...args) => (last = await b.handle({ cmd, args }));
   return { b, s, run, root, work, events };
 }
-const ref = (snap, re) => { const line = snap.split('\n').find(l => re.test(l)); assert.ok(line, '快照里找不到 ' + re + '\n' + snap); return /\[(e\d+)\]/.exec(line)[1]; };
+// 拿不到快照时把上一个命令的完整结果带出来（压力下 open 失败过，只看到 TypeError）
+let last = null;
+const ref = (snap, re) => { assert.equal(typeof snap, 'string', '上一个命令没有快照：' + JSON.stringify(last)); const line = snap.split('\n').find(l => re.test(l)); assert.ok(line, '快照里找不到 ' + re + '\n' + snap); return /\[(e\d+)\]/.exec(line)[1]; };
 
 test('打开网页：回网址、标题和带编号的快照；点链接跳过去；脚本写出来的内容也看得到；后退', { timeout: platformTimeout(60000) }, async t => {
   const { s, run, events } = await setup(t);
   let r = await run('open', s.base + '/');
+  assert.equal(r.ok, true, '打开测试页失败：' + JSON.stringify(r));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.match(r.text, /标题：首页/);
   assert.match(r.text, /heading "小芯测试站"/);
@@ -86,6 +89,7 @@ test('打开网页：回网址、标题和带编号的快照；点链接跳过�
 test('搜索：在搜索框填字、按回车或点「搜索」都照常', { timeout: platformTimeout(60000) }, async t => {
   const { s, run } = await setup(t);
   let r = await run('open', s.base + '/');
+  assert.equal(r.ok, true, '打开测试页失败：' + JSON.stringify(r));
   r = await run('fill', ref(r.text, /searchbox "站内搜索"/), 'STM32 定时器');
   assert.equal(r.ok, true, JSON.stringify(r));
   r = await run('press', 'Enter');
@@ -99,6 +103,7 @@ test('搜索：在搜索框填字、按回车或点「搜索」都照常', { tim
 test('第一步不做的：密码框的值不进快照、往里填被拒；登录、发送、删除被拒，表单没提交出去', { timeout: platformTimeout(60000) }, async t => {
   const { s, run } = await setup(t);
   const r = await run('open', s.base + '/');
+  assert.equal(r.ok, true, '打开测试页失败：' + JSON.stringify(r));
   assert.ok(!r.text.includes('hunter2-secret'), '密码不出现在快照里');
   let x = await run('fill', ref(r.text, /textbox "密码"/), 'abc');
   assert.equal(x.error, 'needs_owner'); assert.match(x.msg, /密码/);
@@ -118,6 +123,7 @@ test('第一步不做的：密码框的值不进快照、往里填被拒；登�
 test('下拉框、翻页、截图、新窗口自动切过去、下载进 downloads', { timeout: platformTimeout(60000) }, async t => {
   const { s, run, work } = await setup(t);
   let r = await run('open', s.base + '/');
+  assert.equal(r.ok, true, '打开测试页失败：' + JSON.stringify(r));
   const x = await run('select', ref(r.text, /combobox "芯片"/), 'STM32F407');
   assert.equal(x.ok, true, JSON.stringify(x));
   assert.match((await run('snapshot')).text, /combobox "芯片".*STM32F407/);
@@ -140,6 +146,7 @@ test('下拉框、翻页、截图、新窗口自动切过去、下载进 downloa
 test('编号只在最近一次快照里有效：页面变了还用旧编号被拒；不认识的命令、file: 网址被拒', { timeout: platformTimeout(60000) }, async t => {
   const { s, run } = await setup(t);
   const home = await run('open', s.base + '/');
+  assert.equal(home.ok, true, '打开测试页失败：' + JSON.stringify(home));
   const old = ref(home.text, /link "下一页"/);
   await run('click', old);
   const x = await run('click', old);
@@ -258,6 +265,7 @@ test('开不了沙盒就不浏览：不退回 --no-sandbox（浏览任意网页�
 test('下载超过上限：取消或删掉，不留在副本里', { timeout: platformTimeout(60000) }, async t => {
   const { s: srv, run, work } = await setup(t, { limits: { downloadBytes: 4 } });
   const r = await run('open', srv.base + '/');
+  assert.equal(r.ok, true, '打开测试页失败：' + JSON.stringify(r));
   await run('click', ref(r.text, /link "下载手册"/));
   await new Promise(ok => setTimeout(ok, 1500));
   const left = fs.existsSync(path.join(work, 'downloads')) ? fs.readdirSync(path.join(work, 'downloads')) : [];
@@ -286,4 +294,70 @@ test('用过浏览器、关掉以后进程马上能退出（不被超时定时�
   const r = require('node:child_process').spawnSync(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8', timeout: 25000 });
   assert.equal(r.status, 0, r.stderr);
   assert.ok(Date.now() - t0 < 10000, '退出用了 ' + (Date.now() - t0) + ' ms');
+});
+
+test('一轮结束同步收尾：浏览器整组进程都杀掉（渲染进程不剩），资料目录删干净，收尾本身不报错', { timeout: platformTimeout(60000) }, async t => {
+  const { s, b, root } = await setup(t);
+  for (let i = 0; i < 3; i++) await b.handle({ cmd: 'open', args: [s.base + (i % 2 ? '/next' : '/')] });
+  const profile = path.join(root, 'profile');
+  const users = () => fs.readdirSync('/proc').filter(n => /^\d+$/.test(n)).filter(n => { try { return fs.readFileSync('/proc/' + n + '/cmdline', 'utf8').includes(profile); } catch { return false; } });
+  assert.ok(users().length >= 2, '开着浏览器时有好几个进程');
+  assert.doesNotThrow(() => b.closeNow());
+  for (const end = Date.now() + platformTimeout(3000); Date.now() < end && users().length;) await new Promise(ok => setTimeout(ok, 100));
+  assert.deepEqual(users(), [], '没有进程还在用这份资料');
+  assert.ok(!fs.existsSync(profile), '资料目录删了');
+});
+
+// 假 Chromium：只会回最基本的 CDP（够 tabs 用），另起一个「渲染进程」不停往资料目录里写——真 Chromium 被杀主进程后子进程还会写一会儿
+function writingChrome(root) {
+  const fake = path.join(root, 'chromium');
+  fs.writeFileSync(fake, '#!' + process.execPath + '\n' + `
+const fs=require('fs'),{spawn}=require('child_process');
+const dir=(process.argv.find(a=>a.startsWith('--user-data-dir='))||'').slice(16);
+spawn(process.execPath,['-e','const fs=require("fs"),d=process.argv[1];setInterval(()=>{try{fs.mkdirSync(d+"/Default",{recursive:true});fs.writeFileSync(d+"/Default/f"+Date.now(),"x")}catch{}},5)',dir],{stdio:'ignore'});
+const out=fs.createWriteStream(null,{fd:4}),inp=fs.createReadStream(null,{fd:3});let buf='';
+inp.on('data',d=>{buf+=d;let i;while((i=buf.indexOf('\\0'))>=0){const m=JSON.parse(buf.slice(0,i));buf=buf.slice(i+1);const r={};
+ if(m.method==='Target.getTargets')r.targetInfos=[{targetId:'T1',type:'page',url:'about:blank',title:''}];
+ if(m.method==='Target.attachToTarget')r.sessionId='S1';
+ if(m.method==='Page.getFrameTree')r.frameTree={frame:{id:'F1'}};
+ out.write(JSON.stringify({id:m.id,result:r})+'\\0');}});
+setInterval(()=>{},1000);
+`, { mode: 0o755 });
+  return fake;
+}
+
+test('同步收尾杀的是浏览器整个进程组：子进程不会留下来接着往资料目录里写（压力下见过删目录报 ENOTEMPTY）', { timeout: platformTimeout(30000) }, async t => {
+  const { browserBroker } = await load();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-browser-group-')), profile = path.join(root, 'profile');
+  const b = await browserBroker({ chrome: writingChrome(root), profileDir: profile, work: root });
+  t.after(() => b.close());
+  const r = await b.handle({ cmd: 'tabs' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const users = () => fs.readdirSync('/proc').filter(n => /^\d+$/.test(n)).filter(n => { try { return fs.readFileSync('/proc/' + n + '/cmdline', 'utf8').includes(profile); } catch { return false; } });
+  for (const end = Date.now() + 3000; Date.now() < end && !fs.existsSync(path.join(profile, 'Default'));) await new Promise(ok => setTimeout(ok, 20));
+  assert.ok(users().length >= 2, '假浏览器和它的子进程都在');
+  assert.doesNotThrow(() => b.closeNow());
+  await new Promise(ok => setTimeout(ok, 500));
+  assert.deepEqual(users(), [], '子进程也没了');
+  assert.ok(!fs.existsSync(profile), '资料目录没被子进程写回来');
+});
+
+test('浏览器刚起来时页面还没登记上（忙的时候见过）：等它出现，不报错', { timeout: platformTimeout(30000) }, async t => {
+  const { browserBroker } = await load();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-browser-late-')), fake = path.join(root, 'chromium');
+  fs.writeFileSync(fake, '#!' + process.execPath + '\n' + `
+const fs=require('fs');let asked=0;
+const out=fs.createWriteStream(null,{fd:4}),inp=fs.createReadStream(null,{fd:3});let buf='';
+inp.on('data',d=>{buf+=d;let i;while((i=buf.indexOf('\\0'))>=0){const m=JSON.parse(buf.slice(0,i));buf=buf.slice(i+1);const r={};
+ if(m.method==='Target.getTargets')r.targetInfos=++asked<3?[]:[{targetId:'T1',type:'page',url:'about:blank',title:'空白'}];
+ if(m.method==='Target.attachToTarget')r.sessionId='S1';
+ if(m.method==='Page.getFrameTree')r.frameTree={frame:{id:'F1'}};
+ out.write(JSON.stringify({id:m.id,result:r})+'\\0');}});
+setInterval(()=>{},1000);
+`, { mode: 0o755 });
+  const b = await browserBroker({ chrome: fake, profileDir: path.join(root, 'profile'), work: root });
+  t.after(() => b.close());
+  const r = await b.handle({ cmd: 'tabs' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.match(r.text, /空白/);
 });
