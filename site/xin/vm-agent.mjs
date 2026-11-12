@@ -39,6 +39,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import * as runtime from './vm-runtime.mjs';
 import { StateJournal, inputDigest } from './vm-state.mjs';
@@ -63,7 +64,7 @@ import {reportLearning,learningEvidence} from './vm-learning.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 import { transientFailure, finalFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
-import { quotaWindows, glowLevel, forecast, usageSummary, agyUsage } from './vm-usage.mjs';
+import { quotaWindows, glowLevel, forecast, usageSummary, agyUsage, inclusive } from './vm-usage.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
@@ -531,9 +532,20 @@ export function backupExport(keep = 3) {
     const stage = fs.mkdtempSync(path.join(dir, '.stage-'));
     try {
       journal.db.exec("VACUUM INTO '" + path.join(stage, 'workflow.sqlite').replace(/'/g, "''") + "'");
+      // 这一刻没做完的几轮（排着的、在做的）：恢复后不该重跑（可能是几天前的话、早上的每日任务）。快照里把它们放回「排着」，
+      // 另记一份 restore-stop.json，恢复后第一次调用由 restoreStops 标成停了，照「开工前就停了」收尾
+      const staged = new DatabaseSync(path.join(stage, 'workflow.sqlite')), stage2 = ['workflow.sqlite'];
+      try {
+        const open = staged.prepare("SELECT run FROM launches WHERE state IN ('pending','dispatched')").all().map(x => x.run);
+        if (open.length) {
+          staged.prepare("UPDATE launches SET state='pending' WHERE state='dispatched'").run();
+          fs.writeFileSync(path.join(stage, 'restore-stop.json'), JSON.stringify({ at: Date.now(), runs: open }), { mode: 0o600 });
+          stage2.push('restore-stop.json');
+        }
+      } finally { staged.close(); }
       const items = BACKUP_ITEMS.filter(n => fs.existsSync(path.join(BASE, n)));
       const tmp = file + '.' + process.pid + '.tmp';
-      const r = spawnSync('tar', ['-czf', tmp, '--exclude=*.tmp', '--exclude=*.journal-*', '-C', stage, 'workflow.sqlite', '-C', BASE, ...items], { encoding: 'utf8', timeout: 60000 });
+      const r = spawnSync('tar', ['-czf', tmp, '--exclude=*.tmp', '--exclude=*.journal-*', '-C', stage, ...stage2, '-C', BASE, ...items], { encoding: 'utf8', timeout: 60000 });
       if (r.status !== 0) { try { fs.unlinkSync(tmp); } catch { /* 没写出来 */ } return { error: 'tar_failed', msg: '打包失败：' + String(r.stderr || r.error?.message || '').trim().slice(0, 200) }; }
       fs.chmodSync(tmp, 0o600); fs.renameSync(tmp, file);
     } finally { fs.rmSync(stage, { recursive: true, force: true }); }
@@ -1080,6 +1092,10 @@ function taskMcpFlags(t) {
    让模型结束这一轮；站长之后回答走 task_tell，接着同一个会话做。 */
 export const APPROVAL_HOLD_MS = Number(process.env.XIN_APPROVAL_HOLD_MS) || 600000;
 export const INPUT_TIMEOUT_TEXT = '（用户 10 分钟内没有回复。问题已经记下，用户回复后会接着叫你。现在结束这一轮：最后一条消息写清楚做到哪了、要用户确认什么。）';
+// 锁忙满 2 分钟还没记下：不说「已经记下」。这一轮结束后任务照样停在「等你确认」（taskFinish 把挂着的问题转成普通问题），
+// 用户看到的是问题本身和这一轮最后一条消息，所以让模型把要确认的事写进最后一条消息
+const INPUT_UNSAVED_TEXT = '（用户 10 分钟内没有回复。现在结束这一轮：最后一条消息写清楚做到哪了、要用户确认什么，用户会在任务结果里看到，回复后会接着叫你。）';
+export const inputTimeoutReply = r => r.unsaved ? INPUT_UNSAVED_TEXT : INPUT_TIMEOUT_TEXT;
 // 到点「记下问题」要拿 tasks 锁，锁忙（别的进程在做重活）时 lockedCall 返回 error：以前照样交还，问题没记下，
 // 这个等待一直挂在任务上（后台算在忙、云电脑不睡）。现在隔 5 秒再试，期间来了回答就用回答；试满 2 分钟还记不下才放弃。
 const EXPIRE_RETRY_MS = 5000, EXPIRE_RETRY_FOR = 120e3;
@@ -1109,7 +1125,7 @@ async function approvalRequest(run, meta, request) {
   const p = request.params || {}, answer = text => ({ answers: Object.fromEntries((p.questions || []).map(q => [q.id, { answers: [text] }])) });
   lockedCall('tasks', 'task_approval', { sid: meta.sid, run, id, method: request.method, kind: 'input', question: cut((p.questions || []).map(q => q.question).join('\n'), 450) });
   const r = await awaitTaskInput({ id, read: () => readJ(metaF(run)), expire: () => lockedCall('tasks', 'task_approval_expire', { sid: meta.sid, run, id }) });
-  return r.reply ? answer(r.reply) : r.expired ? answer(INPUT_TIMEOUT_TEXT) : { answers: {} };
+  return r.reply ? answer(r.reply) : r.expired ? answer(inputTimeoutReply(r)) : { answers: {} };
 }
 // 每日任务不进容器（签到要操作桌面），但用不到电脑自带的云电脑管理插件 instabox（开关机、快照、删机器）：
 // 每天自动访问外部网站的那一轮不该拿着它。清单里没有管云电脑的步骤（2026-11-12 核对）；桌面操作插件留着。
@@ -1253,7 +1269,7 @@ function claudeUsage(id, win) {
 }
 export function sessionUsage(s) {
   try {
-    if (isTask(s) && ['done', 'failed', 'stopped'].includes(s.status) && s.usage) return s.usage;
+    if (isTask(s) && ['done', 'failed', 'stopped'].includes(s.status) && s.usage) return inclusive(s.model, s.usage);   // #123 以前做完的 Gemini 任务是旧口径
     if(isTask(s)&&s.antigravityConversation){const b=readJ(path.join(BASE,'budgets',s.sid+'.json'));if(b?.total)return agyUsage(b,s.frontUsage?.ctx||0);}   // Antigravity 的输入不含缓存，换算后标 incl
     if (s?.agent === 'codex' && s.frontUsage) return s.frontUsage;
     if (!s || !okAgentSid(s.agent, s.agentSid) || !s.started) return null;
@@ -1484,7 +1500,17 @@ export function taskSummary(t, full) {
   if (full) out.goal = t.goal;
   return out;
 }
-// 项目目录：只能在 WORK 里面（软链接指到外面的也不行），不能是 WORK 本身；没指定就 WORK/tasks/编号-标题
+// 集合目录不能当项目目录（研究笔记 3.2）：容器能读整个项目目录，指到集合目录就能读到不相干的东西。
+// 上传的文件（uploads 和下面每一天）、STM32 空工程：本身和里面都不行；任务目录、每日任务目录：本身不行，里面各自的项目照常
+const COLLECTIONS = [['uploads', true], ['stm32-template', true], ['tasks', false], ['daily', false]];
+export function collectionDir(real) {
+  for (const [name, deep] of COLLECTIONS) {
+    let root = path.resolve(WORK, name); try { root = fs.realpathSync(root); } catch { /* 还没建 */ }
+    if (real === root || deep && real.startsWith(root + '/')) return name;
+  }
+  return '';
+}
+// 项目目录：只能在 WORK 里面（软链接指到外面的也不行），不能是 WORK 本身、不能是集合目录；没指定就 WORK/tasks/编号-标题
 function taskDir(no, title, want) {
   const work = path.resolve(WORK);
   let realWork = work; try { realWork = fs.realpathSync(work); } catch { /* 还没建 */ }
@@ -1492,9 +1518,12 @@ function taskDir(no, title, want) {
   if (want) {
     const p = path.resolve(work, String(want));
     if (!inside(p, work)) return { error: '项目目录要在 ' + work + ' 里面' };
+    const notHere = c => ({ error: '不能把 ' + path.join(work, c) + ' 当项目目录（里面是别的东西）：在 ' + work + ' 下面另起一个目录，要用的文件用 --file 带上' });
+    if (collectionDir(p)) return notHere(collectionDir(p));   // 先挡一次，免得在上传目录里建出空目录
     mk(p);
     let real = p; try { real = fs.realpathSync(p); } catch { /* 刚建 */ }
     if (!inside(real, realWork)) return { error: '项目目录要在 ' + work + ' 里面（软链接指到外面了）' };
+    if (collectionDir(real)) return notHere(collectionDir(real));   // 软链接绕过来的
     return { dir: real };
   }
   const slug = String(title || '').replace(/[^\w一-龥]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
@@ -1628,7 +1657,9 @@ function taskFinish(a) {
   if(t.web)t.processesCleaned=true;
   const actual=a.model||runMeta.model||t.actualModel||t.model;
   if(actual){t.model=t.actualModel=actual;t.actualModels=[...new Set((t.actualModels||[]).concat(actual))];}
-  if (a.timeout || a.died || a.stopped) delete t.approval;
+  // 这一轮结束了，挂在它上面的问题不能再按 approval 回复（taskTell 会说「这一轮已经结束」）：超时、断了、停了的直接丢掉；
+  // 正常结束的（到点锁忙、问题没记成 pendingQuestion）状态还是 waiting，下面照样停在「等你确认」，回复走普通的接着做
+  delete t.approval;
   const pending = (runMeta.steers || []).filter(x => x.state === 'pending' || x.state === 'next');
   if (pending.length) t.inbox = (t.inbox || []).concat(pending.map(x => ({ text: x.text, at: x.at })));
   const last = evs.filter(e => e.t === 'text').pop(), err = evs.filter(e => e.t === 'err').pop();
@@ -2830,8 +2861,25 @@ function xinCmd(argv) {
   return act && act !== '-h' && act !== '--help' ? 2 : 0;
 }
 
+// 用机外备份恢复的电脑：备份那一刻没做完的几轮标成停了（不重跑），说明一句；几个进程同时开时只有一个处理
+export const RESTORE_STOP_TEXT = '这一轮是备份那一刻还没做完的，恢复后没有接着做；要的话再说一遍。';
+function restoreStops() {
+  const f = path.join(BASE, 'restore-stop.json');
+  if (!fs.existsSync(f)) return;
+  const mine = f + '.' + process.pid;
+  try { fs.renameSync(f, mine); } catch { return; }
+  for (const run of (readJ(mine, {}) || {}).runs || []) {
+    const m = readJ(metaF(run));
+    if (!m || m.ended || m.stopped) continue;
+    emit(run, { t: 'err', text: RESTORE_STOP_TEXT });
+    patchRun(run, { stopped: true, restoreStopped: Date.now() });
+  }
+  try { fs.unlinkSync(mine); } catch { /* 别处删了 */ }
+}
+
 function main() {
   journal.recover();
+  restoreStops();
   let op = process.argv[2];
   const locked = op === 'locked';
   if (locked) op = process.argv[3];
