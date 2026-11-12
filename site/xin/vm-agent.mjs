@@ -645,7 +645,7 @@ function runner(run) {
     // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
     const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
     if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {}, meta.providerModel ? {providerModel:meta.providerModel} : {});
-    const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0)),...(doneEv.usage.incl?{incl:true}:{})}}:{}) } : null;
+    const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,fromErr:meta.fromErr||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0)),...(doneEv.usage.incl?{incl:true}:{})}}:{}) } : null;
     const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv,stat});
     if(completion.error){finished=false;setTimeout(()=>finish(code,why),1000);return;}
     if(completion.done){Object.assign(doneEv,completion.done);ok=doneEv.ok;stopped=doneEv.stopped;}
@@ -768,8 +768,10 @@ function runner(run) {
         const from = meta.model;
         const candidates=safeFallbacks();
         if(!candidates.length){finish(c,'独立复核候选已改变，未回退到实际作者模型。');return;}
-        state.switched = true; meta.from = from; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);meta.effort=AUTO_EFFORT;
-        patchRun(run,{model:meta.model,effort:meta.effort,from,fallbacks:meta.fallbacks});
+        // 记下为什么换（2026-11-12 正式站联调里点名 Gemini 的任务开工前失败换了模型，原因没处查）
+        const fromErr=cut(String(state.heldErr?.text||state.lastErr||stderr||'').trim().split('\n').filter(Boolean).slice(-3).join(' '),300);
+        state.switched = true; meta.from = from; meta.fromErr = fromErr; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);meta.effort=AUTO_EFFORT;
+        patchRun(run,{model:meta.model,effort:meta.effort,from,fromErr,fallbacks:meta.fallbacks});
         if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
         emit(run, { t: 'status', text: from===runtime.AGY_MODEL?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
