@@ -1484,7 +1484,17 @@ export function taskSummary(t, full) {
   if (full) out.goal = t.goal;
   return out;
 }
-// 项目目录：只能在 WORK 里面（软链接指到外面的也不行），不能是 WORK 本身；没指定就 WORK/tasks/编号-标题
+// 集合目录不能当项目目录（研究笔记 3.2）：容器能读整个项目目录，指到集合目录就能读到不相干的东西。
+// 上传的文件（uploads 和下面每一天）、STM32 空工程：本身和里面都不行；任务目录、每日任务目录：本身不行，里面各自的项目照常
+const COLLECTIONS = [['uploads', true], ['stm32-template', true], ['tasks', false], ['daily', false]];
+export function collectionDir(real) {
+  for (const [name, deep] of COLLECTIONS) {
+    let root = path.resolve(WORK, name); try { root = fs.realpathSync(root); } catch { /* 还没建 */ }
+    if (real === root || deep && real.startsWith(root + '/')) return name;
+  }
+  return '';
+}
+// 项目目录：只能在 WORK 里面（软链接指到外面的也不行），不能是 WORK 本身、不能是集合目录；没指定就 WORK/tasks/编号-标题
 function taskDir(no, title, want) {
   const work = path.resolve(WORK);
   let realWork = work; try { realWork = fs.realpathSync(work); } catch { /* 还没建 */ }
@@ -1492,9 +1502,12 @@ function taskDir(no, title, want) {
   if (want) {
     const p = path.resolve(work, String(want));
     if (!inside(p, work)) return { error: '项目目录要在 ' + work + ' 里面' };
+    const notHere = c => ({ error: '不能把 ' + path.join(work, c) + ' 当项目目录（里面是别的东西）：在 ' + work + ' 下面另起一个目录，要用的文件用 --file 带上' });
+    if (collectionDir(p)) return notHere(collectionDir(p));   // 先挡一次，免得在上传目录里建出空目录
     mk(p);
     let real = p; try { real = fs.realpathSync(p); } catch { /* 刚建 */ }
     if (!inside(real, realWork)) return { error: '项目目录要在 ' + work + ' 里面（软链接指到外面了）' };
+    if (collectionDir(real)) return notHere(collectionDir(real));   // 软链接绕过来的
     return { dir: real };
   }
   const slug = String(title || '').replace(/[^\w一-龥]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
