@@ -447,7 +447,7 @@ export function agentArgs(agent, sess, text, effort, extra) {
     : ['--dangerously-bypass-approvals-and-sandbox'];
   // Native agents bypass our task tree, queue and budget accounting; dispatch only through xin task.
   const common = ['--json', '--skip-git-repo-check'].concat(sandbox, codexRoute(M.id), ['-c', 'features.multi_agent=false', '-c', 'features.multi_agent_v2=false', '-c', 'developer_instructions=' + JSON.stringify(dev)])
-    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], boxed ? taskMcpFlags(sess) : ['-c', 'shell_environment_policy.set.BASH_ENV=' + JSON.stringify(path.join(BASE, 'shell-env.sh'))].concat(mcpFlags()));
+    .concat(effort ? ['-c', 'model_reasoning_effort="' + (effort === 'off' ? 'none' : effort) + '"'] : [], boxed ? taskMcpFlags(sess) : ['-c', 'shell_environment_policy.set.BASH_ENV=' + JSON.stringify(path.join(BASE, 'shell-env.sh'))].concat(mcpFlags(), sess.dailyDate ? dailyMcpOff() : []));
   if (sess.started && sess.agentSid) return ['codex', ['exec', 'resume'].concat(imgs, common, [sess.agentSid, text])];
   return ['codex', ['exec'].concat(imgs, common, ['-C', (role === 'task' && (sess.workspace?.work || sess.dir)) || WORK, text])];
 }
@@ -1086,6 +1086,9 @@ async function approvalRequest(run, meta, request) {
   const r = await awaitTaskInput({ id, read: () => readJ(metaF(run)), expire: () => lockedCall('tasks', 'task_approval_expire', { sid: meta.sid, run, id }) });
   return r.reply ? answer(r.reply) : r.expired ? answer(INPUT_TIMEOUT_TEXT) : { answers: {} };
 }
+// 每日任务不进容器（签到要操作桌面），但用不到电脑自带的云电脑管理插件 instabox（开关机、快照、删机器）：
+// 每天自动访问外部网站的那一轮不该拿着它。清单里没有管云电脑的步骤（2026-11-12 核对）；桌面操作插件留着。
+export function dailyMcpOff() { return mcpBuiltin().has('instabox') ? ['-c', 'mcp_servers.instabox.enabled=false'] : []; }
 export function mcpFlags() {
   const st = pluginState(), have = mcpUser(), out = [];
   for (const n of Object.keys(st)) if (PLUGIN_RE.test(n) && have.has(n) && typeof st[n] === 'boolean') out.push('-c', 'mcp_servers.' + n + '.enabled=' + st[n]);

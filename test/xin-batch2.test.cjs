@@ -84,3 +84,16 @@ test('删 7 天前做完的任务副本改由任务锁里的操作来做（和�
   assert.deepEqual(r, { removed: 0, bytes: 0 });
   assert.equal(typeof op('prune').bytes, 'number');
 });
+
+test('每日任务关掉云电脑管理插件（instabox：开关机、快照、删机器），桌面操作插件留着（补签可能要用）；普通后台任务照旧全关', async () => {
+  const { agentArgs } = await loadAgent();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-b2-mcp-')), sys = path.join(tmp, 'config.toml');
+  fs.writeFileSync(sys, '[mcp_servers.open-computer-use]\ncommand = "x"\n\n[mcp_servers.instabox]\ncommand = "y"\n');
+  const saved = process.env.XIN_CODEX_SYS; process.env.XIN_CODEX_SYS = sys;
+  try {
+    const flags = a => a[1].filter((x, i) => a[1][i - 1] === '-c' && /^mcp_servers\./.test(x));
+    const daily = agentArgs('codex', { sid: 'sdaily0001', dailyDate: '2026-11-12', started: false }, '每日任务', 'max', { role: 'task', sandbox: false });
+    assert.ok(flags(daily).includes('mcp_servers.instabox.enabled=false'), JSON.stringify(flags(daily)));
+    assert.ok(!flags(daily).some(x => x.startsWith('mcp_servers.open-computer-use.enabled=false')));
+  } finally { if (saved === undefined) delete process.env.XIN_CODEX_SYS; else process.env.XIN_CODEX_SYS = saved; }
+});
