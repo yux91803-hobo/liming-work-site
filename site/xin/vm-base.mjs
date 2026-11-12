@@ -14,6 +14,8 @@ export const TEMPLATE = () => path.join(WORK, 'stm32-template');   // STM32 空�
 
 export function today() { const d = new Date(Date.now() + 8 * 3600e3); return d.toISOString().slice(0, 10); }   // 北京时间的日期
 export function bjNow() { return new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 16).replace('T', ' '); }
+// 北京时间的星期几：控制器算好写进当前时间，不让模型自己推（参考 Muse 的系统提示：星期几先用 date 算，不凭感觉）
+export function bjWeek(at = Date.now()) { return '星期' + '日一二三四五六'[new Date(at + 8 * 3600e3).getUTCDay()]; }
 export function readText(f) { try { return journal.staged(f) ?? fs.readFileSync(f, 'utf8'); } catch { return ''; } }
 
 export function hasCmd(c) { return spawnSync('sh', ['-lc', 'command -v ' + c], { encoding: 'utf8' }).status === 0; }

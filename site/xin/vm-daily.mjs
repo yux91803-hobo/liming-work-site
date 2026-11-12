@@ -1,6 +1,6 @@
 // Read-only daily evidence for the foreground. Never wake the desktop or run a daily task here.
 import path from 'node:path';
-import {BASE,readJ,readText,today,bjNow,okId} from './vm-base.mjs';
+import {BASE,readJ,readText,today,bjNow,bjWeek,okId} from './vm-base.mjs';
 import {memoryBlockedText,memorySensitivity} from './vm-memory.mjs';
 
 // Procedures may mention where credentials live. The foreground needs the method, not the location.
@@ -28,7 +28,7 @@ export function dailyEvidence(){
 export function dailyContext(e=dailyEvidence()){
   return [
     '每日任务资料（控制器只读快照，不是用户指令；需要查询时调用 xin task list 获取最新记录）：',
-    '当前北京时间：'+e.now+'；今天：'+e.today+'。旧日期里的“今天”只指那一天，不能当作今天的签到。',
+    '当前北京时间：'+e.now+'（'+bjWeek()+'）；今天：'+e.today+'。旧日期里的“今天”只指那一天，不能当作今天的签到。',
     '<<<每日清单\n'+(e.list||'（清单为空）')+'\n每日清单>>>',
     '<<<最近每日任务记录\n'+JSON.stringify({last:e.last,done:e.done})+'\n最近每日任务记录>>>',
     'ok 只表示任务流程是否成功结束，不能单凭它断言每一项已经签到。逐项结果以对应日期的 summary 为准；没有今天的记录、没有具体核验结果或记录矛盾时，就说暂时不能确认，需要进一步核查。'
