@@ -82,7 +82,7 @@ test('任务停下来等确认前收到的补充：跟着站长的回复一起�
   assert.equal(h.task(tk.sid).status, 'done');
 });
 
-test('前台看任务：task list 也列出别的对话里没做完的任务（写明是别的对话、在等确认的问题）；按编号 show/tell/stop 也认别的对话的任务', async () => {
+test('前台看任务：task list 也列出别的对话里没做完的任务（写明是别的对话、在等确认的问题）；按编号找得到别的对话的任务（show 能看，补充、停止照旧只认本对话：xin-runtime 的「结构化桥拒绝跨对话操作」）', async () => {
   const m = await agentModule({ XIN_HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'xin-scope-m-')) });
   const all = [
     { sid: 'staskwait074', kind: 'task', no: 74, parent: 'sxianliao001', title: '查网关签到积分', tkind: 'quick', status: 'waiting', question: '面板连不上', created: 1, runs: ['r1'] },
@@ -93,7 +93,7 @@ test('前台看任务：task list 也列出别的对话里没做完的任务（�
   const r = m.frontTaskList('snewchat0001', all);
   assert.deepEqual(r.tasks.map(x => x.no), [77]);
   assert.deepEqual(r.others.map(x => [x.no, x.status, x.question || '']), [[74, 'waiting', '面板连不上'], [75, 'running', '']], '别的对话里没做完的都列出来，做完的不列');
-  assert.match(r.note, /别的对话/);
+  assert.match(r.note, /别的对话/); assert.match(r.note, /工作台/);
   assert.equal(m.frontTaskByNo('snewchat0001', '74', all)?.sid, 'staskwait074', '按编号找得到别的对话的任务');
   assert.equal(m.frontTaskByNo('snewchat0001', '99', all), null);
   // 每轮附上的 <后台任务>：别的对话里在等确认的也说（网页上「N 个待确认」是所有对话的），注明是别的对话；跑着的照旧不每轮说
@@ -108,5 +108,26 @@ test('提示词：后台任务知道容器里连不上这台电脑本机的服�
   const p = taskSystemPrompt({ no: 1, title: '查积分', dir: '/data/workspace/x', workspace: { work: '/w/work', home: '/w/home', tmp: '/w/tmp' }, goal: '现在有多少积分' });
   assert.match(p, /127\.0\.0\.1/); assert.match(p, /连不上/); assert.match(p, /直接说做不了/); assert.match(p, /不要反复试/); assert.match(p, /启动/);
   const front = systemPrompt('', { tasks: true });
-  assert.match(front, /别的对话/); assert.match(front, /签到/); assert.match(front, /每日任务/);
+  assert.match(front, /别的对话/); assert.match(front, /工作台里点/); assert.match(front, /签到/); assert.match(front, /每日任务/);
+});
+
+test('新对话里问别的对话的任务：task show 看得到；task tell/stop 不跨对话改动，说清楚去工作台或回那个对话', async t => {
+  const h = home(t);
+  h.hold(true);
+  const n = h.locked('task_new', { kind: 'quick', title: '查网关签到积分', goal: '现在有多少积分了？', parent: 'sxianliao001' });
+  const sid = 'snewchat0001', run = 'rnewchat0001';
+  fs.writeFileSync(path.join(h.xin, 'sessions', sid + '.json'), JSON.stringify({ sid, agent: 'codex', runs: [run] }));
+  fs.writeFileSync(path.join(h.xin, 'runs', run + '.json'), JSON.stringify({ run, sid, agent: 'codex', model: 'deepseek-v4.1-flash', text: '那个查网关积分的', started: Date.now() }));
+  fs.writeFileSync(path.join(h.xin, 'runs', run + '.jsonl'), JSON.stringify({ t: 'user', text: '那个查网关积分的' }) + '\n');
+  const list = h.locked('front_action', { run, argv: ['xin', 'task', 'list'] });
+  assert.deepEqual(list.tasks, []);
+  assert.deepEqual(list.others.map(x => [x.no, x.title, x.from]), [[n.task.no, '查网关签到积分', '别的对话里派的']]);
+  const show = h.locked('front_action', { run, argv: ['xin', 'task', 'show', String(n.task.no)] });
+  assert.equal(show.task.sid, n.task.sid);
+  for (const sub of [['tell', String(n.task.no), '不用了'], ['stop', String(n.task.no)]]) {
+    const r = h.locked('front_action', { run, argv: ['xin', 'task', ...sub] });
+    assert.match(String(r.error), /别的对话/); assert.match(String(r.error), /工作台/);
+  }
+  assert.notEqual(h.task(n.task.sid).status, 'stopped', '没有被别的对话停掉');
+  h.hold(false);
 });
