@@ -1545,7 +1545,7 @@
     box.appendChild(log);
     var act = h('div', 'xc-tk-act'), note = h('p', 'xc-tk-note');
     if (t.approval && t.approval.kind !== 'input') {
-      act.appendChild(h('p', 'xc-tk-q', t.question || '允许这一次操作吗？'));
+      act.appendChild(h('p', 'xc-tk-q', t.question || '批准这一次操作吗？'));
       if (waitLeft(t)) act.appendChild(h('p', 'xc-tk-due', waitLeft(t) + '，未处理将自动停止'));
       ['approve', 'deny'].forEach(function (decision) {
         var button = h('button', 'xc-btn' + (decision === 'deny' ? ' sec' : ''), decision === 'approve' ? '批准' : '拒绝'); button.type = 'button';

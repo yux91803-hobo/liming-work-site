@@ -1810,7 +1810,7 @@ function taskFinish(a) {
     if (publication?.pending) {
       t.status = 'waiting'; t.publication = publication;
       t.question = '结果还未写回项目：' + (publication.deleted.length ? '将删除 ' + publication.deleted.length + ' 个原文件；' : '') +
-        (publication.conflicts.length ? publication.conflicts.length + ' 个文件在任务期间被改过；' : '') + '允许这次写回吗？';
+        (publication.conflicts.length ? publication.conflicts.length + ' 个文件在任务期间被改过；' : '') + '批准这次写回吗？';
       t.result.ok = false;
     } else if (publication?.ok) t.publicationReceipt = publication;
     Object.assign(t, { endedAt: Date.now(), frontSeen: false });
@@ -1832,13 +1832,13 @@ function taskTell(a) {
   const t = findTask(a);
   if (!t) return { error: 'no_task', msg: '找不到这个任务' };
   if (t.approval) {
-    if (t.approval.kind !== 'input' && !['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '请点「允许这一次」或「拒绝」' };
+    if (t.approval.kind !== 'input' && !['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '请点「批准」或「拒绝」' };
     if (t.approval.kind === 'input' && !String(a.text || '').trim()) return { error: 'empty', msg: '请回复问题' };
     const r = lastRun(t), m = readJ(metaF(r));
     if (!m || runDone(r)) return { error: 'ended', msg: '这一轮已经结束，不能再批准' };
     m.approvalReplies = { ...(m.approvalReplies || {}), [t.approval.id]: t.approval.kind === 'input' ? String(a.text).slice(0,4000) : a.decision }; writeJ(metaF(r), m);
     delete t.approval; t.question = ''; t.status = 'running'; saveTask(t);
-    return { ok: true, msg: a.decision === 'approve' ? '已允许这一次' : '已拒绝', task: taskSummary(t) };
+    return { ok: true, msg: a.decision === 'approve' ? '已批准' : '已拒绝', task: taskSummary(t) };
   }
   if (t.publication) {
     if (!['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '结果涉及删除或覆盖冲突，请明确选择是否允许' };

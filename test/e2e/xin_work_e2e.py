@@ -4,7 +4,7 @@
 - 网站没开小芯聊天时首页没有这一块；开了没登录：有，点了先登录。
 - 首页卡片：最近在做的、等你的、做好的最多三行；点任务打开工作台并打开那个任务；最后一行打字回车，发到主对话。
 - 工作台：≥1180 左边对话、中间聊天、右边进行中和成果；900–1179 没有左栏；更窄只有聊天，方格按钮把右栏滑进来。
-- 右栏：在做的能「改一下」（直接打字，送进那个任务）和停止；网页成品显示截图，点「打开」是预览。
+- 右栏：在做的能「修改」（直接打字，送进那个任务）和停止；网页成品显示截图，点「打开」是预览。
 - 关掉回到首页；#xin-work 直接打开工作台；面板里的展开按钮也能进工作台。
 
 运行：先起本地预览（5173），再 python3 test/e2e/xin_work_e2e.py
@@ -172,7 +172,7 @@ async def main():
             await pg.keyboard.press('Enter')
             await pg.wait_for_function("document.querySelector('.xc-tk-note') && document.querySelector('.xc-tk-note').textContent")
             tell = st.get('task_tell') or {}
-            ui.check('%d 宽：右栏「改一下」：看过程盖在右栏上（不挡聊天、没有遮罩），输入框拿到焦点，回车送进那个任务' % width,
+            ui.check('%d 宽：右栏「修改」：看过程盖在右栏上（不挡聊天、没有遮罩），输入框拿到焦点，回车送进那个任务' % width,
                      sheet == [width - 340, 340, 'none'] and tell.get('sid') == 'stasklive01' and tell.get('text') == '改成 PA1', (sheet, tell))
             # 看过程开着也能接着聊：聊天没被挡
             await pg.fill('.xc-row textarea', '顺便问一句')

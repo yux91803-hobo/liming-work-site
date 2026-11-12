@@ -80,7 +80,7 @@ test('还没到 30 分钟的照样等着；任务列表给出到期时间', t =>
 
 test('写回确认过期：当作不写回，原项目不动、副本保留；登录等待过期一样停下', t => {
   const f = fixture(t);
-  waiting(f, { endedAt: Date.now() - 40 * MIN, question: '允许这次写回吗？', publication: { pending: true, deleted: [], conflicts: ['main.c'] }, result: { ok: false, text: '改好了。', at: Date.now() - 40 * MIN } });
+  waiting(f, { endedAt: Date.now() - 40 * MIN, question: '批准这次写回吗？', publication: { pending: true, deleted: [], conflicts: ['main.c'] }, result: { ok: false, text: '改好了。', at: Date.now() - 40 * MIN } });
   f.call('task_tick', {});
   let x = f.read();
   assert.equal(x.status, 'stopped'); assert.equal(x.publication, undefined); assert.match(x.result.text, /原项目未更改/);
