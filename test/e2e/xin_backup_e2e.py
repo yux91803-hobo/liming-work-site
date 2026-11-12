@@ -36,7 +36,10 @@ async def setup(browser, backups, status=200, w=1280, h=860, mobile=False, theme
         return await route.fulfill(json={'backups': backups})
     await pg.route('**/api/xin/backups', handle)
     await pg.goto(ui.BASE + '/#xin-work')
-    await pg.wait_for_selector('.xc.wb.show .xc-set-b', timeout=15000)
+    await pg.wait_for_selector('.xc.wb.show', timeout=15000)
+    if w < 1180:   # 没有左栏：设置收在侧边栏里，先拉开
+        await pg.click('.xc-list-b')
+    await pg.wait_for_selector('.xc.wb.show .xc-set-b', state='visible', timeout=15000)
     return pg, st
 
 
@@ -85,15 +88,14 @@ async def main():
         ui.check('没开备份：这一行不出现', hidden)
         await pg.context.close()
 
-        # 5. 手机宽度、深色：这一行不横向溢出
-        pg, st = await setup(browser, two, w=390, h=844, mobile=True, theme='dark')
-        await pg.click('.xc-hd .xc-ib') if await pg.is_visible('.xc-hd .xc-ib') else None
-        await pg.wait_for_timeout(300)
-        if await pg.is_visible('.xc-set-b'):
+        # 5. 平板、手机宽度，深色：这一行能用、不横向溢出
+        for w, h in ((768, 1024), (390, 844)):
+            pg, st = await setup(browser, two, w=w, h=h, mobile=True, theme='dark')
             await open_settings(pg)
-            fit = await pg.evaluate("document.documentElement.scrollWidth <= innerWidth")
-            ui.check('390 宽深色：设置里不横向溢出', fit)
-        await pg.context.close()
+            await pg.wait_for_selector('.xc-set .xc-bk:not([hidden]) .xc-bk-dl', timeout=10000)
+            box = await pg.evaluate("(() => { const r = document.querySelector('.xc-set .xc-bk-dl').getBoundingClientRect(); return [Math.round(r.right), innerWidth, document.documentElement.scrollWidth <= innerWidth]; })()")
+            ui.check('%d 宽深色：机外备份一行在屏幕里、不横向溢出' % w, box[0] <= box[1] and box[2], box)
+            await pg.context.close()
 
         await browser.close()
     bad = [name for name, ok in ui.results if not ok]

@@ -735,6 +735,25 @@
     var push = toggleRow('xc-push', '完成通知', '');
     box.appendChild(push.row);
     pushSetup(push);
+    // 机外备份：Worker 每天把小芯的状态包加密存进 Cloudflare（docs/xin-reliability-usage-design.md 的 C 部分）。打开设置才去取列表；
+    // 网站没开备份（404）这一行就不出现。「下载」是最近那份解密后的包，新电脑上解进空的 ~/.xin 就恢复了
+    var bk = h('div', 'xc-tg xc-bk'), bt = h('div', 'xc-tg-t'), bdesc = h('span'), dl = h('a', 'xc-bk-dl', '下载'), bkAt = 0;
+    bt.appendChild(h('b', '', '机外备份')); bt.appendChild(bdesc); bk.appendChild(bt); bk.appendChild(dl);
+    bk.hidden = true; dl.hidden = true; box.appendChild(bk);
+    var bjDay = function (t) { return new Date(t + 8 * 3600e3).toISOString().slice(0, 10); };
+    box.load = function () {
+      if (Date.now() - bkAt < 60000) return; bkAt = Date.now();
+      fetch('/api/xin/backups', { credentials: 'same-origin' }).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (d) {
+        var list = (d && d.backups) || [], last = list[0];
+        bk.hidden = false; bk.classList.remove('warn');
+        if (!last) { bdesc.textContent = '还没有备份（每天 9:10 自动做）'; dl.hidden = true; return; }
+        var age = Math.round((Date.parse(bjDay(Date.now())) - Date.parse(last.date)) / 864e5);
+        var name = age === 0 ? '今天' : age === 1 ? '昨天' : (+last.date.slice(5, 7)) + '月' + (+last.date.slice(8, 10)) + '日';
+        bdesc.textContent = '最近一次 ' + name + ' · 共 ' + list.length + ' 份' + (age > 2 ? ' · 已经 ' + age + ' 天没备份了' : '');
+        bk.classList.toggle('warn', age > 2);
+        dl.hidden = false; dl.href = '/api/xin/backup?date=' + last.date; dl.setAttribute('download', '');
+      }).catch(function () { bk.hidden = true; bkAt = 0; });
+    };
     return box;
   }
 
