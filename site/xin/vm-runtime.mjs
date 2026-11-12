@@ -337,8 +337,10 @@ const listenSocket = (server, socketPath) => new Promise((ok, no) => {
   try { fs.unlinkSync(socketPath); } catch { /* no stale socket */ }
   server.once('error', no); server.listen(socketPath, () => { fs.chmodSync(socketPath, 0o600); ok(); });
 });
+// socketPath：给容器转发用的 unix socket；不给就只听 127.0.0.1 的随机端口（给控制器自己的 Chromium 当代理，vm-browser.mjs）
 export async function egressProxy({ socketPath, ports = [80, 443], lookup = (host, o) => dns.promises.lookup(host, o), allowAddress = publicAddress, maxConnections = 32 }) {
   const open = new Set(), track = s => { open.add(s); s.on('close', () => open.delete(s)); };
+  const portOk = p => typeof ports === 'function' ? !!ports(p) : ports.includes(p);
   const resolve = async host => {
     host = String(host).replace(/^\[|\]$/g, '');
     const list = net.isIP(host) ? [{ address: host }] : await lookup(host, { all: true, verbatim: true }).catch(() => []);
@@ -350,7 +352,7 @@ export async function egressProxy({ socketPath, ports = [80, 443], lookup = (hos
     const deny = (status, msg) => { if (!res.headersSent) res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' }); res.end(msg); };
     let url; try { url = new URL(req.url); } catch { return deny(400, '代理请求需要完整网址'); }
     const port = Number(url.port || 80);
-    if (url.protocol !== 'http:' || !ports.includes(port)) return deny(403, '后台任务只能访问公网的 80/443 端口');
+    if (url.protocol !== 'http:' || !portOk(port)) return deny(403, '后台任务只能访问公网的 80/443 端口');
     let address; try { address = await resolve(url.hostname); } catch (e) { return deny(e.status || 502, e.message); }
     const headers = { ...req.headers, host: url.host }; delete headers['proxy-connection']; delete headers['proxy-authorization'];
     const upstream = http.request({ host: address, port, method: req.method, path: url.pathname + url.search, headers, setHost: false }, r => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
@@ -362,7 +364,7 @@ export async function egressProxy({ socketPath, ports = [80, 443], lookup = (hos
     track(client); client.setTimeout(300000, () => client.destroy()); client.on('error', () => client.destroy());
     const refuse = status => client.end('HTTP/1.1 ' + status + ' Blocked\r\n\r\n');
     const m = /^(\[[0-9a-fA-F:.]+\]|[^:\s]+):(\d{1,5})$/.exec(req.url || ''), port = m && Number(m[2]);
-    if (!m || !ports.includes(port)) return refuse(403);
+    if (!m || !portOk(port)) return refuse(403);
     if (open.size > maxConnections) return refuse(429);
     let address; try { address = await resolve(m[1]); } catch (e) { return refuse(e.status || 502); }
     const upstream = net.connect({ host: address, port, timeout: 15000 });
@@ -374,8 +376,9 @@ export async function egressProxy({ socketPath, ports = [80, 443], lookup = (hos
     upstream.on('close', () => client.destroy()); client.on('close', () => upstream.destroy());
   });
   server.headersTimeout = 30000; server.requestTimeout = 0;
-  await listenSocket(server, socketPath);
-  return { socket: socketPath, close() { for (const s of open) s.destroy(); server.closeAllConnections(); server.close(); } };
+  if (socketPath) await listenSocket(server, socketPath);
+  else await new Promise((ok, no) => { server.once('error', no); server.listen(0, '127.0.0.1', ok); });
+  return { socket: socketPath || null, port: socketPath ? null : server.address().port, close() { for (const s of open) s.destroy(); server.closeAllConnections(); server.close(); } };
 }
 // One task turn's network: egress for tools, plus the pinned inference proxy for the model client.
 export async function taskNetwork(workspace, inference = null) {
