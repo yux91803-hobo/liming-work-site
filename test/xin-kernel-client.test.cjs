@@ -108,12 +108,12 @@ async function classify(response) {
 }
 
 test('分类：有内核头的三种', async () => {
-  assert.deepStrictEqual((await classify(resp(200, { ok: true, data: { a: 1 } }, K))).r, { kind: 'ok', data: { a: 1 } });
-  assert.deepStrictEqual((await classify(resp(200, { ok: false, executed: true, error: 'agent_failed', msg: 'x' }, K))).r, { kind: 'executed_error', error: 'agent_failed', msg: 'x' });
-  assert.deepStrictEqual((await classify(resp(409, { ok: false, executed: false, error: 'agent_missing' }, K))).r, { kind: 'not_sent', reason: 'agent_missing' });
-  assert.deepStrictEqual((await classify(resp(503, { ok: false, executed: false, error: 'kernel_busy' }, K))).r, { kind: 'not_sent', reason: 'kernel_busy' });
-  assert.deepStrictEqual((await classify(resp(401, { ok: false, executed: false, error: 'kernel_auth', reason: 'unknown_kid' }, K))).r, { kind: 'not_sent', reason: 'unknown_kid' });
-  assert.deepStrictEqual((await classify(resp(401, { ok: false, executed: false, error: 'kernel_auth', reason: 'replay' }, K))).r, { kind: 'not_sent', reason: 'kernel_auth' });
+  assert.deepStrictEqual((await classify(resp(200, { ok: true, data: { a: 1 } }, K))).r, { kind: 'ok', data: { a: 1 }, version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(200, { ok: false, executed: true, error: 'agent_failed', msg: 'x' }, K))).r, { kind: 'executed_error', error: 'agent_failed', msg: 'x', version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(409, { ok: false, executed: false, error: 'agent_missing' }, K))).r, { kind: 'not_sent', reason: 'agent_missing', version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(503, { ok: false, executed: false, error: 'kernel_busy' }, K))).r, { kind: 'not_sent', reason: 'kernel_busy', version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(401, { ok: false, executed: false, error: 'kernel_auth', reason: 'unknown_kid' }, K))).r, { kind: 'not_sent', reason: 'unknown_kid', version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(401, { ok: false, executed: false, error: 'kernel_auth', reason: 'replay' }, K))).r, { kind: 'not_sent', reason: 'kernel_auth', version: '0123456789ab' });
 });
 
 test('分类：没有内核头的是 InstaBox 自己回的', async () => {
@@ -125,7 +125,7 @@ test('分类：没有内核头的是 InstaBox 自己回的', async () => {
   assert.deepStrictEqual((await classify(resp(504, 'timeout'))).r, { kind: 'unknown', reason: 'http_504' });
   assert.deepStrictEqual((await classify(new TypeError('fetch failed'))).r, { kind: 'unknown', reason: 'network' });
   // 内核头在但回应体坏了：也不知道执行没有
-  assert.deepStrictEqual((await classify(resp(200, 'garbage', K))).r, { kind: 'unknown', reason: 'bad_kernel_reply' });
+  assert.deepStrictEqual((await classify(resp(200, 'garbage', K))).r, { kind: 'unknown', reason: 'bad_kernel_reply', version: '0123456789ab' });
 });
 
 test('请求：带端口令牌和第二层签名，内核认得', async () => {

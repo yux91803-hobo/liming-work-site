@@ -76,12 +76,13 @@ export async function kernelFetch({ config, method, target, body = '', timeoutMs
   return fetchImpl(config.url.replace(/\/$/, '') + target, { method, headers, body: body || undefined, signal: AbortSignal.timeout(timeoutMs) });
 }
 export async function classifyKernelResponse(r) {
-  if (r.headers.get('x-xin-kernel')) {
+  const version = r.headers.get('x-xin-kernel');   // 内核文件名里的哈希：和这次部署的不一样就该升级了
+  if (version) {
     let d = null; try { d = await r.json(); } catch { /* 坏了 */ }
-    if (d && d.ok === true) return { kind: 'ok', data: d.data };
-    if (d && d.executed === false) return { kind: 'not_sent', reason: d.error === 'kernel_auth' ? (d.reason === 'unknown_kid' ? 'unknown_kid' : 'kernel_auth') : d.error };
-    if (d && d.executed === true) return { kind: 'executed_error', error: d.error, msg: d.msg };
-    return { kind: 'unknown', reason: 'bad_kernel_reply' };
+    if (d && d.ok === true) return { kind: 'ok', data: d.data, version };
+    if (d && d.executed === false) return { kind: 'not_sent', reason: d.error === 'kernel_auth' ? (d.reason === 'unknown_kid' ? 'unknown_kid' : 'kernel_auth') : d.error, version };
+    if (d && d.executed === true) return { kind: 'executed_error', error: d.error, msg: d.msg, version };
+    return { kind: 'unknown', reason: 'bad_kernel_reply', version };
   }
   if (r.status === 401 || r.status === 403) return { kind: 'not_sent', reason: 'gate_auth' };
   if (r.status === 503) return { kind: 'not_sent', reason: 'waking', retryAfter: Number(r.headers.get('retry-after')) || 3 };

@@ -2273,3 +2273,19 @@ test('stream：没登录 401；内核不在、没开内核通道都回 503 让�
     assert.strictEqual((await m.handleXin(streamReq('run=../x', { cookie: ck }), env, null)).status, 400);
   } finally { ib.restore(); }
 });
+
+test('内核版本和这次部署的不一样：后台起 ensure 升级；一样就不起', async () => {
+  const want = require('node:crypto').createHash('sha256').update(KERNEL_TEXT).digest('hex').slice(0, 12);
+  for (const [version, expectEnsure] of [['oldoldoldold', true], [want, false]]) {
+    const m = await fresh(), env = kernelEnv(m), ck = await login(m, env), w = waiter();
+    const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+      'POST /xin/op': [() => kres(200, { ok: true, data: { a: 1 } }, { 'x-xin-kernel': version })],
+      'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true,"started":true}', stderr: '', exitCode: 0 } }] });
+    try {
+      assert.deepStrictEqual(await callOp(m, env, ck, 'sessions', {}, w.ctx), { ok: true, data: { a: 1 } });
+      await w.settle();
+      const ensured = ib.calls.filter(c => c.key.endsWith('/exec')).some(c => execArgv(c).includes('ensure'));
+      assert.strictEqual(ensured, expectEnsure, version);
+    } finally { ib.restore(); }
+  }
+});

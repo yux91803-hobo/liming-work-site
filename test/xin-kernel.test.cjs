@@ -368,3 +368,13 @@ test('ensure：没有用户总线时直接起一个脱离的进程', async () =>
     assert.strictEqual(h.kernel, 'dddddddddddd');
   } finally { killAll(L, pid ? [pid] : []); }
 });
+
+test('日志太大就换一份，不会一直长下去', async () => {
+  const f = await kernelFixture({ kernel: { logMaxBytes: 2000 } });
+  try {
+    for (let i = 0; i < 40; i++) await f.request('GET', '/xin/health');
+    const log = path.join(f.home, 'logs', 'kernel.jsonl');
+    assert.ok(fs.statSync(log).size <= 2000 + 400, '当前日志 ' + fs.statSync(log).size + ' 字节');
+    assert.ok(fs.existsSync(log + '.1'), '旧的那份留一份');
+  } finally { await f.k.close(); }
+});

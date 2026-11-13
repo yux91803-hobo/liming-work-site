@@ -85,7 +85,7 @@ export function redact(text) {
    每个回应都带 X-Xin-Kernel 头；出错时 executed 说清楚控制器到底跑没跑，Worker 据此决定能不能退回 exec。
    对方断开（超时、网络断）时不杀已经起来的控制器：让它做完并存下结果，同一编号再来就拿到存下的结果。 */
 const OP_NAME = /^[a-z][a-z0-9_]{0,39}$/, AGENT_NAME = /^vm-agent-[0-9a-f]{12}\.mjs$/;
-export async function createKernel({ home, port = 0, env = process.env, now = Date.now, opTimeoutMs = 40000, maxConcurrent = 16, logFile,
+export async function createKernel({ home, port = 0, env = process.env, now = Date.now, opTimeoutMs = 40000, maxConcurrent = 16, logFile, logMaxBytes = 2 * 1024 * 1024,
   pollEveryMs = 250, keepWatchMs = 4000, heartbeatMs = 15000, maxStreamMs = 600000 }) {
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   const agentDir = path.join(home, 'agent'), ring = new KeyRing(path.join(home, 'kernel-keys.json'));
@@ -95,7 +95,11 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
   let running = 0;
   // 只记时间、方法、路由、操作名、状态码、耗时、clientId；不记请求头、请求体、钥匙、签名、令牌和消息内容
   const log = rec => {
-    try { fs.mkdirSync(path.dirname(logFile), { recursive: true }); fs.appendFileSync(logFile, JSON.stringify({ at: now(), ...rec }) + '\n', { mode: 0o600 }); } catch { /* 日志写不下不影响请求 */ }
+    try {
+      fs.mkdirSync(path.dirname(logFile), { recursive: true });
+      fs.appendFileSync(logFile, JSON.stringify({ at: now(), ...rec }) + '\n', { mode: 0o600 });
+      if (fs.statSync(logFile).size > logMaxBytes) fs.renameSync(logFile, logFile + '.1');   // 只留当前和上一份，不会一直长
+    } catch { /* 日志写不下不影响请求 */ }
   };
   const reply = (res, status, body) => {
     if (res.writableEnded || res.destroyed) return;
