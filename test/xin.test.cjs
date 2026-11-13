@@ -2011,7 +2011,9 @@ function kernelEnv(m, extra) {
   env.XIN_TASK_SUPERVISOR = fakeDO(m, env);
   return env;
 }
-const kres = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'x-xin-kernel': '0123456789ab', ...headers } });
+// 假内核默认报「和这次部署同一版本」（电脑上的内核是新的）；测升级的用例自己传旧版本号
+const KERNEL_HASH = require('node:crypto').createHash('sha256').update(KERNEL_TEXT).digest('hex').slice(0, 12);
+const kres = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'x-xin-kernel': KERNEL_HASH, ...headers } });
 const PORT_TOKEN = n => ({ status: 201, body: { url: 'https://8797-abc.instabox.tech', token: 'ibp_t' + n, access: 'private' } });
 const execArgv = c => JSON.parse(c.body).argv;
 function waiter() { const ps = []; return { ctx: { waitUntil: p => ps.push(p) }, settle: () => Promise.allSettled(ps) }; }
