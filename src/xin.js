@@ -18,6 +18,7 @@
 // status、wake 直接调 InstaBox 的机器接口（wake：打开网页时把睡着的云电脑叫醒，已经醒着就什么都不做）；其余都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
 // 返回 {ok:true, data} 或 {ok:false, state, msg, retryAfter}：state = waking（云电脑在睡，唤醒中）、cooldown（跑满 8 小时后的冷却）、busy、error。
 import { KERNEL_PORT, KernelConfigStore, kernelRequest, retrySafe, redact } from './xin-kernel.js';
+import { Inbox } from './xin-inbox.js';
 
 const API = 'https://api.instabox.sh';
 const COOKIE = '__Host-xin';
@@ -663,10 +664,29 @@ export class XinTaskSupervisor {
     } catch (e) { return json({ error: (e && e.code) || 'kernel_config', status: e && e.status, retryAfter: e && e.retryAfter, msg: redact(e && e.msg || '') }, 502); }
     return json({ error: 'bad_action' }, 400);
   }
+  // 待送达（实例 xin-inbox，src/xin-inbox.js）：送的时候和 Worker 一样调 call()，内核配置直接读本实例的存储
+  inbox() {
+    return this.inboxImpl || (this.inboxImpl = new Inbox(this.state.storage, {
+      deliver: row => call(this.env, CRON_ORIGIN, row.op, { ...row.args, clientId: row.id }, { waitUntil: p => this.state.waitUntil?.(p) }, Date.now(), { kernel: this.kernelAdapter() })
+    }));
+  }
+  async inboxRoute(action, req) {
+    const a = await req.json().catch(() => ({}));
+    try {
+      if (action === 'accept') { const r = await this.inbox().accept({ id: a.id, op: a.op, args: a.args }); return json(r, r.error === 'bad_id' ? 400 : r.error ? 409 : 200); }
+      if (action === 'view') return json({ view: await this.inbox().view(a.id) });
+      if (action === 'list') return json(await this.inbox().list());
+      if (action === 'ack') { await this.inbox().ack(a.id); return json({ ok: true }); }
+      if (action === 'kick') { await this.inbox().kick(); return json({ ok: true }); }
+      if (action === 'stats') return json(await this.inbox().stats());
+    } catch { return json({ error: 'store_failed' }, 500); }
+    return json({ error: 'bad_action' }, 400);
+  }
   async fetch(req) {
     const path = new URL(req.url).pathname;
     if (path.startsWith('/backup/')) return this.backup(path.slice('/backup/'.length), req);
     if (path.startsWith('/kernel/')) return this.kernelRoute(path.slice('/kernel/'.length), req);
+    if (path.startsWith('/inbox/')) return this.inboxRoute(path.slice('/inbox/'.length), req);
     const incoming = await req.json(), current = await this.state.storage.get('tasks') || {};
     if (incoming.version != null && current.version != null && (incoming.version < current.version || incoming.version === current.version && incoming.bg !== current.bg)) return json({ ok: true, stale: true });
     // A browser's old read cannot cancel a newer controller callback.
@@ -680,6 +700,7 @@ export class XinTaskSupervisor {
     return json({ ok: true });
   }
   async alarm() {
+    if (await this.state.storage.get('inbox:meta')) return this.inbox().alarm();   // 实例 xin-inbox：待送达的闹钟
     const current = await this.state.storage.get('tasks');
     if (!current) return;
     if (current.bg <= 0) { if (current.leaseCleanup) await this.releaseLease(current); return; }
