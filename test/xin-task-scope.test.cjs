@@ -22,7 +22,8 @@ function fakeCodex(dir) {
     'L="' + log + '"',
     'exec 9>"$L/seq.lock"; flock 9',
     'n=$(cat "$L/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$L/n"',
-    'for a in "$@"; do printf "%s\\n" "$a"; done > "$L/args.$n"',
+    // 先写临时名再改名：测试看到 args.N 时内容是完整的
+    'for a in "$@"; do printf "%s\\n" "$a"; done > "$L/.args.$n" && mv "$L/.args.$n" "$L/args.$n"',
     'flock -u 9; exec 9>&-',
     'printf \'{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-%012d"}\\n\' $n',
     'echo \'{"type":"turn.started"}\'',

@@ -1029,7 +1029,8 @@ function fakeTaskCodex(dir) {
     'L="' + log + '"',
     'exec 9>"$L/seq.lock"; flock 9',
     'n=$(cat "$L/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$L/n"',
-    'for a in "$@"; do printf "%s\\n" "$a"; done > "$L/args.$n"; pwd > "$L/cwd.$n"',
+    // 先写工作目录、再写参数，都先写临时名再改名：测试看到 args.N 时内容完整、cwd.N 也已经在了（新执行机忙时读到一半，#133 合并后 CI）
+    'pwd > "$L/.cwd.$n" && mv "$L/.cwd.$n" "$L/cwd.$n"; for a in "$@"; do printf "%s\\n" "$a"; done > "$L/.args.$n" && mv "$L/.args.$n" "$L/args.$n"',
     'flock -u 9; exec 9>&-',
     'printf \'{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-%012d"}\\n\' $n',
     'echo \'{"type":"turn.started"}\'',
@@ -1184,7 +1185,11 @@ test('后台任务：到时间没做完停下（算没做成）；runner 中途�
   const xinTask = (...a) => execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString();
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
   xinTask('new', '--title', '慢活', '--', '慢慢做');
-  const t = await until(() => { const x = op('tasks', { sid: r.sid }).tasks[0]; return x && x.status === 'failed' && x; }, 15000, '超时');
+  // #133 合并后 CI（新执行机）上这里偶尔 45 秒都等不到：失败时把任务状态、错误和每一轮的事件一起带出来，下次能看出卡在哪一步
+  const t = await until(() => { const x = op('tasks', { sid: r.sid }).tasks[0]; return x && x.status === 'failed' && x; }, 15000, '超时').catch(e => {
+    const x = op('tasks', { sid: r.sid }).tasks[0] || {}; let h = {}; try { h = op('history', { sid: x.sid }); } catch { /* 读不到 */ }
+    throw new Error(e.message + ' DIAG ' + JSON.stringify({ status: x.status, err: x.result && x.result.err, runs: (h.runs || []).map(rr => (rr.events || []).map(ev => ev.t + (ev.text ? ':' + String(ev.text).slice(0, 60) : '')).slice(-8)) }));
+  });
   assert.match(t.result.err, /^超时（60 分钟）$/);
   // 被杀：把分身那一轮的 runner 和它起的 codex 一起杀掉（模拟电脑重启）
   // 这个任务测的是被杀后接着做，不是超时：时限给足，别让忙的机器先把它判成超时
