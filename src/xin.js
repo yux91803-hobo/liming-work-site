@@ -550,7 +550,7 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
     await recordTasks(env, { bg: state.bg, version: state.version, machine: m.id, observedAt: now });
     return json({ ok: true });
   }
-  if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, env, now), ...(env.XIN_TRANSPORT === 'kernel' && enabled(env) ? { stream: true } : {}) });
+  if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, env, now), ...(env.XIN_TRANSPORT === 'kernel' && enabled(env) ? { stream: true } : {}), ...(env.XIN_INBOX === '1' && enabled(env) ? { inbox: true } : {}) });
   if (p === 'stream' && req.method === 'GET') return streamRoute(req, env, ctx, url, now);
   if (p === 'file' && req.method === 'GET') return download(req, env, ctx, url, now);
   if ((p === 'backups' || p === 'backup') && req.method === 'GET') return backupDownload(req, env, url, now);

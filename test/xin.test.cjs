@@ -2232,12 +2232,12 @@ test('打开网页（greet）之后顺手踢一下待送达', async () => {
   } finally { ib.restore(); }
 });
 
-test('/api/xin/me：内核通道开着时说可以用流，没开就不带这个字段', async () => {
+test('/api/xin/me：内核通道开着时说可以用流、待送达开着时说有待送达，没开就不带这些字段', async () => {
   const m = await fresh();
-  const on = await (await m.handleXin(new Request(ORIGIN + '/api/xin/me'), kernelEnv(m), null)).json();
-  assert.strictEqual(on.stream, true);
+  const on = await (await m.handleXin(new Request(ORIGIN + '/api/xin/me'), kernelEnv(m, { XIN_INBOX: '1' }), null)).json();
+  assert.deepStrictEqual([on.stream, on.inbox], [true, true]);
   const off = await (await m.handleXin(new Request(ORIGIN + '/api/xin/me'), mkEnv(), null)).json();
-  assert.ok(!('stream' in off));
+  assert.ok(!('stream' in off) && !('inbox' in off));
 });
 
 const streamReq = (q, headers) => new Request(ORIGIN + '/api/xin/stream?' + q, { method: 'GET', headers: Object.assign({ 'x-xin': '1' }, headers || {}) });

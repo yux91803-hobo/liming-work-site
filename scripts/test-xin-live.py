@@ -38,7 +38,7 @@ async def main():
         # The CI runner VM can be paused by its host; the TCP shim then turns the dead connection into ETIMEDOUT.
         # Both #106 and #107 release runs were rolled back by exactly that, mid-way through the long wait for the web task.
         # Read-only ops are safe to resend, so they are retried; ops with side effects are never resent here.
-        READ_ONLY = {'history', 'tasks', 'poll', 'sessions', 'status'}
+        READ_ONLY = {'history', 'tasks', 'poll', 'sessions', 'status', 'delivery'}
         TRANSPORT = ('ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ENETUNREACH', 'EAI_AGAIN', 'socket hang up', 'Timeout')
         async def raw(what, send, retry):
             # Every direct request goes through here so a failure never prints Playwright's call log (it carries the cookie).
@@ -199,7 +199,8 @@ async def main():
             upload_data = await uploaded.json()
             if uploaded.status != 200 or not upload_data.get('ok'):
                 raise RuntimeError('Synthetic image upload failed')
-            image = await call('send', {'agent':'codex','clientId':'visual-'+uuid.uuid4().hex,
+            image_client = 'visual-' + uuid.uuid4().hex
+            image = await call('send', {'agent':'codex','clientId':image_client,
                 'text':'只读取这张图片中唯一一行字符并照写出来。不要派任务、执行命令或记忆。',
                 'files':[{'path':upload_data['data']['path'],'name':'visual-check.png'}]})
             image_sid = image['sid']
@@ -218,6 +219,21 @@ async def main():
             if (await call('tasks', {'sid':image_sid})).get('tasks'):
                 raise RuntimeError('Foreground image chat unexpectedly delegated work')
             print('PASS real foreground reads random image text directly without delegating', flush=True)
+            # Kernel stage 1 (docs/xin-kernel-design.md §14): the message was stored before acknowledgement and maps to its turn,
+            # and the turn's events stream from the kernel through Cloudflare. Only status codes and counts are printed.
+            me = await (await raw('me', lambda: context.request.get(BASE + '/api/xin/me', timeout=30000), True)).json()
+            if me.get('inbox'):
+                delivered = await call('delivery', {'id': image_client})
+                if delivered.get('state') != 'delivered' or (delivered.get('result') or {}).get('run') != image['run']:
+                    raise RuntimeError('Pending delivery did not map to its turn: state=' + str(delivered.get('state')))
+                print('PASS message stored before acknowledgement maps to its conversation turn', flush=True)
+            if me.get('stream'):
+                streamed = await raw('stream', lambda: context.request.get(BASE + '/api/xin/stream?off=0&run=' + image['run'], headers={'X-Xin': '1'}, timeout=120000), True)
+                body = (await streamed.body()).decode('utf-8', 'replace') if streamed.status == 200 else ''
+                messages = [json.loads(line[6:]) for line in body.split('\n') if line.startswith('data: ')]
+                if not str(streamed.headers.get('content-type', '')).startswith('text/event-stream') or not messages or not messages[-1].get('done'):
+                    raise RuntimeError('Kernel stream through Cloudflare failed: HTTP ' + str(streamed.status) + ' messages=' + str(len(messages)))
+                print('PASS reply events stream from the kernel through Cloudflare (' + str(len(messages)) + ' messages)', flush=True)
             # Close the page: completion must be recovered through the API and supervisor, without a browser polling loop.
             await page.close()
             await asyncio.sleep(55)
