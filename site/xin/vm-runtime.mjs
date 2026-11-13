@@ -907,17 +907,29 @@ export function previewAsset(controller,a) {
 
 // Antigravity keeps its login in the controller profile. Its model receives no
 // native file/terminal/MCP permission; requested commands run through bwrap here.
-export const AGY_MODEL='gemini-3.8-flash-high';
+/* Antigravity 的后台执行模型。站长 2026-11-13：「后台干活优先也派 hydrogen，根据任务难度选择思考强度」，以前的 Gemini 模型不再用。
+   只用 Gemini 4 Hydrogen，思考强度按任务类别（前台派活时定的类别就是难度）：参考 Codex 的 model_reasoning_effort / plan_mode_reasoning_effort、
+   opencode 每个 agent 自己的 reasoningEffort、Antigravity Orchestrator（Carbon 规划、Hydrogen 执行）。
+   实测每一步（结构化动作）：low 3 秒、medium 5 秒、high 7 秒、xhigh 30 秒。 */
+export const AGY_MODEL='gemini-4-hydrogen';
+export const isAgyModel=id=>id===AGY_MODEL;
+export const AGY_EFFORTS=['low','medium','high','xhigh'];
+export const AGY_KIND_EFFORT={quick:'low',research:'medium',code:'high',review:'high',hard:'xhigh'};
+export const agyEffort=kind=>AGY_KIND_EFFORT[kind]||'high';
+// CLI 里 Hydrogen 的模型编号带思考强度（gemini-4-hydrogen-medium）
+export const agyProviderModel=effort=>AGY_MODEL+'-'+(AGY_EFFORTS.includes(effort)?effort:'high');
 export function antigravityBinary(home=process.env.XIN_AGY_HOME||os.homedir()) {
   return [process.env.XIN_ANTIGRAVITY_BIN,path.join(home,'.local/bin/agy'),path.join(home,'.gemini/bin/agy')].find(p=>p&&fs.existsSync(p))||null;
 }
 export function antigravityQuota(result,now=Date.now(),model=AGY_MODEL) {
   const groups=result?.command?.data?.groups;
   if(!Array.isArray(groups))throw Error('Antigravity 没有返回可核对的额度信息');
-  const family=model.startsWith('claude-')?/^(?:claude-|3p-)/:/^gemini-/;
+  // 按额度组算：Claude/GPT 一组（3p-），Gemini 4 Argon 单独一组（gemini-argon-），其余 Gemini（Flash、Hydrogen）一组。
+  // 2026-11-13 新账号多了 Argon 的单独周限额：以前按 gemini- 前缀把它也算进来，Argon 用完会被当成 Hydrogen / Flash 也用完。
+  const family=model.startsWith('claude-')?/^(?:claude-|3p-)/:/argon/.test(model)?/^gemini-argon-/:/^gemini-(?!argon-)/;
   // 停用的限额（disabled）不起作用，也不带恢复时间：周限额用完后，Antigravity 把五小时限额标成停用、去掉 reset_time。
   // 把它当成「字段不完整」会让前台整轮报错，而不是按额度用完改用 DeepSeek。
-  const buckets=groups.filter(g=>(g.buckets||[]).some(b=>family.test(b.id||''))).flatMap(g=>g.buckets).filter(b=>b?.disabled!==true).map(b=>({id:b.id,remaining:Number(b.remaining_fraction),resetAt:Date.parse(b.reset_time)}));
+  const buckets=groups.flatMap(g=>g.buckets||[]).filter(b=>family.test(b?.id||'')&&b.disabled!==true).map(b=>({id:b.id,remaining:Number(b.remaining_fraction),resetAt:Date.parse(b.reset_time)}));
   if(!buckets.length||buckets.some(b=>!Number.isFinite(b.remaining)||b.remaining<0||b.remaining>1||!Number.isFinite(b.resetAt)))throw Error('Antigravity 额度字段不完整');
   const exhausted=buckets.filter(b=>b.remaining<=0);
   return {model,checkedAt:now,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};
@@ -953,6 +965,7 @@ export async function readAntigravityQuota(binary,cwd) {
 }
 export async function antigravityWork(t,options) {
   const binary=antigravityBinary();if(!binary)throw Error('Antigravity 命令不可用');
+  const effort=AGY_EFFORTS.includes(options.effort)?options.effort:'high',provider=agyProviderModel(effort);
   if(!t.workspace)throw Error('Antigravity 只接收隔离的项目副本');
   const report=o=>process.stdout.write(JSON.stringify(o)+'\n');
   if(options.quotaState?.blocked&&options.quotaState.retryAt>Date.now()){report({type:'error',message:'Antigravity 额度仍在倒计时，按已记录的恢复时间等待。'});return 75;}
@@ -970,13 +983,13 @@ export async function antigravityWork(t,options) {
   try{
   for(let turn=0;turn<48;turn++){
     if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
-    const args=['-p',prompt,'--agent','xin-confined-worker','--model',AGY_MODEL,'--effort','high','--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
+    const args=['-p',prompt,'--agent','xin-confined-worker','--model',provider,'--effort',effort,'--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
     const r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(s?.state==='DONE'&&['search_web','read_url_content'].includes(name))report({type:'item.completed',item:{id:'web-'+turn+'-'+s.step_index,type:'web_search',query:s.tool_info?.parameters?.query||s.tool_info?.parameters?.url||name}});},AGY_IDLE_MS());
     // 卡住：退出码 76，控制器换候选里的下一个模型，让它先读副本里的现有文件再接着做（和额度用尽 75 一样）；15 分钟内新任务先不派给 Gemini
     if(r.stalled){options.unavailable?.({kind:'stall'});report({type:'error',message:'Gemini（Antigravity）'+Math.round(AGY_IDLE_MS()/1000)+' 秒没有任何回应，换别的模型接着做。'});return 76;}
     // 命令自己没跑起来（没有结果、退出码不为 0）：多半是我们这边调用出了问题（参数、版本），写明退出码，不记成 Gemini 不可用
     const result=r.result;if(!result&&r.code!==0)throw Error('Antigravity 没有返回结果，退出码 '+r.code+'，已保留进度');
-    if(r.model!==AGY_MODEL)throw Error('Antigravity 实际模型与固定模型不一致');
+    if(r.model!==provider)throw Error('Antigravity 实际模型与指定模型不一致');
     if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);report({type:'xin.usage',usage:delta});}
     else options.budget.recordUsage?.(null);
     if(r.code!==0||result?.status!=='SUCCESS'){

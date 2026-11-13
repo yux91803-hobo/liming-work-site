@@ -32,11 +32,16 @@ def usage():
         d = (bj - timedelta(days=i)).strftime('%Y-%m-%d')
         models = {}
         if i in (0, 1, 3, 10, 20):
-            models['claude-opus-4.6'] = {'input': 120000 + i * 1000, 'cached': 80000, 'output': 9000, 'runs': 6}
-        if i in (0, 3):
-            models['gemini-3.8-flash-high'] = {'input': 300000, 'cached': 0, 'output': 40000, 'runs': 2}
+            models['gemini-4-hydrogen'] = {'input': 120000 + i * 1000, 'cached': 80000, 'output': 9000, 'runs': 6}
         if i == 1:
             models['deepseek-v4.1-flash'] = {'input': 50000, 'cached': 20000, 'output': 4000, 'runs': 3}
+        # 看图、电脑维护、每日任务还走 GLM / Kimi（只放在上面有数据的日子：30 天里空柱数不变）
+        if i in (0, 3, 10):
+            models['glm-5.3'] = {'input': 90000, 'cached': 30000, 'output': 7000, 'runs': 2}
+        if i in (0, 20):
+            models['kimi-k3.1-pro'] = {'input': 60000, 'cached': 10000, 'output': 5000, 'runs': 1}
+        if i in (0, 1):
+            models['glm-5.3-flash'] = {'input': 30000, 'cached': 5000, 'output': 2000, 'runs': 2}
         days.append({'date': d, 'models': models})
     tot = lambda r: {'input': sum(m['input'] for x in r for m in x['models'].values()), 'cached': sum(m['cached'] for x in r for m in x['models'].values()),
                      'output': sum(m['output'] for x in r for m in x['models'].values()), 'runs': sum(m['runs'] for x in r for m in x['models'].values())}
@@ -45,14 +50,12 @@ def usage():
         t['hit'] = t['cached'] / t['input'] if t['input'] else None
     return {
         'quotas': [
-            {'key': 'opus', 'name': 'Opus', 'checkedAt': NOW - 3 * 60000, 'windows': [
-                {'id': '3p-5h', 'kind': '5h', 'used': 0.72, 'resetAt': NOW + int(1.5 * H), 'reset': False, 'forecastAt': NOW + H},
-                {'id': '3p-weekly', 'kind': 'week', 'used': 0.41, 'resetAt': NOW + 3 * 24 * H, 'reset': False, 'forecastAt': None}]},
-            {'key': 'gemini', 'name': 'Gemini', 'checkedAt': NOW - 2 * H, 'windows': [
-                {'id': 'gemini-5h', 'kind': '5h', 'used': 0, 'resetAt': NOW - 60000, 'reset': True, 'forecastAt': None},
-                {'id': 'gemini-weekly', 'kind': 'week', 'used': 0.09, 'resetAt': NOW + 5 * 24 * H, 'reset': False, 'forecastAt': None}]}],
+            # 前台、后台都用 Gemini 4 Hydrogen（同一个额度组）：额度卡只有一项
+            {'key': 'gemini', 'name': 'Gemini', 'checkedAt': NOW - 3 * 60000, 'windows': [
+                {'id': 'gemini-5h', 'kind': '5h', 'used': 0.72, 'resetAt': NOW + int(1.5 * H), 'reset': False, 'forecastAt': NOW + H},
+                {'id': 'gemini-weekly', 'kind': 'week', 'used': 0, 'resetAt': NOW - 60000, 'reset': True, 'forecastAt': None}]}],
         'days': days, 'totals': totals, 'since': NOW - 40 * 24 * H, 'now': NOW,
-        'names': {'claude-opus-4.6': 'Claude Opus 4.6', 'gemini-3.8-flash-high': 'Gemini 3.8 Flash High', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash'}}
+        'names': {'gemini-4-hydrogen': 'Gemini 4 Hydrogen', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro', 'glm-5.3-flash': 'GLM-5.3 Flash'}}
 
 
 async def setup(browser, w=1280, h=860, mobile=False, theme='light', glow='warn', live=False, reduced=False, clock=False):
@@ -109,9 +112,9 @@ async def main():
         card = await pg.evaluate("""(() => { const q = document.querySelector('.xq'); return {names: [...q.querySelectorAll('.xq-name')].map(e => e.textContent),
           rows: [...q.querySelectorAll('.xq-row')].map(e => e.innerText.replace(/\\s+/g, ' ')), fc: [...q.querySelectorAll('.xq-fc')].map(e => e.textContent),
           at: [...q.querySelectorAll('.xq-at')].map(e => e.textContent), more: !!q.querySelector('.xq-more')}; })()""")
-        ok = card['names'] == ['Opus', 'Gemini'] and len(card['rows']) == 4 and '5 小时' in card['rows'][0] and '72%' in card['rows'][0] and '重置' in card['rows'][0] \
-            and '每周' in card['rows'][1] and '已重置' in card['rows'][2] and len(card['fc']) == 1 and '用完' in card['fc'][0] and card['at'][0].endswith('读取') and card['more']
-        ui.check('额度卡：每个模型两行（已用、重置）、预计用完、读取时间、「用量」入口', ok, card)
+        ok = card['names'] == ['Gemini'] and len(card['rows']) == 2 and '5 小时' in card['rows'][0] and '72%' in card['rows'][0] and '重置' in card['rows'][0] \
+            and '每周' in card['rows'][1] and '已重置' in card['rows'][1] and len(card['fc']) == 1 and '用完' in card['fc'][0] and card['at'][0].endswith('读取') and card['more']
+        ui.check('额度卡：Gemini 一项两行（已用、重置）、预计用完、读取时间、「用量」入口', ok, card)
         ui.check('额度卡打开时焦点在卡片里', await pg.evaluate("!!document.activeElement.closest('.xq')"))
         await pg.keyboard.press('Escape')
         await pg.wait_for_timeout(200)
@@ -146,8 +149,8 @@ async def main():
           quota: s.querySelectorAll('.xq-row').length, tabs: [...s.querySelectorAll('.xu-rg')].map(e => e.textContent), on: (s.querySelector('.xu-rg.on') || {}).textContent,
           days: s.querySelectorAll('.xu-day').length, empty: s.querySelectorAll('.xu-day.empty').length, legend: [...s.querySelectorAll('.xu-lg li')].map(e => e.textContent),
           models: [...s.querySelectorAll('.xu-m')].map(e => e.innerText.replace(/\\s+/g, ' ')), sum: s.querySelector('.xu-sum').textContent}; })()""")
-        ok = page['title'] == '用量' and page['quota'] == 4 and page['tabs'] == ['今天', '7 天', '30 天'] and page['on'] == '7 天' and page['days'] == 7 \
-            and len(page['legend']) >= 2 and any('Claude Opus 4.6' in m for m in page['models']) and '缓存命中' in page['sum']
+        ok = page['title'] == '用量' and page['quota'] == 2 and page['tabs'] == ['今天', '7 天', '30 天'] and page['on'] == '7 天' and page['days'] == 7 \
+            and len(page['legend']) >= 2 and any('Gemini 4 Hydrogen' in m for m in page['models']) and '缓存命中' in page['sum']
         ui.check('用量页：额度、范围（默认 7 天）、合计含缓存命中、7 根柱、图例和按模型列表', ok, page)
         calls = st.get('usage_calls')
         await pg.click('.xc-sheet .xu-rg:has-text("30 天")')

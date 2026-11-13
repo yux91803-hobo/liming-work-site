@@ -1,4 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const { lockedSpawn } = require('./helpers/locked.cjs');
 const {spawnSync}=require('node:child_process');const {performance}=require('node:perf_hooks');const {pathToFileURL}=require('node:url');
 const agent=path.join(__dirname,'../site/xin/vm-agent.mjs');
 function fixture(t,{slow=false,slowUser=false}={}){
@@ -9,7 +10,7 @@ function fixture(t,{slow=false,slowUser=false}={}){
  const parent={sid:'shandoffparent',agent:'codex',runs:[],created:Date.now(),title:'fixture'},task={sid:'shandoffwork01',no:1,parent:parent.sid,kind:'task',tkind:'research',title:'整理资料',goal:'整理资料并核对',status:'running',model:'kimi-k3.1-pro',runs:['rhandoffwork01'],dir:root+'/work/project',created:Date.now(),inbox:[]};fs.mkdirSync(task.dir);
  const write=(file,value)=>fs.writeFileSync(control+'/'+file,JSON.stringify(value));write('sessions/'+parent.sid+'.json',parent);write('sessions/'+task.sid+'.json',task);write('runs/rhandoffwork01.json',{sid:task.sid,started:Date.now(),ended:Date.now()});fs.writeFileSync(control+'/runs/rhandoffwork01.jsonl',JSON.stringify({t:'text',text:'资料已整理并核对。'})+'\n');
  const call=(op,args={})=>{const r=spawnSync(process.execPath,[agent,op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);const x=JSON.parse(r.stdout);assert.ok(!x.error,JSON.stringify(x));return x;};
- const internal=(op,args={})=>{const r=spawnSync(process.execPath,[agent,'locked',op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
+ const internal=(op,args={})=>{const r=lockedSpawn(agent,op,args,{env,encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
  const read=()=>JSON.parse(fs.readFileSync(control+'/sessions/'+task.sid+'.json'));
  const wait=async(fn,timeout=15000)=>{const start=performance.now(),wall=Date.now(),deadline=start+timeout;while(performance.now()<deadline){const value=fn();if(value)return value;await new Promise(r=>setTimeout(r,50));}throw Error('handoff fixture timed out; elapsed='+Math.round(performance.now()-start)+'ms wall='+Math.round(Date.now()-wall)+'ms');};
  t.after(async()=>{const a=await import(pathToFileURL(agent).href);for(let i=0;i<30;i++){let alive=false;for(const n of fs.readdirSync('/proc').filter(n=>/^\d+$/.test(n)&&+n!==process.pid)){try{if(!fs.readFileSync('/proc/'+n+'/environ','utf8').split('\0').includes('XIN_HOME='+control))continue;const id=a.processIdentity(+n);if(id&&!['Z','X'].includes(id.state)){alive=true;a.signalProcessGroup(+n,id,'SIGKILL');}}catch{}}if(!alive)break;await new Promise(r=>setTimeout(r,30));}fs.rmSync(root,{recursive:true,force:true});});

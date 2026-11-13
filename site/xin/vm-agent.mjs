@@ -62,7 +62,7 @@ export * from './vm-persona.mjs';
 import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, memoryPreferences,setMemoryPreferences,MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
 import {recallAll,turnGuidance,safeContextEvents,dropRecall} from './vm-context.mjs';
 import {dailyEvidence,dailyContext} from './vm-daily.mjs';
-import {openFrontProvider,preferredFrontModel,frontModelInfo,OPUS_FRONT_MODEL} from './vm-front-opus.mjs';
+import {openFrontProvider,preferredFrontModel,frontModelInfo,AGY_FRONT_MODEL} from './vm-front-agy.mjs';
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
@@ -748,7 +748,7 @@ function runner(run) {
     const currentSession = readJ(sessF(meta.sid), sess);
     if(currentSession.tkind==='review'&&reviewAuthors(currentSession).includes(meta.model)){finish(127,'独立复核模型与实际作者相同，已拒绝启动。');return;}
     let invocation;
-    try { invocation = meta.task&&meta.model===runtime.AGY_MODEL?[process.execPath,[SELF,'agy-run',run]]:agentArgs(meta.agent, currentSession, meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model, role, sandbox: !!meta.sandbox }); }
+    try { invocation = meta.task&&runtime.isAgyModel(meta.model)?[process.execPath,[SELF,'agy-run',run]]:agentArgs(meta.agent, currentSession, meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model, role, sandbox: !!meta.sandbox }); }
     catch (e) { finish(127, e.message); return; }
     const [cmd, args] = invocation;
     let got = false, buf = '';
@@ -786,7 +786,7 @@ function runner(run) {
       app = null; appCode = null;
       // 这一轮的命令放进自己的 systemd scope（vm-reaper.mjs）：setsid、nohup 甩出去的也认得出是这一轮的，结束 2 小时后还在就清掉
       const unit = 'xin-run-' + run + '-a' + (++scopeSeq);
-      if (meta.agent === 'codex' && meta.model!==runtime.AGY_MODEL && process.env.XIN_CODEX_TRANSPORT !== 'exec') {
+      if (meta.agent === 'codex' && !runtime.isAgyModel(meta.model) && process.env.XIN_CODEX_TRANSPORT !== 'exec') {
         const config = [];
         for (let i = 0; i < args.length; i++) if (args[i] === '-c') config.push('-c', args[++i]);
         if (!meta.sandbox) config.push('-c', 'sandbox_mode="danger-full-access"');
@@ -833,14 +833,14 @@ function runner(run) {
       clearTimeout(stallTm);
       if (restarting) { restarting = false; start(); return; }
       const c = appCode == null ? code == null ? 1 : code : appCode;
-      if((c!==0||state.failed)&&sess.strictModel&&meta.model!==runtime.AGY_MODEL&&!state.strictRetried&&!state.worked&&!state.timeout&&!(readJ(metaF(run),meta)||{}).stopped){
+      if((c!==0||state.failed)&&sess.strictModel&&!runtime.isAgyModel(meta.model)&&!state.strictRetried&&!state.worked&&!state.timeout&&!(readJ(metaF(run),meta)||{}).stopped){
         state.strictRetried=true;emit(run,{t:'status',text:'执行入口暂时没接上，正在按原安排重试。'});
         Object.assign(state,{failed:false,errShown:false,heldErr:null,lastErr:''});stderr='';start();return;
       }
       // 模型还没开始干活就失败了：换候选里的下一个模型再试一次（用户自己停的不换）
-      const quotaFallback=c===75&&meta.model===runtime.AGY_MODEL&&!state.switched&&!state.timeout&&safeFallbacks().length;
+      const quotaFallback=c===75&&runtime.isAgyModel(meta.model)&&!state.switched&&!state.timeout&&safeFallbacks().length;
       // Gemini 卡住（vm-runtime.mjs 的 AGY_IDLE_MS）：和额度用尽一样，已经干了一部分也换下一个模型接着做
-      const stallFallback=c===76&&meta.model===runtime.AGY_MODEL&&!state.switched&&!state.timeout&&safeFallbacks().length;
+      const stallFallback=c===76&&runtime.isAgyModel(meta.model)&&!state.switched&&!state.timeout&&safeFallbacks().length;
       if ((c !== 0 || state.failed) && (canSwitch()||quotaFallback||stallFallback) && !(readJ(metaF(run), meta) || {}).stopped) {
         const from = meta.model;
         const candidates=safeFallbacks();
@@ -852,7 +852,7 @@ function runner(run) {
         if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         else if(stallFallback)meta.text='原执行入口没有回应。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
-        emit(run, { t: 'status', text: from===runtime.AGY_MODEL?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
+        emit(run, { t: 'status', text: runtime.isAgyModel(from)?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
         Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
         start(); return;
       }
@@ -932,7 +932,7 @@ function runner(run) {
         protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},
         quotaState:readJ(path.join(BASE,'front-antigravity-quota.json')),
         quota:quota=>lockedCall('tasks','front_quota',{quota}),
-        model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;meta.providerModel=chosen.providerModel;if(['quota','format','front_model'].includes(chosen.reason))meta.from=OPUS_FRONT_MODEL;}
+        model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;meta.providerModel=chosen.providerModel;if(['quota','format','front_model','unavailable'].includes(chosen.reason))meta.from=AGY_FRONT_MODEL;}
       });
       if(meta.frontFiles?.some(f=>f.image)&&provider.image===false){
         patchRun(run,{frontSeesImages:false,images:[]});
@@ -1652,7 +1652,8 @@ function taskNew(a) {
   const agyState=readJ(path.join(BASE,'antigravity-quota.json'),{}),images=files.some(f=>f.image);
   // 刚卡过（AGY_STALL_MS 内）先不派给 Gemini：不然每个新任务都要先白等 2 分钟
   const stalledAt=(readJ(AGY_STALL_F(),{})||{}).at||0;
-  const preferAgy=!a.named&&!a.daily&&!images&&(kind==='quick'||kind==='research'||kind==='code'&&a.web)&&runtime.antigravityBinary()&&(!agyState.blocked||Date.now()>=agyState.retryAt)&&Date.now()-stalledAt>=AGY_STALL_MS;
+  // 后台优先 Hydrogen（站长 2026-11-13）：杂活、查资料、写代码（含网页）、难题、检查都先给它；它只在隔离副本里跑命令，所以看图、带插件、电脑维护、每日任务照旧
+  const preferAgy=!a.named&&!a.daily&&!images&&!(a.plugins||[]).length&&['quick','research','code','hard','review'].includes(kind)&&runtime.antigravityBinary()&&(!agyState.blocked||Date.now()>=agyState.retryAt)&&Date.now()-stalledAt>=AGY_STALL_MS;
   const rt = route({ kind: images ? (kind === 'review' ? 'review' : 'vision') : kind, want: preferAgy?runtime.AGY_MODEL:a.model||null, named: !!a.named, images, avoid });
   if(rt.error)return {error:rt.error,msg:rt.note};
   const seq = (readJ(TASK_SEQ(), {}) || {}).n || all.reduce((m, t) => Math.max(m, t.no || 0), 0);
@@ -1665,7 +1666,7 @@ function taskNew(a) {
   const t = { sid: rid('s'), kind: 'task', no, parent: okId(a.parent, 's') ? a.parent : null, agent: 'codex', title, goal, userRequest:String(a.userRequest||'').slice(0,TEXT_MAX), tkind: kind,
     model: rt.model, requestedModel:a.model||null,requestedNamed:!!a.named,actualModel:null,actualModels:[],reviewAuthors:[],why: rt.why, fallbacks: rt.fallbacks, note: rt.note || '', files, dir: d.dir, after, minutes,
     plugins: host ? [] : [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
-    frontRun:a.frontRun||null,web:!!a.web&&!host,strictModel:!!a.strictModel&&rt.model!==runtime.AGY_MODEL,...(sites.length?{sites}:{}),status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
+    frontRun:a.frontRun||null,web:!!a.web&&!host,strictModel:!!a.strictModel&&!runtime.isAgyModel(rt.model),...(sites.length?{sites}:{}),status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
   if(t.strictModel)t.fallbacks=[];
   saveTask(t);
   memoryActivity();
@@ -1697,7 +1698,7 @@ function startTask(t, all) {
   if (t.tkind === 'review') {
     t.reviewAuthors=[...new Set((first?[]:t.reviewAuthors||[]).concat(authorModels(deps)))];
     if(deps.some(d=>!authorModels([d]).length)){failTask(t,'没有开始：被检查的任务不知道实际用的哪个模型，做不了独立复核。');return false;}
-    const rt = route({ kind: 'review',want:t.requestedModel||(t.why==='named'?t.model:null),named:t.requestedNamed??t.why==='named', images: (t.files || []).some(f => f.image), avoid:t.reviewAuthors });
+    const rt = route({ kind: 'review',want:t.requestedModel||(t.why==='named'||t.why==='picked'?t.model:null),named:t.requestedNamed??t.why==='named', images: (t.files || []).some(f => f.image), avoid:t.reviewAuthors });
     if(rt.error){failTask(t,'没有开始：'+rt.note);return false;}
     t.model = rt.model; t.fallbacks = t.strictModel?[]:rt.fallbacks; t.why = rt.why;
   }
@@ -1713,7 +1714,7 @@ function startTask(t, all) {
   const userText = first ? t.goal : String(t.nextShow || t.next || '接着做');
   const cm = codexModel(t.model);
   Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, retryAt: 0, startedAt: t.startedAt || Date.now() });
-  const run = launch(t, { text, effort: t.model===runtime.AGY_MODEL?'high':AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||t.model===runtime.AGY_MODEL ? t.fallbacks || [] : [],
+  const run = launch(t, { text, effort: runtime.isAgyModel(t.model)?runtime.agyEffort(t.tkind):AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||t.model===runtime.AGY_MODEL ? t.fallbacks || [] : [],
     images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !hostTask(t) && TASK_SANDBOX(),
     deadline: t.deadline }, { t: 'user', text: userText, at: Date.now() });
   if (t.dailyDate) writeJ(DAILY_LAST(), { date: t.dailyDate, run, sid: t.sid, at: Date.now(), ok: null });
@@ -2188,7 +2189,7 @@ export function frontAction(a) {
     if (!original) return {error:'找不到本轮用户原话，不能替用户编写要求'};
     if (o.kind && !TASK_KINDS.includes(o.kind)) return {error:'未知工作类型：'+o.kind+'（可用：'+TASK_KINDS.join('、')+'）'};
     // A model the user named is recorded from their own words and applied regardless; a loosely written --model must not block dispatch.
-    if (o.model && !m.frontNamed && o.model!==runtime.AGY_MODEL && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(runtime.AGY_MODEL).join('、')+'）'};
+    if (o.model && !m.frontNamed && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(runtime.AGY_MODEL).join('、')+'）'};
     const previous = mine.find(t=>t.frontRun===a.run);
     if (previous) return {terminal:true,text:'好，我这就去弄。',task:taskSummary(previous)};
     const requested = m.frontNamed || o.model;
@@ -2278,9 +2279,10 @@ function leaseHint(bg) {
   return null;
 }
 /* ---------- 用量看板（vm-usage.mjs）：额度光环、额度卡、工作台「用量」页 ---------- */
-const QUOTA_FILES = [{ key: 'opus', name: 'Opus', file: 'front-antigravity-quota.json' }, { key: 'gemini', name: 'Gemini', file: 'antigravity-quota.json' }];
+// 前台和后台都用 Gemini 4 Hydrogen，同一个 Gemini 额度组：额度卡只显示一项，取两份记录里较新的那份（旧的 Claude、Flash 记录不算）
+const QUOTA_FILES = [{ key: 'gemini', name: 'Gemini', files: ['antigravity-quota.json', 'front-antigravity-quota.json'] }];
 const QUOTA_HIST_F = () => path.join(BASE, 'quota-history.jsonl');
-const quotaReadings = () => QUOTA_FILES.map(q => ({ ...q, quota: readJ(path.join(BASE, q.file), null) }));
+const quotaReadings = () => QUOTA_FILES.map(q => ({ key: q.key, name: q.name, quota: q.files.map(f => readJ(path.join(BASE, f), null)).filter(x => x && x.model === runtime.AGY_MODEL).sort((a, b) => (b.checkedAt || 0) - (a.checkedAt || 0))[0] || null }));
 // 每次读到新额度记一行（算消耗速率用），留 14 天、最多 2000 行
 function quotaSample(model, quota) {
   try {
@@ -2417,7 +2419,7 @@ const ops = {
     const userEv = { t: 'user', text, at: Date.now() };
     if (ctxLabel) userEv.ctx = ctxLabel;
     if (files.length) userEv.files = files.map(f => ({ name: f.name, path: f.path, size: f.size, image: f.image }));
-    // 前台优先 Antigravity Opus；实际额度耗尽才回 DeepSeek。点名只记给后台。
+    // 前台优先 Antigravity 的 Gemini 4 Hydrogen（思考强度中）；Gemini 额度实际耗尽才回 DeepSeek。点名只记给后台。
     // Harness（天启模式）按网页选的，续聊没带 model 时保留对话里的选择。
     let rt = null, cm = null;
     if (s.agent === 'codex') {
@@ -2717,14 +2719,14 @@ const ops = {
 // 只在 tasks 锁里跑的（main 里分派）
 const iops = {
   front_model(a){
-    const m=readJ(metaF(a.run));if(!m||m.task||m.agent!=='codex'||m.stopped||m.ended||![runtime.FRONT_MODEL,OPUS_FRONT_MODEL].includes(a.model))return {error:'bad_front_model'};
-    m.model=a.model;m.providerModel=String(a.providerModel||a.model).slice(0,200);if(['quota','format','front_model'].includes(a.reason))m.from=OPUS_FRONT_MODEL;else delete m.from;writeJ(metaF(a.run),m);
+    const m=readJ(metaF(a.run));if(!m||m.task||m.agent!=='codex'||m.stopped||m.ended||![runtime.FRONT_MODEL,AGY_FRONT_MODEL].includes(a.model))return {error:'bad_front_model'};
+    m.model=a.model;m.providerModel=String(a.providerModel||a.model).slice(0,200);if(['quota','format','front_model','unavailable'].includes(a.reason))m.from=AGY_FRONT_MODEL;else delete m.from;writeJ(metaF(a.run),m);
     const s=readJ(sessF(m.sid));if(s){s.model=a.model;writeJ(sessF(m.sid),s);}return {ok:true};
   },
   front_quota(a){
-    if(a.quota?.model!==OPUS_FRONT_MODEL||!Array.isArray(a.quota.buckets))return {error:'bad_quota'};
+    if(a.quota?.model!==AGY_FRONT_MODEL||!Array.isArray(a.quota.buckets))return {error:'bad_quota'};
     const f=path.join(BASE,'front-antigravity-quota.json'),old=readJ(f),quota=runtime.mergeAntigravityQuota(old,a.quota);
-    writeJ(f,quota);quotaSample(OPUS_FRONT_MODEL,a.quota);return {quota};
+    writeJ(f,quota);quotaSample(AGY_FRONT_MODEL,a.quota);return {quota};
   },
   front_reply(a){const m=readJ(metaF(a.run));if(!m||m.task||m.stopped||m.ended)return {};if(m.reply!==undefined)return {already:true};m.reply=String(a.text||'').slice(0,TEXT_MAX);writeJ(metaF(a.run),m);if(m.reply)emit(a.run,{t:'text',text:m.reply});return {ok:true};},
   handoff_start:handoffStart,handoff_finish:handoffFinish,
@@ -2886,7 +2888,7 @@ function taskLine(t) {
   const mins = n => Math.max(1, Math.round(n / 60e3)) + ' 分钟';
   const st = t.status === 'running' ? '进行中 ' + mins(Date.now() - (t.startedAt || t.created)) : (TASK_STATUS[t.status] || t.status);
   const actual=t.actualModel||((t.runs||[]).length||t.turnsCount?t.model:null);
-  const model=actual===runtime.AGY_MODEL?'Gemini 3.8 Flash High':CODEX_MODELS.find(m=>m.id===actual)?.name||actual||'尚未执行';
+  const model=actual===runtime.AGY_MODEL?'Gemini 4 Hydrogen':CODEX_MODELS.find(m=>m.id===actual)?.name||actual||'尚未执行';
   return '任务 ' + t.no + '「' + t.title + '」' + st + '（' + KIND_NAMES[t.tkind || t.kind] + '，' + model + '）' + (t.question ? '：等你确认「' + t.question + '」' : '');
 }
 function taskCmd(argv) {
@@ -2902,7 +2904,7 @@ function taskCmd(argv) {
     if (!o.goal) o.goal = readStdin().trim();
     if (!o.goal) { console.log('要写清楚让分身做什么\n' + TASK_HELP); return 2; }
     if (o.kind && !TASK_KINDS.includes(o.kind)) { console.log('类型只能是：' + TASK_KINDS.join(' / ')); return 2; }
-    if (o.model && o.model!==runtime.AGY_MODEL && !CODEX_MODELS.some(m => m.id === o.model)) { console.log('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(runtime.AGY_MODEL).join('、') + '）'); return 2; }
+    if (o.model && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(m => m.id === o.model)) { console.log('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(runtime.AGY_MODEL).join('、') + '）'); return 2; }
     // 用户这一句点名的就是这个模型：当成用户点名（检查任务也照用）
     const said = (events(run).find(e => e.t === 'user') || {}).text || '';
     if (meta.frontNamed) o.model = meta.frontNamed;
@@ -3114,9 +3116,9 @@ function main() {
   if (op === 'run') { runner(process.argv[3]); return; }
   if(op==='agy-run'){
     const run=process.argv[3],m=readJ(metaF(run)),t=m&&readJ(sessF(m.sid));
-    if(!m?.task||!t?.workspace||m.model!==runtime.AGY_MODEL){process.exitCode=1;return;}
+    if(!m?.task||!t?.workspace||!runtime.isAgyModel(m.model)){process.exitCode=1;return;}
     const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
-    runtime.antigravityWork(t,{clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why})})
+    runtime.antigravityWork(t,{effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why})})
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }

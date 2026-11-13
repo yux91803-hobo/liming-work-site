@@ -1,4 +1,4 @@
-"""Production smoke: real dispatch/chat, durable completion, conversation isolation and named Gemini 3.8 (Antigravity) web delivery.
+"""Production smoke: real dispatch/chat, durable completion, conversation isolation and named Gemini 4 Hydrogen (Antigravity) web delivery.
 Credentials come only from Actions Secrets. Never emit response bodies, cookies, screenshots or model traces.
 """
 import asyncio
@@ -13,7 +13,9 @@ from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
 PASSWORD = os.environ.get('XIN_OWNER_PASSWORD', '')
-AGY_MODEL = 'gemini-3.8-flash-high'
+AGY_MODEL = 'gemini-4-hydrogen'
+# 后台按类别定思考强度（vm-runtime.mjs 的 AGY_KIND_EFFORT）：默认文件任务是查资料（research），点名做网页是写代码（code）
+AGY_EFFORT = {'research': 'medium', 'code': 'high'}
 # Public replies must not mention model, runner or task internals.
 LEAKS = ('kimi','deepseek','gemini','antigravity','分身','任务编号')
 
@@ -235,11 +237,11 @@ async def main():
             if again['task']['result']['at'] != h['task']['result']['at'] or len(again['runs']) != 1:
                 raise RuntimeError('Task completion was duplicated')
             actual = again['task'].get('actualModel')
-            if actual == 'gemini-3.8-flash-high':
+            if actual == AGY_MODEL:
                 finished = [e for r in again['runs'] for e in r['events'] if e.get('t') == 'done']
-                if not finished or finished[-1].get('effort') != 'high':
-                    raise RuntimeError('Antigravity was not fixed at High')
-                print('PASS real default Antigravity Gemini 3.8 Flash High and confined file output', flush=True)
+                if not finished or finished[-1].get('effort') != AGY_EFFORT['research']:
+                    raise RuntimeError('Research work on Hydrogen did not use medium thinking')
+                print('PASS real default Antigravity Gemini 4 Hydrogen (medium for research) and confined file output', flush=True)
             else:
                 # Only a cause the controller itself recorded explains a fallback: a real quota cooldown, or Gemini being
                 # unavailable (no output at all = stall, or it answered with a non-SUCCESS status) during this run or in the
@@ -338,7 +340,8 @@ async def main():
                 release.set()
             # Canonical user scenario. Use the current isolated conversation, with no existing work.
             started = time.monotonic()
-            named_request = '你让 Gemini 3.8 Flash 去画个奶龙。做成可爱的动画互动网页：黄色圆滚滚的小恐龙、大眼睛，可以点按钮跳舞和挥手，适合手机。不使用任何外部资源。请直接制作，不要先讨论。'
+            named_request = '你让 Gemini 4 Hydrogen 去画个奶龙。做成可爱的动画互动网页：黄色圆滚滚的小恐龙、大眼睛，可以点按钮跳舞和挥手，适合手机。不使用任何外部资源。请直接制作，不要先讨论。'
+            named_dispatched_ms = time.time() * 1000
             await page.locator('.xc-row textarea').fill(named_request)
             await page.locator('.xc-send').click()
             await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
@@ -399,11 +402,11 @@ async def main():
             if len(deliveries) != 1 or '我画好了' not in deliveries[0].get('text', ''):
                 raise RuntimeError('Completion was not delivered exactly once without another user prompt')
             if web.get('actualModel') != AGY_MODEL:
-                # Same rule as the background file task: a fallback is only acceptable with a real Antigravity quota cooldown.
-                quota = (await call('tasks', {'all': True})).get('antigravity') or {}
-                if not quota.get('blocked') or quota.get('retryAt', 0) <= time.time() * 1000:
-                    raise RuntimeError('Named Gemini web work ran elsewhere without a real quota cooldown')
-                print('PASS named Gemini web fell back only under a real quota cooldown', flush=True)
+                # Same rule as the background file task: only a cause the controller recorded explains a fallback
+                # (a real quota cooldown, or a Gemini outage: stall / non-SUCCESS answer). #132 正式站：named Gemini 120 秒不出声，换 GLM 做完。
+                center = await call('tasks', {'all': True})
+                why = explain_background_fallback(center.get('antigravity'), center.get('antigravityIssue'), named_dispatched_ms, time.time() * 1000)
+                print('PASS named Gemini web fell back only because ' + ('of a real quota cooldown' if why == 'quota' else why + ' was recorded by the controller'), flush=True)
             if not preview.get('ready') or not preview.get('checks'):
                 raise RuntimeError('Real Gemini web artifact or browser evidence missing')
             if not all((web.get('cleanup') or {}).get(k) for k in ('processesGone','tmpCleaned')):

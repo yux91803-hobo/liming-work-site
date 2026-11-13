@@ -1,23 +1,24 @@
 """Production smoke policy for the owner's configured foreground model."""
-OPUS = 'claude-opus-4.6'
+# 站长 2026-11-13：前台用 Antigravity 的 Gemini 4 Hydrogen（思考强度中），Gemini 额度用完再切 DeepSeek；Claude 不再用。
+HYDROGEN = 'gemini-4-hydrogen'
 DEEPSEEK = 'deepseek-v4.1-flash'
-# The foreground allows 65 s for Opus and 25 s for DeepSeek inference. Allow
+# The foreground allows 65 s for Hydrogen and 25 s for DeepSeek inference. Allow
 # bounded provider setup and transport as well; creating background work still ends the turn.
-REPLY_LIMIT = {OPUS: 75, DEEPSEEK: 30}
+REPLY_LIMIT = {HYDROGEN: 75, DEEPSEEK: 30}
 
 
 def validate_front_model(done, quota=None, now_ms=0):
     if done.get('ok') is not True:
         raise RuntimeError('Foreground did not complete successfully')
     model = done.get('model')
-    if model == OPUS:
+    if model == HYDROGEN:
         return model
     if model != DEEPSEEK:
         raise RuntimeError('Foreground used an unexpected model')
     quota = quota or {}
-    if (quota.get('model') != OPUS or quota.get('blocked') is not True
+    if (quota.get('model') != HYDROGEN or quota.get('blocked') is not True
             or not isinstance(quota.get('retryAt'), (int, float)) or quota['retryAt'] <= now_ms):
-        raise RuntimeError('Foreground skipped Opus without real exhausted Claude quota')
+        raise RuntimeError('Foreground skipped Hydrogen without real exhausted Gemini quota')
     return model
 
 

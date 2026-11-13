@@ -64,10 +64,10 @@ test('短对话：没有索引，全部原文按顺序', async () => {
   assert.deepEqual(ctx.input.map(m => m.role + ':' + m.content[0] + m.content[1]), ['user:Q0', 'assistant:A0', 'user:Q1', 'assistant:A1', 'user:Q2', 'assistant:A2']);
 });
 
-test('显示用的模型名：Gemini、Opus 有自己的名字，不认识的原样显示，不冒充成 GLM-5.3 Flash', async () => {
+test('显示用的模型名：Gemini 4 Hydrogen 有自己的名字；不再用的 Claude、旧 Gemini 和不认识的原样显示，不冒充成 GLM-5.3 Flash', async () => {
   const { modelLabel, codexModel } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-models.mjs')).href);
-  assert.equal(modelLabel('gemini-3.8-flash-high'), 'Gemini 3.8 Flash');
-  assert.equal(modelLabel('claude-opus-4.6'), 'Claude Opus 4.6');
+  assert.equal(modelLabel('gemini-4-hydrogen'), 'Gemini 4 Hydrogen');
+  assert.equal(modelLabel('claude-opus-4.6'), 'claude-opus-4.6');
   assert.equal(modelLabel('kimi-k3.1-pro'), 'Kimi K3.1 Pro');
   assert.equal(modelLabel('glm-5.3'), 'GLM-5.3');
   assert.equal(modelLabel('some-new-model'), 'some-new-model');

@@ -44,7 +44,7 @@ export const CODEX_MODELS = [
 ];
 export function codexModel(id) { return CODEX_MODELS.find(m => m.id === id) || CODEX_MODELS[0]; }   // 起 Codex 用：不认识的照样按第一个开工
 // 只用来显示名字：认得后台的 Gemini（Antigravity）和前台的 Opus；不认识的原样显示编号，不冒充成列表里第一个（审查问题 13）
-const OTHER_NAMES = { 'gemini-3.8-flash-high': 'Gemini 3.8 Flash', 'claude-opus-4.6': 'Claude Opus 4.6' };
+const OTHER_NAMES = { 'gemini-4-hydrogen': 'Gemini 4 Hydrogen' };
 export function modelLabel(id) { const m = CODEX_MODELS.find(x => x.id === id) || HARNESS_MODELS.find(x => x.id === id); return m ? m.name : OTHER_NAMES[id] || String(id || '未知模型'); }
 
 /* ---------- 默认模式（Codex 自动）：路由器 ----------
@@ -71,7 +71,8 @@ export const ROUTES = {
 export const KIND_NAMES = { chat: '聊天', quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务', system: '电脑维护' };
 // 用户点名：「用 / 换成 / 让 … 模型」或者「模型 来做 / 来看 …」。Flash 要排在同名的前面
 export const MODEL_ALIAS = [
-  [runtime.AGY_MODEL,'antigravity\\b|agy\\b|gemini[\\s-]*3\\.8[\\s-]*flash(?:[\\s-]*high)?'],
+  // 站长 2026-11-13：Antigravity 只用 Gemini 4 Hydrogen；说 Gemini、Flash、Hydrogen、Antigravity 都交给它
+  [runtime.AGY_MODEL,'antigravity\\b|agy\\b|(?:gemini[\\s-]*4[\\s-]*)?hydrogen|gemini(?:[\\s-]*[\\d.]+)?(?:[\\s-]*flash)?(?:[\\s-]*high)?'],
   ['glm-5.3-flash', 'glm[\\s-]*(?:5(?:\\.3)?)?[\\s-]*flash|智谱\\s*flash'],
   ['glm-5.3', 'glm(?:[\\s-]*5(?:\\.3)?)?|智谱'],
   ['kimi-k3.1-pro', 'kimi(?:[\\s-]*k?3(?:\\.1)?)?(?:[\\s-]*pro)?|月之暗面'],
@@ -91,15 +92,15 @@ export function namedModel(text) {
 // 回 {model, why, kind, fallbacks, note}：why = named（用户点名）/ picked（小芯提议）/ 类别名（按类别挑的）
 export function route(o = {}) {
   const kind = ROUTES[o.kind] ? o.kind : 'chat', avoid = o.avoid || [];
-  const known = id => CODEX_MODELS.some(m => m.id === id)||id===runtime.AGY_MODEL;
-  const fits = id => known(id) && (id!==runtime.AGY_MODEL||kind!=='chat') && (!o.images || id!==runtime.AGY_MODEL&&codexModel(id).image);
+  const known = id => CODEX_MODELS.some(m => m.id === id)||runtime.isAgyModel(id);
+  const fits = id => known(id) && (!runtime.isAgyModel(id)||kind!=='chat') && (!o.images || !runtime.isAgyModel(id)&&codexModel(id).image);
   const order = ROUTES[kind].filter(id => fits(id) && !avoid.includes(id));
   let model = null, why = kind, note = '';
   if (o.want) {
     const w = String(o.want);
     if(kind==='review'&&o.named&&avoid.includes(w))return {model:null,why:'named',kind,fallbacks:[],error:'independent_review_model',note:'指定模型是被复核任务的实际作者，不能作为独立复核模型，请选择其他模型。'};
     if (fits(w) && (o.named && kind!=='review' || !avoid.includes(w))) { model = w; why = o.named ? 'named' : 'picked'; }
-    else if (known(w)) note = modelLabel(w) + (o.images && (w === runtime.AGY_MODEL || !codexModel(w).image) ? ' 看不了图' : ' 这次不合适') + '，换成了别的';
+    else if (known(w)) note = modelLabel(w) + (o.images && (runtime.isAgyModel(w) || !codexModel(w).image) ? ' 看不了图' : ' 这次不合适') + '，换成了别的';
     else note = '没有叫 ' + w.slice(0, 40) + ' 的模型，按类别挑了一个';
   }
   // 候选全被排除了（比如要看图、能看图的又都在 avoid 里）：退回能用的第一个

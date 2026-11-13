@@ -1,4 +1,5 @@
 const test = require('node:test');
+const { lockedSpawn } = require('./helpers/locked.cjs');
 const { platformTimeout } = require('./helpers/timeout.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -35,7 +36,7 @@ function fixture(t) {
     fs.rmSync(root, { recursive: true, force: true });
   });
   const call = (op, args) => {
-    const r = spawnSync(process.execPath, [agent, 'locked', op], { env, input: JSON.stringify(args), encoding: 'utf8', timeout: platformTimeout(15000) });
+    const r = lockedSpawn(agent, op, args, { env, encoding: 'utf8', timeout: platformTimeout(15000) });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };
   const task = { sid: 'sruntime001', no: 1, kind: 'task', tkind: 'code', title: 'test', dir: path.join(root, 'project'), goal: 'test',

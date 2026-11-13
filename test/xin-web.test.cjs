@@ -1,4 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
+const { lockedSpawn } = require('./helpers/locked.cjs');
 const { platformTimeout } = require('./helpers/timeout.cjs');
 const {spawnSync}=require('node:child_process');const {pathToFileURL}=require('node:url');
 const agent=path.join(__dirname,'../site/xin/vm-agent.mjs'),load=()=>import('../site/xin/vm-runtime.mjs');
@@ -10,7 +11,7 @@ function fixture(t){
  const env={...process.env,XIN_HOME:control,XIN_WORK:root,CODEX_HOME:root+'/codex',XIN_TASK_MAX:'1',NODE_OPTIONS:'--require='+preload,XIN_CODEX_TRANSPORT:'exec'};
  const task={sid:'sweb'+crypto.randomBytes(7).toString('hex'),no:1,kind:'task',tkind:'code',title:'fixture',goal:'fixture',dir:project,status:'running',model:'glm-5.3',runs:['rwebholder01'],inbox:[],created:Date.now()};
  const save=()=>fs.writeFileSync(control+'/sessions/'+task.sid+'.json',JSON.stringify(task));save();fs.writeFileSync(control+'/runs/rwebholder01.json',JSON.stringify({sid:task.sid,pid:process.pid,started:Date.now()}));fs.writeFileSync(control+'/runs/rwebholder01.jsonl','');
- const call=(op,args={})=>{const r=spawnSync(process.execPath,[agent,'locked',op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
+ const call=(op,args={})=>{const r=lockedSpawn(agent,op,args,{env,encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
  const front=(text='你让 Kimi 去画个奶龙')=>{const sid='swebfront01',run='rwebfront01';fs.writeFileSync(control+'/sessions/'+sid+'.json',JSON.stringify({sid,agent:'codex',runs:[run]}));fs.writeFileSync(control+'/runs/'+run+'.json',JSON.stringify({sid,run,agent:'codex',model:'deepseek-v4.1-flash',frontNamed:'kimi-k3.1-pro',frontWeb:true,frontRequest:text,text,started:Date.now()}));fs.writeFileSync(control+'/runs/'+run+'.jsonl',JSON.stringify({t:'user',text})+'\n');return {sid,run};};
  t.after(async()=>{const a=await import(pathToFileURL(agent).href);for(let i=0;i<20;i++){let found=false;for(const n of fs.readdirSync('/proc').filter(n=>/^\d+$/.test(n)&&Number(n)!==process.pid)){try{if(!fs.readFileSync('/proc/'+n+'/environ','utf8').split('\0').includes('XIN_HOME='+control))continue;const identity=a.processIdentity(Number(n));if(identity&&!['Z','X'].includes(identity.state)){found=true;a.signalProcessGroup(Number(n),identity,'SIGKILL');}}catch{}}if(!found)break;await new Promise(ok=>setTimeout(ok,30));}if(task.workspace)fs.rmSync(path.dirname(task.workspace.work),{recursive:true,force:true});fs.rmSync(root,{recursive:true,force:true});});
  return {root,control,project,task,env,save,call,front};
@@ -49,9 +50,9 @@ test('前台只编码本轮已验证的上传图片；PDF 不冒充图片，丢�
  const outside=f.root+'/outside.txt';fs.writeFileSync(outside,'not an upload');fs.symlinkSync(outside,png);assert.match(js('try{a.frontUserInput(meta);console.log(JSON.stringify("unexpected"))}catch(e){console.log(JSON.stringify(e.message))}'),/图片没有成功传给我/);
 });
 test('xin task list/show 第一行按 actualModel 显示，Antigravity 和未知模型不误标成默认 GLM',t=>{
- const f=fixture(t),{run,sid}=f.front('查看任务');Object.assign(f.task,{no:24,parent:sid,status:'done',actualModel:'gemini-3.8-flash-high',model:'glm-5.3-flash'});f.save();
+ const f=fixture(t),{run,sid}=f.front('查看任务');Object.assign(f.task,{no:24,parent:sid,status:'done',actualModel:'gemini-4-hydrogen',model:'glm-5.3-flash'});f.save();
  const cli=(...argv)=>{const r=spawnSync(process.execPath,[agent,'xin','task',...argv],{env:{...f.env,XIN_RUN:run},encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout.split('\n')[0];};
- for(const args of [['list'],['show','24']]){const line=cli(...args);assert.match(line,/Gemini 3\.8 Flash High/);assert.doesNotMatch(line,/GLM/);}
+ for(const args of [['list'],['show','24']]){const line=cli(...args);assert.match(line,/Gemini 4 Hydrogen/);assert.doesNotMatch(line,/GLM/);}
  const index=f.control+'/tasks-index.json';fs.unlinkSync(index);f.task.actualModel='future-vision-model';f.save();assert.match(cli('show','24'),/future-vision-model/);assert.doesNotMatch(cli('list'),/GLM/);
  fs.unlinkSync(index);Object.assign(f.task,{actualModel:null,status:'queued',runs:[]});f.save();assert.match(cli('show','24'),/尚未执行/);
 });

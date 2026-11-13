@@ -2002,7 +2002,7 @@
     }, function (e) { if (quotaEl !== wrap) return; card.innerHTML = ''; card.appendChild(h('p', 'xq-hint', '读不出来：' + e.message)); });
   }
   // 用量页的模型颜色跟着模型走、不跟着排名走（dataviz 参考调色板的前六个，浅色 / 深色都验过色盲可分）；别的模型并成「其他」
-  var SERIES = ['claude-opus-4.6', 'deepseek-v4.1-flash', 'gemini-3.8-flash-high', 'glm-5.3', 'kimi-k3.1-pro', 'glm-5.3-flash'];
+  var SERIES = ['gemini-4-hydrogen', 'deepseek-v4.1-flash', 'glm-5.3', 'kimi-k3.1-pro', 'glm-5.3-flash'];
   function seriesOf(id) { var i = SERIES.indexOf(id); return i >= 0 ? 's' + (i + 1) : 'so'; }
   var RANGES = [['1', '今天'], ['7', '7 天'], ['30', '30 天']];
   function openUsage() {
