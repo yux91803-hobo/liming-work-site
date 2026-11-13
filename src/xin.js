@@ -17,7 +17,7 @@
 //   GET  /api/xin/file?path=/data/workspace/…   下载小芯电脑里的一个文件（先让 vm-agent 核对在工作目录里，再从 InstaBox 原样转过来）
 // status、wake 直接调 InstaBox 的机器接口（wake：打开网页时把睡着的云电脑叫醒，已经醒着就什么都不做）；其余都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
 // 返回 {ok:true, data} 或 {ok:false, state, msg, retryAfter}：state = waking（云电脑在睡，唤醒中）、cooldown（跑满 8 小时后的冷却）、busy、error。
-import { KERNEL_PORT, KernelConfigStore, kernelRequest, retrySafe, redact } from './xin-kernel.js';
+import { KERNEL_PORT, KernelConfigStore, kernelRequest, kernelFetch, retrySafe, redact } from './xin-kernel.js';
 import { Inbox } from './xin-inbox.js';
 
 const API = 'https://api.instabox.sh';
@@ -27,7 +27,7 @@ const AGENT_ASSET = '/xin/vm-agent.mjs', KERNEL_ASSET = 'vm-kernel.mjs';
 const VM_DIR = '/data/home/.xin/agent';
 export const OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'memory_list', 'memory_add', 'memory_update', 'memory_forget','memory_preferences','memory_preferences_set','learning_report', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
   'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off', 'tasks', 'task_stop', 'task_tell', 'usage',
-  'logins', 'login_open', 'login_done', 'login_remove']);
+  'logins', 'login_open', 'login_done', 'login_remove', 'delivery', 'deliveries']);
 const SCREEN_W = 1280, SCREEN_H = 800, SCREEN_VIEW_TTL = 1800, SCREEN_CTL_TTL = 900;   // 桌面大小；链接多久内能打开（秒）
 const FILE_MAX = 100 * 1024 * 1024;   // 下载最大 100 MB（和上传一样大：发给小芯的文件也能原样下回来）
 const UPLOAD_MAX = 100 * 1024 * 1024, UPLOAD_DIR = '/data/workspace/uploads';   // 给小芯发文件：一个最大 100 MB（Cloudflare Worker 收请求的上限），放在它工作目录的 uploads/日期/ 下面
@@ -450,6 +450,72 @@ async function upload(req, env, ctx, url, now) {
   return json({ ok: true, data: { path: dest, name, size: len, image: !!IMG_TYPES[(name.split('.').pop() || '').toLowerCase()] } });
 }
 
+/* ---------- 待送达（docs/xin-kernel-design.md §14.1、§14.4） ----------
+   XIN_INBOX=1 时发消息先存进 Durable Object 实例 xin-inbox，存好了才回「收到了」，再由它送进云电脑（当场送一次，送不进去闹钟接着送）。
+   电脑醒着时当场就送到了，回给网页的和以前一模一样；送不进去时回 accepted + waking / cooldown：旧网页当成「唤醒中」重发同一个 clientId，
+   待送达认得是同一句，不会多送；新网页改用 delivery 看进度。 */
+async function inboxPost(env, action, body) {
+  const r = await inboxStub(env).fetch('https://xin.internal/inbox/' + action, { method: 'POST', body: JSON.stringify(body || {}) });
+  return { status: r.status, d: await r.json().catch(() => ({})) };
+}
+function inboxReply(view, now) {
+  if (view.state === 'delivered') return { ok: true, data: view.result };
+  if (view.state === 'failed') return view.result ? { ok: true, data: view.result } : { ok: false, state: 'error', accepted: true, delivery: view, msg: '没送到：' + ((view.error && view.error.msg) || '') };
+  const w = view.wait || { state: 'waking' }, cooldown = w.state === 'cooldown';
+  return { ok: false, state: cooldown ? 'cooldown' : 'waking', accepted: true, delivery: view,
+    retryAfter: cooldown ? Math.max(30, Math.ceil(((w.until || now) - now) / 1000)) : 3,
+    msg: cooldown ? '已收到 · 云电脑在冷却' : w.state === 'retrying' ? '已收到 · 正在重试' : '已收到 · 唤醒中' };
+}
+async function sendViaInbox(env, args, now) {
+  args = { ...args };
+  if (!/^[A-Za-z0-9_-]{8,80}$/.test(args.clientId || '')) args.clientId = uuid();
+  let res = null;
+  try { res = await inboxPost(env, 'accept', { id: args.clientId, op: 'send', args }); } catch { /* 存不上 */ }
+  if (res && res.d.error === 'conflict') return { ok: true, data: { error: 'message_conflict', msg: '同一个消息标识对应了不同内容，请重新发送' } };
+  if (!res || res.status !== 200 || !res.d.view) return { ok: false, state: 'error', msg: '消息没存上，请再发一次' };
+  return inboxReply(res.d.view, now);
+}
+// delivery / deliveries：只读待送达，不碰电脑（网页等送达、刷新后接着等时用）
+async function deliveryOp(env, op, args) {
+  if (!inboxStub(env)) return { ok: true, data: op === 'delivery' ? { error: 'not_found' } : { rows: [], wakes: null } };
+  try {
+    if (op === 'delivery') { const { d } = await inboxPost(env, 'view', { id: String(args.id || '') }); return { ok: true, data: d.view || { error: 'not_found' } }; }
+    return { ok: true, data: (await inboxPost(env, 'list', {})).d };
+  } catch { return { ok: false, state: 'error', msg: '待送达暂时读不到' }; }
+}
+// 打开网页、叫醒、定时任务都顺手踢一下：有没送完的就把闹钟提前（闹钟丢了也能补上）
+function kickInbox(env, ctx) {
+  if (inboxStub(env) && ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(inboxPost(env, 'kick').catch(() => null));
+}
+
+/* ---------- 流（§14.3）：只是传输方式变了，内核把运行记录的变化原样推出来，这里原样转给网页 ----------
+   流不经过 Durable Object（免得按在线时长计费）；内核不在或没开内核通道就回 503，网页退回轮询。 */
+async function streamRoute(req, env, ctx, url, now) {
+  if (!enabled(env)) return json({ error: 'disabled' }, 404);
+  if (req.headers.get('x-xin') !== '1') return json({ error: 'forbidden' }, 403);
+  if (!(await authed(req, env, now))) return json({ error: 'unauthorized', msg: '要先登录' }, 401);
+  const run = url.searchParams.get('run') || '';
+  if (!/^r[0-9a-z]{6,24}$/.test(run)) return json({ error: 'bad_run' }, 400);
+  const unavailable = () => json({ ok: false, state: 'unavailable' }, 503);
+  const kernel = env.XIN_TRANSPORT === 'kernel' ? workerKernel(env) : null;
+  if (!kernel) return unavailable();
+  try {
+    const m = await machine(env, now), agent = await agentScript(env, url.origin);
+    if (!agent.kernel) return unavailable();
+    const cfg = await kernel.get(m.id);
+    if (cfg.installedKid !== cfg.kid) { await installKernelKeys(env, m.id, cfg); await kernel.markInstalled(cfg.kid); }
+    const q = new URLSearchParams({ agent: agent.path, run });
+    for (const k of ['off', 'pos', 'deviceId', 'tabId', 'watching']) { const v = url.searchParams.get(k); if (v && v.length <= 80) q.set(k, v); }
+    const r = await kernelFetch({ config: cfg, method: 'GET', target: '/xin/stream?' + q.toString(), timeoutMs: 660000 });
+    if (r.status === 200 && r.headers.get('x-xin-kernel') && /^text\/event-stream/.test(r.headers.get('content-type') || ''))
+      return new Response(r.body, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow' } });
+    if (!r.headers.get('x-xin-kernel') && (r.status === 401 || r.status === 403)) await kernel.invalidateToken(cfg.token).catch(() => null);
+    if (r.status === 502) ensureKernel(env, url.origin, m.id, ctx);
+    try { await r.body?.cancel(); } catch { /* 没有正文 */ }
+    return unavailable();
+  } catch { return unavailable(); }
+}
+
 /* ---------- 路由 ---------- */
 export async function handleXin(req, env, ctx, now = Date.now()) {
   const url = new URL(req.url);
@@ -484,7 +550,8 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
     await recordTasks(env, { bg: state.bg, version: state.version, machine: m.id, observedAt: now });
     return json({ ok: true });
   }
-  if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, env, now) });
+  if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, env, now), ...(env.XIN_TRANSPORT === 'kernel' && enabled(env) ? { stream: true } : {}) });
+  if (p === 'stream' && req.method === 'GET') return streamRoute(req, env, ctx, url, now);
   if (p === 'file' && req.method === 'GET') return download(req, env, ctx, url, now);
   if ((p === 'backups' || p === 'backup') && req.method === 'GET') return backupDownload(req, env, url, now);
   if (p === 'upload' && req.method === 'POST') return upload(req, env, ctx, url, now);
@@ -514,7 +581,12 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
   const op = String(body.op || '');
   if (!OPS.has(op)) return json({ error: 'bad_op' }, 400);
   const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? body.args : {};
-  return json(await call(env, url.origin, op, args, ctx, now));
+  if (op === 'send' && env.XIN_INBOX === '1' && inboxStub(env)) return json(await sendViaInbox(env, args, now));
+  if (op === 'delivery' || op === 'deliveries') return json(await deliveryOp(env, op, args));
+  const r = await call(env, url.origin, op, args, ctx, now);
+  if (op === 'greet' || op === 'wake') kickInbox(env, ctx);
+  if (op === 'usage' && r.ok && r.data && inboxStub(env)) { try { r.data.wake = (await inboxPost(env, 'stats')).d; } catch { /* 读不到就不带 */ } }
+  return json(r);
 }
 
 
@@ -599,6 +671,7 @@ export async function runCron(cron, env, ctx, opt = {}) {
   if (!enabled(env)) return { ok: false, state: 'disabled' };
   const op = cron === CRON_WAKE ? 'wake' : 'daily';
   const wait = opt.wait || pause;
+  kickInbox(env, ctx);
   let r = null;
   // 云电脑在睡觉 / 正在醒：等一会儿再试，最多等 3 分钟左右
   for (let i = 0; i < 12; i++) {

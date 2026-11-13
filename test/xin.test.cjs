@@ -1734,7 +1734,7 @@ test('网页用到的每个 op，Worker 都放行，vm-agent 也都认识（漏�
   const missing = used.filter(op => !OPS.has(op));
   assert.deepStrictEqual(missing, [], 'Worker 的 OPS 里少了：' + missing.join(', '));
   const agent = fs.readFileSync(path.join(__dirname, '../site/xin/vm-agent.mjs'), 'utf8');
-  const local = new Set(['status', 'wake', 'screen_off']);   // 这几个 Worker 自己调 InstaBox，不进云电脑（screen 两边都有）
+  const local = new Set(['status', 'wake', 'screen_off', 'delivery', 'deliveries']);   // 这几个 Worker 自己调 InstaBox 或只读待送达，不进云电脑（screen 两边都有）
   const unknown = [...OPS].filter(op => !local.has(op) && !new RegExp('^  (async )?' + op + '\\(', 'm').test(agent));
   assert.deepStrictEqual(unknown, [], 'vm-agent 的 ops 里没有：' + unknown.join(', '));
 });
@@ -2001,7 +2001,7 @@ function fakeDO(m, envRef) {
         objs.set(id, { o: new m.XinTaskSupervisor(state, envRef), state, values });
       }
       const { o } = objs.get(id);
-      return { fetch: (url, init) => o.fetch(new Request(url, init)) };
+      return { fetch: (url, init) => { (objs.get(id).seen = objs.get(id).seen || []).push(new URL(url).pathname); return o.fetch(new Request(url, init)); } };
     }
   };
 }
@@ -2156,5 +2156,120 @@ test('verifyAgent 也核对内核文件', async () => {
     const argv = execArgv(ib.calls[0]);
     assert.strictEqual(argv[0], 'sha256sum');
     assert.ok(argv.some(p => /\/vm-kernel-[0-9a-f]{12}\.mjs$/.test(p)), argv.join(' '));
+  } finally { ib.restore(); }
+});
+
+/* ---------- 待送达和流的接线（计划 Task 8） ---------- */
+const inboxOf = env => { env.XIN_TASK_SUPERVISOR.get('xin-inbox'); return env.XIN_TASK_SUPERVISOR.objs.get('xin-inbox'); };
+const sendArgs = { agent: 'codex', text: '你好', clientId: 'cid-inbox-0001' };
+
+test('send 走待送达：电脑醒着时和以前一样回 run，控制器拿到的是同一个 clientId', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify({ sid: 's1', run: 'r1' }), stderr: '', exitCode: 0 } }] });
+  try {
+    assert.deepStrictEqual(await callOp(m, env, ck, 'send', sendArgs), { ok: true, data: { sid: 's1', run: 'r1' } });
+    const ex = JSON.parse(ib.calls.find(c => c.key.endsWith('/exec')).body);
+    assert.strictEqual(JSON.parse(ex.stdin).clientId, 'cid-inbox-0001');
+    const row = inboxOf(env).values.get('inbox:row:cid-inbox-0001');
+    assert.deepStrictEqual([row.state, row.result.run], ['delivered', 'r1']);
+  } finally { ib.restore(); }
+});
+
+test('send 走待送达：电脑在睡时先回「已收到」和 waking；到时间再发同一个 clientId 就拿到 run，控制器只做了一次', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'GET /v1/machines/m_abc': [{ body: { id: 'm_abc', state: 'suspended' } }], 'POST /v1/machines/m_abc/resume': [{ status: 202, body: {} }],
+    'POST /v1/machines/m_abc/exec': [{ status: 409, body: { error: { code: 'machine_not_running' } } }, { body: { stdout: JSON.stringify({ sid: 's1', run: 'r7' }), stderr: '', exitCode: 0 } }] });
+  try {
+    const first = await callOp(m, env, ck, 'send', sendArgs);
+    assert.deepStrictEqual([first.ok, first.state, first.accepted], [false, 'waking', true]);
+    assert.deepStrictEqual([first.delivery.id, first.delivery.state, first.delivery.text], ['cid-inbox-0001', 'pending', '你好']);
+    assert.match(first.msg, /已收到/);
+    inboxOf(env).values.get('inbox:row:cid-inbox-0001').nextAt = 0;   // 到了该再送的时间
+    assert.deepStrictEqual(await callOp(m, env, ck, 'send', sendArgs), { ok: true, data: { sid: 's1', run: 'r7' } });
+    const execs = ib.calls.filter(c => c.key.endsWith('/exec'));
+    assert.strictEqual(execs.length, 2, '第一次 InstaBox 说电脑没在跑（控制器没执行），第二次才真正执行');
+    assert.strictEqual(JSON.parse(execs[0].body).stdin, JSON.parse(execs[1].body).stdin);
+  } finally { ib.restore(); }
+});
+
+test('send：待送达存不上时回「消息没存上，请再发一次」，也不去碰电脑', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);
+  inboxOf(env).state.storage.put = async () => { throw new Error('storage down'); };
+  const ib = fakeIB({});
+  try {
+    assert.deepStrictEqual(await callOp(m, env, ck, 'send', sendArgs), { ok: false, state: 'error', msg: '消息没存上，请再发一次' });
+    assert.strictEqual(ib.calls.length, 0);
+  } finally { ib.restore(); }
+});
+
+test('send：同一 clientId 换了内容，和控制器一样报冲突，不送', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify({ sid: 's1', run: 'r1' }), stderr: '', exitCode: 0 } }] });
+  try {
+    await callOp(m, env, ck, 'send', sendArgs);
+    const d = await callOp(m, env, ck, 'send', { ...sendArgs, text: '另一句' });
+    assert.deepStrictEqual(d, { ok: true, data: { error: 'message_conflict', msg: '同一个消息标识对应了不同内容，请重新发送' } });
+    assert.strictEqual(ib.calls.filter(c => c.key.endsWith('/exec')).length, 1);
+  } finally { ib.restore(); }
+});
+
+test('delivery 和 deliveries 只找待送达，不碰 InstaBox', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_INBOX: '1' }), ck = await login(m, env);
+  const ib = fakeIB({});
+  try {
+    assert.deepStrictEqual(await callOp(m, env, ck, 'delivery', { id: 'cid-nothing-1' }), { ok: true, data: { error: 'not_found' } });
+    assert.deepStrictEqual(await callOp(m, env, ck, 'deliveries'), { ok: true, data: { rows: [], wakes: { count: 0, p50: 0, max: 0, over45: 0 } } });
+    assert.strictEqual(ib.calls.length, 0);
+  } finally { ib.restore(); }
+});
+
+test('打开网页（greet）之后顺手踢一下待送达', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env), w = waiter();
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true}', stderr: '', exitCode: 0 } }] });
+  try {
+    await callOp(m, env, ck, 'greet', {}, w.ctx); await w.settle();
+    assert.ok((inboxOf(env).seen || []).includes('/inbox/kick'));
+  } finally { ib.restore(); }
+});
+
+test('/api/xin/me：内核通道开着时说可以用流，没开就不带这个字段', async () => {
+  const m = await fresh();
+  const on = await (await m.handleXin(new Request(ORIGIN + '/api/xin/me'), kernelEnv(m), null)).json();
+  assert.strictEqual(on.stream, true);
+  const off = await (await m.handleXin(new Request(ORIGIN + '/api/xin/me'), mkEnv(), null)).json();
+  assert.ok(!('stream' in off));
+});
+
+const streamReq = (q, headers) => new Request(ORIGIN + '/api/xin/stream?' + q, { method: 'GET', headers: Object.assign({ 'x-xin': '1' }, headers || {}) });
+test('stream：原样透传内核的流，签名的查询串里带上控制器路径', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'GET /xin/stream': [() => new Response('id: 10\ndata: {"events":[{"t":"text","text":"整段"}]}\n\nid: 20\ndata: {"events":[],"done":true}\n\n', { status: 200, headers: { 'x-xin-kernel': '0123456789ab', 'content-type': 'text/event-stream; charset=utf-8' } })] });
+  try {
+    const r = await m.handleXin(streamReq('run=rabc12345&off=0&pos=0&watching=1&deviceId=dev12345', { cookie: ck }), env, null);
+    assert.strictEqual(r.status, 200);
+    assert.match(r.headers.get('content-type'), /^text\/event-stream/);
+    const text = await r.text();
+    assert.ok(text.includes('data: {"events":[{"t":"text","text":"整段"}]}'));
+    assert.ok(text.includes('"done":true'));
+    const k = ib.calls.find(c => c.key === 'GET /xin/stream');
+    assert.strictEqual(k.url.searchParams.get('run'), 'rabc12345');
+    assert.strictEqual(k.url.searchParams.get('watching'), '1');
+    assert.match(k.url.searchParams.get('agent'), /^\/data\/home\/\.xin\/agent\/vm-agent-[0-9a-f]{12}\.mjs$/);
+    assert.ok(k.init.headers['x-xin-auth']); assert.strictEqual(k.init.headers.authorization, 'Bearer ibp_t1');
+  } finally { ib.restore(); }
+});
+
+test('stream：没登录 401；内核不在、没开内核通道都回 503 让网页退回轮询', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'GET /xin/stream': [() => new Response('bad gateway', { status: 502 })], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true}', stderr: '', exitCode: 0 } }] });
+  try {
+    assert.strictEqual((await m.handleXin(streamReq('run=rabc12345'), env, null)).status, 401);
+    const down = await m.handleXin(streamReq('run=rabc12345', { cookie: ck }), env, null);
+    assert.deepStrictEqual([down.status, await down.json()], [503, { ok: false, state: 'unavailable' }]);
+    const off = await m.handleXin(streamReq('run=rabc12345', { cookie: ck }), kernelEnv(m, { XIN_TRANSPORT: undefined }), null);
+    assert.strictEqual(off.status, 503);
+    assert.strictEqual((await m.handleXin(streamReq('run=../x', { cookie: ck }), env, null)).status, 400);
   } finally { ib.restore(); }
 });
