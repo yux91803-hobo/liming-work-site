@@ -141,10 +141,13 @@ async def main():
 
         # 5. 用量页：从额度卡进；范围切换不再请求；30 根柱（空日子空柱）；按模型列表、图例
         pg, st = await setup(browser)
+        st['usage']['wake'] = {'count': 3, 'p50': 40400, 'max': 52300, 'over45': 1}   # 待送达记下的叫醒耗时（docs/xin-kernel-design.md §12）
         await pg.click('#xinWork .xc-glow')
         await pg.wait_for_selector('.xq .xq-more', timeout=10000)
         await pg.click('.xq .xq-more')
         await pg.wait_for_selector('.xc.show .xc-sheet:not([hidden]) .xu-chart', timeout=15000)
+        wake = await pg.evaluate("(document.querySelector('.xc-sheet .xu-wake') || {}).textContent || ''")
+        ui.check('用量页：显示最近几次叫醒电脑用了多久', wake == '叫醒电脑：最近 3 次，一般 40 秒，最长 52 秒', wake)
         page = await pg.evaluate("""(() => { const s = document.querySelector('.xc-sheet'); return {title: s.querySelector('.xc-sh-hd b').textContent,
           quota: s.querySelectorAll('.xq-row').length, tabs: [...s.querySelectorAll('.xu-rg')].map(e => e.textContent), on: (s.querySelector('.xu-rg.on') || {}).textContent,
           days: s.querySelectorAll('.xu-day').length, empty: s.querySelectorAll('.xu-day.empty').length, legend: [...s.querySelectorAll('.xu-lg li')].map(e => e.textContent),
