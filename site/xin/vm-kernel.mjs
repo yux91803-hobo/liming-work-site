@@ -139,6 +139,47 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
     try { return [200, { ok: true, data: JSON.parse(r.stdout) }]; }
     catch { return [200, { ok: false, executed: true, error: 'agent_output', msg: 'vm-agent 的输出看不懂' }]; }
   }
+  /* 流（§14.3）：只是传输方式变了——运行记录一变就调一次控制器的 poll，把结果原样推出去，不拆、不攒。
+     没变化也每 keepWatchMs 调一次，保住控制器那边「有人在看」的标记（它 8 秒没人看就改发通知）。 */
+  const RUN = /^r[0-9a-z]{6,24}$/, DEVICE = /^[A-Za-z0-9_-]{8,64}$/;
+  const pause = ms => new Promise(r => setTimeout(r, ms));
+  async function stream(req, res, url, rec, t0) {
+    const q = url.searchParams, agent = q.get('agent'), run = q.get('run') || '';
+    rec.op = 'stream';
+    if (!agentOk(agent) || !RUN.test(run)) return [400, { ok: false, executed: false, error: 'bad_request' }];
+    if (!fs.existsSync(agent)) return [409, { ok: false, executed: false, error: 'agent_missing' }];
+    const base = { run, watching: q.get('watching') === '1' };
+    for (const k of ['deviceId', 'tabId']) if (DEVICE.test(q.get(k) || '')) base[k] = q.get(k);
+    let off = Math.max(0, parseInt(q.get('off') || '0', 10) || 0), pos = /^\d+$/.test(q.get('pos') || '') ? Number(q.get('pos')) : null;
+    res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', 'x-xin-kernel': KERNEL_VERSION });
+    res.flushHeaders();
+    let closed = false; res.on('close', () => { closed = true; });
+    const file = path.join(home, 'runs', run + '.jsonl'), end = now() + maxStreamMs;
+    let stamp = null, lastPoll = -Infinity, lastBeat = now(), why = 'timeout';
+    const stampOf = () => { try { const st = fs.statSync(file); return st.size + ':' + st.mtimeMs; } catch { return 'none'; } };
+    while (!closed && now() < end) {
+      const cur = stampOf();
+      if ((cur !== stamp || now() - lastPoll >= keepWatchMs) && running < maxConcurrent) {
+        stamp = cur; lastPoll = now();
+        const r = await runAgent(agent, 'poll', { ...base, off, ...(pos != null ? { pos } : {}) });
+        let d = null; try { d = r.code === 0 && !r.timedOut ? JSON.parse(r.stdout) : null; } catch { d = null; }
+        if (closed) break;
+        if (!d || d.error) { res.write('event: error\ndata: ' + JSON.stringify(d && d.error ? d : { error: 'poll_failed' }) + '\n\n'); why = 'error'; break; }
+        const evs = Array.isArray(d.events) ? d.events : [];
+        if (evs.length || d.done) { res.write('id: ' + (typeof d.pos === 'number' ? d.pos : d.off) + '\ndata: ' + JSON.stringify(d) + '\n\n'); lastBeat = now(); }
+        if (Number.isInteger(d.off)) off = d.off;
+        pos = typeof d.pos === 'number' ? d.pos : null;
+        if (d.done) { why = 'done'; break; }
+        if (evs.length >= 400) stamp = null;   // poll 一次最多给 400 条：还有就马上接着取
+      }
+      if (now() - lastBeat >= heartbeatMs) { res.write(': hb\n\n'); lastBeat = now(); }
+      await pause(pollEveryMs);
+    }
+    if (closed) why = 'closed';
+    res.end();
+    log({ ...rec, status: 200, ms: now() - t0, reason: why });
+    return null;
+  }
   const server = http.createServer(async (req, res) => {
     const t0 = now(), url = new URL(req.url, 'http://kernel'), rec = { method: req.method, route: url.pathname };
     const answer = (status, body) => { reply(res, status, body); log({ ...rec, status, ms: now() - t0, ...(body.error ? { error: body.error } : {}), ...(body.reason ? { reason: body.reason } : {}) }); };
@@ -151,6 +192,7 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
       if (!auth.ok) { answer(401, { ok: false, executed: false, error: 'kernel_auth', reason: auth.reason }); return; }
       if (req.method === 'GET' && url.pathname === '/xin/health') { answer(200, { ok: true, kernel: KERNEL_VERSION, pid: process.pid, up: now() - started }); return; }
       if (req.method === 'POST' && url.pathname === '/xin/op') { const [status, b] = await op(body, rec); answer(status, b); return; }
+      if (req.method === 'GET' && url.pathname === '/xin/stream') { const r = await stream(req, res, url, rec, t0); if (r) answer(r[0], r[1]); return; }
       answer(404, { ok: false, executed: false, error: 'not_found' });
     } catch (e) {
       answer(500, { ok: false, executed: false, error: 'kernel_error', msg: redact(String(e && e.message || e)) });

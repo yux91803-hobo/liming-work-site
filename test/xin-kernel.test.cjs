@@ -27,12 +27,12 @@ else if (op === 'garbage') process.stdout.write('not json');
 else if (op === 'env') process.stdout.write(JSON.stringify({ probe: process.env.XIN_ENV_PROBE || null }));
 else if (op === 'poll') {
   count('poll');
+  if (a.run.startsWith('rbad')) { process.stdout.write(JSON.stringify({ error: 'no_run', msg: '找不到这一轮' })); process.exit(0); }
   const file = process.env.XIN_HOME + '/runs/' + a.run + '.jsonl';
   let lines = []; try { lines = fs.readFileSync(file, 'utf8').split('\\n').filter(Boolean); } catch {}
   const off = a.off | 0, evs = lines.slice(off).map(l => JSON.parse(l));
   process.stdout.write(JSON.stringify({ events: evs, off: off + evs.length, pos: (off + evs.length) * 10, done: evs.some(e => e.t === 'done') }));
 }
-else if (op === 'bad_poll') process.stdout.write(JSON.stringify({ error: 'no_run', msg: '找不到这一轮' }));
 else process.stdout.write(JSON.stringify({ error: 'bad_op' }));
 `;
 
@@ -166,4 +166,113 @@ test('真控制器：同一个 clientId 一次走内核、一次直接调，只�
     for (const d of results) assert.ok(d.run === run || d.error === 'busy', JSON.stringify(d));
     await kernel.close();
   } finally { /* 第一个内核已关 */ }
+});
+
+// 读内核的 SSE：每条消息 {id, event, data}；注释行（心跳）单独计数
+async function openStream(f, query, o = {}) {
+  const target = '/xin/stream?' + new URLSearchParams({ agent: f.agent, ...query }).toString();
+  const ac = new AbortController();
+  const r = await f.request('GET', target, undefined, { signal: ac.signal });
+  const got = { status: r.status, type: r.headers.get('content-type'), messages: [], beats: 0, ended: false, ac };
+  if (r.status !== 200) { got.body = await r.json(); return got; }
+  got.done = (async () => {
+    const dec = new TextDecoder(); let buf = '';
+    try {
+      for await (const chunk of r.body) {
+        buf += dec.decode(chunk, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const block = buf.slice(0, i); buf = buf.slice(i + 2);
+          if (block.startsWith(':')) { got.beats++; continue; }
+          const m = {}; for (const line of block.split('\n')) { const j = line.indexOf(': '); if (j > 0) m[line.slice(0, j)] = line.slice(j + 2); }
+          got.messages.push({ id: m.id, event: m.event, data: m.data && JSON.parse(m.data) });
+        }
+      }
+    } catch { /* 中止 */ }
+    got.ended = true;
+  })();
+  return got;
+}
+const pollCount = f => { try { return Number(fs.readFileSync(path.join(f.home, 'poll.count'), 'utf8')) || 0; } catch { return 0; } };
+const appendEv = (f, run, ev) => fs.appendFileSync(path.join(f.home, 'runs', run + '.jsonl'), JSON.stringify(ev) + '\n');
+
+test('流：有新事件才推，推的是 poll 原样结果，整段答案不拆开', async () => {
+  const f = await kernelFixture({ kernel: { pollEveryMs: 50 } });
+  try {
+    const s = await openStream(f, { run: 'rstream01', off: '0', watching: '1', deviceId: 'dev12345', tabId: 'tab12345' });
+    assert.strictEqual(s.status, 200);
+    assert.match(s.type, /^text\/event-stream/);
+    await sleep(300);
+    assert.strictEqual(s.messages.length, 0, '没有新事件时不推');
+    appendEv(f, 'rstream01', { t: 'text', text: '整段答案 ABC' });
+    for (const end = Date.now() + platformTimeout(3000); Date.now() < end && !s.messages.length;) await sleep(30);
+    assert.strictEqual(s.messages.length, 1);
+    const d = s.messages[0].data;
+    assert.deepStrictEqual(d.events, [{ t: 'text', text: '整段答案 ABC' }]);
+    assert.strictEqual(s.messages[0].id, String(d.pos));
+    s.ac.abort(); await s.done;
+  } finally { await f.k.close(); }
+});
+
+test('流：推出 done 之后就结束', async () => {
+  const f = await kernelFixture({ kernel: { pollEveryMs: 50 } });
+  try {
+    appendEv(f, 'rstream02', { t: 'text', text: '好' });
+    const s = await openStream(f, { run: 'rstream02', off: '0' });
+    for (const end = Date.now() + platformTimeout(3000); Date.now() < end && !s.messages.length;) await sleep(30);
+    appendEv(f, 'rstream02', { t: 'done' });
+    const t0 = Date.now();
+    await Promise.race([s.done, sleep(platformTimeout(2000))]);
+    assert.ok(s.ended, '做完以后流要关');
+    assert.ok(Date.now() - t0 < platformTimeout(1500));
+    assert.strictEqual(s.messages.at(-1).data.done, true);
+    assert.deepStrictEqual(s.messages.flatMap(m => m.data.events).map(e => e.t), ['text', 'done']);
+  } finally { await f.k.close(); }
+});
+
+test('流：没变化也定期调 poll（保住「有人在看」）', async () => {
+  const f = await kernelFixture({ kernel: { pollEveryMs: 50, keepWatchMs: 200 } });
+  try {
+    const s = await openStream(f, { run: 'rstream03', off: '0', watching: '1' });
+    await sleep(1100);
+    assert.ok(pollCount(f) >= 3, 'poll 次数 ' + pollCount(f));
+    s.ac.abort(); await s.done;
+  } finally { await f.k.close(); }
+});
+
+test('流：定时心跳', async () => {
+  const f = await kernelFixture({ kernel: { pollEveryMs: 30, heartbeatMs: 100 } });
+  try {
+    const s = await openStream(f, { run: 'rstream04', off: '0' });
+    await sleep(400);
+    assert.ok(s.beats >= 2, '心跳 ' + s.beats);
+    s.ac.abort(); await s.done;
+  } finally { await f.k.close(); }
+});
+
+test('流：对方断开就停，不再调 poll', async () => {
+  const f = await kernelFixture({ kernel: { pollEveryMs: 30, keepWatchMs: 100 } });
+  try {
+    const s = await openStream(f, { run: 'rstream05', off: '0' });
+    await sleep(200); s.ac.abort(); await s.done;
+    await sleep(150);
+    const n = pollCount(f);
+    appendEv(f, 'rstream05', { t: 'text', text: 'x' });
+    await sleep(500);
+    assert.strictEqual(pollCount(f), n);
+  } finally { await f.k.close(); }
+});
+
+test('流：run 不合法回 400；poll 报错就推 error 然后关', async () => {
+  const f = await kernelFixture({ kernel: { pollEveryMs: 30 } });
+  try {
+    const bad = await openStream(f, { run: '../etc', off: '0' });
+    assert.strictEqual(bad.status, 400);
+    assert.deepStrictEqual(bad.body, { ok: false, executed: false, error: 'bad_request' });
+    const s = await openStream(f, { run: 'rbadpoll01', off: '0' });
+    await Promise.race([s.done, sleep(platformTimeout(2000))]);
+    assert.ok(s.ended);
+    assert.strictEqual(s.messages[0].event, 'error');
+    assert.strictEqual(s.messages[0].data.error, 'no_run');
+  } finally { await f.k.close(); }
 });
