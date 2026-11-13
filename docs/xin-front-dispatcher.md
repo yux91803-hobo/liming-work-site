@@ -1,6 +1,6 @@
 # 小芯前台、可靠调度与完成事件
 
-默认模式由Opus 优先、额度耗尽后 DeepSeek 兜底的前台和独立后台执行器组成。Opus 通过 Antigravity 客户端协议直接接收文字与图片，DeepSeek 通过网关 Responses API，只注册结构化 xin 函数；没有 shell、文件编辑、MCP 或浏览器执行入口。后台继续使用现有 Codex app-server、容器、临时推理代理、STM32 强制构建与独立复核限制。
+默认模式由 Gemini 4 Hydrogen 优先、Gemini 额度耗尽后 DeepSeek 兜底的前台和独立后台执行器组成。Hydrogen（思考强度中）通过 Antigravity 客户端协议直接接收文字与图片，DeepSeek 通过网关 Responses API，只注册结构化 xin 函数；没有 shell、文件编辑、MCP 或浏览器执行入口。后台继续使用现有 Codex app-server、容器、临时推理代理、STM32 强制构建与独立复核限制。
 
 ## 输入、事务和启动
 
@@ -16,9 +16,9 @@
 
 自然语言的制作、询问、否定、补充和停止交给前台推理，通过结构化参数调用 new/list/show/tell/stop。取消先前实验中的“奶龙关键词直接派工”路径；查询从真实任务快照或 show/list 取证。推理超过 25 秒或工具预算耗尽但没有确定操作时，保留输入并明确报错，不制造泛化任务。
 
-前台优先 `claude-opus-4.6`；实际 Claude 额度耗尽才用 `deepseek-v4.1-flash` / max，到真实恢复时间再试 Opus。两家入口复用控制器的白名单、步数、幂等回执与图片输入；用户点名只约束后台。明确点名的工作固定模型，入口未开始工作就失败时只按同模型重试一次，禁止静默 fallback；请求模型与实际模型分别记录。后续 tell 继续原工作及其模型约束。
+前台优先 `gemini-4-hydrogen`（在 Antigravity 里选 `gemini-4-hydrogen-medium`）；实际 Gemini 额度耗尽才用 `deepseek-v4.1-flash` / max，到真实恢复时间再试 Hydrogen；账号里没有 Hydrogen 时本轮用 DeepSeek 并记下原因（unavailable）。2026-11-13 起不再用 Claude。两家入口复用控制器的白名单、步数、幂等回执与图片输入；用户点名只约束后台。明确点名的工作固定模型，入口未开始工作就失败时只按同模型重试一次，禁止静默 fallback；请求模型与实际模型分别记录。后续 tell 继续原工作及其模型约束。
 
-普通杂活、查资料和 HTML 网页优先使用电脑现有的 Antigravity CLI，精确固定 `gemini-3.8-flash-high` / high；明确点名 Kimi 等其它模型仍按点名执行。前台使用独立的 Claude 额度状态，不与后台 Gemini 的额度混用。未安装或无法核对额度时使用原后台候选，不凭空声称已经调用。
+杂活、查资料、写代码（含 HTML 网页）、难题、检查优先使用电脑现有的 Antigravity CLI 的 `gemini-4-hydrogen`，思考强度按类别：杂活 low、查资料 medium、写代码和网页 high、难题 xhigh、检查 high（`vm-runtime.mjs` 的 `AGY_KIND_EFFORT`，CLI 里是 `gemini-4-hydrogen-<强度>`）；带图片、带插件、电脑维护、每日任务照旧用 Codex 线路的模型。明确点名 Kimi 等其它模型仍按点名执行，点名 Gemini、Hydrogen、Antigravity 都交给 Hydrogen。前台和后台的 Hydrogen 在同一个 Gemini 额度组，Gemini 4 Argon 的单独周限额不算在内。未安装或无法核对额度时使用原后台候选，不凭空声称已经调用。
 
 控制器从 `agy -p /usage` 的结构化结果读取 Gemini 五小时/每周额度，保存剩余比例和服务端 reset_time。任一额度耗尽即暂停使用；两项同时耗尽取更晚恢复时间，到期后重新查询才恢复尝试。迟到的成功查询不能覆盖尚未到期的耗尽状态。额度文件随控制器状态持久保存，重启不丢倒计时；禁用额外付费 credits。额度途中耗尽时保留同一项目副本，转交其它执行模型继续。
 
@@ -38,7 +38,7 @@ Antigravity 客户端在控制器私有目录运行，不从任务项目加载�
 
 ## 预算
 
-现有模型保持 max；Antigravity 按用户指定固定 Flash High。每项工作默认最多 128 次推理请求及 150 万已报告 token，跨续接与后台完成推理累计；可由控制器配置 XIN_TASK_REQUEST_LIMIT / XIN_TASK_TOKEN_LIMIT。Antigravity 最多 48 个控制器动作，其每次 CLI 调用和已报告 token 计入预算，CLI 内部检索的模型请求数没有单独报告。CLI 续接返回整段会话累计用量，以持久水位只计新增部分，重复响应和重启不重复累计；预算使用供应商 total_tokens，缓存输入另记、不再次相加。没有提供 usage 的响应记为未知，不当作零消耗；这不是人民币费用限额或供应商账单。
+现有模型保持 max；Antigravity 的 Hydrogen 按任务类别定思考强度（见上）。每项工作默认最多 128 次推理请求及 150 万已报告 token，跨续接与后台完成推理累计；可由控制器配置 XIN_TASK_REQUEST_LIMIT / XIN_TASK_TOKEN_LIMIT。Antigravity 最多 48 个控制器动作，其每次 CLI 调用和已报告 token 计入预算，CLI 内部检索的模型请求数没有单独报告。CLI 续接返回整段会话累计用量，以持久水位只计新增部分，重复响应和重启不重复累计；预算使用供应商 total_tokens，缓存输入另记、不再次相加。没有提供 usage 的响应记为未知，不当作零消耗；这不是人民币费用限额或供应商账单。
 
 ## 网页成品
 

@@ -42,16 +42,16 @@ test('按北京日汇总 token：日界线、今天/7 天/30 天、缓存命中�
   const { usageSummary } = await load();
   const r = (iso, model, input, cached, output) => ({ at: Date.parse(iso), model, ...(input == null ? {} : { usage: { input, cached, output } }) });
   const u = usageSummary([
-    r('2026-11-10T15:59:00Z', 'claude-opus-4.6', 100, 50, 10),   // 北京 11-10 23:59
-    r('2026-11-10T16:01:00Z', 'claude-opus-4.6', 200, 150, 20),  // 北京 11-11 00:01
+    r('2026-11-10T15:59:00Z', 'kimi-k3.1-pro', 100, 50, 10),   // 北京 11-10 23:59
+    r('2026-11-10T16:01:00Z', 'kimi-k3.1-pro', 200, 150, 20),  // 北京 11-11 00:01
     r('2026-11-11T03:00:00Z', 'deepseek-v4.1-flash', 300, 0, 30),
-    r('2026-11-11T04:00:00Z', 'gemini-3.8-flash-high'),           // 没有用量：只算轮数
-    r('2026-09-01T00:00:00Z', 'claude-opus-4.6', 999, 0, 9)       // 超过 30 天
+    r('2026-11-11T04:00:00Z', 'gemini-4-hydrogen'),           // 没有用量：只算轮数
+    r('2026-09-01T00:00:00Z', 'kimi-k3.1-pro', 999, 0, 9)       // 超过 30 天
   ], NOW);
   assert.equal(u.days.length, 30);
   assert.equal(u.days.at(-1).date, '2026-11-11'); assert.equal(u.days[0].date, '2026-10-13');
-  assert.deepEqual(u.days.at(-1).models['claude-opus-4.6'], { input: 200, cached: 150, output: 20, runs: 1 });
-  assert.deepEqual(u.days.at(-2).models['claude-opus-4.6'], { input: 100, cached: 50, output: 10, runs: 1 });
+  assert.deepEqual(u.days.at(-1).models['kimi-k3.1-pro'], { input: 200, cached: 150, output: 20, runs: 1 });
+  assert.deepEqual(u.days.at(-2).models['kimi-k3.1-pro'], { input: 100, cached: 50, output: 10, runs: 1 });
   assert.deepEqual(u.days[5].models, {});
   assert.deepEqual(u.totals.today, { input: 500, cached: 150, output: 50, runs: 3, hit: 0.3 });
   assert.deepEqual(u.totals.d7, { input: 600, cached: 200, output: 60, runs: 4, hit: 1 / 3 });
@@ -60,23 +60,27 @@ test('按北京日汇总 token：日界线、今天/7 天/30 天、缓存命中�
   assert.deepEqual(usageSummary([], NOW).totals.today, { input: 0, cached: 0, output: 0, runs: 0, hit: null });
 });
 
-test('usage op：只有 Opus 的额度文件就只返回 Opus；文件坏了不报错；tasks 带光环等级', () => {
+// 站长 2026-11-13：前台、后台都用 Gemini 4 Hydrogen，Claude 不再用：额度卡只显示一项 Gemini，旧的 Claude、Flash 记录不算
+test('usage op：额度卡只显示一项 Gemini（前台、后台同一组）；旧的 Claude 记录不算；文件坏了不报错；tasks 带光环等级', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-usage-')), xin = path.join(dir, 'xin');
   fs.mkdirSync(xin, { recursive: true });
   try {
     const now = Date.now();
-    fs.writeFileSync(path.join(xin, 'front-antigravity-quota.json'), JSON.stringify({ model: 'claude-opus-4.6', checkedAt: now, buckets: [{ id: '3p-5h', remaining: 0.2, resetAt: now + H }, { id: '3p-weekly', remaining: 0.7, resetAt: now + 80 * H }] }));
+    fs.writeFileSync(path.join(xin, 'front-antigravity-quota.json'), JSON.stringify({ model: 'gemini-4-hydrogen', checkedAt: now, buckets: [{ id: 'gemini-5h', remaining: 0.2, resetAt: now + H }, { id: 'gemini-weekly', remaining: 0.7, resetAt: now + 80 * H }] }));
     fs.writeFileSync(path.join(xin, 'antigravity-quota.json'), '{坏了');
-    fs.writeFileSync(path.join(xin, 'model-stats.jsonl'), JSON.stringify({ at: now, agent: 'codex', model: 'claude-opus-4.6', usage: { input: 10, cached: 5, output: 2 } }) + '\n');
+    fs.writeFileSync(path.join(xin, 'model-stats.jsonl'), JSON.stringify({ at: now, agent: 'codex', model: 'kimi-k3.1-pro', usage: { input: 10, cached: 5, output: 2 } }) + '\n');
     const env = { ...process.env, XIN_HOME: xin, XIN_WORK: path.join(dir, 'work') };
     const op = (name, args) => { const r = spawnSync(process.execPath, [path.join(__dirname, '../site/xin/vm-agent.mjs'), name], { env, input: JSON.stringify(args || {}), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
     const u = op('usage');
-    assert.deepEqual(u.quotas.map(q => q.key), ['opus']);
+    assert.deepEqual(u.quotas.map(q => q.key), ['gemini']);
     assert.deepEqual(u.quotas[0].windows.map(w => [w.kind, Math.round(w.used * 100)]), [['5h', 80], ['week', 30]]);
-    assert.equal(u.quotas[0].name, 'Opus');
+    assert.equal(u.quotas[0].name, 'Gemini');
     assert.equal(u.totals.today.input, 10);
-    assert.equal(typeof u.names['claude-opus-4.6'], 'string');
+    assert.equal(typeof u.names['kimi-k3.1-pro'], 'string');
     assert.equal(op('tasks').glow, 'warn');
+    // 旧账号留下的 Claude 记录（还标着用完）不算：额度卡不显示，光环也不因它变红
+    fs.writeFileSync(path.join(xin, 'front-antigravity-quota.json'), JSON.stringify({ model: 'claude-opus-4.6', checkedAt: now, blocked: true, retryAt: now + H, buckets: [{ id: '3p-weekly', remaining: 0, resetAt: now + H }] }));
+    assert.deepEqual(op('usage').quotas, []);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -86,7 +90,7 @@ test('前台每次读到额度都记一条读数，用量页据此给出预计�
   try {
     const now = Date.now(), env = { ...process.env, XIN_HOME: xin, XIN_WORK: path.join(dir, 'work') }, agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
     const run = (argv, args) => { const r = spawnSync(process.execPath, [agent, ...argv], { env, input: JSON.stringify(args || {}), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
-    const read = (at, r5) => ({ model: 'claude-opus-4.6', checkedAt: at, blocked: false, retryAt: 0, buckets: [{ id: '3p-5h', remaining: r5, resetAt: now + 4 * H }, { id: '3p-weekly', remaining: 0.9, resetAt: now + 80 * H }] });
+    const read = (at, r5) => ({ model: 'gemini-4-hydrogen', checkedAt: at, blocked: false, retryAt: 0, buckets: [{ id: 'gemini-5h', remaining: r5, resetAt: now + 4 * H }, { id: 'gemini-weekly', remaining: 0.9, resetAt: now + 80 * H }] });
     assert.ok(run(['locked', 'front_quota'], { quota: read(now - 40 * 60e3, 0.8) }).quota);
     assert.ok(run(['locked', 'front_quota'], { quota: read(now - 5 * 60e3, 0.6) }).quota);
     assert.equal(fs.readFileSync(path.join(xin, 'quota-history.jsonl'), 'utf8').trim().split('\n').length, 4);
@@ -106,11 +110,11 @@ test('Antigravity 的输入不含缓存读取（total = 输入 + 输出）：记
     { input: 204341, cached: 149606, output: 39807, total: 244148, ctx: 1200, win: 1000000, incl: true });
   const at = Date.parse('2026-11-11T03:00:00Z');
   const u = usageSummary([
-    { at, model: 'gemini-3.8-flash-high', usage: { input: 100, cached: 300, output: 10 } },              // 旧记录：没换算
-    { at, model: 'gemini-3.8-flash-high', usage: { input: 400, cached: 300, output: 10, incl: true } },  // 新记录：已换算
+    { at, model: 'gemini-4-hydrogen', usage: { input: 100, cached: 300, output: 10 } },              // 旧记录：没换算
+    { at, model: 'gemini-4-hydrogen', usage: { input: 400, cached: 300, output: 10, incl: true } },  // 新记录：已换算
     { at, model: 'deepseek-v4.1-flash', usage: { input: 100, cached: 50, output: 5 } }                   // Codex 本来就含缓存
   ], NOW);
-  assert.deepEqual(u.days.at(-1).models['gemini-3.8-flash-high'], { input: 800, cached: 600, output: 20, runs: 2 });
+  assert.deepEqual(u.days.at(-1).models['gemini-4-hydrogen'], { input: 800, cached: 600, output: 20, runs: 2 });
   assert.deepEqual(u.days.at(-1).models['deepseek-v4.1-flash'], { input: 100, cached: 50, output: 5, runs: 1 });
   assert.ok(u.totals.today.hit <= 1, '缓存命中不会超过 100%');
 });

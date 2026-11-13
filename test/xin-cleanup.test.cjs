@@ -52,12 +52,12 @@ test('以前做完的 Gemini（Antigravity）任务：存下的用量是「输�
   fs.mkdirSync(path.join(xin, 'sessions'), { recursive: true });
   const put = (sid, model, usage) => fs.writeFileSync(path.join(xin, 'sessions', sid + '.json'), JSON.stringify({ sid, kind: 'task', agent: 'codex', no: 1, title: '用量', status: 'done', runs: [], created: 1, endedAt: 2, model, started: true, usage }));
   // 正式机 #123 前的真实形状：input 54735 不含缓存读取 149606，total = 输入 + 输出
-  put('sagyold0001', 'gemini-3.8-flash-high', { input: 54735, cached: 149606, output: 39807, total: 94542, ctx: 0, win: 1000000 });
+  put('sagyold0001', 'gemini-4-hydrogen', { input: 54735, cached: 149606, output: 39807, total: 94542, ctx: 0, win: 1000000 });
   const u = op('history', { sid: 'sagyold0001' }).usage;
   assert.deepEqual([u.input, u.cached, u.output, u.total, u.incl], [204341, 149606, 39807, 244148, true]);
   assert.ok(u.cached / u.input <= 1);
   const fresh = { input: 204341, cached: 149606, output: 39807, total: 244148, ctx: 0, win: 1000000, incl: true };
-  put('sagynew0001', 'gemini-3.8-flash-high', fresh);
+  put('sagynew0001', 'gemini-4-hydrogen', fresh);
   assert.deepEqual(op('history', { sid: 'sagynew0001' }).usage, fresh, '已换算的不再加一次');
   const codex = { input: 120, cached: 60, output: 30, total: 150, ctx: 40, win: 200000 };
   put('scodex00001', 'glm-5.3', codex);

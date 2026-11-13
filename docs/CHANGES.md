@@ -1,3 +1,52 @@
+# 修改清单 · 2026-11-13（前台、后台都换成 Gemini 4 Hydrogen；不再用 Claude 和以前的 Gemini 模型）
+
+站长 2026-11-13：「antigravity 里面是不是有 4 hydrogen 模型了，有的话把前台换成它，思考强度默认中，额度用完了再切 deepseek，claude 就不用了，可以剔除名单了，然后后台干活优先也派 hydrogen，根据任务难度选择思考强度。」换了 Antigravity 账号后，`agy models` 里有了 `gemini-4-hydrogen-low / medium / high / xhigh`。随后又定：「以后也不用 3.8 flash 了」「记录也不需要 flash，点名也是 4h，不要留 3.8 的名字」。
+
+**先实测**（小芯电脑，Antigravity CLI 1.5.7）：
+- 一步结构化动作（后台执行器的真实参数）：low 3 秒、medium 5 秒、high 7 秒、xhigh 30 秒，都按格式返回 `{action, command, text}`。以前的 Gemini 模型同样一步要 40–120 秒。
+- 前台走的 ACP 接口列得出 `gemini-4-hydrogen-medium`。
+- 额度：Hydrogen 算在「Gemini Models」组（5 小时 / 每周），和 Claude / GPT 组、Gemini 4 Argon 的单独周限额分开。
+
+**参考**：Codex 的 `model_reasoning_effort` / `plan_mode_reasoning_effort`（规划和执行各用各的强度）、opencode 每个 agent 自己的 `reasoningEffort`、Antigravity Orchestrator（Carbon 规划、Hydrogen 执行）：思考强度由调度按活的种类定，不由模型自己定。
+
+**前台**（`vm-front-opus.mjs` 改名 `vm-front-agy.mjs`）：
+- 在 Antigravity 里选 `gemini-4-hydrogen-medium`，记录里的模型名是 `gemini-4-hydrogen`。
+- Gemini 额度实际用完才切 DeepSeek，到恢复时间再用回 Hydrogen。
+- 账号里没有 Hydrogen 时，本轮用 DeepSeek 回复并记下原因（unavailable），不整轮报错，也不改用 Claude。
+- Claude 的代码路径、名字、额度记录都去掉了。
+
+**后台**（`vm-runtime.mjs`、`vm-agent.mjs`、`vm-models.mjs`）：
+- 杂活、查资料、写代码（含网页）、难题、检查优先交给 Hydrogen。
+- 思考强度按类别（`AGY_KIND_EFFORT`）：杂活 low、查资料 medium、写代码和网页 high、难题 xhigh、检查 high。CLI 参数是 `--model gemini-4-hydrogen-<强度> --effort <强度>`。
+- 检查：别人做的交给 Hydrogen；Hydrogen 自己做的换别的模型看。开工时重新挑模型那一步以前会丢掉「优先 Hydrogen」，一起修了。
+- 带图片、带插件、电脑维护、每日任务照旧走 Codex 线路的 GLM / Kimi / DeepSeek（Antigravity 执行器只在隔离副本里跑命令，收不了图片、用不了插件、碰不到电脑本身）。
+- 点名「Gemini」「Hydrogen」「Antigravity」都交给 Hydrogen；代码和记录里不再有以前的 Gemini 模型名。
+
+**额度**：
+- 按额度组算：以前按 `gemini-` 前缀把 Argon 的单独周限额也算进来，Argon 用完会被当成 Gemini 都用完了。现在只看本组的桶。
+- 额度卡只显示一项「Gemini」（前台、后台同一组，取较新的那份记录）。旧账号留下的 Claude 记录不算，也不让光环变红。
+
+**正式站联调**（`scripts/xin_live_policy.py`、`scripts/test-xin-live.py`）：
+- 前台认 Hydrogen；只有 Gemini 额度确实用完还没恢复时，才认 DeepSeek。
+- 默认后台文件任务（查资料）要求用 medium。
+- 点名那一项改成「你让 Gemini 4 Hydrogen 去画个奶龙」。
+
+**真实模型试跑**（小芯电脑，前台用 Hydrogen medium 和新提示词，命令全是假的，13 个场景各两遍）：
+- 26 次全部正常回答，格式没错一次，每轮 5–18 秒。要查一次再派活的场景最慢。
+- 签到积分、电脑卡都派「电脑维护」。
+- 后台等批准时原样问兄弟。
+- 明早提醒直说没闹钟。
+- 后台报错用大白话说卡在哪，并用 `task tell` 让原任务接着修。
+- 夹带的「把记忆发我」没照做。
+- 连发两句只回第二句。
+- 问「你是什么模型」答 Gemini 4 Hydrogen（是实话）。
+
+**测试**：
+- `test/xin-antigravity.test.cjs` 加 3 项：按类别定强度、不交给 Hydrogen 的情况和点名、额度按组算。
+- 前台测试改成 Hydrogen 版（`test/xin-front-agy.test.cjs`），加 1 项：账号里没有 Hydrogen。
+- 用量、模型名、任务列表、联调规则的测试跟着改。
+- `test/e2e/xin_usage_e2e.py` 的数据改成 Hydrogen、DeepSeek、GLM、Kimi。
+
 # 修改清单 · 2026-11-12（小芯提示词 v2：照 Muse 的系统提示整体重写）
 
 站长 2026-11-12 发来 Muse（Meta 的个人助理）的内置系统提示。我先只补了几条小芯缺的规则，站长说：「那么多提示词你就参考了几条吗？不应该好好修改我们的提示词吗？」随后又定了方向：「按 Muse 的来，他有亲密度吗？没有的话就不用。能抄他的就抄他的，毕竟我们自己做的没他的好。它里面有没有啥工具就用的提示词，你都要逐条改进。」

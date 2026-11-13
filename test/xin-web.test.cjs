@@ -50,9 +50,9 @@ test('前台只编码本轮已验证的上传图片；PDF 不冒充图片，丢�
  const outside=f.root+'/outside.txt';fs.writeFileSync(outside,'not an upload');fs.symlinkSync(outside,png);assert.match(js('try{a.frontUserInput(meta);console.log(JSON.stringify("unexpected"))}catch(e){console.log(JSON.stringify(e.message))}'),/图片没有成功传给我/);
 });
 test('xin task list/show 第一行按 actualModel 显示，Antigravity 和未知模型不误标成默认 GLM',t=>{
- const f=fixture(t),{run,sid}=f.front('查看任务');Object.assign(f.task,{no:24,parent:sid,status:'done',actualModel:'gemini-3.8-flash-high',model:'glm-5.3-flash'});f.save();
+ const f=fixture(t),{run,sid}=f.front('查看任务');Object.assign(f.task,{no:24,parent:sid,status:'done',actualModel:'gemini-4-hydrogen',model:'glm-5.3-flash'});f.save();
  const cli=(...argv)=>{const r=spawnSync(process.execPath,[agent,'xin','task',...argv],{env:{...f.env,XIN_RUN:run},encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout.split('\n')[0];};
- for(const args of [['list'],['show','24']]){const line=cli(...args);assert.match(line,/Gemini 3\.8 Flash High/);assert.doesNotMatch(line,/GLM/);}
+ for(const args of [['list'],['show','24']]){const line=cli(...args);assert.match(line,/Gemini 4 Hydrogen/);assert.doesNotMatch(line,/GLM/);}
  const index=f.control+'/tasks-index.json';fs.unlinkSync(index);f.task.actualModel='future-vision-model';f.save();assert.match(cli('show','24'),/future-vision-model/);assert.doesNotMatch(cli('list'),/GLM/);
  fs.unlinkSync(index);Object.assign(f.task,{actualModel:null,status:'queued',runs:[]});f.save();assert.match(cli('show','24'),/尚未执行/);
 });
