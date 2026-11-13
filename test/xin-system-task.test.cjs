@@ -25,7 +25,8 @@ function fakeCodex(dir) {
     'L="' + log + '"',
     'exec 9>"$L/seq.lock"; flock 9',
     'n=$(cat "$L/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$L/n"',
-    'for a in "$@"; do printf "%s\\n" "$a"; done > "$L/args.$n"; pwd > "$L/cwd.$n"',
+    // 先写工作目录、再写参数，都先写临时名再改名：测试看到 args.N 时内容完整、cwd.N 也已经在了（新执行机忙时读到一半，#133 合并后 CI）
+    'pwd > "$L/.cwd.$n" && mv "$L/.cwd.$n" "$L/cwd.$n"; for a in "$@"; do printf "%s\\n" "$a"; done > "$L/.args.$n" && mv "$L/.args.$n" "$L/args.$n"',
     'flock -u 9; exec 9>&-',
     'printf \'{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-%012d"}\\n\' $n',
     'echo \'{"type":"turn.started"}\'',
