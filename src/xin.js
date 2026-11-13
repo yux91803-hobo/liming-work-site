@@ -20,7 +20,7 @@
 const API = 'https://api.instabox.sh';
 const COOKIE = '__Host-xin';
 const SESSION_SEC = 30 * 86400;
-const AGENT_ASSET = '/xin/vm-agent.mjs';
+const AGENT_ASSET = '/xin/vm-agent.mjs', KERNEL_ASSET = 'vm-kernel.mjs';
 const VM_DIR = '/data/home/.xin/agent';
 export const OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'memory_list', 'memory_add', 'memory_update', 'memory_forget','memory_preferences','memory_preferences_set','learning_report', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
   'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off', 'tasks', 'task_stop', 'task_tell', 'usage',
@@ -140,7 +140,11 @@ async function agentScript(env, origin) {
   }
   const entry = AGENT_ASSET.split('/').pop();
   const dependencies = order.filter(f => f !== entry).map(f => ({ text: texts.get(f), path: VM_DIR + '/' + names.get(f), sha256: digests.get(f) }));
-  agentCache = { text: texts.get(entry), path: VM_DIR + '/' + names.get(entry), sha256: digests.get(entry), dependencies };
+  // 小芯内核（vm-kernel.mjs，docs/xin-kernel-design.md）不 import 别的模块，单独按内容哈希命名；网站里没有就是 null（旧部署、测试）
+  let kernel = null;
+  const kr = await env.ASSETS.fetch(new Request(origin + '/xin/' + KERNEL_ASSET));
+  if (kr.ok) { const text = await kr.text(), sha256 = hex(await crypto.subtle.digest('SHA-256', enc.encode(text))); kernel = { text, path: VM_DIR + '/vm-kernel-' + sha256.slice(0, 12) + '.mjs', sha256 }; }
+  agentCache = { text: texts.get(entry), path: VM_DIR + '/' + names.get(entry), sha256: digests.get(entry), dependencies, kernel };
   return agentCache;
 }
 function putAgentFile(env, id, file, mode) {
@@ -196,7 +200,7 @@ async function exec(env, origin, id, op, args, retried) {
   if (res.exitCode !== 0) {
     // 脚本还没传上去，或者改过了（文件名带内容的哈希）：传一份再跑
     if (!retried && /Cannot find module|ERR_MODULE_NOT_FOUND/.test(res.stderr || '')) {
-      for (const dependency of agent.dependencies) {
+      for (const dependency of agent.kernel ? [...agent.dependencies, agent.kernel] : agent.dependencies) {
         const d = await putAgentFile(env, id, dependency, '0644');
         if (!d.ok) throw await ibErr(d);
       }
