@@ -2,9 +2,10 @@
 // 只用 node 内置模块，不 import 别的 vm-*.mjs：Worker 把它单独按内容哈希上传（vm-kernel-<hash>.mjs）。
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -204,3 +205,102 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
     close: () => new Promise(ok => { server.close(() => { try { nonces.db.close(); } catch { /* 已关 */ } ok(); }); server.closeAllConnections(); })
   };
 }
+
+/* ---------- 常驻和升级（§5.1）：ensure / serve ----------
+   Worker 经 InstaBox exec 跑 `node vm-kernel-<hash>.mjs ensure --port 8797`：
+   - 先把这次 exec 的环境存成 kernel.env.json（0600），serve 起控制器时照用，和以前 exec 起控制器一模一样（PATH、TMPDIR、DISPLAY…）；
+   - 已经有同一版本在跑就什么都不做；版本不同先停旧的；
+   - 用 systemd 用户服务常驻：KillMode=process（停内核不连带杀掉控制器起的后台进程，和 exec 时一样它们自己活着）、
+     Restart=always（挂了自动重启）；电脑上没有用户总线时直接起一个脱离的进程（挂了由 Worker 下次 ensure 拉起）。 */
+const UNIT = 'xin-kernel';
+const homeDir = () => process.env.XIN_HOME || path.join(os.homedir(), '.xin');
+const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+function busEnv(env) {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 0, e = { ...env }, dir = '/run/user/' + uid;
+  if (!e.XDG_RUNTIME_DIR) e.XDG_RUNTIME_DIR = dir;
+  if (!e.DBUS_SESSION_BUS_ADDRESS) e.DBUS_SESSION_BUS_ADDRESS = 'unix:path=' + dir + '/bus';
+  return e;
+}
+function hasBus() {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  const which = c => (process.env.PATH || '/usr/bin:/bin').split(':').some(d => d && fs.existsSync(path.join(d, c)));
+  return fs.existsSync(process.env.XIN_SYSTEMD_BUS || '/run/user/' + uid + '/bus') && which('systemd-run');
+}
+// 同一时刻只让一个 ensure 动手（锁文件里写进程号，进程没了或超过 30 秒就当失效）
+function takeLock(file, waitMs) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  for (const deadline = Date.now() + waitMs; ;) {
+    try { const fd = fs.openSync(file, 'wx', 0o600); fs.writeSync(fd, String(process.pid)); fs.closeSync(fd); return true; }
+    catch (e) { if (e.code !== 'EEXIST') return false; }
+    let pid = 0, age = 0;
+    try { pid = Number(fs.readFileSync(file, 'utf8')) || 0; age = Date.now() - fs.statSync(file).mtimeMs; } catch { continue; }
+    if (!pid || !alive(pid) || age > 30000) { try { fs.unlinkSync(file); } catch { /* 别人删了 */ } continue; }
+    if (Date.now() > deadline) return false;
+    sleepSync(200);
+  }
+}
+async function localHealth(home, port) {
+  const keys = new KeyRing(path.join(home, 'kernel-keys.json')).keys(), first = [...keys][0];
+  if (!first) return null;
+  const [kid, key] = first, ts = Date.now(), nonce = crypto.randomBytes(16).toString('base64url');
+  const bodySha256 = crypto.createHash('sha256').update('').digest('hex');
+  const sig = crypto.createHmac('sha256', key).update(canonical({ method: 'GET', target: '/xin/health', ts, nonce, bodySha256 })).digest('base64url');
+  try {
+    const r = await fetch('http://127.0.0.1:' + port + '/xin/health', { headers: { 'x-xin-auth': `XinKernel-HMAC-SHA256 kid=${kid},ts=${ts},nonce=${nonce},sig=${sig}` }, signal: AbortSignal.timeout(2000) });
+    const d = await r.json();
+    return d && d.ok ? d : null;
+  } catch { return null; }
+}
+async function ensure(port) {
+  const home = homeDir(), out = r => process.stdout.write(JSON.stringify(r));
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  const envFile = path.join(home, 'kernel.env.json'), tmp = envFile + '.' + process.pid;
+  fs.writeFileSync(tmp, JSON.stringify(process.env), { mode: 0o600 }); fs.renameSync(tmp, envFile);
+  const lock = path.join(home, 'locks', 'kernel.lock');
+  const locked = takeLock(lock, 10000);
+  try {
+    const cur = await localHealth(home, port);
+    if (cur && cur.kernel === KERNEL_VERSION) return out({ ok: true, already: true, pid: cur.pid });
+    if (!locked) return out({ ok: false, error: 'locked' });
+    const bus = hasBus(), env = busEnv(process.env);
+    const ctl = args => spawnSync('systemctl', ['--user', ...args], { env, timeout: 10000, stdio: 'ignore' });
+    if (bus) ctl(['stop', UNIT + '.service']);
+    if (cur && cur.pid && alive(cur.pid)) { try { process.kill(cur.pid, 'SIGTERM'); } catch { /* 已经退出 */ } for (let i = 0; i < 25 && alive(cur.pid); i++) sleepSync(200); }
+    const argv = [process.execPath, SELF, 'serve', '--port', String(port)];
+    let started = false;
+    if (bus) {
+      const run = () => spawnSync('systemd-run', ['--user', '--unit=' + UNIT, '--collect', '-p', 'KillMode=process', '-p', 'Restart=always', '-p', 'RestartSec=2', ...argv], { env, timeout: 15000, stdio: 'ignore' });
+      let r = run();
+      if (r.status !== 0) { ctl(['reset-failed', UNIT + '.service']); r = run(); }
+      started = r.status === 0;
+    }
+    if (!started) {
+      fs.mkdirSync(path.join(home, 'logs'), { recursive: true });
+      const fd = fs.openSync(path.join(home, 'logs', 'kernel.out'), 'a', 0o600);
+      const c = spawn(argv[0], argv.slice(1), { detached: true, stdio: ['ignore', fd, fd], env: process.env, cwd: os.homedir() });
+      c.unref(); fs.closeSync(fd);
+    }
+    for (const deadline = Date.now() + 8000; Date.now() < deadline; await new Promise(r => setTimeout(r, 200))) {
+      const h = await localHealth(home, port);
+      if (h && h.kernel === KERNEL_VERSION) return out({ ok: true, started: true, pid: h.pid, systemd: bus });
+    }
+    return out({ ok: false, error: 'not_healthy' });
+  } finally { if (locked) try { fs.unlinkSync(lock); } catch { /* 已删 */ } }
+}
+async function serve(port) {
+  const home = homeDir();
+  let env = process.env;
+  try { const saved = JSON.parse(fs.readFileSync(path.join(home, 'kernel.env.json'), 'utf8')); if (saved && typeof saved === 'object') env = saved; } catch { /* 没存过就用自己的 */ }
+  const k = await createKernel({ home, port, env });
+  const stop = () => k.close().then(() => process.exit(0));
+  process.on('SIGTERM', stop); process.on('SIGINT', stop);
+}
+function main() {
+  const [cmd, ...rest] = process.argv.slice(2), i = rest.indexOf('--port'), port = i >= 0 ? Number(rest[i + 1]) : KERNEL_PORT;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) { process.stdout.write(JSON.stringify({ ok: false, error: 'bad_port' })); return; }
+  if (cmd === 'ensure') ensure(port).catch(e => process.stdout.write(JSON.stringify({ ok: false, error: 'ensure_failed', msg: redact(String(e && e.message || e)) })));
+  else if (cmd === 'serve') serve(port).catch(e => { process.stderr.write(redact(String(e && e.stack || e)) + '\n'); process.exit(1); });
+  else process.stdout.write(JSON.stringify({ ok: false, error: 'bad_command' }));
+}
+if (process.argv[1] && path.resolve(process.argv[1]) === SELF) main();

@@ -276,3 +276,95 @@ test('流：run 不合法回 400；poll 报错就推 error 然后关', async () 
     assert.strictEqual(s.messages[0].data.error, 'no_run');
   } finally { await f.k.close(); }
 });
+
+/* ---------- ensure / serve：用 systemd 用户服务常驻（假的 systemd-run 真把内核起起来） ---------- */
+function lifecycleHome() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-kensure-')), bin = path.join(home, 'bin');
+  for (const d of ['agent', 'runs', 'bin']) fs.mkdirSync(path.join(home, d));
+  fs.writeFileSync(path.join(home, 'kernel-keys.json'), JSON.stringify({ v: 1, keys: { ka: KEY } }), { mode: 0o600 });
+  fs.writeFileSync(path.join(home, 'agent', FAKE), FAKE_AGENT);
+  // 假 systemd-run：记下参数，去掉自己的选项，把后面的命令脱离出去跑，进程号记进 pids
+  fs.writeFileSync(path.join(bin, 'systemd-run'), `#!${process.execPath}
+const fs = require('fs'), { spawn } = require('child_process'), h = process.env.XIN_HOME;
+fs.appendFileSync(h + '/systemd.log', 'systemd-run ' + process.argv.slice(2).join(' ') + '\\n');
+const a = process.argv.slice(2); let i = 0;
+while (i < a.length && a[i].startsWith('-')) i += a[i] === '-p' ? 2 : 1;
+const c = spawn(a[i], a.slice(i + 1), { detached: true, stdio: 'ignore', env: process.env }); c.unref();
+fs.appendFileSync(h + '/pids', c.pid + '\\n'); fs.writeFileSync(h + '/unit.pid', String(c.pid));
+`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'systemctl'), `#!${process.execPath}
+const fs = require('fs'), h = process.env.XIN_HOME;
+fs.appendFileSync(h + '/systemd.log', 'systemctl ' + process.argv.slice(2).join(' ') + '\\n');
+if (process.argv.includes('stop')) { try { process.kill(Number(fs.readFileSync(h + '/unit.pid', 'utf8')), 'SIGTERM'); fs.unlinkSync(h + '/unit.pid'); } catch {} }
+`, { mode: 0o755 });
+  const bus = path.join(home, 'bus'); fs.writeFileSync(bus, '');
+  return { home, bin, bus };
+}
+function freePort() { return new Promise(ok => { const s = require('node:net').createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => ok(p)); }); }); }
+function kernelCopy(home, hash) {
+  const f = path.join(home, 'agent', 'vm-kernel-' + hash + '.mjs');
+  fs.copyFileSync(path.join(__dirname, '../site/xin/vm-kernel.mjs'), f); return f;
+}
+function runEnsure(L, file, port, extra = {}) {
+  const env = Object.assign({}, process.env, { XIN_HOME: L.home, PATH: L.bin + ':' + process.env.PATH, XIN_SYSTEMD_BUS: L.bus }, extra);
+  return new Promise((ok, no) => execFile(process.execPath, [file, 'ensure', '--port', String(port)], { env }, (e, out) => e ? no(e) : ok(JSON.parse(out))));
+}
+async function signedHealth(port) {
+  const worker = await load('../src/xin-kernel.js');
+  const r = await fetch('http://127.0.0.1:' + port + '/xin/health', { headers: { 'x-xin-auth': await worker.signKernelRequest({ key: KEY, kid: 'ka', method: 'GET', target: '/xin/health' }) } });
+  return r.json();
+}
+function killAll(L, extraPids = []) {
+  let pids = []; try { pids = fs.readFileSync(path.join(L.home, 'pids'), 'utf8').trim().split('\n').map(Number); } catch { /* 没起过 */ }
+  for (const p of [...pids, ...extraPids]) try { process.kill(p, 'SIGKILL'); } catch { /* 已经退出 */ }
+}
+const systemdLog = L => { try { return fs.readFileSync(path.join(L.home, 'systemd.log'), 'utf8'); } catch { return ''; } };
+
+test('ensure：用 systemd 用户服务起内核，只杀主进程、挂了自动重启；同一版本再 ensure 什么都不做', async () => {
+  const L = lifecycleHome(), port = await freePort(), file = kernelCopy(L.home, 'aaaaaaaaaaaa');
+  try {
+    const first = await runEnsure(L, file, port);
+    assert.strictEqual(first.ok, true, JSON.stringify(first)); assert.strictEqual(first.started, true);
+    const log = systemdLog(L);
+    assert.match(log, /systemd-run --user --unit=xin-kernel --collect -p KillMode=process -p Restart=always -p RestartSec=2 \S+ \S+vm-kernel-aaaaaaaaaaaa\.mjs serve --port \d+/);
+    assert.strictEqual((await signedHealth(port)).kernel, 'aaaaaaaaaaaa');
+    const second = await runEnsure(L, file, port);
+    assert.deepStrictEqual([second.ok, second.already], [true, true]);
+    assert.strictEqual(systemdLog(L).split('\n').filter(l => l.startsWith('systemd-run')).length, 1);
+  } finally { killAll(L); }
+});
+
+test('ensure：版本不同会先停旧的再起新的', async () => {
+  const L = lifecycleHome(), port = await freePort();
+  try {
+    await runEnsure(L, kernelCopy(L.home, 'aaaaaaaaaaaa'), port);
+    const r = await runEnsure(L, kernelCopy(L.home, 'bbbbbbbbbbbb'), port);
+    assert.strictEqual(r.started, true, JSON.stringify(r));
+    assert.match(systemdLog(L), /systemctl --user stop xin-kernel\.service/);
+    assert.strictEqual((await signedHealth(port)).kernel, 'bbbbbbbbbbbb');
+  } finally { killAll(L); }
+});
+
+test('ensure：控制器的环境和 exec 时一样（把 ensure 时的环境存下来给 serve 用）', async () => {
+  const L = lifecycleHome(), port = await freePort(), worker = await load('../src/xin-kernel.js');
+  try {
+    await runEnsure(L, kernelCopy(L.home, 'cccccccccccc'), port, { XIN_ENV_PROBE: '1' });
+    const st = fs.statSync(path.join(L.home, 'kernel.env.json'));
+    assert.strictEqual(st.mode & 0o777, 0o600);
+    const text = JSON.stringify({ agent: path.join(L.home, 'agent', FAKE), op: 'env', args: {} });
+    const r = await fetch('http://127.0.0.1:' + port + '/xin/op', { method: 'POST', body: text, headers: { 'x-xin-auth': await worker.signKernelRequest({ key: KEY, kid: 'ka', method: 'POST', target: '/xin/op', body: text }) } });
+    assert.deepStrictEqual(await r.json(), { ok: true, data: { probe: '1' } });
+  } finally { killAll(L); }
+});
+
+test('ensure：没有用户总线时直接起一个脱离的进程', async () => {
+  const L = lifecycleHome(), port = await freePort();
+  let pid = 0;
+  try {
+    const r = await runEnsure(L, kernelCopy(L.home, 'dddddddddddd'), port, { XIN_SYSTEMD_BUS: path.join(L.home, 'no-bus') });
+    assert.strictEqual(r.started, true, JSON.stringify(r));
+    assert.ok(!systemdLog(L).includes('systemd-run'));
+    const h = await signedHealth(port); pid = h.pid;
+    assert.strictEqual(h.kernel, 'dddddddddddd');
+  } finally { killAll(L, pid ? [pid] : []); }
+});
