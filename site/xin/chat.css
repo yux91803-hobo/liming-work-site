@@ -532,6 +532,9 @@ body.xs-open{overflow:hidden}
 .xc-btn.sec{border:1px solid var(--line-2);background:transparent;color:var(--ink);font-weight:500}
 @media (hover:hover){.xc-btn.sec:hover{border-color:var(--ink-3)}}
 .xc-tk-q{flex-basis:100%;margin:0;font-weight:600}
+.xc-tk-plan{flex-basis:100%;min-width:0;font-size:13px;overflow-wrap:anywhere}
+.xc-tk-plan summary{cursor:pointer}
+.xc-tk-plan ul{margin:8px 0;padding-left:20px}
 .xc-tk-due{flex-basis:100%;margin:-4px 0 0;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .xc-tk-login{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px}
 .xc-tk-act .xc-tk-login .xc-btn{padding:0 14px}

@@ -579,7 +579,8 @@ function recentLines(file, days = 7) {
 const SENSITIVE_PATH = /\.xin\/(?:workflow\.sqlite|[a-z-]+\.key|agent\/|push\/|exports\/|logs\/)/;
 export function boundaryKind(meta, ev) {
   if (!meta || !ev || ev.t !== 'tool') return null;
-  const privileged = meta.agent === 'harness' || meta.agent === 'claude', daily = meta.kind === 'daily';
+  const system = meta.task && meta.routeKind === 'system';
+  const privileged = meta.agent === 'harness' || meta.agent === 'claude' || system, daily = meta.kind === 'daily';
   if (!privileged && !daily) return null;
   const d = String(ev.detail || '').split(BASE + '/').join('~/.xin/');   // the controller directory, wherever it is configured
   if (SENSITIVE_PATH.test(d)) return 'sensitive';
@@ -587,9 +588,14 @@ export function boundaryKind(meta, ev) {
   if (/(?:^|[\s;&|(`])xin\s+(?:remember|forget|bond)\b/.test(d)) return 'xin';
   return /(?:~|\$HOME|\$\{HOME\})\/\.xin\b/.test(d) || /\/\.xin\//.test(d) ? 'dir' : null;
 }
-function boundaryNote(meta, ev) {
+export function boundaryRecord(meta, ev) {
   const kind = boundaryKind(meta, ev);
-  if (kind) logLine(BOUNDARY_F(), { sid: meta.sid, run: meta.run, agent: meta.kind === 'daily' ? 'daily' : meta.agent, kind, cmd: String(ev.detail || '').slice(0, 200) });
+  // 命令和输出可能含真实凭据：审计只留身份和触及的边界类别，不另存一份命令正文。
+  return kind ? { sid: meta.sid, run: meta.run, agent: meta.kind === 'daily' ? 'daily' : meta.task && meta.routeKind === 'system' ? 'system' : meta.agent, kind } : null;
+}
+function boundaryNote(meta, ev) {
+  const record = boundaryRecord(meta, ev);
+  if (record) logLine(BOUNDARY_F(), record);
 }
 /* 机外备份的包（Worker 每天取走、加密存进 Durable Object，见 docs/xin-reliability-usage-design.md 的 C 部分）：
    状态库的一致快照（VACUUM INTO，记忆、会话索引都在里面）+ 直接写成文件的对话过程、消息、清单和统计。
@@ -1575,7 +1581,7 @@ export function taskSummary(t, full) {
   if (t.inbox && t.inbox.length) out.inbox = t.inbox.length;
   if (t.status === 'queued' && t.retryAt > Date.now()) out.retryAt = t.retryAt;
   if (t.note) out.note = t.note;
-  if (t.approval || t.publication) out.approval = { id: t.approval?.id || 'publish', kind: t.publication ? 'publish' : t.approval?.kind || 'tool' };
+  if (t.approval || t.publication) out.approval = { id: t.approval?.id || t.publication?.id || 'publish', kind: t.publication ? 'publish' : t.approval?.kind || 'tool' };
   if (t.publication) out.publication = t.publication;
   if (t.verification) out.verification = t.verification;
   if(t.web)out.web=true;
@@ -1838,6 +1844,9 @@ function taskFinish(a) {
 function taskTell(a) {
   const t = findTask(a);
   if (!t) return { error: 'no_task', msg: '找不到这个任务' };
+  const expectedApproval = t.publication ? t.publication.id || 'publish' : t.approval?.id;
+  if (a.approvalId !== undefined && a.approvalId !== expectedApproval || a.decision && !t.approval && !t.publication && !t.browserStep)
+    return { error: 'stale_approval', msg: '这次确认已结束或已变化，请刷新任务后核对' };
   if (t.approval) {
     if (t.approval.kind !== 'input' && !['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '请点「批准」或「拒绝」' };
     if (t.approval.kind === 'input' && !String(a.text || '').trim()) return { error: 'empty', msg: '请回复问题' };
@@ -1849,8 +1858,17 @@ function taskTell(a) {
   }
   if (t.publication) {
     if (!['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '结果涉及删除或覆盖冲突，请明确选择是否允许' };
+    if (t.publication.id && a.approvalId !== t.publication.id) return { error: 'stale_approval', msg: '这份写回清单已变化，请刷新任务后核对新的清单' };
     if (a.decision === 'approve') {
-      try { t.publicationReceipt = runtime.publishWorkspace(t, BASE, true);if(t.web){t.preview=runtime.publishWebPreview(t,BASE,readJ(metaF(lastRun(t)),{}).webCheck);t.result.text='我画好了，点下面的预览就能看。';t.stage='ready';} }
+      try {
+        const publication = runtime.publishWorkspace(t, BASE, t.publication);
+        if (publication.pending) {
+          t.publication = publication; t.question = '写回内容有变化，尚未执行。请核对下面的新文件清单，批准这次写回吗？'; saveTask(t);
+          return { ok: true, msg: '写回清单或文件内容有变化，尚未执行，请核对新清单后再批准', task: taskSummary(t) };
+        }
+        t.publicationReceipt = publication;
+        if(t.web){t.preview=runtime.publishWebPreview(t,BASE,readJ(metaF(lastRun(t)),{}).webCheck);t.result.text='我画好了，点下面的预览就能看。';t.stage='ready';}
+      }
       catch (e) { return { error: 'conflict', msg: e.message }; }
       t.status = 'done'; t.result.ok = true;
     } else { t.status = 'stopped'; t.result.ok = false; t.result.text += '\n原项目未更改，任务副本保留。'; }
@@ -2703,7 +2721,7 @@ const ops = {
   async task_tell(a) {
     // 「已登录，继续」：先把登录窗口存好关掉（锁外，最多等 12 秒），下一轮浏览器才拿得到刚登好的 cookie
     if (a.decision === 'approve' && okId(a.sid, 's') && readJ(sessF(a.sid))?.browserStep) await loginDone();
-    return lockedCall('tasks', 'task_tell', { sid: a.sid, no: a.no, text: a.text, decision: a.decision,clientId:a.clientId });
+    return lockedCall('tasks', 'task_tell', { sid: a.sid, no: a.no, text: a.text, decision: a.decision, approvalId: a.approvalId,clientId:a.clientId });
   },
   // 设置里的「网站登录」：保存了哪些网站（不出 cookie 的值）、删掉一个；登录窗口开着的话是哪个网站
   logins() { const w = readJ(LOGIN_WIN()); return { ok: true, sites: loginStore(LOGINS_DIR()).list(), window: w && alive(w.pid) ? { site: w.site } : null }; },

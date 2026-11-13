@@ -1466,10 +1466,10 @@
       if (S.sheet && S.sheetTask === sid) loadTask(sid);
     }).catch(function (e) { if (btn) btn.disabled = false; setStatus('停不下来：' + e.message, 'bad'); setTimeout(function () { setStatus(''); }, 4000); });
   }
-  function tellTask(sid, text, btn, note, decision) {
+  function tellTask(sid, text, btn, note, decision, approvalId) {
     text = String(text || '').trim();
     if (btn) btn.disabled = true;
-    call('task_tell', { sid: sid, text: text || undefined, decision: decision }, 30000).then(function (r) {
+    call('task_tell', { sid: sid, text: text || undefined, decision: decision, approvalId: approvalId }, 30000).then(function (r) {
       if (r && r.error) throw new Error(r.msg || r.error);
       if (r && r.task) setTasks([r.task], false);
       if (note) note.textContent = r.msg || '好了';
@@ -1548,10 +1548,21 @@
     var act = h('div', 'xc-tk-act'), note = h('p', 'xc-tk-note');
     if (t.approval && t.approval.kind !== 'input') {
       act.appendChild(h('p', 'xc-tk-q', t.question || '批准这一次操作吗？'));
+      if (t.publication) {
+        var plan = h('details', 'xc-tk-plan'), entries = h('ul', '');
+        plan.open = true; plan.appendChild(h('summary', '', '这次写回的文件'));
+        ['deleted', 'conflicts', 'changes'].forEach(function (kind) {
+          (t.publication[kind] || []).forEach(function (file) {
+            if (kind === 'changes' && (t.publication.conflicts || []).indexOf(file) !== -1) return;
+            entries.appendChild(h('li', '', (kind === 'deleted' ? '删除：' : kind === 'conflicts' ? '覆盖冲突：' : '写入：') + file));
+          });
+        });
+        plan.appendChild(entries); act.appendChild(plan);
+      }
       if (waitLeft(t)) act.appendChild(h('p', 'xc-tk-due', waitLeft(t) + '，未处理将自动停止'));
       ['approve', 'deny'].forEach(function (decision) {
         var button = h('button', 'xc-btn' + (decision === 'deny' ? ' sec' : ''), decision === 'approve' ? '批准' : '拒绝'); button.type = 'button';
-        button.addEventListener('click', function () { tellTask(t.sid, '', button, note, decision); });
+        button.addEventListener('click', function () { tellTask(t.sid, '', button, note, decision, t.approval.id); });
         act.appendChild(button);
       });
     } else if (tLive(t)) {

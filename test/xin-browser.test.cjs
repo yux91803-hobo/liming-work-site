@@ -16,10 +16,7 @@ function chromium() {
 const ROOT = (() => {
   const exe = chromium(); if (!exe) return false;
   if (process.getuid?.() === 0) return true;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-sb-probe-'));
-  const r = require('node:child_process').spawnSync(exe, ['--headless=new', '--user-data-dir=' + dir, '--dump-dom', 'data:text/html,<p>sandbox-ok</p>'], { encoding: 'utf8', timeout: 30000 });
-  fs.rmSync(dir, { recursive: true, force: true });
-  return !String(r.stdout || '').includes('sandbox-ok');
+  return !require('./helpers/chromium-probe.cjs').sandboxAvailable(exe);
 })();
 const load = async () => {
   const b = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-browser.mjs')).href), rt = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href);
@@ -84,6 +81,21 @@ test('打开网页：回网址、标题和带编号的快照；点链接跳过�
   r = await run('back');
   assert.match(r.text, /标题：首页/);
   assert.ok(events.some(e => e.cmd === 'open') && events.some(e => e.cmd === 'click'), '每一步都记下来');
+});
+
+test('浏览器诊断不记录填表内容、带令牌的网址或未知命令正文', { timeout: platformTimeout(60000) }, async t => {
+  const { s, run, events } = await setup(t);
+  let result = await run('open', s.base + '/?token=audit-url-secret');
+  assert.equal(result.ok, true);
+  const input = ref(result.text, /searchbox|textbox/);
+  result = await run('fill', input, 'audit-private-form-value');
+  assert.equal(result.ok, true);
+  await run('audit-unknown-secret', 'audit-argument-secret');
+  const logs = JSON.stringify(events);
+  assert.doesNotMatch(logs, /audit-url-secret|audit-private-form-value|audit-unknown-secret|audit-argument-secret/);
+  assert.ok(events.some(e => e.cmd === 'fill' && e.ok));
+  assert.ok(events.some(e => e.cmd === 'unknown' && e.error === 'bad_cmd'));
+  assert.ok(events.every(e => e.url === s.base), '日志只记站点，不记路径和查询串');
 });
 
 test('搜索：在搜索框填字、按回车或点「搜索」都照常', { timeout: platformTimeout(60000) }, async t => {

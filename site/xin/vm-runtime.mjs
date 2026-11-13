@@ -91,7 +91,7 @@ export function publicationPlan(t, controller) {
   const applied = [...changed.filter(n => current[n] === after[n]), ...removed.filter(n => !(n in current))];
   const changes = changed.filter(n => current[n] !== after[n]), deleted = removed.filter(n => n in current);
   const conflicts = [...changes, ...deleted].filter(n => current[n] !== before[n]);
-  return { original, before, after, changes, deleted, conflicts, applied };
+  return { original, before, after, current, changes, deleted, conflicts, applied };
 }
 
 export function stm32Task(t) {
@@ -192,9 +192,14 @@ export function sourceDigest(root) {
   return crypto.createHash('sha256').update(JSON.stringify(Object.entries(files).filter(([n])=>/\.(?:c|h|s|cpp|hpp|ld|mk|cmake|ioc)$|(?:^|\/)(?:Makefile|GNUmakefile|CMakeLists\.txt|CMakePresets\.json|xin-build\.json)$/i.test(n)).sort(([a],[b])=>a.localeCompare(b)))).digest('hex');
 }
 
-export function publishWorkspace(t, controller, approved = false) {
+export function publishWorkspace(t, controller, approval = null) {
   const plan = publicationPlan(t, controller);
-  if ((plan.deleted.length || plan.conflicts.length) && !approved) return { pending: true, deleted: plan.deleted, conflicts: plan.conflicts };
+  // 批准的是这一份具体清单和文件内容，不是「这个任务以后都能删除/覆盖」。旧的无摘要批准也必须重新展示。
+  const entries = [...new Set([...plan.changes, ...plan.deleted])].sort().map(name =>
+    [name, plan.before[name] ?? null, plan.after[name] ?? null, plan.current[name] ?? null]);
+  const id = 'publish-' + crypto.createHash('sha256').update(JSON.stringify({ sid: t.sid, original: plan.original, entries })).digest('hex');
+  if (entries.length && (plan.deleted.length || plan.conflicts.length || approval) && approval?.id !== id)
+    return { pending: true, id, changes: plan.changes, deleted: plan.deleted, conflicts: plan.conflicts };
   // Validate every destination before changing any file. Never follow a task-created or concurrent symlink.
   for (const name of [...plan.changes, ...plan.deleted]) {
     const dst = path.resolve(plan.original, name);
