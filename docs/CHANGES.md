@@ -9,7 +9,7 @@
 - **原有测试修正**：代理关闭后可能先在复用连接上收到 EPIPE/ECONNRESET，而不是重新 connect 的 ENOENT；检验连接失败且上游次数未增加（参考 [nodejs/node #54293](https://github.com/nodejs/node/issues/54293)）。并发验证复现了 Chromium 沙盒探针超时后仅杀主进程、renderer 继续写 Default 导致 ENOTEMPTY；测试探针改为独立进程组，先收组再删目录，并用模拟子进程验证正常/超时清理（参考 [Playwright #33377](https://github.com/microsoft/playwright/issues/33377) 的进程组清理方式）。没有放宽生产浏览器必须能开沙盒的要求。
 - **参考与取舍**：Meta [Muse 公开安全架构](https://muse.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse)、Codex `core/src/tools/approvals.rs` 的结构化操作身份/参数、ACP 权限请求。队首修复和兼容桥/回滚协议按小芯实际状态设计，没找到可直接套用的同构实现，不引入新框架或付费资源。
 - **剩余边界**：system 与每日任务仍直接宿主执行、存在免密 sudo；本分支只补审计，不把它叫作阻止越权。第二阶段必须加入可信宿主授权入口、执行器身份和单写者切换，再迁这些任务；完整工具权限留第三阶段。天启、学习台、记忆数据和每日任务能力不裁剪。
-- **迁移/回滚**：没有新增/删除表、DO 类或用户数据。整 PR 可回 #136 但会恢复旧缺口；不要删除 pending inbox 或恢复旧快照覆盖新消息。重大状态迁移另分 PR，本分支不自行合并/部署。
+- **迁移/回滚**：没有新增/删除表、DO 类或用户数据。整 PR 可回 #136 但会恢复旧缺口；不要删除 pending inbox 或恢复旧快照覆盖新消息。重大状态迁移另分 PR，本分支不自行合并或发布正式站；Actions 测试站仍按原验证流程运行。
 - **本地验证**：Node 22.23.3 下 check 749/749（无跳过），12 组 e2e 全过，四种宽度×浅深色 8 组截图自查通过，Wrangler 4.151.1 staging dry-run 成功。提交后的 CI/测试站记录以 PR 的 Actions 为准。
 
 # 修改清单 · 2026-11-13（小芯内核第 1 步：私有端口上的常驻内核、待送达、流式传输）
