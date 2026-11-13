@@ -1164,6 +1164,18 @@ async def main():
         check('小芯能跳进卡片里，落地后站在里面', await pg.evaluate("[LimingXin.mode, LimingXin.plat && LimingXin.plat.kind]") == ['idle', 'in'])
         await pg.evaluate("LimingXin.hop(0)"); await pg.wait_for_timeout(1500)
         check('再跳回标题栏', await pg.evaluate("[LimingXin.mode, LimingXin.plat && LimingXin.plat.kind]") == ['idle', 'ground'])
+        # 半空中叫它跳（比如它自己正跳着）：要等落地再跳，和背包里的动作一样。以前起跳前蹲的那 0.19 秒里正好落地，
+        # 落地就把这次起跳掐掉了，叫了等于没叫（#134 合并后正式站 CI「hop did not enter real flight」）
+        mid = await pg.evaluate("""() => new Promise(resolve => {
+          const ps = LimingXin.plats(), map = ps.findIndex(p => p.kind === 'top' && p.el.dataset.id === 'map');
+          LimingXin.hop(ps.findIndex(p => p.kind === 'in'));
+          const t = setInterval(() => { if (LimingXin.mode !== 'fly') return; clearInterval(t); LimingXin.hop(map); resolve(LimingXin.mode); }, 5);
+        })""")
+        try: await pg.wait_for_function("LimingXin.mode === 'idle' && !!LimingXin.plat && LimingXin.plat.kind === 'top' && LimingXin.plat.el.dataset.id === 'map'", timeout=6000, polling=100)
+        except Exception: pass
+        got = await pg.evaluate("[LimingXin.mode, LimingXin.plat && LimingXin.plat.kind, LimingXin.plat && LimingXin.plat.el.dataset.id]")
+        check('半空中叫它跳：落地以后再跳过去，不会被落地掐掉', mid == 'fly' and got == ['idle', 'top', 'map'], (mid, got))
+        await pg.evaluate("LimingXin.hop(0)"); await pg.wait_for_timeout(1500)
 
         # 正常点开 STM32：学习台里没有小芯；关掉以后首页的小芯还在原地
         before = await pg.evaluate("LimingXin.el.style.transform")
@@ -1320,8 +1332,9 @@ async def main():
             resolve({before, after: LimingXin.mode});
           });
           watch.observe(LimingXin.el, {attributes:true, attributeFilter:['class']});
-          timer=setTimeout(() => {watch.disconnect(); reject(new Error('hop did not enter real flight'));},5000);
-          const ps=LimingXin.plats(); LimingXin.hop(ps.findIndex(p => p.kind === 'top' && p.el.dataset.id === 'map'));
+          const ps=LimingXin.plats(), i=ps.findIndex(p => p.kind === 'top' && p.el.dataset.id === 'map'), was=LimingXin.mode;
+          timer=setTimeout(() => {watch.disconnect(); reject(new Error('hop did not enter real flight: ' + JSON.stringify({i, was, now: LimingXin.mode, plat: LimingXin.plat && LimingXin.plat.kind})));},5000);
+          LimingXin.hop(i);
         })""")
         pcs = []
         for i in range(90):
