@@ -149,14 +149,61 @@ test('送达和确认同时发生：确认标记不丢', async () => {
   assert.deepStrictEqual([row.state, row.acked], ['delivered', true]);
 });
 
-test('列表：没送完的、失败的、刚送到还没确认的；读到送到的就算确认', async () => {
-  const x = await inbox({ deliver: async row => row.args.text === '会失败' ? { ok: true, data: { error: 'no_session', msg: 'x' } } : row.args.text === '在睡' ? { ok: false, state: 'waking' } : { ok: true, data: { run: 'r1' } } });
+test('列表：没送完的、后来才失败的、刚送到还没确认的；读到终态（送到、失败）就算确认', async () => {
+  let awake = false;
+  const x = await inbox({ deliver: async row => row.args.text === '醒来后失败' ? (awake ? { ok: true, data: { error: 'no_session', msg: '找不到这个对话' } } : { ok: false, state: 'waking' })
+    : row.args.text === '在睡' ? { ok: false, state: 'cooldown', retryAfter: 3600 } : { ok: true, data: { run: 'r1' } } });
   await x.ib.accept({ id: 'cid-0000000d', op: 'send', args: { text: '在睡' } });
-  await x.ib.accept({ id: 'cid-0000000e', op: 'send', args: { text: '会失败' } });
+  await x.ib.accept({ id: 'cid-0000000e', op: 'send', args: { text: '醒来后失败' } });
   await x.ib.accept({ id: 'cid-0000000f', op: 'send', args: { text: '送到了' } });
-  assert.deepStrictEqual((await x.ib.list()).rows.map(r => r.id), ['cid-0000000d', 'cid-0000000e', 'cid-0000000f']);
+  awake = true; x.clock.now = T0 + 5000; await x.ib.alarm();   // 没有网页在等的时候才失败
+  assert.deepStrictEqual((await x.ib.list()).rows.map(r => [r.id, r.state]), [['cid-0000000d', 'pending'], ['cid-0000000e', 'failed'], ['cid-0000000f', 'delivered']]);
   await x.ib.view('cid-0000000f');
   assert.deepStrictEqual((await x.ib.list()).rows.map(r => r.id), ['cid-0000000d', 'cid-0000000e']);
+  assert.strictEqual((await x.ib.view('cid-0000000e')).error.code, 'no_session');   // 网页读到了「没送到」
+  assert.deepStrictEqual((await x.ib.list()).rows.map(r => r.id), ['cid-0000000d'], '读到过的失败不再列出来');
+});
+
+test('当场就失败（控制器回了错误）：已经当面告诉发送方，不留在列表里等下次再报一遍', async () => {
+  const x = await inbox({ deliver: async () => ({ ok: true, data: { error: 'too_long', msg: '消息太长了' } }) });
+  const { view } = await x.ib.accept({ id: 'cid-00000020', op: 'send', args: ARGS });
+  assert.deepStrictEqual([view.state, view.error.code], ['failed', 'too_long']);
+  assert.deepStrictEqual((await x.ib.list()).rows, []);
+});
+
+test('一直叫不醒：前 20 次几秒一试，之后按退避放慢（5 秒、15 秒……）', async () => {
+  const x = await inbox({ deliver: async () => ({ ok: false, state: 'waking', retryAfter: 3 }) });
+  await x.ib.accept({ id: 'cid-00000021', op: 'send', args: ARGS });
+  const row = () => x.storage.get('inbox:row:cid-00000021');
+  for (let i = 0; i < 19; i++) { x.clock.now = (await row()).nextAt; await x.ib.alarm(); }
+  assert.strictEqual((await row()).attempts, 20);
+  assert.strictEqual((await row()).nextAt - x.clock.now, 3000);
+  x.clock.now = (await row()).nextAt; await x.ib.alarm();
+  assert.strictEqual((await row()).attempts, 21);
+  assert.strictEqual((await row()).nextAt - x.clock.now, 5000);
+  assert.strictEqual((await row()).wait.state, 'waking');
+  x.clock.now = (await row()).nextAt; await x.ib.alarm();
+  assert.strictEqual((await row()).nextAt - x.clock.now, 15000);
+});
+
+test('踢一下：退避中的那句提前到现在重试；冷却中的不动（冷却没结束叫不醒）', async () => {
+  const x = await inbox({ deliver: async row => row.args.text === '冷却' ? { ok: false, state: 'cooldown', retryAfter: 3600 } : { ok: false, state: 'error', msg: '连不上' } });
+  await x.ib.accept({ id: 'cid-00000022', op: 'send', args: { text: '重试' } });
+  await x.ib.accept({ id: 'cid-00000023', op: 'send', args: { text: '冷却' } });
+  assert.strictEqual((await x.storage.get('inbox:row:cid-00000022')).nextAt, T0 + 5000);
+  x.clock.now = T0 + 1000;
+  await x.ib.kick();
+  assert.strictEqual((await x.storage.get('inbox:row:cid-00000022')).nextAt, T0 + 1000);
+  assert.strictEqual((await x.storage.get('inbox:row:cid-00000023')).nextAt, T0 + 3600e3);
+  assert.strictEqual(x.storage.alarm, T0 + 2000);
+});
+
+test('先写「这里是待送达」的标记，再写这一行：有行就一定有标记，闹钟认得出来', async () => {
+  const x = await inbox(), order = [], put = x.storage.put;
+  x.storage.put = async (k, v) => { order.push(k); return put(k, v); };
+  await x.ib.accept({ id: 'cid-00000024', op: 'send', args: ARGS });
+  const meta = order.indexOf('inbox:meta'), row = order.indexOf('inbox:row:cid-00000024');
+  assert.ok(meta >= 0 && meta < row, order.join(' → '));
 });
 
 test('清理：终态超过 7 天的删掉，还没送完的不删', async () => {

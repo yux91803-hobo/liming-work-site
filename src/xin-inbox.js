@@ -5,6 +5,7 @@ import { redact } from './xin-kernel.js';
 
 export const BACKOFF_S = [5, 15, 30, 60, 120, 300, 600];
 const ROW = 'inbox:row:', LEASE_MS = 120000, GUARD_MS = 120000, GIVE_UP_MS = 24 * 3600e3, KEEP_MS = 7 * 24 * 3600e3, LIST_DELIVERED_MS = 10 * 60e3, WAKE_MS = 5000;
+const WAKE_FAST = 20;   // 叫醒中：前这么多次几秒一试，再叫不醒（InstaBox 那边出故障）就按退避放慢
 const TRANSIENT = new Set(['busy', 'lock_failed', 'internal']);   // 控制器的临时错误：过一会儿再送
 const STOP = new Set(['waking', 'cooldown', 'busy']);               // 电脑这边整体不可用：这一轮不再送后面的
 const ID = /^[A-Za-z0-9_-]{8,80}$/;
@@ -27,15 +28,17 @@ export class Inbox {
     const old = await this.storage.get(ROW + id);
     if (old) {
       if (old.digest !== digest) return { error: 'conflict' };
-      return { view: this.due(old) ? await this.attempt(id, this.budgetMs) : this.viewOf(old) };
+      return { view: await this.told(this.due(old) ? await this.attempt(id, this.budgetMs) : this.viewOf(old)) };
     }
     const now = this.now(), seq = ((await this.storage.get('inbox:seq')) || 0) + 1;
+    await this.storage.put('inbox:meta', { v: 1 });   // 先写标记：有行就一定有标记，闹钟（XinTaskSupervisor.alarm）认得出这是待送达
     await this.storage.put('inbox:seq', seq);
     await this.storage.put(ROW + id, { id, op, args, digest, seq, state: 'pending', attempts: 0, backoff: 0, nextAt: now, leaseUntil: 0, createdAt: now,
       firstAttemptAt: 0, deliveredAt: 0, finishedAt: 0, result: null, wait: null, error: null, acked: false, woke: false });
-    await this.storage.put('inbox:meta', { v: 1 });
-    return { view: await this.attempt(id, this.budgetMs) };
+    return { view: await this.told(await this.attempt(id, this.budgetMs)) };
   }
+  // 当场就失败的：这次回应已经把结果告诉发送方了，算确认过；下次打开网页不再报一遍
+  async told(view) { if (view && view.state === 'failed') await this.ack(view.id); return view; }
   due(row, now = this.now()) { return row.state === 'pending' && row.nextAt <= now && row.leaseUntil <= now; }
   async attempt(id, budgetMs) {
     const now = this.now(), row = await this.storage.get(ROW + id);
@@ -68,7 +71,12 @@ export class Inbox {
       return;
     }
     const st = r && r.state, ra = Number(r && r.retryAfter) || 0;
-    if (st === 'waking') { row.woke = true; this.waitUntil(row, now, now + Math.max(3, ra) * 1000, { state: 'waking', msg: '唤醒中' }); return; }
+    if (st === 'waking') {
+      row.woke = true;
+      if (row.attempts > WAKE_FAST) this.retry(row, now, { state: 'waking', msg: '唤醒中' });
+      else this.waitUntil(row, now, now + Math.max(3, ra) * 1000, { state: 'waking', msg: '唤醒中' });
+      return;
+    }
     if (st === 'cooldown') { const until = now + (ra || 60) * 1000; this.waitUntil(row, now, until, { state: 'cooldown', until, msg: '云电脑在冷却' }); return; }
     if (st === 'busy') { this.retry(row, now, { state: 'busy', msg: 'InstaBox 忙' }); return; }
     this.retry(row, now, { state: 'retrying', msg: redact(r && r.msg || '连不上云电脑') });
@@ -108,15 +116,18 @@ export class Inbox {
     }
     await this.schedule();
   }
+  // 打开网页、定时任务来踢一下：闹钟丢了能补上；退避中的提前到现在（人已经来了，别再等几分钟）；冷却中的不动，冷却没结束叫不醒
   async kick() {
-    if (!(await this.rows()).some(r => r.state === 'pending')) return;
-    const t = this.now() + 1000, cur = await this.storage.getAlarm();
+    const now = this.now(), pending = (await this.rows()).filter(r => r.state === 'pending');
+    if (!pending.length) return;
+    for (const r of pending) if (r.nextAt > now && r.leaseUntil <= now && !(r.wait && r.wait.state === 'cooldown')) { r.nextAt = now; await this.storage.put(ROW + r.id, r); }
+    const t = now + 1000, cur = await this.storage.getAlarm();
     if (cur == null || cur > t) await this.storage.setAlarm(t);
   }
   async view(id) {
     const row = typeof id === 'string' && await this.storage.get(ROW + id);
     if (!row) return null;
-    if (row.state === 'delivered' && !row.acked) { row.acked = true; await this.storage.put(ROW + id, row); }
+    if (row.state !== 'pending' && !row.acked) { row.acked = true; await this.storage.put(ROW + id, row); }   // 读到终态（送到、没送到）就算确认
     return this.viewOf(row);
   }
   async ack(id) { const row = typeof id === 'string' && await this.storage.get(ROW + id); if (row) { row.acked = true; await this.storage.put(ROW + id, row); } }

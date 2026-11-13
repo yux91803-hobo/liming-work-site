@@ -67,8 +67,11 @@ export class KernelConfigStore {
 export const READ_OPS = new Set(['status', 'ping', 'poll', 'sessions', 'history', 'memory', 'memory_list', 'memory_export', 'memory_preferences', 'learning_report',
   'daily_get', 'files', 'plugins', 'moves', 'bond', 'tasks', 'usage', 'logins', 'preview_asset', 'greet']);
 export const KEYED_OPS = new Set(['send', 'steer', 'task_tell', 'task_stop']);   // 控制器按 clientId 去重（vm-agent.mjs 的 transactionalOp、steer）
+// 本身重做无害的：stop（已经停了就回 already）、daily（控制器按日期和在跑的每日任务认得出做过了，vm-agent.mjs 的 ops.stop、ops.daily）。
+// 内核没在跑（502）时这两个最不能卡住：出问题时要停得下来，定时的每日任务不能因此跳过。
+export const IDEMPOTENT_OPS = new Set(['stop', 'daily']);
 export function retrySafe(op, args) {
-  return READ_OPS.has(op) || (KEYED_OPS.has(op) && typeof args?.clientId === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(args.clientId));
+  return READ_OPS.has(op) || IDEMPOTENT_OPS.has(op) || (KEYED_OPS.has(op) && typeof args?.clientId === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(args.clientId));
 }
 export async function kernelFetch({ config, method, target, body = '', timeoutMs = 90000, fetchImpl = fetch, now = Date.now }) {
   const headers = { authorization: 'Bearer ' + config.token, 'x-xin-auth': await signKernelRequest({ key: config.key, kid: config.kid, method, target, body, now: now() }) };

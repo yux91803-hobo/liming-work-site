@@ -2199,8 +2199,44 @@ test('send：待送达存不上时回「消息没存上，请再发一次」，�
   inboxOf(env).state.storage.put = async () => { throw new Error('storage down'); };
   const ib = fakeIB({});
   try {
-    assert.deepStrictEqual(await callOp(m, env, ck, 'send', sendArgs), { ok: false, state: 'error', msg: '消息没存上，请再发一次' });
+    // resend：让网页再发时沿用同一个编号（万一其实存上了，待送达认得是同一句，不会变成两轮）
+    assert.deepStrictEqual(await callOp(m, env, ck, 'send', sendArgs), { ok: false, state: 'error', resend: true, msg: '消息没存上，请再发一次' });
     assert.strictEqual(ib.calls.length, 0);
+  } finally { ib.restore(); }
+});
+
+test('send：那一行其实已经存进去、只是这次调用后面出了错——不说「没存上」，回「已收到」（免得重发成两轮）', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);
+  const st = inboxOf(env).state.storage, getAlarm = st.getAlarm; let fail = 1;
+  st.getAlarm = async () => { if (fail-- > 0) throw new Error('storage hiccup'); return getAlarm(); };
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify({ sid: 's1', run: 'r1' }), stderr: '', exitCode: 0 } }] });
+  try {
+    const d = await callOp(m, env, ck, 'send', sendArgs);
+    assert.deepStrictEqual([d.ok, d.accepted, d.delivery && d.delivery.id, d.delivery && d.delivery.state], [false, true, 'cid-inbox-0001', 'pending']);
+    assert.match(d.msg, /已收到/);
+  } finally { ib.restore(); }
+});
+
+test('send：存没存上都问不出来时（实例正在重置），回 resend，让网页沿用同一个编号再发', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);
+  const ns = env.XIN_TASK_SUPERVISOR, get = ns.get.bind(ns);
+  ns.get = id => id === 'xin-inbox' ? { fetch: async () => { throw new Error('Durable Object reset because its code was updated.'); } } : get(id);
+  const ib = fakeIB({});
+  try {
+    assert.deepStrictEqual(await callOp(m, env, ck, 'send', sendArgs), { ok: false, state: 'error', resend: true, msg: '消息没存上，请再发一次' });
+  } finally { ib.restore(); }
+});
+
+test('内核 502：stop 和每日任务重做无害，退回 exec——内核没在跑时照样能停，定时的每日任务照样跑', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env), w = waiter();
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => new Response('bad gateway', { status: 502 })],
+    'POST /v1/machines/m_abc/exec': [(u, init) => { const a = JSON.parse(init.body).argv; return new Response(JSON.stringify({ stdout: a.includes('ensure') ? '{"ok":true,"started":true}' : a[2] === 'daily' ? '{"skipped":"empty"}' : a[2] === 'stop' ? '{"ok":true}' : '{"error":"not_now"}', stderr: '', exitCode: 0 })); }] });
+  try {
+    assert.deepStrictEqual(await callOp(m, env, ck, 'stop', { run: 'rabc1234' }, w.ctx), { ok: true, data: { ok: true } });
+    const r = await m.runCron(m.CRON_DAILY, env, w.ctx, { wait: async () => {} });
+    await w.settle();
+    assert.deepStrictEqual(r, { ok: true, data: { skipped: 'empty' } });
   } finally { ib.restore(); }
 });
 

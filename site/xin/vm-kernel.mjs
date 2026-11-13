@@ -13,7 +13,8 @@ export const KERNEL_PORT = 8797;
 const SELF = fileURLToPath(import.meta.url);
 // 上传到电脑上的文件名是 vm-kernel-<sha256 前 12 位>.mjs；健康检查据此认版本（本地直接跑时是 dev）
 export const KERNEL_VERSION = (/^vm-kernel-([0-9a-f]{12})\.mjs$/.exec(path.basename(SELF)) || [])[1] || 'dev';
-const BODY_MAX = 65536, OUT_MAX = 4 * 1024 * 1024, ERR_TAIL = 8192;
+// 请求体上限按字节算：Worker 那边最多放进来 65536 个字符（src/xin.js），全是中文时约 19 万字节，这里要收得下
+const BODY_MAX = 262144, OUT_MAX = 4 * 1024 * 1024, ERR_TAIL = 8192;
 export const AUTH_WINDOW_MS = 300000, NONCE_KEEP_MS = 600000;
 
 /* ---------- 第二层认证（§14.5） ----------

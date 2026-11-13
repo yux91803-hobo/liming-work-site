@@ -106,7 +106,10 @@ test('没执行的都是 executed:false：路径不对、模块不在、太忙�
     r = await f.op('echo', {});
     assert.strictEqual(r.status, 503); assert.deepStrictEqual(await r.json(), { ok: false, executed: false, error: 'kernel_busy' });
     assert.strictEqual((await (await slow).json()).ok, true);
-    r = await f.op('echo', { text: 'x'.repeat(70000) });
+    // Worker 最多放进来 65536 个字符，全是中文时是 19 万多字节：这么大的内核要收得下，再大才拒
+    r = await f.op('echo', { text: '字'.repeat(60000) });
+    assert.strictEqual(r.status, 200); assert.strictEqual((await r.json()).ok, true);
+    r = await f.op('echo', { text: 'x'.repeat(300000) });
     assert.strictEqual(r.status, 413); assert.strictEqual((await r.json()).executed, false);
   } finally { await f.k.close(); }
 });

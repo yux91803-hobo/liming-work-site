@@ -472,10 +472,15 @@ async function sendViaInbox(env, args, now) {
   args = { ...args };
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(args.clientId || '')) args.clientId = uuid();
   let res = null;
-  try { res = await inboxPost(env, 'accept', { id: args.clientId, op: 'send', args }); } catch { /* 存不上 */ }
+  try { res = await inboxPost(env, 'accept', { id: args.clientId, op: 'send', args }); } catch { /* 这次调用断了：存没存上还不知道 */ }
   if (res && res.d.error === 'conflict') return { ok: true, data: { error: 'message_conflict', msg: '同一个消息标识对应了不同内容，请重新发送' } };
-  if (!res || res.status !== 200 || !res.d.view) return { ok: false, state: 'error', msg: '消息没存上，请再发一次' };
-  return inboxReply(res.d.view, now);
+  if (res && res.status === 200 && res.d.view) return inboxReply(res.d.view, now);
+  // 调用出了错不等于没存上：那一行可能已经写进去了（之后闹钟会把它送出去）。先按编号查一下，查到就照「已收到」回。
+  // 查不到、问不出来才说没存上，并让网页再发时沿用同一个编号（resend）：万一其实存上了，待送达认得是同一句，不会变成两轮
+  let seen = null;
+  try { seen = (await inboxPost(env, 'view', { id: args.clientId })).d.view; } catch { /* 问不出来 */ }
+  if (seen) return inboxReply(seen, now);
+  return { ok: false, state: 'error', resend: true, msg: '消息没存上，请再发一次' };
 }
 // delivery / deliveries：只读待送达，不碰电脑（网页等送达、刷新后接着等时用）
 async function deliveryOp(env, op, args) {

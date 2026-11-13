@@ -141,6 +141,15 @@ test('请求：带端口令牌和第二层签名，内核认得', async () => {
   assert.deepStrictEqual(v, { ok: true, kid: CONFIG.kid });
 });
 
+test('能安全重来的操作：本身重做无害的 stop、daily（控制器按轮次、按日期认得出做过了）', async () => {
+  const { retrySafe } = await load('../src/xin-kernel.js');
+  assert.strictEqual(retrySafe('stop', { run: 'rabc1234' }), true);
+  assert.strictEqual(retrySafe('daily', {}), true);
+  assert.strictEqual(retrySafe('daily', { force: true }), true);
+  assert.strictEqual(retrySafe('memory_add', {}), false);
+  assert.strictEqual(retrySafe('bond_play', {}), false);
+});
+
 test('能安全重来的操作：只读的，或者带编号由控制器去重的', async () => {
   const { retrySafe } = await load('../src/xin-kernel.js');
   assert.strictEqual(retrySafe('history', {}), true);
