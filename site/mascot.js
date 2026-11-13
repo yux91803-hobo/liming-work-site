@@ -1785,7 +1785,8 @@
     drop: function () { fall('drop'); },
     jump: function () { tap(); },
     plats: plats,
-    hop: function (i) { var ps = plats(); hop(ps[i]); },
+    // 跳到第 i 个落脚点：正在半空就等落地再跳（走 act）。以前直接跳：起跳前蹲的那 0.19 秒里正好落地，落地 setMode('idle') 把起跳掐掉
+    hop: function (i) { act(function () { hop(plats()[i]); }); },
     // 调试 / 截图：固定一个姿势（传 null 恢复）
     pose: function (p) { forced = p; lastSig = ''; render(); },
     frames: function (n) { return n === 'jump' ? jumpFrames(6) : n === 'dance' ? danceFrames() : TOYS[n]().frames; },
