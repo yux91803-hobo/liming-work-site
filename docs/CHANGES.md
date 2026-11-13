@@ -72,6 +72,16 @@
   - 「点名 Gemini 做网页」那处：Gemini 3.8 Flash 120 秒没出声，控制器照新规矩记下、换 GLM-5.3 做完。但那处检查我上次漏改了，还是只认额度，于是又判失败。
   - 改法：`scripts/test-xin-live.py` 的两处都走同一个 `explain_background_fallback`，按这个任务自己的派出时间算 15 分钟。
   - `test/xin_live_policy_test.py` 加一项守住：脚本里不能再有只认额度的换模型检查，两处都得走这个规则（对 main 上的脚本会报错）。
+- **#133 的 CI 单元测试偶尔不过（查清是测试自己没拿锁）**：
+  - 现象：「到点那一刻站长回答：答案进收件箱，下一轮带上，不丢」偶尔失败：任务停在等待，回答没了。本地 12 次里出现 1 次。
+  - 查法：临时给到点、回答、记问题、一轮结束这几处加记录，跑到失败为止。看到回答刚写进去（收件箱 1），后台进程报会话号的 `session_patch` 就用它更早读到的旧记录（收件箱 0）把它盖掉了。
+  - 根因：测试里的 `locked()` 直接跑 `node vm-agent.mjs locked 操作`，没拿锁；正式环境的回答是经 `lockedCall('tasks', …)` 拿着 tasks 锁写的，不会和 `session_patch` 交错。所以这是测试的写法问题，正式站不会丢回答。
+  - 改法：新加 `test/helpers/locked.cjs`，照控制器的规则拿锁：
+    - 内部操作（`iops`）和 `session_patch` 先拿锁，任务记录用 tasks 锁，对话自己的操作用对话那把；
+    - 公开操作（`tasks`、`history` 这些）自己会拿锁，照原样调。
+  - 后台任务还在跑时会调 locked 操作的 9 个测试文件都改用它。
+  - 新增 `test/locked-helper.test.cjs` 2 项：分类和选锁对不对；别人拿着锁时会等。
+  - 改完连跑 30 次都过。
 - 顺手：#131 从工作树提交时，误带进了一个 `node_modules` 软链接。`.gitignore` 写的是 `node_modules/`，只匹配目录，不匹配软链接。现已删掉，规则改成 `node_modules`。
 
 **测试**：`test/xin-antigravity.test.cjs` 加 2 项（假 Gemini 不出声、出一段后不再出声）：

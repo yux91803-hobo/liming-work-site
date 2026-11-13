@@ -3,6 +3,7 @@
 // 后台容器连不上本机的网关面板（127.0.0.1:8788），反复试，还让站长「启动面板」。
 // 参考 Codex codex-rs/core/src/session/input_queue.rs：干活时收到的补充一次取完、和下一轮一起交给模型，不留着以后再放。
 const test = require('node:test');
+const { lockedSpawn } = require('./helpers/locked.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -39,7 +40,7 @@ function home(t) {
   const env = { ...process.env, TMPDIR: path.join(dir, 'tmp'), XIN_HOME: xin, XIN_WORK: work, XIN_CODEX_TRANSPORT: 'exec', XIN_FRONT_PROVIDER: 'deepseek',
     XIN_DSH: path.join(dir, 'no-dsh'), XIN_AGY_HOME: dir, XIN_ANTIGRAVITY_BIN: '', CODEX_HOME: path.join(dir, 'codex'), PATH: fc.bin + ':' + process.env.PATH };
   const run = (argv, args) => { const r = spawnSync(process.execPath, [AGENT, ...argv], { env, input: JSON.stringify(args || {}), encoding: 'utf8', timeout: platformTimeout(30000) }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
-  const op = (name, args) => run([name], args), locked = (name, args) => run(['locked', name], args);
+  const op = (name, args) => run([name], args), locked = (name, args) => { const r = lockedSpawn(AGENT, name, args, { env, encoding: 'utf8', timeout: platformTimeout(30000) }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
   const hold = on => { const f = path.join(fc.log, 'hold-bg'); if (on) fs.writeFileSync(f, ''); else fs.rmSync(f, { force: true }); };
   const task = sid => JSON.parse(fs.readFileSync(path.join(xin, 'sessions', sid + '.json'), 'utf8'));
   t.after(() => stopOwned(xin, dir));

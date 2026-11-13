@@ -4,6 +4,7 @@
 // 只有碰用户的电脑才每步批准）和 OpenMuse（docs/COMPUTER.md：E2B 桌面的隔离靠整台虚拟机，里面免密 sudo）：
 // 新加一类后台任务「电脑维护」（--kind system）：不进容器，直接在电脑上做，能 sudo；同一时间只做一个（共用目录 WORK/system，按目录排队）。
 const test = require('node:test');
+const { lockedSpawn } = require('./helpers/locked.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -43,7 +44,7 @@ function home(t) {
   const env = { ...process.env, TMPDIR: path.join(dir, 'tmp'), XIN_HOME: xin, XIN_WORK: work, XIN_CODEX_TRANSPORT: 'exec', XIN_FRONT_PROVIDER: 'deepseek',
     XIN_DSH: path.join(dir, 'no-dsh'), XIN_AGY_HOME: dir, XIN_ANTIGRAVITY_BIN: '', CODEX_HOME: path.join(dir, 'codex'), PATH: fc.bin + ':' + process.env.PATH };
   const run = (argv, args) => { const r = spawnSync(process.execPath, [AGENT, ...argv], { env, input: JSON.stringify(args || {}), encoding: 'utf8', timeout: platformTimeout(20000) }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
-  const locked = (name, args) => run(['locked', name], args);
+  const locked = (name, args) => { const r = lockedSpawn(AGENT, name, args, { env, encoding: 'utf8', timeout: platformTimeout(20000) }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
   const hold = on => { const f = path.join(fc.log, 'hold-bg'); if (on) fs.writeFileSync(f, ''); else fs.rmSync(f, { force: true }); };
   const task = sid => JSON.parse(fs.readFileSync(path.join(xin, 'sessions', sid + '.json'), 'utf8'));
   t.after(() => stopOwned(xin, dir));

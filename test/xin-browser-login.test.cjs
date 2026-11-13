@@ -2,6 +2,7 @@
 // 不设白名单：任务点名哪个网站就带哪个网站保存的登录；登录由站长在登录窗口里自己输；别的网站的登录一概不装。
 // 参考 Nanobrowser gate.ts（密码框、登录是用户的这一步）、Browser Use domains.py（只许在点名网站里跳）、Playwright MCP（--isolated + storage-state）。
 const test = require('node:test');
+const { lockedSpawn } = require('./helpers/locked.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http');
 const { spawnSync } = require('node:child_process');
@@ -309,7 +310,7 @@ function home(t, extra = {}) {
   const env = { ...process.env, TMPDIR: path.join(dir, 'tmp'), XIN_HOME: xin, XIN_WORK: work, XIN_CODEX_TRANSPORT: 'exec', XIN_FRONT_PROVIDER: 'deepseek',
     XIN_DSH: path.join(dir, 'no-dsh'), XIN_AGY_HOME: dir, XIN_ANTIGRAVITY_BIN: '', CODEX_HOME: path.join(dir, 'codex'), PATH: fc.bin + ':' + process.env.PATH, ...extra };
   const run = (argv, args) => { const r = spawnSync(process.execPath, [AGENT, ...argv], { env, input: JSON.stringify(args || {}), encoding: 'utf8', timeout: platformTimeout(30000) }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
-  const op = (name, args) => run([name], args), locked = (name, args) => run(['locked', name], args);
+  const op = (name, args) => run([name], args), locked = (name, args) => { const r = lockedSpawn(AGENT, name, args, { env, encoding: 'utf8', timeout: platformTimeout(30000) }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
   const hold = on => { const f = path.join(fc.log, 'hold-bg'); if (on) fs.writeFileSync(f, ''); else fs.rmSync(f, { force: true }); };
   const task = sid => JSON.parse(fs.readFileSync(path.join(xin, 'sessions', sid + '.json'), 'utf8'));
   t.after(() => stopOwned(xin, dir));

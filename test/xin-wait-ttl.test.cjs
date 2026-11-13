@@ -4,6 +4,7 @@
 // 改成：能自己定的不问；只剩「要批准的事、登录、写回确认」会停下等，30 分钟没回就停下（不再提醒），回一句照样接着做；
 // 中途断了两次、复核找不到模型这类不是问题的，直接算没做成。
 const test = require('node:test');
+const { lockedSpawn } = require('./helpers/locked.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -37,7 +38,7 @@ function fixture(t) {
     fs.rmSync(root, { recursive: true, force: true });
   });
   const call = (op, args) => {
-    const r = spawnSync(process.execPath, [agent, 'locked', op], { env, input: JSON.stringify(args || {}), encoding: 'utf8', timeout: platformTimeout(15000) });
+    const r = lockedSpawn(agent, op, args, { env, encoding: 'utf8', timeout: platformTimeout(15000) });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };
   const task = { sid: 'swaitttl001', no: 1, kind: 'task', tkind: 'code', title: '查网关签到积分', dir: path.join(root, 'project'), goal: '现在有多少积分',
