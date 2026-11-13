@@ -17,14 +17,17 @@
 //   GET  /api/xin/file?path=/data/workspace/…   下载小芯电脑里的一个文件（先让 vm-agent 核对在工作目录里，再从 InstaBox 原样转过来）
 // status、wake 直接调 InstaBox 的机器接口（wake：打开网页时把睡着的云电脑叫醒，已经醒着就什么都不做）；其余都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
 // 返回 {ok:true, data} 或 {ok:false, state, msg, retryAfter}：state = waking（云电脑在睡，唤醒中）、cooldown（跑满 8 小时后的冷却）、busy、error。
+import { KERNEL_PORT, KernelConfigStore, kernelRequest, kernelFetch, retrySafe, redact } from './xin-kernel.js';
+import { Inbox } from './xin-inbox.js';
+
 const API = 'https://api.instabox.sh';
 const COOKIE = '__Host-xin';
 const SESSION_SEC = 30 * 86400;
-const AGENT_ASSET = '/xin/vm-agent.mjs';
+const AGENT_ASSET = '/xin/vm-agent.mjs', KERNEL_ASSET = 'vm-kernel.mjs';
 const VM_DIR = '/data/home/.xin/agent';
 export const OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'memory', 'memory_set', 'memory_list', 'memory_add', 'memory_update', 'memory_forget','memory_preferences','memory_preferences_set','learning_report', 'greet', 'daily', 'daily_get', 'daily_set', 'rename', 'archive', 'forget', 'files', 'plugins', 'plugin_set',
   'push_key', 'push_sub', 'push_unsub', 'push_test', 'moves', 'bond', 'bond_play', 'screen', 'screen_off', 'tasks', 'task_stop', 'task_tell', 'usage',
-  'logins', 'login_open', 'login_done', 'login_remove']);
+  'logins', 'login_open', 'login_done', 'login_remove', 'delivery', 'deliveries']);
 const SCREEN_W = 1280, SCREEN_H = 800, SCREEN_VIEW_TTL = 1800, SCREEN_CTL_TTL = 900;   // 桌面大小；链接多久内能打开（秒）
 const FILE_MAX = 100 * 1024 * 1024;   // 下载最大 100 MB（和上传一样大：发给小芯的文件也能原样下回来）
 const UPLOAD_MAX = 100 * 1024 * 1024, UPLOAD_DIR = '/data/workspace/uploads';   // 给小芯发文件：一个最大 100 MB（Cloudflare Worker 收请求的上限），放在它工作目录的 uploads/日期/ 下面
@@ -140,11 +143,24 @@ async function agentScript(env, origin) {
   }
   const entry = AGENT_ASSET.split('/').pop();
   const dependencies = order.filter(f => f !== entry).map(f => ({ text: texts.get(f), path: VM_DIR + '/' + names.get(f), sha256: digests.get(f) }));
-  agentCache = { text: texts.get(entry), path: VM_DIR + '/' + names.get(entry), sha256: digests.get(entry), dependencies };
+  // 小芯内核（vm-kernel.mjs，docs/xin-kernel-design.md）不 import 别的模块，单独按内容哈希命名；网站里没有就是 null（旧部署、测试）
+  let kernel = null;
+  const kr = await env.ASSETS.fetch(new Request(origin + '/xin/' + KERNEL_ASSET));
+  if (kr.ok) { const text = await kr.text(), sha256 = hex(await crypto.subtle.digest('SHA-256', enc.encode(text))); kernel = { text, path: VM_DIR + '/vm-kernel-' + sha256.slice(0, 12) + '.mjs', sha256 }; }
+  agentCache = { text: texts.get(entry), path: VM_DIR + '/' + names.get(entry), sha256: digests.get(entry), dependencies, kernel };
   return agentCache;
 }
 function putAgentFile(env, id, file, mode) {
   return ib(env, `/v1/machines/${id}/files?path=${encodeURIComponent(file.path)}&parents=true&mode=${mode}`, { method: 'PUT', body: file.text, headers: { 'Content-Type': 'application/octet-stream' } });
+}
+// 依赖（和内核）先传，入口最后传：入口一出现，它 import 的文件都已经在了
+async function uploadAgent(env, id, agent) {
+  for (const f of agent.kernel ? [...agent.dependencies, agent.kernel] : agent.dependencies) {
+    const d = await putAgentFile(env, id, f, '0644');
+    if (!d.ok) throw await ibErr(d);
+  }
+  const u = await putAgentFile(env, id, agent, '0755');
+  if (!u.ok) throw await ibErr(u);
 }
 // The controller's scripts live on a machine where fully privileged agents also run. A script is found by the hash in
 // its name, so a file edited in place would keep being executed. Every ten minutes (per isolate) compare what is on
@@ -153,7 +169,7 @@ let verifiedAt = 0;
 export async function verifyAgent(env, origin, id, now = Date.now()) {
   if (now - verifiedAt < 600000) return { skipped: true };
   verifiedAt = now;
-  const agent = await agentScript(env, origin), files = [...agent.dependencies, agent];
+  const agent = await agentScript(env, origin), files = [...agent.dependencies, ...(agent.kernel ? [agent.kernel] : []), agent];
   const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['sha256sum', '--', ...files.map(f => f.path)], timeoutSeconds: 20 }) });
   if (!r.ok) { verifiedAt = 0; return { skipped: true }; }   // asleep or busy: the request that follows reports it; check again next time
   const found = new Map();
@@ -196,12 +212,7 @@ async function exec(env, origin, id, op, args, retried) {
   if (res.exitCode !== 0) {
     // 脚本还没传上去，或者改过了（文件名带内容的哈希）：传一份再跑
     if (!retried && /Cannot find module|ERR_MODULE_NOT_FOUND/.test(res.stderr || '')) {
-      for (const dependency of agent.dependencies) {
-        const d = await putAgentFile(env, id, dependency, '0644');
-        if (!d.ok) throw await ibErr(d);
-      }
-      const u = await putAgentFile(env, id, agent, '0755');
-      if (!u.ok) throw await ibErr(u);
+      await uploadAgent(env, id, agent);
       return exec(env, origin, id, op, args, true);
     }
     if (res.oomKilled) throw { status: 500, code: 'oom', msg: '云电脑内存不够，脚本被杀了' };
@@ -210,7 +221,95 @@ async function exec(env, origin, id, op, args, retried) {
   try { return JSON.parse(res.stdout); } catch { throw { status: 500, code: 'agent_output', msg: 'vm-agent 的输出看不懂' }; }
 }
 
-async function call(env, origin, op, args, ctx, now) {
+/* ---------- 小芯内核通道（docs/xin-kernel-design.md §4.2、§14.2、§14.5） ----------
+   XIN_TRANSPORT=kernel 时，原来走 InstaBox exec 的操作改走电脑上常驻内核的私有端口（请求本身会叫醒电脑）。
+   端口令牌和第二层钥匙在 Durable Object 实例 xin-inbox 里（KernelConfigStore），每个 isolate 缓存 5 分钟。
+   换回 exec 的规则：确定没执行的（内核说 executed:false、InstaBox 自己拒了）修好能修的再试，修不了就走 exec；
+   不知道执行没有的（超时、断线、没有内核头的 502/504）只给能安全重来的操作（只读的、带 clientId 由控制器去重的）走 exec，
+   别的报「不确定」——宁可让用户刷新看一眼，也不让同一件事做两遍。 */
+const KERNEL_KEYS_FILE = '/data/home/.xin/kernel-keys.json';
+function inboxStub(env) { return env.XIN_TASK_SUPERVISOR?.get(env.XIN_TASK_SUPERVISOR.idFromName('xin-inbox')); }
+let kernelCache = null;
+function workerKernel(env) {
+  const stub = inboxStub(env);
+  if (!stub) return null;
+  const post = async (action, body) => {
+    const r = await stub.fetch('https://xin.internal/kernel/' + action, { method: 'POST', body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw { status: d.status || r.status, code: d.error || 'kernel_config', msg: d.msg || '', retryAfter: d.retryAfter || 0 };
+    return d;
+  };
+  return {
+    async get(machineId) {
+      const c = kernelCache;
+      if (c && c.key === env.INSTABOX_API_KEY && c.machineId === machineId && Date.now() - c.at < 300000) return c.config;
+      const config = await post('config', { machineId });
+      kernelCache = { key: env.INSTABOX_API_KEY, machineId, at: Date.now(), config };
+      return config;
+    },
+    async markInstalled(kid) { await post('installed', { kid }); if (kernelCache) kernelCache.config = { ...kernelCache.config, installedKid: kid }; },
+    async invalidateToken(token) { kernelCache = null; await post('invalid', { token }); }
+  };
+}
+// 钥匙写成电脑上的 kernel-keys.json（0600），新旧两把都在：换钥匙时还没切过去的请求照样认得
+async function installKernelKeys(env, id, cfg) {
+  const r = await putAgentFile(env, id, { path: KERNEL_KEYS_FILE, text: JSON.stringify({ v: 1, keys: cfg.keys }) }, '0600');
+  if (!r.ok) throw await ibErr(r);
+}
+// 内核不在（502）：后台经 exec 跑一次 ensure（每个 isolate 60 秒内最多一次）；缺内核文件就先传上去
+let ensuringAt = 0;
+function ensureKernel(env, origin, id, ctx) {
+  if (Date.now() - ensuringAt < 60000) return;
+  ensuringAt = Date.now();
+  const p = (async () => {
+    const agent = await agentScript(env, origin);
+    if (!agent.kernel) return;
+    const run = async () => { const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['node', agent.kernel.path, 'ensure', '--port', String(KERNEL_PORT)], timeoutSeconds: 40 }) }); if (!r.ok) throw await ibErr(r); return r.json(); };
+    const res = await run();
+    if (res.exitCode !== 0 && /Cannot find module|ERR_MODULE_NOT_FOUND/.test(res.stderr || '')) {
+      const u = await putAgentFile(env, id, agent.kernel, '0644');
+      if (!u.ok) throw await ibErr(u);
+      await run();
+    }
+  })().catch(() => { ensuringAt = 0; });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
+}
+async function runOp(env, origin, id, op, args, ctx, opts = {}) {
+  const kernel = env.XIN_TRANSPORT === 'kernel' ? (opts.kernel || workerKernel(env)) : null;
+  if (!kernel) return exec(env, origin, id, op, args);
+  const agent = await agentScript(env, origin);
+  if (!agent.kernel) return exec(env, origin, id, op, args);
+  let cfg;
+  try { cfg = await kernel.get(id); } catch { return exec(env, origin, id, op, args); }   // 拿不到配置：请求还没发出去，走 exec
+  const fixed = new Set();
+  for (;;) {
+    if (cfg.installedKid !== cfg.kid) {
+      try { await installKernelKeys(env, id, cfg); await kernel.markInstalled(cfg.kid); cfg = { ...cfg, installedKid: cfg.kid }; }
+      catch (e) { if (e && e.code === 'machine_cooldown') throw e; return exec(env, origin, id, op, args); }
+    }
+    const r = await kernelRequest({ config: cfg, agentPath: agent.path, op, args });
+    // 内核文件换了（这次部署带了新版本）而电脑上跑的还是旧的：后台 ensure 一次，换成新版本（每个 isolate 60 秒最多一次）
+    if (r.version && r.version !== agent.kernel.sha256.slice(0, 12)) ensureKernel(env, origin, id, ctx);
+    if (r.kind === 'ok') return r.data;
+    if (r.kind === 'executed_error') throw { status: 500, code: r.error || 'agent_failed', msg: redact(r.msg || r.error || '控制器出错了') };
+    if (r.kind === 'not_sent') {
+      if (r.reason === 'gate_auth' && !fixed.has('token')) {
+        fixed.add('token');
+        try { await kernel.invalidateToken(cfg.token); cfg = await kernel.get(id); continue; } catch { return exec(env, origin, id, op, args); }
+      }
+      if (r.reason === 'unknown_kid' && !fixed.has('keys')) { fixed.add('keys'); cfg = { ...cfg, installedKid: null }; continue; }
+      if (r.reason === 'agent_missing' && !fixed.has('upload')) { fixed.add('upload'); await uploadAgent(env, id, agent); continue; }
+      if (r.reason === 'waking') throw { status: 409, code: 'machine_not_running', retryAfter: r.retryAfter || 3 };
+      if (r.reason === 'cooldown') throw { status: 409, code: 'machine_cooldown', retryAfter: r.retryAfter };
+      return exec(env, origin, id, op, args);
+    }
+    if (r.reason === 'http_502') ensureKernel(env, origin, id, ctx);
+    if (retrySafe(op, args)) return exec(env, origin, id, op, args);
+    throw { status: 500, code: 'unknown_outcome', msg: '不确定刚才的操作有没有做完，请刷新看看' };
+  }
+}
+
+async function call(env, origin, op, args, ctx, now, opts = {}) {
   let m;
   try { m = await machine(env, now); } catch (e) { return explain(e); }
   if (op === 'wake') {
@@ -262,7 +361,7 @@ async function call(env, origin, op, args, ctx, now) {
   }
   try {
     if (supervisor(env) && ['send', 'daily'].includes(op)) args = { ...(args || {}), _callback: { url: origin + '/api/xin/task-event', token: await callbackToken(env) } };
-    const data = await exec(env, origin, m.id, op, args);
+    const data = await runOp(env, origin, m.id, op, args, ctx, opts);
     // 打开网页（greet）时顺手核对云电脑上的控制器脚本有没有被改过；不挡这次请求
     if (op === 'greet' && ctx) ctx.waitUntil(verifyAgent(env, origin, m.id, now).catch(() => null));
     // AI 在等模型回话时云电脑看起来是闲着的：挂一个「有活在干」的租约，别让它半路自己暂停
@@ -353,6 +452,77 @@ async function upload(req, env, ctx, url, now) {
   return json({ ok: true, data: { path: dest, name, size: len, image: !!IMG_TYPES[(name.split('.').pop() || '').toLowerCase()] } });
 }
 
+/* ---------- 待送达（docs/xin-kernel-design.md §14.1、§14.4） ----------
+   XIN_INBOX=1 时发消息先存进 Durable Object 实例 xin-inbox，存好了才回「收到了」，再由它送进云电脑（当场送一次，送不进去闹钟接着送）。
+   电脑醒着时当场就送到了，回给网页的和以前一模一样；送不进去时回 accepted + waking / cooldown：旧网页当成「唤醒中」重发同一个 clientId，
+   待送达认得是同一句，不会多送；新网页改用 delivery 看进度。 */
+async function inboxPost(env, action, body) {
+  const r = await inboxStub(env).fetch('https://xin.internal/inbox/' + action, { method: 'POST', body: JSON.stringify(body || {}) });
+  return { status: r.status, d: await r.json().catch(() => ({})) };
+}
+function inboxReply(view, now) {
+  if (view.state === 'delivered') return { ok: true, data: view.result };
+  if (view.state === 'failed') return view.result ? { ok: true, data: view.result } : { ok: false, state: 'error', accepted: true, delivery: view, msg: '没送到：' + ((view.error && view.error.msg) || '') };
+  const w = view.wait || { state: 'waking' }, cooldown = w.state === 'cooldown';
+  return { ok: false, state: cooldown ? 'cooldown' : 'waking', accepted: true, delivery: view,
+    retryAfter: cooldown ? Math.max(30, Math.ceil(((w.until || now) - now) / 1000)) : 3,
+    msg: cooldown ? '已收到 · 云电脑在冷却' : w.state === 'retrying' ? '已收到 · 正在重试' : '已收到 · 唤醒中' };
+}
+async function sendViaInbox(env, args, now) {
+  args = { ...args };
+  if (!/^[A-Za-z0-9_-]{8,80}$/.test(args.clientId || '')) args.clientId = uuid();
+  let res = null;
+  try { res = await inboxPost(env, 'accept', { id: args.clientId, op: 'send', args }); } catch { /* 这次调用断了：存没存上还不知道 */ }
+  if (res && res.d.error === 'conflict') return { ok: true, data: { error: 'message_conflict', msg: '同一个消息标识对应了不同内容，请重新发送' } };
+  if (res && res.status === 200 && res.d.view) return inboxReply(res.d.view, now);
+  // 调用出了错不等于没存上：那一行可能已经写进去了（之后闹钟会把它送出去）。先按编号查一下，查到就照「已收到」回。
+  // 查不到、问不出来才说没存上，并让网页再发时沿用同一个编号（resend）：万一其实存上了，待送达认得是同一句，不会变成两轮
+  let seen = null;
+  try { seen = (await inboxPost(env, 'view', { id: args.clientId })).d.view; } catch { /* 问不出来 */ }
+  if (seen) return inboxReply(seen, now);
+  return { ok: false, state: 'error', resend: true, msg: '消息没存上，请再发一次' };
+}
+// delivery / deliveries：只读待送达，不碰电脑（网页等送达、刷新后接着等时用）
+async function deliveryOp(env, op, args) {
+  if (!inboxStub(env)) return { ok: true, data: op === 'delivery' ? { error: 'not_found' } : { rows: [], wakes: null } };
+  try {
+    if (op === 'delivery') { const { d } = await inboxPost(env, 'view', { id: String(args.id || '') }); return { ok: true, data: d.view || { error: 'not_found' } }; }
+    return { ok: true, data: (await inboxPost(env, 'list', {})).d };
+  } catch { return { ok: false, state: 'error', msg: '待送达暂时读不到' }; }
+}
+// 打开网页、叫醒、定时任务都顺手踢一下：有没送完的就把闹钟提前（闹钟丢了也能补上）
+function kickInbox(env, ctx) {
+  if (inboxStub(env) && ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(inboxPost(env, 'kick').catch(() => null));
+}
+
+/* ---------- 流（§14.3）：只是传输方式变了，内核把运行记录的变化原样推出来，这里原样转给网页 ----------
+   流不经过 Durable Object（免得按在线时长计费）；内核不在或没开内核通道就回 503，网页退回轮询。 */
+async function streamRoute(req, env, ctx, url, now) {
+  if (!enabled(env)) return json({ error: 'disabled' }, 404);
+  if (req.headers.get('x-xin') !== '1') return json({ error: 'forbidden' }, 403);
+  if (!(await authed(req, env, now))) return json({ error: 'unauthorized', msg: '要先登录' }, 401);
+  const run = url.searchParams.get('run') || '';
+  if (!/^r[0-9a-z]{6,24}$/.test(run)) return json({ error: 'bad_run' }, 400);
+  const unavailable = () => json({ ok: false, state: 'unavailable' }, 503);
+  const kernel = env.XIN_TRANSPORT === 'kernel' ? workerKernel(env) : null;
+  if (!kernel) return unavailable();
+  try {
+    const m = await machine(env, now), agent = await agentScript(env, url.origin);
+    if (!agent.kernel) return unavailable();
+    const cfg = await kernel.get(m.id);
+    if (cfg.installedKid !== cfg.kid) { await installKernelKeys(env, m.id, cfg); await kernel.markInstalled(cfg.kid); }
+    const q = new URLSearchParams({ agent: agent.path, run });
+    for (const k of ['off', 'pos', 'deviceId', 'tabId', 'watching']) { const v = url.searchParams.get(k); if (v && v.length <= 80) q.set(k, v); }
+    const r = await kernelFetch({ config: cfg, method: 'GET', target: '/xin/stream?' + q.toString(), timeoutMs: 660000 });
+    if (r.status === 200 && r.headers.get('x-xin-kernel') && /^text\/event-stream/.test(r.headers.get('content-type') || ''))
+      return new Response(r.body, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow' } });
+    if (!r.headers.get('x-xin-kernel') && (r.status === 401 || r.status === 403)) await kernel.invalidateToken(cfg.token).catch(() => null);
+    if (r.status === 502) ensureKernel(env, url.origin, m.id, ctx);
+    try { await r.body?.cancel(); } catch { /* 没有正文 */ }
+    return unavailable();
+  } catch { return unavailable(); }
+}
+
 /* ---------- 路由 ---------- */
 export async function handleXin(req, env, ctx, now = Date.now()) {
   const url = new URL(req.url);
@@ -387,7 +557,8 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
     await recordTasks(env, { bg: state.bg, version: state.version, machine: m.id, observedAt: now });
     return json({ ok: true });
   }
-  if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, env, now) });
+  if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, env, now), ...(env.XIN_TRANSPORT === 'kernel' && enabled(env) ? { stream: true } : {}), ...(env.XIN_INBOX === '1' && enabled(env) ? { inbox: true } : {}) });
+  if (p === 'stream' && req.method === 'GET') return streamRoute(req, env, ctx, url, now);
   if (p === 'file' && req.method === 'GET') return download(req, env, ctx, url, now);
   if ((p === 'backups' || p === 'backup') && req.method === 'GET') return backupDownload(req, env, url, now);
   if (p === 'upload' && req.method === 'POST') return upload(req, env, ctx, url, now);
@@ -417,7 +588,12 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
   const op = String(body.op || '');
   if (!OPS.has(op)) return json({ error: 'bad_op' }, 400);
   const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? body.args : {};
-  return json(await call(env, url.origin, op, args, ctx, now));
+  if (op === 'send' && env.XIN_INBOX === '1' && inboxStub(env)) return json(await sendViaInbox(env, args, now));
+  if (op === 'delivery' || op === 'deliveries') return json(await deliveryOp(env, op, args));
+  const r = await call(env, url.origin, op, args, ctx, now);
+  if (op === 'greet' || op === 'wake') kickInbox(env, ctx);
+  if (op === 'usage' && r.ok && r.data && inboxStub(env)) { try { r.data.wake = (await inboxPost(env, 'stats')).d; } catch { /* 读不到就不带 */ } }
+  return json(r);
 }
 
 
@@ -502,6 +678,7 @@ export async function runCron(cron, env, ctx, opt = {}) {
   if (!enabled(env)) return { ok: false, state: 'disabled' };
   const op = cron === CRON_WAKE ? 'wake' : 'daily';
   const wait = opt.wait || pause;
+  kickInbox(env, ctx);
   let r = null;
   // 云电脑在睡觉 / 正在醒：等一会儿再试，最多等 3 分钟左右
   for (let i = 0; i < 12; i++) {
@@ -516,7 +693,7 @@ export async function runCron(cron, env, ctx, opt = {}) {
 }
 
 // 测试用：清掉缓存
-export function _reset() { keyCache = null; machineCache = null; agentCache = null; verifiedAt = 0; }
+export function _reset() { keyCache = null; machineCache = null; agentCache = null; verifiedAt = 0; kernelCache = null; ensuringAt = 0; }
 export const _callbackToken = env => callbackToken(env);   // 测试用：任务回调的令牌
 
 // Durable alarms keep running after a browser closes or the VM restarts. No alarms remain when idle.
@@ -555,9 +732,41 @@ export class XinTaskSupervisor {
     }
     return json({ error: 'bad_action' }, 400);
   }
+  // 小芯内核的配置（端口令牌、钥匙）放在实例 xin-inbox 里；Durable Object 自己调 call() 时直接用 kernelAdapter()，不经 stub 请求自己
+  kernelStore() { return this.kernelConfig || (this.kernelConfig = new KernelConfigStore(this.state.storage, { ib: (p, init) => ib(this.env, p, init), ibErr })); }
+  kernelAdapter() { const s = this.kernelStore(); return { get: id => s.get({ machineId: id }), markInstalled: kid => s.markInstalled(kid), invalidateToken: t => s.invalidateToken(t) }; }
+  async kernelRoute(action, req) {
+    const a = await req.json().catch(() => ({}));
+    try {
+      if (action === 'config') return json(await this.kernelStore().get({ machineId: a.machineId }));
+      if (action === 'installed') { await this.kernelStore().markInstalled(a.kid); return json({ ok: true }); }
+      if (action === 'invalid') { await this.kernelStore().invalidateToken(a.token); return json({ ok: true }); }
+    } catch (e) { return json({ error: (e && e.code) || 'kernel_config', status: e && e.status, retryAfter: e && e.retryAfter, msg: redact(e && e.msg || '') }, 502); }
+    return json({ error: 'bad_action' }, 400);
+  }
+  // 待送达（实例 xin-inbox，src/xin-inbox.js）：送的时候和 Worker 一样调 call()，内核配置直接读本实例的存储
+  inbox() {
+    return this.inboxImpl || (this.inboxImpl = new Inbox(this.state.storage, {
+      deliver: row => call(this.env, CRON_ORIGIN, row.op, { ...row.args, clientId: row.id }, { waitUntil: p => this.state.waitUntil?.(p) }, Date.now(), { kernel: this.kernelAdapter() })
+    }));
+  }
+  async inboxRoute(action, req) {
+    const a = await req.json().catch(() => ({}));
+    try {
+      if (action === 'accept') { const r = await this.inbox().accept({ id: a.id, op: a.op, args: a.args }); return json(r, r.error === 'bad_id' ? 400 : r.error ? 409 : 200); }
+      if (action === 'view') return json({ view: await this.inbox().view(a.id) });
+      if (action === 'list') return json(await this.inbox().list());
+      if (action === 'ack') { await this.inbox().ack(a.id); return json({ ok: true }); }
+      if (action === 'kick') { await this.inbox().kick(); return json({ ok: true }); }
+      if (action === 'stats') return json(await this.inbox().stats());
+    } catch { return json({ error: 'store_failed' }, 500); }
+    return json({ error: 'bad_action' }, 400);
+  }
   async fetch(req) {
     const path = new URL(req.url).pathname;
     if (path.startsWith('/backup/')) return this.backup(path.slice('/backup/'.length), req);
+    if (path.startsWith('/kernel/')) return this.kernelRoute(path.slice('/kernel/'.length), req);
+    if (path.startsWith('/inbox/')) return this.inboxRoute(path.slice('/inbox/'.length), req);
     const incoming = await req.json(), current = await this.state.storage.get('tasks') || {};
     if (incoming.version != null && current.version != null && (incoming.version < current.version || incoming.version === current.version && incoming.bg !== current.bg)) return json({ ok: true, stale: true });
     // A browser's old read cannot cancel a newer controller callback.
@@ -571,6 +780,7 @@ export class XinTaskSupervisor {
     return json({ ok: true });
   }
   async alarm() {
+    if (await this.state.storage.get('inbox:meta')) return this.inbox().alarm();   // 实例 xin-inbox：待送达的闹钟
     const current = await this.state.storage.get('tasks');
     if (!current) return;
     if (current.bg <= 0) { if (current.leaseCleanup) await this.releaseLease(current); return; }

@@ -89,13 +89,15 @@
         if (d._status === 401) { S.authed = false; syncBag(); render(); throw new Error('要先登录'); }
         if (d._status !== 200) throw new Error(d.msg || d.error || ('出错了（' + d._status + '）'));
         if (d.ok) { if (op !== 'status' && (!current || current())) setStatus(''); return d.data; }
+        // 发消息：Cloudflare 已经存好了这句（待送达），只是还没送进云电脑——不再重发，交给 waitDelivery 看进度
+        if (d.accepted && d.delivery) { if (!current || current()) setStatus(''); return { _accepted: true, delivery: d.delivery, state: d.state, retryAfter: d.retryAfter, msg: d.msg }; }
         if ((d.state === 'waking' || d.state === 'busy') && Date.now() - t0 < (maxWait || 0)) {
           if (!current || current()) { if (onWait) onWait(d); else setStatus(d.msg || '唤醒中…', 'wait'); }
           var x = xin(); if (x && op === 'send' && (!current || current())) x.ai('think');
           return sleepMs((d.retryAfter || 3) * 1000).then(once);
         }
         var err = new Error(d.state === 'cooldown' ? '云电脑连续跑满了时长，在冷却，大约 ' + Math.ceil((d.retryAfter || 60) / 60) + ' 分钟后再试' : (d.msg || '云电脑出错了'));
-        err.state = d.state; err.retryAfter = d.retryAfter;
+        err.state = d.state; err.retryAfter = d.retryAfter; err.resend = !!d.resend;
         throw err;
       }, function (e) {
         // 超时 / 断网：带 clientId 的操作（send、task_tell…）云电脑按 clientId 去重，原样重发同一份 args 不会多发一遍
@@ -231,7 +233,7 @@
   function renderHead() {
     if (!titleEl) return;
     var t = '', cls = '';
-    if (S.sending) { t = sendingText() + '…'; cls = 'busy'; }
+    if (S.sending) { t = sendingText(true) + '…'; cls = 'busy'; }   // 标题栏地方小：冷却只说「冷却中」，几点送到写在对话里那一行
     else if (S.run) { t = S.doing === 'work' ? '正在电脑上忙…' : '思考中…'; cls = 'busy'; }
     else if (S.mstate === 'running') { t = '在线'; cls = 'on'; }
     else if (S.mstate === 'suspended') t = '唤醒中…';
@@ -308,7 +310,7 @@
   function login(pw) {
     var err = loginEl.querySelector('.xc-err'); err.textContent = '';
     req('login', { password: pw }).then(function (d) {
-      if (d._status === 200) { S.authed = true; syncPushDevice(); loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); greet(); pollWork(); renderHome(); if (S.wb) layout(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
+      if (d._status === 200) { S.authed = true; syncPushDevice(); loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); greet(); loadDeliveries(); pollWork(); renderHome(); if (S.wb) layout(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
       err.textContent = d.msg || (d._status === 429 ? '试太多次了，过一分钟再试' : '登录失败');
     }, function () { err.textContent = '网络不通'; });
   }
@@ -374,7 +376,7 @@
     status();
     if (!S.sid && mainDraft() && S.main) return openSession(S.main);
     if (S.sid) return openSession(S.sid);
-    clearList(); S.histFor = ''; welcome(); render();
+    clearList(); S.histFor = ''; welcome(); render(); showDeliveries();
     return null;
   }
   function status() {
@@ -415,7 +417,7 @@
       setUsage(d.usage);
       if (d.active) { S.run = d.active.run; S.off = d.active.off; S.pos = typeof d.active.pos === 'number' ? d.active.pos : null; S.t0 = Math.min(Date.now(), d.active.started || Date.now()); S.doing = 'think'; startPolling(); typing(true); var x = xin(); if (x) x.ai('think'); }
       restoreQueue(); if (!d.active) flushQueue();
-      render(); toBottom(true);
+      render(); toBottom(true); showDeliveries();
     }, function (e) {
       if(generation!==S.convSeq)return;
       S.loadingConversation=false;renderSendBtn();
@@ -2028,6 +2030,8 @@
     box.innerHTML = '';
     box.appendChild(h('p', 'wk-h', '额度'));
     var q = h('div', 'xu-q'); quotaRows(q, u); box.appendChild(q);
+    // 待送达记下的叫醒耗时（docs/xin-kernel-design.md §12：超过 45 秒的多了再想别的办法）
+    if (u.wake && u.wake.count > 0) box.appendChild(h('p', 'xu-wake', '叫醒电脑：最近 ' + u.wake.count + ' 次，一般 ' + Math.round(u.wake.p50 / 1000) + ' 秒，最长 ' + Math.round(u.wake.max / 1000) + ' 秒'));
     box.appendChild(h('p', 'wk-h', '用了多少'));
     var seg = h('div', 'xu-seg'); seg.setAttribute('role', 'tablist'); seg.setAttribute('aria-label', '时间范围');
     var body = h('div', 'xu-body');
@@ -2348,6 +2352,9 @@
     var x = xin(); if (x) x.ai('think');
     flight.payload=retry&&retry.payload||{ sid: flight.sid || undefined, main: !flight.sid && mainDraft() || undefined, clientId: flight.id, agent: flight.sid ? undefined : S.agent, text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,files:files.length?files.map(function(f){return {path:f.path,name:f.name};}):undefined};
     call('send', flight.payload, 90000, function (w) { if(generation===S.convSeq){S.waitSend = w.state; progress();} },function(){return generation===S.convSeq;}).then(function (d) {
+      if (d && d._accepted) return waitDelivery(d.delivery, d, function () { return generation === S.convSeq; }, function (w) { if (generation === S.convSeq) { S.waitSend = w; progress(); } });
+      return d;
+    }).then(function (d) {
       // vm-agent 的软错误也包在 ok:true 的 data 里（busy / empty / no_session…），不能当发送成功
       if (d && d.error) {
         var er = new Error(d.msg || d.error);
@@ -2376,7 +2383,8 @@
       if (prep && prep.queued) { S.queueFlight = []; prep.queued.forEach(function (v) { queueMsg(v.text, v); }); saveQueue(); }
       if (!(prep && prep.queued) && !input.value) { input.value = text; ls(LS_DRAFT, text); grow(); }
       if (!(prep && prep.queued) && atts.length && !(S.atts || []).length) { S.atts = atts; renderAtts(); render(); }   // 没发出去：附件放回去
-      if (!(prep && prep.queued) && (e.state === 'timeout' || e.state === 'network')) S.retrySend = { id: flight.id, sid: flight.sid, text: text, atts: atts, payload: flight.payload };   // 可能其实送到了：再点发送沿用同一个 clientId，云电脑认得出来，不会多一轮
+      // 可能其实送到了、或者其实存上了（服务器说 resend）：再点发送沿用同一个 clientId，待送达和云电脑都认得出来，不会多一轮
+      if (!(prep && prep.queued) && (e.state === 'timeout' || e.state === 'network' || e.resend)) S.retrySend = { id: flight.id, sid: flight.sid, text: text, atts: atts, payload: flight.payload };
       var x2 = xin(); if (x2) { x2.ai(''); x2.cmd('confused'); if (!S.open) x2.say('没发出去：' + e.message, 9000, open); }
       // 上一句还在跑（多标签最常见）：别弄脏 S.run，把输入还回去，重新打开同一对话接着看进行中的那一轮
       if (e.code === 'busy' || /还没做完/.test(e.message)) {
@@ -2385,7 +2393,71 @@
         if (e.sid || S.sid) openSession(e.sid || S.sid);
         return;
       }
-      draw({ t: 'err', text: '没发出去：' + e.message }); toBottom(true);
+      draw({ t: 'err', text: (e.delivery ? '没送到：' : '没发出去：') + e.message }); toBottom(true);
+    });
+  }
+  /* ---------- 待送达（docs/xin-kernel-design.md §14.1）：这句已经存在 Cloudflare 上，等它送进云电脑 ----------
+     电脑在睡、在冷却时不再报「没发出去」，一直显示「已收到 · …」，不设总时限（关掉页面它也会送到）。
+     送到了 resolve 成和以前 send 一样的结果；24 小时都没送到等情况 reject，e.delivery 为真。 */
+  function waitDelivery(view, first, current, onWait) {
+    return new Promise(function (resolve, reject) {
+      function step(v, hint) {
+        if (v && v.state === 'delivered') { resolve(v.result || {}); return; }
+        if (v && v.state === 'failed' && v.result) { resolve(v.result); return; }   // 控制器回的错误（找不到对话等），照以前的方式处理
+        if (!v || v.error || v.state === 'failed') { var e = new Error((v && v.error && v.error.msg) || '这句话没找到，请再发一次'); e.delivery = true; reject(e); return; }
+        var w = v.wait || {}, cool = w.state === 'cooldown';
+        if (!current || current()) { S.waitUntil = cool ? w.until || 0 : 0; if (onWait) onWait(cool ? 'accepted-cooldown' : w.state === 'retrying' || w.state === 'busy' ? 'accepted-retrying' : 'accepted-waking'); }
+        setTimeout(function () {
+          call('delivery', { id: v.id }, 30000).then(function (nv) { step(nv && nv.id ? nv : nv && nv.error ? nv : v); }, function () { step(v); });
+        }, cool ? 30000 : Math.max(2000, ((hint && hint.retryAfter) || 2) * 1000));
+      }
+      step(view, first);
+    });
+  }
+  // 刷新页面、换设备回来：Cloudflare 上还有没送完的句子，画出当前对话里的那一句并接着等；别的对话的只在状态栏说一声
+  S.waitingIds = {};
+  function loadDeliveries() {
+    if (!S.enabled || !S.authed) return;
+    call('deliveries', {}, 30000).then(function (d) {
+      S.failedDeliveries = (S.failedDeliveries || []).concat(((d && d.rows) || []).filter(function (r) { return r.state === 'failed' && !S.waitingIds[r.id]; }));
+      S.deliveries = ((d && d.rows) || []).filter(function (r) { return r.state === 'pending' && !S.waitingIds[r.id]; });
+      showDeliveries();
+    }, function () {});
+  }
+  // 没有网页在等的时候才失败的（24 小时都没送到、送到时对话已经没了）：把那句话和原因画出来，不悄悄丢。
+  // 这一次打开网页期间换到哪个对话都看得见；第一次画出来时向服务器确认读过了（delivery 读到终态就算确认），下次打开不再报
+  function showFailedDeliveries() {
+    (S.failedDeliveries || []).forEach(function (r) {
+      if (list.querySelector('[data-delivery="' + r.id + '"]')) return;
+      if (list.querySelector('.xc-hello')) clearList();
+      draw({ t: 'user', text: r.text, files: (r.files || []).map(function (f) { return { name: f.name, path: f.path }; }) }).setAttribute('data-delivery', r.id);
+      draw({ t: 'err', text: '没送到：' + ((r.error && r.error.msg) || '原因不明') + '。上面这句没有送进小芯的电脑，还需要的话请重新发' });
+      if (!S.waitingIds[r.id]) { S.waitingIds[r.id] = true; call('delivery', { id: r.id }, 30000).catch(function () {}); }
+      toBottom(true);
+    });
+  }
+  function showDeliveries() {
+    if (!list || S.loadingConversation) return;
+    showFailedDeliveries();
+    var rows = (S.deliveries || []).filter(function (r) { return !S.waitingIds[r.id]; });
+    if (!rows.length) return;
+    var mine = rows.filter(function (r) { return r.sid ? r.sid === S.sid : !S.sid; }), others = rows.length - mine.length;
+    if (others > 0) setStatus('还有 ' + others + ' 句在等小芯醒来', 'wait');
+    var row = mine[0];
+    if (!row || S.sending || S.run) return;
+    S.waitingIds[row.id] = true;
+    if (list.querySelector('.xc-hello')) clearList();
+    var generation = S.convSeq, bubble = draw({ t: 'user', text: row.text, files: (row.files || []).map(function (f) { return { name: f.name, path: f.path }; }) });
+    bubble.classList.add('pending');
+    S.sending = true; S.doing = 'think'; typing(true); renderHead(); toBottom(true);
+    waitDelivery(row, null, function () { return generation === S.convSeq; }, function (w) { if (generation === S.convSeq) { S.waitSend = w; progress(); } }).then(function (d) {
+      if (generation !== S.convSeq) return;
+      S.sending = false; S.waitSend = ''; bubble.classList.remove('pending');
+      if (d && d.sid) openSession(d.sid); else { typing(false); renderHead(); }
+    }, function (e) {
+      if (generation !== S.convSeq) return;
+      S.sending = false; S.waitSend = ''; bubble.remove(); typing(false); renderHead();
+      draw({ t: 'err', text: '没送到：' + e.message }); toBottom(true);
     });
   }
   /* ---------- 附带页面信息：发消息时告诉小芯你正在看什么 ----------
@@ -2499,34 +2571,98 @@
   }
 
   /* ---------- 轮询这一轮的新事件 ---------- */
-  var pollTm = 0;
-  function startPolling() { if (S.polling) return; S.polling = true; poll(); }
-  function stopPolling() { S.polling = false; clearTimeout(pollTm); }
+  var pollTm = 0, streamCtl = null, streamFails = {}, pollBusy = '';
+  function watchingNow() { return !!(S.open && S.view === 'chat' && !document.hidden && document.hasFocus()); }
+  function startPolling() { if (S.polling) return; S.polling = true; follow(); }
+  function stopPolling() { S.polling = false; clearTimeout(pollTm); if (streamCtl) { streamCtl.abort(); streamCtl = null; } }
+  // 跟进这一轮：服务器说能用流（/api/xin/me 的 stream）就用 SSE，连续失败两次这一轮就改回轮询
+  function follow() {
+    clearTimeout(pollTm);
+    if (!S.polling || !S.run) return;
+    // 上一次轮询还在路上：等它回来再决定。两路从同一个位置各取一遍的话，同一段会画两次
+    if (pollBusy === S.run + ':' + S.convSeq) { pollTm = setTimeout(follow, 300); return; }
+    if (S.streamOn && (streamFails[S.run] || 0) < 2 && !document.hidden && window.fetch && window.TextDecoder && typeof AbortController === 'function') openStream(); else poll();
+  }
+  // 一页新进度（轮询的结果和流里的每一条形状一样）：画出来、记下读到哪；返回 continue / again（done 但还没看到 done 那一行）/ finished
+  function applyTurn(d, run) {
+    d.events.forEach(function (ev) {
+      if (ev.t === 'done') S.sawDone = run;
+      if (!(ev.t === 'user' && S.mine[run])) draw(ev, false, run); react(ev); if (ev.t === 'done' && ev.usage) setUsage(ev.usage);
+    });
+    S.off = d.off; S.pos = typeof d.pos === 'number' ? d.pos : null;   // 新控制器给字节位置，下次只读新增的部分
+    if (d.events.length) toBottom();
+    // 记录里的 ended 可能先于回复行可见。这时 done 为真但这一页没有 done 事件，接着取，不能把这轮收掉。
+    if (d.done && S.sawDone !== run) { progress(); return 'again'; }
+    if (d.done) {
+      S.run = ''; stopPolling(); setStatus(''); typing(false); render(); if (!touch && S.open) input.focus();
+      if (S.sessAgent === 'codex' || d.events.some(function (ev) { return ev.t === 'task'; })) pollTasksSoon(800);   // 这一句派了分身、或者有任务在做：看看任务
+      if (d.next || S.reload === S.sid) { S.reload = ''; openSession(S.sid); return 'finished'; }
+      flushQueue();
+      return 'finished';
+    }
+    progress();
+    return 'continue';
+  }
+  /* SSE（docs/xin-kernel-design.md §14.3）：只是传输方式——控制器一写进运行记录就推过来，不用等下一次轮询。
+     回答仍然是整段到的（前台模型一次给出完整答案），这里不做打字机效果。 */
+  function openStream() {
+    var run = S.run, generation = S.convSeq, ctl = new AbortController(), finished = false, buf = '', idleTm = 0;
+    if (streamCtl) streamCtl.abort();
+    streamCtl = ctl;
+    // 流和别的请求一样要有期限（见上面 req 的说明）：连接被静默丢掉时既不来数据也不报错，页面会一直停在「思考中」。
+    // 内核每 15 秒发一次心跳，45 秒什么都没收到就当它断了：断开，算一次失败（重连；连续两次这一轮就退回轮询）
+    var beat = function (ms) { clearTimeout(idleTm); idleTm = setTimeout(function () { ctl.abort(); }, reqMs(ms)); };
+    var over = function () { clearTimeout(idleTm); if (streamCtl === ctl) streamCtl = null; };   // 这条流完了：streamCtl 只在流开着时有值
+    beat(60000);
+    var live = function () { return run === S.run && generation === S.convSeq && S.polling && streamCtl === ctl; };
+    var q = 'run=' + encodeURIComponent(run) + '&off=' + (S.off | 0) + (typeof S.pos === 'number' ? '&pos=' + S.pos : '') + '&deviceId=' + encodeURIComponent(S.deviceId) + '&tabId=' + encodeURIComponent(S.tabId) + '&watching=' + (watchingNow() ? '1' : '0');
+    fetch(API + 'stream?' + q, { credentials: 'same-origin', headers: { 'X-Xin': '1' }, signal: ctl.signal }).then(function (r) {
+      if (!r.ok || !r.body || !/event-stream/.test(r.headers.get('content-type') || '')) throw new Error('no_stream');
+      var reader = r.body.getReader(), dec = new TextDecoder();
+      function pump() {
+        return reader.read().then(function (x) {
+          if (x.done || !live()) return;
+          beat(45000);
+          buf += dec.decode(x.value, { stream: true });
+          for (var i = buf.indexOf('\n\n'); i >= 0; i = buf.indexOf('\n\n')) {
+            var block = buf.slice(0, i), data = '', kind = '';
+            buf = buf.slice(i + 2);
+            block.split('\n').forEach(function (l) { if (l.indexOf('data: ') === 0) data += l.slice(6); else if (l.indexOf('event: ') === 0) kind = l.slice(7); });
+            if (!data) continue;
+            if (kind === 'error') throw new Error('stream_error');
+            var st = applyTurn(JSON.parse(data), run);
+            streamFails[run] = 0;
+            if (st !== 'continue') { finished = true; over(); ctl.abort(); if (st === 'again' && S.polling) pollTm = setTimeout(poll, 300); return; }
+          }
+          return pump();
+        });
+      }
+      return pump();
+    }).then(function () {
+      var on = !finished && live(); over();
+      if (on) pollTm = setTimeout(follow, 1000);   // 流正常结束但这一轮还没完（内核换一条流、电脑暂停）：接着连
+    }, function () {
+      var on = !finished && live(); over();
+      if (!on) return;
+      streamFails[run] = (streamFails[run] || 0) + 1;
+      pollTm = setTimeout(follow, 1000);
+    });
+  }
   function poll() {
     clearTimeout(pollTm);
     if (!S.polling || !S.run) return;
-    if (document.hidden) { pollTm = setTimeout(poll, 1500); return; }
-    var run = S.run,generation=S.convSeq;
-    call('poll', Object.assign({ run: run, off: S.off }, typeof S.pos === 'number' ? { pos: S.pos } : {}, { deviceId:S.deviceId, tabId:S.tabId, watching:!!(S.open && S.view==='chat' && !document.hidden && document.hasFocus()) }), 0,null,function(){return generation===S.convSeq&&run===S.run;}).then(function (d) {
+    if (document.hidden) { pollTm = setTimeout(follow, 1500); return; }
+    var run = S.run,generation=S.convSeq,key=run+':'+generation;
+    if (pollBusy === key) return;   // 这一轮已经有一次轮询在路上：它回来以后会接着排下一次
+    pollBusy = key;
+    call('poll', Object.assign({ run: run, off: S.off }, typeof S.pos === 'number' ? { pos: S.pos } : {}, { deviceId:S.deviceId, tabId:S.tabId, watching:watchingNow() }), 0,null,function(){return generation===S.convSeq&&run===S.run;}).then(function (d) {
+      if (pollBusy === key) pollBusy = '';
       if (run !== S.run || generation!==S.convSeq) return;
-      d.events.forEach(function (ev) {
-        if (ev.t === 'done') S.sawDone = run;
-        if (!(ev.t === 'user' && S.mine[run])) draw(ev, false, run); react(ev); if (ev.t === 'done' && ev.usage) setUsage(ev.usage);
-      });
-      S.off = d.off; S.pos = typeof d.pos === 'number' ? d.pos : null;   // 新控制器给字节位置，下次只读新增的部分
-      if (d.events.length) toBottom();
-      // 记录里的 ended 可能先于回复行可见。这时 done 为真但这一页没有 done 事件，接着取，不能把这轮收掉。
-      if (d.done && S.sawDone !== run) { progress(); pollTm = setTimeout(poll, d.events.length ? 400 : 300); return; }
-      if (d.done) {
-        S.run = ''; stopPolling(); setStatus(''); typing(false); render(); if (!touch && S.open) input.focus();
-        if (S.sessAgent === 'codex' || d.events.some(function (ev) { return ev.t === 'task'; })) pollTasksSoon(800);   // 这一句派了分身、或者有任务在做：看看任务
-        if (d.next || S.reload === S.sid) { S.reload = ''; openSession(S.sid); return; }
-        flushQueue();
-        return;
-      }
-      progress();
-      pollTm = setTimeout(poll, d.events.length ? 700 : 1300);
+      var st = applyTurn(d, run);
+      if (st === 'finished') return;
+      pollTm = setTimeout(poll, st === 'again' ? (d.events.length ? 400 : 300) : d.events.length ? 700 : 1300);
     }, function (e) {
+      if (pollBusy === key) pollBusy = '';
       if (run !== S.run || generation!==S.convSeq) return;
       if (e.state === 'cooldown') { setStatus(e.message, 'bad'); pollTm = setTimeout(poll, Math.max(30, e.retryAfter || 60) * 1000); return; }
       if (/要先登录/.test(e.message)) { stopPolling(); return; }
@@ -2548,7 +2684,13 @@
     lab.textContent = (S.doing === 'work' ? '在电脑上忙' : '思考中') + (sec >= 1 ? ' · ' + (sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒' : sec + ' 秒') : '');
   }
   // 还没送到小芯的电脑时那行字：接收中；电脑在睡：唤醒中；InstaBox 忙：排队中
-  function sendingText() { return S.waitSend === 'waking' ? '唤醒中' : S.waitSend === 'busy' ? '排队中' : '接收中'; }
+  function bjClock(t) { return new Date(t + 8 * 3600e3).toISOString().slice(11, 16); }   // 北京时间 HH:MM
+  function sendingText(short) {
+    if (S.waitSend === 'accepted-waking') return '已收到 · 唤醒中';
+    if (S.waitSend === 'accepted-retrying') return '已收到 · 正在重试';
+    if (S.waitSend === 'accepted-cooldown') return S.waitUntil && !short ? '已收到 · 冷却中，约 ' + bjClock(S.waitUntil) + ' 送到' : '已收到 · 冷却中';
+    return S.waitSend === 'waking' ? '唤醒中' : S.waitSend === 'busy' ? '排队中' : '接收中';
+  }
   function react(ev) {
     if (ev.t === 'status') { if (!NOISE.test(ev.text || '')) S.note = { text: ev.text, at: Date.now() }; return; }
     if (ev.t === 'tool') S.doing = 'work'; else if (ev.t === 'tool_end' || ev.t === 'text') S.doing = 'think';
@@ -2845,7 +2987,11 @@
     wokeAt = Date.now();
     call('wake', {}, 0).catch(function () {});
   }
+  // 流带着「在不在看」：可见性、焦点变了就重新连一次，让控制器知道
+  function restartStream() { if (S.polling && S.streamOn && streamCtl) { streamCtl.abort(); streamCtl = null; follow(); } }
+  window.addEventListener('focus', restartStream); window.addEventListener('blur', restartStream);
   document.addEventListener('visibilitychange', function () {
+    restartStream();
     if (document.hidden) return;
     if (Date.now() - wokeAt > 600000) { wakeVm(); greet(); }
     if (S.bg > 0) pollTasksSoon(500);
@@ -2897,8 +3043,8 @@
     document.addEventListener('load', function (e) { if (e.target && e.target.tagName === 'IFRAME') try { watchDoc(e.target.contentDocument); } catch (er) {} }, true);
     [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { watchDoc(f.contentDocument); } catch (er) {} });
     req('me').then(function (d) {
-      S.enabled = !!d.enabled; S.authed = !!d.authed;
-      syncBag(); wakeVm(); greet(); syncPushDevice();
+      S.enabled = !!d.enabled; S.authed = !!d.authed; S.streamOn = !!d.stream;
+      syncBag(); wakeVm(); greet(); syncPushDevice(); loadDeliveries();
       if (S.enabled) buildHome(); if (S.authed) { status(); pollWork(); }
       openFromHash();
       // 刷新页面时上一轮还在跑：小芯接着陪着（打开面板时会接上）
