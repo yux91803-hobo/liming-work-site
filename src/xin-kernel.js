@@ -60,3 +60,43 @@ export class KernelConfigStore {
   // 只作废「出错时用的那个」令牌：别的 isolate 拿着更早的令牌来报错时，不再白换一次
   async invalidateToken(token) { const c = await this.storage.get(CONFIG_KEY); if (c && c.token && c.token === token) { c.tokenInvalid = true; await this.storage.put(CONFIG_KEY, c); } }
 }
+
+/* ---------- 请求内核、给结果分类（§14.2） ----------
+   内核的每个回应都带 X-Xin-Kernel 头；没有这个头的回应是 InstaBox 自己回的（端口令牌不对、正在叫醒、冷却），请求没到内核。
+   四种结果：ok（成功）、executed_error（做了但出错，不能换通道重来）、not_sent（确定没执行）、unknown（不知道执行没有）。 */
+export const READ_OPS = new Set(['status', 'ping', 'poll', 'sessions', 'history', 'memory', 'memory_list', 'memory_export', 'memory_preferences', 'learning_report',
+  'daily_get', 'files', 'plugins', 'moves', 'bond', 'tasks', 'usage', 'logins', 'preview_asset', 'greet']);
+export const KEYED_OPS = new Set(['send', 'steer', 'task_tell', 'task_stop']);   // 控制器按 clientId 去重（vm-agent.mjs 的 transactionalOp、steer）
+export function retrySafe(op, args) {
+  return READ_OPS.has(op) || (KEYED_OPS.has(op) && typeof args?.clientId === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(args.clientId));
+}
+export async function kernelFetch({ config, method, target, body = '', timeoutMs = 90000, fetchImpl = fetch, now = Date.now }) {
+  const headers = { authorization: 'Bearer ' + config.token, 'x-xin-auth': await signKernelRequest({ key: config.key, kid: config.kid, method, target, body, now: now() }) };
+  if (body) headers['content-type'] = 'application/json';
+  return fetchImpl(config.url.replace(/\/$/, '') + target, { method, headers, body: body || undefined, signal: AbortSignal.timeout(timeoutMs) });
+}
+export async function classifyKernelResponse(r) {
+  if (r.headers.get('x-xin-kernel')) {
+    let d = null; try { d = await r.json(); } catch { /* 坏了 */ }
+    if (d && d.ok === true) return { kind: 'ok', data: d.data };
+    if (d && d.executed === false) return { kind: 'not_sent', reason: d.error === 'kernel_auth' ? (d.reason === 'unknown_kid' ? 'unknown_kid' : 'kernel_auth') : d.error };
+    if (d && d.executed === true) return { kind: 'executed_error', error: d.error, msg: d.msg };
+    return { kind: 'unknown', reason: 'bad_kernel_reply' };
+  }
+  if (r.status === 401 || r.status === 403) return { kind: 'not_sent', reason: 'gate_auth' };
+  if (r.status === 503) return { kind: 'not_sent', reason: 'waking', retryAfter: Number(r.headers.get('retry-after')) || 3 };
+  if (r.status === 409) {
+    let e = {}; try { e = (await r.json()).error || {}; } catch { /* 不是 JSON */ }
+    const retryAfter = e.retryAfterSeconds || Number(r.headers.get('retry-after')) || 0;
+    if (e.code === 'machine_cooldown') return { kind: 'not_sent', reason: 'cooldown', retryAfter: retryAfter || 60 };
+    if (e.code === 'operation_conflict' || e.code === 'machine_not_running') return { kind: 'not_sent', reason: 'waking', retryAfter: retryAfter || 3 };
+  }
+  return { kind: 'unknown', reason: 'http_' + r.status };
+}
+export async function kernelRequest({ config, agentPath, op, args, timeoutMs, fetchImpl, now }) {
+  const body = JSON.stringify({ agent: agentPath, op, args: args || {} });
+  let r;
+  try { r = await kernelFetch({ config, method: 'POST', target: '/xin/op', body, timeoutMs, fetchImpl, now }); }
+  catch (e) { return { kind: 'unknown', reason: e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? 'timeout' : 'network' }; }
+  return classifyKernelResponse(r);
+}

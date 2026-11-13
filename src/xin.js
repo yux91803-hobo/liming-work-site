@@ -17,6 +17,8 @@
 //   GET  /api/xin/file?path=/data/workspace/…   下载小芯电脑里的一个文件（先让 vm-agent 核对在工作目录里，再从 InstaBox 原样转过来）
 // status、wake 直接调 InstaBox 的机器接口（wake：打开网页时把睡着的云电脑叫醒，已经醒着就什么都不做）；其余都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
 // 返回 {ok:true, data} 或 {ok:false, state, msg, retryAfter}：state = waking（云电脑在睡，唤醒中）、cooldown（跑满 8 小时后的冷却）、busy、error。
+import { KERNEL_PORT, KernelConfigStore, kernelRequest, retrySafe, redact } from './xin-kernel.js';
+
 const API = 'https://api.instabox.sh';
 const COOKIE = '__Host-xin';
 const SESSION_SEC = 30 * 86400;
@@ -150,6 +152,15 @@ async function agentScript(env, origin) {
 function putAgentFile(env, id, file, mode) {
   return ib(env, `/v1/machines/${id}/files?path=${encodeURIComponent(file.path)}&parents=true&mode=${mode}`, { method: 'PUT', body: file.text, headers: { 'Content-Type': 'application/octet-stream' } });
 }
+// 依赖（和内核）先传，入口最后传：入口一出现，它 import 的文件都已经在了
+async function uploadAgent(env, id, agent) {
+  for (const f of agent.kernel ? [...agent.dependencies, agent.kernel] : agent.dependencies) {
+    const d = await putAgentFile(env, id, f, '0644');
+    if (!d.ok) throw await ibErr(d);
+  }
+  const u = await putAgentFile(env, id, agent, '0755');
+  if (!u.ok) throw await ibErr(u);
+}
 // The controller's scripts live on a machine where fully privileged agents also run. A script is found by the hash in
 // its name, so a file edited in place would keep being executed. Every ten minutes (per isolate) compare what is on
 // the machine with what this deployment ships; anything different is replaced and the incident is written down.
@@ -157,7 +168,7 @@ let verifiedAt = 0;
 export async function verifyAgent(env, origin, id, now = Date.now()) {
   if (now - verifiedAt < 600000) return { skipped: true };
   verifiedAt = now;
-  const agent = await agentScript(env, origin), files = [...agent.dependencies, agent];
+  const agent = await agentScript(env, origin), files = [...agent.dependencies, ...(agent.kernel ? [agent.kernel] : []), agent];
   const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['sha256sum', '--', ...files.map(f => f.path)], timeoutSeconds: 20 }) });
   if (!r.ok) { verifiedAt = 0; return { skipped: true }; }   // asleep or busy: the request that follows reports it; check again next time
   const found = new Map();
@@ -200,12 +211,7 @@ async function exec(env, origin, id, op, args, retried) {
   if (res.exitCode !== 0) {
     // 脚本还没传上去，或者改过了（文件名带内容的哈希）：传一份再跑
     if (!retried && /Cannot find module|ERR_MODULE_NOT_FOUND/.test(res.stderr || '')) {
-      for (const dependency of agent.kernel ? [...agent.dependencies, agent.kernel] : agent.dependencies) {
-        const d = await putAgentFile(env, id, dependency, '0644');
-        if (!d.ok) throw await ibErr(d);
-      }
-      const u = await putAgentFile(env, id, agent, '0755');
-      if (!u.ok) throw await ibErr(u);
+      await uploadAgent(env, id, agent);
       return exec(env, origin, id, op, args, true);
     }
     if (res.oomKilled) throw { status: 500, code: 'oom', msg: '云电脑内存不够，脚本被杀了' };
@@ -214,7 +220,93 @@ async function exec(env, origin, id, op, args, retried) {
   try { return JSON.parse(res.stdout); } catch { throw { status: 500, code: 'agent_output', msg: 'vm-agent 的输出看不懂' }; }
 }
 
-async function call(env, origin, op, args, ctx, now) {
+/* ---------- 小芯内核通道（docs/xin-kernel-design.md §4.2、§14.2、§14.5） ----------
+   XIN_TRANSPORT=kernel 时，原来走 InstaBox exec 的操作改走电脑上常驻内核的私有端口（请求本身会叫醒电脑）。
+   端口令牌和第二层钥匙在 Durable Object 实例 xin-inbox 里（KernelConfigStore），每个 isolate 缓存 5 分钟。
+   换回 exec 的规则：确定没执行的（内核说 executed:false、InstaBox 自己拒了）修好能修的再试，修不了就走 exec；
+   不知道执行没有的（超时、断线、没有内核头的 502/504）只给能安全重来的操作（只读的、带 clientId 由控制器去重的）走 exec，
+   别的报「不确定」——宁可让用户刷新看一眼，也不让同一件事做两遍。 */
+const KERNEL_KEYS_FILE = '/data/home/.xin/kernel-keys.json';
+function inboxStub(env) { return env.XIN_TASK_SUPERVISOR?.get(env.XIN_TASK_SUPERVISOR.idFromName('xin-inbox')); }
+let kernelCache = null;
+function workerKernel(env) {
+  const stub = inboxStub(env);
+  if (!stub) return null;
+  const post = async (action, body) => {
+    const r = await stub.fetch('https://xin.internal/kernel/' + action, { method: 'POST', body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw { status: d.status || r.status, code: d.error || 'kernel_config', msg: d.msg || '', retryAfter: d.retryAfter || 0 };
+    return d;
+  };
+  return {
+    async get(machineId) {
+      const c = kernelCache;
+      if (c && c.key === env.INSTABOX_API_KEY && c.machineId === machineId && Date.now() - c.at < 300000) return c.config;
+      const config = await post('config', { machineId });
+      kernelCache = { key: env.INSTABOX_API_KEY, machineId, at: Date.now(), config };
+      return config;
+    },
+    async markInstalled(kid) { await post('installed', { kid }); if (kernelCache) kernelCache.config = { ...kernelCache.config, installedKid: kid }; },
+    async invalidateToken(token) { kernelCache = null; await post('invalid', { token }); }
+  };
+}
+// 钥匙写成电脑上的 kernel-keys.json（0600），新旧两把都在：换钥匙时还没切过去的请求照样认得
+async function installKernelKeys(env, id, cfg) {
+  const r = await putAgentFile(env, id, { path: KERNEL_KEYS_FILE, text: JSON.stringify({ v: 1, keys: cfg.keys }) }, '0600');
+  if (!r.ok) throw await ibErr(r);
+}
+// 内核不在（502）：后台经 exec 跑一次 ensure（每个 isolate 60 秒内最多一次）；缺内核文件就先传上去
+let ensuringAt = 0;
+function ensureKernel(env, origin, id, ctx) {
+  if (Date.now() - ensuringAt < 60000) return;
+  ensuringAt = Date.now();
+  const p = (async () => {
+    const agent = await agentScript(env, origin);
+    if (!agent.kernel) return;
+    const run = async () => { const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['node', agent.kernel.path, 'ensure', '--port', String(KERNEL_PORT)], timeoutSeconds: 40 }) }); if (!r.ok) throw await ibErr(r); return r.json(); };
+    const res = await run();
+    if (res.exitCode !== 0 && /Cannot find module|ERR_MODULE_NOT_FOUND/.test(res.stderr || '')) {
+      const u = await putAgentFile(env, id, agent.kernel, '0644');
+      if (!u.ok) throw await ibErr(u);
+      await run();
+    }
+  })().catch(() => { ensuringAt = 0; });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
+}
+async function runOp(env, origin, id, op, args, ctx, opts = {}) {
+  const kernel = env.XIN_TRANSPORT === 'kernel' ? (opts.kernel || workerKernel(env)) : null;
+  if (!kernel) return exec(env, origin, id, op, args);
+  const agent = await agentScript(env, origin);
+  if (!agent.kernel) return exec(env, origin, id, op, args);
+  let cfg;
+  try { cfg = await kernel.get(id); } catch { return exec(env, origin, id, op, args); }   // 拿不到配置：请求还没发出去，走 exec
+  const fixed = new Set();
+  for (;;) {
+    if (cfg.installedKid !== cfg.kid) {
+      try { await installKernelKeys(env, id, cfg); await kernel.markInstalled(cfg.kid); cfg = { ...cfg, installedKid: cfg.kid }; }
+      catch (e) { if (e && e.code === 'machine_cooldown') throw e; return exec(env, origin, id, op, args); }
+    }
+    const r = await kernelRequest({ config: cfg, agentPath: agent.path, op, args });
+    if (r.kind === 'ok') return r.data;
+    if (r.kind === 'executed_error') throw { status: 500, code: r.error || 'agent_failed', msg: redact(r.msg || r.error || '控制器出错了') };
+    if (r.kind === 'not_sent') {
+      if (r.reason === 'gate_auth' && !fixed.has('token')) {
+        fixed.add('token');
+        try { await kernel.invalidateToken(cfg.token); cfg = await kernel.get(id); continue; } catch { return exec(env, origin, id, op, args); }
+      }
+      if (r.reason === 'unknown_kid' && !fixed.has('keys')) { fixed.add('keys'); cfg = { ...cfg, installedKid: null }; continue; }
+      if (r.reason === 'agent_missing' && !fixed.has('upload')) { fixed.add('upload'); await uploadAgent(env, id, agent); continue; }
+      if (r.reason === 'waking') throw { status: 409, code: 'machine_not_running', retryAfter: r.retryAfter || 3 };
+      if (r.reason === 'cooldown') throw { status: 409, code: 'machine_cooldown', retryAfter: r.retryAfter };
+      return exec(env, origin, id, op, args);
+    }
+    if (r.reason === 'http_502') ensureKernel(env, origin, id, ctx);
+    if (retrySafe(op, args)) return exec(env, origin, id, op, args);
+    throw { status: 500, code: 'unknown_outcome', msg: '不确定刚才的操作有没有做完，请刷新看看' };
+  }
+}
+
+async function call(env, origin, op, args, ctx, now, opts = {}) {
   let m;
   try { m = await machine(env, now); } catch (e) { return explain(e); }
   if (op === 'wake') {
@@ -266,7 +358,7 @@ async function call(env, origin, op, args, ctx, now) {
   }
   try {
     if (supervisor(env) && ['send', 'daily'].includes(op)) args = { ...(args || {}), _callback: { url: origin + '/api/xin/task-event', token: await callbackToken(env) } };
-    const data = await exec(env, origin, m.id, op, args);
+    const data = await runOp(env, origin, m.id, op, args, ctx, opts);
     // 打开网页（greet）时顺手核对云电脑上的控制器脚本有没有被改过；不挡这次请求
     if (op === 'greet' && ctx) ctx.waitUntil(verifyAgent(env, origin, m.id, now).catch(() => null));
     // AI 在等模型回话时云电脑看起来是闲着的：挂一个「有活在干」的租约，别让它半路自己暂停
@@ -520,7 +612,7 @@ export async function runCron(cron, env, ctx, opt = {}) {
 }
 
 // 测试用：清掉缓存
-export function _reset() { keyCache = null; machineCache = null; agentCache = null; verifiedAt = 0; }
+export function _reset() { keyCache = null; machineCache = null; agentCache = null; verifiedAt = 0; kernelCache = null; ensuringAt = 0; }
 export const _callbackToken = env => callbackToken(env);   // 测试用：任务回调的令牌
 
 // Durable alarms keep running after a browser closes or the VM restarts. No alarms remain when idle.
@@ -559,9 +651,22 @@ export class XinTaskSupervisor {
     }
     return json({ error: 'bad_action' }, 400);
   }
+  // 小芯内核的配置（端口令牌、钥匙）放在实例 xin-inbox 里；Durable Object 自己调 call() 时直接用 kernelAdapter()，不经 stub 请求自己
+  kernelStore() { return this.kernelConfig || (this.kernelConfig = new KernelConfigStore(this.state.storage, { ib: (p, init) => ib(this.env, p, init), ibErr })); }
+  kernelAdapter() { const s = this.kernelStore(); return { get: id => s.get({ machineId: id }), markInstalled: kid => s.markInstalled(kid), invalidateToken: t => s.invalidateToken(t) }; }
+  async kernelRoute(action, req) {
+    const a = await req.json().catch(() => ({}));
+    try {
+      if (action === 'config') return json(await this.kernelStore().get({ machineId: a.machineId }));
+      if (action === 'installed') { await this.kernelStore().markInstalled(a.kid); return json({ ok: true }); }
+      if (action === 'invalid') { await this.kernelStore().invalidateToken(a.token); return json({ ok: true }); }
+    } catch (e) { return json({ error: (e && e.code) || 'kernel_config', status: e && e.status, retryAfter: e && e.retryAfter, msg: redact(e && e.msg || '') }, 502); }
+    return json({ error: 'bad_action' }, 400);
+  }
   async fetch(req) {
     const path = new URL(req.url).pathname;
     if (path.startsWith('/backup/')) return this.backup(path.slice('/backup/'.length), req);
+    if (path.startsWith('/kernel/')) return this.kernelRoute(path.slice('/kernel/'.length), req);
     const incoming = await req.json(), current = await this.state.storage.get('tasks') || {};
     if (incoming.version != null && current.version != null && (incoming.version < current.version || incoming.version === current.version && incoming.bg !== current.bg)) return json({ ok: true, stale: true });
     // A browser's old read cannot cancel a newer controller callback.

@@ -93,3 +93,62 @@ test('发布端口失败：抛出 InstaBox 的错误，不存半套配置', asyn
   await assert.rejects(s.get({ machineId: 'm_abc' }), e => e.status === 409);
   assert.ok(!storage.m.get('kernel:config')?.token);
 });
+
+/* ---------- 请求和结果分类（§14.2） ---------- */
+const CONFIG = { url: 'https://8797-abc.instabox.tech', token: 'ibp_tok1', kid: 'k0123456789', key: Buffer.alloc(32, 3).toString('base64url') };
+const AGENT = '/data/home/.xin/agent/vm-agent-0123456789ab.mjs';
+const K = { 'x-xin-kernel': '0123456789ab' };
+const resp = (status, body, headers = {}) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers });
+async function classify(response) {
+  const { kernelRequest } = await load('../src/xin-kernel.js');
+  const seen = [];
+  const fetchImpl = async (url, init) => { seen.push({ url, init }); if (response instanceof Error) throw response; return response; };
+  const r = await kernelRequest({ config: CONFIG, agentPath: AGENT, op: 'history', args: { sid: 's1' }, fetchImpl });
+  return { r, seen };
+}
+
+test('分类：有内核头的三种', async () => {
+  assert.deepStrictEqual((await classify(resp(200, { ok: true, data: { a: 1 } }, K))).r, { kind: 'ok', data: { a: 1 } });
+  assert.deepStrictEqual((await classify(resp(200, { ok: false, executed: true, error: 'agent_failed', msg: 'x' }, K))).r, { kind: 'executed_error', error: 'agent_failed', msg: 'x' });
+  assert.deepStrictEqual((await classify(resp(409, { ok: false, executed: false, error: 'agent_missing' }, K))).r, { kind: 'not_sent', reason: 'agent_missing' });
+  assert.deepStrictEqual((await classify(resp(503, { ok: false, executed: false, error: 'kernel_busy' }, K))).r, { kind: 'not_sent', reason: 'kernel_busy' });
+  assert.deepStrictEqual((await classify(resp(401, { ok: false, executed: false, error: 'kernel_auth', reason: 'unknown_kid' }, K))).r, { kind: 'not_sent', reason: 'unknown_kid' });
+  assert.deepStrictEqual((await classify(resp(401, { ok: false, executed: false, error: 'kernel_auth', reason: 'replay' }, K))).r, { kind: 'not_sent', reason: 'kernel_auth' });
+});
+
+test('分类：没有内核头的是 InstaBox 自己回的', async () => {
+  assert.deepStrictEqual((await classify(resp(401, 'This URL is private'))).r, { kind: 'not_sent', reason: 'gate_auth' });
+  assert.deepStrictEqual((await classify(resp(403, 'token is not valid'))).r, { kind: 'not_sent', reason: 'gate_auth' });
+  assert.deepStrictEqual((await classify(resp(503, 'waking', { 'retry-after': '5' }))).r, { kind: 'not_sent', reason: 'waking', retryAfter: 5 });
+  assert.deepStrictEqual((await classify(resp(409, { error: { code: 'machine_cooldown', retryAfterSeconds: 420 } }))).r, { kind: 'not_sent', reason: 'cooldown', retryAfter: 420 });
+  assert.deepStrictEqual((await classify(resp(502, 'The sandbox service disconnected'))).r, { kind: 'unknown', reason: 'http_502' });
+  assert.deepStrictEqual((await classify(resp(504, 'timeout'))).r, { kind: 'unknown', reason: 'http_504' });
+  assert.deepStrictEqual((await classify(new TypeError('fetch failed'))).r, { kind: 'unknown', reason: 'network' });
+  // 内核头在但回应体坏了：也不知道执行没有
+  assert.deepStrictEqual((await classify(resp(200, 'garbage', K))).r, { kind: 'unknown', reason: 'bad_kernel_reply' });
+});
+
+test('请求：带端口令牌和第二层签名，内核认得', async () => {
+  const kernel = await load('../site/xin/vm-kernel.mjs');
+  const { seen } = await classify(resp(200, { ok: true, data: {} }, K));
+  const { url, init } = seen[0];
+  assert.strictEqual(url, CONFIG.url + '/xin/op');
+  assert.strictEqual(init.method, 'POST');
+  assert.strictEqual(init.headers.authorization, 'Bearer ibp_tok1');
+  assert.deepStrictEqual(JSON.parse(init.body), { agent: AGENT, op: 'history', args: { sid: 's1' } });
+  const keys = new Map([[CONFIG.kid, Buffer.from(CONFIG.key, 'base64url')]]);
+  const v = kernel.verifyRequest({ method: 'POST', target: '/xin/op', header: init.headers['x-xin-auth'], body: init.body, keys, nonces: new kernel.NonceStore(':memory:'), now: Date.now() });
+  assert.deepStrictEqual(v, { ok: true, kid: CONFIG.kid });
+});
+
+test('能安全重来的操作：只读的，或者带编号由控制器去重的', async () => {
+  const { retrySafe } = await load('../src/xin-kernel.js');
+  assert.strictEqual(retrySafe('history', {}), true);
+  assert.strictEqual(retrySafe('poll', { run: 'r1' }), true);
+  assert.strictEqual(retrySafe('send', { clientId: 'abcdefgh1' }), true);
+  assert.strictEqual(retrySafe('task_tell', { clientId: 'abcdefgh1' }), true);
+  assert.strictEqual(retrySafe('send', {}), false);
+  assert.strictEqual(retrySafe('steer', { clientId: 'short' }), false);
+  assert.strictEqual(retrySafe('memory_add', { clientId: 'abcdefgh1' }), false);
+  assert.strictEqual(retrySafe('forget', {}), false);
+});

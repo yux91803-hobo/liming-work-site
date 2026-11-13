@@ -1983,3 +1983,178 @@ test('默认模式前台：Muse 式人设和说话方式，不带会变的分数
   assert.ok(!p.includes('"bond"') && !p.includes('["xin","next"') && p.includes('["xin","dance"]'));
   assert.ok(p.includes('"--quote"') && p.includes('由你自己打理') && !p.includes('待兄弟确认'));
 });
+
+/* ---------- 小芯内核通道（docs/xin-kernel-design.md §4.2、§14.2；计划 Task 6） ---------- */
+// 假的 Durable Object 命名空间：按名字建真的 XinTaskSupervisor，存储放内存
+function fakeDO(m, envRef) {
+  const objs = new Map();
+  return {
+    objs,
+    idFromName: n => n,
+    get(id) {
+      if (!objs.has(id)) {
+        const values = new Map(), state = { alarm: null };
+        state.storage = { get: async k => values.get(k), put: async (k, v) => { values.set(k, structuredClone(v)); }, delete: async k => Array.isArray(k) ? k.forEach(x => values.delete(x)) : values.delete(k),
+          list: async ({ prefix } = {}) => new Map([...values].filter(([k]) => !prefix || k.startsWith(prefix)).sort(([a], [b]) => a < b ? -1 : 1)),
+          setAlarm: async t => { state.alarm = t; }, getAlarm: async () => state.alarm, deleteAlarm: async () => { state.alarm = null; } };
+        state.waitUntil = () => {};
+        objs.set(id, { o: new m.XinTaskSupervisor(state, envRef), state, values });
+      }
+      const { o } = objs.get(id);
+      return { fetch: (url, init) => o.fetch(new Request(url, init)) };
+    }
+  };
+}
+const KERNEL_TEXT = '// fake kernel\n';
+function kernelEnv(m, extra) {
+  const env = mkEnv(Object.assign({ XIN_TRANSPORT: 'kernel', ASSETS: { fetch: async r => { const p = new URL(r.url).pathname; return p === '/xin/vm-agent.mjs' ? new Response(AGENT_TEXT) : p === '/xin/vm-kernel.mjs' ? new Response(KERNEL_TEXT) : new Response('nope', { status: 404 }); } } }, extra));
+  env.XIN_TASK_SUPERVISOR = fakeDO(m, env);
+  return env;
+}
+const kres = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'x-xin-kernel': '0123456789ab', ...headers } });
+const PORT_TOKEN = n => ({ status: 201, body: { url: 'https://8797-abc.instabox.tech', token: 'ibp_t' + n, access: 'private' } });
+const execArgv = c => JSON.parse(c.body).argv;
+function waiter() { const ps = []; return { ctx: { waitUntil: p => ps.push(p) }, settle: () => Promise.allSettled(ps) }; }
+async function callOp(m, env, ck, op, args, ctx) {
+  return (await m.handleXin(req('/api/xin/call', { body: { op, args: args || {} }, headers: { cookie: ck } }), env, ctx || null)).json();
+}
+
+test('内核通道：只读操作走内核，不调 exec；第一次用会装钥匙，第二次不再装', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => kres(200, { ok: true, data: { sessions: [] } })] });
+  try {
+    const d = await callOp(m, env, ck, 'sessions');
+    assert.deepStrictEqual(d, { ok: true, data: { sessions: [] } });
+    assert.ok(!ib.calls.some(c => c.key.endsWith('/exec')), '不该调 exec');
+    const put = ib.calls.find(c => c.key === 'PUT /v1/machines/m_abc/files');
+    assert.strictEqual(put.url.searchParams.get('path'), '/data/home/.xin/kernel-keys.json');
+    assert.strictEqual(put.url.searchParams.get('mode'), '0600');
+    const kid = Object.keys(JSON.parse(put.body).keys)[0];
+    const op = ib.calls.find(c => c.key === 'POST /xin/op');
+    assert.strictEqual(op.url.host, '8797-abc.instabox.tech');
+    assert.strictEqual(op.init.headers.authorization, 'Bearer ibp_t1');
+    assert.match(op.init.headers['x-xin-auth'], new RegExp('kid=' + kid + ','));
+    assert.match(JSON.parse(op.body).agent, /^\/data\/home\/\.xin\/agent\/vm-agent-[0-9a-f]{12}\.mjs$/);
+    await callOp(m, env, ck, 'sessions');
+    assert.strictEqual(ib.calls.filter(c => c.key.startsWith('PUT')).length, 1);
+    assert.strictEqual(ib.calls.filter(c => c.key.endsWith('/ports')).length, 1);
+  } finally { ib.restore(); }
+});
+
+test('内核 502：只读的 history 退回 exec，并在后台起 ensure', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env), w = waiter();
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => new Response('The sandbox service disconnected', { status: 502 })],
+    'POST /v1/machines/m_abc/exec': [(u, init) => new Response(JSON.stringify({ stdout: JSON.parse(init.body).argv.includes('ensure') ? '{"ok":true,"started":true}' : '{"runs":[]}', stderr: '', exitCode: 0 }))] });
+  try {
+    const d = await callOp(m, env, ck, 'history', { sid: 'sabc123' }, w.ctx);
+    await w.settle();
+    assert.deepStrictEqual(d, { ok: true, data: { runs: [] } });
+    const argvs = ib.calls.filter(c => c.key.endsWith('/exec')).map(execArgv);
+    assert.ok(argvs.some(a => a[2] === 'history'));
+    const ensure = argvs.find(a => a.includes('ensure'));
+    assert.ok(ensure, '后台要起 ensure');
+    assert.strictEqual(ensure[0], 'node'); assert.match(ensure[1], /\/vm-kernel-[0-9a-f]{12}\.mjs$/);
+    assert.deepStrictEqual(ensure.slice(2), ['ensure', '--port', '8797']);
+  } finally { ib.restore(); }
+});
+
+test('内核 502：不带编号又会改东西的 memory_add 不退回 exec，报不确定', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env), w = waiter();
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => new Response('bad gateway', { status: 502 })],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true}', stderr: '', exitCode: 0 } }] });
+  try {
+    const d = await callOp(m, env, ck, 'memory_add', { content: '记住这个' }, w.ctx);
+    await w.settle();
+    assert.strictEqual(d.ok, false);
+    assert.strictEqual(d.msg, '不确定刚才的操作有没有做完，请刷新看看');
+    assert.ok(!ib.calls.filter(c => c.key.endsWith('/exec')).some(c => execArgv(c)[2] === 'memory_add'), '不能再用 exec 做一遍');
+  } finally { ib.restore(); }
+});
+
+test('send 断线：带 clientId 的退回 exec，参数原样（控制器按编号去重）', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => { throw new TypeError('fetch failed'); }],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify({ sid: 's1', run: 'r1' }), stderr: '', exitCode: 0 } }],
+    'POST /state': [{ body: { ok: true } }] });
+  try {
+    const d = await callOp(m, env, ck, 'send', { text: '你好', clientId: 'cid-12345678' });
+    assert.deepStrictEqual(d, { ok: true, data: { sid: 's1', run: 'r1' } });
+    const sent = JSON.parse(ib.calls.find(c => c.key === 'POST /xin/op').body).args;
+    const ex = JSON.parse(ib.calls.find(c => c.key.endsWith('/exec')).body);
+    assert.strictEqual(ex.argv[2], 'send');
+    assert.deepStrictEqual(JSON.parse(ex.stdin), sent);
+    assert.strictEqual(sent.clientId, 'cid-12345678');
+  } finally { ib.restore(); }
+});
+
+test('内核说做了但出错：不退回 exec；给网页的错误信息脱敏', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => kres(200, { ok: false, executed: true, error: 'agent_failed', msg: 'vm-agent 出错（退出码 1）：x ibp_XYZSECRET' })] });
+  try {
+    const d = await callOp(m, env, ck, 'history', { sid: 'sabc123' });
+    assert.strictEqual(d.ok, false);
+    assert.match(d.msg, /vm-agent 出错/);
+    assert.ok(!d.msg.includes('XYZSECRET'));
+    assert.ok(!ib.calls.some(c => c.key.endsWith('/exec')));
+  } finally { ib.restore(); }
+});
+
+test('端口令牌被拒（没有内核头的 401）：换令牌再试一次就通', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1), PORT_TOKEN(2)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => new Response('This URL is private', { status: 401 }), () => kres(200, { ok: true, data: { ok: 1 } })] });
+  try {
+    const d = await callOp(m, env, ck, 'sessions');
+    assert.deepStrictEqual(d, { ok: true, data: { ok: 1 } });
+    const ops = ib.calls.filter(c => c.key === 'POST /xin/op');
+    assert.deepStrictEqual(ops.map(c => c.init.headers.authorization), ['Bearer ibp_t1', 'Bearer ibp_t2']);
+    assert.ok(!ib.calls.some(c => c.key.endsWith('/exec')));
+  } finally { ib.restore(); }
+});
+
+test('内核不认识这把钥匙：重装钥匙再试', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => kres(401, { ok: false, executed: false, error: 'kernel_auth', reason: 'unknown_kid' }), () => kres(200, { ok: true, data: { ok: 2 } })] });
+  try {
+    assert.deepStrictEqual(await callOp(m, env, ck, 'sessions'), { ok: true, data: { ok: 2 } });
+    assert.strictEqual(ib.calls.filter(c => c.key.startsWith('PUT')).length, 2);
+  } finally { ib.restore(); }
+});
+
+test('内核那边电脑在睡（503）：回 waking 并替它 resume，不退回 exec', async () => {
+  const m = await fresh(), env = kernelEnv(m), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => new Response('Sandbox is waking up', { status: 503, headers: { 'retry-after': '5' } })],
+    'GET /v1/machines/m_abc': [{ body: { id: 'm_abc', state: 'suspended' } }], 'POST /v1/machines/m_abc/resume': [{ status: 202, body: {} }] });
+  try {
+    const d = await callOp(m, env, ck, 'sessions');
+    assert.strictEqual(d.state, 'waking');
+    assert.ok(!ib.calls.some(c => c.key.endsWith('/exec')));
+  } finally { ib.restore(); }
+});
+
+test('XIN_TRANSPORT 不设：有 Durable Object 也照旧走 exec，不发布端口', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined }), ck = await login(m, env);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"sessions":[]}', stderr: '', exitCode: 0 } }] });
+  try {
+    assert.deepStrictEqual(await callOp(m, env, ck, 'sessions'), { ok: true, data: { sessions: [] } });
+    assert.ok(!ib.calls.some(c => c.key.endsWith('/ports') || c.key === 'POST /xin/op'));
+  } finally { ib.restore(); }
+});
+
+test('verifyAgent 也核对内核文件', async () => {
+  const m = await fresh(), env = kernelEnv(m);
+  const ib = fakeIB({ 'POST /v1/machines/m_abc/exec': [{ body: { stdout: '', stderr: '', exitCode: 0 } }] });
+  try {
+    await m.verifyAgent(env, ORIGIN, 'm_abc', Date.now());
+    const argv = execArgv(ib.calls[0]);
+    assert.strictEqual(argv[0], 'sha256sum');
+    assert.ok(argv.some(p => /\/vm-kernel-[0-9a-f]{12}\.mjs$/.test(p)), argv.join(' '));
+  } finally { ib.restore(); }
+});
