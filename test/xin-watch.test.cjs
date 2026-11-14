@@ -141,8 +141,11 @@ test('控制器脚本自检：内容和这一版一致就什么都不做；被�
     // Someone edited a dependency in place: same name, other content.
     sums = sha('// base\nprocess.exit(0)\n') + '  ' + dir + baseName + '\n' + sha(agentText) + '  ' + dir + agentName + '\n';
     assert.deepEqual(await m.verifyAgent(e, ORIGIN, 'm_abc', 1e12 + 600001), { ok: false, repaired: 1 });
-    const puts = box.calls.filter(c => c.method === 'PUT');
-    assert.deepEqual(puts.map(c => [c.file, c.body]), [[dir + baseName, baseText], [dir + agentName, agentText]], '整套按这一版的内容重传');
+    // 一次 exec 整套重装（逐个 PUT 每个文件算一个子请求，冷启动时会超过免费套餐一次 50 个的上限）
+    const installs = box.calls.filter(c => c.path.endsWith('/exec') && JSON.parse(c.body).argv[1] === '-e').map(c => JSON.parse(c.body));
+    assert.equal(installs.length, 1);
+    assert.deepEqual(JSON.parse(installs[0].stdin).map(f => [f.path, f.text, f.mode]), [[dir + baseName, baseText, '0644'], [dir + agentName, agentText, '0755']], '整套按这一版的内容重传');
+    assert.ok(!box.calls.some(c => c.method === 'PUT'));
     const note = box.calls.filter(c => c.path.endsWith('/exec')).map(c => JSON.parse(c.body)).find(b => b.argv[2] === 'integrity_event');
     assert.deepEqual(JSON.parse(note.stdin), { files: [baseName] });
     // A file that is simply not there yet is uploaded by the normal path, not treated as tampering.

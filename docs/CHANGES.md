@@ -1,3 +1,14 @@
+# 修改清单 · 2026-11-15（控制器文件一次装好：换控制器时冷启动不再超过 Cloudflare 免费套餐的子请求上限）
+
+#144 由仓库账号在北京时间 03:33 合并（当时 Claude Code 额度用完、会话停着，不是它合并的；合并前 PR 的 CI [43631282996](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43631282996) 全绿）。合并后的正式运行 [43632754629](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43632754629)：检查、浏览器测试、部署、冒烟都过了，正式站联调第一步 `sessions` 回 `state=error`，自动回滚到 #143 的 Worker 版本 `92d73094`。正式站在这次修复上线前一直是 #143。实际实现 AI：**Claude Code**；自查，没有别的 AI 复核。改的是 `src/xin.js` 上传控制器文件的方式（逐个 PUT），原因见下。
+
+- **现象**：小芯电脑上的内核日志（只有时间、操作名、状态码）：19:46:00（UTC）网页和联调脚本同时发的 greet、tasks、sessions 都回「控制器文件不在」（409 `agent_missing`）。随后 19:46:00–05 依次写了 19 个模块文件，第 20 个起没再写，新控制器入口 `vm-agent-7919079b6906.mjs` 没传上去，内核之后没再收到请求。电脑磁盘 61%，持久服务一直在跑、没有重启。
+- **原因**：#144 改了 `vm-kernel-compat.mjs`，控制器跟着换了文件名，第一次请求要先把文件传上去。Cloudflare Workers 免费套餐一次请求最多 50 个子请求，fetch 和读静态资源都算（Durable Object 是内部服务，另算）。部署后冷启动的那次请求：读 28 个模块和内核文件共 29 个、查电脑 1 个、内核请求 1 个，再逐个 PUT——传到第 19 个正好 50 个，第 20 个失败，请求回「云电脑出错了」。电脑上看到的文件时间和这个数一一对得上。#143 没换控制器、不用传文件，所以没碰到。以前换控制器的那几次大概是电脑在睡：第一次请求读完模块后回「唤醒中」，重试时模块已经缓存在同一个 isolate 里，没超（这一条是推断：06:44 那次电脑是被请求叫醒的，几秒后才开始上传，没有别的证据）。单元测试和浏览器测试里没有这个上限，CI 发现不了。
+- **改法**：控制器文件改成一次 exec 装好：`node -e <安装小程序> <目录>`，标准输入是整套文件（路径、权限、摘要、内容），超过 1 MiB 按顺序分几次。小程序在电脑上逐个写临时文件、核对摘要、给好权限再换名，内核和控制器读不到写了一半的文件；只认这个目录里按摘要命名的 `vm-*.mjs`，权限只认 0644 / 0755，摘要不对就停下、不留临时文件；依赖和内核在前、入口在最后。`verifyAgent` 发现文件被改过时的整套重传也走这一次 exec。冷启动换控制器的那次请求现在用 33 个子请求（以前第 51 个失败）。
+- **验证**：新增 4 个测试。两个按免费套餐 50 个子请求计数、用网站里真实的 29 个模块，分别走内核通道和 exec 通道，冷启动、电脑醒着、换了控制器：改前和正式站一样回 `state: 'error'`，改后照常回答，分别用 34 个（测试里多一次装钥匙）和 33 个。一个测超过 1 MiB 时按顺序分批、入口在最后一批。一个在本机真跑安装小程序：顺序、权限、被改过的文件照这一版重写、摘要不对在那里停下、不留临时文件、拒绝目录外和不按规则命名的文件。原有 3 个上传测试和控制器自检测试改成核对 exec 带的文件，断言意思不变（整套都传、入口最后、import 指向带摘要的文件名、出错时一个都不传）。子请求测试留 10 个余量：模块再多 6 个左右就会先红。
+- **没改的**：内核文件在 ensure 时缺了还是单独 PUT 一次（只占 1 个子请求）。冷启动读模块用掉的 29 个子请求会随模块增加而增加，以后要么把模块合成一个资源文件读，要么换付费套餐（上限 10000）。
+- **参考**：Vercel Sandbox [`api-client.ts`](https://github.com/vercel/sandbox/blob/main/packages/vercel-sandbox/src/api-client/api-client.ts) 的 `writeFiles`（整套文件打成一个 gzip tar，一次 POST `/fs/write`）；E2B [`filesystem/index.ts`](https://github.com/e2b-dev/E2B/blob/main/packages/js-sdk/src/sandbox/filesystem/index.ts) 的 `write(WriteEntry[])`（一个 multipart 请求带多个文件）；Cloudflare 文档 [Workers Limits](https://developers.cloudflare.com/workers/platform/limits/#subrequests)（免费套餐一次请求 50 个子请求，内部服务另算）和 [Service bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/)（经绑定的请求算子请求）；InstaBox exec API（`argv` 不经 shell，标准输入最多 1 MiB）。
+
 # 修改清单 · 2026-11-15（状态进程启动时核对旧控制器：正在退出的进程不算）
 
 #143 合并后的正式运行 [43627096116](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43627096116) 第一次 check 857 项红 1 项，部署跳过，正式站那时还停在 #140。实际实现 AI：**Claude Code**；自查，没有别的 AI 复核。改的是 Codex 在 #140 实现的 `checkControllers`（`site/xin/vm-kernel-compat.mjs`），原因见下。正式站状态模式仍是 legacy，不会启动常驻状态进程，所以这处问题目前只让测试偶发失败；第 2 批切到内核模式以后，正式电脑上的状态进程启动也会碰到。

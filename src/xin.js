@@ -153,15 +153,52 @@ async function agentScript(env, origin) {
 function putAgentFile(env, id, file, mode) {
   return ib(env, `/v1/machines/${id}/files?path=${encodeURIComponent(file.path)}&parents=true&mode=${mode}`, { method: 'PUT', body: file.text, headers: { 'Content-Type': 'application/octet-stream' } });
 }
-// 依赖（和内核）先传，入口最后传：入口一出现，它 import 的文件都已经在了
-async function uploadAgent(env, id, agent) {
-  for (const f of agent.kernel ? [...agent.dependencies, agent.kernel] : agent.dependencies) {
-    const d = await putAgentFile(env, id, f, '0644');
-    if (!d.ok) throw await ibErr(d);
+/* 控制器文件装到电脑上：一次 exec 带上一整套，由下面这段小程序在电脑上写（node -e <小程序> <目录>，标准输入是文件列表）。
+   以前逐个 PUT，每个文件算一个子请求。Cloudflare 免费套餐一次请求最多 50 个子请求，读静态资源也算：冷启动时读模块就用掉 29 个，
+   #144 上线（正式运行 43632754629）时传到第 20 个文件就超了，控制器入口没传上去，联调失败、自动回滚。
+   照 Vercel Sandbox 的 writeFiles（整套打包一次 POST）和 E2B 的 files.write（一个请求带多个文件）的做法，一套文件只占一个子请求；
+   exec 的标准输入最多 1 MiB，超了就按顺序分几次。每个文件先写临时文件、核对摘要、给好权限再换名：内核和控制器读不到写了一半的文件；
+   按给的顺序写，依赖（和内核）在前、入口在最后——入口一出现，它 import 的文件都已经在了。 */
+// 出错时标准错误只写一行原因（Worker 只把最后两行报给网页，Node 默认会打一串调用栈）
+export const AGENT_INSTALL = String.raw`'use strict';
+const fs=require('fs'),path=require('path'),crypto=require('crypto');
+try{
+  const dir=process.argv[1],files=JSON.parse(fs.readFileSync(0,'utf8'));
+  if(!path.isAbsolute(dir||'')||!Array.isArray(files))throw Error('bad input');
+  for(const f of files){
+    const name=path.basename(String(f&&f.path)),mode={'0644':0o644,'0755':0o755}[f&&f.mode];
+    if(path.dirname(String(f.path))!==dir||!/^vm-[a-z0-9-]+-[0-9a-f]{12}\.mjs$/.test(name)||!mode||typeof f.text!=='string')throw Error('bad file: '+name);
+    if(crypto.createHash('sha256').update(f.text).digest('hex')!==f.sha256)throw Error('digest mismatch: '+name);
+    fs.mkdirSync(dir,{recursive:true});
+    const tmp=path.join(dir,'.'+name+'.'+process.pid+'.tmp');
+    try{fs.writeFileSync(tmp,f.text,{mode});fs.chmodSync(tmp,mode);fs.renameSync(tmp,f.path);}
+    finally{try{fs.unlinkSync(tmp);}catch{}}
   }
-  const u = await putAgentFile(env, id, agent, '0755');
-  if (!u.ok) throw await ibErr(u);
+  process.stdout.write(JSON.stringify({ok:true,installed:files.length}));
+}catch(e){process.stderr.write(String(e&&e.message||e)+'\n');process.exitCode=1;}`;
+const INSTALL_STDIN_MAX = 1048576 - 8192;   // InstaBox exec 的标准输入最多 1 MiB（按字节算），留点余量
+async function installFiles(env, id, files) {
+  const batches = [];
+  let cur = [], size = 2;
+  for (const f of files) {
+    const item = { path: f.path, mode: f.mode, sha256: f.sha256, text: f.text }, n = enc.encode(JSON.stringify(item)).length + 1;
+    if (cur.length && size + n > INSTALL_STDIN_MAX) { batches.push(cur); cur = []; size = 2; }
+    cur.push(item); size += n;
+  }
+  if (cur.length) batches.push(cur);
+  for (const batch of batches) {
+    const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['node', '-e', AGENT_INSTALL, VM_DIR], stdin: JSON.stringify(batch), timeoutSeconds: 40 }) });
+    if (!r.ok) throw await ibErr(r);
+    const res = await r.json();
+    if (res.exitCode !== 0) throw { status: 500, code: 'install_failed', msg: '控制器文件没装上（退出码 ' + res.exitCode + '）：' + String(res.stderr || '').trim().split('\n').slice(-2).join(' ') };
+  }
 }
+// 一整套：依赖（和内核）在前，入口在最后
+function agentFiles(agent) {
+  return [...agent.dependencies.map(f => ({ ...f, mode: '0644' })), ...(agent.kernel ? [{ ...agent.kernel, mode: '0644' }] : []),
+    { path: agent.path, text: agent.text, sha256: agent.sha256, mode: '0755' }];
+}
+function uploadAgent(env, id, agent) { return installFiles(env, id, agentFiles(agent)); }
 // The controller's scripts live on a machine where fully privileged agents also run. A script is found by the hash in
 // its name, so a file edited in place would keep being executed. Every ten minutes (per isolate) compare what is on
 // the machine with what this deployment ships; anything different is replaced and the incident is written down.
@@ -177,7 +214,7 @@ export async function verifyAgent(env, origin, id, now = Date.now()) {
   // A missing file is uploaded by exec() when it is first needed; only a present file with other content is an incident.
   const changed = files.filter(f => found.has(f.path) && found.get(f.path) !== f.sha256);
   if (!changed.length) return { ok: true };
-  for (const f of files) { const u = await putAgentFile(env, id, f, f === agent ? '0755' : '0644'); if (!u.ok) { verifiedAt = 0; throw await ibErr(u); } }
+  try { await uploadAgent(env, id, agent); } catch (e) { verifiedAt = 0; throw e; }
   await exec(env, origin, id, 'integrity_event', { files: changed.map(f => f.path.split('/').pop()) }).catch(() => null);
   return { ok: false, repaired: changed.length };
 }
