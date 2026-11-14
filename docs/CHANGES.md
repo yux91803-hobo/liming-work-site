@@ -6,7 +6,7 @@
 - **原因**：状态进程启动前扫 `/proc`，找同一目录下用 node 跑 `vm-agent.mjs`、XIN_HOME 相同的进程：没接状态桥的拒绝启动；读不出 environ 的当成「核对不了」，也拒绝。别的测试同时在起、退控制器，扫到的进程正好在退出时，内核已经收走它的内存映射。Linux v6.18 的 `task_dump_owner`（`fs/proc/base.c`）对这样的进程把 `/proc/<pid>/` 下的文件算作归 root，普通用户读 environ 得到 EACCES，于是被误拦。CI 执行机用普通用户 `actions-box` 跑，会碰到；本会话用 root，读到的是 ESRCH（本来就跳过），所以本地一直没复现。
 - **改法**：读不出 environ、或者读出来以后发现没有桥标记时，先看 `/proc/<pid>/stat`：进程已经没了、是僵尸或已死（Z / X）、或者第 9 项 flags 带 `PF_EXITING`（0x4，正在退出），就跳过；还活着的照旧拒绝。主线内核已经改写 `task_dump_owner`，较新的内核读正在退出的进程可能读出空内容（走到「没有桥标记」那一支），同一个判断也覆盖到——这一条是按源码推断，没在新内核上实测。
 - **验证**：新增 `test/xin-kernel-compat.test.cjs` 5 个，用假的 `/proc` 目录（测试可能以 root 运行，造不出 EACCES，就把 environ 做成目录让读取失败）。其中 4 个先红后绿；「还活着却读不到 environ 照旧拒绝」改前改后都过，用来证明假进程确实过了前面的筛选。真实复现：以普通用户（nobody）一边不停起、退 vm-agent 进程，一边反复调用核对，各 25 秒、各约 1100 个进程：改前 12111 次核对误拦 6 次（都是「无法核对旧控制器」），改后 12407 次 0 次。原有用真旧控制器验证会被拒绝的测试照旧通过。
-- **重跑一次**：查清是这个竞争、和 #143 的改动无关以后，对 43627096116 的 check 作业重跑了一次（同一个作业只重跑一次），结果记在交接记录和这次的 PR 里。
+- **重跑一次**：查清是这个竞争、和 #143 的改动无关以后，对 43627096116 的 check 作业重跑了一次（同一个作业只重跑一次）：第二次 check 通过，北京时间 02:57 部署，冒烟和正式站联调都通过，没有回滚，#143 就此上线。
 - **参考**：psutil [`psutil/_pslinux.py`](https://github.com/giampaolo/psutil/blob/master/psutil/_pslinux.py) 遇到 `/proc` 读取失败时先读 `/proc/<pid>/stat` 看是不是僵尸（`_raise_if_zombie`），这里照着做，并多认 `PF_EXITING`；Linux [`fs/proc/base.c`（v6.18）](https://github.com/torvalds/linux/blob/v6.18/fs/proc/base.c) 的 `task_dump_owner`；[`include/linux/sched.h`](https://github.com/torvalds/linux/blob/master/include/linux/sched.h) 的 `PF_EXITING`；proc(5) 对 stat 第 9 项 flags 的说明（[man-pages](https://github.com/mkerrisk/man-pages/blob/master/man5/proc.5)）。
 
 # 修改清单 · 2026-11-14（小芯内核第 2 步 · 第 1 批最后一块：持久用户服务）
