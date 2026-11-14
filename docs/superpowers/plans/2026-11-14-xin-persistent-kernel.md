@@ -48,3 +48,8 @@ node "$HOME/.xin/agent/vm-kernel-<已验证旧哈希>.mjs" ensure --port 8797
 systemd [unit.c / unit_may_gc](https://github.com/systemd/systemd/blob/main/src/core/unit.c) 与 [service.c / service_may_gc](https://github.com/systemd/systemd/blob/main/src/core/service.c) 不回收仍有进程的单元。`KillMode=process` 下旧 `xin-kernel.service` 可能因后台任务保留 transient 定义。因此持久服务改用独立名字 `xin-kernel-resident.service`，旧临时服务只停主进程，不等后台任务退出；新服务校验实际 FragmentPath、MainPID 与健康 PID 一致且 is-enabled=enabled，不能只凭 HTTP 健康声称持久化成功。回退时恢复旧持久单元，或恢复仍存留的旧 transient 单元；它已回收时用已保存的旧哈希模块按原方法重建。
 
 这不改变传输或状态所有者协议，也不新增权限。模拟覆盖后台工作继续完成、旧 transient 不回收时迁移和恢复；真正宿主上的启动条件仍由发布后只读核验确认。模块路径受 Node ESM 限制（反斜杠路径本来就不能作为模块入口）；环境/参数转义保留，实际启动与 systemd-analyze --user verify 覆盖空格、百分号、美元符号、引号。
+
+
+## 本地完成与发布阻塞的修正
+
+持久服务本体 `eb1a9b6`：check 854/854、kernel 171/171、E2E 12 组、专项 51/51 均退出 0。仅在隔离临时目录中做故障注入，没有操作真实服务。#141 正式运行首次浏览器两项像素交互失败，部署被跳过，因此正式站仍未更新。Codex 追加 E2E 测试定位/观察修正，保留“附近不醒、点身体才醒”和“抓头、鼠标在卡片上方、身体激活卡片、松手打开工具”的保证，网站产品文件不改。延迟导致旧坐标失效已复现；修正后的完整 12 组 E2E 已从头通过；当前 PR/正式发布仍须线上验收，不用早先结果冒充。

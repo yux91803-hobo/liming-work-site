@@ -312,6 +312,17 @@ async def xin_mock(pg, authed=False, live=None):
     return st
 
 # 用鼠标把首页的小芯拖进某张卡片。小芯会自己走来走去、跳舞：先等它站定再按下去，
+async def xin_head_position(pg):
+    # 相对当前元素的可见像素位置，让 Locator 在动作时重新定位；不能复用几秒前的页面坐标。
+    return await pg.evaluate("""(() => {
+      const r=LimingXin.el.getBoundingClientRect(), x=r.x+r.width/2;
+      for(let y=Math.max(0,r.y);y<r.bottom;y++) {
+        const target=document.elementFromPoint(x,y);
+        if(target && LimingXin.el.contains(target)) return {x:r.width/2,y:y+2-r.y};
+      }
+      throw new Error('小芯没有可抓住的可见像素');
+    })()""")
+
 # 按空了（它刚好挪开）就再来一次，最多 4 次；拖进去以后卡片对应的工具会打开
 async def drag_xin_into(pg, card_id):
     for attempt in range(4):
@@ -1261,16 +1272,17 @@ async def main():
         # 电脑：右键打开背包；让它睡以后鼠标在旁边晃、点别处都不吵醒它，点它才醒；玩灯时表情不跟着灯来回变
         pg = await page(b)
         await pg.goto(BASE + '/'); await pg.wait_for_timeout(2500)
-        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height * 0.55]; })()")
-        await pg.mouse.click(r[0], r[1], button='right'); await pg.wait_for_timeout(200)
+        await pg.locator('.xin').click(button='right', position=await xin_head_position(pg)); await pg.wait_for_timeout(200)
         check('电脑：右键小芯打开小背包', await pg.evaluate("!!document.querySelector('.xin-bag')"))
         await pg.click('.xin-bag .xin-it:has-text("睡觉")'); await pg.wait_for_timeout(200)
+        r = await pg.evaluate("(() => { const r = LimingXin.el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height * 0.55]; })()")
         for i in range(15):
             await pg.mouse.move(r[0] + 120 * ((i % 5) - 2), r[1] + 50 * ((i % 3) - 1)); await pg.wait_for_timeout(50)
         await pg.mouse.click(1100, 700); await pg.wait_for_timeout(300)
         check('电脑：睡着以后鼠标在旁边晃、点别处都不会吵醒它', await pg.evaluate("LimingXin.mode") == 'sleep')
-        await pg.mouse.click(r[0], r[1]); await pg.wait_for_timeout(200)
-        check('电脑：点它才醒', await pg.evaluate("LimingXin.mode") != 'sleep')
+        await pg.evaluate("document.addEventListener('pointerup',()=>{window.__xinBeforeWake=LimingXin.mode},{capture:true,once:true})")
+        await pg.locator('.xin').click(position=await xin_head_position(pg)); await pg.wait_for_timeout(200)
+        check('电脑：点它才醒', await pg.evaluate("window.__xinBeforeWake === 'sleep' && LimingXin.mode !== 'sleep'"))
         faces = await pg.evaluate("LimingXin.frames('led').map(f => f.face || '')")
         hap = [i for i, f in enumerate(faces) if f == 'hap']
         check('玩灯：一直盯着灯看，最后才笑一下（表情不来回切）', len(hap) == 1 and all(f in ('', 'eyes') for f in faces[:hap[0]]), faces)
@@ -1282,17 +1294,17 @@ async def main():
         await pg.bring_to_front()
         await pg.evaluate("document.fonts.ready")
         await pg.wait_for_function("window.LimingXin && LimingXin.mode === 'idle' && !!LimingXin.plat")
-        r = await pg.evaluate("""(() => { const r = LimingXin.el.getBoundingClientRect(), cx = r.x + r.width / 2;
-          for (let yy = r.y; yy < r.bottom; yy++) { const e = document.elementFromPoint(cx, yy); if (e && LimingXin.el.contains(e)) return [cx, yy + 2]; }
-          throw new Error('小芯没有可抓住的头部'); })()""")
-        c = await pg.evaluate("(() => { const r = document.querySelector('.card[data-id=stm32]').getBoundingClientRect(); return [r.x + r.width / 2, r.y]; })()")
+        c = await pg.evaluate("(() => { const r=document.querySelector('.card[data-id=stm32]').getBoundingClientRect(), b=document.body.getBoundingClientRect(); return {x:r.x+r.width/2-b.x,y:r.y-6-b.y}; })()")
         try:
-            await pg.mouse.move(r[0], r[1]); await pg.mouse.down()
-            await pg.mouse.move(c[0], c[1] - 6, steps=6)
-            await pg.wait_for_function("LimingXin.mode === 'drag' && !!document.querySelector('.card[data-id=stm32].xin-over')", timeout=3000)
-            await pg.mouse.up()
+            # 在真正松手的捕获阶段留证；不在多次跨进程 mouse RPC 之间读一个易逝状态。
+            await pg.evaluate("""document.addEventListener('pointerup',e=>{
+              const card=document.querySelector('.card[data-id=stm32]');
+              window.__xinDrop={mode:LimingXin.mode,over:document.querySelector('.card.xin-over')?.dataset.id,above:e.clientY<card.getBoundingClientRect().top};
+            },{capture:true,once:true})""")
+            await pg.locator('.xin').drag_to(pg.locator('body'),source_position=await xin_head_position(pg),target_position=c)
             await pg.wait_for_function("document.body.classList.contains('tool-open')", timeout=5000)
-            check('电脑：抓着头拖、身子在学习台卡片上，松手就进去', True)
+            drop=await pg.evaluate("window.__xinDrop")
+            check('电脑：抓着头拖、身子在学习台卡片上，松手就进去', bool(drop and drop['mode']=='drag' and drop['over']=='stm32' and drop['above']), drop)
         except Exception:
             detail = await pg.evaluate("({mode:LimingXin.mode,visible:document.visibilityState,focused:document.hasFocus(),over:document.querySelector('.card.xin-over')?.dataset.id,open:document.body.classList.contains('tool-open'),rect:LimingXin.el.getBoundingClientRect().toJSON()})")
             check('电脑：抓着头拖、身子在学习台卡片上，松手就进去', False, detail)
