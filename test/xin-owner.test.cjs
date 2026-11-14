@@ -86,15 +86,37 @@ test('八个进程同时第一次用：都拿得到共享锁', async t => {
 });
 
 test('owner.sqlite 是软链接：拒绝', async t => {
-  const dir = home(t), { Ownership } = await import(url);
-  fs.writeFileSync(path.join(dir, 'elsewhere'), ''); fs.symlinkSync(path.join(dir, 'elsewhere'), path.join(dir, 'owner.sqlite'));
-  assert.throws(() => new Ownership(dir).enter(), /软链接/);
+  const { Ownership } = await import(url);
+  for (const exists of [false, true]) {
+    const dir = home(t), target = path.join(dir, 'elsewhere');
+    if (exists) fs.writeFileSync(target, '');
+    fs.symlinkSync(target, path.join(dir, 'owner.sqlite'));
+    assert.throws(() => new Ownership(dir).enter(), /软链接/);
+    assert.equal(fs.existsSync(target), exists);
+  }
 });
 
 test('owner.sqlite 打不开（被建成了目录）：写入口抛错，不当成旧模式', async t => {
   const dir = home(t), { Ownership } = await import(url);
   fs.mkdirSync(path.join(dir, 'owner.sqlite'));
   assert.throws(() => new Ownership(dir).enter(), e => e.code !== 'owner_unavailable');
+});
+
+test('所有权记录损坏或协议不认识时拒绝，不把它猜成旧模式', async t => {
+  const { Ownership, BRIDGE_PROTOCOL } = await import(url);
+  for (const values of [
+    { mode: 'unknown', epoch: '1', protocol: String(BRIDGE_PROTOCOL), since: '1' },
+    { epoch: '1' },
+    { mode: 'legacy', epoch: '1', protocol: String(BRIDGE_PROTOCOL + 1), since: '1' },
+    { mode: 'legacy', epoch: 'broken', protocol: String(BRIDGE_PROTOCOL), since: '1' },
+  ]) {
+    const o = new Ownership(home(t)); t.after(() => o.close());
+    const put = o.db.prepare('INSERT INTO owner(k,v) VALUES(?,?)');
+    for (const [k, v] of Object.entries(values)) put.run(k, v);
+    assert.throws(() => o.enter(), e => e.code === 'owner_invalid');
+    assert.equal(o.depth, 0);
+    assert.throws(() => o.record(), e => e.code === 'owner_invalid');
+  }
 });
 
 test('改记录改到一半被 kill -9：读到的还是上一次提交的，写入口照常', async t => {
@@ -141,6 +163,16 @@ test('主人活着：控制器回 owner_unavailable，状态库没有被建出�
   await proc(t, dir, OWNER).line();
   assert.equal(JSON.parse(cli(dir, 'sessions').stdout).error, 'owner_unavailable');
   assert.equal(fs.existsSync(path.join(dir, 'workflow.sqlite')), false);
+});
+
+test('主人活着时长进程的启动恢复也不能创建状态库', async t => {
+  for (const op of ['run', 'callback', 'memory-idle']) {
+    const dir = home(t); await proc(t, dir, OWNER).line();
+    const r = cli(dir, op);
+    assert.notEqual(r.status, 0, op + ' 不能越过恢复入口');
+    assert.match(r.stderr, /owner_alive/);
+    assert.equal(fs.existsSync(path.join(dir, 'workflow.sqlite')), false);
+  }
 });
 
 test('该内核当主人但它不在：控制器同样不写，不悄悄退回旧模式', async t => {

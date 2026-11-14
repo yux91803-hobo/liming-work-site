@@ -30,7 +30,8 @@ export class Ownership {
   get db() {
     if (this.connection) return this.connection;
     fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
-    if (fs.existsSync(this.file) && fs.lstatSync(this.file).isSymbolicLink()) throw Error('所有权库不能是软链接');
+    let stat; try { stat = fs.lstatSync(this.file); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    if (stat?.isSymbolicLink()) throw Error('所有权库不能是软链接');
     const d = new DatabaseSync(this.file);
     try {
       fs.chmodSync(this.file, 0o600);
@@ -45,7 +46,14 @@ export class Ownership {
   }
   rows() {
     const r = Object.fromEntries(this.db.prepare('SELECT k, v FROM owner').all().map(x => [x.k, x.v]));
-    return { mode: r.mode === 'kernel' ? 'kernel' : 'legacy', epoch: Number(r.epoch) || 0, protocol: Number(r.protocol) || 0, since: Number(r.since) || 0 };
+    if (!Object.keys(r).length) return { mode: 'legacy', epoch: 0, protocol: 0, since: 0 };
+    const epoch = Number(r.epoch), protocol = Number(r.protocol), since = Number(r.since);
+    // 只有真正的新库才能默认旧模式。损坏/不认识的记录不能放行旧写者，也不自动覆盖修复。
+    if (!KEYS.every(k => Object.hasOwn(r, k)) || !['legacy', 'kernel'].includes(r.mode) ||
+        !Number.isSafeInteger(epoch) || epoch < 1 || !Number.isSafeInteger(protocol) || protocol < 1 || protocol > BRIDGE_PROTOCOL ||
+        !Number.isSafeInteger(since) || since < 0)
+      throw Object.assign(new Error('所有权记录损坏或桥协议不兼容'), { code: 'owner_invalid' });
+    return { mode: r.mode, epoch, protocol, since };
   }
   save(mode) {
     const now = this.rows(), next = { mode, epoch: now.epoch + 1, protocol: BRIDGE_PROTOCOL, since: Date.now() };

@@ -62,6 +62,48 @@ test('有提交了但没投影的行时 recover 照样补写',async t=>{
 const refuse = { enter() { throw Object.assign(new Error('owner_alive'), { code: 'owner_unavailable', status: 'alive' }); } };
 const counting = () => { const c = { entered: 0, released: 0, enter() { c.entered++; return () => { c.released++; }; } }; return c; };
 
+test('没有写权时冷启动不能创建空状态库，已有空文件也不被初始化', async t => {
+  const { StateJournal } = await import(moduleUrl);
+  for (const emptyFile of [false, true]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-state-init-owner-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const file = path.join(root, 'workflow.sqlite');
+    if (emptyFile) fs.writeFileSync(file, '');
+    const j = new StateJournal(root); j.owner = refuse; t.after(() => j.close());
+    assert.throws(() => j.recover(), e => e.code === 'owner_unavailable');
+    assert.equal(fs.existsSync(file), emptyFile);
+    if (emptyFile) assert.equal(fs.statSync(file).size, 0);
+    assert.equal(fs.existsSync(file + '-wal'), false);
+  }
+});
+
+test('没有写权时不能借读库升级旧 schema 或切换日志模式；失败后连接可重新初始化', async t => {
+  const { StateJournal } = await import(moduleUrl), { DatabaseSync } = require('node:sqlite');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-state-schema-owner-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'workflow.sqlite'), old = new DatabaseSync(file);
+  old.exec("CREATE TABLE launches(run TEXT PRIMARY KEY,sid TEXT NOT NULL,lane INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'pending',at INTEGER NOT NULL)");
+  old.close(); const before = fs.readFileSync(file);
+  const j = new StateJournal(root); j.owner = refuse; t.after(() => j.close());
+  assert.throws(() => j.recover(), e => e.code === 'owner_unavailable');
+  assert.equal(j.connection == null, true, '不能缓存初始化失败的连接');
+  assert.deepEqual(fs.readFileSync(file), before);
+  const check = new DatabaseSync(file, { readOnly: true });
+  try {
+    assert.deepEqual(check.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(x => x.name), ['launches']);
+    assert.equal(check.prepare('PRAGMA journal_mode').get().journal_mode, 'delete');
+  } finally { check.close(); }
+  j.owner = null; j.recover();
+  assert.ok(j.db.prepare('PRAGMA table_info(launches)').all().some(c => c.name === 'attempts'));
+});
+
+test('状态库的悬空软链接也拒绝，不在链接目标创建文件', async t => {
+  const { root, j } = await fixture(t), target = path.join(root, 'elsewhere.sqlite');
+  fs.symlinkSync(target, path.join(root, 'workflow.sqlite'));
+  assert.throws(() => j.recover(), /软链接/);
+  assert.equal(fs.existsSync(target), false);
+});
+
 test('主人活着时状态库的写入口都不执行、不落任何行；读不受影响', async t => {
   const { root, j } = await fixture(t);
   j.atomic(() => { j.write(root + '/a.json', '{"v":1}'); j.enqueueLaunch('r1', 's1'); j.enqueueHandoff({ id: 'h1', parent: 'sp', task: 'st', version: 'v1', payload: {} }); });
@@ -81,7 +123,7 @@ test('主人活着时状态库的写入口都不执行、不落任何行；读�
 });
 
 test('一次最外层事务只过一次所有权检查；提交、回滚、抛错之后都放掉；没有要投影的就不去检查', async t => {
-  const { root, j } = await fixture(t), c = counting(); j.owner = c;
+  const { root, j } = await fixture(t), c = counting(); j.recover(); j.owner = c;
   j.recover(); assert.deepEqual([c.entered, c.released], [0, 0]);
   j.atomic(() => { j.write(root + '/a.json', '{}'); j.atomic(() => j.enqueueLaunch('r1', 's1')); });
   assert.equal(c.entered, 1); assert.equal(c.released, 1);

@@ -6,6 +6,17 @@ import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
 export const inputDigest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const SCHEMA = `CREATE TABLE IF NOT EXISTS documents (name TEXT PRIMARY KEY, body TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, dirty INTEGER NOT NULL DEFAULT 1);
+      CREATE TABLE IF NOT EXISTS appends (id TEXT PRIMARY KEY, name TEXT NOT NULL, body TEXT NOT NULL, projected INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, digest TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS launches (run TEXT PRIMARY KEY, sid TEXT NOT NULL, lane INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, dispatchedAt INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS handoffs (id TEXT PRIMARY KEY, parent TEXT NOT NULL, task TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, nextAt INTEGER NOT NULL, run TEXT);
+      CREATE INDEX IF NOT EXISTS dirty_documents ON documents(name) WHERE dirty=1;
+      CREATE INDEX IF NOT EXISTS unprojected_appends ON appends(projected) WHERE projected=0;
+      CREATE INDEX IF NOT EXISTS pending_launches ON launches(state,lane,at);
+      CREATE INDEX IF NOT EXISTS pending_handoffs ON handoffs(state,nextAt,parent);`;
+const SCHEMA_NAMES = [...SCHEMA.matchAll(/CREATE (?:TABLE|INDEX) IF NOT EXISTS (\w+)/g)].map(m => m[1]);
 export class StateJournal {
   constructor(root) { this.root=path.resolve(root);this.active=false;this.overlay=new Map();this.after=[];this.owner=null;this.writers=0; }
   // 所有写入口都从这里过（docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.2）：旧模式下拿着共享的所有权锁写，
@@ -18,33 +29,37 @@ export class StateJournal {
   }
   get db(){
     if(this.connection)return this.connection;
+    const file=path.join(this.root,'workflow.sqlite');
+    let stat;try{stat=fs.lstatSync(file);}catch(e){if(e.code!=='ENOENT')throw e;}
+    if(stat?.isSymbolicLink())throw Error('状态库不能是软链接');
+    // 打开缺失/空库本身就会写文件。先拿所有权，不能先创建了再在 recover 里拒绝。
+    return !stat||stat.size===0?this.writing(()=>this.#open()):this.#open();
+  }
+  #open(){
     fs.mkdirSync(this.root,{recursive:true,mode:0o700});
     const file=path.join(this.root,'workflow.sqlite');
     if(fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw Error('状态库不能是软链接');
-    const d=new DatabaseSync(file);fs.chmodSync(file,0o600);
-    d.exec('PRAGMA busy_timeout=15000');
+    const d=new DatabaseSync(file);
+    try{
+    fs.chmodSync(file,0o600);d.exec('PRAGMA busy_timeout=15000; PRAGMA synchronous=FULL');
     // Concurrent first opens race on WAL setup and schema creation, which can report busy without
     // waiting. Every statement below is idempotent: retry briefly, and cache the connection only once ready.
     for(let attempt=0;;attempt++)try{
-    d.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-      CREATE TABLE IF NOT EXISTS documents (name TEXT PRIMARY KEY, body TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, dirty INTEGER NOT NULL DEFAULT 1);
-      CREATE TABLE IF NOT EXISTS appends (id TEXT PRIMARY KEY, name TEXT NOT NULL, body TEXT NOT NULL, projected INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, digest TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS launches (run TEXT PRIMARY KEY, sid TEXT NOT NULL, lane INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, dispatchedAt INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS handoffs (id TEXT PRIMARY KEY, parent TEXT NOT NULL, task TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, nextAt INTEGER NOT NULL, run TEXT);
-      CREATE INDEX IF NOT EXISTS dirty_documents ON documents(name) WHERE dirty=1;
-      CREATE INDEX IF NOT EXISTS unprojected_appends ON appends(projected) WHERE projected=0;
-      CREATE INDEX IF NOT EXISTS pending_launches ON launches(state,lane,at);
-      CREATE INDEX IF NOT EXISTS pending_handoffs ON handoffs(state,nextAt,parent);`);
-    if(!d.prepare('PRAGMA table_info(launches)').all().some(c=>c.name==='attempts'))d.exec('ALTER TABLE launches ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
-    if(!d.prepare('PRAGMA table_info(launches)').all().some(c=>c.name==='dispatchedAt'))d.exec('ALTER TABLE launches ADD COLUMN dispatchedAt INTEGER NOT NULL DEFAULT 0');
+    const have=new Set(d.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','index')").all().map(r=>r.name));
+    const columns=new Set(d.prepare('PRAGMA table_info(launches)').all().map(c=>c.name));
+    if(!SCHEMA_NAMES.every(n=>have.has(n))||!columns.has('attempts')||!columns.has('dispatchedAt')||d.prepare('PRAGMA journal_mode').get().journal_mode!=='wal')this.writing(()=>{
+      d.exec('PRAGMA journal_mode=WAL;'+SCHEMA);
+      const latest=new Set(d.prepare('PRAGMA table_info(launches)').all().map(c=>c.name));
+      if(!latest.has('attempts'))d.exec('ALTER TABLE launches ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
+      if(!latest.has('dispatchedAt'))d.exec('ALTER TABLE launches ADD COLUMN dispatchedAt INTEGER NOT NULL DEFAULT 0');
+    });
     break;
     }catch(e){
-      if(![5,6].includes(e.errcode)&&!/duplicate column/.test(e.message)||attempt>=60){d.close();throw e;}
+      if(![5,6].includes(e.errcode)&&!/duplicate column/.test(e.message)||attempt>=60)throw e;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10+attempt*5);
     }
     return this.connection=d;
+    }catch(e){d.close();throw e;}
   }
   name(file){const n=path.relative(this.root,path.resolve(file));if(!n||n.startsWith('..')||path.isAbsolute(n))throw Error('状态投影越界');return n;}
   staged(file){if(!this.active)return;try{return this.overlay.get(this.name(file));}catch{return;}}
