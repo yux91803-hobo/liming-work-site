@@ -376,7 +376,7 @@ Worker ──HTTPS + 签名──▶ 内核外壳 xin-kernel（常驻；不碰�
 ## 12. 参考
 
 - [tmux `client.c`](https://github.com/tmux/tmux/blob/master/client.c) 的 `client_get_lock` / `client_connect`：客户端连不上服务端时，先在套接字旁边的 `<套接字>.lock` 上拿独占锁，保证只起一个服务端。「客户端经套接字找常驻进程，用一把锁保证只有一个」的做法取自这里；锁换成了 SQLite 的，理由见 §6.2。
-- [SQLite 文件锁](https://www.sqlite.org/lockingv3.html)：共享锁、独占锁和进程退出时释放的语义。本文的两个探针实测了用到的每一条。
+- [SQLite 文件锁](https://www.sqlite.org/lockingv3.html)：共享锁、独占锁和进程退出时释放的语义。§6.2 表里的五条是两个探针实测的；「主人在等独占锁的时候，不再放新的写者进来」这一条是按文档写的，没有实测，第 1 批的切换演练要覆盖它。
 - [synckit](https://github.com/un-ts/synckit)：用工作线程把异步的事做成同步调用。
 - [OpenClaw 命令队列](https://docs.openclaw.ai/concepts/queue)：每个会话一次一轮，加一条全局通道限制并发。
 - #137 计划里已经列的：Codex app-server 和结构化审批、ACP 工具调用、SQLite 备份接口。
