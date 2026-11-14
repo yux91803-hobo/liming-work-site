@@ -559,7 +559,7 @@ test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做�
   assert.strictEqual(r.agent, 'codex');
   let p = null, completed = null;
   // A model turn can finish before the controller has published the daily task and its day marker.
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) { completed=op('tasks',{all:true}).tasks.find(t=>t.sid===r.sid);if(completed?.status==='done')break; } await new Promise(s => setTimeout(s, 200)); }
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) { completed=op('tasks',{all:true}).tasks.find(t=>t.sid===r.sid);if(completed?.status==='done')break; } await new Promise(s => setTimeout(s, 200)); }
   assert.strictEqual(completed?.status,'done',JSON.stringify({done:p?.done,task:completed?.status}));
   const ts = p.events.map(e => e.t);
   assert.deepStrictEqual(ts, ['user', 'status', 'text', 'done'], JSON.stringify(p.events));
@@ -714,7 +714,7 @@ function agentEnv(extraEnv = {}) {
 test('前台缓存：系统提示每轮一字不差（不带时间、记忆、每日记录）；这些资料放在本轮输入里，排在历史之后、原话之前', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-cache-')), log = path.join(tmp, 'front.log');
   const { op } = agentEnv({ XIN_FRONT_TEST_LOG: log });
-  const done = async run => { for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { if (op('poll', { run, off: 0 }).done) return; await new Promise(ok => setTimeout(ok, 120)); } assert.fail('这一轮没有结束'); };
+  const done = async run => { for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { if (op('poll', { run, off: 0 }).done) return; await new Promise(ok => setTimeout(ok, 120)); } assert.fail('这一轮没有结束'); };
   const a = op('send', { agent: 'codex', text: '第一句' }); await done(a.run);
   // 两轮之间记忆变了：以前会让系统提示跟着变，缓存失效
   assert.ok(op('memory_add', { content: '讲代码先给结论', type: 'profile' }).ok);
@@ -910,7 +910,7 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   assert.ok(r.run, JSON.stringify(r));
   assert.strictEqual(r.title, '板子.jpg、说明.pdf');
   let p = null;
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
   const user = p.events[0];
   assert.deepStrictEqual(user.files, [{ name: '板子.jpg', path: img, size: 3, image: true }, { name: '说明.pdf', path: pdf, size: 3, image: false }]);
   assert.strictEqual(user.text, '');
@@ -930,7 +930,7 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   const r2 = op('send', { sid: r.sid, model: 'kimi-k3.1-pro', effort: 'low', text: '用 GLM-5.3 看看这张呢', files: [{ path: img, name: '板子.jpg' }] });
   assert.ok(r2.run, JSON.stringify(r2));
   assert.strictEqual(r2.model, 'deepseek-v4.1-flash');
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { p = op('poll', { run: r2.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r2.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
   const request2 = JSON.parse(fs.readFileSync(log,'utf8').trim().split('\n').pop());
   assert.equal(request2.model,'deepseek-v4.1-flash');
   assert.ok(JSON.stringify(request2).includes('本轮已记录用户指定'));
@@ -939,7 +939,7 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   // 点名看不了图的 GLM-5.3 Flash 却发了图：路由器不让，换成能看图的（前台默认那个）
   const r3 = op('send', { sid: r.sid, text: '用 GLM-5.3 Flash 看图', files: [{ path: img, name: '板子.jpg' }] });
   assert.strictEqual(r3.model, 'deepseek-v4.1-flash');
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { p = op('poll', { run: r3.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r3.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
   // 每一轮都记进运行记录（调候选顺序用）
   const stats = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
   assert.deepStrictEqual(stats.map(x => [x.agent, x.model, x.kind, x.why, x.ok]), [['codex', 'deepseek-v4.1-flash', 'chat', 'chat', true], ['codex', 'deepseek-v4.1-flash', 'chat', 'chat', true], ['codex', 'deepseek-v4.1-flash', 'chat', 'chat', true]]);
@@ -1004,7 +1004,7 @@ test('每日任务用默认模式：Codex 按 daily 类别挑模型、思考强�
   const r = op('daily');
   assert.deepStrictEqual([r.agent, r.model], ['codex', 'glm-5.3'], JSON.stringify(r));
   let p;
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
   const args = fs.readFileSync(log, 'utf8').split('\n');
   assert.ok(args.includes('model="glm-5.3"') && args.includes('model_reasoning_effort="max"'), args.join(' '));
   assert.ok(!fs.existsSync(path.join(tmp, 'dsh-ran')));
@@ -1050,8 +1050,8 @@ function fakeTaskCodex(dir) {
   return { bin, log, args: () => fs.readdirSync(log).filter(f => /^args\.\d+$/.test(f)).sort((a, b) => a.split('.')[1] - b.split('.')[1]).map(f => fs.readFileSync(path.join(log, f), 'utf8')) };
 }
 async function until(fn, ms = 15000, what = '') {
-  const t0 = Date.now(); let v; ms = platformTimeout(ms);
-  while (Date.now() - t0 < ms) { v = fn(); if (v) return v; await new Promise(ok => setTimeout(ok, 120)); }
+  const t0 = performance.now(); let v; ms = platformTimeout(ms);
+  while (performance.now() - t0 < ms) { v = fn(); if (v) return v; await new Promise(ok => setTimeout(ok, 120)); }
   throw new Error('等不到：' + what + ' ' + JSON.stringify(v));
 }
 
@@ -1301,7 +1301,7 @@ test('Harness（天启）：dsh headless --json 起，带天启自己的设定�
   fs.mkdirSync(xin, { recursive: true });
   fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
   assert.ok(op('ping').agents.includes('harness'));
-  const poll = async run => { let p; for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { p = op('poll', { run, off: 0 }); if (p.done) return p; await new Promise(ok => setTimeout(ok, 150)); } return p; };
+  const poll = async run => { let p; for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run, off: 0 }); if (p.done) return p; await new Promise(ok => setTimeout(ok, 150)); } return p; };
   const stale = path.join(xin, 'harness-persona.glm-5.3.high.yml');   // 旧版设定副本里带着小芯的记事本
   fs.writeFileSync(stale, '    personaPrefix: "你就是小芯…<<<记事本\\n- 旧记录\\n记事本>>>"\n');
   const r = op('send', { agent: 'harness', text: '-看看目录', effort: 'off' });   // 天启要明确指定；思考强度「关」
@@ -1518,7 +1518,7 @@ test('对话的用量：Codex 取记录里最后一条 token_count（累计、�
   const want1 = { ctx: 120342, win: 258400, input: 3699260, cached: 3567104, output: 28753, total: 3728013 };
   const r = op('send', { agent: 'codex', text: '你好' });
   let p = null;
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
   const done = p.events.find(e => e.t === 'done');
   assert.equal(done.usage.total,13);
   const legacy=JSON.parse(fs.readFileSync(path.join(xin,'sessions',r.sid+'.json'),'utf8'));
@@ -1653,7 +1653,7 @@ test('做完提醒：网页没在看时做完就推送（解得开、带标题�
     const br = fakeBrowser();
     assert.strictEqual(op('push_sub', { deviceId:'test-device-1', sub: { endpoint: `http://127.0.0.1:${port}/push/a`, keys: br.keys } }).ok, true);
     const wait = async (run, watch) => {
-      for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) {
+      for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) {
         const p = watch ? op('poll', { run, off: 0, deviceId:'test-device-1',tabId:'test-tab-1',watching:true }) : JSON.parse(fs.readFileSync(path.join(home, 'xin', 'runs', run + '.jsonl'), 'utf8').trim().split('\n').pop());
         if (watch ? p.done : p.t === 'done') return;
         await new Promise(s => setTimeout(s, 150));
@@ -1663,7 +1663,7 @@ test('做完提醒：网页没在看时做完就推送（解得开、带标题�
     // 1. 发完就没人看了：推送
     const r1 = op('send', { agent: 'codex', text: '写个点灯程序' });
     await wait(r1.run, false);
-    for (const end = Date.now() + platformTimeout(5000); Date.now() < end && !got.length;) await new Promise(s => setTimeout(s, 100));
+    for (const end = performance.now() + platformTimeout(5000); performance.now() < end && !got.length;) await new Promise(s => setTimeout(s, 100));
     assert.strictEqual(got.length, 1);
     const g = got[0];
     assert.strictEqual(g.url, '/push/a');

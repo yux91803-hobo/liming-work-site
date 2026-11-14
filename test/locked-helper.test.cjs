@@ -31,9 +31,9 @@ test('别人拿着 tasks 锁时，内部操作会等它放开再做（不是绕�
   try {
     await new Promise(r => setTimeout(r, 300));
     const env = { ...process.env, XIN_HOME: home, XIN_WORK: path.join(home, 'work') };
-    const t0 = Date.now(), r = lockedSpawn(AGENT, 'task_tick', {}, { env, encoding: 'utf8', timeout: 1500 });
+    const t0 = performance.now(), r = lockedSpawn(AGENT, 'task_tick', {}, { env, encoding: 'utf8', timeout: 1500 });
     assert.notEqual(r.status, 0, '锁被占着，不该直接做完');
-    assert.ok(Date.now() - t0 >= 1400, '一直在等锁');
+    assert.ok(performance.now() - t0 >= 1400, '一直在等锁');
     release();
     await new Promise(r => holder.exitCode !== null || holder.signalCode ? r() : holder.on('exit', r));
     const ok = lockedSpawn(AGENT, 'task_tick', {}, { env, encoding: 'utf8', timeout: 20000 });

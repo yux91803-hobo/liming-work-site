@@ -53,8 +53,8 @@ function home(t) {
   return { dir, xin, work, locked, hold, task, fc };
 }
 async function until(fn, ms = 15000, what = '') {
-  const end = Date.now() + platformTimeout(ms); let v;
-  while (Date.now() < end) { v = fn(); if (v) return v; await new Promise(ok => setTimeout(ok, 120)); }
+  const end = performance.now() + platformTimeout(ms); let v;
+  while (performance.now() < end) { v = fn(); if (v) return v; await new Promise(ok => setTimeout(ok, 120)); }
   throw new Error('等不到：' + what + ' ' + JSON.stringify(v));
 }
 

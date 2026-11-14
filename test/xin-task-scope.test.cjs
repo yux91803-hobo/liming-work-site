@@ -50,8 +50,8 @@ function home(t) {
 }
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 async function until(fn, ms = 15000, what = '') {
-  const end = Date.now() + platformTimeout(ms); let v;
-  while (Date.now() < end) { v = await fn(); if (v) return v; await sleep(120); }
+  const end = performance.now() + platformTimeout(ms); let v;
+  while (performance.now() < end) { v = await fn(); if (v) return v; await sleep(120); }
   throw new Error('等不到：' + what + ' ' + JSON.stringify(v));
 }
 async function agentModule(env) {

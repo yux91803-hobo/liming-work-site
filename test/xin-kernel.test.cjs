@@ -210,7 +210,7 @@ test('流：有新事件才推，推的是 poll 原样结果，整段答案不�
     await sleep(300);
     assert.strictEqual(s.messages.length, 0, '没有新事件时不推');
     appendEv(f, 'rstream01', { t: 'text', text: '整段答案 ABC' });
-    for (const end = Date.now() + platformTimeout(3000); Date.now() < end && !s.messages.length;) await sleep(30);
+    for (const end = performance.now() + platformTimeout(3000); performance.now() < end && !s.messages.length;) await sleep(30);
     assert.strictEqual(s.messages.length, 1);
     const d = s.messages[0].data;
     assert.deepStrictEqual(d.events, [{ t: 'text', text: '整段答案 ABC' }]);
@@ -224,12 +224,12 @@ test('流：推出 done 之后就结束', async () => {
   try {
     appendEv(f, 'rstream02', { t: 'text', text: '好' });
     const s = await openStream(f, { run: 'rstream02', off: '0' });
-    for (const end = Date.now() + platformTimeout(3000); Date.now() < end && !s.messages.length;) await sleep(30);
+    for (const end = performance.now() + platformTimeout(3000); performance.now() < end && !s.messages.length;) await sleep(30);
     appendEv(f, 'rstream02', { t: 'done' });
-    const t0 = Date.now();
+    const t0 = performance.now();
     await Promise.race([s.done, sleep(platformTimeout(2000))]);
     assert.ok(s.ended, '做完以后流要关');
-    assert.ok(Date.now() - t0 < platformTimeout(1500));
+    assert.ok(performance.now() - t0 < platformTimeout(1500));
     assert.strictEqual(s.messages.at(-1).data.done, true);
     assert.deepStrictEqual(s.messages.flatMap(m => m.data.events).map(e => e.t), ['text', 'done']);
   } finally { await f.k.close(); }

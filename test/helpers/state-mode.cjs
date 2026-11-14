@@ -15,8 +15,8 @@ function stateMode(t,env,{force=false,agent=path.join(__dirname,'../../site/xin/
     child.stdin.end();const timer=setTimeout(()=>child.kill('SIGKILL'),2000);
     await exited;clearTimeout(timer);
   });
-  const end=Date.now()+10000;
-  while(Date.now()<end){
+  const end=performance.now()+10000;
+  while(performance.now()<end){
     try{const r=JSON.parse(fs.readFileSync(ready,'utf8'));if(r.ready)return {child,exited,ready:r};}catch{}
     if(fs.readFileSync(error,'utf8').match(/^(?:state_|owner_)/m))throw Error('state fixture startup: '+fs.readFileSync(error,'utf8'));
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);

@@ -35,7 +35,7 @@ test('集合目录不能当项目目录：上传的文件（uploads 和下面每
 test('xin task new --dir 指到上传目录：不派，说清楚改用 --file 带上要用的文件', async () => {
   const { work, xin, env, op } = agentEnv();
   const r = op('send', { agent: 'codex', text: '你好' });
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end && !op('poll', { run: r.run, off: 0 }).done;) await sleep(200);
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end && !op('poll', { run: r.run, off: 0 }).done;) await sleep(200);
   fs.mkdirSync(path.join(work, 'uploads', '2026-11-12'), { recursive: true });
   const e = Object.assign({}, env, { XIN_RUN: r.run, PATH: path.join(xin, 'bin') + ':' + process.env.PATH });
   const xinTask = (...a) => { try { return execFileSync(process.execPath, [AGENT, 'xin', 'task', ...a], { env: e, input: '' }).toString(); } catch (err) { return String(err.stdout || '') + String(err.stderr || ''); } };
@@ -69,12 +69,12 @@ test('备份那一刻没做完的那一轮：恢复后不重跑，标成停了�
   const { xin, work, op } = agentEnv({ XIN_FRONT_TEST_COLD: cold });
   fs.writeFileSync(cold, '');   // 网关卡着：这一轮一直在做
   const r = op('send', { agent: 'codex', text: '早上好' });
-  for (const end = Date.now() + platformTimeout(10000); Date.now() < end;) { const m = JSON.parse(fs.readFileSync(path.join(xin, 'runs', r.run + '.json'), 'utf8')); if (m.pid) break; await sleep(100); }
+  for (const end = performance.now() + platformTimeout(10000); performance.now() < end;) { const m = JSON.parse(fs.readFileSync(path.join(xin, 'runs', r.run + '.json'), 'utf8')); if (m.pid) break; await sleep(100); }
   const a = op('backup_export');
   assert.equal(a.ok, true, JSON.stringify(a));
   // 原来那台电脑上这一轮后来结束了（这里直接停掉），备份里它还是「在做」
   op('stop', { run: r.run });
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end && !op('poll', { run: r.run, off: 0 }).done;) await sleep(200);
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end && !op('poll', { run: r.run, off: 0 }).done;) await sleep(200);
   // 新电脑：解进空的 ~/.xin
   const out = path.join(tmp, 'restored'), log = path.join(tmp, 'front-after.log');
   fs.mkdirSync(out);
@@ -83,7 +83,7 @@ test('备份那一刻没做完的那一轮：恢复后不重跑，标成停了�
   env2.NODE_OPTIONS = (env2.NODE_OPTIONS || '') + ' --require=' + path.join(__dirname, 'helpers/front-responses.cjs');
   const op2 = (name, args) => JSON.parse(execFileSync(process.execPath, [AGENT, name], { env: env2, input: JSON.stringify(args || {}) }).toString());
   let p = null;
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { p = op2('poll', { run: r.run, off: 0 }); if (p.done) break; await sleep(200); }
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op2('poll', { run: r.run, off: 0 }); if (p.done) break; await sleep(200); }
   assert.ok(p && p.done, '恢复后这一轮结束了');
   const done = p.events.find(e => e.t === 'done');
   assert.equal(done.stopped, true, JSON.stringify(p.events.slice(-3)));
