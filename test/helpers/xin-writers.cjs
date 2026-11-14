@@ -4,9 +4,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-// 类别：rmw 读了再写；run 执行进程自己的输出；mark 标记、只追加的日志、内容固定的安装文件；
+// 类别：rmw 读了再写，写的进程不一定是主人；op 只在操作的处理函数里写；run 执行进程自己的输出；safe 两个进程同时写也不会坏；
 // owner 只由主人写；shell 内核外壳自己的文件；outside 状态目录以外
-const KINDS = ['rmw', 'run', 'mark', 'owner', 'shell', 'outside'];
+const KINDS = ['rmw', 'op', 'run', 'safe', 'owner', 'shell', 'outside'];
 
 const WRITES = ['writeFile', 'appendFile', 'rename', 'unlink', 'rm', 'rmdir', 'copyFile', 'cp', 'truncate', 'ftruncate', 'symlink', 'link',
   'mkdir', 'mkdtemp', 'chmod', 'chown', 'utimes', 'write', 'open'];
@@ -76,4 +76,35 @@ function scanWriters(dir) {
   return { writers, problems };
 }
 
-module.exports = { scanWriters, KINDS };
+// 源码扫出来的和清单逐条对：没登记的、清单里多出来的、调用次数对不上的
+function diffWriters(found, listed) {
+  const show = calls => Object.entries(calls).map(([k, n]) => k + '×' + n).sort().join(' ');
+  return {
+    没登记: Object.keys(found).filter(k => !listed[k]).sort().map(k => k + '  ' + show(found[k])),
+    多出来: Object.keys(listed).filter(k => !found[k]).sort(),
+    次数不对: Object.keys(found).filter(k => listed[k] && show(found[k]) !== show(listed[k])).sort().map(k => k + '  源码 ' + show(found[k]) + '，清单 ' + show(listed[k])),
+  };
+}
+const sourceFiles = dir => fs.readdirSync(dir).filter(n => /^vm-[a-z0-9-]+\.mjs$/.test(n)).sort();
+// 直接开事务的地方（journal.atomic），按文件计数。状态库自己内部的 this.atomic 不算
+function countAtomic(dir) {
+  const out = {};
+  for (const file of sourceFiles(dir)) { const n = (fs.readFileSync(path.join(dir, file), 'utf8').match(/\bjournal\.atomic\(/g) || []).length; if (n) out[file] = n; }
+  return out;
+}
+// 具名操作：源码里 journal.named('名字' 用到的，和 vm-kernel-operations.mjs 的 stateOperations 里登记的
+function namedOperations(dir) {
+  const used = new Set();
+  for (const file of sourceFiles(dir)) for (const m of fs.readFileSync(path.join(dir, file), 'utf8').matchAll(/\bjournal\.named\(\s*'([^']+)'/g)) used.add(m[1]);
+  const table = /stateOperations\s*=\s*Object\.freeze\(\{([\s\S]*?)\}\)/.exec(fs.readFileSync(path.join(dir, 'vm-kernel-operations.mjs'), 'utf8'));
+  const defined = table ? [...table[1].matchAll(/^\s*'([^']+)'\s*:/gm)].map(m => m[1]) : [];
+  return { used: [...used].sort(), defined: defined.sort() };
+}
+
+module.exports = { scanWriters, diffWriters, countAtomic, namedOperations, KINDS };
+
+// 更新清单时用：node test/helpers/xin-writers.cjs 打印源码和清单的出入
+if (require.main === module) {
+  const list = require('../xin-writers.json'), found = scanWriters(path.join(__dirname, '../../site/xin'));
+  console.log(JSON.stringify({ ...diffWriters(found.writers, Object.fromEntries(Object.entries(list.writers).map(([k, v]) => [k, v.calls]))), problems: found.problems }, null, 2));
+}

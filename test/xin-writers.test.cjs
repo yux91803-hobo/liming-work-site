@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { scanWriters } = require('./helpers/xin-writers.cjs');
+const { scanWriters, diffWriters, countAtomic, namedOperations, KINDS } = require('./helpers/xin-writers.cjs');
+const SRC = path.join(__dirname, '../site/xin'), LIST = require('./xin-writers.json');
 
 function sources(t, map) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-writers-'));
@@ -35,4 +36,30 @@ test('扫描器：换了引入方式就报出来，不悄悄漏掉', t => {
 test('扫描器：把函数赋给别的名字也算一处', t => {
   const dir = sources(t, { 'vm-e.mjs': "import fs from 'node:fs';\nconst put = fs.writeFileSync;\n" });
   assert.deepEqual(scanWriters(dir).writers, { 'vm-e.mjs::put': { writeFileSync: 1 } });
+});
+
+test('写者清单：控制器里每一处直接写文件的调用都登记了，清单里也没有多出来的', () => {
+  const { writers, problems } = scanWriters(SRC);
+  assert.deepEqual(problems, []);
+  const listed = Object.fromEntries(Object.entries(LIST.writers).map(([k, v]) => [k, v.calls]));
+  assert.deepEqual(diffWriters(writers, listed), { 没登记: [], 多出来: [], 次数不对: [] });
+});
+test('写者清单：每一条都标了类别、写了说明', () => {
+  for (const [k, v] of Object.entries(LIST.writers)) { assert.ok(KINDS.includes(v.kind), k); assert.ok(typeof v.what === 'string' && v.what.length >= 6, k); }
+});
+test('写者清单：「读了再写」的条数和清单里记的一致（第 5 批要清零，只许往下改）', () => {
+  assert.equal(Object.values(LIST.writers).filter(v => v.kind === 'rmw').length, LIST.rmw);
+});
+test('写者清单：vm-agent.mjs 的行数不超过基线，少了 20 行以上要把基线调小', () => {
+  const lines = fs.readFileSync(path.join(SRC, 'vm-agent.mjs'), 'utf8').split('\n').length - 1;
+  assert.ok(lines <= LIST.agentLines, `现在 ${lines} 行，基线 ${LIST.agentLines}`);
+  assert.ok(LIST.agentLines - lines < 20, `现在 ${lines} 行，把 test/xin-writers.json 的 agentLines 调小`);
+});
+test('写者清单：直接开事务（journal.atomic）只出现在登记过的文件里，次数一致', () => {
+  assert.deepEqual(countAtomic(SRC), LIST.atomic);
+});
+test('写者清单：具名操作两边对得上（journal.named 用到的名字都在 stateOperations 里，反过来也是）', () => {
+  const { used, defined } = namedOperations(SRC);
+  assert.ok(used.length > 0);
+  assert.deepEqual(used, defined);
 });
