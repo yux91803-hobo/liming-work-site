@@ -6,11 +6,19 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { StateJournal } from './vm-state.mjs';
 import { Ownership } from './vm-kernel-owner.mjs';
+import { requestStateSync, stateSocket } from './vm-kernel-client.mjs';
 
 export const BASE = process.env.XIN_HOME || path.join(os.homedir(), '.xin');
 export const journal = new StateJournal(BASE);
-// 谁能写状态库：状态库的每个写入口先问它（vm-kernel-owner.mjs）。现在记录永远是旧模式，问一次不到一毫秒。
-export const ownership = journal.owner = new Ownership(BASE);
+// 写权释放前关闭可写连接；正式部署仍默认 legacy，状态进程由后续的模式开关启用。
+export const ownership = journal.owner = new Ownership(BASE,{beforeRelease:()=>journal.closeWriter()});
+journal.bridge = (kind,args) => requestStateSync(BASE,{kind,...args});
+// The socket is only a hint. A legacy record still goes through the shared-lock path, even with a stale socket.
+export function stateOwned(){
+  if(ownership.owning||!fs.existsSync(stateSocket(BASE)))return false;
+  const r=ownership.record({waitMs:0});return r.busy||r.mode==='kernel';
+}
+journal.bridge.available=stateOwned;
 
 export const WORK = process.env.XIN_WORK || '/data/workspace';
 export const TEMPLATE = () => path.join(WORK, 'stm32-template');   // STM32 空工程（scripts/vm/setup-stm32.sh 装的）

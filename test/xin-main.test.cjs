@@ -15,7 +15,8 @@ function home(t) {
   for (const cmd of ['claude', 'codex', 'agy']) fs.writeFileSync(path.join(bin, cmd), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const env = { ...process.env, XIN_HOME: xin, XIN_WORK: path.join(dir, 'work'), XIN_DSH: path.join(dir, 'no-dsh'), XIN_FRONT_PROVIDER: 'deepseek',
     XIN_AGY_HOME: dir, XIN_ANTIGRAVITY_BIN: '', CODEX_HOME: path.join(dir, 'codex'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), PATH: bin + ':' + process.env.PATH };
-  const op = (name, args = {}) => {
+  const ensureState=require('./helpers/state-mode.cjs').stateClient(t,env);
+  const op = (name, args = {}) => { ensureState();
     const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };

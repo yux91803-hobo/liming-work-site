@@ -18,22 +18,53 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS documents (name TEXT PRIMARY KEY, bod
       CREATE INDEX IF NOT EXISTS pending_handoffs ON handoffs(state,nextAt,parent);`;
 const SCHEMA_NAMES = [...SCHEMA.matchAll(/CREATE (?:TABLE|INDEX) IF NOT EXISTS (\w+)/g)].map(m => m[1]);
 export class StateJournal {
-  constructor(root) { this.root=path.resolve(root);this.active=false;this.overlay=new Map();this.after=[];this.owner=null;this.writers=0; }
+  constructor(root) { this.root=path.resolve(root);this.active=false;this.overlay=new Map();this.after=[];this.owner=null;this.writers=0;this.bridge=null; }
   // 所有写入口都从这里过（docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.2）：旧模式下拿着共享的所有权锁写，
   // 主人活着、或者该内核当主人但它不在，owner.enter() 会抛 owner_unavailable，这里就不写。一次最外层调用只问一次。
   // owner 为空（单独用 StateJournal 的测试）时不检查。
-  writing(fn){
+  writing(fn,unavailable){
     if(!this.owner||this.writers>0)return fn();
-    const release=this.owner.enter();this.writers++;
-    try{return fn();}finally{this.writers--;release();}
+    if(!this.owner.owning&&!this.owner.depth&&unavailable&&this.bridge?.available?.())
+      return unavailable(Object.assign(Error('owner_alive'),{code:'owner_unavailable'}));
+    const held=this.owner.depth>0;let release;
+    try{release=this.owner.enter();}catch(e){if(e.code==='owner_unavailable'&&unavailable)return unavailable(e);throw e;}
+    this.writers++;
+    try{return fn();}finally{
+      this.writers--;
+      // A writable handle must not survive the shared authority that allowed it to open.
+      if(!this.writers&&!held&&!this.owner.owning)this.closeWriter();
+      release();
+    }
   }
+  named(name,args,fn){return this.writing(()=>this.atomic(fn),e=>{if(!this.bridge)throw e;return this.bridge('named',{name,args});});}
+  get writable(){return !this.owner||this.writers>0||this.owner.owning||this.owner.depth>0;}
   get db(){
+    if(!this.writable){
+      this.closeWriter();if(this.reader)return this.reader;
+      const file=path.join(this.root,'workflow.sqlite');let stat;
+      try{stat=fs.lstatSync(file);}catch(e){if(e.code!=='ENOENT')throw e;}
+      if(stat?.isSymbolicLink())throw Error('状态库不能是软链接');
+      if(!stat||!stat.size)this.writing(()=>this.db);
+      let d=new DatabaseSync(file,{readOnly:true});
+      try{
+        d.exec('PRAGMA busy_timeout=15000');
+        if(!this.schemaReady(d)){
+          d.close();d=null;this.writing(()=>this.db);d=new DatabaseSync(file,{readOnly:true});d.exec('PRAGMA busy_timeout=15000');
+        }
+        return this.reader=d;
+      }catch(e){d?.close();throw e;}
+    }
     if(this.connection)return this.connection;
     const file=path.join(this.root,'workflow.sqlite');
     let stat;try{stat=fs.lstatSync(file);}catch(e){if(e.code!=='ENOENT')throw e;}
     if(stat?.isSymbolicLink())throw Error('状态库不能是软链接');
     // 打开缺失/空库本身就会写文件。先拿所有权，不能先创建了再在 recover 里拒绝。
     return !stat||stat.size===0?this.writing(()=>this.#open()):this.#open();
+  }
+  schemaReady(d){
+    const names=new Set(d.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','index')").all().map(r=>r.name));
+    const columns=new Set(d.prepare('PRAGMA table_info(launches)').all().map(c=>c.name));
+    return SCHEMA_NAMES.every(n=>names.has(n))&&columns.has('attempts')&&columns.has('dispatchedAt')&&d.prepare('PRAGMA journal_mode').get().journal_mode==='wal';
   }
   #open(){
     fs.mkdirSync(this.root,{recursive:true,mode:0o700});
@@ -45,9 +76,7 @@ export class StateJournal {
     // Concurrent first opens race on WAL setup and schema creation, which can report busy without
     // waiting. Every statement below is idempotent: retry briefly, and cache the connection only once ready.
     for(let attempt=0;;attempt++)try{
-    const have=new Set(d.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','index')").all().map(r=>r.name));
-    const columns=new Set(d.prepare('PRAGMA table_info(launches)').all().map(c=>c.name));
-    if(!SCHEMA_NAMES.every(n=>have.has(n))||!columns.has('attempts')||!columns.has('dispatchedAt')||d.prepare('PRAGMA journal_mode').get().journal_mode!=='wal')this.writing(()=>{
+    if(!this.schemaReady(d))this.writing(()=>{
       d.exec('PRAGMA journal_mode=WAL;'+SCHEMA);
       const latest=new Set(d.prepare('PRAGMA table_info(launches)').all().map(c=>c.name));
       if(!latest.has('attempts'))d.exec('ALTER TABLE launches ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
@@ -85,12 +114,12 @@ export class StateJournal {
     const after=this.after;this.after=[];this.recover();for(const f of after)f();return result;
   }
   write(file,body){
-    if(!this.active)return this.atomic(()=>this.write(file,body));
+    if(!this.active)return this.writing(()=>this.atomic(()=>this.write(file,body)),e=>{if(!this.bridge)throw e;return this.bridge('write',{name:this.name(file),body});});
     const n=this.name(file);this.overlay.set(n,body);
     this.db.prepare('INSERT INTO documents(name,body) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=revision+1,dirty=1').run(n,body);
   }
   append(file,event){
-    if(!this.active)return this.atomic(()=>this.append(file,event));
+    if(!this.active)return this.writing(()=>this.atomic(()=>this.append(file,event)),e=>{if(!this.bridge)throw e;return this.bridge('append',{name:this.name(file),event});});
     const id=this.operation+':'+this.eventSequence++,body=JSON.stringify({...event,_eventId:id});
     this.db.prepare('INSERT OR IGNORE INTO appends(id,name,body) VALUES(?,?,?)').run(id,this.name(file),body);
   }
@@ -150,5 +179,6 @@ export class StateJournal {
       this.db.prepare("DELETE FROM commands WHERE json_extract(result,'$.sid')=? OR json_extract(result,'$.task.sid')=? OR json_extract(result,'$.task.parent')=?").run(sid,sid,sid);
     });
   }
-  close(){this.connection?.close();this.connection=null;}
+  closeWriter(){if(this.connection){this.connection.close();this.connection=null;}}
+  close(){this.closeWriter();this.reader?.close();this.reader=null;}
 }

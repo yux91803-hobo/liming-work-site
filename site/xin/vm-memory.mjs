@@ -34,7 +34,7 @@ function db() {
   if (!ready) {
     // 表和索引都在就不碰：读记忆不需要写权限（状态库归别的进程写的时候也能读）。缺了才建，建表是写，要过所有权检查。
     const have = d.prepare('SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN (' + SCHEMA_NAMES.map(() => '?').join(',') + ')').get(...SCHEMA_NAMES).n;
-    if (have < SCHEMA_NAMES.length) journal.writing(() => d.exec(SCHEMA));
+    if (have < SCHEMA_NAMES.length) journal.writing(() => journal.db.exec(SCHEMA));
     // DDL participates in the caller's transaction too. Do not cache schema readiness before commit:
     // a rejected first command can roll the new tables back while this process continues running.
     if (journal.active) journal.defer(() => { ready = true; }); else ready = true;
@@ -81,7 +81,7 @@ export const memoryPreferences=()=>({followups:memoryMeta('preferences',{}).foll
 export function setMemoryPreferences(changes) {
   const keys=['followups','learning'].filter(k=>Object.hasOwn(changes||{},k));
   if(!keys.length||keys.some(k=>typeof changes[k]!=='boolean'))return {error:'bad_setting',msg:'开关值不对'};
-  return journal.atomic(()=>{setMemoryMeta('preferences',{...memoryPreferences(),...Object.fromEntries(keys.map(k=>[k,changes[k]]))});return memoryPreferences();});
+  return journal.named('memory.preferences',[changes],()=>{setMemoryMeta('preferences',{...memoryPreferences(),...Object.fromEntries(keys.map(k=>[k,changes[k]]))});return memoryPreferences();});
 }
 // value: looks like a credential or identity number itself — never stored, not even when the user types it.
 // word: only mentions passwords/keys — refused from chat and workers, kept private from the old notebook, allowed from the user.
@@ -118,12 +118,14 @@ export function memoryMeta(key, fallback = null) {
   try { return r ? JSON.parse(r.value) : fallback; } catch { return fallback; }
 }
 export function setMemoryMeta(key, value) {
-  db().prepare('INSERT INTO memory_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(value));
+  return journal.named('memory.meta',[key,value],()=>{db().prepare('INSERT INTO memory_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(value));});
 }
 export function memorySnapshot(id, reason) {
+  return journal.named('memory.snapshot',[id,reason],()=>{
   const item = row(id);
   if (item) db().prepare('INSERT INTO memory_versions(item,body,reason,at) VALUES(?,?,?,?)').run(id,
     JSON.stringify({ item, evidence: db().prepare('SELECT * FROM memory_evidence WHERE item=?').all(id) }), reason, Date.now());
+  });
 }
 export function memoryBlocked(content, ev) {
   return !!db().prepare('SELECT 1 FROM memory_forgotten WHERE norm=?').get(hash(memoryNorm(content))) ||
@@ -137,6 +139,7 @@ function retireSources(it) {
 }
 
 export function supersedeMemory(oldId, nextId, actor = 'idle') {
+  return journal.named('memory.supersede',[oldId,nextId,actor],()=>{
   const old = row(oldId), next = row(nextId);
   if (!old || !next || oldId === nextId || !['active','pending'].includes(old.status) || next.status !== 'active') return false;
   memorySnapshot(oldId, 'supersede');
@@ -145,11 +148,12 @@ export function supersedeMemory(oldId, nextId, actor = 'idle') {
   retireSources(old);
   log(oldId, 'supersede', actor, { next: nextId });
   return true;
+  });
 }
 
 // A rollback is an explicit user action, never an idle-model operation. Forgotten items have no snapshot to restore.
 export function restoreMemoryVersion(version) {
-  return journal.atomic(() => {
+  return journal.named('memory.restore',[version],() => {
     const v = db().prepare('SELECT * FROM memory_versions WHERE id=?').get(version);
     if (!v || !row(v.item)) return { error: 'not_found' };
     const saved = JSON.parse(v.body), it = saved.item;
@@ -181,7 +185,7 @@ export function addMemory({ content, type = 'profile', basis = 'observed', sourc
   if (sens === 'value' || sens === 'word' && source !== 'user' && source !== 'legacy') return { error: 'secret', msg: SECRET_MSG };
   const norm = memoryNorm(text);
   if (!norm) return { error: 'empty', msg: '要记的内容是空的' };
-  return journal.atomic(() => {
+  return journal.named('memory.add',[{content:text,type,basis,source,evidence:ev,at}],() => {
     if (source !== 'user' && memoryBlocked(text, ev)) return { error: 'forgotten', msg: '用户让我忘掉或纠正过这件事，不再记。' };
     // Only what the user said (or the user's own edits) counts at once; daily procedures are Xiaoxin's own know-how.
     let status = source === 'user' || source === 'daily' || source === 'chat' && basis === 'stated' ? 'active' : 'pending';
@@ -205,7 +209,7 @@ export function addMemory({ content, type = 'profile', basis = 'observed', sourc
 
 // changes: {content?, type?, private?: boolean, confirm?: true}. Only the user edits through this path.
 export function updateMemory(id, changes = {}, actor = 'user') {
-  return journal.atomic(() => {
+  return journal.named('memory.update',[id,changes,actor],() => {
     const it = row(id);
     if (!it || !['active', 'pending', 'private'].includes(it.status)) return { error: 'not_found', msg: '找不到这条记忆' };
     const next = { ...it }, now = Date.now();
@@ -233,7 +237,7 @@ export function updateMemory(id, changes = {}, actor = 'user') {
 
 // Only the controller's study reporter calls this. Observed exercise results never become user statements.
 export function learningMemory({id,content,quote,at}) {
-  return journal.atomic(()=>{
+  return journal.named('memory.learning',[{id,content,quote,at}],()=>{
     let it=id&&row(id);
     if(it){
       const userEdit=db().prepare("SELECT 1 FROM memory_log WHERE item=? AND actor='user' AND action IN ('update','supersede','rollback') LIMIT 1").get(id);
@@ -251,7 +255,7 @@ export function learningMemory({id,content,quote,at}) {
 
 // Forgetting removes the statement and its quotes; only a hash remains so the same content is not stored again.
 export function forgetMemory(id, actor = 'user') {
-  return journal.atomic(() => {
+  return journal.named('memory.forget',[id,actor],() => {
     const it = row(id);
     if (!it) return { error: 'not_found', msg: '找不到这条记忆' };
     // Forget the whole chain, including superseded judgements and snapshots. Block the original runs too:
@@ -288,6 +292,7 @@ export function forgetMemory(id, actor = 'user') {
   });
 }
 export function forgetByKeyword(keyword, actor = 'chat') {
+  return journal.named('memory.forgetKeyword',[keyword,actor],()=>{
   const k = clean(keyword).toLowerCase();
   if (k.length < 2) return { error: 'empty', msg: '要写清楚忘掉哪件事（至少两个字）' };
   const hits = db().prepare('SELECT * FROM memory_items WHERE status IN ' + LIVE + ' ORDER BY updated DESC').all().filter(it => it.content.toLowerCase().includes(k));
@@ -295,6 +300,7 @@ export function forgetByKeyword(keyword, actor = 'chat') {
   if (hits.length > 1) return { error: 'ambiguous', msg: '有好几条相关的，请用户说清楚是哪一条，或者在「小芯的记忆」里删：' + hits.slice(0, 6).map(it => '「' + it.content.slice(0, 40) + '」').join('、') };
   forgetMemory(hits[0].id, actor);
   return { ok: true, text: hits[0].content };
+  });
 }
 
 export function listMemory() {
@@ -312,10 +318,11 @@ const lineHash = line => crypto.createHash('sha256').update(line).digest('hex').
 export function importLegacyNotebook(text = readText(LEGACY_FILE())) {
   const body = String(text || '').trim();
   if (!body) return { skipped: true };
-  const d = db(), digest = crypto.createHash('sha256').update(body).digest('hex'), get = () => d.prepare("SELECT value FROM memory_meta WHERE key='legacy_import'").get();
+  const digest = crypto.createHash('sha256').update(body).digest('hex'), get = () => db().prepare("SELECT value FROM memory_meta WHERE key='legacy_import'").get();
   const prior = get();
   if (prior && JSON.parse(prior.value).digest === digest) return { skipped: true };
-  return journal.atomic(() => {
+  return journal.named('memory.import',[body],() => {
+    const d = db();
     const row = get(), meta = row ? JSON.parse(row.value) : null;
     if (meta && meta.digest === digest) return { skipped: true };
     // A record from before line hashes were kept is rebuilt from the lines quoted by imported items.

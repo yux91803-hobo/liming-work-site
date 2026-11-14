@@ -36,7 +36,7 @@ test('忘掉在一次事务内清掉索引、版本和其它会话里的相同�
 test('每轮给可照做的建议，待确认/隐私不混入；久未涉及先问，后台只取相关习惯',t=>{
  const run=fixture(t),r=run(`m.addMemory({content:'回答先给结论',source:'user'});m.addMemory({content:'可能爱看红色',basis:'inferred'});
  const it=m.addMemory({content:'PWM 还没独立算对',source:'user',type:'learning'}).item;
- m.memoryDb().prepare('UPDATE memory_items SET confirmed=?,updated=? WHERE id=?').run(1,1,it.id);
+ b.journal.atomic(()=>m.memoryDb().prepare('UPDATE memory_items SET confirmed=?,updated=? WHERE id=?').run(1,1,it.id));
  const priv=m.addMemory({content:'只想私下提起的爱好',source:'user'}).item;m.updateMemory(priv.id,{private:true});
  m.addMemory({content:'音乐喜欢爵士',source:'user'});chat(1,'PWM 频率先分频，再看 ARR');
  return {g:c.turnGuidance({text:'PWM 怎么算',sid:'scontext01'}),task:c.taskMemory('写 PWM 代码'),found:c.recallAll('先分频').matches.length};`);

@@ -22,9 +22,9 @@ const busy = e => e && (e.errcode === 5 || e.errcode === 6 || /database is locke
 const KEYS = ['mode', 'epoch', 'protocol', 'since'];
 
 export class Ownership {
-  constructor(home, { waitMs = 250 } = {}) {
+  constructor(home, { waitMs = 250, beforeRelease = () => {} } = {}) {
     this.file = path.join(path.resolve(home), 'owner.sqlite'); this.waitMs = waitMs;
-    this.connection = null; this.depth = 0; this.owning = false;
+    this.connection = null; this.depth = 0; this.owning = false; this.beforeRelease = beforeRelease;
   }
   // 内部用的连接，第一次用到才打开
   get db() {
@@ -38,8 +38,11 @@ export class Ownership {
       d.exec('PRAGMA busy_timeout=' + Math.max(0, this.waitMs | 0));
       // 只在表还没有的时候才建：平时不为建表去拿写锁，不会把别的写者挡一下
       let has = false;
+      // An exclusive owner makes schema reads busy too. Discovery need not wait before forwarding.
+      d.exec('PRAGMA busy_timeout=0');
       try { has = !!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner'").get(); }
       catch (e) { if (!busy(e)) throw e; has = true; }   // 读都读不了：有人独占着，表一定已经建好了
+      finally { d.exec('PRAGMA busy_timeout=' + Math.max(0, this.waitMs | 0)); }
       if (!has) d.exec('CREATE TABLE IF NOT EXISTS owner(k TEXT PRIMARY KEY, v TEXT NOT NULL)');
     } catch (e) { d.close(); throw e; }
     return this.connection = d;
@@ -62,12 +65,13 @@ export class Ownership {
     return next.epoch;
   }
   // 现在的记录。不留锁。主人活着时读不了，返回 { busy: true }
-  record() {
+  record({waitMs=this.waitMs}={}) {
     if (this.owning || this.depth > 0) return this.rows();
-    try { this.db.exec('BEGIN'); } catch (e) { if (busy(e)) return { busy: true }; throw e; }
+    const d=this.db;d.exec('PRAGMA busy_timeout='+Math.max(0,waitMs|0));
+    try { d.exec('BEGIN'); } catch (e) { d.exec('PRAGMA busy_timeout='+Math.max(0,this.waitMs|0));if (busy(e)) return { busy: true }; throw e; }
     try { return this.rows(); }
     catch (e) { if (busy(e)) return { busy: true }; throw e; }
-    finally { try { this.db.exec('COMMIT'); } catch { /* 没开成 */ } }
+    finally { try { d.exec('COMMIT'); } catch { /* 没开成 */ } d.exec('PRAGMA busy_timeout='+Math.max(0,this.waitMs|0)); }
   }
   // 旧模式的写入口：拿共享锁并确认归旧模式，返回放锁函数。每次都重新判断，不缓存（执行进程会活过一次切换）。
   // 可重入：本进程已经拿着（或本进程就是主人）时返回空操作。
@@ -82,7 +86,10 @@ export class Ownership {
     this.depth = 1;
     return () => { this.leave(); };
   }
-  leave() { if (this.depth > 0 && --this.depth === 0) this.db.exec('COMMIT'); }
+  leave() {
+    if(this.depth===1){this.beforeRelease();this.db.exec('COMMIT');this.depth=0;}
+    else if(this.depth>1)this.depth--;
+  }
   // 同 enter，但一直拿到进程结束：一次性进程用（每个请求起的那个、flock 里面的那个），本来就只活几十毫秒
   hold() { this.enter(); }
   // 当主人：拿独占锁（等正在写的旧写者写完，最多 waitMs），写「归内核」、切换次数加一，一直不放。
@@ -110,5 +117,5 @@ export class Ownership {
     try { const epoch = this.save(mode); d.exec('COMMIT'); return { epoch }; }
     catch (e) { try { d.exec('ROLLBACK'); } catch { /* 没开成 */ } throw e; }
   }
-  close() { try { this.connection?.close(); } catch { /* 已经关了 */ } this.connection = null; this.depth = 0; this.owning = false; }
+  close() { this.beforeRelease();try { this.connection?.close(); } catch { /* 已经关了 */ } this.connection = null; this.depth = 0; this.owning = false; }
 }

@@ -194,6 +194,6 @@ test('前台模型用的 xin 命令：主人活着时在标准错误里说明，
   await proc(t, dir, OWNER).line();
   const r = spawnSync(process.execPath, [AGENT, 'xin', 'task', 'list'], { env: { ...process.env, XIN_HOME: dir }, encoding: 'utf8' });
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /状态正在切换/);
+  assert.match(r.stderr, /状态进程暂时不可用/);
   assert.equal(fs.existsSync(path.join(dir, 'workflow.sqlite')), false);
 });

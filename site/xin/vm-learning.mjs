@@ -7,13 +7,15 @@ const sha=s=>crypto.createHash('sha256').update(s).digest('hex');
 const topics={gpio:'GPIO',exti:'EXTI',usart:'USART',i2c:'I2C',tim:'定时器',dma:'DMA',adc:'ADC',spi:'SPI'};
 const bj=at=>new Date(at+8*3600e3).toISOString().slice(0,10);
 export function learningDb(){
- const d=memoryDb();d.exec(`CREATE TABLE IF NOT EXISTS learning_events (
+ const d=memoryDb();
+ if(d.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('learning_events','learning_by_scope','learning_profiles','learning_blocked','learning_links')").get().n!==5)
+ journal.writing(()=>journal.db.exec(`CREATE TABLE IF NOT EXISTS learning_events (
  id TEXT PRIMARY KEY,scope TEXT NOT NULL,topic TEXT NOT NULL,exercise TEXT NOT NULL,kind TEXT NOT NULL,
  answer TEXT NOT NULL,correct INTEGER,independent INTEGER NOT NULL,at INTEGER NOT NULL,url TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS learning_by_scope ON learning_events(scope,at);
  CREATE TABLE IF NOT EXISTS learning_profiles (scope TEXT PRIMARY KEY,item TEXT,state TEXT NOT NULL,mastered INTEGER NOT NULL,at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS learning_blocked (hash TEXT PRIMARY KEY,at INTEGER NOT NULL);
- CREATE TABLE IF NOT EXISTS learning_links (item TEXT NOT NULL,event TEXT NOT NULL,PRIMARY KEY(item,event));`);return d;
+ CREATE TABLE IF NOT EXISTS learning_links (item TEXT NOT NULL,event TEXT NOT NULL,PRIMARY KEY(item,event));`));return d;
 }
 export function learningState(events,previous={},now=Date.now()){
  const es=events.filter(e=>e.kind!=='view'&&e.answer&&e.correct!==null&&e.independent&&e.at<=now).sort((a,b)=>a.at-b.at),days=new Set();
@@ -33,8 +35,8 @@ export function reportLearning(a={},now=Date.now()){
  const s=a.sid&&readJ(path.join(BASE,'sessions',a.sid+'.json'));
  if(a.agent!=='codex'||a.sid&&(!s||s.agent!=='codex'||s.kind)||a.task)return {error:'not_default'};
  if(!Array.isArray(a.events)||a.events.length>30)return {error:'bad_events'};
- const d=learningDb();
- return journal.atomic(()=>{
+ return journal.named('learning.report',[a,now],()=>{
+  const d=learningDb();
   let accepted=0;const scopes=new Set();
   for(const e of a.events){
    if(!/^[a-zA-Z0-9_-]{8,80}$/.test(e.id||'')||!topics[e.topic]||!/^[a-zA-Z0-9_.:-]{1,80}$/.test(e.exercise||'')||!['view','answer','code'].includes(e.kind))continue;

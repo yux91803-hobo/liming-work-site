@@ -42,9 +42,16 @@ import { spawn, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import * as runtime from './vm-runtime.mjs';
-import { StateJournal, inputDigest } from './vm-state.mjs';
+import { StateJournal } from './vm-state.mjs';
+import { createController } from './vm-kernel-controller.mjs';
+import { createStateServer } from './vm-kernel-state.mjs';
+import { requestState, requestStateSync } from './vm-kernel-client.mjs';
+import { callContext, lockHeld } from './vm-kernel-context.mjs';
+import { initializeStateTables } from './vm-kernel-operations.mjs';
+import { checkControllers } from './vm-kernel-compat.mjs';
+// xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
-import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
+import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership, stateOwned } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
 import { loginStore, normalizeSite } from './vm-logins.mjs';
@@ -254,6 +261,10 @@ const seenF = run => path.join(RUNS, run + '.seen');   // 网页最近一次来�
 // 后台任务的记录（派、排队、收尾、补充、停）都用同一把锁 tasks，等得久一点
 function lockedCall(key, op, args) {
   if (key !== 'new' && key !== 'daily' && key !== 'tasks' && !okId(key, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
+  if(ownership.owning)return controller.invoke({op,args,locked:true,key,run:callContext().run});
+  if(stateOwned())return requestStateSync(BASE,{kind:'op',op,args,locked:true,key,run:callContext().run});
+  let release;try{release=ownership.enter();}catch(e){if(e.code!=='owner_unavailable')throw e;return requestStateSync(BASE,{kind:'op',op,args,locked:true,key,run:callContext().run});}
+  try{
   const dir = path.join(BASE, 'locks'); mk(dir);
   const r = spawnSync('flock', ['--exclusive', '--timeout', key === 'tasks' ? '20' : '3', '--conflict-exit-code', '73', '--close',
     path.join(dir, key + '.lock'), process.execPath, SELF, 'locked', op],
@@ -262,6 +273,7 @@ function lockedCall(key, op, args) {
   if (r.error || r.status !== 0) return { error: 'lock_failed', msg: r.error && r.error.code === 'ENOENT'
     ? '云电脑缺少 flock，暂时不能安全更新对话' : '暂时不能安全更新对话，请重试' };
   try { return JSON.parse(r.stdout); } catch { return { error: 'lock_failed', msg: '保存对话的结果不完整，请重试' }; }
+  }finally{release();}
 }
 // 后台任务的记录也是会话文件，但归 tasks 锁管（调度会整份改写它）
 function patchSession(sid, changes) { return lockedCall(isTask(readJ(sessF(sid))) ? 'tasks' : sid, 'session_patch', { sid, changes }); }
@@ -274,7 +286,7 @@ function applyRunPatch(run,changes){
 function patchRun(run,changes){
   const m=readJ(metaF(run));if(!m)return null;
   const key=m.task||isTask(readJ(sessF(m.sid)))?'tasks':m.sid;
-  if(process.argv[2]==='locked'&&process.env.XIN_LOCK===key)return applyRunPatch(run,changes);
+  if(lockHeld(key))return applyRunPatch(run,changes);
   const r=lockedCall(key,'run_patch',{run,changes});if(r.error)throw new Error(r.msg||r.error);return r.meta;
 }
 function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
@@ -1383,8 +1395,10 @@ function launch(s, m, userEv) {
   return run;
 }
 function dispatchLaunches(){
-  if(journal.active)return;
-  for(const job of process.env.XIN_LOCK?[]:journal.launchedRuns()){
+  if(journal.active||ownership.draining)return;
+  let release;try{release=ownership.enter();}catch(e){if(e.code==='owner_unavailable')return;throw e;}
+  try{
+  for(const job of callContext().key?[]:journal.launchedRuns()){
     const m=readJ(metaF(job.run));if(!m||m.ended){journal.finishLaunch(job.run);continue;}
     if(alive(m.pid,m.identity)||Date.now()-Math.max(m.started,job.dispatchedAt||0)<15000)continue;
     if(!m.task&&m.agent==='codex'&&!m.stopped&&job.attempts<2){startRunner(job.run);journal.dispatched(job.run);}
@@ -1399,6 +1413,7 @@ function dispatchLaunches(){
     if(earlier)continue;
     startRunner(job.run);journal.dispatched(job.run);
   }
+  }finally{if(!ownership.owning&&ownership.depth===1)journal.closeWriter();release();}
 }
 function startRunner(run){
   // The per-run lifetime lock prevents a crash/retry between spawn and receipt from executing twice.
@@ -1419,7 +1434,7 @@ function runDone(run) {
     if(!m.task&&m.agent==='codex'&&!m.stopped){
       const job=journal.launchRecord(run);
       if(job&&job.state!=='finished'&&(job.attempts<2||Date.now()-job.dispatchedAt<15000)){
-        if(!journal.active&&!process.env.XIN_LOCK)dispatchLaunches();return false;
+        if(!journal.active&&!callContext().key)dispatchLaunches();return false;
       }
     }
     if(m.childPid && processGroupMembers(m.childPid,m.childIdentity).length){
@@ -1489,7 +1504,7 @@ function taskIndexEntry(t){
   out.runs=lastRun(t)?[lastRun(t)]:[];out.turnsCount=t.turnsCount??(t.runs||[]).length;
   if(t.result)out.result={...t.result,text:cut(t.result.text,2000)};return out;
 }
-const taskLockHeld = () => process.argv[2]==='locked' && process.env.XIN_LOCK==='tasks';
+const taskLockHeld = () => lockHeld('tasks');
 function listTasks() {
   const index=path.join(BASE,'tasks-index.json'),cached=readJ(index);
   if(cached?.version===3 && Array.isArray(cached.tasks)) return cached.tasks.sort((a,b)=>a.no-b.no);
@@ -2012,6 +2027,8 @@ function tickTasks() {
   for (const n of (r && r.notify) || []) deliverNotice(n).catch(() => {});
 }
 function ensureWatchdog() {
+  if(ownership.owning)return;
+  let release;try{release=ownership.enter();}catch(e){if(e.code==='owner_unavailable')return;throw e;}release();
   if(journal.active){journal.defer(ensureWatchdog);return;}
   // flock lives outside every task's writable roots and is released by the kernel on exit.
   mk(path.join(BASE, 'locks'));
@@ -2073,7 +2090,7 @@ function runEnded(run) {
 function reapNow() {
   const r = reapOnce({ stateFile: path.join(BASE, 'reaper.json'), ended: runEnded, procs: readProcs({ root: process.env.XIN_PROC_ROOT || '/proc' }),
     log: e => logLine(path.join(BASE, 'logs', 'reaper.jsonl'), e) });
-  process.stdout.write(JSON.stringify(r));
+  return r;
 }
 function markCurrentController() {
   try {
@@ -2094,11 +2111,13 @@ function handOverWatchdog(next) {
   mk(path.join(BASE, 'locks'));
   spawn('flock', ['-w', '60', '--close', path.join(BASE, 'locks/watchdog.lock'), process.execPath, next, 'watchdog'], { detached: true, stdio: 'ignore', cwd: os.homedir(), env }).unref();
 }
+async function maintainState(){journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();await flushNotices();await flushControllerEvent();}
 async function watchdog() {
   for (;;) {
+    let release;try{release=ownership.enter();}catch(e){if(e.code==='owner_unavailable')return;throw e;}release();
     const next = newerController();
     if (next) { handOverWatchdog(next); return; }
-    try { journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();await flushNotices(); await flushControllerEvent(); } catch { /* transient errors are retried */ }
+    try { await maintainState(); } catch { /* transient errors are retried */ }
     const active = listTasks().some(isBackground);
     const pending = readJ(path.join(BASE, 'controller-event.json'));
     const notices=fs.existsSync(NOTICE_DIR()) && fs.readdirSync(NOTICE_DIR()).some(n=>/^[a-f0-9]{32}\.json$/.test(n) && readJ(path.join(NOTICE_DIR(),n))?.state==='pending');
@@ -2864,6 +2883,7 @@ const iops = {
      （要求也可以从标准输入给：xin task new --title 标题 <<'EOF' … EOF）
    xin task list | show 编号 | tell 编号 补充的话 | stop 编号 | ask 要用户确认的事（只在分身里用） */
 function readStdin() {
+  if(Object.hasOwn(callContext(),'stdin'))return callContext().stdin;
   try { const st = fs.fstatSync(0); if (!st.isFIFO() && !st.isFile()) return ''; return fs.readFileSync(0, 'utf8'); } catch { return ''; }
 }
 export function parseTaskArgs(argv) {
@@ -2909,20 +2929,20 @@ function taskLine(t) {
   const model=actual===runtime.AGY_MODEL?'Gemini 4 Hydrogen':CODEX_MODELS.find(m=>m.id===actual)?.name||actual||'尚未执行';
   return '任务 ' + t.no + '「' + t.title + '」' + st + '（' + KIND_NAMES[t.tkind || t.kind] + '，' + model + '）' + (t.question ? '：等你确认「' + t.question + '」' : '');
 }
-function taskCmd(argv) {
-  const sub = argv[0] || '', run = process.env.XIN_RUN;
+function taskCmd(argv,print=console.log) {
+  const sub = argv[0] || '', run = callContext().run;
   const meta = okId(run, 'r') ? readJ(metaF(run)) : null;
-  if (!sub || sub === 'help' || sub === '-h' || sub === '--help') { console.log(TASK_HELP); return sub ? 0 : 2; }
+  if (!sub || sub === 'help' || sub === '-h' || sub === '--help') { print(TASK_HELP); return sub ? 0 : 2; }
   if (sub === 'new') {
-    if (!meta) { console.log('现在不在对话里，派不了任务'); return 1; }
-    if (meta.task) { console.log('分身里不能再派分身：要拆开做的话，在最后的总结里写清楚建议怎么拆'); return 1; }
-    if (meta.kind === 'daily') { console.log('每日任务里不派分身，自己做完'); return 1; }
+    if (!meta) { print('现在不在对话里，派不了任务'); return 1; }
+    if (meta.task) { print('分身里不能再派分身：要拆开做的话，在最后的总结里写清楚建议怎么拆'); return 1; }
+    if (meta.kind === 'daily') { print('每日任务里不派分身，自己做完'); return 1; }
     const o = parseTaskArgs(argv.slice(1));
-    if (o.error) { console.log(o.error + '\n' + TASK_HELP); return 2; }
+    if (o.error) { print(o.error + '\n' + TASK_HELP); return 2; }
     if (!o.goal) o.goal = readStdin().trim();
-    if (!o.goal) { console.log('要写清楚让分身做什么\n' + TASK_HELP); return 2; }
-    if (o.kind && !TASK_KINDS.includes(o.kind)) { console.log('类型只能是：' + TASK_KINDS.join(' / ')); return 2; }
-    if (o.model && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(m => m.id === o.model)) { console.log('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(runtime.AGY_MODEL).join('、') + '）'); return 2; }
+    if (!o.goal) { print('要写清楚让分身做什么\n' + TASK_HELP); return 2; }
+    if (o.kind && !TASK_KINDS.includes(o.kind)) { print('类型只能是：' + TASK_KINDS.join(' / ')); return 2; }
+    if (o.model && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(m => m.id === o.model)) { print('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(runtime.AGY_MODEL).join('、') + '）'); return 2; }
     // 用户这一句点名的就是这个模型：当成用户点名（检查任务也照用）
     const said = (events(run).find(e => e.t === 'user') || {}).text || '';
     if (meta.frontNamed) o.model = meta.frontNamed;
@@ -2931,9 +2951,9 @@ function taskCmd(argv) {
     // has ended is an operator-supplied task and keeps its explicit command-line requirement.
     const fromFront=meta.agent==='codex'&&!meta.ended;
     const original=fromFront?frontOriginalRequest(run,meta):o.goal;
-    if(!original){console.log('找不到本轮用户原话，不能替用户编写要求');return 1;}
+    if(!original){print('找不到本轮用户原话，不能替用户编写要求');return 1;}
     const r = lockedCall('tasks', 'task_new', { parent: meta.sid, kind: o.kind, title: o.title, goal: original, frontRun:fromFront?run:undefined,web:o.web,strictModel:!!meta.frontNamed,userRequest:fromFront?original:said, model: o.model, named, dir: o.dir, files: fromFront?[...new Set([...(o.files||[]),...(meta.frontFiles||[]).map(f=>f.path)])]:o.files, after: o.after, minutes: o.minutes, plugins: o.plugins, sites: o.sites });
-    if (r.error) { console.log(r.msg || r.error); return 1; }
+    if (r.error) { print(r.msg || r.error); return 1; }
     const t = r.task;
     emit(run, { t: 'task', sid: t.sid, no: t.no, title: t.title, kind: t.kind, model: t.model, why: t.why, status: t.status, after: t.after, at: Date.now() });
     let out = '派出去了：任务 ' + t.no + '「' + t.title + '」（' + KIND_NAMES[t.kind] + '，' + modelLabel(t.model) + '，' + TASK_STATUS[t.status] + '，工作目录 ' + t.dir + '）。' + (t.note ? t.note + '。' : '');
@@ -2947,28 +2967,28 @@ function taskCmd(argv) {
         out += '检查任务 ' + v.no + '（' + modelLabel(v.model) + '）等它做完就开始。';
       } else out += '检查任务没派成：' + (rv.msg || rv.error) + '。';
     }
-    console.log(out + '它在后台做，做完结果会自动出现在聊天里；你不用等，回用户一句就结束这一轮。');
+    print(out + '它在后台做，做完结果会自动出现在聊天里；你不用等，回用户一句就结束这一轮。');
     return 0;
   }
   if (sub === 'ask') {
-    if (!meta || !meta.task) { console.log('xin task ask 只在后台任务里用（要问用户就直接在回答里问）'); return 1; }
+    if (!meta || !meta.task) { print('xin task ask 只在后台任务里用（要问用户就直接在回答里问）'); return 1; }
     const r = lockedCall('tasks', 'task_ask', { sid: meta.sid, question: argv.slice(1).join(' ') });
-    if (r.error) { console.log(r.msg || r.error); return r.error === 'empty' ? 2 : 1; }
-    console.log('记下了。现在结束这一轮（最后一条消息说清楚做到哪了、要用户确认什么）；用户回复后会接着叫你。');
+    if (r.error) { print(r.msg || r.error); return r.error === 'empty' ? 2 : 1; }
+    print('记下了。现在结束这一轮（最后一条消息说清楚做到哪了、要用户确认什么）；用户回复后会接着叫你。');
     return 0;
   }
   const all = listTasks();
   if (sub === 'list') {
     const parent = meta && !meta.task ? meta.sid : null;
     const mine = all.filter(t => t.parent === parent), others = all.filter(t => t.parent !== parent && !isFinished(t));
-    if (!mine.length && !others.length) console.log('还没有后台任务');
-    if (mine.length) console.log(mine.slice(-20).map(taskLine).join('\n'));
-    if (others.length) console.log((mine.length ? '\n' : '') + '别的对话里还没做完的：\n' + others.map(taskLine).join('\n'));
-    console.log(dailyContext());
+    if (!mine.length && !others.length) print('还没有后台任务');
+    if (mine.length) print(mine.slice(-20).map(taskLine).join('\n'));
+    if (others.length) print((mine.length ? '\n' : '') + '别的对话里还没做完的：\n' + others.map(taskLine).join('\n'));
+    print(dailyContext());
     return 0;
   }
   const t = findTask({ no: argv[1] }, all);
-  if (!t) { console.log(argv[1] ? '没有任务 ' + argv[1] : TASK_HELP); return 1; }
+  if (!t) { print(argv[1] ? '没有任务 ' + argv[1] : TASK_HELP); return 1; }
   if (sub === 'show') {
     const lines = [taskLine(t), '工作目录：' + t.dir, '要求：' + cut(t.goal, 1500)];
     const r = lastRun(t);
@@ -2979,24 +2999,24 @@ function taskCmd(argv) {
     }
     if (t.inbox && t.inbox.length) lines.push('等这一步做完再告诉它的：' + t.inbox.map(x => x.text).join(' / '));
     if (t.result) lines.push('结果：' + cut(t.result.text, 3000) + (t.result.err ? '\n出错：' + t.result.err : ''));
-    console.log(lines.join('\n'));
+    print(lines.join('\n'));
     return 0;
   }
   // 分身在沙盒里：从它那里起别的任务会把沙盒带过去，所以分身只能看，不能补充、停别的任务
-  if ((sub === 'tell' || sub === 'stop') && meta && meta.task) { console.log('分身里不能补充、停别的任务'); return 1; }
+  if ((sub === 'tell' || sub === 'stop') && meta && meta.task) { print('分身里不能补充、停别的任务'); return 1; }
   if (sub === 'tell') {
     const text = argv.slice(2).join(' ').trim() || readStdin().trim();
-    if (!text) { console.log('用法：xin task tell 编号 补充的话'); return 2; }
+    if (!text) { print('用法：xin task tell 编号 补充的话'); return 2; }
     const r = lockedCall('tasks', 'task_tell', { no: t.no, text });
-    console.log(r.error ? r.msg || r.error : r.msg);
+    print(r.error ? r.msg || r.error : r.msg);
     return r.error ? 1 : 0;
   }
   if (sub === 'stop') {
     const r = lockedCall('tasks', 'task_stop', { no: t.no });
-    console.log(r.error ? r.msg || r.error : r.already ? '任务 ' + t.no + ' 已经结束了' : '停了：任务 ' + t.no);
+    print(r.error ? r.msg || r.error : r.already ? '任务 ' + t.no + ' 已经结束了' : '停了：任务 ' + t.no);
     return r.error ? 1 : 0;
   }
-  console.log(TASK_HELP);
+  print(TASK_HELP);
   return 2;
 }
 
@@ -3080,32 +3100,32 @@ function companionCmd(argv, run) {
   emit(run, { t: 'xin', act, arg: arg.slice(0, 80) });
   return { code: 0, text: '小芯收到：' + act + (arg ? ' ' + arg.slice(0, 80) : '') };
 }
-function xinCmd(argv) {
-  const act = argv[0], run = process.env.XIN_RUN, meta = okId(run, 'r') ? readJ(metaF(run)) : null;
+function xinCmd(argv,print=console.log) {
+  const act = argv[0], run = callContext().run, meta = okId(run, 'r') ? readJ(metaF(run)) : null;
   // 天启是独立功能：不读写小芯的记事本、好感度、动作、开场白和后台任务
-  if (meta && meta.agent === 'harness') { console.log('天启模式是独立功能，不使用小芯的 xin 命令（记事本、好感度、动作、开场白、后台任务等）。'); return 1; }
+  if (meta && meta.agent === 'harness') { print('天启模式是独立功能，不使用小芯的 xin 命令（记事本、好感度、动作、开场白、后台任务等）。'); return 1; }
   if (act === 'recall') {
-    if(meta?.task){console.log('后台只使用任务内的资料，不检索私人聊天。');return 1;}
-    const q=argv.slice(1).join(' ').trim();if(!q){console.log('用法：xin recall 关键词');return 2;}
-    console.log(JSON.stringify(recallAll(q)));return 0;
+    if(meta?.task){print('后台只使用任务内的资料，不检索私人聊天。');return 1;}
+    const q=argv.slice(1).join(' ').trim();if(!q){print('用法：xin recall 关键词');return 2;}
+    print(JSON.stringify(recallAll(q)));return 0;
   }
-  if (act === 'task') return taskCmd(argv.slice(1));
+  if (act === 'task') return taskCmd(argv.slice(1),print);
   if (act === 'plugin') {   // 插件开关：xin plugin（列出来）、xin plugin on 名字、xin plugin off 名字；下一句开始生效
     const sub = argv[1] || '', name = argv[2] || '';
     if (sub === 'on' || sub === 'off') {
       const r = ops.plugin_set({ name, on: sub === 'on' });
-      console.log(r.error ? r.msg : (r.on ? '已打开 ' : '已关掉 ') + name + '，下一句开始生效（网页上「＋ → 插件」里也能开关）');
+      print(r.error ? r.msg : (r.on ? '已打开 ' : '已关掉 ') + name + '，下一句开始生效（网页上「＋ → 插件」里也能开关）');
       return r.error ? 1 : 0;
     }
     const r = ops.plugins();
-    if (r.error) { console.log(r.msg); return 1; }
-    console.log(r.plugins.length ? r.plugins.map(p => (p.on ? '开着  ' : '关着  ') + p.name + (p.desc ? '：' + p.desc : '')).join('\n') : '没有装插件');
-    console.log('用法：xin plugin on 名字 / xin plugin off 名字（下一句开始生效）');
+    if (r.error) { print(r.msg); return 1; }
+    print(r.plugins.length ? r.plugins.map(p => (p.on ? '开着  ' : '关着  ') + p.name + (p.desc ? '：' + p.desc : '')).join('\n') : '没有装插件');
+    print('用法：xin plugin on 名字 / xin plugin off 名字（下一句开始生效）');
     return 0;
   }
   const c = act && act !== '-h' && act !== '--help' ? companionCmd(argv, run) : null;
-  if (c) { console.log(c.text); return c.code; }
-  console.log('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记忆里（xin remember [--basis stated|observed|inferred] [--type 类型] 一句话）\n  forget   忘掉记忆里的一件事（xin forget 关键词）\n  next     下次见面的开场白（xin next 一句话）\n  move     编新动作、做新动作（xin move help）\n  bond     好感度（xin bond +1 理由）\n  task     后台任务：派分身、看进度、补充、停（xin task help）');
+  if (c) { print(c.text); return c.code; }
+  print('用法：xin <动作> [参数]\n' + Object.keys(ACTS).map(k => '  ' + k.padEnd(8) + ACTS[k]).join('\n') + '\n  remember 记到记忆里（xin remember [--basis stated|observed|inferred] [--type 类型] 一句话）\n  forget   忘掉记忆里的一件事（xin forget 关键词）\n  next     下次见面的开场白（xin next 一句话）\n  move     编新动作、做新动作（xin move help）\n  bond     好感度（xin bond +1 理由）\n  task     后台任务：派分身、看进度、补充、停（xin task help）');
   return act && act !== '-h' && act !== '--help' ? 2 : 0;
 }
 
@@ -3125,18 +3145,53 @@ function restoreStops() {
   try { fs.unlinkSync(mine); } catch { /* 别处删了 */ }
 }
 
-// 一次性的进程（每个请求起的那个、flock 里面的那个）从头到尾拿着共享的所有权锁；下面这几种活得久，只在每次写的那一下拿（vm-state.mjs 的 writing）
+// 一次性兼容客户端在 legacy 持共享锁；kernel 时只转发，不取得本地写权。
 const LONG_LIVED = ['run', 'agy-run', 'warm', 'memory-idle', 'callback', 'watchdog', 'login-window', 'pushq'];
-function main() {
-  if (!LONG_LIVED.includes(process.argv[2])) try { ownership.hold(); } catch (e) {
-    if (e.code !== 'owner_unavailable') throw e;   // 主人活着，或者该内核当主人但它不在：都不写（不悄悄退回旧模式）
-    return ownerUnavailable(process.argv[2], '小芯的状态正在切换，请稍后再试');
+function inputArgs(){try{const t=fs.readFileSync(0,'utf8').trim(),a=t?JSON.parse(t):{};return a&&typeof a==='object'&&!Array.isArray(a)?a:{};}catch{return {};}}
+async function forwardCLI(op){
+  const q=op==='xin'?{kind:'xin',argv:process.argv.slice(3),run:process.env.XIN_RUN||null,stdin:readStdin()}:
+    op==='reap'?{kind:'reap'}:{kind:'op',op:op==='locked'?process.argv[3]:op,locked:op==='locked',key:process.env.XIN_LOCK||null,run:process.env.XIN_RUN||null,args:inputArgs()};
+  try{
+    const r=await requestState(BASE,q);
+    if(op==='xin'){process.stdout.write(r.output||'');process.exitCode=r.code||0;}
+    else process.stdout.write(JSON.stringify(r??{}));
+  }catch(e){
+    if(op==='xin'){process.stderr.write('小芯的状态进程暂时不可用，请稍后重试\n');process.exitCode=1;}
+    else process.stdout.write(JSON.stringify({error:e.code||'owner_unavailable',msg:'小芯的状态进程暂时不可用，请稍后重试',executed:e.executed??false}));
   }
-  journal.recover();
-  restoreStops();
-  let op = process.argv[2];
-  const locked = op === 'locked';
-  if (locked) op = process.argv[3];
+}
+async function serveState(){
+  checkControllers(BASE,SELF);
+  let initialized=false;
+  const service=await createStateServer({home:BASE,owner:ownership,
+    initialize:()=>{checkControllers(BASE,SELF);journal.recover();initializeStateTables();restoreStops();markCurrentController();initialized=true;},
+    handle:controller.handle,tick:maintainState,beforeRelease:()=>{try{if(initialized)journal.recover();}finally{journal.close();}}
+  });
+  const stop=()=>service.close().catch(()=>{process.exitCode=1;});
+  process.on('SIGTERM',stop);process.on('SIGINT',stop);
+  const piped=process.argv.includes('--parent-pipe');
+  if(piped){process.stdin.resume();process.stdin.on('end',stop);}
+  process.stdout.write(JSON.stringify({ready:true,pid:process.pid,epoch:service.epoch})+'\n');
+  await service.closed;
+  process.removeListener('SIGTERM',stop);process.removeListener('SIGINT',stop);
+  if(piped){process.stdin.removeListener('end',stop);process.stdin.destroy();}
+}
+async function main() {
+  if(process.argv[2]==='serve')return serveState();
+  if(!LONG_LIVED.includes(process.argv[2])){
+    if(stateOwned())return forwardCLI(process.argv[2]);
+    try{ownership.hold();}catch(e){if(e.code!=='owner_unavailable')throw e;return forwardCLI(process.argv[2]);}
+    journal.recover();restoreStops();
+  }else{
+    let release;
+    try{release=ownership.enter();journal.recover();restoreStops();}
+    catch(e){
+      if(e.code!=='owner_unavailable')throw e;if(process.argv[2]==='watchdog')return;
+      try{await requestState(BASE,{kind:'control',op:'health'},{timeoutMs:3000});}catch{throw e;}
+    }
+    finally{if(release){journal.closeWriter();release();}}
+  }
+  let op=process.argv[2];const locked=op==='locked';if(locked)op=process.argv[3];
   if (op === 'run') { runner(process.argv[3]); return; }
   if(op==='agy-run'){
     const run=process.argv[3],m=readJ(metaF(run)),t=m&&readJ(sessF(m.sid));
@@ -3151,60 +3206,12 @@ function main() {
   if (op === 'watchdog') { watchdog().catch(() => {}); return; }
   if (op === 'login-window') { runLoginWindow().catch(() => {}); return; }
   // 清理定时器顺带把过期的等待停下：没人开网页、也没有任务在跑时，电脑醒着就照样按时停
-  if (op === 'reap') { reapNow(); try { lockedCall('tasks', 'task_expire', {}); } catch { /* 锁忙就等下次 */ } return; }
-  if (op === 'xin') { process.exitCode = xinCmd(process.argv.slice(3)); return; }
-  if (op === 'pushq') { let m = null; try { m = JSON.parse(process.argv[3] || ''); } catch { /* 坏的就不发 */ } if (m) pushAll(m).catch(() => {}); return; }
-  const internal = locked && Object.prototype.hasOwnProperty.call(iops, op);
-  if (!Object.prototype.hasOwnProperty.call(ops, op) && !(locked && op === 'session_patch') && !internal) {
-    process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return;
-  }
-  let args = {};
-  try { const t = fs.readFileSync(0, 'utf8').trim(); if (t) args = JSON.parse(t); } catch { args = {}; }
-  if (!args || typeof args !== 'object' || Array.isArray(args)) args = {};
-  if(locked&&!process.env.XIN_LOCK){
-    const sid=args.sid||readJ(metaF(args.run||''))?.sid;
-    process.env.XIN_LOCK=['send','session_patch','run_complete','continue_steers'].includes(op)&&sid&&!isTask(readJ(sessF(sid)))?sid:'tasks';
-  }
-  if (op === 'session_patch' && locked && okId(args.sid, 's')) {
-    const s = readJ(sessF(args.sid));
-    if (!s) { process.stdout.write(JSON.stringify({ error: 'no_session', msg: '找不到这个对话' })); return; }
-    for (const k of ['agentSid', 'started', 'ctxWin', 'hUsage', 'frontUsage']) if (Object.prototype.hasOwnProperty.call(args.changes || {}, k)) s[k] = args.changes[k];
-    s.updated = Date.now(); if(isTask(s))saveTask(s);else writeJ(sessF(args.sid), s); rememberAgentSession(s.agent, s.agentSid);
-    process.stdout.write(JSON.stringify({ session: s })); return;
-  }
-  if (internal) {
-    let res; try { res = transactionalOp(op,args,()=>iops[op](args));dispatchLaunches(); } catch (e) { res = { error: 'internal', msg: String(e && e.message || e) }; }
-    process.stdout.write(JSON.stringify(res || {})); return;
-  }
-  if (!Object.prototype.hasOwnProperty.call(ops, op)) { process.stdout.write(JSON.stringify({ error: 'bad_op', msg: '不认识的操作' })); return; }
-  if (!locked) markCurrentController();
-  // 发给主对话的话不带编号：先认出是哪一个，按它自己的锁排队（重发时的摘要仍按「没带编号」算，见 transactionalOp）
-  if (op === 'send' && !args.sid && args.main && !args.mainSid) { const m = mainSid(); if (m) { args.sid = m; args.mainSid = m; } }
-  const key = ['push_key','push_sub','push_unsub'].includes(op) ? 'tasks' : op === 'daily' ? 'daily' : ['send', 'steer', 'rename', 'archive', 'forget'].includes(op)
-    ? (okId(args.sid, 's') ? isTask(readJ(sessF(args.sid))) ? 'tasks' : args.sid : op === 'send' && !args.sid ? 'new' : null) : null;
-  if (!locked && key) { process.stdout.write(JSON.stringify(lockedCall(key, op, args))); return; }
-  Promise.resolve().then(() => transactionalOp(op,args,()=>ops[op](args || {}))).then(res=>{dispatchLaunches();return res;}).catch(e => ({ error: 'internal', msg: String(e && e.message || e) }))
-    .then(res => { process.stdout.write(JSON.stringify(res)); });
+  if(op==='reap'){const res=reapNow();try{lockedCall('tasks','task_expire',{});}catch{}process.stdout.write(JSON.stringify(res));return;}
+  if(op==='xin'){process.exitCode=xinCmd(process.argv.slice(3));return;}
+  if(op==='pushq'){let m=null;try{m=JSON.parse(process.argv[3]||'');}catch{}if(m)pushAll(m).catch(()=>{});return;}
+  try{const res=await controller.invoke({op,args:inputArgs(),locked,key:process.env.XIN_LOCK||null,run:process.env.XIN_RUN||null});process.stdout.write(JSON.stringify(res??{}));}
+  catch(e){process.stdout.write(JSON.stringify({error:'internal',msg:String(e?.message||e)}));}
 }
+const controller=createController({ops,iops,isTask,saveTask,rememberAgentSession,mainSid,listTasks,lockedCall,dispatchLaunches,markCurrentController,xinCmd,reapNow});
 
-function ownerUnavailable(op, msg) { if (op === 'xin') { process.stderr.write(msg + '\n'); process.exitCode = 1; } else if (op !== 'reap') process.stdout.write(JSON.stringify({ error: 'owner_unavailable', msg })); }
-function transactionalOp(op,args,fn){
-  const locked=process.argv[2]==='locked';
-  if(!locked)return fn();
-  const taskScope=process.env.XIN_LOCK==='tasks'&&Object.hasOwn(iops,op);
-  if(!taskScope&&!['send','handoff_start','front_reply','front_model','continue_steers'].includes(op))return fn();
-  // Initialize the compatibility index before opening SQLite: no child may wait on our transaction while holding tasks.lock.
-  if(op==='send'||op==='continue_steers'){mk(SESS);mk(RUNS);listTasks();}
-  let command=null;
-  if(op==='send'&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
-    const {sid,agent,text,effort,model,context,ctxLabel,files}=args;
-    command={id:'send:'+args.clientId,digest:inputDigest({sid:args.mainSid?null:sid||null,agent:agent||null,text:text||'',effort:effort||null,model:model||null,context:context||'',ctxLabel:ctxLabel||'',files:files||[],...(args.main?{main:true}:{})})};
-  }else if(['task_tell','task_stop'].includes(op)&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
-    command={id:op+':'+args.clientId,digest:inputDigest(args)};
-  }else if(op==='front_action'&&(['remember','forget','task','bond','next','move'].includes(args.argv?.[1])||Object.hasOwn(ACTS,args.argv?.[1]||''))&&!['list','show'].includes(args.argv?.[2])){
-    command={id:'front:'+args.run+':'+inputDigest(args.argv).slice(0,20),digest:inputDigest({run:args.run,argv:args.argv})};
-  }
-  return journal.atomic(fn,command);
-}
-
-if (process.argv[1] && path.resolve(process.argv[1]) === SELF) main();
+if (process.argv[1] && path.resolve(process.argv[1]) === SELF) main().catch(e=>{process.stderr.write((e.code==='owner_unavailable'?e.message:e.code||'state_failed')+'\n');process.exitCode=1;});
