@@ -92,3 +92,18 @@
 - 执行机 `li-box-runner`（站长那边的共享虚拟机，会话里进不去）今天已经在 #140、#141、#142、#143 上各出过问题：作业执行两遍、10 分钟没进展、时钟前跳、整机卡住。根因没查到。要站长定：搬回 GitHub 托管的执行机，或排查那台虚拟机。
 - 给第 2 批的提醒：内核模式下状态进程是长寿进程，小芯的电脑空闲 30 分钟会被平台暂停、恢复后墙上时钟一次跳很久。切正式站之前，要在临时目录里专门测「状态进程在跑时墙上时钟前跳」会不会让请求卡住或让状态进程退出（设计把完整的暂停恢复处理放在第 3 批，但第 2 批就会遇到）。这一条是按 CI 现象做的推断，还没有实测。
 
+## Claude Code · 北京时间 2026-11-15 02:30 后（#143 合并后的正式运行）
+
+- 已合并：#143 → main `b9955fb`（北京 02:31，squash；Codex 的 3 个提交和 Claude Code 的 4 个提交都在 PR 里保留）。#142 已关闭（没有留评论，分支 `codex/xin-persistent-kernel-20261114` 保留）。
+- 正式运行 [43627096116](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43627096116) 第一次：e2e 通过，check 857 项红 1 项（状态进程启动时报 `state_compat`），部署跳过，正式站还是 #140。原因是 `checkControllers` 把正在退出的控制器当成「核对不了」（详见修改清单 2026-11-15）；和 #143 的改动无关，正式站不启动状态进程，不影响线上行为。
+- 处理：对这次运行的 check 作业重跑了一次（规矩允许一次，不再重跑）。第二次 check 通过；部署 02:57:31 完成，冒烟、正式站联调（02:57:39–03:00:59）都通过，回滚步骤跳过。**#143 已在正式站上线。**
+- 根因修复：`claude/xiaoxin-architecture-review-2dkunv` 上的 `71394d8`，单独开 PR。实现：Claude Code；自查，没有别的 AI 复核。本地验证（Node 22.23.4，北京 02:57–03:12）：check 862/862、kernel 171/171、E2E 12 组退出 0。
+- 小芯电脑只读核对（北京 03:03，经 InstaBox exec 跑只读命令；不重启、不暂停、不杀进程），全部符合：
+  - `xin-kernel-resident.service` active/running，enabled（`default.target.wants` 里有链接），NRestarts 0，FragmentPath `/data/home/.config/systemd/user/xin-kernel-resident.service`；单元文件 600，带标记行和 `StartLimitIntervalSec=60`、`StartLimitBurst=10`。
+  - 主进程跑的是这次部署的 `vm-kernel-2f117dcbcfda.mjs serve --port 8797`，占 8797 端口的就是它。
+  - 日志里只有一次启动，在 02:57:45，正是正式站联调时第一次 ensure 装上的；之后没有重启或失败。
+  - 旧临时单元 `xin-kernel.service` 已被回收（not-found）；没有 `kernel-service.pending.json`，没有内核启动锁文件，`kernel.env.json` 600。
+  - 所有者记录为空（= legacy，epoch 0），没有 `vm-agent serve` 进程：状态模式仍是 legacy。
+- 还没验收：真实冷启动（关机再开机后服务自己起来）和暂停恢复后的表现。容器里的实测不能代替。
+- 给第 2 批：切内核模式后，正式电脑上的状态进程启动会真的跑这个核对；新内核上读正在退出的进程可能读出空内容，这一支是按源码推断覆盖的，切换前在临时目录里多跑几轮「控制器不停起退时启动状态进程」。
+
