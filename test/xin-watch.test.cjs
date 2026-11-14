@@ -59,6 +59,14 @@ test('越界记录：天启和 Claude 旧模式碰控制器目录、改记忆的
   assert.deepEqual(kinds, ['dir', 'sensitive', 'dir', 'xin', 'sensitive', null, null, null, 'sensitive', null]);
 });
 
+test('越界记录：碰所有权库（owner.sqlite，谁能写状态库）和碰状态库一样算敏感', t => {
+  const { js } = home(t);
+  const kinds = js(`const B=a.BASE,tool=d=>({t:'tool',detail:d});
+    return [a.boundaryKind({agent:'harness'},tool('sqlite3 '+B+'/owner.sqlite "UPDATE owner SET v=1"')),
+      a.boundaryKind({agent:'codex',kind:'daily',task:true},tool('rm '+B+'/owner.sqlite'))];`);
+  assert.deepEqual(kinds, ['sensitive', 'sensitive']);
+});
+
 test('电脑维护同样记越界；审计不保存可能含凭据的命令正文', t => {
   const { js } = home(t);
   const record = js(`return a.boundaryRecord({sid:'scheck001',run:'rcheck001',agent:'codex',kind:'task',task:true,routeKind:'system'},

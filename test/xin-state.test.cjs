@@ -56,3 +56,49 @@ test('有提交了但没投影的行时 recover 照样补写',async t=>{
  j.db.prepare("INSERT INTO documents(name,body,dirty) VALUES('sessions/sdirty001.json','{\"sid\":\"sdirty001\"}',1)").run();
  j.recover();assert.equal(JSON.parse(fs.readFileSync(root+'/sessions/sdirty001.json')).sid,'sdirty001');assert.equal(j.db.prepare("SELECT dirty FROM documents WHERE name='sessions/sdirty001.json'").get().dirty,0);
 });
+
+// ── 所有权检查（site/xin/vm-kernel-owner.mjs，设计 docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.2）──
+// 状态库的每个写入口先问「现在归不归我写」；主人活着、或者该内核当主人但它不在，都不写。
+const refuse = { enter() { throw Object.assign(new Error('owner_alive'), { code: 'owner_unavailable', status: 'alive' }); } };
+const counting = () => { const c = { entered: 0, released: 0, enter() { c.entered++; return () => { c.released++; }; } }; return c; };
+
+test('主人活着时状态库的写入口都不执行、不落任何行；读不受影响', async t => {
+  const { root, j } = await fixture(t);
+  j.atomic(() => { j.write(root + '/a.json', '{"v":1}'); j.enqueueLaunch('r1', 's1'); j.enqueueHandoff({ id: 'h1', parent: 'sp', task: 'st', version: 'v1', payload: {} }); });
+  j.db.prepare('UPDATE documents SET dirty=1').run();
+  j.owner = refuse;
+  const denied = f => assert.throws(f, e => e.code === 'owner_unavailable');
+  denied(() => j.atomic(() => j.write(root + '/b.json', '{}')));
+  denied(() => j.write(root + '/b.json', '{}'));
+  denied(() => j.append(root + '/e.jsonl', { t: 'x' }));
+  denied(() => j.recover());
+  for (const f of [() => j.enqueueLaunch('r2', 's1'), () => j.dispatched('r1'), () => j.finishLaunch('r1'), () => j.enqueueHandoff({ id: 'h2', parent: 'sp', task: 'st', version: 'v1', payload: {} }),
+    () => j.startHandoff('h1', 'r1'), () => j.settleHandoff('h1', 'delivered'), () => j.retryHandoff('h1')]) denied(f);
+  assert.equal(j.db.prepare('SELECT COUNT(*) AS n FROM documents').get().n, 1);
+  assert.equal(j.launchRecord('r1').state, 'pending');
+  assert.equal(j.handoff('h1').state, 'pending');
+  assert.equal(j.pendingLaunches().length, 1);
+});
+
+test('一次最外层事务只过一次所有权检查；提交、回滚、抛错之后都放掉；没有要投影的就不去检查', async t => {
+  const { root, j } = await fixture(t), c = counting(); j.owner = c;
+  j.recover(); assert.deepEqual([c.entered, c.released], [0, 0]);
+  j.atomic(() => { j.write(root + '/a.json', '{}'); j.atomic(() => j.enqueueLaunch('r1', 's1')); });
+  assert.equal(c.entered, 1); assert.equal(c.released, 1);
+  assert.deepEqual(j.atomic(() => ({ error: 'no' })), { error: 'no' });
+  assert.throws(() => j.atomic(() => { throw new Error('boom'); }), /boom/);
+  assert.deepEqual([c.entered, c.released], [3, 3]);
+});
+
+test('记忆表已经建好之后，读记忆不需要写权限；表缺了要建时才过所有权检查', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-state-mem-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const base = pathToFileURL(path.join(__dirname, '../site/xin/vm-base.mjs')).href, mem = pathToFileURL(path.join(__dirname, '../site/xin/vm-memory.mjs')).href;
+  const run = body => spawnSync(process.execPath, ['--input-type=module', '-e',
+    `import { journal } from ${JSON.stringify(base)}; import * as m from ${JSON.stringify(mem)};
+     const refuse = { enter() { throw Object.assign(new Error('owner_alive'), { code: 'owner_unavailable' }); } }; ${body}`], { env: { ...process.env, XIN_HOME: root }, encoding: 'utf8' });
+  const fresh = run("journal.owner = refuse; try { m.listMemory(); console.log('read'); } catch (e) { console.log(e.code); }");
+  assert.equal(fresh.stdout.trim(), 'owner_unavailable', fresh.stderr);
+  assert.equal(run("m.listMemory(); console.log('ready');").stdout.trim(), 'ready');
+  const later = run("journal.owner = refuse; m.listMemory(); console.log('read');");
+  assert.equal(later.stdout.trim(), 'read', later.stderr);
+});
