@@ -63,6 +63,9 @@ function fakeIB(routes) {
   return { calls, restore() { globalThis.fetch = real; } };
 }
 const MACHINES = { body: { machines: [{ id: 'm_abc', name: 'li', state: 'running' }] } };
+// 控制器文件一次 exec 装到电脑上：argv 是 node -e <安装小程序> <目录>，标准输入是要装的文件（按顺序）
+const isInstall = c => c.key.endsWith('/exec') && JSON.parse(c.body).argv[1] === '-e';
+const installed = calls => calls.filter(isInstall).flatMap(c => JSON.parse(JSON.parse(c.body).stdin));
 
 test('没配密钥：功能关着，/me 报 enabled=false，登录 404', async () => {
   const m = await fresh();
@@ -152,9 +155,9 @@ test('send：脚本没传上去时自动上传再跑，并挂活动租约', asyn
     'GET /v1/machines': [MACHINES],
     'POST /v1/machines/m_abc/exec': [
       { body: { stdout: '', stderr: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data/home/.xin/agent/vm-agent-x.mjs'", exitCode: 1 } },
+      { body: { stdout: '{"ok":true}', stderr: '', exitCode: 0 } },
       { body: { stdout: JSON.stringify({ sid: 'sabc123', run: 'rabc123' }), stderr: '', exitCode: 0 } }
     ],
-    'PUT /v1/machines/m_abc/files': [{ status: 201, body: { created: true } }],
     'PUT /v1/machines/m_abc/activity-leases/xin-rabc123': [{ body: {} }]
   });
   const waits = [];
@@ -164,15 +167,18 @@ test('send：脚本没传上去时自动上传再跑，并挂活动租约', asyn
     await Promise.all(waits);
     assert.deepStrictEqual(d, { ok: true, data: { sid: 'sabc123', run: 'rabc123' } });
     const execs = ib.calls.filter(c => c.key.endsWith('/exec'));
-    assert.strictEqual(execs.length, 2);
+    assert.strictEqual(execs.length, 3);
     const body = JSON.parse(execs[0].body);
     assert.strictEqual(body.argv[0], 'node');
     assert.match(body.argv[1], /^\/data\/home\/\.xin\/agent\/vm-agent-[0-9a-f]{12}\.mjs$/);
     assert.strictEqual(body.argv[2], 'send');
     assert.deepStrictEqual(JSON.parse(body.stdin), { agent: 'claude', text: '你好' });
-    const put = ib.calls.find(c => c.key === 'PUT /v1/machines/m_abc/files');
-    assert.strictEqual(put.url.searchParams.get('path'), body.argv[1]);
-    assert.strictEqual(put.body, AGENT_TEXT);
+    // 一次 exec 装好：argv 是 node -e <安装小程序> <目录>，标准输入是要装的文件
+    const install = JSON.parse(execs[1].body);
+    assert.deepStrictEqual([install.argv[0], install.argv[1], install.argv[3]], ['node', '-e', '/data/home/.xin/agent']);
+    assert.deepStrictEqual(JSON.parse(install.stdin).map(f => [f.path, f.text, f.mode]), [[body.argv[1], AGENT_TEXT, '0755']]);
+    assert.deepStrictEqual(JSON.parse(execs[2].body), body, '装好后原样再跑一次');
+    assert.ok(!ib.calls.some(c => c.key.startsWith('PUT /v1/machines/m_abc/files')));
     assert.ok(ib.calls.some(c => c.key.includes('activity-leases')));
     for (const c of ib.calls) assert.strictEqual(c.init.headers['X-API-Key'], 'ibk_test_key_1234567890');
   } finally { ib.restore(); }
@@ -186,14 +192,14 @@ test('上传小芯脚本：按 import 递归带上全部本地模块，文件名
     'GET /v1/machines': [MACHINES],
     'POST /v1/machines/m_abc/exec': [
       { body: { stdout: '', stderr: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data/home/.xin/agent/vm-base-x.mjs'", exitCode: 1 } },
+      { body: { stdout: '{"ok":true}', stderr: '', exitCode: 0 } },
       { body: { stdout: JSON.stringify({ ok: true, agents: [] }), stderr: '', exitCode: 0 } }
-    ],
-    'PUT /v1/machines/m_abc/files': [{ status: 201, body: { created: true } }]
+    ]
   });
   try {
     const d = await (await m.handleXin(req('/api/xin/call', { body: { op: 'ping' }, headers: { cookie: ck } }), env, null)).json();
     assert.strictEqual(d.ok, true);
-    const puts = ib.calls.filter(c => c.key === 'PUT /v1/machines/m_abc/files').map(c => ({ name: path.basename(c.url.searchParams.get('path')), body: c.body }));
+    const puts = installed(ib.calls).map(f => ({ name: path.basename(f.path), body: f.text }));
     const uploaded = new Map(puts.map(p => [p.name, p.body]));
     const local = fs.readdirSync(path.join(site, 'xin')).filter(f => /^vm-.*\.mjs$/.test(f));
     for (const f of local) assert.ok([...uploaded.keys()].some(n => new RegExp('^' + f.replace('.mjs', '') + '-[0-9a-f]{12}\\.mjs$').test(n)), '没有上传 ' + f);
@@ -212,7 +218,7 @@ test('上传小芯脚本：缺模块或模块循环引用时明确报错，不�
     const ib = fakeIB({ 'GET /v1/machines': [MACHINES] });
     try {
       const d = await (await m.handleXin(req('/api/xin/call', { body: { op: 'ping' }, headers: { cookie: ck } }), env, null)).json();
-      assert.strictEqual(d.ok, false); assert.ok(!ib.calls.some(c => c.key.startsWith('PUT')), code);
+      assert.strictEqual(d.ok, false); assert.ok(!ib.calls.some(c => c.key.startsWith('PUT') || c.key.endsWith('/exec')), code);
       assert.match(d.msg, code === 'module_cycle' ? /循环依赖/ : /缺 vm-missing\.mjs/);
     } finally { ib.restore(); }
   }
@@ -2159,6 +2165,119 @@ test('verifyAgent 也核对内核文件', async () => {
     assert.strictEqual(argv[0], 'sha256sum');
     assert.ok(argv.some(p => /\/vm-kernel-[0-9a-f]{12}\.mjs$/.test(p)), argv.join(' '));
   } finally { ib.restore(); }
+});
+
+/* ---------- 一次请求的子请求数（#144 正式联调失败，正式运行 43632754629） ----------
+   Cloudflare Workers 免费套餐：一次请求最多 50 个子请求，fetch 和读静态资源（ASSETS）都算；Durable Object 是内部服务，另有上限。
+   #144 换了控制器，冷启动的那次请求先读 29 个模块文件，再逐个 PUT 上传，传到第 20 个时超了，控制器入口没传上去，联调失败、自动回滚。
+   端口令牌是 Durable Object 自己去要的（KernelConfigStore），算在它那次请求里，这里不计。 */
+const FREE_SUBREQUESTS = 50;
+const SITE_DIR = path.join(__dirname, '../site');
+const siteAssets = () => ({ fetch: async r => { const f = path.join(SITE_DIR, new URL(r.url).pathname); return fs.existsSync(f) ? new Response(fs.readFileSync(f, 'utf8')) : new Response('nope', { status: 404 }); } });
+const sha256hex = t => require('node:crypto').createHash('sha256').update(t).digest('hex');
+const REAL_KERNEL_HASH = sha256hex(fs.readFileSync(path.join(SITE_DIR, 'xin/vm-kernel.mjs'), 'utf8')).slice(0, 12);
+function subrequests(env) {
+  const s = { used: 0, keys: [] }, inner = globalThis.fetch, assets = env.ASSETS;
+  const charge = key => { s.used++; s.keys.push(key); if (s.used > FREE_SUBREQUESTS) throw new Error('Too many subrequests.'); };
+  globalThis.fetch = async (url, init = {}) => { const u = new URL(url); if (!u.pathname.endsWith('/ports')) charge((init.method || 'GET') + ' ' + u.pathname); return inner(url, init); };
+  env.ASSETS = { fetch: async r => { charge('ASSETS ' + new URL(r.url).pathname); return assets.fetch(r); } };
+  s.restore = () => { globalThis.fetch = inner; env.ASSETS = assets; };
+  return s;
+}
+test('冷启动、电脑醒着、这次部署换了控制器（内核通道）：子请求不超过免费套餐的 50 个，控制器一次装好，照常回答', async t => {
+  const m = await fresh(), env = kernelEnv(m, { ASSETS: siteAssets() }), ck = await login(m, env), w = waiter();
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => kres(409, { ok: false, executed: false, error: 'agent_missing' }, { 'x-xin-kernel': REAL_KERNEL_HASH }), () => kres(200, { ok: true, data: { sessions: [] } }, { 'x-xin-kernel': REAL_KERNEL_HASH })],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true}', stderr: '', exitCode: 0 } }] });
+  const sub = subrequests(env);
+  try {
+    const d = await callOp(m, env, ck, 'sessions', {}, w.ctx);
+    await w.settle();
+    assert.deepStrictEqual(d, { ok: true, data: { sessions: [] } }, '用了 ' + sub.used + ' 个子请求：' + sub.keys.join(', '));
+    t.diagnostic('这次请求用了 ' + sub.used + ' 个子请求（免费套餐上限 50）');
+    // 模块再多几个也不该逼近上限：留 10 个余量，快到了这里先红
+    assert.ok(sub.used <= FREE_SUBREQUESTS - 10, '子请求 ' + sub.used + ' 个，离免费套餐的 50 个太近：' + sub.keys.join(', '));
+    const files = installed(ib.calls), local = fs.readdirSync(path.join(SITE_DIR, 'xin')).filter(f => /^vm-.*\.mjs$/.test(f));
+    assert.ok(ib.calls.filter(isInstall).length >= 1);
+    for (const f of local) assert.ok(files.some(x => new RegExp('/' + f.replace('.mjs', '') + '-[0-9a-f]{12}\\.mjs$').test(x.path)), '没有装 ' + f);
+    assert.match(files.at(-1).path, /\/vm-agent-[0-9a-f]{12}\.mjs$/, '入口最后装');
+    assert.strictEqual(files.at(-1).mode, '0755');
+    assert.strictEqual(files.at(-1).path, JSON.parse(ib.calls.filter(c => c.key === 'POST /xin/op').at(-1).body).agent, '装的就是内核要跑的那个入口');
+    for (const x of files) assert.strictEqual(x.sha256, sha256hex(x.text), x.path);
+    for (const c of ib.calls.filter(isInstall)) assert.ok(Buffer.byteLength(JSON.parse(c.body).stdin) <= 1048576, 'exec 的标准输入最多 1 MiB');
+    assert.deepStrictEqual(ib.calls.filter(c => c.key.startsWith('PUT')).map(c => c.url.searchParams.get('path')), ['/data/home/.xin/kernel-keys.json'], '控制器文件不再逐个 PUT');
+  } finally { sub.restore(); ib.restore(); }
+});
+
+test('冷启动、这次部署换了控制器（exec 通道）：一样不超 50 个子请求，装好后再跑一次', async t => {
+  const m = await fresh(), env = mkEnv({ ASSETS: siteAssets() }), ck = await login(m, env);
+  let agentRuns = 0;
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /v1/machines/m_abc/exec': [(u, init) => {
+      if (JSON.parse(init.body).argv[1] === '-e') return new Response(JSON.stringify({ stdout: '{"ok":true}', stderr: '', exitCode: 0 }));
+      return new Response(JSON.stringify(agentRuns++ ? { stdout: '{"sessions":[]}', stderr: '', exitCode: 0 } : { stdout: '', stderr: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data/home/.xin/agent/vm-base-x.mjs'", exitCode: 1 }));
+    }] });
+  const sub = subrequests(env);
+  try {
+    const d = await callOp(m, env, ck, 'sessions');
+    assert.deepStrictEqual(d, { ok: true, data: { sessions: [] } }, '用了 ' + sub.used + ' 个子请求：' + sub.keys.join(', '));
+    t.diagnostic('这次请求用了 ' + sub.used + ' 个子请求（免费套餐上限 50）');
+    assert.ok(sub.used <= FREE_SUBREQUESTS - 10, '子请求 ' + sub.used + ' 个：' + sub.keys.join(', '));
+    assert.strictEqual(agentRuns, 2);
+    assert.ok(!ib.calls.some(c => c.key.startsWith('PUT')), '控制器文件不再逐个 PUT');
+    assert.match(installed(ib.calls).at(-1).path, /\/vm-agent-[0-9a-f]{12}\.mjs$/);
+  } finally { sub.restore(); ib.restore(); }
+});
+
+test('要装的文件超过一次 exec 能带的输入（1 MiB）：按顺序分几次装，入口在最后一次', async () => {
+  const big = name => '// ' + name + ' ' + '模'.repeat(150000) + '\nexport const ' + name + ' = 1;\n';   // 每个约 450 KB（中文按 3 字节算）
+  const files = { '/xin/vm-agent.mjs': "import { a } from './vm-a.mjs';\nimport { b } from './vm-b.mjs';\nimport { c } from './vm-c.mjs';\n", '/xin/vm-a.mjs': big('a'), '/xin/vm-b.mjs': big('b'), '/xin/vm-c.mjs': big('c') };
+  const m = await fresh(), env = mkEnv({ ASSETS: { fetch: async r => files[new URL(r.url).pathname] ? new Response(files[new URL(r.url).pathname]) : new Response('nope', { status: 404 }) } }), ck = await login(m, env);
+  let agentRuns = 0;
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/exec': [(u, init) => JSON.parse(init.body).argv[1] === '-e' ? new Response(JSON.stringify({ stdout: '{"ok":true}', stderr: '', exitCode: 0 }))
+      : new Response(JSON.stringify(agentRuns++ ? { stdout: '{"ok":true}', stderr: '', exitCode: 0 } : { stdout: '', stderr: 'Error [ERR_MODULE_NOT_FOUND]: Cannot find module x', exitCode: 1 }))] });
+  try {
+    assert.strictEqual((await callOp(m, env, ck, 'ping')).ok, true);
+    const batches = ib.calls.filter(isInstall).map(c => JSON.parse(c.body).stdin);
+    assert.ok(batches.length >= 2, '应分几次装，实际 ' + batches.length + ' 次');
+    for (const b of batches) assert.ok(Buffer.byteLength(b) <= 1048576, '一次最多 1 MiB：' + Buffer.byteLength(b));
+    assert.deepStrictEqual(installed(ib.calls).map(x => path.basename(x.path).replace(/-[0-9a-f]{12}\.mjs$/, '')), ['vm-a', 'vm-b', 'vm-c', 'vm-agent']);
+    assert.deepStrictEqual(JSON.parse(batches.at(-1)).map(x => path.basename(x.path).replace(/-[0-9a-f]{12}\.mjs$/, '')).at(-1), 'vm-agent', '入口在最后一次');
+  } finally { ib.restore(); }
+});
+
+test('装控制器文件的小程序（在电脑上跑）：按顺序写、摘要对上才换名、权限照给的；摘要或路径不对就停下，不留半个文件', async () => {
+  const { AGENT_INSTALL } = await fresh(), { spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-install-'));
+  try {
+    const run = list => spawnSync(process.execPath, ['-e', AGENT_INSTALL, dir], { input: JSON.stringify(list), encoding: 'utf8' });
+    const item = (name, text, mode = '0644') => ({ path: path.join(dir, name), mode, sha256: sha256hex(text), text });
+    const base = item('vm-base-0123456789ab.mjs', 'export const x = 1;\n'), agent = item('vm-agent-ba9876543210.mjs', "import { x } from './vm-base-0123456789ab.mjs';\n// 中文注释\n", '0755');
+    let r = run([base, agent]);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(fs.readFileSync(agent.path, 'utf8'), agent.text);
+    assert.strictEqual(fs.statSync(agent.path).mode & 0o777, 0o755);
+    assert.strictEqual(fs.statSync(base.path).mode & 0o777, 0o644);
+    assert.deepStrictEqual(fs.readdirSync(dir).sort(), [path.basename(agent.path), path.basename(base.path)].sort(), '不留临时文件');
+    // 被改过的文件：照这一版的内容重写
+    fs.writeFileSync(base.path, 'process.exit(0)\n');
+    r = run([base]);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(fs.readFileSync(base.path, 'utf8'), base.text);
+    // 摘要不对：在它这里停下，前面的写好了，它和后面的都不写，不留临时文件
+    const first = item('vm-first-111111111111.mjs', 'export const f = 1;\n'), wrong = { ...item('vm-agent-222222222222.mjs', 'export const w = 1;\n'), sha256: '0'.repeat(64) }, later = item('vm-later-333333333333.mjs', 'export const l = 1;\n');
+    r = run([first, wrong, later]);
+    assert.notStrictEqual(r.status, 0);
+    assert.ok(fs.existsSync(first.path) && !fs.existsSync(wrong.path) && !fs.existsSync(later.path));
+    assert.ok(!fs.readdirSync(dir).some(f => f.endsWith('.tmp')), fs.readdirSync(dir).join(' '));
+    // 只写这个目录里、按摘要命名的 vm-*.mjs，权限只认 0644 / 0755
+    for (const bad of [{ ...item('vm-x-444444444444.mjs', 'x'), path: path.join(dir, '..', 'vm-x-444444444444.mjs') }, item('run.sh', 'x'), item('vm-agent-555555555555.mjs', 'x', '4755'), item('vm-agent.mjs', 'x')]) {
+      r = run([bad]);
+      assert.notStrictEqual(r.status, 0, bad.path + ' ' + bad.mode);
+      assert.ok(!fs.existsSync(bad.path), bad.path);
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 /* ---------- 待送达和流的接线（计划 Task 8） ---------- */
