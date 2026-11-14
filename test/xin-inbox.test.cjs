@@ -194,6 +194,113 @@ test('旧租约的迟到回应不能覆盖已经重试的行', async () => {
   assert.strictEqual((await x.ib.view(a.id)).result.run, 'rnew');
 });
 
+// ── 按对话分道（docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §2.2）──
+// 「这个对话在忙」只挡这一道；「电脑叫不醒、在冷却、连不上」才挡所有道。
+const A = { text: '给 A', sid: 'sA' }, B = { text: '给 B', sid: 'sB' };
+const BUSY = { ok: true, data: { error: 'busy', msg: '上一句还没做完，请稍后再试' } };
+
+test('一个对话在忙：发给别的对话的照样马上送到', async () => {
+  const x = await inbox({ deliver: async row => row.args.sid === 'sA' ? BUSY : { ok: true, data: { run: 'rB' } } });
+  const a = await x.ib.accept({ id: 'cid-lane-a001', op: 'send', args: A });
+  const b = await x.ib.accept({ id: 'cid-lane-b001', op: 'send', args: B });
+  assert.deepStrictEqual([a.view.state, a.view.wait.state, a.view.wait.scope], ['pending', 'busy', 'lane']);
+  assert.strictEqual(b.view.state, 'delivered');
+  assert.deepStrictEqual(x.calls.map(r => r.id), ['cid-lane-a001', 'cid-lane-b001']);
+});
+
+test('闹钟那一轮：一个对话的队首还在忙，别的对话到期的照送', async () => {
+  let awake = false;
+  const x = await inbox({ deliver: async row => !awake ? { ok: false, state: 'waking', retryAfter: 3 } : row.args.sid === 'sA' ? BUSY : { ok: true, data: { run: 'rB' } } });
+  await x.ib.accept({ id: 'cid-lane-a002', op: 'send', args: A });
+  await x.ib.accept({ id: 'cid-lane-b002', op: 'send', args: B });
+  awake = true; x.clock.now = T0 + 3000;
+  await x.ib.alarm();
+  assert.strictEqual((await x.ib.view('cid-lane-b002')).state, 'delivered');
+  assert.strictEqual((await x.ib.view('cid-lane-a002')).wait.state, 'busy');
+  assert.strictEqual(x.storage.alarm, T0 + 3000 + 5000, '闹钟定在 A 那一道下次重试的时候');
+});
+
+test('连发两个新对话，第一个临时失败：第二个照样送到', async () => {
+  const x = await inbox({ deliver: async row => row.args.text === '第一个' ? { ok: true, data: { error: 'internal', msg: '出错了' } } : { ok: true, data: { run: 'r2' } } });
+  await x.ib.accept({ id: 'cid-new-00001', op: 'send', args: { text: '第一个' } });
+  assert.strictEqual((await x.ib.accept({ id: 'cid-new-00002', op: 'send', args: { text: '第二个' } })).view.state, 'delivered');
+});
+
+test('一道在长退避、另一道几秒后到期：闹钟定在最早的那一道', async () => {
+  const x = await inbox({ deliver: async row => row.args.sid === 'sA' ? BUSY : { ok: true, data: { error: 'internal', msg: '出错了' } } });
+  await x.ib.accept({ id: 'cid-lane-a003', op: 'send', args: A });
+  for (const at of [5, 20, 50, 110, 230, 530]) { x.clock.now = T0 + at * 1000; await x.ib.alarm(); }   // A 退避到 10 分钟一次
+  const t = x.clock.now;
+  await x.ib.accept({ id: 'cid-lane-b003', op: 'send', args: B });
+  assert.strictEqual(x.storage.alarm, t + 5000);
+});
+
+test('laneOf：有编号按编号，主对话的第一句一道，其余新对话各自一道；编号不是字符串也不抛错', async () => {
+  const { laneOf } = await load('../src/xin-inbox.js');
+  assert.strictEqual(laneOf({ id: 'i1', args: { sid: 'sA' } }), 'c:sA');
+  assert.strictEqual(laneOf({ id: 'i1', args: { main: true } }), 'main');
+  assert.strictEqual(laneOf({ id: 'i1', args: { sid: 'sA', main: true } }), 'c:sA');
+  assert.strictEqual(laneOf({ id: 'i1', args: {} }), 'n:i1');
+  for (const sid of [42, {}, '', null]) assert.strictEqual(laneOf({ id: 'i2', args: { sid } }), 'n:i2');
+  assert.strictEqual(laneOf({ id: 'i3' }), 'n:i3');
+});
+
+test('同一个对话里：前面那句还在路上，后面那句不越过去，显示「前面那句还没送到」', async () => {
+  let release;
+  const x = await inbox({ budgetMs: 1, deliver: () => new Promise(r => { release = r; }) });
+  await x.ib.accept({ id: 'cid-same-0001', op: 'send', args: A });
+  const second = await x.ib.accept({ id: 'cid-same-0002', op: 'send', args: { ...A, text: '第二句' } });
+  assert.deepStrictEqual([second.view.state, second.view.wait.state, second.view.wait.msg], ['pending', 'retrying', '前面那句还没送到']);
+  assert.strictEqual(x.calls.length, 1);
+  release({ ok: true, data: { run: 'r1' } });
+  for (let i = 0; i < 5; i++) await tick();
+});
+
+test('电脑在冷却：别的对话的新消息也不去试，显示冷却，闹钟定在冷却结束；结束后按先后都送到', async () => {
+  let ready = false;
+  const x = await inbox({ deliver: async () => ready ? { ok: true, data: { run: 'r' } } : { ok: false, state: 'cooldown', retryAfter: 3600 } });
+  await x.ib.accept({ id: 'cid-cool-a001', op: 'send', args: A });
+  const b = await x.ib.accept({ id: 'cid-cool-b001', op: 'send', args: B });
+  assert.deepStrictEqual([b.view.state, b.view.wait.state], ['pending', 'cooldown']);
+  assert.deepStrictEqual(x.calls.map(r => r.id), ['cid-cool-a001']);
+  assert.strictEqual(x.storage.alarm, T0 + H);
+  ready = true; x.clock.now = T0 + H;
+  await x.ib.alarm();
+  assert.deepStrictEqual(x.calls.map(r => r.id), ['cid-cool-a001', 'cid-cool-a001', 'cid-cool-b001']);
+  assert.strictEqual((await x.ib.view('cid-cool-b001')).state, 'delivered');
+});
+
+test('叫不醒：这一轮只试最前面那一句，不挨个对话去撞', async () => {
+  const x = await inbox({ deliver: async () => ({ ok: false, state: 'waking', retryAfter: 3 }) });
+  await x.ib.accept({ id: 'cid-wake-a001', op: 'send', args: A });
+  await x.ib.accept({ id: 'cid-wake-b001', op: 'send', args: B });
+  x.clock.now = T0 + 3000; await x.ib.alarm();
+  assert.deepStrictEqual(x.calls.map(r => r.id), ['cid-wake-a001', 'cid-wake-a001']);
+});
+
+test('上线前存着的旧行（wait 里没有 scope）：不报错，等到它下一次重试，之后带上 scope', async () => {
+  const x = await inbox({ deliver: async row => row.args.sid === 'sA' ? BUSY : { ok: true, data: { run: 'rB' } } });
+  await x.storage.put('inbox:meta', { v: 1 }); await x.storage.put('inbox:seq', 1);
+  await x.storage.put('inbox:row:cid-old-00001', { id: 'cid-old-00001', op: 'send', args: A, digest: 'd', seq: 1, state: 'pending', attempts: 1, backoff: 1, nextAt: T0 + 5000, leaseUntil: 0, createdAt: T0 - 1000,
+    firstAttemptAt: T0 - 1000, deliveredAt: 0, finishedAt: 0, result: null, wait: { state: 'busy', until: T0 + 5000, msg: '上一句还没做完' }, error: null, acked: false, woke: false });
+  assert.strictEqual((await x.ib.accept({ id: 'cid-old-b0001', op: 'send', args: B })).view.state, 'pending');
+  x.clock.now = T0 + 5000; await x.ib.alarm();
+  assert.strictEqual((await x.storage.get('inbox:row:cid-old-00001')).wait.scope, 'lane');
+  assert.strictEqual((await x.ib.view('cid-old-b0001')).state, 'delivered');
+});
+
+test('一道的队首 24 小时放弃：同一道的下一句在同一轮接着送', async () => {
+  let ok = false;
+  const x = await inbox({ deliver: async () => ok ? { ok: true, data: { run: 'r' } } : BUSY });
+  await x.ib.accept({ id: 'cid-give-0001', op: 'send', args: A });
+  x.clock.now = T0 + DAY - 1000;
+  await x.ib.accept({ id: 'cid-give-0002', op: 'send', args: { ...A, text: '第二句' } });
+  ok = true; x.clock.now = T0 + DAY + 1;
+  await x.ib.alarm();
+  assert.strictEqual((await x.ib.view('cid-give-0001')).error.code, 'gave_up');
+  assert.strictEqual((await x.ib.view('cid-give-0002')).state, 'delivered');
+});
+
 test('送达和确认同时发生：确认标记不丢', async () => {
   let release;
   const x = await inbox({ deliver: () => new Promise(r => { release = r; }) });
