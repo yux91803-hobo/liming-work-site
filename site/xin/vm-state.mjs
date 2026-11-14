@@ -6,20 +6,7 @@ import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
 export const inputDigest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
-export class StateJournal {
-  constructor(root) { this.root=path.resolve(root);this.active=false;this.overlay=new Map();this.after=[]; }
-  get db(){
-    if(this.connection)return this.connection;
-    fs.mkdirSync(this.root,{recursive:true,mode:0o700});
-    const file=path.join(this.root,'workflow.sqlite');
-    if(fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw Error('状态库不能是软链接');
-    const d=new DatabaseSync(file);fs.chmodSync(file,0o600);
-    d.exec('PRAGMA busy_timeout=15000');
-    // Concurrent first opens race on WAL setup and schema creation, which can report busy without
-    // waiting. Every statement below is idempotent: retry briefly, and cache the connection only once ready.
-    for(let attempt=0;;attempt++)try{
-    d.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-      CREATE TABLE IF NOT EXISTS documents (name TEXT PRIMARY KEY, body TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, dirty INTEGER NOT NULL DEFAULT 1);
+const SCHEMA = `CREATE TABLE IF NOT EXISTS documents (name TEXT PRIMARY KEY, body TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, dirty INTEGER NOT NULL DEFAULT 1);
       CREATE TABLE IF NOT EXISTS appends (id TEXT PRIMARY KEY, name TEXT NOT NULL, body TEXT NOT NULL, projected INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, digest TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS launches (run TEXT PRIMARY KEY, sid TEXT NOT NULL, lane INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, dispatchedAt INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL);
@@ -28,21 +15,60 @@ export class StateJournal {
       CREATE INDEX IF NOT EXISTS dirty_documents ON documents(name) WHERE dirty=1;
       CREATE INDEX IF NOT EXISTS unprojected_appends ON appends(projected) WHERE projected=0;
       CREATE INDEX IF NOT EXISTS pending_launches ON launches(state,lane,at);
-      CREATE INDEX IF NOT EXISTS pending_handoffs ON handoffs(state,nextAt,parent);`);
-    if(!d.prepare('PRAGMA table_info(launches)').all().some(c=>c.name==='attempts'))d.exec('ALTER TABLE launches ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
-    if(!d.prepare('PRAGMA table_info(launches)').all().some(c=>c.name==='dispatchedAt'))d.exec('ALTER TABLE launches ADD COLUMN dispatchedAt INTEGER NOT NULL DEFAULT 0');
+      CREATE INDEX IF NOT EXISTS pending_handoffs ON handoffs(state,nextAt,parent);`;
+const SCHEMA_NAMES = [...SCHEMA.matchAll(/CREATE (?:TABLE|INDEX) IF NOT EXISTS (\w+)/g)].map(m => m[1]);
+export class StateJournal {
+  constructor(root) { this.root=path.resolve(root);this.active=false;this.overlay=new Map();this.after=[];this.owner=null;this.writers=0; }
+  // 所有写入口都从这里过（docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.2）：旧模式下拿着共享的所有权锁写，
+  // 主人活着、或者该内核当主人但它不在，owner.enter() 会抛 owner_unavailable，这里就不写。一次最外层调用只问一次。
+  // owner 为空（单独用 StateJournal 的测试）时不检查。
+  writing(fn){
+    if(!this.owner||this.writers>0)return fn();
+    const release=this.owner.enter();this.writers++;
+    try{return fn();}finally{this.writers--;release();}
+  }
+  get db(){
+    if(this.connection)return this.connection;
+    const file=path.join(this.root,'workflow.sqlite');
+    let stat;try{stat=fs.lstatSync(file);}catch(e){if(e.code!=='ENOENT')throw e;}
+    if(stat?.isSymbolicLink())throw Error('状态库不能是软链接');
+    // 打开缺失/空库本身就会写文件。先拿所有权，不能先创建了再在 recover 里拒绝。
+    return !stat||stat.size===0?this.writing(()=>this.#open()):this.#open();
+  }
+  #open(){
+    fs.mkdirSync(this.root,{recursive:true,mode:0o700});
+    const file=path.join(this.root,'workflow.sqlite');
+    if(fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw Error('状态库不能是软链接');
+    const d=new DatabaseSync(file);
+    try{
+    fs.chmodSync(file,0o600);d.exec('PRAGMA busy_timeout=15000; PRAGMA synchronous=FULL');
+    // Concurrent first opens race on WAL setup and schema creation, which can report busy without
+    // waiting. Every statement below is idempotent: retry briefly, and cache the connection only once ready.
+    for(let attempt=0;;attempt++)try{
+    const have=new Set(d.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','index')").all().map(r=>r.name));
+    const columns=new Set(d.prepare('PRAGMA table_info(launches)').all().map(c=>c.name));
+    if(!SCHEMA_NAMES.every(n=>have.has(n))||!columns.has('attempts')||!columns.has('dispatchedAt')||d.prepare('PRAGMA journal_mode').get().journal_mode!=='wal')this.writing(()=>{
+      d.exec('PRAGMA journal_mode=WAL;'+SCHEMA);
+      const latest=new Set(d.prepare('PRAGMA table_info(launches)').all().map(c=>c.name));
+      if(!latest.has('attempts'))d.exec('ALTER TABLE launches ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
+      if(!latest.has('dispatchedAt'))d.exec('ALTER TABLE launches ADD COLUMN dispatchedAt INTEGER NOT NULL DEFAULT 0');
+    });
     break;
     }catch(e){
-      if(![5,6].includes(e.errcode)&&!/duplicate column/.test(e.message)||attempt>=60){d.close();throw e;}
+      if(![5,6].includes(e.errcode)&&!/duplicate column/.test(e.message)||attempt>=60)throw e;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10+attempt*5);
     }
     return this.connection=d;
+    }catch(e){d.close();throw e;}
   }
   name(file){const n=path.relative(this.root,path.resolve(file));if(!n||n.startsWith('..')||path.isAbsolute(n))throw Error('状态投影越界');return n;}
   staged(file){if(!this.active)return;try{return this.overlay.get(this.name(file));}catch{return;}}
   stagedNames(prefix){return [...this.overlay.keys()].filter(n=>n.startsWith(prefix));}
   atomic(fn,command){
     if(this.active)return fn();
+    return this.writing(()=>this.commit(fn,command));
+  }
+  commit(fn,command){
     const d=this.db;d.exec('BEGIN IMMEDIATE');this.active=true;this.overlay.clear();this.after=[];this.eventSequence=0;this.operation=command?.id||crypto.randomUUID();
     let result;
     try{
@@ -75,6 +101,10 @@ export class StateJournal {
     // Every controller call starts here. With nothing committed-but-unprojected there is nothing to repair, so
     // a plain WAL read is enough and a reader never waits behind another process's write transaction.
     if(!d.prepare('SELECT 1 FROM documents WHERE dirty=1 LIMIT 1').get()&&!d.prepare('SELECT 1 FROM appends WHERE projected=0 LIMIT 1').get())return;
+    return this.writing(()=>this.project());
+  }
+  project(){
+    const d=this.db;
     d.exec('BEGIN IMMEDIATE');
     try{
       for(const x of d.prepare('SELECT * FROM documents WHERE dirty=1 ORDER BY name').all()){
@@ -93,21 +123,21 @@ export class StateJournal {
       d.exec('COMMIT');
     }catch(e){d.exec('ROLLBACK');throw e;}
   }
-  enqueueLaunch(run,sid,lane=0){this.db.prepare('INSERT OR IGNORE INTO launches(run,sid,lane,at) VALUES(?,?,?,?)').run(run,sid,lane,Date.now());}
+  enqueueLaunch(run,sid,lane=0){this.writing(()=>this.db.prepare('INSERT OR IGNORE INTO launches(run,sid,lane,at) VALUES(?,?,?,?)').run(run,sid,lane,Date.now()));}
   pendingLaunches(){return this.db.prepare("SELECT * FROM launches WHERE state='pending' ORDER BY lane,at LIMIT 32").all();}
-  dispatched(run){this.db.prepare("UPDATE launches SET state='dispatched',attempts=attempts+1,dispatchedAt=? WHERE run=?").run(Date.now(),run);}
+  dispatched(run){this.writing(()=>this.db.prepare("UPDATE launches SET state='dispatched',attempts=attempts+1,dispatchedAt=? WHERE run=?").run(Date.now(),run));}
   launchRecord(run){return this.db.prepare('SELECT * FROM launches WHERE run=?').get(run);}
   launchedRuns(){return this.db.prepare("SELECT * FROM launches WHERE state='dispatched' ORDER BY at LIMIT 128").all();}
-  finishLaunch(run){this.db.prepare("UPDATE launches SET state='finished' WHERE run=?").run(run);}
+  finishLaunch(run){this.writing(()=>this.db.prepare("UPDATE launches SET state='finished' WHERE run=?").run(run));}
   hasOpenLaunches(){return !!this.db.prepare("SELECT 1 FROM launches WHERE state IN ('pending','dispatched') LIMIT 1").get();}
   enqueueHandoff({id,parent,task,version,payload}){
-    this.db.prepare('INSERT OR IGNORE INTO handoffs(id,parent,task,version,payload,nextAt) VALUES(?,?,?,?,?,?)').run(id,parent,task,version,JSON.stringify(payload),Date.now());
+    this.writing(()=>this.db.prepare('INSERT OR IGNORE INTO handoffs(id,parent,task,version,payload,nextAt) VALUES(?,?,?,?,?,?)').run(id,parent,task,version,JSON.stringify(payload),Date.now()));
   }
   handoff(id){const r=this.db.prepare('SELECT * FROM handoffs WHERE id=?').get(id);return r?{...r,payload:JSON.parse(r.payload)}:null;}
   dueHandoffs(){return this.db.prepare("SELECT id,parent,task,state,run FROM handoffs WHERE state IN ('pending','running') AND nextAt<=? ORDER BY nextAt LIMIT 16").all(Date.now());}
-  startHandoff(id,run){this.db.prepare("UPDATE handoffs SET state='running',run=?,attempts=attempts+1,nextAt=? WHERE id=? AND state='pending'").run(run,Date.now()+5000,id);}
-  settleHandoff(id,state){if(!['delivered','continued','silent','superseded','cancelled'].includes(state))throw Error('无效交接结果');this.db.prepare('UPDATE handoffs SET state=?,nextAt=0 WHERE id=?').run(state,id);}
-  retryHandoff(id){this.db.prepare("UPDATE handoffs SET state='pending',run=NULL,nextAt=? WHERE id=? AND state='running'").run(Date.now()+5000,id);}
+  startHandoff(id,run){this.writing(()=>this.db.prepare("UPDATE handoffs SET state='running',run=?,attempts=attempts+1,nextAt=? WHERE id=? AND state='pending'").run(run,Date.now()+5000,id));}
+  settleHandoff(id,state){if(!['delivered','continued','silent','superseded','cancelled'].includes(state))throw Error('无效交接结果');this.writing(()=>this.db.prepare('UPDATE handoffs SET state=?,nextAt=0 WHERE id=?').run(state,id));}
+  retryHandoff(id){this.writing(()=>this.db.prepare("UPDATE handoffs SET state='pending',run=NULL,nextAt=? WHERE id=? AND state='running'").run(Date.now()+5000,id));}
   hasPendingHandoffs(){return !!this.db.prepare("SELECT 1 FROM handoffs WHERE state IN ('pending','running') LIMIT 1").get();}
   handoffCount(){return this.db.prepare("SELECT COUNT(DISTINCT parent) AS n FROM handoffs WHERE state IN ('pending','running')").get().n;}
   dropConversation(sid,runs=[]){

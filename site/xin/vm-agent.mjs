@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 import * as runtime from './vm-runtime.mjs';
 import { StateJournal, inputDigest } from './vm-state.mjs';
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
-import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX } from './vm-base.mjs';
+import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
 import { loginStore, normalizeSite } from './vm-logins.mjs';
@@ -576,7 +576,7 @@ function recentLines(file, days = 7) {
   const since = Date.now() - days * 86400e3;
   return readText(file).split('\n').flatMap(l => { try { const o = JSON.parse(l); return o.at >= since ? [o] : []; } catch { return []; } });
 }
-const SENSITIVE_PATH = /\.xin\/(?:workflow\.sqlite|[a-z-]+\.key|agent\/|push\/|exports\/|logs\/)/;
+const SENSITIVE_PATH = /\.xin\/(?:workflow\.sqlite|owner\.sqlite|[a-z-]+\.key|agent\/|push\/|exports\/|logs\/)/;
 export function boundaryKind(meta, ev) {
   if (!meta || !ev || ev.t !== 'tool') return null;
   const system = meta.task && meta.routeKind === 'system';
@@ -3125,7 +3125,13 @@ function restoreStops() {
   try { fs.unlinkSync(mine); } catch { /* 别处删了 */ }
 }
 
+// 一次性的进程（每个请求起的那个、flock 里面的那个）从头到尾拿着共享的所有权锁；下面这几种活得久，只在每次写的那一下拿（vm-state.mjs 的 writing）
+const LONG_LIVED = ['run', 'agy-run', 'warm', 'memory-idle', 'callback', 'watchdog', 'login-window', 'pushq'];
 function main() {
+  if (!LONG_LIVED.includes(process.argv[2])) try { ownership.hold(); } catch (e) {
+    if (e.code !== 'owner_unavailable') throw e;   // 主人活着，或者该内核当主人但它不在：都不写（不悄悄退回旧模式）
+    return ownerUnavailable(process.argv[2], '小芯的状态正在切换，请稍后再试');
+  }
   journal.recover();
   restoreStops();
   let op = process.argv[2];
@@ -3181,6 +3187,7 @@ function main() {
     .then(res => { process.stdout.write(JSON.stringify(res)); });
 }
 
+function ownerUnavailable(op, msg) { if (op === 'xin') { process.stderr.write(msg + '\n'); process.exitCode = 1; } else if (op !== 'reap') process.stdout.write(JSON.stringify({ error: 'owner_unavailable', msg })); }
 function transactionalOp(op,args,fn){
   const locked=process.argv[2]==='locked';
   if(!locked)return fn();

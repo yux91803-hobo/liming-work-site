@@ -5,9 +5,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { StateJournal } from './vm-state.mjs';
+import { Ownership } from './vm-kernel-owner.mjs';
 
 export const BASE = process.env.XIN_HOME || path.join(os.homedir(), '.xin');
 export const journal = new StateJournal(BASE);
+// 谁能写状态库：状态库的每个写入口先问它（vm-kernel-owner.mjs）。现在记录永远是旧模式，问一次不到一毫秒。
+export const ownership = journal.owner = new Ownership(BASE);
 
 export const WORK = process.env.XIN_WORK || '/data/workspace';
 export const TEMPLATE = () => path.join(WORK, 'stm32-template');   // STM32 空工程（scripts/vm/setup-stm32.sh 装的）

@@ -12,10 +12,7 @@ const ITEM_MAX = 300, LIVE = "('active','pending','private')";
 export const LEGACY_FILE = () => path.join(BASE, 'memory.md');
 
 let ready = false;
-function db() {
-  const d = journal.db;
-  if (!ready) {
-    d.exec(`CREATE TABLE IF NOT EXISTS memory_items (id TEXT PRIMARY KEY, type TEXT NOT NULL, content TEXT NOT NULL, norm TEXT NOT NULL,
+const SCHEMA = `CREATE TABLE IF NOT EXISTS memory_items (id TEXT PRIMARY KEY, type TEXT NOT NULL, content TEXT NOT NULL, norm TEXT NOT NULL,
         basis TEXT NOT NULL, status TEXT NOT NULL, source TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, confirmed INTEGER);
       CREATE TABLE IF NOT EXISTS memory_evidence (item TEXT NOT NULL, sid TEXT, run TEXT, quote TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS memory_log (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL, detail TEXT, at INTEGER NOT NULL);
@@ -30,7 +27,14 @@ function db() {
       CREATE TABLE IF NOT EXISTS memory_retired (norm TEXT PRIMARY KEY, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS memory_suppressed_phrases (hash TEXT PRIMARY KEY, length INTEGER NOT NULL, fingerprint INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS memory_by_status ON memory_items(status, type, updated);
-      CREATE INDEX IF NOT EXISTS memory_evidence_item ON memory_evidence(item);`);
+      CREATE INDEX IF NOT EXISTS memory_evidence_item ON memory_evidence(item);`;
+const SCHEMA_NAMES = [...SCHEMA.matchAll(/CREATE (?:TABLE|INDEX) IF NOT EXISTS (\w+)/g)].map(m => m[1]);
+function db() {
+  const d = journal.db;
+  if (!ready) {
+    // 表和索引都在就不碰：读记忆不需要写权限（状态库归别的进程写的时候也能读）。缺了才建，建表是写，要过所有权检查。
+    const have = d.prepare('SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN (' + SCHEMA_NAMES.map(() => '?').join(',') + ')').get(...SCHEMA_NAMES).n;
+    if (have < SCHEMA_NAMES.length) journal.writing(() => d.exec(SCHEMA));
     // DDL participates in the caller's transaction too. Do not cache schema readiness before commit:
     // a rejected first command can roll the new tables back while this process continues running.
     if (journal.active) journal.defer(() => { ready = true; }); else ready = true;
