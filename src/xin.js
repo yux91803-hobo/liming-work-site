@@ -159,20 +159,23 @@ function putAgentFile(env, id, file, mode) {
    照 Vercel Sandbox 的 writeFiles（整套打包一次 POST）和 E2B 的 files.write（一个请求带多个文件）的做法，一套文件只占一个子请求；
    exec 的标准输入最多 1 MiB，超了就按顺序分几次。每个文件先写临时文件、核对摘要、给好权限再换名：内核和控制器读不到写了一半的文件；
    按给的顺序写，依赖（和内核）在前、入口在最后——入口一出现，它 import 的文件都已经在了。 */
+// 出错时标准错误只写一行原因（Worker 只把最后两行报给网页，Node 默认会打一串调用栈）
 export const AGENT_INSTALL = String.raw`'use strict';
 const fs=require('fs'),path=require('path'),crypto=require('crypto');
-const dir=process.argv[1],files=JSON.parse(fs.readFileSync(0,'utf8'));
-if(!path.isAbsolute(dir||'')||!Array.isArray(files))throw Error('bad input');
-for(const f of files){
-  const name=path.basename(String(f&&f.path)),mode={'0644':0o644,'0755':0o755}[f&&f.mode];
-  if(path.dirname(String(f.path))!==dir||!/^vm-[a-z0-9-]+-[0-9a-f]{12}\.mjs$/.test(name)||!mode||typeof f.text!=='string')throw Error('bad file: '+name);
-  if(crypto.createHash('sha256').update(f.text).digest('hex')!==f.sha256)throw Error('digest mismatch: '+name);
-  fs.mkdirSync(dir,{recursive:true});
-  const tmp=path.join(dir,'.'+name+'.'+process.pid+'.tmp');
-  try{fs.writeFileSync(tmp,f.text,{mode});fs.chmodSync(tmp,mode);fs.renameSync(tmp,f.path);}
-  finally{try{fs.unlinkSync(tmp);}catch{}}
-}
-process.stdout.write(JSON.stringify({ok:true,installed:files.length}));`;
+try{
+  const dir=process.argv[1],files=JSON.parse(fs.readFileSync(0,'utf8'));
+  if(!path.isAbsolute(dir||'')||!Array.isArray(files))throw Error('bad input');
+  for(const f of files){
+    const name=path.basename(String(f&&f.path)),mode={'0644':0o644,'0755':0o755}[f&&f.mode];
+    if(path.dirname(String(f.path))!==dir||!/^vm-[a-z0-9-]+-[0-9a-f]{12}\.mjs$/.test(name)||!mode||typeof f.text!=='string')throw Error('bad file: '+name);
+    if(crypto.createHash('sha256').update(f.text).digest('hex')!==f.sha256)throw Error('digest mismatch: '+name);
+    fs.mkdirSync(dir,{recursive:true});
+    const tmp=path.join(dir,'.'+name+'.'+process.pid+'.tmp');
+    try{fs.writeFileSync(tmp,f.text,{mode});fs.chmodSync(tmp,mode);fs.renameSync(tmp,f.path);}
+    finally{try{fs.unlinkSync(tmp);}catch{}}
+  }
+  process.stdout.write(JSON.stringify({ok:true,installed:files.length}));
+}catch(e){process.stderr.write(String(e&&e.message||e)+'\n');process.exitCode=1;}`;
 const INSTALL_STDIN_MAX = 1048576 - 8192;   // InstaBox exec 的标准输入最多 1 MiB（按字节算），留点余量
 async function installFiles(env, id, files) {
   const batches = [];

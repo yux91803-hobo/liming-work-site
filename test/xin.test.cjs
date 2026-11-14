@@ -2269,12 +2269,15 @@ test('装控制器文件的小程序（在电脑上跑）：按顺序写、摘�
     const first = item('vm-first-111111111111.mjs', 'export const f = 1;\n'), wrong = { ...item('vm-agent-222222222222.mjs', 'export const w = 1;\n'), sha256: '0'.repeat(64) }, later = item('vm-later-333333333333.mjs', 'export const l = 1;\n');
     r = run([first, wrong, later]);
     assert.notStrictEqual(r.status, 0);
+    // Worker 只把标准错误的最后两行报给网页：这里只留一行原因，不能是一串调用栈
+    assert.strictEqual(r.stderr.trim(), 'digest mismatch: vm-agent-222222222222.mjs');
     assert.ok(fs.existsSync(first.path) && !fs.existsSync(wrong.path) && !fs.existsSync(later.path));
     assert.ok(!fs.readdirSync(dir).some(f => f.endsWith('.tmp')), fs.readdirSync(dir).join(' '));
     // 只写这个目录里、按摘要命名的 vm-*.mjs，权限只认 0644 / 0755
     for (const bad of [{ ...item('vm-x-444444444444.mjs', 'x'), path: path.join(dir, '..', 'vm-x-444444444444.mjs') }, item('run.sh', 'x'), item('vm-agent-555555555555.mjs', 'x', '4755'), item('vm-agent.mjs', 'x')]) {
       r = run([bad]);
       assert.notStrictEqual(r.status, 0, bad.path + ' ' + bad.mode);
+      assert.strictEqual(r.stderr.trim(), 'bad file: ' + path.basename(bad.path));
       assert.ok(!fs.existsSync(bad.path), bad.path);
     }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
