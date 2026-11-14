@@ -1,3 +1,15 @@
+# 修改清单 · 2026-11-14（小芯内核第 2 步 · 第 1 批最后一块：持久用户服务）
+
+接续 #140 和 #141，按[已确认设计](superpowers/specs/2026-11-14-xin-kernel-stage2-design.md) §6.7；[实施与回退计划](superpowers/plans/2026-11-14-xin-persistent-kernel.md)。实际实现 AI：**Codex**；Codex 自查与自动化验证，尚无 Claude Code 独立复核。生产状态模式保持 legacy，本批不接管用户 SQLite、不改调度、不触碰真实凭据或删除用户数据。
+
+- **为何修改原实现**：原 HTTP 外壳只建立 transient 用户单元；健康同版本会提前返回，无法落实持久安装。现在 ensure 在启动门内安装 `xin-kernel-resident.service` 并 enable 到 default.target，核对磁盘定义、MainPID/健康 PID 和启用状态。参数采用绝对 Node/哈希模块路径；单元不含凭据，环境沿用 0600 的 kernel.env.json。
+- **后台任务保留**：保留 KillMode=process、Restart=always、RestartSec=2。systemd 不回收还有进程的 transient 单元，因此使用独立的 resident 名字，旧 xin-kernel.service 即使因后台工作残留也不挡迁移；只停旧主进程。不是新权限隔离层，宿主授权 C 和凭据代理路线不变。
+- **安装中断与失败恢复**：原子写入/fsync 配置；在触碰安装前保存 0600 的 prepared/activation 小记录，成功后移除。安装进程被 SIGKILL、enable 部分成功、start/健康失败时恢复旧配置与启用状态；恢复命令失败保留记录并不另起实例，下次接着恢复。站长自己的同名单元或链接不覆盖。无用户总线保留原脱离启动，持久安装失败明确返回 persistent=false。
+- **暂停与启动门**：原来活进程超过 30 秒也能被夺走门，暂停或慢安装时可能并行动配置；现在只对已退出的 PID 接续，保持旧 PID 文件格式。启动门只管外壳安装，业务状态所有权仍由已有 owner.sqlite/桥负责；部署版本/epoch 切换仍未开启。
+- **本地验证**：Node 22.23.3 下 check 854/854、kernel 171/171、浏览器 E2E 12 组全部退出 0；生命周期/写者专项 51/51。35 项外壳测试包括保留原临时启动 reset-failed 重试，写者清单 68 条、193 次调用、rmw 5、agent 上限 3217 行。早期完整检查只有新增 shell 调用未登记这一项失败，更新清单后重跑全过；没有删检查或放宽约束。真实电脑只做过前提只读核验（Linger=yes、用户管理器 running）；没有真实重启、暂停或杀生产内核，不能把模拟等同真实故障验收。
+- **迁移/回滚**：无数据库或消息迁移。正常新版本由 ensure 替换单元；退回 #140 及更早版本前，要先停用/备份 resident 单元并 daemon-reload，再由旧 ensure 起临时服务。仅回滚 Worker 不会移除电脑上的持久单元。安装记录保留时先用懂记录的新 ensure 完成恢复，再走旧版回退；全部状态/记忆/登录/任务数据保留。
+- **参考**：OpenClaw `src/daemon/systemd-install.ts` / `systemd-unit.ts` 的持久配置、enable/reload/启动与引号处理；systemd `src/core/unit.c` / `service.c` 的 GC、`man/systemd.kill.xml` 的停止语义；Node `lib/internal/modules/esm/resolve.js` 的模块路径限制。未引入依赖、服务器、数据库或收费模型。
+
 # 修改清单 · 2026-11-14（小芯内核第 2 步 · 第 1 批第三块之一：写者清单测试；浏览器检查报告不再撞名）
 
 接着 #140，基线 `04a88fb`。按[已确认设计](superpowers/specs/2026-11-14-xin-kernel-stage2-design.md) §6.5，[实施计划](superpowers/plans/2026-11-14-xin-writer-inventory.md)。这一块不改 `site/xin/` 和 `src/` 里的任何文件，线上行为不变。

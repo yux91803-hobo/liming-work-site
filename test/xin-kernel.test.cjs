@@ -16,6 +16,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // 假控制器：按 op 做事，参数从标准输入来，和真控制器一样
 const FAKE_AGENT = `import fs from 'node:fs';
+import {spawn} from 'node:child_process';
 const op = process.argv[2];
 let input = ''; for await (const c of process.stdin) input += c;
 const a = input ? JSON.parse(input) : {};
@@ -25,6 +26,7 @@ else if (op === 'slow') { await new Promise(r => setTimeout(r, a.ms || 500)); if
 else if (op === 'boom') { process.stderr.write('line1\\nleak ibp_LEAKED1\\nboom happened\\n'); process.exit(1); }
 else if (op === 'garbage') process.stdout.write('not json');
 else if (op === 'env') process.stdout.write(JSON.stringify({ probe: process.env.XIN_ENV_PROBE || null }));
+else if (op === 'launch') { const c=spawn(process.execPath,['-e',"setTimeout(()=>require('fs').writeFileSync(process.argv[1],'done'),1500)",a.mark],{detached:true,stdio:'ignore'});c.unref();process.stdout.write(JSON.stringify({pid:c.pid})); }
 else if (op === 'poll') {
   count('poll');
   if (a.run.startsWith('rbad')) { process.stdout.write(JSON.stringify({ error: 'no_run', msg: '找不到这一轮' })); process.exit(0); }
@@ -280,28 +282,16 @@ test('流：run 不合法回 400；poll 报错就推 error 然后关', async () 
   } finally { await f.k.close(); }
 });
 
-/* ---------- ensure / serve：用 systemd 用户服务常驻（假的 systemd-run 真把内核起起来） ---------- */
-function lifecycleHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-kensure-')), bin = path.join(home, 'bin');
-  for (const d of ['agent', 'runs', 'bin']) fs.mkdirSync(path.join(home, d));
-  fs.writeFileSync(path.join(home, 'kernel-keys.json'), JSON.stringify({ v: 1, keys: { ka: KEY } }), { mode: 0o600 });
-  fs.writeFileSync(path.join(home, 'agent', FAKE), FAKE_AGENT);
-  // 假 systemd-run：记下参数，去掉自己的选项，把后面的命令脱离出去跑，进程号记进 pids
-  fs.writeFileSync(path.join(bin, 'systemd-run'), `#!${process.execPath}
-const fs = require('fs'), { spawn } = require('child_process'), h = process.env.XIN_HOME;
-fs.appendFileSync(h + '/systemd.log', 'systemd-run ' + process.argv.slice(2).join(' ') + '\\n');
-const a = process.argv.slice(2); let i = 0;
-while (i < a.length && a[i].startsWith('-')) i += a[i] === '-p' ? 2 : 1;
-const c = spawn(a[i], a.slice(i + 1), { detached: true, stdio: 'ignore', env: process.env }); c.unref();
-fs.appendFileSync(h + '/pids', c.pid + '\\n'); fs.writeFileSync(h + '/unit.pid', String(c.pid));
-`, { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'systemctl'), `#!${process.execPath}
-const fs = require('fs'), h = process.env.XIN_HOME;
-fs.appendFileSync(h + '/systemd.log', 'systemctl ' + process.argv.slice(2).join(' ') + '\\n');
-if (process.argv.includes('stop')) { try { process.kill(Number(fs.readFileSync(h + '/unit.pid', 'utf8')), 'SIGTERM'); fs.unlinkSync(h + '/unit.pid'); } catch {} }
-`, { mode: 0o755 });
-  const bus = path.join(home, 'bus'); fs.writeFileSync(bus, '');
-  return { home, bin, bus };
+/* ---------- ensure / serve：临时用户管理器驱动真实 HTTP 内核 ---------- */
+function lifecycleHome(prefix='xin-kensure-') {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix)), bin = path.join(home, 'bin'), config=path.join(home,'config');
+  for (const d of ['agent','runs','bin','config']) fs.mkdirSync(path.join(home,d));
+  fs.writeFileSync(path.join(home,'kernel-keys.json'),JSON.stringify({v:1,keys:{ka:KEY}}),{mode:0o600});
+  fs.writeFileSync(path.join(home,'agent',FAKE),FAKE_AGENT);
+  const fake=fs.readFileSync(path.join(__dirname,'helpers/kernel-systemd.cjs'),'utf8');
+  for(const cmd of ['systemctl','systemd-run'])fs.writeFileSync(path.join(bin,cmd),'#!'+process.execPath+'\n'+fake,{mode:0o755});
+  const bus=path.join(home,'bus');fs.writeFileSync(bus,'');
+  return {home,bin,bus,config,unit:path.join(config,'systemd/user/xin-kernel-resident.service')};
 }
 function freePort() { return new Promise(ok => { const s = require('node:net').createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => ok(p)); }); }); }
 function kernelCopy(home, hash) {
@@ -309,7 +299,7 @@ function kernelCopy(home, hash) {
   fs.copyFileSync(path.join(__dirname, '../site/xin/vm-kernel.mjs'), f); return f;
 }
 function runEnsure(L, file, port, extra = {}) {
-  const env = Object.assign({}, process.env, { XIN_HOME: L.home, PATH: L.bin + ':' + process.env.PATH, XIN_SYSTEMD_BUS: L.bus }, extra);
+  const env = Object.assign({}, process.env, { XIN_HOME: L.home, XDG_CONFIG_HOME: L.config, PATH: L.bin + ':' + process.env.PATH, XIN_SYSTEMD_BUS: L.bus }, extra);
   return new Promise((ok, no) => execFile(process.execPath, [file, 'ensure', '--port', String(port)], { env }, (e, out) => e ? no(e) : ok(JSON.parse(out))));
 }
 async function signedHealth(port) {
@@ -319,9 +309,19 @@ async function signedHealth(port) {
 }
 function killAll(L, extraPids = []) {
   let pids = []; try { pids = fs.readFileSync(path.join(L.home, 'pids'), 'utf8').trim().split('\n').map(Number); } catch { /* 没起过 */ }
-  for (const p of [...pids, ...extraPids]) try { process.kill(p, 'SIGKILL'); } catch { /* 已经退出 */ }
+  for (const p of [...pids, ...extraPids]) if(p>1)try { process.kill(p, 'SIGKILL'); } catch { /* 已经退出 */ }
 }
 const systemdLog = L => { try { return fs.readFileSync(path.join(L.home, 'systemd.log'), 'utf8'); } catch { return ''; } };
+function serviceControl(L,action) {
+  const env={...process.env,XIN_HOME:L.home,XDG_CONFIG_HOME:L.config,PATH:L.bin+':'+process.env.PATH};
+  const args=['--user',action,...(action==='daemon-reload'?[]:['xin-kernel-resident.service'])];
+  return new Promise((ok,no)=>execFile(path.join(L.bin,'systemctl'),args,{env},e=>e?no(e):ok()));
+}
+async function lifecycleOp(L,port,op,args={}) {
+  const worker=await load('../src/xin-kernel.js'),body=JSON.stringify({agent:path.join(L.home,'agent',FAKE),op,args});
+  const r=await fetch('http://127.0.0.1:'+port+'/xin/op',{method:'POST',body,headers:{'x-xin-auth':await worker.signKernelRequest({key:KEY,kid:'ka',method:'POST',target:'/xin/op',body})}});
+  return r.json();
+}
 
 test('ensure：用 systemd 用户服务起内核，只杀主进程、挂了自动重启；同一版本再 ensure 什么都不做', async () => {
   const L = lifecycleHome(), port = await freePort(), file = kernelCopy(L.home, 'aaaaaaaaaaaa');
@@ -329,11 +329,15 @@ test('ensure：用 systemd 用户服务起内核，只杀主进程、挂了自�
     const first = await runEnsure(L, file, port);
     assert.strictEqual(first.ok, true, JSON.stringify(first)); assert.strictEqual(first.started, true);
     const log = systemdLog(L);
-    assert.match(log, /systemd-run --user --unit=xin-kernel --collect -p KillMode=process -p Restart=always -p RestartSec=2 \S+ \S+vm-kernel-aaaaaaaaaaaa\.mjs serve --port \d+/);
+    assert.strictEqual(first.persistent,true);
+    const unit=fs.readFileSync(L.unit,'utf8');
+    assert.match(unit,/KillMode=process/);assert.match(unit,/Restart=always/);assert.match(unit,/RestartSec=2/);assert.match(unit,/WantedBy=default.target/);
+    assert.match(unit,/vm-kernel-aaaaaaaaaaaa\.mjs/);assert.match(log,/systemctl --user enable/);
+    assert.strictEqual(fs.readFileSync(path.join(L.home,'enabled'),'utf8'),'yes');
     assert.strictEqual((await signedHealth(port)).kernel, 'aaaaaaaaaaaa');
     const second = await runEnsure(L, file, port);
     assert.deepStrictEqual([second.ok, second.already], [true, true]);
-    assert.strictEqual(systemdLog(L).split('\n').filter(l => l.startsWith('systemd-run')).length, 1);
+    assert.strictEqual(systemdLog(L).split('\n').filter(l => l.startsWith('systemctl --user start')).length, 1);
   } finally { killAll(L); }
 });
 
@@ -343,7 +347,7 @@ test('ensure：版本不同会先停旧的再起新的', async () => {
     await runEnsure(L, kernelCopy(L.home, 'aaaaaaaaaaaa'), port);
     const r = await runEnsure(L, kernelCopy(L.home, 'bbbbbbbbbbbb'), port);
     assert.strictEqual(r.started, true, JSON.stringify(r));
-    assert.match(systemdLog(L), /systemctl --user stop xin-kernel\.service/);
+    assert.match(systemdLog(L), /systemctl --user stop xin-kernel-resident\.service/);
     assert.strictEqual((await signedHealth(port)).kernel, 'bbbbbbbbbbbb');
   } finally { killAll(L); }
 });
@@ -366,10 +370,190 @@ test('ensure：没有用户总线时直接起一个脱离的进程', async () =>
   try {
     const r = await runEnsure(L, kernelCopy(L.home, 'dddddddddddd'), port, { XIN_SYSTEMD_BUS: path.join(L.home, 'no-bus') });
     assert.strictEqual(r.started, true, JSON.stringify(r));
-    assert.ok(!systemdLog(L).includes('systemd-run'));
+    assert.ok(!systemdLog(L).includes('systemd-run'));assert.strictEqual(r.persistent,false);assert.strictEqual(fs.existsSync(L.unit),false);
     const h = await signedHealth(port); pid = h.pid;
     assert.strictEqual(h.kernel, 'dddddddddddd');
   } finally { killAll(L, pid ? [pid] : []); }
+});
+
+test('持久服务：enable 失败保留临时启动；健康同版本临时服务下次仍迁移，未丢环境',async()=>{
+  const L=lifecycleHome(),port=await freePort(),file=kernelCopy(L.home,'111111111111');
+  try {
+    const fallback=await runEnsure(L,file,port,{XIN_FAKE_FAIL:'enable',XIN_ENV_PROBE:'saved'});
+    assert.strictEqual(fallback.ok,true);assert.strictEqual(fallback.persistent,false);assert.strictEqual(fallback.serviceError,'service_enable_failed');
+    assert.strictEqual(fs.existsSync(L.unit),false);assert.strictEqual(fs.existsSync(path.join(L.home,'enabled')),false);
+    const migration=await runEnsure(L,file,port,{XIN_ENV_PROBE:'saved'});
+    assert.strictEqual(migration.persistent,true);assert.notStrictEqual(migration.pid,fallback.pid);
+    assert.deepStrictEqual((await lifecycleOp(L,port,'env')).data,{probe:'saved'});
+  }finally{killAll(L);}
+});
+
+test('持久服务：临时回退保留原来的 reset-failed 后重试，不能因改持久服务丢掉旧恢复途径',async()=>{
+  const L=lifecycleHome(),port=await freePort(),file=kernelCopy(L.home,'abababababab');
+  try {
+    const r=await runEnsure(L,file,port,{XIN_FAKE_FAIL:'enable',XIN_FAKE_RUN_FAIL:'once'});
+    assert.strictEqual(r.ok,true,JSON.stringify(r));assert.strictEqual(r.persistent,false);assert.strictEqual(r.systemd,true);
+    assert.strictEqual(systemdLog(L).split('\n').filter(l=>l.startsWith('systemd-run')).length,2);
+    assert.match(systemdLog(L),/systemctl --user reset-failed xin-kernel.service/);
+  }finally{killAll(L);}
+});
+
+test('持久服务：旧 transient 因后台进程尚未回收时，也可迁到独立单元，后台工作继续完成',async()=>{
+  const L=lifecycleHome(),port=await freePort(),old=kernelCopy(L.home,'111111111111'),next=kernelCopy(L.home,'222222222222'),mark=path.join(L.home,'busy.done');let executor=0;
+  try {
+    await runEnsure(L,old,port,{XIN_FAKE_FAIL:'enable'});
+    executor=(await lifecycleOp(L,port,'launch',{mark})).data.pid;fs.writeFileSync(path.join(L.home,'transient-busy'),'yes');
+    const r=await runEnsure(L,next,port);assert.strictEqual(r.persistent,true,JSON.stringify(r));
+    assert.match(fs.readFileSync(path.join(L.home,'legacy.fragment'),'utf8'),/transient\/xin-kernel.service/);
+    assert.strictEqual(fs.readFileSync(path.join(L.home,'fragment'),'utf8'),L.unit);
+    for(let i=0;i<50&&!fs.existsSync(mark);i++)await sleep(50);assert.strictEqual(fs.readFileSync(mark,'utf8'),'done');
+  }finally{killAll(L,executor?[executor]:[]);}
+});
+
+test('持久服务：旧 transient 还留着后台进程时，启动新版失败能恢复旧外壳并保留后台工作',async()=>{
+  const L=lifecycleHome(),port=await freePort(),old=kernelCopy(L.home,'111111111111'),next=kernelCopy(L.home,'222222222222');
+  try {
+    await runEnsure(L,old,port,{XIN_FAKE_FAIL:'enable'});fs.writeFileSync(path.join(L.home,'transient-busy'),'yes');
+    const r=await runEnsure(L,next,port,{XIN_FAKE_FAIL:'start-once'});
+    assert.strictEqual(r.error,'service_failed',JSON.stringify(r));assert.strictEqual((await signedHealth(port)).kernel,'111111111111');
+    assert.strictEqual(fs.existsSync(L.unit),false);assert.strictEqual(fs.existsSync(path.join(L.home,'kernel-service.pending.json')),false);
+    assert.strictEqual(fs.existsSync(path.join(L.home,'transient-busy')),true);
+  }finally{killAll(L);}
+});
+
+test('持久服务：并发 ensure 只启动一个实例，两次返回同一健康进程',async()=>{
+  const L=lifecycleHome(),port=await freePort(),file=kernelCopy(L.home,'222222222222');
+  try {
+    const results=await Promise.all([runEnsure(L,file,port),runEnsure(L,file,port)]);
+    assert.ok(results.every(r=>r.ok&&r.persistent));assert.strictEqual(results[0].pid,results[1].pid);
+    assert.strictEqual(results.filter(r=>r.started).length,1);assert.strictEqual(results.filter(r=>r.already).length,1);
+    assert.strictEqual(systemdLog(L).split('\n').filter(l=>l==='systemctl --user start xin-kernel-resident.service').length,1);
+  }finally{killAll(L);}
+});
+
+test('持久服务：暂停超过旧租期也不抢活进程的启动门；进程崩溃后能重新接手',async()=>{
+  const L=lifecycleHome(),port=await freePort(),file=kernelCopy(L.home,'999999999999'),lock=path.join(L.home,'locks/kernel.lock');
+  fs.mkdirSync(path.dirname(lock));fs.writeFileSync(lock,String(process.pid));fs.utimesSync(lock,new Date(0),new Date(0));
+  try {
+    const held=await runEnsure(L,file,port);assert.strictEqual(held.error,'locked');assert.strictEqual(fs.readFileSync(lock,'utf8'),String(process.pid));assert.strictEqual(fs.existsSync(L.unit),false);
+    fs.writeFileSync(lock,'2147483647');
+    const recovered=await runEnsure(L,file,port);assert.strictEqual(recovered.persistent,true);assert.strictEqual(fs.existsSync(lock),false);
+  }finally{killAll(L);}
+});
+
+test('持久服务：升级 start 失败恢复旧单元和启用状态，旧内核重新可用',async()=>{
+  const L=lifecycleHome(),port=await freePort();
+  try {
+    await runEnsure(L,kernelCopy(L.home,'333333333333'),port);const before=fs.readFileSync(L.unit,'utf8');
+    const result=await runEnsure(L,kernelCopy(L.home,'444444444444'),port,{XIN_FAKE_FAIL:'start-once'});
+    assert.strictEqual(result.ok,false);assert.strictEqual(result.serviceError,'service_start_failed');assert.strictEqual(fs.readFileSync(L.unit,'utf8'),before);
+    assert.strictEqual(fs.readFileSync(path.join(L.home,'enabled'),'utf8'),'yes');
+    let health;for(let i=0;i<30;i++){try{health=await signedHealth(port);if(health.ok)break;}catch{}await sleep(50);}
+    assert.strictEqual(health.kernel,'333333333333');
+  }finally{killAll(L);}
+});
+
+test('持久服务：未启用的已有单元若 enable 部分成功后报错，也恢复未启用状态且不重启健康实例',async()=>{
+  const L=lifecycleHome(),port=await freePort(),file=kernelCopy(L.home,'aaaaaaaaaaaa');
+  try {
+    const first=await runEnsure(L,file,port),before=fs.readFileSync(L.unit,'utf8');await serviceControl(L,'disable');
+    const r=await runEnsure(L,file,port,{XIN_FAKE_FAIL:'enable-partial'});
+    assert.strictEqual(r.pid,first.pid);assert.strictEqual(r.persistent,false);assert.strictEqual(r.serviceError,'service_enable_failed');
+    assert.strictEqual(fs.existsSync(path.join(L.home,'enabled')),false);assert.strictEqual(fs.readFileSync(L.unit,'utf8'),before);
+  }finally{killAll(L);}
+});
+
+for(const action of ['enable','start'])test('持久服务：安装进程在 '+action+' 前被杀后，下次启动先恢复旧配置再确认健康',async()=>{
+  const L=lifecycleHome(),port=await freePort(),old=kernelCopy(L.home,'cccccccccccc'),next=kernelCopy(L.home,'dddddddddddd'),pending=path.join(L.home,'kernel-service.pending.json');
+  try {
+    await runEnsure(L,old,port);const before=fs.readFileSync(L.unit,'utf8');
+    await assert.rejects(runEnsure(L,next,port,{XIN_FAKE_CRASH:action,XIN_ENV_PROBE:'ibk_DUMMY_SENTINEL'}),e=>e.signal==='SIGKILL');
+    assert.strictEqual(fs.statSync(pending).mode&0o777,0o600);const tx=JSON.parse(fs.readFileSync(pending));
+    assert.strictEqual(tx.prior,before);assert.strictEqual(tx.phase,action==='enable'?'prepared':'activation');
+    assert.ok(!fs.readFileSync(pending,'utf8').includes('ibk_DUMMY_SENTINEL'));assert.ok(!systemdLog(L).includes('ibk_DUMMY_SENTINEL'));
+    const recovered=await runEnsure(L,old,port);
+    assert.strictEqual(recovered.persistent,true,JSON.stringify(recovered));assert.strictEqual(fs.readFileSync(L.unit,'utf8'),before);
+    assert.strictEqual(fs.existsSync(pending),false);assert.strictEqual((await signedHealth(port)).kernel,'cccccccccccc');
+  }finally{killAll(L);}
+});
+
+test('持久服务：记录已落盘但首次服务文件还没写入就中断，也能接续安装',async()=>{
+  const L=lifecycleHome(),port=await freePort(),file=kernelCopy(L.home,'abababababab'),pending=path.join(L.home,'kernel-service.pending.json');
+  fs.writeFileSync(pending,JSON.stringify({v:1,file:L.unit,prior:null,target:'# Managed by xin-kernel\n[Service]\n',enabled:false,running:false,legacyRunning:false,legacyFile:null,port,phase:'prepared'}),{mode:0o600});
+  try { const r=await runEnsure(L,file,port);assert.strictEqual(r.persistent,true,JSON.stringify(r));assert.strictEqual(fs.existsSync(pending),false); }
+  finally{killAll(L);}
+});
+
+test('持久服务：回退命令也失败时保留安装记录，不另起实例；用户总线恢复后可接续恢复',async()=>{
+  const L=lifecycleHome(),port=await freePort(),old=kernelCopy(L.home,'eeeeeeeeeeee'),next=kernelCopy(L.home,'ffffffffffff'),pending=path.join(L.home,'kernel-service.pending.json');
+  try {
+    await runEnsure(L,old,port);const before=fs.readFileSync(L.unit,'utf8');
+    const failed=await runEnsure(L,next,port,{XIN_FAKE_FAIL:'daemon-reload'});
+    assert.strictEqual(failed.error,'service_recovery_failed');assert.ok(fs.existsSync(pending));assert.ok(!systemdLog(L).includes('systemd-run'));
+    const recovered=await runEnsure(L,old,port);assert.strictEqual(recovered.persistent,true,JSON.stringify(recovered));
+    assert.strictEqual(fs.readFileSync(L.unit,'utf8'),before);assert.strictEqual(fs.existsSync(pending),false);
+  }finally{killAll(L);}
+});
+
+test('持久服务：启动命令成功但 HTTP 不健康时撤销安装，回退临时服务而不留下错误开机配置',async()=>{
+  const L=lifecycleHome(),port=await freePort();
+  try {
+    const r=await runEnsure(L,kernelCopy(L.home,'777777777777'),port,{XIN_FAKE_UNHEALTHY:'1'});
+    assert.strictEqual(r.ok,true);assert.strictEqual(r.persistent,false);assert.strictEqual(r.serviceError,'service_not_healthy');
+    assert.strictEqual(fs.existsSync(L.unit),false);assert.strictEqual(fs.existsSync(path.join(L.home,'enabled')),false);
+    assert.strictEqual((await signedHealth(port)).kernel,'777777777777');
+  }finally{killAll(L);}
+});
+
+test('持久服务：不覆盖站长自己的同名单元，也不把环境秘密写进服务文件',async()=>{
+  const L=lifecycleHome(),port=await freePort(),file=kernelCopy(L.home,'555555555555');
+  try {
+    await runEnsure(L,file,port,{XIN_ENV_PROBE:'private-probe-secret'});
+    assert.ok(!fs.readFileSync(L.unit,'utf8').includes('private-probe-secret'));
+    fs.writeFileSync(L.unit,'[Service]\nExecStart=/custom/service\n');
+    const before=systemdLog(L),result=await runEnsure(L,file,port);
+    assert.strictEqual(result.persistent,false);assert.strictEqual(result.serviceError,'service_unmanaged');
+    assert.strictEqual(fs.readFileSync(L.unit,'utf8'),'[Service]\nExecStart=/custom/service\n');assert.strictEqual(systemdLog(L),before);
+  }finally{killAll(L);}
+});
+
+test('持久服务：模拟用户管理器重启从磁盘单元启动，0600 环境恢复，已授权执行进程在换壳后继续完成',async()=>{
+  const L=lifecycleHome(),port=await freePort(),mark=path.join(L.home,'executor.done');let executor=0;
+  try {
+    await runEnsure(L,kernelCopy(L.home,'666666666666'),port,{XIN_ENV_PROBE:'recovered'});
+    executor=(await lifecycleOp(L,port,'launch',{mark})).data.pid;
+    await serviceControl(L,'stop');await serviceControl(L,'start');
+    let health;for(let i=0;i<30;i++){try{health=await signedHealth(port);if(health.ok)break;}catch{}await sleep(50);}
+    assert.strictEqual(health.kernel,'666666666666');assert.deepStrictEqual((await lifecycleOp(L,port,'env')).data,{probe:'recovered'});
+    for(let i=0;i<50&&!fs.existsSync(mark);i++)await sleep(50);
+    assert.strictEqual(fs.readFileSync(mark,'utf8'),'done');assert.strictEqual(fs.statSync(path.join(L.home,'kernel.env.json')).mode&0o777,0o600);
+  }finally{killAll(L,executor?[executor]:[]);}
+});
+
+test('持久服务：特殊路径按 systemd 规则转义并实际启动；拒绝注入额外指令的换行',async()=>{
+  const {kernelServiceUnit}=await load('../site/xin/vm-kernel.mjs');
+  const text=kernelServiceUnit('/tmp/a b%$"\\tail',8797);
+  assert.ok(text.includes('Environment="XIN_HOME=/tmp/a b%%$\\"\\\\tail"'));
+  assert.throws(()=>kernelServiceUnit('/tmp/a\nExecStart=/bad',8797),/bad_service_value/);
+  const L=lifecycleHome('xin k%$"-'),port=await freePort();
+  try {
+    const r=await runEnsure(L,kernelCopy(L.home,'888888888888'),port);
+    assert.strictEqual(r.persistent,true,JSON.stringify(r));assert.strictEqual((await signedHealth(port)).kernel,'888888888888');
+    if(fs.existsSync('/usr/bin/systemd-analyze'))await new Promise((ok,no)=>execFile('/usr/bin/systemd-analyze',['--user','verify','--man=no',L.unit],{env:{...process.env,XDG_RUNTIME_DIR:L.home}},e=>e?no(e):ok()));
+  }finally{killAll(L);}
+});
+
+test('持久服务：旧版回滚步骤保留数据和单元备份，原临时服务启动方式仍可用',async()=>{
+  const L=lifecycleHome(),port=await freePort(),file=kernelCopy(L.home,'bbbbbbbbbbbb');
+  try {
+    await runEnsure(L,file,port);fs.writeFileSync(path.join(L.home,'user-data'),'keep');
+    await serviceControl(L,'disable');await serviceControl(L,'stop');fs.renameSync(L.unit,L.unit+'.rollback-backup');await serviceControl(L,'daemon-reload');
+    const env={...process.env,XIN_HOME:L.home,XDG_CONFIG_HOME:L.config,PATH:L.bin+':'+process.env.PATH};
+    await new Promise((ok,no)=>execFile(path.join(L.bin,'systemd-run'),['--user','--unit=xin-kernel','--collect','-p','KillMode=process','-p','Restart=always','-p','RestartSec=2',process.execPath,file,'serve','--port',String(port)],{env},e=>e?no(e):ok()));
+    let health;for(let i=0;i<30;i++){try{health=await signedHealth(port);if(health.ok)break;}catch{}await sleep(50);}
+    assert.strictEqual(health.kernel,'bbbbbbbbbbbb');assert.strictEqual(fs.existsSync(path.join(L.home,'enabled')),false);
+    assert.strictEqual(fs.readFileSync(path.join(L.home,'user-data'),'utf8'),'keep');assert.ok(fs.existsSync(L.unit+'.rollback-backup'));
+  }finally{killAll(L);}
 });
 
 test('日志太大就换一份，不会一直长下去', async () => {
