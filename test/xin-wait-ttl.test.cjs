@@ -17,6 +17,7 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-wait-ttl-'));
   for (const d of ['control/sessions', 'control/runs', 'project', 'profile', 'codex']) fs.mkdirSync(path.join(root, d), { recursive: true });
   const env = { ...process.env, XIN_HOME: path.join(root, 'control'), XIN_WORK: root, CODEX_HOME: path.join(root, 'codex'), XIN_TASK_MAX: '1' };
+  const ensureState=require('./helpers/state-mode.cjs').stateClient(t,env);
   const preload = path.join(root, 'preload.cjs');
   fs.writeFileSync(preload, `require('node:os').homedir=()=>${JSON.stringify(path.join(root, 'profile'))};require('node:module').syncBuiltinESMExports();`);
   env.NODE_OPTIONS = '--require=' + preload;
@@ -37,7 +38,7 @@ function fixture(t) {
     }
     fs.rmSync(root, { recursive: true, force: true });
   });
-  const call = (op, args) => {
+  const call = (op, args) => { ensureState();
     const r = lockedSpawn(agent, op, args, { env, encoding: 'utf8', timeout: platformTimeout(15000) });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };

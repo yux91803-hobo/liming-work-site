@@ -16,7 +16,8 @@ function home(t) {
   // TMPDIR：任务副本（os.tmpdir()/xin-task-<编号>）放在这个测试自己的目录里
   const env = { ...process.env, TMPDIR: tmp, XIN_HOME: xin, XIN_WORK: path.join(dir, 'work'), XIN_DSH: path.join(dir, 'no-dsh'), XIN_FRONT_PROVIDER: 'deepseek',
     XIN_AGY_HOME: dir, XIN_ANTIGRAVITY_BIN: '', CODEX_HOME: path.join(dir, 'codex'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), PATH: bin + ':' + process.env.PATH };
-  const op = (name, args = {}) => { const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  const ensureState=require('./helpers/state-mode.cjs').stateClient(t,env);
+  const op = (name, args = {}) => { ensureState(); const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
   const settle = run => { for (const end = Date.now() + platformTimeout(20000); Date.now() < end;) { if (op('poll', { run, off: 0 }).done) return; spawnSync('sleep', ['0.1']); } assert.fail('这一轮没有结束'); };
   t.after(() => stopOwned(xin, dir));
   const put = (p, v) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, typeof v === 'string' ? v : JSON.stringify(v)); return p; };

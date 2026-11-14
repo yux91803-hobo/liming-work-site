@@ -121,7 +121,7 @@ const correction = /不是|不再|不对|改成|改为|改一下|纠正|更正|�
 
 export function applyMemoryReview(plan, proposals) {
   if (!Array.isArray(proposals) || proposals.length > 8) return {error:'bad_proposals'};
-  return journal.atomic(() => {
+  return journal.named('memoryReview.apply',[plan,proposals],() => {
     if (memoryMeta('revision') !== plan.revision || memoryMeta('idle_activity')?.id !== plan.activity || memoryBusy()) return {error:'changed'};
     for (const c of plan.checks) if (!normalChat(readJ(sessionFile(c.sid))) || !eligibleRun(readJ(metaFile(c.run)),c.sid) ||
       digest(JSON.stringify(userEvents(c.run))) !== c.hash) return {error:'changed'};
@@ -179,17 +179,17 @@ export function applyMemoryReview(plan, proposals) {
 }
 
 export function reserveMemoryReview(plan, now = Date.now(), limits = MEMORY_IDLE) {
-  return journal.atomic(() => {
+  return journal.named('memoryReview.reserve',[plan,now,limits],() => {
     const key = 'idle_budget:' + day(now), budget = memoryMeta(key,{calls:0,tokens:0});
     if (budget.calls >= limits.dailyCalls || budget.tokens + plan.reservation > limits.dailyTokens) return null;
     budget.calls++; budget.tokens += plan.reservation; setMemoryMeta(key,budget);
     return {key,reservation:plan.reservation};
   });
 }
-function settleUsage(ticket, usage) {
+export function settleUsage(ticket, usage) {
   const input = usage?.input_tokens, output = usage?.output_tokens;
   if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) return;
-  journal.atomic(() => {
+  return journal.named('memoryReview.settle',[ticket,usage],() => {
     const budget = memoryMeta(ticket.key), used = Math.ceil(Math.max(input+output,Number(usage.total_tokens)||0));
     budget.tokens = Math.max(0,budget.tokens - ticket.reservation + used); setMemoryMeta(ticket.key,budget);
   });

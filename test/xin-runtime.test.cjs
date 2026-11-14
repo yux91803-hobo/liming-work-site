@@ -14,6 +14,7 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-runtime-test-'));
   for (const d of ['control/sessions', 'control/runs', 'project', 'profile', 'codex']) fs.mkdirSync(path.join(root, d), { recursive: true });
   const env = { ...process.env, XIN_HOME: path.join(root, 'control'), XIN_WORK: root, CODEX_HOME: path.join(root, 'codex'), XIN_TASK_MAX: '1' };
+  const ensureState=require('./helpers/state-mode.cjs').stateClient(t,env);
   const preload = path.join(root, 'preload.cjs');
   fs.writeFileSync(preload, `require('node:os').homedir=()=>${JSON.stringify(path.join(root, 'profile'))};require('node:module').syncBuiltinESMExports();`);
   env.NODE_OPTIONS = '--require=' + preload;
@@ -35,7 +36,7 @@ function fixture(t) {
     assert.equal(owned().length, 0, 'fixture processes must exit before removing their state');
     fs.rmSync(root, { recursive: true, force: true });
   });
-  const call = (op, args) => {
+  const call = (op, args) => { ensureState();
     const r = lockedSpawn(agent, op, args, { env, encoding: 'utf8', timeout: platformTimeout(15000) });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };
@@ -412,11 +413,11 @@ test('并发补充任务与编译元数据更新共用任务锁，不覆盖已�
 });
 
 test('旧回调的确认不能覆盖较新的待投递状态，旧推送响应不能删除新订阅',t=>{
-  const f=fixture(t),event=path.join(f.control,'controller-event.json');
+  const f=fixture(t),event=path.join(f.control,'controller-event.json');f.env.XIN_PUSH_INSECURE='1';
   fs.writeFileSync(event,JSON.stringify({version:2,bg:1,acknowledged:false}));
   f.call('controller_ack',{version:1});assert.equal(JSON.parse(fs.readFileSync(event)).acknowledged,false);
   f.call('controller_ack',{version:2});assert.equal(JSON.parse(fs.readFileSync(event)).acknowledged,true);
-  f.env.XIN_PUSH_INSECURE='1';const crypto=require('node:crypto'),ec=crypto.createECDH('prime256v1');ec.generateKeys();
+  const crypto=require('node:crypto'),ec=crypto.createECDH('prime256v1');ec.generateKeys();
   const sub={endpoint:'http://127.0.0.1:9999/owned-test',keys:{p256dh:ec.getPublicKey().toString('base64url'),auth:crypto.randomBytes(16).toString('base64url')}};
   f.call('push_sub',{sub,deviceId:'test-device'});const file=path.join(f.control,'push/subs.json'),old=JSON.parse(fs.readFileSync(file))[0];
   f.call('push_sub',{sub,deviceId:'test-device'});f.call('push_gone',{endpoints:[{endpoint:sub.endpoint,revision:old.revision}]});

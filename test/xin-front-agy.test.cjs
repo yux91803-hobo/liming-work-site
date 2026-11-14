@@ -51,8 +51,9 @@ function fixture(t,mode='ok'){
  // Only dispatched test tasks use this fake CLI; no real service is contacted.
  fs.writeFileSync(bin+'/codex','#!'+process.execPath+'\n'+`console.log(JSON.stringify({type:'turn.started'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'后台测试完成'}}));`,{mode:0o755});
  const env={...process.env,HOME:home,XIN_HOME:control,XIN_WORK:work,XIN_AGY_HOME:home,XIN_ANTIGRAVITY_BIN:bin+'/agy',NODE_OPTIONS:'--require='+preload,PATH:bin+':'+process.env.PATH,XIN_CODEX_TRANSPORT:'exec',XIN_TASK_SANDBOX:'0',XIN_CODEX_KEY:'must-not-reach-native'};
+  const ensureState=require('./helpers/state-mode.cjs').stateClient(t,env);
  delete env.XIN_FRONT_PROVIDER;
- const call=(op,args={})=>{const r=spawnSync(process.execPath,[agent,op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);const d=JSON.parse(r.stdout);assert.ok(!d.error,JSON.stringify(d));return d;};
+ const call=(op,args={})=>{ ensureState();const r=spawnSync(process.execPath,[agent,op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);const d=JSON.parse(r.stdout);assert.ok(!d.error,JSON.stringify(d));return d;};
  const wait=async run=>{const until=Date.now()+platformTimeout(15000);while(Date.now()<until){const p=call('poll',{run,off:0});if(p.done)return p;await new Promise(r=>setTimeout(r,70));}assert.fail('synthetic front did not finish');};
  const rows=file=>fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse):[];
  t.after(()=>stopOwned(control,root));

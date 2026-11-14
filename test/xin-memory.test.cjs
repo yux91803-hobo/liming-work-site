@@ -106,7 +106,7 @@ test('旧记事本后来又多了几行（例如回滚期间旧版本记的）�
   // A record written before line hashes were kept: rebuilt from the quoted lines, so only the newest line comes in.
   js(`const {journal}=await import(${JSON.stringify(pathToFileURL(path.join(__dirname, '../site/xin/vm-base.mjs')).href)});
     const v=JSON.parse(journal.db.prepare("SELECT value FROM memory_meta WHERE key='legacy_import'").get().value);delete v.lines;
-    journal.db.prepare("UPDATE memory_meta SET value=? WHERE key='legacy_import'").run(JSON.stringify(v));return null;`);
+    journal.atomic(()=>journal.db.prepare("UPDATE memory_meta SET value=? WHERE key='legacy_import'").run(JSON.stringify(v)));return null;`);
   fs.appendFileSync(file, '- 2026-11-08：晚上九点后不想被提醒\n');
   const b = js(`return {r:m.importLegacyNotebook(),list:m.listMemory().map(i=>i.content).sort()};`);
   assert.equal(b.r.imported, 1);

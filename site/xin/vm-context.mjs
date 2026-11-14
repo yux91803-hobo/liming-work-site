@@ -8,10 +8,11 @@ import {learningGuidance} from './vm-learning.mjs';
 const sess=sid=>path.join(BASE,'sessions',sid+'.json'),meta=run=>path.join(BASE,'runs',run+'.json'),raw=run=>path.join(BASE,'runs',run+'.jsonl');
 const normal=s=>s?.agent==='codex'&&!s.kind&&!s.dailyDate;
 const date=at=>new Date(Number(at)+8*3600e3).toISOString().slice(0,16).replace('T',' ');
-function schema(){
+export function recallDb(){
   const d=memoryDb();
-  d.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS recall_fts USING fts5(sid UNINDEXED,run UNINDEXED,event UNINDEXED,role UNINDEXED,at UNINDEXED,title UNINDEXED,text,tokenize='trigram');
-    CREATE TABLE IF NOT EXISTS recall_sources (run TEXT PRIMARY KEY,sid TEXT NOT NULL,stamp TEXT NOT NULL);`);
+  if(d.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('recall_fts','recall_sources')").get().n!==2)
+    journal.writing(()=>journal.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS recall_fts USING fts5(sid UNINDEXED,run UNINDEXED,event UNINDEXED,role UNINDEXED,at UNINDEXED,title UNINDEXED,text,tokenize='trigram');
+    CREATE TABLE IF NOT EXISTS recall_sources (run TEXT PRIMARY KEY,sid TEXT NOT NULL,stamp TEXT NOT NULL);`));
   return d;
 }
 function events(run){return readText(raw(run)).split('\n').flatMap(line=>{try{const e=JSON.parse(line);return e.t==='user'||e.t==='text'?[e]:[];}catch{return [];}});}
@@ -35,8 +36,8 @@ export function safeContextEvents(run, read=events, scope='recall'){
   return es;
 }
 export function syncRecall(){
-  const d=schema(),valid=new Set();let names=[];try{names=fs.readdirSync(path.join(BASE,'sessions'));}catch{}
-  return journal.atomic(()=>{
+  return journal.named('recall.sync',[],()=>{
+    const d=recallDb(),valid=new Set();let names=[];try{names=fs.readdirSync(path.join(BASE,'sessions'));}catch{}
     const revision=memoryMeta('revision')||'',unchanged=memoryMeta('recall_revision')===revision;
     const seen=new Map(d.prepare('SELECT run,sid,stamp FROM recall_sources').all().map(r=>[r.run,r]));
     for(const name of names){
@@ -69,12 +70,14 @@ export function syncRecall(){
 }
 // 删对话时立刻把它从跨对话检索里拿掉（下次同步本来也会清，这里不等）
 export function dropRecall(sid){
-  if(!okId(sid,'s'))return;const d=schema();
+  if(!okId(sid,'s'))return;
+  return journal.named('recall.drop',[sid],()=>{const d=recallDb();
   d.prepare('DELETE FROM recall_fts WHERE sid=?').run(sid);d.prepare('DELETE FROM recall_sources WHERE sid=?').run(sid);
+  });
 }
 export function recallAll(query,limit=8,sync=true){
   const q=String(query||'').trim().slice(0,80);if(!q)return {matches:[],more:false};
-  if(sync)syncRecall();const d=schema(),count=Math.min(8,Math.max(1,limit));
+  if(sync)syncRecall();const d=recallDb(),count=Math.min(8,Math.max(1,limit));
   const rows=[...q].length>=3?d.prepare('SELECT * FROM recall_fts WHERE text MATCH ? ORDER BY rank,CAST(at AS INTEGER) DESC LIMIT ?').all('"'+q.replace(/"/g,'""')+'"',count+1):
     d.prepare('SELECT * FROM recall_fts WHERE instr(lower(text),lower(?))>0 ORDER BY CAST(at AS INTEGER) DESC LIMIT ?').all(q,count+1);
   const good=rows.filter(r=>!memoryBlocked('',r)&&!memoryBlockedText(r.text,Number(r.at))&&!memorySensitivity(r.text)&&normal(readJ(sess(r.sid))));

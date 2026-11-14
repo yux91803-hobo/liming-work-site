@@ -30,7 +30,7 @@ export function getNext(now = Date.now()) {
   return memoryPreferences().followups && g && g.text && now - g.at < NEXT_TTL && !memoryBlockedText(g.text,g.at) ? g : null;
 }
 export function claimNext(now=Date.now(),device='legacy') {
-  return journal.atomic(()=>{
+  return journal.named('companion.claim',[now,device],()=>{
     const g=getNext(now);if(!g)return null;
     const date=new Date(now+8*3600e3).toISOString().slice(0,10),seen=memoryMeta('followup_delivery');
     if(seen?.date===date)return seen.id===g.id&&seen.device===device?g:null;
@@ -110,6 +110,7 @@ export function bondRead() {
 export function bondLog(b, d, why, now) { b.log.push({ at: now, d, why: String(why || '').replace(/\s+/g, ' ').trim().slice(0, 40) }); b.log = b.log.slice(-20); }
 // kind：chat / play / visit / ai。返回这次实际加减了多少（到了当天上限就是 0）
 export function bondAdd(kind, d, why, now = Date.now()) {
+  return journal.named('companion.bond',[kind,d,why,now],()=>{
   const b = bondRead(), day = dayOf(now), used = (b.days[day] = b.days[day] || {});
   // 好久没来：这次见面先按多出来的天数扣（只扣一次）
   if (kind !== 'ai' && b.seen) {
@@ -125,6 +126,7 @@ export function bondAdd(kind, d, why, now = Date.now()) {
   for (const k of Object.keys(b.days)) if (k < dayOf(now - 7 * 86400e3)) delete b.days[k];
   mk(BASE); writeJ(BOND_F(), b);
   return { delta, score: b.score };
+  });
 }
 export function bondInfo() {
   const b = bondRead();
