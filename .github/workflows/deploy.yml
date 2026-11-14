@@ -106,8 +106,6 @@ jobs:
       - name: 浏览器端到端测试（电脑、手机宽度：点击、翻页、返回、模拟器）
         run: |
           set -o pipefail
-          # 这次执行自己的编号，给下面的报告起名用：同一个作业被执行机跑了两遍时，两份报告都留得下来，谁也不因为同名失败
-          echo "E2E_REPORT_ID=$(date +%s%N)-$$" >> "$GITHUB_ENV"
           mkdir -p test-results/e2e
           node scripts/preview.mjs --port 5173 > preview.log 2>&1 &
           preview_pid=$!
@@ -124,16 +122,16 @@ jobs:
           python test/e2e/xin_usage_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-usage.log
           python test/e2e/xin_backup_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-backup.log
           python test/e2e/xin_kernel_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-kernel.log
+      - name: 准备浏览器检查报告快照（失败也保留）
+        if: always()
+        id: e2e_report
+        run: node scripts/ci-e2e-report.mjs
       - name: 保存浏览器检查报告（失败也保留）
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-report-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.E2E_REPORT_ID }}
-          path: |
-            test-results/e2e/*.log
-            preview.log
-            screens/xin-web-failure-*.png
-            screens/stm32-drag-failure.png
+          name: ${{ steps.e2e_report.outputs.name }}
+          path: ${{ steps.e2e_report.outputs.path }}
           retention-days: 1
       - name: 记录浏览器测试通过的代码树
         if: github.event_name == 'pull_request'
