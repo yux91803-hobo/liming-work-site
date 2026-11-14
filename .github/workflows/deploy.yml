@@ -122,16 +122,16 @@ jobs:
           python test/e2e/xin_usage_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-usage.log
           python test/e2e/xin_backup_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-backup.log
           python test/e2e/xin_kernel_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-kernel.log
+      - name: 准备浏览器检查报告快照（失败也保留）
+        if: always()
+        id: e2e_report
+        run: node scripts/ci-e2e-report.mjs
       - name: 保存浏览器检查报告（失败也保留）
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-report-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            test-results/e2e/*.log
-            preview.log
-            screens/xin-web-failure-*.png
-            screens/stm32-drag-failure.png
+          name: ${{ steps.e2e_report.outputs.name }}
+          path: ${{ steps.e2e_report.outputs.path }}
           retention-days: 1
       - name: 记录浏览器测试通过的代码树
         if: github.event_name == 'pull_request'

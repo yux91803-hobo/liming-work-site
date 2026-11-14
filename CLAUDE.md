@@ -6,7 +6,8 @@ Liming 工具箱 / STM32 学习工作台，正式站 https://liming-work.com （
 ## 沟通
 
 - 用中文；时间用北京时间。
-- 用户不看测试站，也不逐个审 PR：**从写代码到上线全流程交给 Claude 独立完成**，做完告诉用户改了什么、线上是否已更新。
+- 用户不看测试站，也不逐个审 PR：**从写代码到上线全流程交给当前接手的 AI 完成**，做完告诉用户改了什么、线上是否已更新。
+- Claude Code 与 Codex 按额度轮流接手。开始工作先读 [AGENTS.md](AGENTS.md) 和 [交接记录](docs/AI-HANDOFF.md)，核对远端与工作区实际进度。提交或 PR 分别记录实际实现与复核责任；审核者不冒充代码作者，修改前一位实现要记录原因。
 
 ## 遇到问题先去 GitHub 找办法
 
@@ -19,7 +20,7 @@ Liming 工具箱 / STM32 学习工作台，正式站 https://liming-work.com （
 
 ## 上线流程
 
-1. 从 `main` 开 `claude/...` 分支改代码。
+1. 从最新 `main` 开 `claude/...` 或 `codex/...` 独立分支；接续未合并工作时从已核对的提交另开分支，保留原分支与作者。
 2. 本地验证：`npm run check`（语法、资源引用、单元测试）和 `npm run test:e2e`（浏览器测试，本机用 `CHROMIUM_PATH` 指向 /opt/pw-browsers 里的 chrome）必须全过；改了页面就 `npm run dev` 起本地预览，用 Chromium 截图自查电脑（1280）、平板竖屏（768）和横屏（1024）、手机（390），浅色和深色。
 3. 开 PR → GitHub Actions 跑单元测试和浏览器测试，通过后自动部署测试站 `liming-hub-staging`（只有 `*.workers.dev` 地址，不绑正式域名）并做冒烟检查。
 4. 检查和测试站都绿了，Claude 自己合并 PR → Actions 自动部署正式站，冒烟检查失败会自动回滚到发布前记录的版本。

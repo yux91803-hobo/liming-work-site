@@ -45,7 +45,7 @@
 
 ## 小芯后台运行方式
 
-- 2026-11-14 接手核对：[现状与安全审查](docs/xin-kernel-handover-review-2026-11-14.md)、[第二阶段实施计划](docs/superpowers/plans/2026-11-14-xin-kernel-stage2.md)。第一阶段已上线，状态与调度仍在旧控制器。待送达按对话分道：同一个对话先来后到，一个对话在忙不堵别的对话，电脑叫不醒或在冷却时才全部等着；文件删除/冲突写回展示具体清单，批准只适用于该清单与文件内容，变化后重新核对。浏览器诊断不记填写内容和网址参数，维护审计不另存命令正文。第二步先引入[所有权锁和记录](docs/superpowers/plans/2026-11-14-xin-owner-lock.md)，建库和 schema 升级也经过写权检查；[常驻状态进程与兼容桥](docs/superpowers/plans/2026-11-14-xin-state-bridge.md)已加入隔离验证路径，具名修改转交所有者，未持写权的数据库句柄原生只读；默认部署仍走旧模式，正式状态切换尚未开启。电脑维护、每日任务、天启能力保留；宿主授权 C 路线和后续隔离的安排以[已确认设计](docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md)为准，不声称已经强隔离。
+- 2026-11-14 接手核对：[现状与安全审查](docs/xin-kernel-handover-review-2026-11-14.md)、[第二阶段实施计划](docs/superpowers/plans/2026-11-14-xin-kernel-stage2.md)。第一阶段已上线，状态与调度仍在旧控制器。待送达按对话分道：同一个对话先来后到，一个对话在忙不堵别的对话，电脑叫不醒或在冷却时才全部等着；文件删除/冲突写回展示具体清单，批准只适用于该清单与文件内容，变化后重新核对。浏览器诊断不记填写内容和网址参数，维护审计不另存命令正文。第二步先引入[所有权锁和记录](docs/superpowers/plans/2026-11-14-xin-owner-lock.md)，建库和 schema 升级也经过写权检查；[常驻状态进程与兼容桥](docs/superpowers/plans/2026-11-14-xin-state-bridge.md)已加入隔离验证路径，具名修改转交所有者，未持写权的数据库句柄原生只读；默认部署仍走旧模式，正式状态切换尚未开启。电脑维护、每日任务、天启能力保留；宿主授权 C 路线和后续隔离的安排以[已确认设计](docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md)为准，不声称已经强隔离。[写者清单](docs/superpowers/plans/2026-11-14-xin-writer-inventory.md)：控制器里每一处直接写文件的地方都登记在 `test/xin-writers.json` 并标了类别，新加一处没登记测试就红。
 
 - 2026-11-13 起（内核第 1 步，[设计](docs/xin-kernel-design.md)）：
   - 网站和小芯电脑之间改走电脑上常驻的内核（InstaBox 私有端口，带第二层签名），不再每个请求都经 InstaBox exec；出问题自动退回 exec，不会把同一件事做两遍。
@@ -90,6 +90,7 @@
 ```sh
 npm run dev        # 本地预览
 npm run check      # 语法、本地引用、STM32 图片引用 + 单元测试
+npm run test:kernel # 同一批小芯控制器测试，换成真的状态进程再跑一遍
 npm run test:e2e   # 浏览器端到端测试（需要 Python playwright + Chromium，先 npm run dev）
 ```
 

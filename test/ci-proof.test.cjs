@@ -42,3 +42,44 @@ test('正式发布只选对应合并的同仓库 PR 成功运行；失败运行�
   await assert.rejects(run({pr:{merge_commit_sha:'c'.repeat(40)}}));
   await assert.rejects(run({pr:{head:{sha:head,repo:{full_name:'outsider/fork'}}}}));
 });
+// 43572318127 再次出现相同启动编号的 409；名字必须对应实际上传快照，不能依赖测试开始时的环境变量。
+test('浏览器报告在测试结束后保存快照，再上传该快照：失败报告也保留，不覆盖先前结果',()=>{
+  const yaml=fs.readFileSync(path.resolve(__dirname,'../.github/workflows/deploy.yml'),'utf8');
+  const last=yaml.indexOf('python test/e2e/xin_kernel_e2e.py'),snapshot=yaml.indexOf('准备浏览器检查报告快照'),upload=yaml.indexOf('保存浏览器检查报告');
+  assert.ok(last>0&&snapshot>last&&upload>snapshot);
+  const prepare=yaml.slice(snapshot,upload),save=yaml.slice(upload,yaml.indexOf('记录浏览器测试通过的代码树'));
+  assert.match(prepare,/if: always\(\)/);assert.match(prepare,/id: e2e_report/);assert.match(prepare,/run: node scripts\/ci-e2e-report\.mjs/);
+  assert.match(save,/if: always\(\)/);assert.match(save,/name: \$\{\{ steps\.e2e_report\.outputs\.name \}\}/);assert.match(save,/path: \$\{\{ steps\.e2e_report\.outputs\.path \}\}/);
+  assert.doesNotMatch(save,/overwrite: true|continue-on-error/);
+});
+
+test('报告快照：复制过的启动编号相同时，不同结果仍有不同名字，源日志变化不改变已保存报告',async t=>{
+  const {snapshotReport}=await import('../scripts/ci-e2e-report.mjs');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ci-report-')),root=path.join(dir,'checkout'),temporary=path.join(dir,'tmp');
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));fs.mkdirSync(path.join(root,'test-results/e2e'),{recursive:true});
+  const file=path.join(root,'test-results/e2e/stm32.log');fs.writeFileSync(file,'FAIL splash timeout');fs.writeFileSync(path.join(root,'preview.log'),'preview ready');
+  const options={root,temporary,run:'1',attempt:'2',nonce:'cloned-id'};
+  const a=snapshotReport(options);fs.writeFileSync(file,'PASS all checks');const b=snapshotReport(options);
+  assert.notEqual(a.name,b.name);assert.notEqual(a.path,b.path);
+  assert.equal(fs.readFileSync(path.join(a.path,'test-results/e2e/stm32.log'),'utf8'),'FAIL splash timeout');
+  assert.equal(fs.readFileSync(path.join(b.path,'test-results/e2e/stm32.log'),'utf8'),'PASS all checks');
+  assert.equal(fs.statSync(a.path).mode&0o777,0o700);
+});
+
+test('报告快照：相同内容的两次上传也使用新编号；不把其它文件带进报告',async t=>{
+  const {snapshotReport}=await import('../scripts/ci-e2e-report.mjs');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ci-report-')),root=path.join(dir,'checkout');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  fs.mkdirSync(path.join(root,'test-results/e2e'),{recursive:true});fs.writeFileSync(path.join(root,'test-results/e2e/one.log'),'PASS');fs.writeFileSync(path.join(root,'private.env'),'not a report');
+  fs.mkdirSync(path.join(root,'screens'));fs.writeFileSync(path.join(root,'screens/xin-web-failure-390.png'),'PNG');fs.writeFileSync(path.join(root,'screens/private.png'),'not a report');
+  const options={root,temporary:path.join(dir,'tmp'),run:'3',attempt:'1'},a=snapshotReport(options),b=snapshotReport(options);
+  assert.equal(a.digest,b.digest);assert.notEqual(a.name,b.name);assert.equal(fs.existsSync(path.join(a.path,'private.env')),false);
+  assert.deepEqual(a.files,['screens/xin-web-failure-390.png','test-results/e2e/one.log']);
+});
+
+test('报告快照：拒绝指向其它文件的链接和不合法的运行编号',async t=>{
+  const {snapshotReport}=await import('../scripts/ci-e2e-report.mjs');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ci-report-')),root=path.join(dir,'checkout');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  fs.mkdirSync(root);const outside=path.join(dir,'outside');fs.writeFileSync(outside,'private');fs.symlinkSync(outside,path.join(root,'preview.log'));
+  assert.throws(()=>snapshotReport({root,temporary:path.join(dir,'tmp'),run:'1',attempt:'1'}),/link|普通文件/);
+  assert.throws(()=>snapshotReport({root,temporary:path.join(dir,'tmp'),run:'1\nbad',attempt:'1'}),/编号/);
+});
