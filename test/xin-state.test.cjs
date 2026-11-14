@@ -49,7 +49,7 @@ test('别的进程占着写锁时 recover 不等待：没有要补写的就不�
  const holder=spawn(process.execPath,['-e',`const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(${JSON.stringify(root+'/workflow.sqlite')});d.exec('BEGIN IMMEDIATE');d.prepare("INSERT INTO commands(id,digest,result,at) VALUES('x','d','{}',0)").run();console.log('holding');setTimeout(()=>{d.exec('ROLLBACK');process.exit(0);},${platformTimeout(3000)});`],{stdio:['ignore','pipe','inherit']});
  await new Promise(ok=>holder.stdout.once('data',ok));t.after(()=>holder.kill());
  const j=new StateJournal(root);t.after(()=>j.close());
- const t0=Date.now();j.recover();assert.ok(Date.now()-t0<1000,'recover 等了 '+(Date.now()-t0)+' ms');
+ const t0=performance.now();j.recover();assert.ok(performance.now()-t0<1000,'recover 等了 '+Math.round(performance.now()-t0)+' ms');
 });
 test('有提交了但没投影的行时 recover 照样补写',async t=>{
  const {root,j}=await fixture(t);j.recover();

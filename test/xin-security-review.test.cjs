@@ -11,6 +11,6 @@ test('读取请求使用已验证的同一文件描述符，打开后换成软�
 test('客户端只能看到完整回复，控制器处理期间不能读到预留空文件',async t=>{
  const r=await load(),f=bridge(t),{spawn}=require('node:child_process'),id='f'.repeat(24),reply=path.join(f.io,id+'.reply');fs.writeFileSync(path.join(f.io,id+'.request'),'{}');
  const child=spawn(process.execPath,['-e','const fs=require("node:fs");console.log("READY");setInterval(()=>{if(fs.existsSync(process.argv[1])){process.stdout.write(fs.readFileSync(process.argv[1],"utf8"));process.exit(0);}},5);',reply],{stdio:['ignore','pipe','pipe']});t.after(()=>{try{child.kill('SIGKILL');}catch{}});
- let output='';child.stdout.on('data',b=>output+=b);await new Promise((resolve,reject)=>{const deadline=Date.now()+platformTimeout(5000);const timer=setInterval(()=>{if(output.includes('READY')){clearInterval(timer);resolve();}else if(Date.now()>deadline){clearInterval(timer);reject(Error('client startup timeout'));}},5);});
+ let output='';child.stdout.on('data',b=>output+=b);await new Promise((resolve,reject)=>{const deadline=performance.now()+platformTimeout(5000);const timer=setInterval(()=>{if(output.includes('READY')){clearInterval(timer);resolve();}else if(performance.now()>deadline){clearInterval(timer);reject(Error('client startup timeout'));}},5);});
  const ended=new Promise(resolve=>child.once('exit',resolve));r.drainBridge(f,()=>{Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,150);return 'COMPLETE';});await ended;assert.equal(output.replace('READY\n',''),'COMPLETE');
 });

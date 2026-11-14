@@ -21,7 +21,7 @@ function home(t) {
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };
   // 等这一轮结束（没有真实模型，前台会很快报错收尾），下一句才发得进去
-  const settle = run => { for (const end = Date.now() + platformTimeout(20000); Date.now() < end;) { if (op('poll', { run, off: 0 }).done) return; spawnSync('sleep', ['0.1']); } assert.fail('这一轮没有结束'); };
+  const settle = run => { for (const end = performance.now() + platformTimeout(20000); performance.now() < end;) { if (op('poll', { run, off: 0 }).done) return; spawnSync('sleep', ['0.1']); } assert.fail('这一轮没有结束'); };
   // 发出去的轮次和 watchdog 在测试结束后还会写这个目录：先停掉它们再删（不然整套并发跑时偶尔 ENOTEMPTY）
   t.after(() => stopOwned(xin, dir));
   const sess = sid => JSON.parse(fs.readFileSync(path.join(xin, 'sessions', sid + '.json'), 'utf8'));

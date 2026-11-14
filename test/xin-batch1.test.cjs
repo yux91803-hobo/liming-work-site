@@ -4,6 +4,7 @@ const { lockedSpawn } = require('./helpers/locked.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { performance } = require('node:perf_hooks');
 const { platformTimeout } = require('./helpers/timeout.cjs');
 const { stopOwned } = require('./helpers/stop-owned.cjs');
 const AGENT = path.join(__dirname, '../site/xin/vm-agent.mjs');
@@ -65,8 +66,9 @@ function home(t, extra = {}) {
   return { dir, xin, work, env, op, locked, hold, script, task, fc };
 }
 async function until(fn, ms = 15000, what = '') {
-  const end = Date.now() + platformTimeout(ms); let v;
-  while (Date.now() < end) { v = fn(); if (v) return v; await new Promise(ok => setTimeout(ok, 120)); }
+  // 等待预算用单调时钟，宿主暂停/校时后的墙钟跳跃不能在控制器恢复之前判超时。
+  const end = performance.now() + platformTimeout(ms); let v;
+  while (performance.now() < end) { v = fn(); if (v) return v; await new Promise(ok => setTimeout(ok, 120)); }
   throw new Error('等不到：' + what + ' ' + JSON.stringify(v));
 }
 

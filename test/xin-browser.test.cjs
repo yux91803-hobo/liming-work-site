@@ -151,7 +151,7 @@ test('下拉框、翻页、截图、新窗口自动切过去、下载进 downloa
   r = await run('tab', '0');
   assert.match(r.text, /标题：首页/);
   r = await run('click', ref(r.text, /link "下载手册"/));
-  for (const end = Date.now() + platformTimeout(10000); Date.now() < end && !fs.existsSync(path.join(work, 'downloads', 'manual.pdf'));) await new Promise(ok => setTimeout(ok, 100));
+  for (const end = performance.now() + platformTimeout(10000); performance.now() < end && !fs.existsSync(path.join(work, 'downloads', 'manual.pdf'));) await new Promise(ok => setTimeout(ok, 100));
   assert.equal(fs.readFileSync(path.join(work, 'downloads', 'manual.pdf'), 'utf8'), 'PDF-DATA');
 });
 
@@ -302,10 +302,10 @@ test('用过浏览器、关掉以后进程马上能退出（不被超时定时�
   const src = `const b=await import(${JSON.stringify(pathToFileURL(path.join(__dirname, '../site/xin/vm-browser.mjs')).href)}),rt=await import(${JSON.stringify(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href)});
     const x=await b.browserBroker({chrome:${JSON.stringify(fake)},profileDir:${JSON.stringify(path.join(root, 'p'))},work:${JSON.stringify(root)},egress:rt.egressProxy,allowAddress:rt.publicAddress});
     await x.handle({cmd:'open',args:['https://example.com/']});await x.close();`;
-  const t0 = Date.now();
+  const t0 = performance.now();
   const r = require('node:child_process').spawnSync(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8', timeout: 25000 });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(Date.now() - t0 < 10000, '退出用了 ' + (Date.now() - t0) + ' ms');
+  assert.ok(performance.now() - t0 < 10000, '退出用了 ' + Math.round(performance.now() - t0) + ' ms');
 });
 
 test('一轮结束同步收尾：浏览器整组进程都杀掉（渲染进程不剩），资料目录删干净，收尾本身不报错', { timeout: platformTimeout(60000) }, async t => {
@@ -315,7 +315,7 @@ test('一轮结束同步收尾：浏览器整组进程都杀掉（渲染进程�
   const users = () => fs.readdirSync('/proc').filter(n => /^\d+$/.test(n)).filter(n => { try { return fs.readFileSync('/proc/' + n + '/cmdline', 'utf8').includes(profile); } catch { return false; } });
   assert.ok(users().length >= 2, '开着浏览器时有好几个进程');
   assert.doesNotThrow(() => b.closeNow());
-  for (const end = Date.now() + platformTimeout(3000); Date.now() < end && users().length;) await new Promise(ok => setTimeout(ok, 100));
+  for (const end = performance.now() + platformTimeout(3000); performance.now() < end && users().length;) await new Promise(ok => setTimeout(ok, 100));
   assert.deepEqual(users(), [], '没有进程还在用这份资料');
   assert.ok(!fs.existsSync(profile), '资料目录删了');
 });
@@ -346,7 +346,7 @@ test('同步收尾杀的是浏览器整个进程组：子进程不会留下来�
   const r = await b.handle({ cmd: 'tabs' });
   assert.equal(r.ok, true, JSON.stringify(r));
   const users = () => fs.readdirSync('/proc').filter(n => /^\d+$/.test(n)).filter(n => { try { return fs.readFileSync('/proc/' + n + '/cmdline', 'utf8').includes(profile); } catch { return false; } });
-  for (const end = Date.now() + 3000; Date.now() < end && !fs.existsSync(path.join(profile, 'Default'));) await new Promise(ok => setTimeout(ok, 20));
+  for (const end = performance.now() + 3000; performance.now() < end && !fs.existsSync(path.join(profile, 'Default'));) await new Promise(ok => setTimeout(ok, 20));
   assert.ok(users().length >= 2, '假浏览器和它的子进程都在');
   assert.doesNotThrow(() => b.closeNow());
   await new Promise(ok => setTimeout(ok, 500));

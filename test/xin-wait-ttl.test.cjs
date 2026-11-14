@@ -31,8 +31,8 @@ function fixture(t) {
         return identity && !['Z', 'X'].includes(identity.state) ? [{ pid: Number(n), identity }] : [];
       } catch { return []; }
     });
-    const deadline = Date.now() + platformTimeout(5000);
-    while (owned().length && Date.now() < deadline) {
+    const deadline = performance.now() + platformTimeout(5000);
+    while (owned().length && performance.now() < deadline) {
       for (const p of owned()) r.signalProcessGroup(p.pid, p.identity, 'SIGKILL');
       await new Promise(ok => setTimeout(ok, 30));
     }

@@ -40,7 +40,7 @@ function fixture(t,mode='ok'){
   const ensureState=require('./helpers/state-mode.cjs').stateClient(t,env);
  const call=(op,args={})=>{ ensureState();const r=lockedSpawn(agent,op,args,{env,encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
  t.after(()=>stopOwned(control,root));
- const wait=async sid=>{let task;for(const end=Date.now()+platformTimeout(15000);Date.now()<end;){task=call('history',{sid}).task;if(['done','failed','waiting'].includes(task.status))return task;await new Promise(r=>setTimeout(r,50));}assert.fail(JSON.stringify(task));};
+ const wait=async sid=>{let task;for(const end=performance.now()+platformTimeout(15000);performance.now()<end;){task=call('history',{sid}).task;if(['done','failed','waiting'].includes(task.status))return task;await new Promise(r=>setTimeout(r,50));}assert.fail(JSON.stringify(task));};
  return {root,control,log,call,wait};
 }
 test('普通资料任务真正交给 Gemini 4 Hydrogen（查资料用 medium），前台模型和网关密钥不交给 agy',async t=>{
@@ -63,8 +63,8 @@ test('实际返回其它模型时拒绝执行，不把它当 Hydrogen 成功',as
 // 参考 opencode 的 chunkTimeout（packages/core/src/v1/config/provider.ts：两段输出之间等不到就中止）、Codex 的 stream_idle_timeout_ms（codex-rs/model-provider-info：默认 300 秒，按服务商可改）
 test('Gemini 一直不出声：到了闲置时限就换别的模型接着做，记下原因；之后 15 分钟内新任务先不派给 Gemini',async t=>{
  const f=fixture(t,'stall'),task=f.call('task_new',{kind:'research',goal:'stall research'}).task;assert.equal(task.model,'gemini-4-hydrogen');
- const t0=Date.now(),done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-4-hydrogen');
- assert.ok(Date.now()-t0<platformTimeout(12000),'没有等满 4 分钟');
+ const t0=performance.now(),done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-4-hydrogen');
+ assert.ok(performance.now()-t0<platformTimeout(12000),'没有等满 4 分钟');
  assert.match(fs.readFileSync(f.root+'/fallback.log','utf8'),/codex/);
  const stats=fs.readFileSync(f.control+'/model-stats.jsonl','utf8').trim().split('\n').map(JSON.parse),last=stats.at(-1);
  assert.equal(last.from,'gemini-4-hydrogen');assert.match(last.fromErr||'',/没有任何回应/);

@@ -137,8 +137,8 @@ function home(t) {
   return { dir, xin, env, run, read };
 }
 async function until(fn, ms = 15000, what = '') {
-  const end = Date.now() + platformTimeout(ms); let v;
-  while (Date.now() < end) { v = await fn(); if (v) return v; await new Promise(ok => setTimeout(ok, 120)); }
+  const end = performance.now() + platformTimeout(ms); let v;
+  while (performance.now() < end) { v = await fn(); if (v) return v; await new Promise(ok => setTimeout(ok, 120)); }
   throw new Error('等不到：' + what + ' ' + JSON.stringify(v));
 }
 

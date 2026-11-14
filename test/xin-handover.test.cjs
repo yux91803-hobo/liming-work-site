@@ -42,10 +42,10 @@ test('旧 watchdog 发现网站已经在用新的一份：让新版接班，自�
   const next = path.join(agentDir, 'vm-agent-0123456789ab.mjs');
   fs.writeFileSync(next, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)}, process.argv[2] || '');\n`);
   fs.writeFileSync(path.join(xin, 'controller-current.json'), JSON.stringify({ self: next }));
-  const t0 = Date.now(), r = run(['watchdog']);
+  const t0 = performance.now(), r = run(['watchdog']);
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(Date.now() - t0 < 8000, '没有接着循环');
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end && !fs.existsSync(marker);) spawnSync('sleep', ['0.1']);
+  assert.ok(performance.now() - t0 < 8000, '没有接着循环');
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end && !fs.existsSync(marker);) spawnSync('sleep', ['0.1']);
   assert.equal(fs.readFileSync(marker, 'utf8'), 'watchdog');
 });
 

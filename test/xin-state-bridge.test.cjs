@@ -111,8 +111,8 @@ test('kill -9 后内核记录保留；新主人恢复提交，旧写者不能趁
 
 test('SIGSTOP/CONT 超时有界，恢复后仍可请求且不接错回应',async t=>{
   const h=home(t),m=await load(),a=await actor(t,h);a.child.kill('SIGSTOP');
-  const t0=Date.now();await assert.rejects(m.requestState(h,{kind:'op',op:'echo'},{timeoutMs:50}),e=>e.executed==='unknown');
-  assert.ok(Date.now()-t0<1000);a.child.kill('SIGCONT');
+  const t0=performance.now();await assert.rejects(m.requestState(h,{kind:'op',op:'echo'},{timeoutMs:50}),e=>e.executed==='unknown');
+  assert.ok(performance.now()-t0<1000);a.child.kill('SIGCONT');
   assert.equal((await m.requestState(h,{kind:'op',op:'echo',args:{text:'恢复'}})).text,'恢复');
 });
 

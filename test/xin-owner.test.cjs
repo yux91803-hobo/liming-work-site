@@ -140,11 +140,11 @@ test('拿着共享锁时起了脱离的子进程然后自己退出：锁不被�
 test('源源不断的旧写者：等独占锁的主人不会被饿死', async t => {
   const dir = home(t), { Ownership } = await import(url);
   new Ownership(dir).enter()();   // 先把库建好
-  const writers = Array.from({ length: 4 }, () => proc(t, dir, 'setInterval(() => { try { const r = o.enter(); const end = Date.now() + 15; while (Date.now() < end); r(); } catch { /* 主人来了 */ } }, 20);'));
+  const writers = Array.from({ length: 4 }, () => proc(t, dir, 'setInterval(() => { try { const r = o.enter(); const end = performance.now() + 15; while (performance.now() < end); r(); } catch { /* 主人来了 */ } }, 20);'));
   await pause(400);
-  const t0 = Date.now();
+  const t0 = performance.now();
   assert.equal(await proc(t, dir, "o.take({ waitMs: 3000 }); console.log('took'); setInterval(() => {}, 1000);").line(), 'took');
-  assert.ok(Date.now() - t0 < 3000, '用了 ' + (Date.now() - t0) + ' 毫秒');
+  assert.ok(performance.now() - t0 < 3000, '用了 ' + Math.round(performance.now() - t0) + ' 毫秒');
   for (const w of writers) w.child.kill('SIGKILL');
 });
 

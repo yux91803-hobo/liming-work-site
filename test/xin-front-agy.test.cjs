@@ -54,7 +54,7 @@ function fixture(t,mode='ok'){
   const ensureState=require('./helpers/state-mode.cjs').stateClient(t,env);
  delete env.XIN_FRONT_PROVIDER;
  const call=(op,args={})=>{ ensureState();const r=spawnSync(process.execPath,[agent,op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);const d=JSON.parse(r.stdout);assert.ok(!d.error,JSON.stringify(d));return d;};
- const wait=async run=>{const until=Date.now()+platformTimeout(15000);while(Date.now()<until){const p=call('poll',{run,off:0});if(p.done)return p;await new Promise(r=>setTimeout(r,70));}assert.fail('synthetic front did not finish');};
+ const wait=async run=>{const until=performance.now()+platformTimeout(15000);while(performance.now()<until){const p=call('poll',{run,off:0});if(p.done)return p;await new Promise(r=>setTimeout(r,70));}assert.fail('synthetic front did not finish');};
  const rows=file=>fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse):[];
  t.after(()=>stopOwned(control,root));
  return {root,control,home,work,env,log,gateway,call,wait,rows};
@@ -180,8 +180,8 @@ test('Hydrogen 未查询却声称查过时，补上的真实查询输入没有�
 });
 test('后台完成仍由默认 Hydrogen 接回、持久交付一次，完成事件不会被改成新工作',async t=>{
  const f=fixture(t),sent=f.call('send',{agent:'codex',text:'FRONT_DISPATCH：整理一份说明。'});await f.wait(sent.run);
- const until=Date.now()+platformTimeout(10000);let visible=[];
- while(Date.now()<until){f.call('tasks',{sid:sent.sid});const h=f.call('history',{sid:sent.sid});visible=h.runs.flatMap(r=>r.events).filter(e=>e.t==='text'&&e.taskResult);if(visible.length)break;await new Promise(r=>setTimeout(r,100));}
+ const until=performance.now()+platformTimeout(10000);let visible=[];
+ while(performance.now()<until){f.call('tasks',{sid:sent.sid});const h=f.call('history',{sid:sent.sid});visible=h.runs.flatMap(r=>r.events).filter(e=>e.t==='text'&&e.taskResult);if(visible.length)break;await new Promise(r=>setTimeout(r,100));}
  assert.equal(visible.length,1);assert.match(visible[0].text,/原生前台已交付结果/);
  const h=f.call('history',{sid:sent.sid});assert.equal(h.runs.flatMap(r=>r.events).filter(e=>e.t==='text'&&e.taskResult).length,1);
  assert.equal(f.call('tasks',{sid:sent.sid}).tasks.length,1);
@@ -189,7 +189,7 @@ test('后台完成仍由默认 Hydrogen 接回、持久交付一次，完成事�
 });
 test('用户停止 Hydrogen 会取消原生请求，保留已停止结果，不按超时派活或切 DeepSeek',async t=>{
  const f=fixture(t,'hang'),sent=f.call('send',{agent:'codex',text:'你好'});
- const until=Date.now()+platformTimeout(5000);while(!f.rows(f.log).some(r=>r.method==='session/prompt')){assert.ok(Date.now()<until);await new Promise(r=>setTimeout(r,40));}
+ const until=performance.now()+platformTimeout(5000);while(!f.rows(f.log).some(r=>r.method==='session/prompt')){assert.ok(performance.now()<until);await new Promise(r=>setTimeout(r,40));}
  f.call('stop',{run:sent.run});const done=await f.wait(sent.run);assert.equal(done.events.find(e=>e.t==='done').stopped,true);
  assert.equal(f.rows(f.gateway).length,0);assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
 });

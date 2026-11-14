@@ -47,6 +47,8 @@
 
 - 2026-11-14 接手核对：[现状与安全审查](docs/xin-kernel-handover-review-2026-11-14.md)、[第二阶段实施计划](docs/superpowers/plans/2026-11-14-xin-kernel-stage2.md)。第一阶段已上线，状态与调度仍在旧控制器。待送达按对话分道：同一个对话先来后到，一个对话在忙不堵别的对话，电脑叫不醒或在冷却时才全部等着；文件删除/冲突写回展示具体清单，批准只适用于该清单与文件内容，变化后重新核对。浏览器诊断不记填写内容和网址参数，维护审计不另存命令正文。第二步先引入[所有权锁和记录](docs/superpowers/plans/2026-11-14-xin-owner-lock.md)，建库和 schema 升级也经过写权检查；[常驻状态进程与兼容桥](docs/superpowers/plans/2026-11-14-xin-state-bridge.md)已加入隔离验证路径，具名修改转交所有者，未持写权的数据库句柄原生只读；默认部署仍走旧模式，正式状态切换尚未开启。电脑维护、每日任务、天启能力保留；宿主授权 C 路线和后续隔离的安排以[已确认设计](docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md)为准，不声称已经强隔离。[写者清单](docs/superpowers/plans/2026-11-14-xin-writer-inventory.md)：控制器里每一处直接写文件的地方都登记在 `test/xin-writers.json` 并标了类别，新加一处没登记测试就红。
 
+- 2026-11-14 持久服务：[安装/中断恢复与旧版回退](docs/superpowers/plans/2026-11-14-xin-persistent-kernel.md)。HTTP 外壳由持久用户单元 `xin-kernel-resident.service` 管理，迁移保留后台执行进程；状态模式仍为 legacy。安装、失败回退、被杀后恢复、管理器重启后自启在真的 systemd 255 上实测过（计划末尾的表）；回滚到旧版时持久服务最多重启 10 次就停下。正式电脑上的真实冷启动和正式状态所有者切换另行验收。
+
 - 2026-11-13 起（内核第 1 步，[设计](docs/xin-kernel-design.md)）：
   - 网站和小芯电脑之间改走电脑上常驻的内核（InstaBox 私有端口，带第二层签名），不再每个请求都经 InstaBox exec；出问题自动退回 exec，不会把同一件事做两遍。
   - 发消息先存在 Cloudflare 的待送达里，存好了马上显示「已收到」，再叫醒电脑送过去（叫醒一次约 40 秒）；冷却期间会写明大约几点送到，关掉网页也会送到。

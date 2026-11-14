@@ -29,7 +29,7 @@ test('云电脑刚醒、网关在预热：前台先等预热做完再发请求�
   fs.rmSync(cold);
   fs.writeFileSync(path.join(xin, 'warm.json'), JSON.stringify({ at: Date.now(), ms: 1500, ok: true }));
   let p = null;
-  for (const end = Date.now() + platformTimeout(40000); Date.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await sleep(200); }
+  for (const end = performance.now() + platformTimeout(40000); performance.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await sleep(200); }
   assert.ok(p && p.done, '这一轮没有结束');
   const done = p.events.find(e => e.t === 'done');
   assert.equal(done.ok, true, JSON.stringify(p.events.slice(-3)));
@@ -43,12 +43,12 @@ test('预热记录坏了或卡死（超过 200 秒还标着在跑）：前台不
   const { xin, op } = agentEnv({ XIN_FRONT_TEST_LOG: log });
   fs.mkdirSync(xin, { recursive: true });
   fs.writeFileSync(path.join(xin, 'warm.json'), JSON.stringify({ at: Date.now() - 300e3, running: true }));
-  const t0 = Date.now(), r = op('send', { agent: 'codex', text: '在吗' });
+  const t0 = performance.now(), r = op('send', { agent: 'codex', text: '在吗' });
   let p = null;
-  for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await sleep(150); }
+  for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await sleep(150); }
   assert.ok(p && p.done && p.events.find(e => e.t === 'done').ok);
   assert.ok(!p.events.some(e => e.t === 'status' && /刚醒/.test(e.text)), '没有等');
-  assert.ok(Date.now() - t0 < platformTimeout(10000));
+  assert.ok(performance.now() - t0 < platformTimeout(10000));
 });
 
 /* ---------- 第一批留下的小问题 ---------- */

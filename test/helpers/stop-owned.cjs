@@ -16,9 +16,9 @@ function owned(xinHome) {
 }
 
 async function stopOwned(xinHome, root, timeoutMs = 8000) {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = performance.now() + timeoutMs;
   let left = owned(xinHome);
-  while (left.length && Date.now() < deadline) {
+  while (left.length && performance.now() < deadline) {
     for (const pid of left) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
     await new Promise(ok => setTimeout(ok, 30));
     left = owned(xinHome);

@@ -25,8 +25,8 @@ fs.readFileSync = function (name, ...args) {
       process.env.XIN_TEST_BARRIER_OPS.split(',').includes(op)) {
     const dir = process.env.XIN_TEST_BARRIER_DIR;
     fs.writeFileSync(path.join(dir, String(process.pid)), 'read');
-    const end = Date.now() + 350;
-    while (fs.readdirSync(dir).length < 2 && Date.now() < end)
+    const end = performance.now() + 350;
+    while (fs.readdirSync(dir).length < 2 && performance.now() < end)
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
   return value;
@@ -106,7 +106,7 @@ function fixture(t, extra = {}) {
   });
   const wait = async run => {
     const log = path.join(env.XIN_HOME, 'runs', run + '.jsonl'), meta = path.join(env.XIN_HOME, 'runs', run + '.json');
-    for (const end = Date.now() + platformTimeout(15000); Date.now() < end;) {
+    for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) {
       let events = [], ended = false;
       try { events = fs.readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l)); ended = !!JSON.parse(fs.readFileSync(meta, 'utf8')).ended; } catch { /* 正在写 */ }
       if (ended && events.some(e => e.t === 'done')) return events;

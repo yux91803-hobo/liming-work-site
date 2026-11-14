@@ -175,7 +175,7 @@ test('取得独占锁后再次检查旧控制器；等待期间出现未兼容�
   const next=spawn(process.execPath,[path.join(dir,'vm-agent.mjs'),'serve'],{env:f.env,stdio:['ignore','pipe','pipe']});
   const exited=new Promise(resolve=>next.once('exit',(code,signal)=>resolve({code,signal})));let err='';next.stderr.on('data',b=>err+=b);
   let opened=false;
-  for(const end=Date.now()+5000;Date.now()<end;){
+  for(const end=performance.now()+5000;performance.now()<end;){
     try{opened=fs.readdirSync('/proc/'+next.pid+'/fd').some(n=>{try{return fs.readlinkSync('/proc/'+next.pid+'/fd/'+n)===path.join(f.home,'owner.sqlite');}catch{return false;}});}catch{}
     if(opened)break;await sleep(10);
   }
