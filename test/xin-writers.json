@@ -68,7 +68,7 @@
   "vm-runtime.mjs::taskNetwork": { "calls": { "rmSync": 1, "mkdirSync": 1 }, "kind": "outside", "what": "任务的网络代理目录：每轮清空重建" },
   "vm-runtime.mjs::requestBudget": { "calls": { "writeFileSync": 1, "renameSync": 1 }, "kind": "rmw", "what": "后台任务的请求预算 budgets/<任务>.json：读出来、加一、写回。执行进程在写" },
   "vm-runtime.mjs::containerAppServer": { "calls": { "copyFileSync": 1 }, "kind": "outside", "what": "把模型目录复制进任务私有的 Codex 目录" },
-  "vm-runtime.mjs::drainBridge": { "calls": { "openSync": 1, "writeFileSync": 1, "linkSync": 1, "unlinkSync": 2 }, "kind": "outside", "what": "处理沙盒发来的请求：回执先写临时文件再硬链接成正式名字，处理完删请求" },
+  "vm-runtime.mjs::drainBridge": { "calls": { "openSync": 3, "writeFileSync": 1, "linkSync": 1, "unlinkSync": 2 }, "kind": "outside", "what": "处理沙盒发来的请求：回执先写临时文件再硬链接成正式名字，处理完删请求。openSync 保守登记 3 处：其中 2 处通过 C 常量别名只读打开，实际写入的是另一处回执临时文件" },
   "vm-runtime.mjs::cleanupTaskTemporary": { "calls": { "rmSync": 1 }, "kind": "outside", "what": "清空任务的临时目录" },
   "vm-runtime.mjs::removeTree": { "calls": { "rmSync": 2, "chmodSync": 1 }, "kind": "outside", "what": "删掉整个任务目录（先把权限改回可写）" },
   "vm-runtime.mjs::profile": { "calls": { "mkdtempSync": 1 }, "kind": "outside", "what": "网页检查用的临时浏览器资料目录" },

@@ -36,6 +36,44 @@ test('扫描器：换了引入方式就报出来，不悄悄漏掉', t => {
 test('扫描器：把函数赋给别的名字也算一处', t => {
   const dir = sources(t, { 'vm-e.mjs': "import fs from 'node:fs';\nconst put = fs.writeFileSync;\n" });
   assert.deepEqual(scanWriters(dir).writers, { 'vm-e.mjs::put': { writeFileSync: 1 } });
+  assert.match(scanWriters(dir).problems.join('\n'), /间接|别名/);
+});
+
+test('扫描器：多行调用参数不完整时不能当作默认只读打开',t=>{
+  const dir=sources(t,{'vm-a.mjs':"import fs from 'node:fs';\nfunction write() {\n  return fs.openSync(\n    '/tmp/example',\n    'a'\n  );\n}\n"});
+  assert.deepEqual(scanWriters(dir).writers,{'vm-a.mjs::write':{openSync:1}});
+});
+test('扫描器：路径里的逗号、动态打开标志和 SQLite 选项覆盖不能伪装只读',t=>{
+  const dir=sources(t,{'vm-a.mjs':`import fs from 'node:fs';
+function write(file,flags,options) {
+  fs.openSync("prefix,'r',suffix", 'w');
+  fs.openSync(file, fs.constants.O_RDONLY | flags);
+  new DatabaseSync(file, { readOnly: true, ...options });
+  new DatabaseSync(file, { readOnly: true, readOnly: false });
+}
+function read(file) { fs.openSync(file, 'r'); fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); new DatabaseSync(file, { readOnly: true }); }
+`});
+  assert.deepEqual(scanWriters(dir).writers,{'vm-a.mjs::write':{openSync:2,DatabaseSync:2}});
+});
+test('扫描器：多行解构引入、模块别名、计算属性和动态引入都必须显式报告',t=>{
+  const dir=sources(t,{'vm-a.mjs':`import {
+ writeFileSync
+} from 'node:fs';
+const all = fs;
+const { appendFileSync } = fs;
+fs['writeFileSync']('a','b');
+const other = await import('node:fs');
+`});
+  const {problems}=scanWriters(dir);
+  assert.equal(problems.length,5,problems.join('\n'));
+});
+test('扫描器：SQLite 构造器换别名、命名空间或动态引入不能绕过可写连接盘点',t=>{
+  const dir=sources(t,{'vm-a.mjs':`import { DatabaseSync as DB } from 'node:sqlite';
+import * as sqlite from 'node:sqlite';
+const dynamic = await import('node:sqlite');
+const Other = DatabaseSync;
+new DB('state.sqlite');new sqlite.DatabaseSync('state.sqlite');`});
+  assert.equal(scanWriters(dir).problems.length,4);
 });
 
 test('写者清单：控制器里每一处直接写文件的调用都登记了，清单里也没有多出来的', () => {
@@ -59,7 +97,16 @@ test('写者清单：直接开事务（journal.atomic）只出现在登记过的
   assert.deepEqual(countAtomic(SRC), LIST.atomic);
 });
 test('写者清单：具名操作两边对得上（journal.named 用到的名字都在 stateOperations 里，反过来也是）', () => {
-  const { used, defined } = namedOperations(SRC);
+  const { used, defined, problems } = namedOperations(SRC);
+  assert.deepEqual(problems,[]);
   assert.ok(used.length > 0);
   assert.deepEqual(used, defined);
+});
+
+test('事务和具名对照：空格、换行和双引号不漏报；动态名字需要人工核对',t=>{
+  const dir=sources(t,{'vm-a.mjs':`journal . atomic (()=>{}); journal.atomic\n(()=>{});
+journal . named ("one",[],()=>{});journal.named('two',[],()=>{});journal.named(variable,[],()=>{});`,
+    'vm-kernel-operations.mjs':`export const stateOperations = Object.freeze ({ 'one': a, "two": b });`});
+  assert.deepEqual(countAtomic(dir),{'vm-a.mjs':2});
+  const r=namedOperations(dir);assert.deepEqual(r.used,['one','two']);assert.deepEqual(r.defined,['one','two']);assert.equal(r.problems.length,1);
 });
