@@ -67,3 +67,30 @@ if (process.argv[1]?.endsWith('.test.cjs')) {
 ```
 
 把上段放入临时 preload 文件，以 NODE_OPTIONS=--require=<绝对路径>、XIN_TEST_STATE_MODE=kernel 运行 Node --test，test-name-pattern 选「连续临时错误到上限」和「系统 SIGTERM 保留后台断点」。控制器子进程不是 .test.cjs，时间不被修改。原测试 0/2、修正后 2/2；完整检查/内核复跑与当前 CI 结果仍需核对。这项验证不能代替真实 VM 暂停恢复验收。
+
+
+## 独立复核与真 systemd 实测（Claude Code，2026-11-14 北京时间 21 点前后）
+
+Codex 的 3 个提交由 Claude Code 在 `claude/xiaoxin-architecture-review-2dkunv` 上承接（保留原提交和作者），独立复核后追加一处修正。上面的回归全部用假的 systemctl / systemd-run；这一节是在**真的 systemd 255 用户管理器**上跑同一份代码的结果。环境是本会话的容器，和正式电脑无关：
+
+- 起法：`unshare -m` 开私有挂载命名空间，在里面把 cgroup2 挂到 `/sys/fs/cgroup`、在 `/run/systemd` 上盖一层 tmpfs 并建 `system/`（让 systemd 认为系统由它启动），把自己放进一个不带控制器的 cgroup2 子树，然后 `systemd --user`；HOME、XIN_HOME 用临时目录，运行目录用 `/run/user/9001`（旧临时单元的路径形式要和正式的 `/run/user/<uid>/systemd/transient/` 一样，代码按这个形式认它）。所有 ensure 和 systemctl 都用 `nsenter -m` 进同一个命名空间执行。
+- 两份内核文件：main（#141）的 `vm-kernel.mjs` 当旧版，本分支的当新版，各自按 `vm-kernel-<12 位十六进制>.mjs` 命名。
+- 注意：不要对着正在用的运行目录跑 `systemd-analyze --user verify`，它会把管理器的私有套接字换掉，之后 systemctl 全部连不上（实测踩到过；仓库里的测试给它单独的 `XDG_RUNTIME_DIR`，没有这个问题）。
+
+| 场景 | 实测结果 |
+|---|---|
+| 旧版临时单元（cgroup 里有一个后台进程）→ 新版 ensure | 0.49 秒，`started / persistent:true`；持久单元 enabled，FragmentPath 是磁盘上的文件，MainPID 等于健康检查的 pid；旧临时单元 inactive/dead 但还在（有后台进程），后台进程活着 |
+| 再 ensure 一次 | `already / persistent:true`，没有重启 |
+| 用户管理器退出再启动（模拟关机开机），不跑 ensure | 持久服务自己起来，健康检查通过；之后 ensure 返回 already |
+| 换一个新版本 ensure | 单元改成新文件，服务重启，`persistent:true` |
+| 持久服务在跑时，旧版（#141）ensure 来了（= Worker 自动回滚） | 旧版杀掉持久服务主进程、起临时单元占住端口；持久服务每 2 秒重启一次，25 秒 11 次，不停 |
+| 同上，但单元带 `StartLimitIntervalSec=60`、`StartLimitBurst=10` | 重启 10 次（二十多秒）后停在 failed；旧临时单元稳定服务 |
+| 上一行之后再发新版 ensure | `stop` → `reset-failed` → `start`，回到 `persistent:true` |
+| 安装时 `start` 失败一次（旧临时单元带后台进程） | 返回 `service_failed / service_start_failed`；新单元和启用状态撤掉，旧临时单元 `start` 回来，后台进程活着，没有留安装记录；再 ensure 一次安装成功 |
+| 同上，旧临时单元没有后台进程（停了就被回收） | 恢复时用旧哈希文件 `systemd-run` 重建临时单元，旧版健康 |
+| 安装进程在 `start` 那一步被 SIGKILL | 留下 0600 的安装记录（activation、legacyRunning）和启动锁；下一次 ensure 接过锁，先恢复旧外壳，再完成安装，`persistent:true` |
+| 单元里加 `Conflicts=xin-kernel.service`（候选改法） | 否掉：临时单元停了以后因为被引用不回收，旧版再 `systemd-run --unit=xin-kernel` 报 already loaded，只能退成脱离进程 |
+
+修正只有一处：`kernelServiceUnit` 的 `[Unit]` 里加重启上限（上表第 6 行）。原因是正式站冒烟失败会**自动**回滚 Worker，没有人有机会先执行上面的人工回退步骤；不加上限，回滚后电脑上会一直每 2 秒起一个注定失败的进程。加了以后，自动回滚的结果是：旧版照常服务，持久单元停在 failed（仍然 enabled，电脑重启后会先起来，旧版再换掉它一次）；要长期留在旧版，仍按上面「迁移与回滚」的步骤停用持久单元。
+
+没有实测的：正式电脑（systemd 257）上的真实冷启动和暂停恢复；这次对正式电脑只做了只读预检（结果在 CHANGES）。启动门认活进程不认时间以后，进程号被别的长寿进程占用会让 ensure 一直报 locked，这一条是按源码推断的，没有复现，也没有改。

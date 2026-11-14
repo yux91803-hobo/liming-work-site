@@ -1,6 +1,19 @@
 # 修改清单 · 2026-11-14（小芯内核第 2 步 · 第 1 批最后一块：持久用户服务）
 
-接续 #140 和 #141，按[已确认设计](superpowers/specs/2026-11-14-xin-kernel-stage2-design.md) §6.7；[实施与回退计划](superpowers/plans/2026-11-14-xin-persistent-kernel.md)。实际实现 AI：**Codex**；Codex 自查与自动化验证，尚无 Claude Code 独立复核。生产状态模式保持 legacy，本批不接管用户 SQLite、不改调度、不触碰真实凭据或删除用户数据。
+接续 #140 和 #141，按[已确认设计](superpowers/specs/2026-11-14-xin-kernel-stage2-design.md) §6.7；[实施与回退计划](superpowers/plans/2026-11-14-xin-persistent-kernel.md)。实际实现 AI：**Codex**（持久服务本体、像素 E2E 修正、等待时钟修正）；Codex 自查与自动化验证。**Claude Code 接手后独立复核，并实现了一处修正**（重启上限，见下面两条），PR 由 Claude Code 在自己的分支上承接 Codex 的 3 个提交后发出。生产状态模式保持 legacy，本批不接管用户 SQLite、不改调度、不触碰真实凭据或删除用户数据。
+
+- **独立复核（Claude Code，北京时间 20:40–21:30）**：读了 `vm-kernel.mjs` 的全部改动、外壳测试、像素 E2E 和等待时钟的修改。在 Codex 的最后一个提交 `7ef4240` 上本地重跑（Node 22.23.4）：check 854/854、kernel 171/171、浏览器 E2E 12 组退出 0。之前的测试全用假的 systemctl，所以另外在本会话容器里起了一个**真的 systemd 255 用户管理器**（私有挂载命名空间、不带控制器的 cgroup2 子树、临时 HOME 和运行目录，和正式电脑无关）把这套安装流程实跑了一遍，结果：
+  - 旧版临时单元（带一个还活着的后台进程）→ 新版 ensure：0.49 秒迁到持久服务，`persistent:true`，FragmentPath / MainPID / is-enabled 三项核对通过，后台进程没被杀，旧临时单元留在 inactive。再 ensure 一次返回 already。
+  - 用户管理器整个退出再启动（模拟关机开机）：没有人跑 ensure，持久服务自己起来，健康检查通过。换版本升级正常。
+  - 安装到 `start` 失败：撤掉新单元和启用状态，旧临时单元重新起来（旧单元还在就 `start`，已被回收就用旧哈希文件重建），后台进程还在。
+  - 安装进程在 `start` 那一步被 SIGKILL：留下 0600 的安装记录（activation），下一次 ensure 先恢复旧外壳、再完成安装。
+  - 没实测的：正式电脑上的真实冷启动、暂停恢复（没有对正式电脑做任何故障注入）；正式电脑是 systemd 257，实测用的是 255。
+- **复核发现并修正（Claude Code 实现）：回滚到旧版时持久服务会没完没了地重启**。正式站冒烟失败会自动把 Worker 回滚到上一个版本，而 #141 及更早的 ensure 不认识持久单元：它杀掉持久服务的主进程、另起临时单元占住端口，持久服务（`Restart=always`、`RestartSec=2`）每次启动都因端口被占退出，然后再来。真 systemd 上实测：25 秒重启 11 次，一直不停，直到重新发一个认识持久单元的版本（那时新 ensure 能收拾回来，也实测了）。修法：单元的 `[Unit]` 里加 `StartLimitIntervalSec=60`、`StartLimitBurst=10`。加了以后同样的场景实测：重启 10 次（二十多秒）后停在 failed，旧临时单元稳定服务；再发新版，ensure 的 `stop` → `reset-failed` → `start` 照常接回持久服务。测试先红后绿（单元文字里有这两行、位置在 `[Unit]`）；假的 systemctl 模拟不了限流，行为证据是上面的真机实测。
+  - 试过另一个改法 `Conflicts=xin-kernel.service`，否掉了：真 systemd 上，被引用的临时单元停了以后不会被回收，旧版第二次 `systemd-run --unit=xin-kernel` 报「already loaded or has a fragment file」，只能退成脱离进程。
+  - 回滚到旧版的人工步骤（[计划](superpowers/plans/2026-11-14-xin-persistent-kernel.md)里那段）仍然需要：上限只是让自动回滚后的状态稳定下来，持久单元还是启用着的，电脑重启后它会先起来，旧版再把它换掉一次。
+- **复核里没改、记下来的**：① 启动门现在只认「进程还活着」。安装进程异常退出留下锁文件、而那个进程号后来被别的长寿进程占用时，ensure 会一直报 locked，直到那个进程退出（按源码推断，没有在真机上遇到；正式电脑 `pid_max` 是 4194304，不重启的话进程号很难复用）。② 用户总线的套接字还在、但管理器连不上时，安装和恢复都会失败并留下安装记录，这时不会另起脱离进程，要等总线恢复（设计如此；这期间 Worker 会退回 exec）。③ Codex 的 #141 两处补丁（扫描器补漏、报告快照）这次也读了全部差异，没有发现要改的。
+- **正式电脑只读预检（Claude Code，北京时间 20:59，经 InstaBox exec，只查不改）**：uid 1000、HOME 和 passwd 里的家目录都是 `/data/home`，用户管理器的 `XDG_CONFIG_HOME=/data/home/.config`，和 ensure 算出来的单元路径一致（现有 `xin-reaper.timer` 的 FragmentPath 也是这个目录，没有符号链接）；systemd 257，Linger=yes，管理器 running；`xin-kernel.service` 是 active 的临时单元（`/run/user/1000/systemd/transient/`），当时 cgroup 里只有主进程；没有 `xin-kernel-resident.service`、没有安装记录、没有启动锁。也就是说上线后的第一次 ensure 走的正是上面实测过的「旧临时单元 → 持久服务」这条路。
+- **参考（复核修正）**：[moby 的 docker.service](https://github.com/moby/moby/blob/master/contrib/init/systemd/docker.service)（`Restart=always`、`RestartSec=2` 配 `StartLimitBurst=3`、`StartLimitIntervalSec=60`，写在 `[Unit]`）；[systemd.unit 手册](https://github.com/systemd/systemd/blob/main/man/systemd.unit.xml)的 StartLimitIntervalSec= / StartLimitBurst=（到上限后不再自动重启，`systemctl reset-failed` 清计数）。上限取 10 次是因为 2 秒一次时 systemd 默认的「10 秒 5 次」实测碰不到。
 
 - **为何修改原实现**：原 HTTP 外壳只建立 transient 用户单元；健康同版本会提前返回，无法落实持久安装。现在 ensure 在启动门内安装 `xin-kernel-resident.service` 并 enable 到 default.target，核对磁盘定义、MainPID/健康 PID 和启用状态。参数采用绝对 Node/哈希模块路径；单元不含凭据，环境沿用 0600 的 kernel.env.json。
 - **后台任务保留**：保留 KillMode=process、Restart=always、RestartSec=2。systemd 不回收还有进程的 transient 单元，因此使用独立的 resident 名字，旧 xin-kernel.service 即使因后台工作残留也不挡迁移；只停旧主进程。不是新权限隔离层，宿主授权 C 和凭据代理路线不变。

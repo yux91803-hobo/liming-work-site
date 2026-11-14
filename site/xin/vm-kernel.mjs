@@ -267,7 +267,9 @@ function unitWord(value, exec = false) {
 }
 export function kernelServiceUnit(home, port) {
   const argv = [process.execPath, SELF, 'serve', '--port', String(port)];
-  return [SERVICE_MARK, '[Unit]', 'Description=Xin resident kernel', '', '[Service]',
+  // 重启有上限：端口被别的外壳占着（回滚到不认识这个单元的旧版）时，起不来 10 次就停在 failed，不再每 2 秒空转；
+  // 下一次 ensure 先 stop、reset-failed 再 start，照常接回来。
+  return [SERVICE_MARK, '[Unit]', 'Description=Xin resident kernel', 'StartLimitIntervalSec=60', 'StartLimitBurst=10', '', '[Service]',
     'Type=simple', 'ExecStart=' + argv.map(v => unitWord(v, true)).join(' '),
     'Environment=' + unitWord('XIN_HOME=' + home), 'WorkingDirectory=%h',
     'KillMode=process', 'Restart=always', 'RestartSec=2', '', '[Install]', 'WantedBy=default.target', ''].join('\n');

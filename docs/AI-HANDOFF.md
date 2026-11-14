@@ -58,3 +58,27 @@
 本批本地验收已齐：持久服务本体 check 854/854、kernel 171/171、外壳/写者专项 51/51；随后仅改像素 E2E 的定位与真实事件观察，12 组完整 E2E 已再跑通过。CJS 检查不读取这份 Python 测试，后续当前 head 的 CI 仍完整执行所有检查。PR/正式发布待线上结果，真实电脑服务未安装；状态所有者未开启。
 
 #142 首次 Actions 43579920339：854 项完整检查通过，kernel 为 169/171，E2E 尚未运行。两项失败可用只改测试进程 Date.now 的 5 分钟跳跃精确复现（约 2 秒时提前耗尽等待，两项 0/2）；改用 performance.now 的单调等待预算后同一注入 2/2 通过。原预算、断言和生产墙钟截止时间不变；Codex 实际修改两份原测试等待逻辑，原因/参考已入 CHANGES。新补丁的完整检查和 kernel 正在复跑；像素修正后 12 组 E2E 已通过且此后无网页/E2E 更改。没有合并 #142 或部署新服务，不得引用首次失败 head 的通过部分冒充本补丁全量结果。
+
+
+## Claude Code 接手 · 2026-11-14 北京时间 20:40 后
+
+接手时按远端核对到的状态（看不到 Codex 的工作区和本地日志，以 Git、PR 和 Actions 为准）：
+
+- 已合并：main 是 `96488dd`（#141，Codex 于 16:39 合并）。它的正式运行 [43576866694](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43576866694) check 通过、E2E 失败、**部署跳过**，所以正式站跑的还是 #140 的代码（#141 本身不含 `site/`、`src/` 的改动）。
+- 已推送未合并：Codex 的 [#142](https://github.com/yux91803-hobo/liming-work-site/pull/142)，分支 `codex/xin-persistent-kernel-20261114`，head `7ef4240`，Actions [43581216790](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43581216790) 检查、E2E、测试站全绿；没有独立复核，没有合并。
+- Claude 自己的分支当时停在 `b8361e9`，那 4 个提交已随 #141 进 main。上一段会话里对 `b8361e9` 的本地全量验证后来跑完了（check 829/829、kernel 171/171、E2E 退出 0），只作记录，不是任何新提交的证据。
+
+这一轮做的：
+
+- 分支：`claude/xiaoxin-architecture-review-2dkunv` 从 `7ef4240` 接续，Codex 的 3 个提交原样保留（作者不变），后面是 Claude Code 的提交。没有往 Codex 的分支推东西，#142 没有动。
+- 责任：持久服务本体、像素 E2E 修正、等待时钟修正的实现是 **Codex**（`eb1a9b6`、`60a219f`、`7ef4240`）。**Claude Code** 独立复核了这三个提交和 #141 里 Codex 的两处补丁，并实现了一处修正（持久单元的重启上限）。发布和验收跟进：Claude Code。
+- 复核范围和证据：`vm-kernel.mjs` 全部改动、外壳测试、E2E 和等待时钟的修改逐段读过；`7ef4240` 上本地 check 854/854、kernel 171/171、E2E 12 组退出 0（Node 22.23.4）；在本会话容器里用真的 systemd 255 用户管理器实跑了安装、迁移、失败回退、被杀恢复、管理器重启后自启、旧版 ensure 撞上持久服务这几种情形，结果表在[持久服务计划](superpowers/plans/2026-11-14-xin-persistent-kernel.md)末尾；正式电脑只读预检（北京时间 20:59）的结果在 CHANGES。
+- 复核发现：自动回滚到旧版时持久服务会每 2 秒重启一次不停（实测）。修正：单元加 `StartLimitIntervalSec=60`、`StartLimitBurst=10`，测试先红后绿，改后同一场景实测重启 10 次后停下。没改的两条限制（启动门遇到进程号被占用、总线连不上时不另起进程）记在 CHANGES。
+
+还没做 / 风险：
+
+- 正式电脑上还没有安装持久服务；合并后的第一次 ensure 才会装。装完要只读核对：`xin-kernel-resident.service` 的 FragmentPath、is-enabled、MainPID 和健康检查的 pid 一致，没有留下 `kernel-service.pending.json`，状态模式仍是 legacy。
+- 真实冷启动、暂停恢复没有在正式电脑上验收过，不能把容器里的实测当成这一条。
+- 如果这次发布的正式冒烟失败并自动回滚：电脑上的持久服务会在重启 10 次后停在 failed，旧临时单元继续服务；修好再发新版时 ensure 会自己接回去。要长期留在旧版，按计划里的人工回退步骤停用持久单元。
+- #142 的内容由这一轮的 PR 带上线后，#142 本身就没用了，可以关掉。
+- 下一批（第 2 批）是把正式站切到内核模式：Worker 的 `XIN_STATE_OWNER` 开关带部署代号和 epoch、失联时的收尾暂存。**合并前要先告诉站长**，其余照常由当前接手的 AI 自己走完流程。

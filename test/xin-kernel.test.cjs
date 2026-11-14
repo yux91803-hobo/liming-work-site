@@ -530,6 +530,16 @@ test('持久服务：模拟用户管理器重启从磁盘单元启动，0600 环
   }finally{killAll(L,executor?[executor]:[]);}
 });
 
+// 正式站自动回滚到不认识持久服务的旧版时，旧版会另起临时单元占住端口，持久服务每次启动都因端口被占而退出。
+// 没有上限它会每 2 秒重启一次、一直不停（真 systemd 255 上实测）；上限写在 [Unit] 里才生效。
+test('持久服务：一分钟内连续起不来 10 次就停手，不会没完没了地重启', async () => {
+  const { kernelServiceUnit } = await load('../site/xin/vm-kernel.mjs');
+  const text = kernelServiceUnit('/home/x/.xin', 8797), unit = text.slice(text.indexOf('[Unit]'), text.indexOf('[Service]'));
+  assert.match(unit, /^StartLimitIntervalSec=60$/m);
+  assert.match(unit, /^StartLimitBurst=10$/m);
+  assert.match(text, /^Restart=always$/m); assert.match(text, /^RestartSec=2$/m);
+});
+
 test('持久服务：特殊路径按 systemd 规则转义并实际启动；拒绝注入额外指令的换行',async()=>{
   const {kernelServiceUnit}=await load('../site/xin/vm-kernel.mjs');
   const text=kernelServiceUnit('/tmp/a b%$"\\tail',8797);
