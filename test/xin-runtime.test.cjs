@@ -61,7 +61,7 @@ test('分身修改副本，检查原文件并发变更；删除和冲突不会�
   assert.equal(p.pending, true); assert.deepEqual(p.conflicts, ['main.c']); assert.deepEqual(p.deleted, ['keep.txt']);
   assert.equal(fs.readFileSync(path.join(f.task.dir, 'main.c'), 'utf8'), 'foreground edit');
   assert.equal(fs.readFileSync(path.join(f.task.dir, 'keep.txt'), 'utf8'), 'keep');
-  const done = r.publishWorkspace(f.task, f.control, true);
+  const done = r.publishWorkspace(f.task, f.control, p);
   assert.equal(done.ok, true); assert.equal(fs.readFileSync(path.join(f.task.dir, 'main.c'), 'utf8'), 'task edit');
   assert.equal(fs.existsSync(path.join(f.task.dir, 'keep.txt')), false);
   assert.equal(fs.readFileSync(path.join(done.backup, 'main.c'), 'utf8'), 'foreground edit');
@@ -277,7 +277,11 @@ test('任务网络的推理代理走套接字，仍校验本轮凭证和固定�
   assert.equal(await post(n.token, 'other'), 403);
   assert.equal(await post(n.token, 'task-model'), 200);
   assert.equal(hits, 1);
-  n.close(); assert.equal(await post(n.token, 'task-model'), 'ENOENT', '本轮结束后套接字立即撤销');
+  // Node 的 keep-alive 连接可能先收到 EPIPE/ECONNRESET，而不是再次 connect 的 ENOENT。
+  // 参考 nodejs/node #54293：核验撤销后的访问失败且没到上游，而不是固定一次系统调用的 errno。
+  n.close(); const closed = await post(n.token, 'task-model');
+  assert.ok(['ENOENT', 'EPIPE', 'ECONNRESET', 'ECONNREFUSED'].includes(closed), '本轮结束后不能再用代理：' + closed);
+  assert.equal(hits, 1, '撤销后的请求没有到达模型网关');
 });
 
 test('写回删除必须给明确决定，普通文字不能批准；允许后保留备份',async t=>{
@@ -288,9 +292,61 @@ test('写回删除必须给明确决定，普通文字不能批准；允许后�
   f.task.publication=r.publishWorkspace(f.task,f.control);f.task.status='waiting';f.task.result={ok:false,text:'ready'};f.save();
   assert.equal(f.call('task_tell',{sid:f.task.sid,text:'yes'}).error,'needs_decision');
   assert.equal(fs.readFileSync(path.join(f.task.dir,'old.txt'),'utf8'),'original');
-  assert.equal(f.call('task_tell',{sid:f.task.sid,decision:'approve'}).ok,true);
+  assert.equal(f.call('task_tell',{sid:f.task.sid,decision:'approve',approvalId:f.task.publication.id}).ok,true);
   const task=f.read();assert.equal(task.status,'done');assert.equal(fs.existsSync(path.join(f.task.dir,'old.txt')),false);
   assert.equal(fs.readFileSync(path.join(task.publicationReceipt.backup,'old.txt'),'utf8'),'original');
+});
+
+test('批准绑定展示过的写回清单：新增删除项后不执行，重启调用仍须重新核对', async t => {
+  const f = fixture(t), r = await load();
+  for (const name of ['a.txt', 'b.txt']) fs.writeFileSync(path.join(f.task.dir, name), name);
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  fs.unlinkSync(path.join(f.task.workspace.work, 'a.txt'));
+  f.task.publication = r.publishWorkspace(f.task, f.control);
+  f.task.status = 'waiting'; f.task.result = { ok: false, text: 'prepared' }; f.save();
+  const shown = f.task.publication;
+  assert.deepEqual(shown.deleted, ['a.txt']);
+  assert.equal(r.publishWorkspace(f.task, f.control, true).pending, true, '布尔值不是授权清单');
+  fs.unlinkSync(path.join(f.task.workspace.work, 'b.txt'));
+  const renewed = f.call('task_tell', { sid: f.task.sid, decision: 'approve', approvalId: shown.id });
+  assert.equal(renewed.task.status, 'waiting');
+  assert.match(renewed.msg, /尚未执行/);
+  assert.notEqual(renewed.task.approval.id, shown.id);
+  assert.deepEqual(renewed.task.publication.deleted.sort(), ['a.txt', 'b.txt']);
+  for (const name of ['a.txt', 'b.txt']) assert.equal(fs.readFileSync(path.join(f.task.dir, name), 'utf8'), name);
+  assert.equal(f.call('task_tell', { sid: f.task.sid, decision: 'approve', approvalId: shown.id }).error, 'stale_approval', '旧页面上的批准不能同意新清单');
+  assert.equal(f.call('task_tell', { sid: f.task.sid, decision: 'approve' }).error, 'stale_approval', '旧网页缺少清单编号时也不扩大授权');
+  const done = f.call('task_tell', { sid: f.task.sid, decision: 'approve', approvalId: renewed.task.approval.id });
+  assert.equal(done.task.status, 'done');
+  assert.deepEqual(fs.readdirSync(f.task.dir), []);
+  const saved = f.read().publicationReceipt.backup;
+  assert.equal(fs.readFileSync(path.join(saved, 'b.txt'), 'utf8'), 'b.txt');
+  assert.equal(f.call('task_tell', { sid: f.task.sid, decision: 'deny', approvalId: renewed.task.approval.id }).error, 'stale_approval', '另一个页面迟到的按钮不能重新启动已完成任务');
+  assert.equal(f.call('task_tell', { sid: f.task.sid, decision: 'approve' }).error, 'stale_approval');
+  assert.equal(f.read().status, 'done');
+});
+
+test('同名文件内容或原项目变了也使批准失效；旧的无摘要清单安全换成新清单', async t => {
+  const f = fixture(t), r = await load();
+  fs.writeFileSync(path.join(f.task.dir, 'a.txt'), 'original');
+  fs.writeFileSync(path.join(f.task.dir, 'b.txt'), 'before');
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  fs.unlinkSync(path.join(f.task.workspace.work, 'a.txt'));
+  fs.writeFileSync(path.join(f.task.workspace.work, 'b.txt'), 'first edit');
+  const shown = r.publishWorkspace(f.task, f.control);
+  fs.writeFileSync(path.join(f.task.workspace.work, 'b.txt'), 'different edit');
+  const changed = r.publishWorkspace(f.task, f.control, shown);
+  assert.equal(changed.pending, true); assert.notEqual(changed.id, shown.id);
+  fs.writeFileSync(path.join(f.task.dir, 'b.txt'), 'owner edit');
+  const conflict = r.publishWorkspace(f.task, f.control, changed);
+  assert.equal(conflict.pending, true); assert.notEqual(conflict.id, changed.id);
+  assert.equal(fs.readFileSync(path.join(f.task.dir, 'b.txt'), 'utf8'), 'owner edit');
+  f.task.publication = { pending: true, deleted: ['a.txt'], conflicts: [] };
+  f.task.status = 'waiting'; f.task.result = { ok: false, text: 'old task' }; f.save();
+  const upgraded = f.call('task_tell', { sid: f.task.sid, decision: 'approve' });
+  assert.equal(upgraded.task.status, 'waiting');
+  assert.ok(upgraded.task.publication.id);
+  assert.equal(fs.existsSync(path.join(f.task.dir, 'a.txt')), true, '迁移没有执行旧批准');
 });
 
 test('停止尚未退出或原生问题仍占用进程时，不能删除所属对话',t=>{
@@ -632,7 +688,8 @@ test('写回写到一半失败：原项目逐字节还原，新建的删掉、�
   // 改 a.c、b.c，建 new.c，删 old.txt 四步都做完以后才失败：三种改动都要还原
   process.env.XIN_TEST_PUBLISH_FAIL_AFTER = '4';
   t.after(() => { delete process.env.XIN_TEST_PUBLISH_FAIL_AFTER; });
-  assert.throws(() => r.publishWorkspace(f.task, f.control, true), /写回中途失败，原项目已还原/);
+  const approval = r.publishWorkspace(f.task, f.control);
+  assert.throws(() => r.publishWorkspace(f.task, f.control, approval), /写回中途失败，原项目已还原/);
   assert.equal(fs.readFileSync(path.join(f.task.dir, 'a.c'), 'utf8'), 'A0');
   assert.equal(fs.readFileSync(path.join(f.task.dir, 'b.c'), 'utf8'), 'B0');
   assert.equal(fs.readFileSync(path.join(f.task.dir, 'old.txt'), 'utf8'), 'OLD');
@@ -689,7 +746,7 @@ test('写回失败而且有文件没能还原：如实说哪些没还原、备�
   process.env.XIN_TEST_PUBLISH_FAIL_AFTER = '2'; process.env.XIN_TEST_RESTORE_FAIL = 'b.c';
   t.after(() => { delete process.env.XIN_TEST_PUBLISH_FAIL_AFTER; delete process.env.XIN_TEST_RESTORE_FAIL; });
   let msg = '';
-  try { r.publishWorkspace(f.task, f.control, true); } catch (e) { msg = e.message; }
+  try { r.publishWorkspace(f.task, f.control); } catch (e) { msg = e.message; }
   assert.match(msg, /写回中途失败/); assert.doesNotMatch(msg, /已还原/); assert.match(msg, /b\.c/); assert.match(msg, /backups/);
   assert.equal(fs.readFileSync(path.join(f.task.dir, 'a.c'), 'utf8'), 'A0', '能还原的照样还原');
   const backups = fs.readdirSync(path.join(f.control, 'backups'));

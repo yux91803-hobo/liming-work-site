@@ -49,7 +49,9 @@ async def main():
         now = int(time.time()*1000)
         task = {'sid':'stask00001','no':1,'parent':'snew000001','title':'发布有冲突的改动','kind':'code','model':'glm-5.3','status':'waiting',
                 'created':now,'endedAt':now,'dir':'/data/workspace/demo','after':[],'turns':1,'question':'将删除 1 个原文件，批准这次写回吗？',
-                'approval':{'kind':'publish','id':'publish'},'result':{'ok':False,'text':'结果已准备','at':now}}
+                'approval':{'kind':'publish','id':'publish-scope-1'},
+                'publication':{'deleted':['project/old.txt'],'conflicts':[],'changes':['project/new.txt']},
+                'result':{'ok':False,'text':'结果已准备','at':now}}
         st['tasks']=[task]
         await pg.evaluate('LimingXinChat.tasks()')
         await pg.wait_for_selector('.xc-tstrip:not([hidden])')
@@ -59,9 +61,11 @@ async def main():
         await pg.wait_for_selector('.xc-tk-act .xc-btn')
         assert await pg.locator('.xc-tk-act .xc-btn').all_text_contents() == ['批准','拒绝']
         assert await pg.locator('.xc-tk-in').count() == 0
+        assert 'project/old.txt' in await pg.locator('.xc-tk-plan').inner_text()
         await pg.get_by_role('button', name='拒绝', exact=True).click()
         await pg.wait_for_function("document.querySelector('.xc-tk-note').textContent.length > 0")
         assert st['task_tell']['decision'] == 'deny'
+        assert st['task_tell']['approvalId'] == 'publish-scope-1'
         print('PASS publication conflict requires an explicit decision; text cannot approve it', flush=True)
         task['status']='waiting'
         task['approval']={'kind':'input','id':'input-1'}

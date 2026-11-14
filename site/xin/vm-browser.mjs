@@ -469,8 +469,9 @@ export async function browserBroker({ chrome, profileDir, work, headless = true,
       .catch(e => fail('browser', e.message)).finally(() => clearTimeout(timer));
     queue = go.then(() => {}, () => {});
     return go.then(r => {
-      const a = cmd === 'fill' ? [args[0], String(args.slice(1).join(' ')).slice(0, 60)] : (args || []).slice(0, 2).map(x => String(x).slice(0, 200));
-      log({ cmd: String(cmd), args: a, ok: !!r.ok, error: r.error || null, ms: Date.now() - t0, url: current?.url || '' });
+      // 填写内容、网址的路径/查询串和未知命令都可能带凭据；诊断只需动作、结果和站点。
+      let origin = ''; try { const u = new URL(current?.url || ''); if (webUrl(u.href)) origin = u.origin; } catch { /* 没有网页 */ }
+      log({ cmd: Object.hasOwn(CMDS, String(cmd)) ? String(cmd) : 'unknown', ok: !!r.ok, error: r.error || null, ms: Date.now() - t0, url: origin });
       return r;
     });
   }

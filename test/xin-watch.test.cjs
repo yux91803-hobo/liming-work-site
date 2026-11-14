@@ -42,7 +42,7 @@ test('没写模式的新对话是默认模式，不是完全放权的天启；Cl
   assert.equal(again.agent, 'claude'); assert.ok(again.run);
 });
 
-test('越界记录：天启和 Claude 旧模式碰控制器目录、改记忆的命令记一条；每日任务只记密钥、状态库和脚本；默认模式的后台不记', t => {
+test('越界记录：天启和 Claude 旧模式碰控制器目录、改记忆的命令记一条；每日任务只记密钥、状态库和脚本；普通后台不记', t => {
   const { js } = home(t);
   const kinds = js(`const B=a.BASE,tool=d=>({t:'tool',detail:d});
     return [
@@ -57,6 +57,15 @@ test('越界记录：天启和 Claude 旧模式碰控制器目录、改记忆的
       a.boundaryKind({agent:'codex',kind:'daily',task:true},tool('cat '+B+'/codex.key')),
       a.boundaryKind({agent:'codex',task:true},tool('cat '+B+'/codex.key'))];`);
   assert.deepEqual(kinds, ['dir', 'sensitive', 'dir', 'xin', 'sensitive', null, null, null, 'sensitive', null]);
+});
+
+test('电脑维护同样记越界；审计不保存可能含凭据的命令正文', t => {
+  const { js } = home(t);
+  const record = js(`return a.boundaryRecord({sid:'scheck001',run:'rcheck001',agent:'codex',kind:'task',task:true,routeKind:'system'},
+    {t:'tool',detail:'cat ~/.xin/codex.key; echo Bearer audit-secret-value'});`);
+  assert.equal(record.agent, 'system'); assert.equal(record.kind, 'sensitive');
+  assert.equal(record.sid, 'scheck001'); assert.equal(record.run, 'rcheck001');
+  assert.doesNotMatch(JSON.stringify(record), /audit-secret|Bearer|codex.key|cat /);
 });
 
 test('脚本被改过的记录和越界记录只留时间、对话和命令开头；任务中心报最近 7 天的条数', t => {

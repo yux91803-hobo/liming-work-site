@@ -74,9 +74,10 @@ test('预览快照绑定已检查 HTML，临时目录清理和修改原稿不影
 test('待写回网页收到允许或拒绝后都清理 tmp；允许后的快照继续可读',async t=>{
  for(const decision of ['approve','deny']){
   const f=await web(t),m=f.r.webManifest(f.task),shot=f.task.workspace.tmp+'/shot.png';fs.writeFileSync(shot,Buffer.from('89504e470d0a1a0a00000000','hex'));
-  Object.assign(f.task,{status:'waiting',publication:{pending:true},processesCleaned:true,result:{ok:false,text:'prepared'}});f.save();
+  fs.writeFileSync(f.project+'/index.html','owner concurrent edit');
+  Object.assign(f.task,{status:'waiting',publication:f.r.publishWorkspace(f.task,f.control),processesCleaned:true,result:{ok:false,text:'prepared'}});f.save();
   fs.writeFileSync(f.control+'/runs/rwebholder01.json',JSON.stringify({sid:f.task.sid,ended:true,webCheck:{trusted:true,ok:true,digest:m.digest,screenshot:shot,viewports:[{width:1280,checks:1},{width:390,checks:1}]}}));
-  const r=f.call('task_tell',{sid:f.task.sid,decision});assert.equal(r.task.status,decision==='approve'?'done':'stopped');assert.deepEqual(r.task.cleanup,{processesGone:true,tmpCleaned:true});assert.deepEqual(fs.readdirSync(f.task.workspace.tmp),[]);
+  const r=f.call('task_tell',{sid:f.task.sid,decision,approvalId:f.task.publication.id});assert.equal(r.task.status,decision==='approve'?'done':'stopped');assert.deepEqual(r.task.cleanup,{processesGone:true,tmpCleaned:true});assert.deepEqual(fs.readdirSync(f.task.workspace.tmp),[]);
   const listed=f.call('tasks',{all:true}).tasks.find(x=>x.sid===f.task.sid);assert.deepEqual(listed.cleanup,r.task.cleanup);
   if(decision==='approve')assert.equal(fs.readFileSync(f.r.previewAsset(f.control,{id:r.task.preview.id}).real,'utf8'),html);else assert.equal(r.task.preview,undefined);
  }

@@ -85,10 +85,7 @@ function chromium() {
 const ROOT = (() => {
   const exe = chromium(); if (!exe) return false;
   if (process.getuid?.() === 0) return true;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-sb-probe-'));
-  const r = spawnSync(exe, ['--headless=new', '--user-data-dir=' + dir, '--dump-dom', 'data:text/html,<p>sandbox-ok</p>'], { encoding: 'utf8', timeout: 30000 });
-  fs.rmSync(dir, { recursive: true, force: true });
-  return !String(r.stdout || '').includes('sandbox-ok');
+  return !require('./helpers/chromium-probe.cjs').sandboxAvailable(exe);
 })();
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 async function until(fn, ms = 15000, what = '') {
