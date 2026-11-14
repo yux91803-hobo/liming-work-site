@@ -53,3 +53,17 @@ systemd [unit.c / unit_may_gc](https://github.com/systemd/systemd/blob/main/src/
 ## 本地完成与发布阻塞的修正
 
 持久服务本体 `eb1a9b6`：check 854/854、kernel 171/171、E2E 12 组、专项 51/51 均退出 0。仅在隔离临时目录中做故障注入，没有操作真实服务。#141 正式运行首次浏览器两项像素交互失败，部署被跳过，因此正式站仍未更新。Codex 追加 E2E 测试定位/观察修正，保留“附近不醒、点身体才醒”和“抓头、鼠标在卡片上方、身体激活卡片、松手打开工具”的保证，网站产品文件不改。延迟导致旧坐标失效已复现；修正后的完整 12 组 E2E 已从头通过；当前 PR/正式发布仍须线上验收，不用早先结果冒充。
+
+
+### CI 墙钟跳跃的等待回归
+
+#142 首次 check 854/854 通过、kernel 169/171，两项失败的等待用 Date.now 作预算。Node 报告单调耗时约 22 秒却超过了墙钟预算；在隔离测试进程中注入下面的前向墙钟跳跃，两项失败原样复现，改为 performance.now 后同一注入两项通过。只更正测试等待，数值预算与业务断言不变；生产期限继续用墙钟。
+
+```js
+if (process.argv[1]?.endsWith('.test.cjs')) {
+  const original = Date.now;
+  setTimeout(() => { Date.now = () => original() + 300000; }, 2000).unref();
+}
+```
+
+把上段放入临时 preload 文件，以 NODE_OPTIONS=--require=<绝对路径>、XIN_TEST_STATE_MODE=kernel 运行 Node --test，test-name-pattern 选「连续临时错误到上限」和「系统 SIGTERM 保留后台断点」。控制器子进程不是 .test.cjs，时间不被修改。原测试 0/2、修正后 2/2；完整检查/内核复跑与当前 CI 结果仍需核对。这项验证不能代替真实 VM 暂停恢复验收。

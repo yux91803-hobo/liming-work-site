@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { performance } = require('node:perf_hooks');
 const { pathToFileURL } = require('node:url');
 const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
 const load = () => import(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href);
@@ -448,7 +449,7 @@ test('系统 SIGTERM 保留后台断点并续接，用户停止不被自动重�
   const bin=path.join(f.root,'bin');fs.mkdirSync(bin);f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_CODEX_TRANSPORT='exec';
   fs.writeFileSync(path.join(bin,'codex'),'#!/bin/sh\nprintf \'%s\\n\' \'{"type":"thread.started","thread_id":"graceful-fixture"}\'\nif [ ! -f .checkpoint ]; then printf ONCE > .checkpoint; sleep 600; fi\nprintf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message","text":"recovered"}}\' \'{"type":"turn.completed"}\'\n',{mode:0o755});
   let observed;
-  const wait=async fn=>{const deadline=Date.now()+platformTimeout(30000);while(Date.now()<deadline){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,100));}throw Error('fixture did not reach checkpoint: '+JSON.stringify(observed));};
+  const wait=async fn=>{const deadline=performance.now()+platformTimeout(30000);while(performance.now()<deadline){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,100));}throw Error('fixture did not reach checkpoint: '+JSON.stringify(observed));};
   const start=async dir=>{
     fs.mkdirSync(dir,{recursive:true});const a=f.call('task_new',{kind:'research',dir,goal:'fixture',title:'graceful fixture'}).task;
     const s=await wait(()=>{const v=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',a.sid+'.json'))),m=JSON.parse(fs.readFileSync(path.join(f.control,'runs',v.runs.at(-1)+'.json')));observed={phase:'start',status:v.status,modelSession:!!v.agentSid,child:!!m.childPid};return v.agentSid&&m.childIdentity&&v.workspace&&fs.existsSync(path.join(v.workspace.work,'.checkpoint'))?v:null;});
