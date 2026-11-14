@@ -235,6 +235,24 @@ test('一道在长退避、另一道几秒后到期：闹钟定在最早的那�
   assert.strictEqual(x.storage.alarm, t + 5000);
 });
 
+test('一句话因为不明原因一直送不进去：只挡它自己那个对话，别的对话照送', async () => {
+  const x = await inbox({ deliver: async row => row.args.sid === 'sA' ? { ok: false, state: 'error', msg: '控制器出错了' } : { ok: true, data: { run: 'rB' } } });
+  const a = await x.ib.accept({ id: 'cid-poison-a01', op: 'send', args: A });
+  assert.deepStrictEqual([a.view.state, a.view.wait.state, a.view.wait.scope], ['pending', 'retrying', 'lane']);
+  assert.strictEqual((await x.ib.accept({ id: 'cid-poison-b01', op: 'send', args: B })).view.state, 'delivered');
+  x.clock.now = T0 + 5000; await x.ib.alarm();
+  await x.ib.accept({ id: 'cid-poison-b02', op: 'send', args: { ...B, text: '第二句' } });
+  assert.deepStrictEqual(x.calls.map(r => r.id), ['cid-poison-a01', 'cid-poison-b01', 'cid-poison-a01', 'cid-poison-b02']);
+});
+
+test('InstaBox 忙（限流）算电脑整体不可用：别的对话先不去撞', async () => {
+  const x = await inbox({ deliver: async () => ({ ok: false, state: 'busy', msg: 'InstaBox 忙，稍等', retryAfter: 5 }) });
+  const a = await x.ib.accept({ id: 'cid-limit-a01', op: 'send', args: A });
+  assert.strictEqual(a.view.wait.scope, 'machine');
+  assert.strictEqual((await x.ib.accept({ id: 'cid-limit-b01', op: 'send', args: B })).view.state, 'pending');
+  assert.deepStrictEqual(x.calls.map(r => r.id), ['cid-limit-a01']);
+});
+
 test('laneOf：有编号按编号，主对话的第一句一道，其余新对话各自一道；编号不是字符串也不抛错', async () => {
   const { laneOf } = await load('../src/xin-inbox.js');
   assert.strictEqual(laneOf({ id: 'i1', args: { sid: 'sA' } }), 'c:sA');
@@ -278,15 +296,21 @@ test('叫不醒：这一轮只试最前面那一句，不挨个对话去撞', as
   assert.deepStrictEqual(x.calls.map(r => r.id), ['cid-wake-a001', 'cid-wake-a001']);
 });
 
-test('上线前存着的旧行（wait 里没有 scope）：不报错，等到它下一次重试，之后带上 scope', async () => {
-  const x = await inbox({ deliver: async row => row.args.sid === 'sA' ? BUSY : { ok: true, data: { run: 'rB' } } });
-  await x.storage.put('inbox:meta', { v: 1 }); await x.storage.put('inbox:seq', 1);
-  await x.storage.put('inbox:row:cid-old-00001', { id: 'cid-old-00001', op: 'send', args: A, digest: 'd', seq: 1, state: 'pending', attempts: 1, backoff: 1, nextAt: T0 + 5000, leaseUntil: 0, createdAt: T0 - 1000,
-    firstAttemptAt: T0 - 1000, deliveredAt: 0, finishedAt: 0, result: null, wait: { state: 'busy', until: T0 + 5000, msg: '上一句还没做完' }, error: null, acked: false, woke: false });
-  assert.strictEqual((await x.ib.accept({ id: 'cid-old-b0001', op: 'send', args: B })).view.state, 'pending');
-  x.clock.now = T0 + 5000; await x.ib.alarm();
-  assert.strictEqual((await x.storage.get('inbox:row:cid-old-00001')).wait.scope, 'lane');
-  assert.strictEqual((await x.ib.view('cid-old-b0001')).state, 'delivered');
+test('上线前存着的旧行（wait 里没有 scope）：冷却、叫醒中的照样挡住所有对话；别的只挡自己那个对话；下一次重试后带上 scope', async () => {
+  const oldRow = (id, args, wait, nextAt) => ({ id, op: 'send', args, digest: 'd', seq: 1, state: 'pending', attempts: 1, backoff: 1, nextAt, leaseUntil: 0, createdAt: T0 - 1000,
+    firstAttemptAt: T0 - 1000, deliveredAt: 0, finishedAt: 0, result: null, wait, error: null, acked: false, woke: false });
+  const seed = async (x, row) => { await x.storage.put('inbox:meta', { v: 1 }); await x.storage.put('inbox:seq', 1); await x.storage.put('inbox:row:' + row.id, row); };
+  const busy = await inbox({ deliver: async row => row.args.sid === 'sA' ? BUSY : { ok: true, data: { run: 'rB' } } });
+  await seed(busy, oldRow('cid-old-00001', A, { state: 'busy', until: T0 + 5000, msg: '上一句还没做完' }, T0 + 5000));
+  assert.strictEqual((await busy.ib.accept({ id: 'cid-old-b0001', op: 'send', args: B })).view.state, 'delivered');
+  busy.clock.now = T0 + 5000; await busy.ib.alarm();
+  assert.strictEqual((await busy.storage.get('inbox:row:cid-old-00001')).wait.scope, 'lane');
+  const cold = await inbox({ deliver: async () => ({ ok: true, data: { run: 'r' } }) });
+  await seed(cold, oldRow('cid-old-00002', A, { state: 'cooldown', until: T0 + H, msg: '云电脑在冷却' }, T0 + H));
+  const b = await cold.ib.accept({ id: 'cid-old-b0002', op: 'send', args: B });
+  assert.deepStrictEqual([b.view.state, b.view.wait.state, cold.calls.length], ['pending', 'cooldown', 0]);
+  cold.clock.now = T0 + H; await cold.ib.alarm();
+  assert.deepStrictEqual(cold.calls.map(r => r.id), ['cid-old-00002', 'cid-old-b0002']);
 });
 
 test('一道的队首 24 小时放弃：同一道的下一句在同一轮接着送', async () => {

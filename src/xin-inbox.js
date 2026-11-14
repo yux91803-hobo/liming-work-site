@@ -21,9 +21,12 @@ export function laneOf(row) {
   const a = (row && row.args) || {};
   return typeof a.sid === 'string' && a.sid ? 'c:' + a.sid : a.main ? 'main' : 'n:' + row.id;
 }
-// 电脑整体不可用（叫醒中、冷却、InstaBox 忙、连不上），而且还没到再试的时候：这时候哪一道都送不进去。
-// 「控制器说这个对话在忙」记了 scope:'lane'，不算。上线前存着的旧行没有 scope，按电脑不可用算到它下一次重试为止。
-const machineDown = (r, now) => r.state === 'pending' && !!r.wait && r.wait.scope !== 'lane' && r.nextAt > now;
+// 电脑整体不可用（叫醒中、冷却、InstaBox 限流），而且还没到再试的时候：这时候哪一道都送不进去，等待记 scope:'machine'。
+// 别的等待记 scope:'lane'，只挡自己那一道：控制器说这个对话在忙，以及连不上、不明原因的错误。
+// 后一种分不清是电脑坏了还是这一句有毒；当成电脑坏了的话，一句怎么都送不进去的会把所有对话堵到 24 小时放弃为止，所以各道自己重试。
+// 上线前存着的旧行没有 scope：按状态认，叫醒中和冷却算电脑不可用，其余只挡自己。
+const machineWait = w => !!w && (w.scope ? w.scope === 'machine' : w.state === 'waking' || w.state === 'cooldown');
+const machineDown = (r, now) => r.state === 'pending' && r.nextAt > now && machineWait(r.wait);
 
 export class Inbox {
   constructor(storage, { deliver, now = Date.now, budgetMs = 6000 }) {
@@ -104,13 +107,13 @@ export class Inbox {
     const st = r && r.state, ra = Number(r && r.retryAfter) || 0;
     if (st === 'waking') {
       row.woke = true;
-      if (row.attempts > WAKE_FAST) this.retry(row, now, { state: 'waking', msg: '唤醒中' });
-      else this.waitUntil(row, now, now + Math.max(3, ra) * 1000, { state: 'waking', msg: '唤醒中' });
+      if (row.attempts > WAKE_FAST) this.retry(row, now, { state: 'waking', scope: 'machine', msg: '唤醒中' });
+      else this.waitUntil(row, now, now + Math.max(3, ra) * 1000, { state: 'waking', scope: 'machine', msg: '唤醒中' });
       return;
     }
-    if (st === 'cooldown') { const until = now + (ra || 60) * 1000; this.waitUntil(row, now, until, { state: 'cooldown', until, msg: '云电脑在冷却' }); return; }
-    if (st === 'busy') { this.retry(row, now, { state: 'busy', msg: 'InstaBox 忙' }); return; }
-    this.retry(row, now, { state: 'retrying', msg: redact(r && r.msg || '连不上云电脑') });
+    if (st === 'cooldown') { const until = now + (ra || 60) * 1000; this.waitUntil(row, now, until, { state: 'cooldown', scope: 'machine', until, msg: '云电脑在冷却' }); return; }
+    if (st === 'busy') { this.retry(row, now, { state: 'busy', scope: 'machine', msg: 'InstaBox 忙' }); return; }
+    this.retry(row, now, { state: 'retrying', scope: 'lane', msg: redact(r && r.msg || '连不上云电脑') });
   }
   retry(row, now, wait) {
     const s = BACKOFF_S[Math.min(row.backoff || 0, BACKOFF_S.length - 1)];
