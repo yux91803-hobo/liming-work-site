@@ -42,3 +42,10 @@ test('正式发布只选对应合并的同仓库 PR 成功运行；失败运行�
   await assert.rejects(run({pr:{merge_commit_sha:'c'.repeat(40)}}));
   await assert.rejects(run({pr:{head:{sha:head,repo:{full_name:'outsider/fork'}}}}));
 });
+// 2026-11-14 运行 43559539100：同一个 e2e 作业在执行机上被跑了两遍，先结束的那遍传了报告，后结束的那遍（测试全过）因为报告同名得到 409，正式站没有部署
+test('浏览器检查报告的名字每次执行都不同：同一个作业被跑两遍时不会因为同名而失败',()=>{
+  const yaml=fs.readFileSync(path.resolve(__dirname,'../.github/workflows/deploy.yml'),'utf8');
+  const step=yaml.indexOf('浏览器端到端测试'),stamp=yaml.indexOf('echo "E2E_REPORT_ID=$(date +%s%N)-$$" >> "$GITHUB_ENV"'),first=yaml.indexOf('python test/e2e/stm32_e2e.py');
+  assert.ok(step>0&&stamp>step&&stamp<first,'测试那一步一开头就定下这次执行自己的编号（测试失败时也已经有了）');
+  assert.match(yaml,/name: e2e-report-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}-\$\{\{ env\.E2E_REPORT_ID \}\}\n/);
+});

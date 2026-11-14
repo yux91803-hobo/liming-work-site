@@ -106,6 +106,8 @@ jobs:
       - name: 浏览器端到端测试（电脑、手机宽度：点击、翻页、返回、模拟器）
         run: |
           set -o pipefail
+          # 这次执行自己的编号，给下面的报告起名用：同一个作业被执行机跑了两遍时，两份报告都留得下来，谁也不因为同名失败
+          echo "E2E_REPORT_ID=$(date +%s%N)-$$" >> "$GITHUB_ENV"
           mkdir -p test-results/e2e
           node scripts/preview.mjs --port 5173 > preview.log 2>&1 &
           preview_pid=$!
@@ -126,7 +128,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-report-${{ github.run_id }}-${{ github.run_attempt }}
+          name: e2e-report-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.E2E_REPORT_ID }}
           path: |
             test-results/e2e/*.log
             preview.log
