@@ -2043,6 +2043,9 @@
     var q = h('div', 'xu-q'); quotaRows(q, u); box.appendChild(q);
     // 待送达记下的叫醒耗时（docs/xin-kernel-design.md §12：超过 45 秒的多了再想别的办法）
     if (u.wake && u.wake.count > 0) box.appendChild(h('p', 'xu-wake', '叫醒电脑：最近 ' + u.wake.count + ' 次，一般 ' + Math.round(u.wake.p50 / 1000) + ' 秒，最长 ' + Math.round(u.wake.max / 1000) + ' 秒'));
+    // 状态由谁在管（第 2 批：内核外壳拉起、看住的常驻状态进程）；旧 Worker、exec 通道没有 owner，就不显示
+    var own = ownerLine(u.owner);
+    if (own) box.appendChild(h('p', 'xu-owner', own));
     box.appendChild(h('p', 'wk-h', '用了多少'));
     var seg = h('div', 'xu-seg'); seg.setAttribute('role', 'tablist'); seg.setAttribute('aria-label', '时间范围');
     var body = h('div', 'xu-body');
@@ -2058,6 +2061,18 @@
     });
     box.appendChild(seg); box.appendChild(body);
     usageBody(body, u);
+  }
+  function ownerLine(o) {
+    if (!o || typeof o !== 'object') return '';
+    if (o.phase === 'running') {
+      var up = Math.max(0, Number(o.up) || 0), all = o.ops && o.ops.all;
+      var dur = up >= 3600000 ? Math.floor(up / 3600000) + ' 小时' : up >= 60000 ? Math.floor(up / 60000) + ' 分钟' : '不到 1 分钟';
+      var p50 = all && all.n > 0 && typeof all.p50 === 'number' && isFinite(all.p50) ? '，操作一般 ' + Math.max(1, Math.round(all.p50)) + ' 毫秒' : '';
+      return '状态：常驻进程在管（已切换 ' + (Number(o.epoch) || 0) + ' 次，这次运行了 ' + dur + p50 + '）';
+    }
+    if (o.phase === 'fallback') return '状态：常驻进程起不来，已改回旧方式（' + (o.lastError || '原因不明') + '）。下次上线会再试';
+    if (o.phase === 'starting' || o.phase === 'waiting') return '状态：正在换到常驻进程';
+    return '状态：旧方式（每次操作起一个进程）';
   }
   function usageBody(body, u) {
     body.innerHTML = '';

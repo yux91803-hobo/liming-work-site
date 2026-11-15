@@ -58,6 +58,20 @@ def usage():
         'names': {'gemini-4-hydrogen': 'Gemini 4 Hydrogen', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro', 'glm-5.3-flash': 'GLM-5.3 Flash'}}
 
 
+# 内核外壳给的主人状态（site/xin/vm-kernel.mjs 的 summary，Worker 在 usage 里挂上 ops）
+OWNER_RUNNING = {'want': 'kernel', 'mode': 'kernel', 'epoch': 3, 'phase': 'running', 'gen': 2, 'agent': '0123456789ab', 'pid': 4242, 'up': 2 * H + 5 * 60000,
+                 'restarts': 0, 'failures': 0, 'lastError': None, 'fallback': False, 'spawns': 0,
+                 'ops': {'all': {'n': 40, 'p50': 2.4, 'p95': 9, 'max': 30}, 'byOp': {'usage': {'n': 1, 'p50': 2, 'p95': 2, 'max': 2}}}}
+OWNER_FALLBACK = dict(OWNER_RUNNING, mode='legacy', phase='fallback', pid=None, up=0, failures=7, lastError='state_compat', fallback=True)
+
+
+async def open_usage(pg):
+    await pg.click('#xinWork .xc-glow')
+    await pg.wait_for_selector('.xq .xq-more', timeout=10000)
+    await pg.click('.xq .xq-more')
+    await pg.wait_for_selector('.xc.show .xc-sheet:not([hidden]) .xu-chart', timeout=15000)
+
+
 async def setup(browser, w=1280, h=860, mobile=False, theme='light', glow='warn', live=False, reduced=False, clock=False):
     pg = await ui.page(browser, w, h, mobile=mobile, theme=theme)
     if clock:
@@ -148,6 +162,7 @@ async def main():
         await pg.wait_for_selector('.xc.show .xc-sheet:not([hidden]) .xu-chart', timeout=15000)
         wake = await pg.evaluate("(document.querySelector('.xc-sheet .xu-wake') || {}).textContent || ''")
         ui.check('用量页：显示最近几次叫醒电脑用了多久', wake == '叫醒电脑：最近 3 次，一般 40 秒，最长 52 秒', wake)
+        ui.check('用量页：没有主人状态（旧 Worker、exec 通道）就不显示「状态」这一行', await pg.evaluate("!document.querySelector('.xc-sheet .xu-owner')"))
         page = await pg.evaluate("""(() => { const s = document.querySelector('.xc-sheet'); return {title: s.querySelector('.xc-sh-hd b').textContent,
           quota: s.querySelectorAll('.xq-row').length, tabs: [...s.querySelectorAll('.xu-rg')].map(e => e.textContent), on: (s.querySelector('.xu-rg.on') || {}).textContent,
           days: s.querySelectorAll('.xu-day').length, empty: s.querySelectorAll('.xu-day.empty').length, legend: [...s.querySelectorAll('.xu-lg li')].map(e => e.textContent),
@@ -184,6 +199,25 @@ async def main():
         after = await pg.evaluate("document.querySelector('.xc-sheet .xu').scrollTop")
         ui.check('用量页每分钟刷新，滚到的位置不跳回顶部', top > 0 and st.get('usage_calls') > calls and abs(after - top) <= 1, (top, after, calls, st.get('usage_calls')))
         await pg.context.close()
+
+        # 5c. 用量页：状态由谁在管（第 2 批计划 Task 5）。常驻进程在管 / 起不来改回旧方式；正在换；旧方式
+        for w, h, mobile in ((390, 844, True), (1280, 860, False)):
+            cases = [(OWNER_RUNNING, '状态：常驻进程在管（已切换 3 次，这次运行了 2 小时，操作一般 2 毫秒）'),
+                     (OWNER_FALLBACK, '状态：常驻进程起不来，已改回旧方式（state_compat）。下次上线会再试')]
+            if w == 1280:
+                cases += [(dict(OWNER_RUNNING, up=25 * 60000, ops=None), '状态：常驻进程在管（已切换 3 次，这次运行了 25 分钟）'),
+                          (dict(OWNER_RUNNING, phase='starting', mode='legacy'), '状态：正在换到常驻进程'),
+                          (dict(OWNER_RUNNING, phase='waiting', mode='legacy'), '状态：正在换到常驻进程'),
+                          (dict(OWNER_RUNNING, phase='off', want='legacy', mode='legacy'), '状态：旧方式（每次操作起一个进程）')]
+            for owner, want in cases:
+                pg, st = await setup(browser, w, h, mobile=mobile)
+                st['usage']['owner'] = {k: v for k, v in owner.items() if v is not None}
+                await open_usage(pg)
+                got = await pg.evaluate("""(() => { const e = document.querySelector('.xc-sheet .xu-owner'); if (!e) return null;
+                  const r = e.getBoundingClientRect(), s = document.querySelector('.xc-sheet').getBoundingClientRect();
+                  return {text: e.textContent, inside: r.left >= s.left - 1 && r.right <= s.right + 1 && r.width > 0 && r.height > 0, fit: e.scrollWidth <= e.clientWidth + 1}; })()""")
+                ui.check('%d 宽：用量页「状态」这一行（%s）' % (w, owner['phase']), bool(got) and got['text'] == want and got['inside'] and got['fit'], got)
+                await pg.context.close()
 
         # 6. 各宽度、浅色深色：额度卡和用量页不横向溢出；手机上额度卡贴底
         for w, h, mobile in ((1280, 860, False), (1024, 768, False), (768, 1024, True), (390, 844, True)):
