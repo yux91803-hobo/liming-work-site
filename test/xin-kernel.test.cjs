@@ -649,6 +649,14 @@ test('期望 kernel：拉起状态进程，之后同版本的操作和轮询走�
   assert.strictEqual(after.spawns, 0, '这一路都没起控制器'); assert.strictEqual(fileCount(f.home, 'poll'), 0);
 });
 
+test('走套接字的操作做完就清掉等它的计时器：外壳常驻，不能每次操作留一个 40 秒的计时器', async t => {
+  const f = await keeperFixture(t);
+  await ownerOp(f, 'echo', {}, KERNEL(1)); assert.ok(await running(f));
+  const timers = () => process.getActiveResourcesInfo().filter(x => x === 'Timeout').length, before = timers();
+  for (let i = 0; i < 20; i++) assert.strictEqual((await ownerOp(f, 'echo', { i }, KERNEL(1))).body.data.via, 'state');
+  assert.ok(timers() - before < 5, '20 次操作以后多了 ' + (timers() - before) + ' 个计时器');
+});
+
 test('代号小的期望不改模式；同代号要 legacy 就排空停下；代号更大再拉起', async t => {
   const f = await keeperFixture(t);
   await ownerOp(f, 'echo', {}, KERNEL(2)); assert.ok(await running(f));

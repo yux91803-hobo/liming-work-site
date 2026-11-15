@@ -309,11 +309,12 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
   const stats = opStats(), keeper = createStateKeeper({ home, env, log: rec => log({ route: 'state', ...rec }), ...keeperOptions });
   const ownerView = () => ({ ...keeper.summary(), spawns });
   const OWNER_OK = o => !!o && typeof o === 'object' && (o.mode === 'kernel' || o.mode === 'legacy') && Number.isSafeInteger(o.gen) && o.gen >= 0;
-  const waitMs = ms => new Promise(r => setTimeout(r, ms));
   async function viaState(op, args, rec) {
     rec.via = 'state';
     const t0 = performance.now(), call = keeper.call({ kind: 'op', op, args, locked: false });
-    const r = await Promise.race([call.then(v => ({ v }), e => ({ e })), waitMs(opTimeoutMs).then(() => ({ timeout: true }))]);
+    // 等它的计时器做完就清掉：外壳常驻，不能每次操作都留一个 opTimeoutMs 长的计时器
+    let timer; const r = await Promise.race([call.then(v => ({ v }), e => ({ e })), new Promise(ok => { timer = setTimeout(() => ok({ timeout: true }), opTimeoutMs); })]);
+    clearTimeout(timer);
     if (r.timeout) return [200, { ok: false, executed: 'unknown', error: 'agent_timeout', msg: '状态进程超过 ' + Math.round(opTimeoutMs / 1000) + ' 秒没做完' }];
     if (r.e) return r.e.executed === false ? [503, { ok: false, executed: false, error: 'owner_unavailable', retryAfter: 3 }]
       : [200, { ok: false, executed: 'unknown', error: typeof r.e.code === 'string' ? r.e.code : 'state_failed' }];
