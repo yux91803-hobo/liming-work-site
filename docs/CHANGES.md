@@ -11,6 +11,7 @@
 - **旧断言**：一条没改。计划原先写「状态进程正常退出一律交回 legacy」，和 #140 的「父管道断开会排空退出并保留 kernel 记录，不能默默改回 legacy」（Codex）冲突；后者合设计 §6.2（该内核当主人但它不在：不写），所以撤回原先的写法，改成外壳正常停止时显式发 `release`。为原先写法加的两项测试在提交前删了（从没进过 main）。
 - **参考**：设计时参考 [tmux `client.c`](https://github.com/tmux/tmux/blob/master/client.c) 的 `client_get_lock` / `client_connect`（客户端经套接字找常驻进程，一把锁保证只起一个）、[SQLite 文件锁](https://www.sqlite.org/lockingv3.html)（进程退出锁就放）、[synckit](https://github.com/un-ts/synckit)（同步等异步结果，这里用 `Atomics.wait` 稍等）。外壳怎么看住状态进程（退避重起、按代号放弃、存期望）没找到现成做法，自己设计。
 - **测试**：新文件 `test/xin-kernel-owner.test.cjs` 7 项，真状态进程加外壳：内核模式不起控制器、带编号重送只成一轮、`kill -9` 空档里来报告的执行进程稍等后交给新主人（不重试的话主人 15 秒后重派、模型被调两次；故意去掉重试，这一项就挂）、外壳正常停止交回 legacy 后旧外壳照常写、墙上时钟跳 2 小时、控制器不停起退 20 轮、2000 次调用内存和打开的文件不涨。外壳 14 项（假状态进程）、Worker 和待送达 7 项、用量页浏览器测试 9 项、联调规则 4 项。
+- **浏览器测试的一处竞争**（`test/e2e/stm32_e2e.py`，#148 第一次 CI 碰到）：小芯空闲时会自己随机去荡秋千（一次 7–13 秒），测试正好在它荡着的时候叫它跳，跳要等落地，超过了 5 秒的观察时限（`hop did not enter real flight`，`was: swing`）。改成先等它落在平台上、同一段脚本里接着叫它跳；先让它荡秋千再跑：旧写法必挂、新写法必过。只改测试，小芯的动作没改。
 - **正式联调**（`scripts/test-xin-live.py`）：登录后等状态进程跑起来（最多 120 秒，等不到就失败、自动回滚），所有检查做完再核对一次没重启、外壳一个控制器都没起，打印 `PASS state owner is the resident process (kernel mode, no controller process per request)`；日志只打阶段和计数。
 
 # 修改清单 · 2026-11-15（仓库公开前的准备：CI 改用 GitHub 自带的执行机，日志不打邮箱，能清旧日志）
