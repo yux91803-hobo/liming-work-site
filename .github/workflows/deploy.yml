@@ -50,7 +50,7 @@ jobs:
     # 每次可信 main 发布都测试当前提交；PR 仅接受同仓库来源。
     if: >-
       github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == 'main')
-    runs-on: [self-hosted, box]
+    runs-on: [self-hosted, laptop]
     steps:
       - name: 记录执行机器（无密钥）
         env:
@@ -81,7 +81,7 @@ jobs:
     timeout-minutes: 30
     if: >-
       github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == 'main')
-    runs-on: [self-hosted, box]
+    runs-on: [self-hosted, laptop]
     steps:
       - name: 记录执行机器（无密钥）
         env:
@@ -154,7 +154,7 @@ jobs:
       ((github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) ||
        (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == 'main')) &&
       needs.check.result == 'success' && needs.e2e.result == 'success'
-    runs-on: [self-hosted, box]
+    runs-on: [self-hosted, laptop]
     concurrency:
       group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.target || (github.event_name == 'push' && 'production' || 'staging') }}
       cancel-in-progress: false
