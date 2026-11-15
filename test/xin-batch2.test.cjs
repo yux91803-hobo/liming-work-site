@@ -24,7 +24,16 @@ test('云电脑刚醒、网关在预热：前台先等预热做完再发请求�
   fs.writeFileSync(cold, '');
   const r = op('send', { agent: 'codex', text: '早上好' });
   assert.ok(r.run, JSON.stringify(r));
-  await sleep(1500);
+  // 预热一直卡着，直到前台真的进了「等预热」、告诉了网页「刚醒」：按事件等，不按固定时间。
+  // 以前固定只给 1.5 秒：笔记本上的 CI 起后台进程慢，进到「等预热」时预热已经结束，就不会说「刚醒」（#146）。
+  // 参考 Node.js doc/contributing/writing-tests.md 的 Timers 一节：除非测的就是计时，别用定时器，它是不稳定的主要来源。
+  let told = false;
+  for (const end = performance.now() + platformTimeout(20000); performance.now() < end;) {
+    if (op('poll', { run: r.run, off: 0 }).events.some(e => e.t === 'status' && /刚醒/.test(e.text))) { told = true; break; }
+    await sleep(200);
+  }
+  assert.ok(told, '等预热时告诉网页');
+  assert.ok(!fs.existsSync(log), '预热还没做完，前台没发请求');
   // 预热的那个请求终于回来了：网关热了
   fs.rmSync(cold);
   fs.writeFileSync(path.join(xin, 'warm.json'), JSON.stringify({ at: Date.now(), ms: 1500, ok: true }));
