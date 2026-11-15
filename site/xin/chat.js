@@ -1886,12 +1886,12 @@
     var h_ = workEl.offsetHeight || 400, r = Math.round(p.ih / 2);
     return 'inset(0px ' + Math.max(0, p.left + p.w - p.il - p.iw) + 'px ' + Math.max(0, h_ - p.ih) + 'px ' + Math.max(0, p.il - p.left) + 'px round ' + r + 'px)';
   }
-  var trayTm = 0, trayEnd = 0, OPEN_MS = 520, CLOSE_MS = 270;
+  var trayTm = 0, trayEnd = 0, enterTm = 0, OPEN_MS = 520, CLOSE_MS = 270;
   function setTray(on, focusBack, instant) {
     if (!root) return;
     on = !!on && !trayDocked() && S.authed;
     if (on === S.tray) return;
-    S.tray = on; clearTimeout(trayTm); clearTimeout(trayEnd);
+    S.tray = on; clearTimeout(trayTm); clearTimeout(trayEnd); clearTimeout(enterTm);
     isleEl.setAttribute('aria-expanded', on ? 'true' : 'false');
     var quick = instant || reduceMotion(), id = workEl.querySelector('.xc-wk-id'), fresh = !workEl.classList.contains('pop');
     if (on) {
@@ -1935,7 +1935,7 @@
     if (!S.tray) return;
     S.trayMv = false; workEl.classList.remove('mv');
     workEl.style.clipPath = 'none'; workEl.classList.add('done');
-    setTimeout(function () { workEl.classList.remove('enter'); }, 500);
+    enterTm = setTimeout(function () { workEl.classList.remove('enter'); }, 500);   // 记着，快速收起再展开时别把新一次的错开进场掐掉
     if (S.trayDirty) { S.trayDirty = false; renderTray(); renderWork(); }
   }
   function trayClosed() {
