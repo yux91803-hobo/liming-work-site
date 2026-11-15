@@ -657,10 +657,12 @@ export function exportState(keep = 7) {
 }
 // 只重试尚未开始工作的 CLI：开始处理后可能长时间不输出，网络超时由 CLI 自己处理，避免重复投递同一轮。
 const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
+// 开工前就停了（站长先按了停，或者用备份恢复时备份那一刻没做完）：不起模型，写一条「已停止」收尾，后台任务跟着标成停了
+function endStoppedRun(run,meta){emit(run,{t:'done',ok:false,stopped:true,code:0});patchRun(run,{stopped:true,ended:Date.now()});journal.finishLaunch(run);if(meta.task)lockedCall('tasks','task_finish',{sid:meta.sid,run,ok:false,stopped:true});}
 function runner(run) {
   const meta = readJ(metaF(run));
   if (!meta) process.exit(1);
-  if(meta.stopped){emit(run,{t:'done',ok:false,stopped:true,code:0});patchRun(run,{ended:Date.now()});journal.finishLaunch(run);if(meta.task)lockedCall('tasks','task_finish',{sid:meta.sid,run,ok:false,stopped:true});return;}
+  if(meta.stopped){endStoppedRun(run,meta);return;}
   meta.pid = process.pid; meta.identity = processIdentity(process.pid); patchRun(run,{pid:meta.pid,identity:meta.identity});
   const sess = readJ(sessF(meta.sid));
   mk(WORK); installXin();
@@ -3138,9 +3140,7 @@ function restoreStops() {
   try { fs.renameSync(f, mine); } catch { return; }
   for (const run of (readJ(mine, {}) || {}).runs || []) {
     const m = readJ(metaF(run));
-    if (!m || m.ended || m.stopped) continue;
-    emit(run, { t: 'err', text: RESTORE_STOP_TEXT });
-    patchRun(run, { stopped: true, restoreStopped: Date.now() });
+    if (m && !m.ended && !m.stopped) { emit(run, { t: 'err', text: RESTORE_STOP_TEXT }); endStoppedRun(run, m); }   // 当场收尾：恢复时离开工早过了 15 秒，等起进程来收会先被 runDone 当成「中途断了」（#146）
   }
   try { fs.unlinkSync(mine); } catch { /* 别处删了 */ }
 }
