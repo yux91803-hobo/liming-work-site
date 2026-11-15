@@ -1,5 +1,7 @@
 # Box runner: safe recovery and restart limitations
 
+> 2026-11-15 起 CI 改在 GitHub 自带的执行机上跑，这台 box 执行机已从仓库设置里删掉（仓库要公开，自托管执行机会跑别人 PR 里的代码）。这里的脚本只留作参考，不要再注册回公开仓库。
+
 Scope: PRIVATE `yux91803-hobo/liming-work-site`, immutable GitHub repository ID `1434453690`; runner `box-liming-work-site`, labels `self-hosted/Linux/X64/box`. Debian 13 x86_64. Use the normal box user with authorized `gh` and passwordless sudo; do not run installer as root or copy gh authentication into the CI account.
 
 ## One explicit recovery command
