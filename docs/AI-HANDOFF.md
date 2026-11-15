@@ -171,3 +171,15 @@
   - 待送达遇到 Worker 层的「稍等」时，等待原因显示「InstaBox 忙」，不够准确（换状态进程只要几秒，先没改）。
   - 切换前备份用 `VACUUM INTO`，库大时第一次切换会慢一点；联调最多等 120 秒。
 
+## Claude Code · 北京时间 2026-11-15 18:10 后（第 2 批上线、Antigravity 冷启动修复）
+
+- 站长 18:0x 回「可以的」同意合并。#148 北京 18:13 合并（`1498c45`，squash）。正式运行 43702977504：第 1 次联调失败、18:25 自动回滚到 #147（原因见 [CHANGES](CHANGES.md) 最新一条：电脑暂停约 4 小时后醒来，Antigravity 冷启动约 26 秒，超过额度核对写死的 25 秒；和状态模式无关）；重跑部署作业一次，18:43–18:49 全绿，联调 13 项 PASS，含 `PASS state owner is the resident process …`。
+- 上线后只读核对（约 18:55，经 InstaBox exec）全部符合：记录被状态进程锁着；`kernel-owner.json` 0600、`gen 2`（Durable Object 读得到版本号，风险排除）；外壳 `vm-kernel-e1a29f7279b5`、状态进程 `vm-agent-2fd96a609bd5 serve --parent-pipe`（父进程是外壳）；没有看门狗；状态事件一次 start、一次 ready；切换前备份一份。
+- 空闲自动暂停：待核对（约 19:41 只读看 `GET /v1/machines/{id}`）。
+- 冷启动修复在分支 `claude/xiaoxin-architecture-review-2dkunv`：`XIN_AGY_QUOTA_MS` 默认 90 秒，测试先红后绿；跟这条记录一起开 PR。
+- 分支处理：#148 是 squash 合并，按规矩要从 main 重开分支，但强推被会话的自动权限拦了；改成在旧分支上合并 main（`a7f0567`，内容和 main 一样），普通推送。
+- 站长新定的规矩：小芯的动作不合理可以直接改良（已写进 CLAUDE.md）。
+- 给下一位：
+  - 第 2 批之后状态由常驻进程管。回滚办法见 README「小芯后台运行方式」第一条。
+  - 联调发第一句话之前电脑多半刚醒：Antigravity 冷启动慢是常态，别把这类失败当成新改动的问题，先看 `~/.gemini/antigravity-cli/log/` 里那次的日志（里面有账号邮箱，不要贴出来）。
+

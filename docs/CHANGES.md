@@ -1,3 +1,12 @@
+# 修改清单 · 2026-11-15（第 2 批上线；Antigravity 冷启动时额度核对的时限放宽到 90 秒）
+
+- **第 2 批上线经过**：#148 北京 18:13 合并。正式运行 [43702977504](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43702977504) 第 1 次：新外壳 18:24:22 换上，状态进程 18:24:24 就绪（0.7 秒，切换次数 1），联调「等状态进程跑起来」那一步过了；但联调发的第一句话前台失败、没派出后台任务，18:25 自动回滚到 #147。查明原因（见下一条）和第 2 批无关以后，重跑部署作业一次：18:43 部署，联调 13 项全过，包括 `PASS state owner is the resident process (kernel mode, no controller process per request)`，没有回滚。
+- **上线后只读核对**（北京约 18:55）：所有权记录被状态进程锁着（内核模式、有主人）；期望文件 0600、`{mode:kernel, gen:2}`——**代号变成 2，说明 Durable Object 读得到 `CF_VERSION_METADATA`**（之前没验证的风险排除了）；外壳由 systemd 管，状态进程的父进程是外壳、跑的是这次的控制器，重跑部署时没重启（同一版本、代号变大不用重起）；没有旧看门狗进程；外壳日志里状态进程只有一次启动、一次就绪；切换前备份正好一份（688 KB、0600）。
+- **第一次联调失败的原因**（按小芯电脑上的日志推断）：电脑暂停了约 4 小时，刚醒来；前台第一次调 Antigravity 核对额度（`agy -p /usage`），CLI 先检查更新（约 19 秒），语言服务起来后令牌已过期、刷新又用了 7 秒，总共约 26 秒，超过写死的 25 秒时限，被停掉时离刷新好只差 1 秒。消息交给状态进程只用了 67 毫秒；Antigravity 子进程的环境变量是写死的（`HOME`、`PATH`、`LANG`），旧方式下一样会碰上：电脑长时间没用后的第一句话可能失败。
+- **修复**（`site/xin/vm-front-agy.mjs`）：额度核对的时限改由 `XIN_AGY_QUOTA_MS` 管，默认 90 秒，CLI 自己的 `--print-timeout` 跟着一起放宽。平时 1–2 秒就回，放宽只影响冷启动；Antigravity 真卡住时要多等一会儿才报错。参考文件里等预热那段已经引用的 Codex（慢的流等 300 秒）和 opencode（可恢复的错误退避重试）：慢的时候不急着放弃。
+- **测试**（`test/xin-front-agy.test.cjs`，先红后绿）：假 CLI 模拟冷启动 1.5 秒，时限 0.5 秒时这一轮报「暂时无法核对」，8 秒时照常用 Hydrogen 回答，CLI 的 `--print-timeout` 跟着变；默认 90 秒。本地 `npm run check` 907/907、`npm run test:kernel` 174/174。
+- **站长新定的规矩**（写进 CLAUDE.md）：小芯的动作有不合理的地方可以直接改良，不必为了保留原来的动作弄得繁琐。#148 的 CI 碰到「荡秋千时叫它跳」那次，当时只改了测试。
+
 # 修改清单 · 2026-11-15（小芯第 2 批：正式站的状态切到内核模式）
 
 设计 [2026-11-14-xin-kernel-stage2-design.md](superpowers/specs/2026-11-14-xin-kernel-stage2-design.md) §6.4–6.9、§7 第 2 批（站长 2026-11-14 确认），计划 [2026-11-15-xin-state-owner-switch.md](superpowers/plans/2026-11-15-xin-state-owner-switch.md)。实现和自查：Claude Code（同一会话，没有另一位审核）。
