@@ -1,3 +1,18 @@
+# 修改清单 · 2026-11-15（小芯第 2 批：正式站的状态切到内核模式）
+
+设计 [2026-11-14-xin-kernel-stage2-design.md](superpowers/specs/2026-11-14-xin-kernel-stage2-design.md) §6.4–6.9、§7 第 2 批（站长 2026-11-14 确认），计划 [2026-11-15-xin-state-owner-switch.md](superpowers/plans/2026-11-15-xin-state-owner-switch.md)。实现和自查：Claude Code（同一会话，没有另一位审核）。
+
+- **外壳看住状态进程**（`site/xin/vm-kernel.mjs` 的 `createStateKeeper`）：请求带期望 `owner {mode, gen}`，要 `kernel` 就拉起 `node vm-agent-<哈希>.mjs serve --parent-pipe`，同版本的操作和流里的每次 `poll` 都经 `~/.xin/run/state.sock` 交给它，不再起控制器进程；健康检查和 `usage` 带上它的情况（阶段、切换次数、运行多久、外壳起过几次控制器、各操作耗时）。意外退出按退避重起；连续 3 分钟起不来就跑 `owner-legacy` 改回旧方式、推送一次，这一代号不再试。外壳收到 SIGTERM（换版本、回滚）先让它排空、交回 legacy 再退出；期望存在 `~/.xin/kernel-owner.json`（0600），外壳自己重启后马上按它拉起。
+- **Worker 和 Durable Object**（`src/xin-kernel.js`、`src/xin.js`、`wrangler.jsonc`）：`XIN_STATE_OWNER` 定模式（正式站 `kernel`，测试站不设），部署代号由 Durable Object 按 `CF_VERSION_METADATA.id` 发（换了部署就加一，回滚也加一），每次操作带进请求体；外壳只认不比见过的小的代号，刚部署时新旧两版的 isolate 同时在线也不会来回切。主人暂时不在（状态进程正在重起或排空）回 503 `owner_unavailable`：不退 exec，网页显示「小芯正在换状态进程，稍等」，待送达当临时错误重送。
+- **状态进程这一侧**（`vm-kernel-client.mjs`、`vm-state.mjs`、`vm-kernel-state.mjs`、`vm-kernel-owner.mjs`）：桥交不过去（确定没执行）时稍等再按所有权规则从头判断，最多 30 秒，不确定的不重来；没活时一分钟才检查一次（InstaBox 按 CPU 负载判断空闲，常驻进程不能让电脑一直醒着）；从 legacy 接手前做一次一致备份（`~/.xin/backups/owner-switch/`，一天最多一次，留两份）；新命令 `owner-legacy` 把记录改回旧方式（主人在时拒绝）。
+- **用量页**（`site/xin/chat.js`）：「叫醒电脑」下面一行「状态：常驻进程在管（已切换 N 次，这次运行了 …，操作一般 … 毫秒）」/「常驻进程起不来，已改回旧方式（原因）。下次上线会再试」/「正在换到常驻进程」/「旧方式（每次操作起一个进程）」；Worker 没给就不显示。
+- **顺手修的**：外壳走套接字的每个操作都留下一个 40 秒的计时器没清（第 2 批 Task 2 的实现，跑真状态进程时发现），先写测试复现（20 次操作多出 20 个计时器）再修。
+- **我定的十条**（和设计文字不同或设计没写到的，计划开头有原因和代价）：1 外壳正常停止时让状态进程排空、交回 legacy；状态进程意外失去外壳照 #140 保持 kernel、停着不写；2 状态进程意外退出时不改记录、按退避重起，连续 3 分钟起不来才改回 legacy；3 「起不来就切回」在外壳里判断、按代号记住、推送；4 部署代号由 Durable Object 发；5 流仍调 `poll`，只是改走套接字；6 启动中的同版本请求最多等 15 秒；7 控制器版本不同的请求照旧起控制器；8 切换前备份只在从 legacy 接手时做；9 操作 40 秒没回先报不确定、60 秒杀掉状态进程；10 退回次数进用量页、按内存阈值重启等留到以后。
+- **旧断言**：一条没改。计划原先写「状态进程正常退出一律交回 legacy」，和 #140 的「父管道断开会排空退出并保留 kernel 记录，不能默默改回 legacy」（Codex）冲突；后者合设计 §6.2（该内核当主人但它不在：不写），所以撤回原先的写法，改成外壳正常停止时显式发 `release`。为原先写法加的两项测试在提交前删了（从没进过 main）。
+- **参考**：设计时参考 [tmux `client.c`](https://github.com/tmux/tmux/blob/master/client.c) 的 `client_get_lock` / `client_connect`（客户端经套接字找常驻进程，一把锁保证只起一个）、[SQLite 文件锁](https://www.sqlite.org/lockingv3.html)（进程退出锁就放）、[synckit](https://github.com/un-ts/synckit)（同步等异步结果，这里用 `Atomics.wait` 稍等）。外壳怎么看住状态进程（退避重起、按代号放弃、存期望）没找到现成做法，自己设计。
+- **测试**：新文件 `test/xin-kernel-owner.test.cjs` 7 项，真状态进程加外壳：内核模式不起控制器、带编号重送只成一轮、`kill -9` 空档里来报告的执行进程稍等后交给新主人（不重试的话主人 15 秒后重派、模型被调两次；故意去掉重试，这一项就挂）、外壳正常停止交回 legacy 后旧外壳照常写、墙上时钟跳 2 小时、控制器不停起退 20 轮、2000 次调用内存和打开的文件不涨。外壳 14 项（假状态进程）、Worker 和待送达 7 项、用量页浏览器测试 9 项、联调规则 4 项。
+- **正式联调**（`scripts/test-xin-live.py`）：登录后等状态进程跑起来（最多 120 秒，等不到就失败、自动回滚），所有检查做完再核对一次没重启、外壳一个控制器都没起，打印 `PASS state owner is the resident process (kernel mode, no controller process per request)`；日志只打阶段和计数。
+
 # 修改清单 · 2026-11-15（仓库公开前的准备：CI 改用 GitHub 自带的执行机，日志不打邮箱，能清旧日志）
 
 站长 2026-11-15 决定把仓库公开：公开仓库用 GitHub 自带的标准执行机不收费；私有仓库的免费额度每月约 2000 分钟，按现在一天约 26 次 CI、每次约 15 分钟，一个月要 1 万分钟上下。自托管执行机（box、笔记本）站长已在仓库设置里删掉。实际实现 AI：**Claude Code**；自查，没有别的 AI 复核。

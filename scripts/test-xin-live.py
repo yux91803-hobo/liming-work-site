@@ -8,7 +8,7 @@ import json
 import os
 import time
 import uuid
-from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback
+from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, owner_brief
 from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
@@ -38,7 +38,7 @@ async def main():
         # The CI runner VM can be paused by its host; the TCP shim then turns the dead connection into ETIMEDOUT.
         # Both #106 and #107 release runs were rolled back by exactly that, mid-way through the long wait for the web task.
         # Read-only ops are safe to resend, so they are retried; ops with side effects are never resent here.
-        READ_ONLY = {'history', 'tasks', 'poll', 'sessions', 'status', 'delivery'}
+        READ_ONLY = {'history', 'tasks', 'poll', 'sessions', 'status', 'delivery', 'usage'}
         TRANSPORT = ('ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ENETUNREACH', 'EAI_AGAIN', 'socket hang up', 'Timeout')
         async def raw(what, send, retry):
             # Every direct request goes through here so a failure never prints Playwright's call log (it carries the cookie).
@@ -126,6 +126,17 @@ async def main():
             await page.locator('.xc-login input[name=pw]').fill(PASSWORD, timeout=30000)
             await page.locator('.xc-login button').click()
             await page.wait_for_function('LimingXinChat.state.authed', timeout=30000)
+            # 第 2 批：状态切到内核模式。外壳拉起常驻的状态进程（换外壳、切换前备份都在这里头），最多等 120 秒；
+            # 等不到就失败（会自动回滚）。记下切换次数和外壳起控制器的次数，所有检查做完后再核对一次。
+            limit = time.monotonic() + 120
+            while True:
+                usage = await call('usage', {})
+                owner = resident_owner(usage)
+                if owner:
+                    break
+                if time.monotonic() > limit:
+                    raise RuntimeError('State owner did not become the resident process within 120 s: ' + owner_brief(usage))
+                await asyncio.sleep(3)
             # Smoke conversations left by an earlier run whose cleanup failed: recall would quote their old instructions
             # into this run's turns. Remove them first (only this script's own opening lines, never the main conversation).
             for leftover in [s for s in (await call('sessions', {})).get('sessions', []) if is_leftover_smoke(s)]:
@@ -459,6 +470,9 @@ async def main():
             print('PASS real Gemini animated web preview, actual clicks and complete temporary cleanup', flush=True)
             print('PREVIEW_URL ' + BASE + preview['url'], flush=True)
             await art.close()
+            # 这一路（真对话、后台任务、流、备份、网页预览）都做完了：常驻进程没重启，外壳一个控制器进程都没起
+            same_resident_owner(owner, await call('usage', {}))
+            print('PASS state owner is the resident process (kernel mode, no controller process per request)', flush=True)
         finally:
             # Forget only this run's own conversation. Leave its small result artifact for diagnosis.
             for owned_sid in [s for s in (sid,alternate_sid,image_sid) if s]:

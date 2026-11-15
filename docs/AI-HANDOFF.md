@@ -160,3 +160,14 @@
 - 给下一位：
   - 「fork 来的 PR 运行前要批准」是站长在 Settings → Actions → General 里的设置，没有工具能改，已建议站长设成对所有外部贡献者都要批准。
   - 执行机提示 `actions/github-script@v7`、`actions/download-artifact@v4`、`actions/upload-artifact@v4` 还是按 Node.js 20 写的，现在被强制用 Node.js 24 跑，照常能用；以后顺手升到新的大版本，升之前先看各自的发布说明。
+
+## Claude Code · 北京时间 2026-11-15 14:00 后（第 2 批：正式站状态切到内核模式）
+
+- 站长说「你继续吧」。计划 [2026-11-15-xin-state-owner-switch.md](superpowers/plans/2026-11-15-xin-state-owner-switch.md) 6 个任务都由 Claude Code 实现和自查（没有另一位审核），分支 `claude/xiaoxin-architecture-review-2dkunv`；改了什么见 [CHANGES](CHANGES.md) 最新一条。
+- 和计划不一样的地方（都记在计划执行记录里）：撤回「状态进程正常退出一律交回 legacy」，保留 #140 的断言；`kill -9` 空档测试原先在「不重试」时照样通过（主人 15 秒后会重派），改成要求很快收尾、模型只调一次；顺手修了外壳每次操作留一个 40 秒计时器。
+- 上线前后要做的（按计划「上线和验收」）：合并前对小芯电脑做一次只读核对（所有权记录、`workflow.sqlite` 大小、有没有 `serve` 进程）；**合并前先告诉站长**；合并后确认正式运行全绿、联调有 `PASS state owner is the resident process …`；上线后只读核对记录、进程、日志、备份；35 分钟没人用之后看电脑照常自动暂停。
+- 风险和没验证的：
+  - Durable Object 里能不能读到 `CF_VERSION_METADATA`，官方文档没写明（第三方文章说可以）。读不到时代号一直是 1：改 `legacy` 回滚照样生效，只是换控制器版本不会重起状态进程。**下一次部署后看用量页或健康检查的 `owner.gen` 是不是变成 2。**
+  - 待送达遇到 Worker 层的「稍等」时，等待原因显示「InstaBox 忙」，不够准确（换状态进程只要几秒，先没改）。
+  - 切换前备份用 `VACUUM INTO`，库大时第一次切换会慢一点；联调最多等 120 秒。
+

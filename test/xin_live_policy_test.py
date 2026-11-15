@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback
+from xin_live_policy import HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner
 
 
 class SpokenMarker(unittest.TestCase):
@@ -117,6 +117,30 @@ class BackgroundFallback(unittest.TestCase):
                 explain_background_fallback(quota, issue, self.SENT, self.NOW)
 
 
+class ResidentStateOwner(unittest.TestCase):
+    # 第 2 批：正式站的状态由外壳拉起的常驻进程管，操作经本机套接字交给它，不再起控制器进程（usage 里的 owner 是外壳的 summary）
+    RUNNING = {'want': 'kernel', 'mode': 'kernel', 'phase': 'running', 'epoch': 4, 'spawns': 2, 'pid': 900, 'lastError': None}
+
+    def test_running_kernel_owner_is_resident(self):
+        self.assertEqual(resident_owner({'owner': self.RUNNING}), {'epoch': 4, 'spawns': 2})
+
+    def test_anything_else_is_not_resident_yet(self):
+        for owner in (None, {}, dict(self.RUNNING, phase='starting'), dict(self.RUNNING, phase='fallback', mode='legacy'),
+                      dict(self.RUNNING, mode='legacy'), dict(self.RUNNING, epoch=None), dict(self.RUNNING, spawns='2')):
+            with self.subTest(owner=owner):
+                self.assertIsNone(resident_owner({'owner': owner} if owner is not None else {}))
+        self.assertIsNone(resident_owner(None))
+
+    def test_same_owner_passes_and_any_change_fails_with_counts_only(self):
+        first = resident_owner({'owner': self.RUNNING})
+        same_resident_owner(first, {'owner': dict(self.RUNNING, up=99)})
+        for owner, says_ in ((dict(self.RUNNING, epoch=5), 'restarted'), (dict(self.RUNNING, spawns=3), 'controller'),
+                             (dict(self.RUNNING, phase='fallback', mode='legacy', lastError='state_compat'), 'no longer'), (None, 'no longer')):
+            with self.subTest(owner=owner), self.assertRaises(RuntimeError) as e:
+                same_resident_owner(first, {'owner': owner} if owner else {})
+            self.assertIn(says_, str(e.exception))
+
+
 class LiveScriptUsesOnePolicy(unittest.TestCase):
     # #132 正式站：只改了默认后台任务那一处，「点名 Gemini 做网页」那处还只认额度，Gemini 一卡又判失败回滚
     def test_every_gemini_fallback_check_goes_through_the_policy(self):
@@ -125,6 +149,14 @@ class LiveScriptUsesOnePolicy(unittest.TestCase):
         self.assertNotIn('without a real quota cooldown', src)
         # 默认后台任务、点名 Gemini 做网页：两处换模型的验收都走同一个规则
         self.assertEqual(src.count('explain_background_fallback(center'), 2)
+
+    def test_resident_owner_is_waited_for_then_checked_at_the_end(self):
+        src = (Path(__file__).resolve().parents[1] / 'scripts' / 'test-xin-live.py').read_text(encoding='utf-8')
+        wait, check = src.index('owner = resident_owner(usage)'), src.index("same_resident_owner(owner, await call('usage', {}))")
+        self.assertIn("usage = await call('usage', {})", src)
+        self.assertIn('PASS state owner is the resident process (kernel mode, no controller process per request)', src)
+        self.assertLess(wait, src.index('PASS off-machine encrypted backup'), '第一个检查之前先等到常驻进程')
+        self.assertGreater(check, src.index('PASS real Gemini animated web preview'), '所有检查做完以后再核对一次')
 
 
 if __name__ == '__main__':
