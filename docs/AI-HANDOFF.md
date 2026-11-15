@@ -183,3 +183,13 @@
   - 第 2 批之后状态由常驻进程管。回滚办法见 README「小芯后台运行方式」第一条。
   - 联调发第一句话之前电脑多半刚醒：Antigravity 冷启动慢是常态，别把这类失败当成新改动的问题，先看 `~/.gemini/antigravity-cli/log/` 里那次的日志（里面有账号邮箱，不要贴出来）。
 
+## Claude Code · 北京时间 2026-11-15 19:20 后（小芯工作台重新设计）
+
+- 站长要求（原话在设计文档开头）：工作台「有点丑，而且还有点简陋」，要从 0 设计，「交互细腻和好看，要让人看着很舒服」，看现有功能可以加新布局、不需要的删掉。第一版还是在旧布局上改，站长说「感觉你还是在基于原有的布局上在改」，于是按 impeccable、frontend-design、ui-ux-pro-max 三个设计 skill 重来：先列现有功能逐条定去留，写设计文档 [2026-11-15-xin-workbench-redesign-design.md](superpowers/specs/2026-11-15-xin-workbench-redesign-design.md)，做设计稿和可点的预览，再实现。之后站长没再提意见，按 CLAUDE.md 全流程自己上线。
+- 改了什么见 [CHANGES](CHANGES.md) 最新一条。界面层是 `site/xin/chat.js`（发送、排队、待送达、轮询、SSE 的逻辑没动）和 `site/xin/chat.css`（整个重写）；`site/mascot.js` 只给 `portrait` 加了表情参数；`site/shell.js` 改了快捷键（打字时不认「/」、聊天开着不抢 Ctrl+K、聊天处理过的 Esc 不再关工具）。根目录新加的 `PRODUCT.md` 是 impeccable 读的产品说明（谁用、在哪用、原则），以后做界面先看它。
+- 分支 `claude/friendly-hopper-d7392n`，从 #148 的 main 开；中途 main 合进 #149（另一个会话的冷启动修复和文档），我这边还没提交，直接快进上来，三份文档没有冲突。
+- 本地验证：见 PR 说明（`npm run check`、`npm run test:e2e` 12 套）。截图 1280 / 1024 / 768 / 390 × 浅色深色看过；impeccable 的检测器只剩「小芯岛用了弹性缓动」的提示，是设计定的（只有小芯岛用）。
+- 给下一位：
+  - 任务的入口只剩小芯岛（输入框上面的任务条、「任务」列表页、标题栏的方格按钮和「屏幕」按钮都删了）。浏览器测试要找任务：先点 `.xc-isle`，面板是 `.xc-work.in`，任务行是 `.wk-c[data-tsid=…]`，标题 `.wk-t`；全屏 900 以上钉住时面板常驻（`lm.xin.trayPin`）。点任务行正中可能正好点在「停止」上，点标题更稳。
+  - 工作台里的圆角都走 `--rad`：`pixel.css` 全局 `border-radius:0 !important`，所以 `.xc *{border-radius:var(--rad) !important}`，要圆角就设 `--rad`，直接写 `border-radius` 不生效。像素头像要 `stroke:none`（`shell.css` 给所有 svg 描了边）。
+  - 弹性缓动 `--e-spring` 只给小芯岛（按下和展开），别处用 `--e-out`。
