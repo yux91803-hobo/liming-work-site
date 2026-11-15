@@ -6,7 +6,8 @@ import { redact } from './xin-kernel.js';
 export const BACKOFF_S = [5, 15, 30, 60, 120, 300, 600];
 const ROW = 'inbox:row:', LEASE_MS = 120000, GUARD_MS = 120000, GIVE_UP_MS = 24 * 3600e3, KEEP_MS = 7 * 24 * 3600e3, LIST_DELIVERED_MS = 10 * 60e3, WAKE_MS = 5000;
 const WAKE_FAST = 20;   // 叫醒中：前这么多次几秒一试，再叫不醒（InstaBox 那边出故障）就按退避放慢
-const TRANSIENT = new Set(['busy', 'lock_failed', 'internal']);   // 控制器的临时错误：过一会儿再送。只和这一句所在的对话有关
+// 控制器的临时错误：过一会儿再送。只和这一句所在的对话有关。owner_unavailable：控制器把这一次交给状态进程没交过去（它正在重起或排空）
+const TRANSIENT = new Set(['busy', 'lock_failed', 'internal', 'owner_unavailable']);
 const ID = /^[A-Za-z0-9_-]{8,80}$/;
 const enc = new TextEncoder();
 const stable = v => Array.isArray(v) ? v.map(stable) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, stable(v[k])])) : v;

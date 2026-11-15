@@ -23,11 +23,24 @@ export function redact(text) {
 /* ---------- 内核配置（Durable Object 实例 xin-inbox 里，§4.2、§14.5） ----------
    端口令牌：发布私有端口时带 rotateToken 拿到（InstaBox 只在那一刻给一次）；30 天换一次，被 InstaBox 拒了就作废重换。
    钥匙：随机 32 字节，和端口令牌、站长密码都无关；30 天换一把，最多留两把（文件里新旧都在，换的时候不断线）。
-   installedKid：已经写进电脑上 kernel-keys.json 的那把；和当前 kid 不一样时 Worker 先装钥匙再签名。 */
-const CONFIG_KEY = 'kernel:config', ROTATE_MS = 30 * 86400e3;
+   installedKid：已经写进电脑上 kernel-keys.json 的那把；和当前 kid 不一样时 Worker 先装钥匙再签名。
+   期望 owner {mode, gen}（第 2 批，docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.4）：mode 跟 XIN_STATE_OWNER；
+   gen 是部署代号，存在 kernel-owner 里，这次的部署编号（CF_VERSION_METADATA.id）和存的不一样就加一（回滚也是一次新部署）。
+   外壳只认不比见过的小的代号：刚部署时新旧两版的 isolate 同时在发请求，模式只跟新的走，不来回切。 */
+const CONFIG_KEY = 'kernel:config', OWNER_KEY = 'kernel-owner', ROTATE_MS = 30 * 86400e3;
 export class KernelConfigStore {
-  constructor(storage, { ib, ibErr = async r => ({ status: r.status, code: 'http_' + r.status, msg: '' }), now = Date.now, random = n => crypto.getRandomValues(new Uint8Array(n)) }) {
+  constructor(storage, { ib, ibErr = async r => ({ status: r.status, code: 'http_' + r.status, msg: '' }), now = Date.now, random = n => crypto.getRandomValues(new Uint8Array(n)), deploy = 'dev', mode = 'legacy' }) {
     this.storage = storage; this.ib = ib; this.ibErr = ibErr; this.now = now; this.random = random; this.inflight = null;
+    this.deploy = typeof deploy === 'string' && deploy ? deploy : 'dev'; this.mode = mode === 'kernel' ? 'kernel' : 'legacy'; this.gen = null;
+  }
+  // 一个 Durable Object 实例只属于一次部署：代号算一次就记住
+  async ownerGen() {
+    if (this.gen != null) return this.gen;
+    const o = (await this.storage.get(OWNER_KEY)) || {};
+    if (o.deploy === this.deploy && Number.isSafeInteger(o.gen)) return (this.gen = o.gen);
+    const next = { deploy: this.deploy, gen: (Number.isSafeInteger(o.gen) ? o.gen : 0) + 1 };
+    await this.storage.put(OWNER_KEY, next);
+    return (this.gen = next.gen);
   }
   // 同一个实例里同时来的 get 共用一次刷新，免得连着换两次令牌、把刚拿到的那个作废
   get({ machineId }) {
@@ -50,7 +63,7 @@ export class KernelConfigStore {
     const cur = (c.keys || []).at(-1);
     if (!cur || now - cur.at > ROTATE_MS) { c.keys = [...(c.keys || []), { kid: 'k' + hex(this.random(5)), key: b64url(this.random(32)), at: now }].slice(-2); dirty = true; }
     if (dirty) await this.storage.put(CONFIG_KEY, c);
-    return this.view(c);
+    return { ...this.view(c), owner: { mode: this.mode, gen: await this.ownerGen() } };
   }
   view(c) {
     const cur = c.keys.at(-1);
@@ -82,10 +95,13 @@ export async function classifyKernelResponse(r) {
   const version = r.headers.get('x-xin-kernel');   // 内核文件名里的哈希：和这次部署的不一样就该升级了
   if (version) {
     let d = null; try { d = await r.json(); } catch { /* 坏了 */ }
-    if (d && d.ok === true) return { kind: 'ok', data: d.data, version };
+    // 外壳收到过期望以后，回应都带 owner（状态进程的情况）；usage 再带 ops（各操作耗时）
+    if (d && d.ok === true) return { kind: 'ok', data: d.data, version, ...(d.owner && typeof d.owner === 'object' ? { owner: d.owner } : {}), ...(d.ops && typeof d.ops === 'object' ? { ops: d.ops } : {}) };
+    // 主人暂时不在（状态进程正在重起或排空）：确定没执行，稍等再来
+    if (d && d.executed === false && d.error === 'owner_unavailable') return { kind: 'not_sent', reason: 'owner_unavailable', retryAfter: Math.min(60, Math.max(1, Number(d.retryAfter) || 3)), version };
     if (d && d.executed === false) return { kind: 'not_sent', reason: d.error === 'kernel_auth' ? (d.reason === 'unknown_kid' ? 'unknown_kid' : 'kernel_auth') : d.error, version };
     if (d && d.executed === true) return { kind: 'executed_error', error: d.error, msg: d.msg, version };
-    return { kind: 'unknown', reason: 'bad_kernel_reply', version };
+    return { kind: 'unknown', reason: d && d.executed === 'unknown' && typeof d.error === 'string' && /^[a-z][a-z0-9_]{0,39}$/.test(d.error) ? d.error : 'bad_kernel_reply', version };
   }
   if (r.status === 401 || r.status === 403) return { kind: 'not_sent', reason: 'gate_auth' };
   if (r.status === 503) return { kind: 'not_sent', reason: 'waking', retryAfter: Number(r.headers.get('retry-after')) || 3 };
@@ -97,8 +113,8 @@ export async function classifyKernelResponse(r) {
   }
   return { kind: 'unknown', reason: 'http_' + r.status };
 }
-export async function kernelRequest({ config, agentPath, op, args, timeoutMs, fetchImpl, now }) {
-  const body = JSON.stringify({ agent: agentPath, op, args: args || {} });
+export async function kernelRequest({ config, agentPath, op, args, owner, timeoutMs, fetchImpl, now }) {
+  const body = JSON.stringify({ agent: agentPath, op, args: args || {}, ...(owner ? { owner } : {}) });
   let r;
   try { r = await kernelFetch({ config, method: 'POST', target: '/xin/op', body, timeoutMs, fetchImpl, now }); }
   catch (e) { return { kind: 'unknown', reason: e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? 'timeout' : 'network' }; }

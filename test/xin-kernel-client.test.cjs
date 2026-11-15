@@ -26,7 +26,7 @@ async function store(o = {}) {
   const storage = o.storage || memStorage(), ports = o.ports || fakePorts();
   let now = o.now || T0;
   let r = 0; const random = n => Uint8Array.from({ length: n }, () => (r++ % 251) + 1);
-  const s = new KernelConfigStore(storage, { ib: ports.ib, now: () => now, random });
+  const s = new KernelConfigStore(storage, { ib: ports.ib, now: () => now, random, ...('deploy' in o ? { deploy: o.deploy } : {}), ...('mode' in o ? { mode: o.mode } : {}) });
   return { s, storage, ports, setNow: t => { now = t; } };
 }
 
@@ -40,6 +40,20 @@ test('第一次 get：发布私有端口（换新令牌）、生成钥匙，还�
   assert.strictEqual(Buffer.from(c.key, 'base64url').length, 32);
   assert.deepStrictEqual(Object.keys(c.keys), [c.kid]);
   assert.strictEqual(c.installedKid, null);
+});
+
+test('部署代号：同一部署不变；换了部署（包括回滚到旧版本号）加一；期望跟 XIN_STATE_OWNER', async () => {
+  const storage = memStorage();
+  const a = await store({ storage, deploy: 'v1' });
+  assert.deepStrictEqual((await a.s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 1 }, '没说要 kernel 就是 legacy');
+  assert.deepStrictEqual((await a.s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 1 }, '同一部署不变');
+  const b = await store({ storage, deploy: 'v2', mode: 'kernel' });
+  assert.deepStrictEqual((await b.s.get({ machineId: 'm1' })).owner, { mode: 'kernel', gen: 2 });
+  const c = await store({ storage, deploy: 'v1', mode: 'kernel' });
+  assert.deepStrictEqual((await c.s.get({ machineId: 'm1' })).owner, { mode: 'kernel', gen: 3 }, '回滚到旧版本号也是一次新部署');
+  assert.deepStrictEqual(storage.m.get('kernel-owner'), { deploy: 'v1', gen: 3 });
+  assert.deepStrictEqual((await (await store({ storage, deploy: 'v1', mode: 'bogus' })).s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 3 }, '认不得的模式按 legacy');
+  assert.deepStrictEqual((await (await store()).s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 1 }, '默认部署 dev、模式 legacy');
 });
 
 test('第二次 get 不再调 InstaBox；同时来的两个 get 也只发布一次', async () => {
@@ -114,6 +128,25 @@ test('分类：有内核头的三种', async () => {
   assert.deepStrictEqual((await classify(resp(503, { ok: false, executed: false, error: 'kernel_busy' }, K))).r, { kind: 'not_sent', reason: 'kernel_busy', version: '0123456789ab' });
   assert.deepStrictEqual((await classify(resp(401, { ok: false, executed: false, error: 'kernel_auth', reason: 'unknown_kid' }, K))).r, { kind: 'not_sent', reason: 'unknown_kid', version: '0123456789ab' });
   assert.deepStrictEqual((await classify(resp(401, { ok: false, executed: false, error: 'kernel_auth', reason: 'replay' }, K))).r, { kind: 'not_sent', reason: 'kernel_auth', version: '0123456789ab' });
+});
+
+test('分类：主人暂时不在算没执行（带 retryAfter）；成功带上主人状态和耗时；不确定带上原因', async () => {
+  const owner = { want: 'kernel', mode: 'kernel', epoch: 3, phase: 'running' }, ops = { all: { n: 1, p50: 2, p95: 2, max: 2 }, byOp: {} };
+  assert.deepStrictEqual((await classify(resp(503, { ok: false, executed: false, error: 'owner_unavailable', retryAfter: 5, owner }, K))).r, { kind: 'not_sent', reason: 'owner_unavailable', retryAfter: 5, version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(503, { ok: false, executed: false, error: 'owner_unavailable' }, K))).r, { kind: 'not_sent', reason: 'owner_unavailable', retryAfter: 3, version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(200, { ok: true, data: { a: 1 }, owner }, K))).r, { kind: 'ok', data: { a: 1 }, version: '0123456789ab', owner });
+  assert.deepStrictEqual((await classify(resp(200, { ok: true, data: { a: 1 }, owner, ops }, K))).r, { kind: 'ok', data: { a: 1 }, version: '0123456789ab', owner, ops });
+  assert.deepStrictEqual((await classify(resp(200, { ok: false, executed: 'unknown', error: 'agent_timeout' }, K))).r, { kind: 'unknown', reason: 'agent_timeout', version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(200, { ok: false, executed: 'unknown', error: 'state_disconnected' }, K))).r, { kind: 'unknown', reason: 'state_disconnected', version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(200, { ok: false, executed: 'unknown', error: { x: 1 } }, K))).r, { kind: 'unknown', reason: 'bad_kernel_reply', version: '0123456789ab' }, '原因不是短代号就不照抄');
+});
+
+test('请求：有期望就放进请求体，没有就不带', async () => {
+  const { kernelRequest } = await load('../src/xin-kernel.js');
+  const seen = [], fetchImpl = async (url, init) => { seen.push(JSON.parse(init.body)); return resp(200, { ok: true, data: {} }, K); };
+  await kernelRequest({ config: CONFIG, agentPath: AGENT, op: 'usage', args: {}, owner: { mode: 'kernel', gen: 4 }, fetchImpl });
+  await kernelRequest({ config: CONFIG, agentPath: AGENT, op: 'usage', args: {}, fetchImpl });
+  assert.deepStrictEqual(seen, [{ agent: AGENT, op: 'usage', args: {}, owner: { mode: 'kernel', gen: 4 } }, { agent: AGENT, op: 'usage', args: {} }]);
 });
 
 test('分类：没有内核头的是 InstaBox 自己回的', async () => {
