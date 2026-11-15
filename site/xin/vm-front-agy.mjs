@@ -34,8 +34,11 @@ function command(binary,args,cwd,signal,ms=25000){
   ch.on('error',e=>done(e));ch.on('close',code=>signal?.aborted?done(Error('前台已停止')):done(null,{code,out}));
  });
 }
+// 核对额度常是电脑醒来后第一次调 Antigravity：CLI 先检查更新、再刷新过期的令牌。2026-11-15 正式站暂停几个小时后醒来实测约 26 秒，
+// 原来写死的 25 秒正好不够，那一轮回复失败。平时 1–2 秒就回，放宽只影响冷启动；和上面等预热一样，参考 Codex、opencode：慢的时候不急着放弃。
+export const AGY_QUOTA_MS=Number(process.env.XIN_AGY_QUOTA_MS)||90000;
 async function quota(binary,cwd,signal){
- const requestedAt=Date.now(),r=await command(binary,['-p','/usage','--output-format','stream-json','--print-timeout','25s'],cwd,signal);
+ const requestedAt=Date.now(),r=await command(binary,['-p','/usage','--output-format','stream-json','--print-timeout',Math.max(1,Math.ceil(AGY_QUOTA_MS/1000))+'s'],cwd,signal,AGY_QUOTA_MS);
  if(r.code!==0)throw Error('暂时无法核对 Gemini 的实际额度');
  const result=r.out.split('\n').flatMap(l=>{try{const o=JSON.parse(l);return o.event==='result'?[o.result]:[];}catch{return [];}}).at(-1);
  return {...antigravityQuota(result,Date.now(),AGY_FRONT_MODEL),requestedAt};

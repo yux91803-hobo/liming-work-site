@@ -16,7 +16,7 @@ function fixture(t,mode='ok'){
  const record=o=>fs.appendFileSync(log,JSON.stringify(o)+'\\n'),send=o=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...o})+'\\n');
  record({argv:a,key:!!process.env.XIN_CODEX_KEY,cwd:process.cwd()});
  const rows=()=>fs.readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse);
- if(a.includes('/usage')){const count=rows().filter(x=>x.argv?.includes('/usage')).length;console.log(JSON.stringify({event:'result',result:{command:{data:{groups:[
+ if(a.includes('/usage')){const slow=${JSON.stringify(root+'/slow-usage-ms')};if(fs.existsSync(slow))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(fs.readFileSync(slow,'utf8')));const count=rows().filter(x=>x.argv?.includes('/usage')).length;console.log(JSON.stringify({event:'result',result:{command:{data:{groups:[
  {buckets:[{id:'3p-5h',remaining_fraction:0,reset_time:new Date(Date.now()+3600000).toISOString()}]},
  {buckets:[{id:'gemini-argon-wtu-weekly',remaining_fraction:0,reset_time:new Date(Date.now()+3600000).toISOString()}]},
  mode==='weekly'?{buckets:[{id:'gemini-weekly',remaining_fraction:0,reset_time:new Date(Date.now()+4*86400000).toISOString()},{id:'gemini-5h',window:'5h',disabled:true,remaining_fraction:.857}]}:
@@ -71,6 +71,28 @@ test('前台默认用 Gemini 4 Hydrogen（思考强度中），Claude、Argon �
  assert.equal(fs.existsSync(f.root+'/must-not-exist'),false);
  const session=f.call('history',{sid:sent.sid}).session;assert.equal(session.model,'gemini-4-hydrogen');
  const q=JSON.parse(fs.readFileSync(f.control+'/front-antigravity-quota.json'));assert.equal(q.blocked,false);assert.equal(q.buckets.length,2);assert.ok(q.buckets.every(b=>/^gemini-(?!argon-)/.test(b.id)),'只看 Gemini 组：Claude、Argon 用完不算');
+});
+// 2026-11-15 正式站：电脑暂停几个小时后醒来，第一次调 Antigravity 核对额度，CLI 先检查更新、再刷新过期令牌，用了约 26 秒，
+// 原来写死的 25 秒时限正好不够，那一轮回复失败。时限改由 XIN_AGY_QUOTA_MS 管（默认 90 秒），这里用缩小的时间模拟冷启动。
+test('Antigravity 冷启动慢：额度核对的时限由 XIN_AGY_QUOTA_MS 管，比冷启动还短才报「暂时无法核对」',async t=>{
+ const f=fixture(t);fs.writeFileSync(f.root+'/slow-usage-ms','1500');
+ f.env.XIN_AGY_QUOTA_MS='500';
+ const short=f.call('send',{agent:'codex',text:'你好'}),failed=await f.wait(short.run);
+ assert.equal(failed.events.find(e=>e.t==='done').ok,false,'时限比冷启动短：这一轮失败');
+ assert.ok(failed.events.some(e=>e.t==='err'&&/暂时无法核对/.test(e.text||'')),JSON.stringify(failed.events));
+ const usage=f.rows(f.log).find(r=>r.argv?.includes('/usage'));assert.equal(usage.argv[usage.argv.indexOf('--print-timeout')+1],'1s','CLI 自己的时限跟着一起放宽');
+});
+test('Antigravity 冷启动慢：时限够的时候照常用 Hydrogen 回答',async t=>{
+ const f=fixture(t);fs.writeFileSync(f.root+'/slow-usage-ms','1500');
+ f.env.XIN_AGY_QUOTA_MS='8000';
+ const sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run),end=done.events.find(e=>e.t==='done');
+ assert.equal(end.ok,true,JSON.stringify(done.events));assert.equal(end.model,'gemini-4-hydrogen');
+ const usage=f.rows(f.log).find(r=>r.argv?.includes('/usage'));assert.equal(usage.argv[usage.argv.indexOf('--print-timeout')+1],'8s');
+});
+test('额度核对默认时限盖得住实测的冷启动（26 秒），默认 90 秒',async t=>{
+ const f=fixture(t);delete f.env.XIN_AGY_QUOTA_MS;
+ const r=spawnSync(process.execPath,['--input-type=module','-e',"const m=await import("+JSON.stringify(require('node:url').pathToFileURL(path.join(__dirname,'../site/xin/vm-front-agy.mjs')).href)+");console.log(m.AGY_QUOTA_MS)"],{env:f.env,encoding:'utf8',timeout:20000});
+ assert.equal(r.status,0,r.stderr);assert.equal(Number(r.stdout.trim()),90000);
 });
 test('Hydrogen 的图片提示与直接视觉块一致，读图聊天不派活',async t=>{
  const f=fixture(t),file=f.work+'/uploads/photo.png',bytes=Buffer.from('synthetic-png-fixture');fs.writeFileSync(file,bytes);
