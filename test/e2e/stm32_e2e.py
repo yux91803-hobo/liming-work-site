@@ -2057,11 +2057,11 @@ async def main():
         await pt.evaluate("LimingXinChat.tasks()")
         await pt.wait_for_selector('.xc-tres')
         rs = await pt.evaluate(TASK_RES_JS)
-        check('任务做完：聊天最后小芯把结果直接说出来，和别的回答一样是一条消息（正文里的路径能点、能复制、「看过程」），没有卡片的标题和「查看详情」，小芯岛不再标在做',
-              rs == ['我编好了：/data/workspace/blink/build/app.hex，直接烧录就行。', True, True, False, True, ['复制', '看过程'], True], rs)
+        check('任务做完：聊天最后小芯把结果直接说出来，和别的回答一样是一条消息（正文里的路径能点、能复制、「详情」），没有卡片的标题和「查看详情」，小芯岛不再标在做',
+              rs == ['我编好了：/data/workspace/blink/build/app.hex，直接烧录就行。', True, True, False, True, ['复制', '详情'], True], rs)
         await pt.evaluate("LimingXinChat.tasks()"); await pt.wait_for_timeout(400)
         check('同一次结果只说一次（再轮询不重复）', await pt.evaluate("document.querySelectorAll('.xc-tres').length") == 1)
-        await pt.click('.xc-tres .xc-tact:has-text("看过程")'); await pt.wait_for_selector('.xc-sheet .xc-tk-log')
+        await pt.click('.xc-tres .xc-tact:has-text("详情")'); await pt.wait_for_selector('.xc-sheet .xc-tk-log')
         tk = await pt.evaluate(TASK_SHEET_JS)
         check('详情：一页里写着状态、类别、工作目录（能点开）、要求、每一步说的话和执行的命令（去掉 bash 外壳，点开看输出）；做完的能补充后继续（没有说明小字）',
               tk[:3] == ['编译 LED', '已完成写代码', '/data/workspace/blink'] and tk[3] == '要求编译 blink 工程' and tk[4] == ['make'] and tk[5]

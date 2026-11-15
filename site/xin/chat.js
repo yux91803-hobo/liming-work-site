@@ -1538,12 +1538,12 @@
     if (body.querySelector('.xc-code, .xc-tbl')) m.e.classList.add('wide');
     return put(m.e);
   }
-  // 任务结果下面那行小操作：要你处理时一个主按钮（审批 / 回复 / 登录），网页成品「打开网页」，「看过程」打开这件活的详情
+  // 任务结果下面那行小操作：要你处理时一个主按钮（审批 / 回复 / 登录），网页成品「打开网页」，「详情」打开这件活的详情页（站长 2026-11-16 定的叫法，原来叫「看过程」）
   function taskActs(e, t) {
     var a = e.querySelector('.xc-acts'); if (!a) { a = h('div', 'xc-acts'); e.appendChild(a); }
     if (t.status === 'waiting') { var w = h('button', 'xc-tact on', waitAction(t)); w.type = 'button'; w.addEventListener('click', function () { openTask(t.sid); }); a.insertBefore(w, a.firstChild); }
     var pv = previewLink(t); if (pv) { pv.className = 'xc-tact pv xc-preview'; a.appendChild(pv); }
-    var v = h('button', 'xc-tact', '看过程'); v.type = 'button'; v.addEventListener('click', function () { openTask(t.sid); }); a.appendChild(v);
+    var v = h('button', 'xc-tact', '详情'); v.type = 'button'; v.addEventListener('click', function () { openTask(t.sid); }); a.appendChild(v);
   }
   // 合进轮询到的任务情况：live 时，从「在做」变成结束的，聊天最后说结果；不在看那个对话就让页面上的小芯冒气泡
   function setTasks(arr, live) {
@@ -3195,7 +3195,7 @@
         if(list.querySelector('[data-tres="'+key+'"]'))return null;
       }
       m = aiMsg(run); var body = md(ev.text); m.b.appendChild(body); msgActs(m.e, ev.text);
-      // 后台做完、小芯转达的那一句：和普通回答一样，下面多「看过程」（不再换成卡片）
+      // 后台做完、小芯转达的那一句：和普通回答一样，下面多「详情」（不再换成卡片）
       if(ev.taskResult){m.e.dataset.tres=key;m.e.dataset.tsid=tr.sid;m.e.classList.add('xc-tres');taskActs(m.e,S.tinfo[tr.sid]||{sid:tr.sid,status:tr.status});}
       if (body.querySelector('.xc-code, .xc-tbl')) m.e.classList.add('wide');
       e = m.e;
