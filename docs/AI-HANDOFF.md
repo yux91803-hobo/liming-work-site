@@ -175,7 +175,7 @@
 
 - 站长 18:0x 回「可以的」同意合并。#148 北京 18:13 合并（`1498c45`，squash）。正式运行 43702977504：第 1 次联调失败、18:25 自动回滚到 #147（原因见 [CHANGES](CHANGES.md) 最新一条：电脑暂停约 4 小时后醒来，Antigravity 冷启动约 26 秒，超过额度核对写死的 25 秒；和状态模式无关）；重跑部署作业一次，18:43–18:49 全绿，联调 13 项 PASS，含 `PASS state owner is the resident process …`。
 - 上线后只读核对（约 18:55，经 InstaBox exec）全部符合：记录被状态进程锁着；`kernel-owner.json` 0600、`gen 2`（Durable Object 读得到版本号，风险排除）；外壳 `vm-kernel-e1a29f7279b5`、状态进程 `vm-agent-2fd96a609bd5 serve --parent-pipe`（父进程是外壳）；没有看门狗；状态事件一次 start、一次 ready；切换前备份一份。
-- 空闲自动暂停：待核对（约 19:41 只读看 `GET /v1/machines/{id}`）。
+- 空闲自动暂停：19:41 电脑还醒着。只读查了原因：CPU 负载 0.07，状态进程 0% CPU（没活时一分钟一检）；外壳日志里 19:08、19:21 有人打开过网页（`greet`、`tasks`），按 InstaBox 的规则算「在用」，暂停计时从那以后重算，所以还没暂停。桌面、Codex、Antigravity hub 这些常驻进程都是几天前就在的，今天早上照样能暂停。最终看到它自己暂停的结果补在下一条记录里。
 - 冷启动修复在分支 `claude/xiaoxin-architecture-review-2dkunv`：`XIN_AGY_QUOTA_MS` 默认 90 秒，测试先红后绿；跟这条记录一起开 PR。
 - 分支处理：#148 是 squash 合并，按规矩要从 main 重开分支，但强推被会话的自动权限拦了；改成在旧分支上合并 main（`a7f0567`，内容和 main 一样），普通推送。
 - 站长新定的规矩：小芯的动作不合理可以直接改良（已写进 CLAUDE.md）。
