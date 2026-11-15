@@ -55,6 +55,7 @@
   "vm-kernel-state.mjs::createStateServer": { "calls": { "unlinkSync": 2, "mkdirSync": 1, "chmodSync": 2 }, "kind": "owner", "what": "状态进程的套接字目录和套接字文件：只有拿到独占锁的主人建和删" },
   "vm-kernel.mjs::NonceStore.constructor": { "calls": { "DatabaseSync": 1, "chmodSync": 1 }, "kind": "shell", "what": "内核外壳的防重放库 kernel.sqlite" },
   "vm-kernel.mjs::createKernel": { "calls": { "mkdirSync": 2, "appendFileSync": 1, "renameSync": 1 }, "kind": "shell", "what": "内核外壳的日志：追加，太大就把当前这份改名成上一份" },
+  "vm-kernel.mjs::createStateKeeper": { "calls": { "writeFileSync": 1, "renameSync": 1, "unlinkSync": 1 }, "kind": "shell", "what": "内核外壳存下的状态模式期望 kernel-owner.json（模式、代号、控制器路径）：先写临时文件再改名，0600；外壳自己重启后按它拉起状态进程" },
   "vm-kernel.mjs::takeLock": { "calls": { "mkdirSync": 1, "openSync": 1, "writeSync": 1, "unlinkSync": 1 }, "kind": "shell", "what": "启动内核外壳时的锁文件：独占创建，用完删掉" },
   "vm-kernel.mjs::writeServiceUnit": { "calls": { "mkdirSync": 1, "writeFileSync": 1, "renameSync": 1, "unlinkSync": 1, "openSync": 1 }, "kind": "shell", "what": "内核外壳持久服务及安装记录的原子写入、同步与恢复，不是业务状态写者" },
   "vm-kernel.mjs::restoreService": { "calls": { "unlinkSync": 1 }, "kind": "shell", "what": "回退未完成的内核外壳服务安装，移除本次新建配置；不删除用户数据" },
