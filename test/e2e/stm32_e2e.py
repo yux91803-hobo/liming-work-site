@@ -87,10 +87,11 @@ XIN_LIVE_TASK = [
 XIN_TASK_RUN = [{'t': 'user', 'text': '编译 blink 工程'}, {'t': 'text', 'text': '我先看看工程。'},
                 {'t': 'tool_end', 'id': 'c1', 'name': 'Bash', 'detail': "/bin/bash -lc 'make'", 'ok': True, 'out': 'arm-none-eabi-gcc -c main.c\nbuild/app.hex'},
                 {'t': 'text', 'text': '编好了：`/data/workspace/blink/build/app.hex`'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 95000}]
-TASK_STRIP_JS = """[!!document.querySelector('.xc-msgs .xc-task'), !document.querySelector('.xc-tstrip').hidden, document.querySelector('.xc-tstrip').textContent]"""
+TASK_ISLE_JS = """[!!document.querySelector('.xc-msgs .xc-task'), document.querySelector('.xc-isle').classList.contains('live'), document.querySelector('.xc-isle-n').textContent,
+  document.querySelector('.xc-isle').getAttribute('aria-label').includes('1 个任务进行中')]"""
 TASK_RES_JS = """(() => { const r = document.querySelector('.xc-tres'); return [r.querySelector('.xc-tres-h').textContent, r.querySelector('.xc-md').textContent, r.querySelector('.xc-tres-f span').textContent,
   !!r.querySelector('.xc-path'), document.querySelector('.xc-msgs').lastElementChild === r, !!document.querySelector('.xc-msgs .xc-task'),
-  [...r.querySelectorAll('.xc-task-btn')].map(b => b.textContent), document.querySelector('.xc-tstrip').hidden] })()"""
+  [...r.querySelectorAll('.xc-task-btn')].map(b => b.textContent), !document.querySelector('.xc-isle').classList.contains('live') && document.querySelector('.xc-isle-n').textContent === ''] })()"""
 TASK_CENTER_JS = """(() => { const p = document.querySelector('.xc-sess'); return [[...p.querySelectorAll('.xc-set-h')].map(e => e.textContent), [...p.querySelectorAll('.xc-tl-i b')].map(e => e.textContent),
   [...p.querySelectorAll('.xc-tl-m')].map(e => e.textContent), [...p.querySelectorAll('.xc-tl-from')].map(e => e.textContent), p.querySelector('.xc-dailyst').textContent,
   [...p.querySelectorAll('.xc-tv-st li')].map(e => e.textContent)] })()"""
@@ -1852,7 +1853,7 @@ async def main():
         await pf.evaluate("LimingXinChat.state.sid = 'shist00001'")
         await pf.click('.xc-list-b'); await pf.wait_for_selector('.xc-sli'); await pf.wait_for_timeout(350)
         vis = "[...document.querySelectorAll('.xc-sli')].filter(e => !e.hidden).map(e => e.querySelector('.xc-si-t').textContent)"
-        f1 = await pf.evaluate("[" + vis + ", document.querySelector('.xc-more-b').textContent, document.querySelector('.xc-dr-h').textContent, document.querySelectorAll('.xc-sli').length]")
+        f1 = await pf.evaluate("[" + vis + ", document.querySelector('.xc-more-b').textContent, [...document.querySelector('.xc-dr-h').childNodes].map(n => n.textContent), document.querySelectorAll('.xc-sli').length]")
         await pf.click('.xc-more-b'); await pf.wait_for_timeout(100)
         f2 = await pf.evaluate("[" + vis + ".length, document.querySelector('.xc-more-b').textContent, document.querySelector('.xc-more-b').getAttribute('aria-expanded')]")
         await pf.click('.xc-more-b'); await pf.wait_for_timeout(100)
@@ -1861,7 +1862,7 @@ async def main():
         await pf.click('.xc-sa-del'); await pf.click('.xc-sa-del'); await pf.wait_for_timeout(300)
         f4 = await pf.evaluate("[" + vis + ", document.querySelector('.xc-more-b').textContent]")
         check('对话多了侧边栏不拉长：只露最近 5 个和正在看的那个（排第 7），「更多对话（3）」展开全部、「收起」收回；删掉一个后面的补上来',
-              f1 == [['对话 1', '对话 2', '对话 3', '对话 4', '对话 5', '对话 7'], '更多对话（3）', '对话 · 9', 9] and f2 == [9, '收起', 'true'] and f3 == 6
+              f1 == [['对话 1', '对话 2', '对话 3', '对话 4', '对话 5', '对话 7'], '更多对话（3）', ['对话', '9'], 9] and f2 == [9, '收起', 'true'] and f3 == 6
               and f4 == [['对话 2', '对话 3', '对话 4', '对话 5', '对话 6', '对话 7'], '更多对话（2）'], (f1, f2, f3, f4))
         await pf.click('.xc-dr-x'); await pf.wait_for_timeout(300)
         xf['many'] = 0
@@ -1921,11 +1922,12 @@ async def main():
         pw = await page(b)
         xw = await xin_mock(pw, authed=True)
         await pw.goto(BASE + '/'); await pw.wait_for_timeout(1000)
-        await pw.evaluate("LimingXinChat.open()"); await pw.wait_for_selector('.xc.show .xc-scr-b')
-        await pw.click('.xc-scr-b'); await pw.wait_for_function("(() => { const f = document.querySelector('.xs .xs-fr'); return f && !f.hidden && f.src.includes('/icons/icon-192.png'); })()", timeout=8000)
+        await pw.evaluate("LimingXinChat.open()"); await pw.wait_for_selector('.xc.show .xc-isle:not([disabled])')
+        await pw.click('.xc-isle'); await pw.wait_for_selector('.xc-work.in .xc-scr-b')
+        await pw.click('.xc-work .xc-scr-b'); await pw.wait_for_function("(() => { const f = document.querySelector('.xs .xs-fr'); return f && !f.hidden && f.src.includes('/icons/icon-192.png'); })()", timeout=8000)
         st = await pw.evaluate("""[!document.querySelector('.xs').hidden, document.querySelector('.xs-mode [aria-checked=true]').dataset.mode, document.querySelector('.xs-tip').textContent,
           (() => { const r = document.querySelector('.xs-fr').getBoundingClientRect(); return r.width >= innerWidth - 1 && r.height > innerHeight * 0.6; })(), document.body.classList.contains('xs-open')]""")
-        check('小芯的屏幕：标题栏点「屏幕」全屏打开它的桌面，默认只看（提示说怎么接管），画面占满', xw['screen'] == [{'control': False}] and st[:2] == [True, 'view'] and '接管' in st[2] and st[3] and st[4], (xw['screen'], st))
+        check('小芯的屏幕：点小芯岛、面板里「看屏幕」全屏打开它的桌面，默认只看（提示说怎么接管），画面占满', xw['screen'] == [{'control': False}] and st[:2] == [True, 'view'] and '接管' in st[2] and st[3] and st[4], (xw['screen'], st))
         await pw.click('.xs-mode [data-mode=ctl]'); await pw.wait_for_function("document.querySelector('.xs .xs-fr').src.includes('ctl=1')", timeout=8000)
         st = await pw.evaluate("[document.querySelector('.xs-mode [aria-checked=true]').dataset.mode, document.querySelector('.xs').classList.contains('ctl'), document.querySelector('.xs-tip').textContent]")
         check('小芯的屏幕：点「接管」换成能操作的链接，提示变成接管中', xw['screen'][-1] == {'control': True} and st[:2] == ['ctl', True] and '接管中' in st[2], (xw['screen'], st))
@@ -2034,14 +2036,14 @@ async def main():
         await pt.goto(BASE + '/#xin'); await pt.wait_for_selector('.xc.show .xc-row textarea'); await pt.wait_for_timeout(300)
         await pt.fill('.xc-row textarea', '编译一下 blink，后台做'); await pt.keyboard.press('Enter')
         await pt.wait_for_function(CHAT_DONE, timeout=8000)
-        await pt.wait_for_function("!document.querySelector('.xc-tstrip').hidden", timeout=8000)
-        cd = await pt.evaluate(TASK_STRIP_JS)
-        check('后台任务：聊天里不放任务卡片；输入框上面一条「在做 1 件事」', cd == [False, True, '1 个任务进行中'], cd)
-        # 还在做的时候改要求：点那条进任务列表，点任务打开详情，写了发给它（它手上这一步做完就按新的来），同一页也能停
-        await pt.click('.xc-tstrip'); await pt.wait_for_selector('.xc-sheet .xc-tl-i')
-        heads = await pt.evaluate("[document.querySelector('.xc-sh-hd b').textContent, [...document.querySelectorAll('.xc-sheet .xc-set-h')].map(e => e.textContent), [...document.querySelectorAll('.xc-tl-i b')].map(e => e.textContent)]")
-        check('点「在做 1 件事」：任务列表（标题「任务」、分组「进行中」，任务名前面不加「我在做：」）', heads == ['任务', ['进行中'], ['编译 LED']], heads)
-        await pt.click('.xc-sheet .xc-tl-i'); await pt.wait_for_selector('.xc-sheet .xc-tk-in')
+        await pt.wait_for_function("document.querySelector('.xc-isle').classList.contains('live')", timeout=8000)
+        cd = await pt.evaluate(TASK_ISLE_JS)
+        check('后台任务：聊天里不放任务卡片；标题栏的小芯岛标出在做 1 件（读屏念「1 个任务进行中」）', cd == [False, True, '1', True], cd)
+        # 还在做的时候改要求：点小芯岛展开它在做的事，点任务打开详情，写了发给它（它手上这一步做完就按新的来），同一页也能停
+        await pt.click('.xc-isle'); await pt.wait_for_selector('.xc-work.in .wk-c[data-tsid=stask00001]')
+        heads = await pt.evaluate("[document.querySelector('.xc-isle').getAttribute('aria-expanded'), [...document.querySelectorAll('.xt-tasks .wk-h')].map(e => e.firstChild.textContent), [...document.querySelectorAll('.xt-tasks .wk-c .wk-t')].map(e => e.textContent)]")
+        check('点小芯岛：展开它在做的事（分组「进行中」，任务名前面不加「我在做：」）', heads == ['true', ['进行中'], ['编译 LED']], heads)
+        await pt.click('.xc-work .wk-c[data-tsid=stask00001]'); await pt.wait_for_selector('.xc-sheet .xc-tk-in')
         await pt.click('.xc-sheet .xc-tk-in')
         live = await pt.evaluate("[document.querySelector('.xc-tk-in').placeholder, [...document.querySelectorAll('.xc-tk-act button')].map(b => b.textContent)]")
         await pt.keyboard.type('先别编译，改成 PA1'); await pt.keyboard.press('Enter')
@@ -2055,7 +2057,7 @@ async def main():
         await pt.evaluate("LimingXinChat.tasks()")
         await pt.wait_for_selector('.xc-tres')
         rs = await pt.evaluate(TASK_RES_JS)
-        check('任务做完：聊天最后小芯说结果（标题就是任务名、正文里的路径能点、用时、「详情」），聊天里没有卡片，任务条收起',
+        check('任务做完：聊天最后小芯说结果（标题就是任务名、正文里的路径能点、用时、「详情」），聊天里没有卡片，小芯岛不再标在做',
               rs == ['编译 LED', '我编好了：/data/workspace/blink/build/app.hex，直接烧录就行。', '用时 2 分钟', True, True, False, ['查看详情'], True], rs)
         await pt.evaluate("LimingXinChat.tasks()"); await pt.wait_for_timeout(400)
         check('同一次结果只说一次（再轮询不重复）', await pt.evaluate("document.querySelectorAll('.xc-tres').length") == 1)

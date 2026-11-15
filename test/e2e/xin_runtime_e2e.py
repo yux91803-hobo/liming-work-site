@@ -54,10 +54,11 @@ async def main():
                 'result':{'ok':False,'text':'结果已准备','at':now}}
         st['tasks']=[task]
         await pg.evaluate('LimingXinChat.tasks()')
-        await pg.wait_for_selector('.xc-tstrip:not([hidden])')
-        await pg.locator('.xc-tstrip').click()
-        await pg.wait_for_selector('.xc-tl-i')
-        await pg.locator('.xc-tl-i').click()
+        # 等你处理的任务：标题栏的小芯岛标出来，点开从面板里找到它
+        await pg.wait_for_function("document.querySelector('.xc-isle').classList.contains('wait')")
+        await pg.locator('.xc-isle').click()
+        await pg.wait_for_selector('.xc-work.in .wk-c[data-tsid=stask00001]')
+        await pg.locator('.wk-c[data-tsid=stask00001]').click()
         await pg.wait_for_selector('.xc-tk-act .xc-btn')
         assert await pg.locator('.xc-tk-act .xc-btn').all_text_contents() == ['批准','拒绝']
         assert await pg.locator('.xc-tk-in').count() == 0
@@ -72,8 +73,9 @@ async def main():
         task['question']='请输入需要分析的目标名称'
         await pg.locator('.xc-sh-x').click()
         await pg.evaluate('LimingXinChat.tasks()')
-        await pg.locator('.xc-tstrip').click()
-        await pg.locator('.xc-tl-i').click()
+        await pg.locator('.xc-isle').click()
+        await pg.wait_for_selector('.xc-work.in .wk-c[data-tsid=stask00001]')
+        await pg.locator('.wk-c[data-tsid=stask00001]').click()
         await pg.wait_for_selector('.xc-tk-in')
         await pg.locator('.xc-tk-in').fill('main')
         await pg.locator('.xc-tk-act .xc-btn').click()

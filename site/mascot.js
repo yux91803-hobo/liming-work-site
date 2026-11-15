@@ -1774,7 +1774,13 @@
     get mood() { return mood; },
     get plat() { return plat ? { kind: plat.kind, el: plat.el } : null; },
     el: el,
-    portrait: function () { return '<svg class="xc-px xin-portrait" viewBox="0 5.8 20 14.2" aria-hidden="true" shape-rendering="crispEdges">' + draw({ face: 'eyes', armL: 'out', armR: 'out' }, 'xin-portrait-' + (++portraitId)) + '</svg>'; },
+    // 聊天界面用的头像：o.face 表情（同 FACE 的名字，默认常态），o.lx / o.ly 视线（-1…1），o.arms 两只手的姿势
+    portrait: function (o) {
+      o = o || {};
+      var face = FACE[o.face] ? o.face : 'eyes', arm = ARM[o.arms] ? o.arms : 'out';
+      return '<svg class="xc-px xin-portrait" viewBox="0 5.8 20 14.2" aria-hidden="true" shape-rendering="crispEdges">' +
+        draw({ face: face, lx: Math.max(-1, Math.min(1, o.lx | 0)), ly: Math.max(-1, Math.min(1, o.ly | 0)), armL: arm, armR: arm }, 'xin-portrait-' + (++portraitId)) + '</svg>';
+    },
     sleep: function () { setMode('idle'); setMood(''); sleep(); },
     toy: playToy,
     bag: openBag,

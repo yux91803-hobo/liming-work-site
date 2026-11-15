@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """浏览器第二步：用站长的登录（docs/xin-browser-v2-design.md）。
 
-- 任务等你登录：右栏卡片按钮写「登录」；详情里写着要登录哪个网站，三个按钮：
+- 任务等你登录：小芯岛标出待处理，点开面板里卡片按钮写「登录」；详情里写着要登录哪个网站，三个按钮：
   「打开登录窗口」（login_open {sid}，小芯的屏幕直接以接管打开登录窗口）、「已登录，继续」（task_tell approve）、「跳过登录」（task_tell deny）。
 - 详情里写「用你的登录：…」（任务点名的网站）。
 - 设置里「网站登录」：点「查看」才去取列表（不打开不叫醒电脑）；列出网站和保存日期；「删除」；填网址「登录新网站」打开登录窗口，「保存登录」存好。
@@ -59,9 +59,11 @@ async def main():
         # 1. 任务等你登录（电脑宽度，浅色、深色）
         for theme in ('light', 'dark'):
             pg, st = await setup(browser, theme=theme)
-            card = pg.locator('.wk-c[data-tsid=staskwait01] .wk-b')
+            await pg.wait_for_function("document.querySelector('.xc-isle').classList.contains('wait')", timeout=10000)
+            await pg.click('.xc-isle')
+            card = pg.locator('.xc-work.in .wk-c[data-tsid=staskwait01] .wk-b')
             await card.wait_for(timeout=10000)
-            ui.check('%s：右栏等你登录的任务，按钮写「登录」' % theme, (await card.inner_text()).strip() == '登录', await card.inner_text())
+            ui.check('%s：小芯岛标出待处理，点开面板里等你登录的任务，按钮写「登录」' % theme, (await card.inner_text()).strip() == '登录', await card.inner_text())
             await card.click()
             await pg.wait_for_selector('.xc-sheet:not([hidden]) .xc-tk-login', timeout=10000)
             det = await pg.evaluate("""(() => { const s = document.querySelector('.xc-sheet');
