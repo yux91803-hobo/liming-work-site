@@ -1,3 +1,20 @@
+# 修改清单 · 2026-11-15（仓库公开前的准备：CI 改用 GitHub 自带的执行机，日志不打邮箱，能清旧日志）
+
+站长 2026-11-15 决定把仓库公开：公开仓库用 GitHub 自带的标准执行机不收费；私有仓库的免费额度每月约 2000 分钟，按现在一天约 26 次 CI、每次约 15 分钟，一个月要 1 万分钟上下。自托管执行机（box、笔记本）站长已在仓库设置里删掉。实际实现 AI：**Claude Code**；自查，没有别的 AI 复核。
+
+- **公开前查了什么（实测）**：
+  - 全部历史的密钥扫描：gitleaks 8.18.4 扫了全部分支和 146 个 PR 的提交（共 593 个），21 处疑似全是测试数据（`ib_test_key` 这类假钥匙、`cid-` / `dup-` 测试消息编号）和浏览器存储的键名，没有真密钥。
+  - 11 月 5 日 `claude/xin-screen` 分支误提交过 `stream.json`（下一个提交就删了，但历史里还在）：小芯电脑桌面的观看链接，带电脑编号和一段令牌。这种链接创建时只给 30 分钟，早已过期（按代码推断，没去试那条旧链接）。
+  - 现在的代码里没有邮箱、电脑编号、Cloudflare 账号 ID；云电脑上的脚本网站不让下载（请求回 404）；登录不靠代码保密（密码只在服务器上核对、每个 IP 每分钟最多 5 次、会话有签名、Cookie 是 HttpOnly / Secure / SameSite=Strict）。
+  - 会公开的个人信息：提交记录里作者 / 提交者的 Gmail（362 处，改不掉，站长已知道）；旧 Actions 日志里部署列表打出的账号邮箱（见下，清掉）。
+- **CI 改用 GitHub 自带的执行机**（`deploy.yml` 三个作业 `runs-on: ubuntu-latest`）：GitHub 文档说自托管执行机「几乎永远不该用于公开仓库」——任何人都能开 PR，在上面跑代码。每个作业本来就只接 main 和本仓库分支的 PR，fork 来的 PR 不跑、拿不到密钥。去掉了只有 box 执行机才用得上的 TCP 垫片设置（`LIMING_TCP_SHIM_FORCE`）。`scripts/box-runner/` 留作参考，开头注明已停用。
+- **部署列表进日志前隐去邮箱**（新脚本 `scripts/ci-redact.mjs`）：「线上现状」那一步打的 wrangler 部署列表里 Author 是账号邮箱（一个 qq.com 地址，每次部署 4 处）。公开后 Actions 日志任何人都能看，现在先把邮箱换成「（邮箱已隐去）」，别的原样。
+- **清理旧日志**（新工作流 `clean-logs.yml`，只能在 Actions 页手动运行，要填 `before`）：删 `before` 以前开始、已经结束的运行的日志；运行记录和结果留着（交接记录、修改清单里链到的运行还打得开）；日志早没了的不算错；删一个歇 0.8 秒（GitHub 对接连的删改有次数限制）。
+- **#146 的修复一起带上**：预热测试按事件等、备份恢复当场收尾（见下一条修改清单）。#146 里换到笔记本执行机的那部分不要了。
+- **测试**：新文件 `test/ci-public.test.cjs` 3 项——所有工作流都用 `ubuntu-latest`；隐去邮箱的脚本（多个邮箱、大写域名、带加号的都隐去，别的原样、行数不变），而且工作流里打部署列表的地方都经过它；清理脚本用假的 GitHub 接口真跑一遍（只删 `before` 以前已结束的、跳过自己、404 不算错、别的错让运行失败但不挡后面的、`before` 不对就停）。改前 3 项都失败，改后通过。
+- **参考**：GitHub 文档 [Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)（自托管执行机和公开仓库）、[Setting repository visibility](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility)（改公开的后果：Actions 历史和日志任何人都能看；以后改回私有，已有的 fork 仍公开）、[GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)（公开仓库免费、免费版每月 12 美元额度）；删日志用 REST 接口 `DELETE /repos/{owner}/{repo}/actions/runs/{run_id}/logs`（[Workflow runs](https://docs.github.com/en/rest/actions/workflow-runs#delete-workflow-run-logs)）；清理脚本照本仓库 `ci-proof` 的写法用 `actions/github-script`，测试也照 `test/ci-proof.test.cjs` 取出脚本正文用假接口真跑。
+- **验证**：本地（Node 22.23.4，北京 12:35–12:55）：`npm run check` 870/870（多出的 3 项是新加的）、内核模式 `npm run test:kernel` 171/171、浏览器测试 12 组全过。
+
 # 修改清单 · 2026-11-15（笔记本 CI 上两项测试失败：一项是测试的固定时间窗，一项查出备份恢复的真问题）
 
 PR #146 把 CI 换到站长笔记本上的执行机（WSL2 Ubuntu 24.04，标签 `self-hosted, laptop`）后，运行 [43668216733](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43668216733) 的 check 挂了 2 项，浏览器测试过了；同一份代码在原来的 box 执行机上全过。站长让在这个分支上修、不删断言。实际实现 AI：**Claude Code**；自查，没有别的 AI 复核。改了 #123 写的预热测试、#125 写的恢复收尾（`restoreStops`）和它的测试，原因见下。
