@@ -198,9 +198,11 @@
 
 - 站长看了 #150 上线的工作台，提了六件事（原话见设计文档 [2026-11-16-xin-workbench-round2-design.md](superpowers/specs/2026-11-16-xin-workbench-round2-design.md)）。分两批：这一批是答案直接说在聊天里、小芯岛动画、用量分网关和 Google、状态字；下一批是天启的独立入口（模型和思考强度选择动画）和小芯干活时的实时终端。
 - 改了什么见 [CHANGES](CHANGES.md) 最新一条。控制器改了 `vm-handoff.mjs`（交付消息的过滤和提示词）、`vm-models.mjs` / `vm-agent.mjs`（用量多给 `sources`）；网页改了 `chat.js` / `chat.css`。
-- 分支 `claude/friendly-hopper-d7392n`：#150 squash 合并后按规矩从最新 main 重开（本地 `checkout -B`，推送用 `--force-with-lease`，旧分支上只有已合并的那一个提交）。
+- 分支 `claude/friendly-hopper-d7392n`：#150 squash 合并后按规矩要从最新 main 重开，但强推被会话的自动权限拦了；改成在旧分支上合并 main（`13f9c4c`，内容和 main 一样），这一批的提交放在上面，普通推送。之后 main 又合进了 #151（只改文档），也是合并进来的，两边的内容都保留。
 - 给下一位：
   - 后台做完的结果现在是普通消息（`.xc-tres` 只是个标记，没有卡片样式），下面「详情」打开这件活的详情页（站长定的叫法，别改回「看过程」）。`publicCompletion` 的过滤按「站长问没问到模型 / 配置 / 实现」决定要不要藏模型名，内部编号只认这件活自己的。
   - 小芯岛开合：`setTray` 里的形状（clip-path）和标题那组（`.xc-wk-id` 的 transform）一起动，药丸用 `.under` 藏在面板下面；`S.trayMv` 为真时 `renderTray` / `renderWork` 只记一笔、展开完再画。要改面板标题那一行，药丸里那一行也要一起改（两边必须一模一样，换的那一帧才看不出）。
+  - 动画能打断：收起途中 `.xc-work.mv.out` 不接点击（`pointer-events: none`），这时再点小芯岛，点击落到药丸上，从当前的位置展开回去；工作台浏览器测试有一条专门核对，别去掉。展开完去掉 `enter` 的计时器记在 `enterTm` 里，开合时一起清掉。
+  - 还没做：触屏上回答下面那一行（复制、详情）按钮只有 28px 高，比 44px 的点按建议小（复制在 #150 就是这样，这一批没变差）。下一批在回答上方加工作记录时一起改这一行。
   - 状态字：`actVerb` 按命令认在干什么，`thinkWord` 轮换；第一句永远是「思考中」（计时那条浏览器测试按「思考中 · 1 秒」核对）。
   - `npm run check` 和浏览器测试同时跑时，`xin-kernel.test.cjs` 的「流：对方断开就停，不再调 poll」偶尔超时（它等固定 150 毫秒）；单独跑稳定通过。别和浏览器测试并行跑它。
