@@ -111,61 +111,91 @@
     return once();
   }
 
-  /* ---------- 面板 ---------- */
+  /* ---------- 面板 ----------
+     标题栏正中是「小芯岛」：小芯的像素脸、它现在在干什么、在做几件、几件等你。点一下从药丸里长出一块面板（.xc-work）：
+     它的电脑、额度、进行中 / 待处理 / 成果；全屏工作台里能「钉住」成右边一栏。 */
   var root, list, statusEl, input, sendBtn, titleEl, sessEl, loginEl, foot, drawerEl, useEl, sheetEl, menuEl, fileEl, attsEl, pickEl, mdlBtn;
+  var isleEl, workEl, jumpEl, palEl, toastEl;
+  var HI = {
+    menu: '<path d="M4.5 7.5h15M4.5 12h15M4.5 16.5h9"/>',
+    plus: '<path d="M12 5.5v13M5.5 12h13"/>',
+    grow: '<path d="M14.5 4.5h5v5M19.5 4.5l-6 6M9.5 19.5h-5v-5M4.5 19.5l6-6"/>',
+    shrink: '<path d="M4.5 14.5h5v5M9.5 14.5l-5 5M19.5 9.5h-5v-5M14.5 9.5l5-5"/>',
+    x: '<path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/>',
+    pin: '<path d="M9.5 4.5h5l-.8 5.2 3.3 3.3H7l3.3-3.3zM12 13v6.5"/>',
+    down: '<path d="M12 5.5v12M6.5 12l5.5 5.5 5.5-5.5"/>',
+    send: '<path d="M12 18.5V6M6.5 11.5 12 6l5.5 5.5"/>',
+    clip: '<path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5l6-6"/>',
+    plug: '<path d="M9 3.5v4M15 3.5v4M7 7.5h10v3.5a5 5 0 0 1-10 0zM12 16v4.5"/>'
+  };
+  function hi(k) { return '<svg viewBox="0 0 24 24" aria-hidden="true">' + HI[k] + '</svg>'; }
   function build() {
     root = h('section', 'xc'); root.id = 'xinChat'; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', '和小芯聊天'); root.hidden = true;
     root.innerHTML =
       '<header class="xc-hd">' +
-        '<button class="xc-ib xc-list-b" type="button" aria-label="对话列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9"/></svg></button>' +
-        '<div class="xc-ttl"><span class="xc-ttl-t"><b>小芯</b><span class="xc-sub"></span></span></div>' +
-        '<button class="xc-ib xc-work-b" type="button" aria-label="进行中和成果" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg><i></i></button>' +
-        '<button class="xc-ib xc-scr-b" type="button" aria-label="小芯的屏幕" title="看小芯的电脑屏幕"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M8 20h8M12 16v4"/></svg></button>' +
-        '<button class="xc-ib xc-new-b" type="button" aria-label="新对话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>' +
-        '<button class="xc-ib xc-wb-b" type="button" aria-label="工作台"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="xc-wb-in" d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/><path class="xc-wb-out" d="M4 14h6v6M10 14l-7 7M20 10h-6V4M14 10l7-7"/></svg></button>' +
-        '<button class="xc-ib xc-x" type="button" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>' +
+        '<div class="xc-hd-l"><button class="xc-ib xc-list-b" type="button" aria-label="对话列表">' + hi('menu') + '</button>' +
+        '<div class="xc-conv"><b class="xc-conv-t"></b></div></div>' +
+        '<button class="xc-isle" type="button" aria-haspopup="dialog" aria-controls="xin-tray" aria-expanded="false">' +
+          '<span class="xc-face" aria-hidden="true"></span>' +
+          '<span class="xc-ttl"><b>小芯</b><span class="xc-sub"></span></span>' +
+          '<span class="xc-isle-n" aria-hidden="true"></span>' +
+        '</button>' +
+        '<div class="xc-hd-r">' +
+          '<button class="xc-ib xc-new-b" type="button" aria-label="新对话" title="新对话">' + hi('plus') + '</button>' +
+          '<button class="xc-ib xc-wb-b" type="button" aria-label="工作台" title="工作台"><span class="xc-wb-in">' + hi('grow') + '</span><span class="xc-wb-out">' + hi('shrink') + '</span></button>' +
+          '<button class="xc-ib xc-x" type="button" aria-label="关闭" title="关闭">' + hi('x') + '</button>' +
+        '</div>' +
       '</header>' +
       '<div class="xc-st" role="status" aria-live="polite" hidden></div>' +
-      '<div class="xc-body"><div class="xc-msgs" aria-live="polite"></div></div>' +
+      '<div class="xc-body"><div class="xc-msgs" aria-live="polite"></div>' +
+        '<div class="xc-jump-w"><button type="button" class="xc-jump" hidden>' + hi('down') + '<span>回到底部</span></button></div></div>' +
       '<div class="xc-sess" hidden></div>' +
-      // 侧边栏：对话列表、小芯的记忆 / 每日任务 / 文件、好感度、设置。从左边滑出来，盖在聊天上面
       '<div class="xc-scrim" aria-hidden="true"></div>' +
+      // 侧边栏：小芯、搜索、新对话、主对话、每日任务、对话列表、设置。宽屏全屏时常驻左边，别的时候从左边滑出来
       '<aside class="xc-drawer" aria-label="对话列表"><div class="xc-dr"></div></aside>' +
-      // 工作台（全屏）右边一栏：在做的、等你的、做好的。宽屏一直在，窄屏从右边滑进来
-      '<aside class="xc-work" aria-label="进行中和成果"><div class="xc-wk-hd"><b>工作台</b><button class="xc-ib xc-wk-x" type="button" aria-label="收起"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button></div><div class="xc-wk-sc"></div></aside>' +
+      // 小芯岛展开的面板：它的电脑、额度、进行中 / 待处理 / 成果
+      '<aside class="xc-work" id="xin-tray" role="dialog" aria-label="小芯在做的事">' +
+        '<div class="xc-wk-hd"><span class="xc-face" aria-hidden="true"></span><span class="xc-wk-t"><b>小芯</b><span class="xc-wk-st"></span></span>' +
+          '<button class="xc-ib xc-wk-pin" type="button" aria-pressed="false" aria-label="钉在右边" title="钉在右边">' + hi('pin') + '</button>' +
+          '<button class="xc-ib xc-wk-x" type="button" aria-label="收起" title="收起">' + hi('x') + '</button></div>' +
+        '<div class="xc-wk-sc"><div class="xt-top"></div><div class="xt-tasks"></div></div>' +
+      '</aside>' +
       '<form class="xc-login" hidden>' +
+        '<span class="xc-login-av" aria-hidden="true"></span>' +
+        '<b class="xc-login-t">登录</b>' +
         '<input type="password" name="pw" autocomplete="current-password" placeholder="密码" aria-label="密码" required>' +
         '<button type="submit" class="xc-btn">登录</button>' +
         '<p class="xc-err" role="alert"></p>' +
       '</form>' +
-      // 插件：从「＋」打开，从底下升起来的一页，盖在聊天上面
-      '<section class="xc-sheet" aria-label="插件" hidden></section>' +
+      // 详情、用量、插件：电脑上是右边一栏（聊天照样能用），手机上从底下升起来
+      '<section class="xc-sheet" aria-label="详情" hidden></section>' +
       '<form class="xc-ft">' +
         // 「＋」点开的小菜单：发图片或文件、开关插件
         '<div class="xc-menu" role="menu" hidden>' +
-          '<button type="button" class="xc-mi xc-mi-file" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5l6-6"/></svg><b>图片或文件</b></button>' +
-          '<button type="button" class="xc-mi xc-mi-plug" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg><b>插件</b></button>' +
+          '<button type="button" class="xc-mi xc-mi-file" role="menuitem">' + hi('clip') + '<b>图片或文件</b></button>' +
+          '<button type="button" class="xc-mi xc-mi-plug" role="menuitem">' + hi('plug') + '<b>插件</b></button>' +
         '</div>' +
         // 模型、思考强度（新对话还能选 AI）：输入框底下那颗按钮点开
         '<div class="xc-pick" id="xin-model-picker" role="dialog" aria-label="模型和思考强度" hidden></div>' +
         '<input type="file" class="xc-file" multiple hidden>' +
-        // 后台任务（分身）：有在做、在等你确认的，输入框上面一条，点开看
-        '<button type="button" class="xc-tstrip" hidden></button>' +
         '<div class="xc-atts" hidden></div>' +
-        '<div class="xc-ctx" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5l6-6"/></svg><span></span><button type="button" aria-label="这次不带">✕</button></div>' +
+        '<div class="xc-ctx" hidden>' + hi('clip') + '<span></span><button type="button" aria-label="这次不带">' + hi('x') + '</button></div>' +
         '<div class="xc-row">' +
-          '<button type="button" class="xc-plus" aria-label="发图片、文件或开关插件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>' +
+          '<button type="button" class="xc-plus" aria-label="发图片、文件或开关插件" aria-haspopup="menu" aria-expanded="false">' + hi('plus') + '</button>' +
           '<textarea rows="1" placeholder="和小芯说点什么…" aria-label="消息" enterkeyhint="' + (touch ? 'enter' : 'send') + '"></textarea>' +
           '<button type="button" class="xc-mdl" aria-haspopup="dialog" aria-controls="xin-model-picker" aria-expanded="false"><span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>' +
-          '<button type="submit" class="xc-send" aria-label="发送"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6 11l6-6 6 6"/></svg></button>' +
+          '<button type="submit" class="xc-send" aria-label="发送">' + hi('send') + '</button>' +
         '</div>' +
         // 这个对话的用量：上下文、消耗的 token、缓存命中率（点一下看明细）
         '<div class="xc-use" hidden></div>' +
-      '</form>';
+      '</form>' +
+      '<div class="xc-pal" role="dialog" aria-label="搜索和命令" hidden></div>' +
+      '<div class="xc-toast" role="status" aria-live="polite"></div>';
     document.body.appendChild(root);
     list = root.querySelector('.xc-msgs'); statusEl = root.querySelector('.xc-st'); input = root.querySelector('textarea');
     sendBtn = root.querySelector('.xc-send'); titleEl = root.querySelector('.xc-sub');
-    root.querySelector('.xc-ttl').insertBefore(glowAv(''), root.querySelector('.xc-ttl-t'));
+    isleEl = root.querySelector('.xc-isle'); workEl = root.querySelector('.xc-work'); jumpEl = root.querySelector('.xc-jump');
+    palEl = root.querySelector('.xc-pal'); toastEl = root.querySelector('.xc-toast');
     sessEl = root.querySelector('.xc-sess'); loginEl = root.querySelector('.xc-login'); foot = root.querySelector('.xc-ft'); drawerEl = root.querySelector('.xc-dr');
     useEl = root.querySelector('.xc-use');
     sheetEl = root.querySelector('.xc-sheet'); menuEl = root.querySelector('.xc-menu'); fileEl = root.querySelector('.xc-file'); attsEl = root.querySelector('.xc-atts');
@@ -177,61 +207,129 @@
     if (window.visualViewport) window.visualViewport.addEventListener('resize', fitPick);
     root.querySelector('.xc-mi-file').addEventListener('click', function () { setMenu(false); fileEl.value = ''; fileEl.click(); });
     root.querySelector('.xc-mi-plug').addEventListener('click', function () { setMenu(false); openPlugins(); });
-    root.querySelector('.xc-tstrip').addEventListener('click', openTaskList);
     fileEl.addEventListener('change', function () { addFiles(fileEl.files); fileEl.value = ''; });
-    // 粘贴图片、把文件拖进面板：也当附件
-    root.addEventListener('dragover', function (e) { if (e.dataTransfer && [].indexOf.call(e.dataTransfer.types || [], 'Files') >= 0 && S.view === 'chat' && S.authed) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
-    root.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length && S.view === 'chat' && S.authed) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
+    // 粘贴图片、把文件拖进面板：也当附件；拖着的时候整块聊天亮一圈
+    root.addEventListener('dragover', function (e) { if (e.dataTransfer && [].indexOf.call(e.dataTransfer.types || [], 'Files') >= 0 && S.view === 'chat' && S.authed) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; root.classList.add('drop'); } });
+    root.addEventListener('dragleave', function (e) { if (!e.relatedTarget || !root.contains(e.relatedTarget)) root.classList.remove('drop'); });
+    root.addEventListener('drop', function (e) { root.classList.remove('drop'); if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length && S.view === 'chat' && S.authed) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
     document.addEventListener('pointerdown', function (e) {
       if (menuEl && !menuEl.hidden && !e.target.closest('.xc-menu, .xc-plus')) setMenu(false);
       if (pickEl && !pickEl.hidden && !e.target.closest('.xc-pick, .xc-mdl')) setPick(false);
+      if (S.tray && !e.target.closest('.xc-work, .xc-isle, .xc-sheet, .xs, .xq-wrap')) setTray(false);
     }, true);
     useEl.addEventListener('click', function () { S.useMore = !S.useMore; renderUsage(); });
     root.querySelector('.xc-scrim').addEventListener('click', function () { if (S.sheet) setSheet(false); else setDrawer(false); });
     root.querySelector('.xc-list-b').setAttribute('aria-expanded', 'false');
     root.querySelector('.xc-x').addEventListener('click', close);
-    root.querySelector('.xc-scr-b').addEventListener('click', function () { openScreen(false); });
     root.querySelector('.xc-new-b').addEventListener('click', function () { newChat(); if (!touch) input.focus(); });
     root.querySelector('.xc-wb-b').addEventListener('click', function () { if (S.wb) unwork(); else work(); });
-    root.querySelector('.xc-work-b').addEventListener('click', function () { setWorkOpen(!root.classList.contains('work-open')); });
-    root.querySelector('.xc-wk-x').addEventListener('click', function () { setWorkOpen(false); });
+    isleEl.addEventListener('click', function () { if (trayDocked()) { workEl.querySelector('.xc-wk-sc').scrollTo({ top: 0, behavior: 'smooth' }); flash(workEl); return; } setTray(!S.tray); });
+    root.querySelector('.xc-wk-x').addEventListener('click', function () { if (trayDocked()) setPin(false); else setTray(false, true); });
+    root.querySelector('.xc-wk-pin').addEventListener('click', function () { setPin(!S.pin); });
     window.addEventListener('resize', layout);
+    window.addEventListener('resize', function () { if (S.tray) placeTray(); });
     root.querySelector('.xc-list-b').addEventListener('click', function () { setDrawer(!S.drawer); });
     loginEl.addEventListener('submit', function (e) { e.preventDefault(); login(loginEl.pw.value); });
+    // 输密码时小芯闭上眼睛，不偷看
+    loginEl.pw.addEventListener('focus', paintFaces); loginEl.pw.addEventListener('blur', paintFaces); loginEl.pw.addEventListener('input', paintFaces);
     // 小芯还在回上一句：输入框里有话就排队（回完一起发），没话按钮就是「停止」
     foot.addEventListener('submit', function (e) { e.preventDefault(); if (S.run || S.sending) { if (hasDraft()) queueMsg(); else if (S.run) stop(); } else send(); });
     input.value = ls(LS_DRAFT) || '';
-    input.addEventListener('input', function () { grow(); ls(LS_DRAFT, input.value || null); renderSendBtn(); });
+    input.addEventListener('input', function () { grow(); ls(LS_DRAFT, input.value || null); renderSendBtn(); paintFaces(); });
     root.querySelector('.xc-row').addEventListener('click', function (e) { if (e.target === this) input.focus(); });
-    input.addEventListener('focus', function () { setPick(false); refreshCtx(); });
+    input.addEventListener('focus', function () { setPick(false); refreshCtx(); paintFaces(); });
+    input.addEventListener('blur', paintFaces);
     input.addEventListener('paste', function (e) {
       var fs = e.clipboardData && e.clipboardData.files;
       if (fs && fs.length) { e.preventDefault(); addFiles(fs); }
     });
     root.querySelector('.xc-ctx button').addEventListener('click', function () { skipCtx(); refreshCtx(); input.focus(); });
     input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touch) { e.preventDefault(); if (S.run || S.sending) queueMsg(); else send(); }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229 && !touch) { e.preventDefault(); if (S.run || S.sending) queueMsg(); else send(); }
     });
     root.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape' || (scrEl && !scrEl.hidden)) return;
+      if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey) && !e.altKey && S.authed) { e.preventDefault(); if (palEl.classList.contains('in')) closePal(); else openPal(); return; }
+      if (e.key !== 'Escape' || e.isComposing || (scrEl && !scrEl.hidden)) return;
+      // 收掉一层就说一声（preventDefault），外壳就不会顺带把下面的工具也关了
+      e.preventDefault();
+      if (palEl.classList.contains('in')) { closePal(); return; }
       if (menuEl && !menuEl.hidden) { setMenu(false); return; }
       if (pickEl && !pickEl.hidden) { e.preventDefault(); e.stopPropagation(); setPick(false, true); return; }
-      if (S.sheet) setSheet(false); else if (root.classList.contains('work-open')) setWorkOpen(false); else if (S.drawer && !root.classList.contains('wb-side')) setDrawer(false); else close();
+      if (S.sheet) setSheet(false); else if (S.tray) setTray(false, true); else if (S.drawer && !root.classList.contains('wb-side')) setDrawer(false); else close();
     });
     list.addEventListener('click', function (e) {
       var fp = e.target.closest('.xc-path'); if (fp) { e.preventDefault(); loadFiles(fp.getAttribute('data-path'), 'chat'); return; }
       var c = e.target.closest('.xc-copy');
-      if (c) { var code = c.closest('.xc-code').querySelector('code'); copy(code ? code.textContent : '', c); }
+      if (c) { var code = c.closest('.xc-code').querySelector('code'); copy(code ? code.textContent : '', c); return; }
+      var w = e.target.closest('.xc-wrap');
+      if (w) { var cb = w.closest('.xc-code'), on = !cb.classList.contains('wrap'); cb.classList.toggle('wrap', on); w.setAttribute('aria-pressed', on ? 'true' : 'false'); return; }
+      var more = e.target.closest('.xc-code-more');
+      if (more) { var box = more.closest('.xc-code'); box.classList.remove('fold'); more.remove(); return; }
+      var mc = e.target.closest('.xc-mcopy');
+      // 「复制」在这一轮最后一条下面，复制这一轮小芯说的全部原文（Markdown）
+      if (mc) {
+        var parts = [];
+        for (var m = mc.closest('.xc-m'); m; m = m.previousElementSibling) {
+          if (m.classList.contains('xc-ai') && !m.classList.contains('bad')) parts.unshift(m._md || (m.querySelector('.xc-bub') || {}).innerText || '');
+          if (!m.classList.contains('cont')) break;
+        }
+        copy(parts.filter(Boolean).join('\n\n'), mc);
+      }
     });
+    root.querySelector('.xc-body').addEventListener('scroll', jumpCheck, { passive: true });
+    jumpEl.addEventListener('click', function () { toBottom(true, true); });
+    S.pin = ls('lm.xin.trayPin') === '1';
   }
-  function grow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 150) + 'px'; }
+  function grow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 168) + 'px'; }
   function copy(text, btn) {
-    var ok = function () { btn.lastChild.textContent = '已复制'; setTimeout(function () { btn.lastChild.textContent = '复制'; }, 1200); };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, function () {});
+    var lab = btn && btn.lastChild;
+    var ok = function () {
+      if (!btn) return;
+      btn.classList.add('done'); if (lab) lab.textContent = '已复制';
+      clearTimeout(btn._t); btn._t = setTimeout(function () { btn.classList.remove('done'); if (lab) lab.textContent = '复制'; }, 1400);
+    };
+    var old = function () {
+      var t = document.createElement('textarea'); t.value = text; t.setAttribute('readonly', ''); t.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(t); t.select(); var done = false;
+      try { done = document.execCommand('copy'); } catch (e) { done = false; }
+      t.remove(); if (done) ok(); else toast('没复制成：浏览器不让读写剪贴板');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, old); else old();
+  }
+  /* ---------- 小芯的脸：跟着状态换表情 ----------
+     想事情抬眼、在电脑上忙侧身、等你打字时低头看你写的、做完笑、出错难过、电脑睡着闭眼、输密码时闭眼不偷看。
+     只在表情换了的时候重画（像素 SVG），眨眼、左右看用 CSS 逐帧动画 */
+  S.mood = ''; S.moodAt = 0;
+  function faceKey() {
+    if (S.mood && Date.now() - S.moodAt < 3500) return S.mood;
+    if (S.enabled && !S.authed) return document.activeElement === (loginEl && loginEl.pw) ? 'shut' : 'idle';
+    if (S.run) return S.doing === 'work' ? 'work' : 'think';
+    if (S.sending) return /waking|cooldown/.test(S.waitSend || '') ? 'sleepy' : 'think';
+    if (input && document.activeElement === input && input.value.trim()) return 'read';
+    if ((S.tactive || []).some(tLive)) return 'busy';
+    if (S.mstate === 'suspended' || S.mstate === 'stopped') return 'sleep';
+    return 'idle';
+  }
+  var FACES = {
+    idle: { face: 'eyes' }, read: { face: 'eyes', ly: 1 }, think: { face: 'eyes', ly: -1 }, work: { face: 'side' }, busy: { face: 'focus' },
+    sleepy: { face: 'blink' }, sleep: { face: 'shut' }, shut: { face: 'shut' }, happy: { face: 'hap' }, sad: { face: 'sad' }
+  };
+  function faceSvg(k) { var x = xin(); return x && x.portrait ? x.portrait(FACES[k] || FACES.idle) : ''; }
+  function paintFace(el, k) {
+    if (!el || el.dataset.k === k) return;
+    el.dataset.k = k; el.innerHTML = faceSvg(k);
+    el.className = el.className.replace(/\s*f-\w+/g, '') + ' f-' + k;
+  }
+  function setMood(k) { S.mood = k; S.moodAt = Date.now(); paintFaces(); setTimeout(paintFaces, 3600); }
+  function paintFaces() {
+    if (!root) return;
+    var k = faceKey();
+    [].forEach.call(root.querySelectorAll('.xc-face'), function (el) { paintFace(el, k); });
+    var lf = root.querySelector('.xc-login-av'); if (lf) paintFace(lf, faceKey());
+    if (typingEl) paintFace(typingEl.querySelector('.xc-face'), k === 'read' ? 'think' : k);
   }
   // 标题栏「小芯」下面那行：在忙就说在干什么，闲着就说电脑醒没醒
-  function renderHead() {
-    if (!titleEl) return;
+  function statusText() {
     var t = '', cls = '';
     if (S.sending) { t = sendingText(true) + '…'; cls = 'busy'; }   // 标题栏地方小：冷却只说「冷却中」，几点送到写在对话里那一行
     else if (S.run) { t = S.doing === 'work' ? '正在电脑上忙…' : '思考中…'; cls = 'busy'; }
@@ -239,12 +337,35 @@
     else if (S.mstate === 'suspended') t = '唤醒中…';
     else if (S.mstate === 'stopped') t = '开机中…';
     else if (S.mstate) t = S.mstate;
+    return { t: t, cls: cls };
+  }
+  function convTitle() { return S.sid && S.sid === S.main || mainDraft() ? '主对话' : S.title || (S.sid ? '对话' : '新对话'); }
+  function renderHead() {
+    if (!titleEl) return;
+    var st = statusText(), t = st.t, cls = st.cls;
     titleEl.textContent = t; titleEl.className = 'xc-sub' + (cls ? ' ' + cls : '');
-    // 左栏常驻时，左上角已经是小芯：中间标题栏写正在看的是哪个对话
-    var tb = root.querySelector('.xc-ttl b'), side = root.classList.contains('wb-side');
-    tb.textContent = side ? (S.sid && S.sid === S.main || mainDraft() ? '主对话' : S.title || (S.sid ? '对话' : '新对话')) : '小芯';
-    root.querySelector('.xc-ttl').classList.toggle('conv', side);
+    // 左栏常驻时，标题栏左边写正在看的是哪个对话
+    root.querySelector('.xc-conv-t').textContent = convTitle();
     var ds = drawerEl && drawerEl.querySelector('.xc-dr-st'); if (ds) { ds.textContent = t; ds.className = 'xc-dr-st' + (cls ? ' ' + cls : ''); }
+    var ws = workEl && workEl.querySelector('.xc-wk-st'); if (ws) { ws.textContent = t; ws.className = 'xc-wk-st' + (cls ? ' ' + cls : ''); }
+    renderIsle();
+    if (S.tray || trayDocked()) renderTray();
+    paintFaces();
+  }
+  // 小芯岛右边：在做几件（眼光色）、几件等你（待处理色）；读屏念完整的一句
+  function renderIsle() {
+    if (!isleEl) return;
+    var act = S.tactive || [], n = act.filter(tLive).length, w = act.filter(function (t) { return t.status === 'waiting'; }).length;
+    var box = isleEl.querySelector('.xc-isle-n'), sig = n + ':' + w;
+    if (box.dataset.sig !== sig) {
+      box.dataset.sig = sig; box.textContent = '';
+      if (w) box.appendChild(h('i', 'w', String(w)));
+      if (n) box.appendChild(h('i', 'r', String(n)));
+    }
+    isleEl.classList.toggle('live', !!n); isleEl.classList.toggle('wait', !!w);
+    isleEl.classList.toggle('busy', !!(S.run || S.sending));
+    var st = statusText().t;
+    isleEl.setAttribute('aria-label', '小芯' + (st ? '，' + st.replace(/…$/, '') : '') + (n ? '，' + n + ' 个任务进行中' : '') + (w ? '，' + w + ' 个待处理' : '') + '。点开看它在做的事');
   }
   function render() {
     if (!root) return;
@@ -253,13 +374,13 @@
     foot.hidden = login || off || S.view !== 'chat';
     sessEl.hidden = login || off || S.view === 'chat';
     root.querySelector('.xc-body').hidden = login || S.view !== 'chat';
-    root.querySelector('.xc-list-b').hidden = root.querySelector('.xc-new-b').hidden = root.querySelector('.xc-scr-b').hidden = root.querySelector('.xc-work-b').hidden = login || off;
+    root.querySelector('.xc-list-b').hidden = root.querySelector('.xc-new-b').hidden = isleEl.disabled = login || off;
     if ((login || off) && S.drawer) setDrawer(false);
+    if ((login || off) && S.tray) setTray(false);
     root.classList.toggle('running', !!S.run);
     root.classList.toggle('locked', login || off);
     renderPick();
     renderSendBtn();
-    renderStrip();
     if (off) { list.innerHTML = ''; list.appendChild(h('p', 'xc-hint', '小芯聊天还没开（网站没配密码或 InstaBox key）。')); }
     renderHead();
   }
@@ -271,10 +392,11 @@
     sendBtn.setAttribute('aria-label', stopMode ? '停止' : q ? '排队发送' : '发送');
     sendBtn.disabled = !!S.loadingConversation || !stopMode && attsBusy();
     sendBtn.classList.toggle('q', q);
+    sendBtn.classList.toggle('ready', hasDraft() || stopMode);
     var want = stopMode ? 'stop' : 'send';
     if (sendBtn.dataset.k !== want) {
       sendBtn.dataset.k = want;
-      sendBtn.innerHTML = stopMode ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" class="fill"/></svg>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>';
+      sendBtn.innerHTML = stopMode ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7.5" y="7.5" width="9" height="9" rx="1.5" class="fill"/></svg>' : hi('send');
     }
   }
   function setStatus(text, kind) {
@@ -301,6 +423,7 @@
   function close() {
     if (!root) return;
     S.open = false; root.classList.remove('show'); document.body.classList.remove('xc-open');
+    if (S.tray) setTray(false); closePal();
     setTimeout(function () { if (!S.open) { root.hidden = true; if (S.wb) unwork(true); } }, 240);
     if (XIN_HASH.test(location.hash) || location.hash === '#xin-work') history.replaceState(null, '', location.pathname + location.search);
     renderHome(); nextWork();
@@ -310,8 +433,9 @@
   function login(pw) {
     var err = loginEl.querySelector('.xc-err'); err.textContent = '';
     req('login', { password: pw }).then(function (d) {
-      if (d._status === 200) { S.authed = true; syncPushDevice(); loginEl.pw.value = ''; syncBag(); render(); loadCurrent(); wakeVm(); greet(); loadDeliveries(); pollWork(); renderHome(); if (S.wb) layout(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
+      if (d._status === 200) { S.authed = true; syncPushDevice(); loginEl.pw.value = ''; syncBag(); render(); setMood('happy'); loadCurrent(); wakeVm(); greet(); loadDeliveries(); pollWork(); renderHome(); if (S.wb) layout(); var x = xin(); if (x) { x.cmd('happy'); x.say('你来啦！'); } return; }
       err.textContent = d.msg || (d._status === 429 ? '试太多次了，过一分钟再试' : '登录失败');
+      loginEl.classList.remove('no'); void loginEl.offsetWidth; loginEl.classList.add('no'); setMood('sad');
     }, function () { err.textContent = '网络不通'; });
   }
   function logout() {
@@ -365,12 +489,13 @@
     if (S.main && S.main === S.sid && S.view === 'chat') { setDrawer(false); return; }
     if (S.main) openSession(S.main); else newChat(false, true);
   }
-  // 空对话：大一点的小芯和一句招呼
+  // 空对话：大一点的小芯（会眨眼、跟着状态换表情）和一句招呼，点阵字
   function welcome() {
     var p = h('div', 'xc-hello');
-    p.appendChild(avatar('big'));
+    p.appendChild(avatar('big xc-face'));
     p.appendChild(h('b', 'xc-hello-t', '嗨，我是小芯'));
     list.appendChild(p);
+    paintFaces();
   }
   function loadCurrent() {
     status();
@@ -509,6 +634,11 @@
     hd.appendChild(glowAv('', 'dr')); hd.appendChild(who); hd.appendChild(x);
     drawerEl.appendChild(hd);
     var sc = h('div', 'xc-dr-sc');
+    // 搜索：对话、功能都从命令面板找（电脑上 Ctrl / ⌘ + K 也能打开）
+    var q = h('button', 'xc-dr-q'); q.type = 'button'; q.setAttribute('aria-haspopup', 'dialog');
+    q.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg><span>搜索对话和功能</span>' + (touch ? '' : '<kbd>' + (/Mac|iP/.test(navigator.platform) ? '⌘' : 'Ctrl ') + 'K</kbd>');
+    q.addEventListener('click', function () { openPal(); });
+    sc.appendChild(q);
     var nb = h('button', 'xc-dr-new'); nb.type = 'button'; nb.innerHTML = svgIcon('plus') + '<span>新对话</span>';
     nb.addEventListener('click', function () { newChat(); if (!touch) input.focus(); });
     sc.appendChild(nb);
@@ -528,7 +658,7 @@
         call('archive', { sid: sid, on: true }, 60000).then(function (r) {
           if (r && r.error) throw new Error(r.msg || r.error);
           setMain(''); if (S.sid === sid) newChat(true, true);
-          loadSessions();
+          loadSessions(); toast('主对话已归档，重新开始');
         }).catch(function (e) { go.disabled = false; msg.textContent = '没归档成：' + e.message; });
       });
       row.appendChild(go); row.appendChild(msg); mrow.appendChild(row);
@@ -596,7 +726,11 @@
     b.appendChild(h('span', 'xc-si-t', s.title || '（无标题）'));
     // 第二行只留时间；天启、Claude 的对话标一下是谁（默认模式不用说）
     var who = s.agent === 'harness' ? '天启' + (HM_MODELS[s.model] ? ' ' + HM_MODELS[s.model] : '') : s.agent === 'codex' ? '' : AGENTS[s.agent] || s.agent;
-    b.appendChild(h('span', 'xc-si-m', [who, when(s.updated), s.active ? '进行中' : ''].filter(Boolean).join(' · ')));
+    // 下面一行小字：哪个 AI、什么时候、在不在回话。分成几段用间距隔开，不用「·」拼
+    var sm = h('span', 'xc-si-m');
+    [who, when(s.updated)].filter(Boolean).forEach(function (t) { sm.appendChild(h('span', '', t)); });
+    if (s.active) sm.appendChild(h('span', 'on', '进行中'));
+    b.appendChild(sm);
     if (s.sid === S.sid) { b.classList.add('cur'); b.setAttribute('aria-current', 'true'); }
     b.addEventListener('click', function () { openSession(s.sid); });
     var more = h('button', 'xc-si-more'); more.type = 'button'; more.setAttribute('aria-label', '改名、归档或删除'); more.setAttribute('aria-expanded', 'false');
@@ -611,7 +745,7 @@
     if (!ul || !aul || !ab) return;
     var list = (S.sessList || []).filter(function (s) { return !s.main; }), main = list.filter(function (s) { return !s.archived; }), arch = list.filter(function (s) { return s.archived; });
     ul.innerHTML = ''; aul.innerHTML = '';
-    if (dh) { dh.textContent = '对话' + (main.length > SESS_SHOW ? ' · ' + main.length : ''); dh.hidden = !main.length; }
+    if (dh) { dh.textContent = '对话'; if (main.length > SESS_SHOW) dh.appendChild(h('i', '', String(main.length))); dh.hidden = !main.length; }
     main.forEach(function (s) { ul.appendChild(sessItem(s)); });
     arch.forEach(function (s) { aul.appendChild(sessItem(s)); });
     ab.hidden = !arch.length; aul.hidden = !arch.length || !S.archOpen;
@@ -677,7 +811,7 @@
     [].forEach.call(scrEl.querySelectorAll('.xs-mode .xc-ag'), function (b) {
       b.addEventListener('click', function () { var ctl = b.getAttribute('data-mode') === 'ctl'; if (ctl !== scrEl._ctl) loadScreen(ctl); });
     });
-    scrEl.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeScreen(); });
+    scrEl.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); closeScreen(); } });
   }
   // first：先用别的操作拿链接（登录窗口：login_open 开好窗口回一个接管链接），之后切换观看 / 接管照常用 screen
   function openScreen(control, first) {
@@ -709,7 +843,7 @@
     scrEl.hidden = true; document.body.classList.remove('xs-open');
     var fr = scrEl.querySelector('.xs-fr'); fr.src = 'about:blank'; fr.hidden = true;
     if (scrUsedCtl) { scrUsedCtl = false; call('screen_off', {}, 20000).catch(function () {}); }   // 接管过：能操作的链接全部作废
-    if (root && S.open && !touch) root.querySelector('.xc-scr-b').focus();
+    if (root && S.open && !touch) { var sb = root.querySelector('.xc-work .xc-scr-b'); (sb && sb.offsetParent ? sb : isleEl).focus({ preventScroll: true }); }
   }
 
   /* ---------- 设置：天启模式、附带正在看的页面、做完提醒（学习记录、主动跟进站长 2026-11-11 说不要，已去掉） ---------- */
@@ -874,7 +1008,7 @@
       arc.disabled = true; msg.textContent = '';
       call('archive', { sid: s.sid, on: !s.archived }, 60000).then(function (r) {
         if (r && r.error) throw new Error(r.msg || r.error);
-        s.archived = !s.archived; renderSess();
+        s.archived = !s.archived; renderSess(); toast(s.archived ? '已归档' : '已放回对话列表');
       }).catch(function (e) { arc.disabled = false; msg.textContent = '没归档成：' + e.message; });
     });
     var rename = function () {
@@ -884,7 +1018,7 @@
       call('rename', { sid: s.sid, title: t }, 60000).then(function (r) {
         if (r && r.error) throw new Error(r.msg || r.error);
         s.title = t; li.querySelector('.xc-si-t').textContent = t;
-        row.remove(); more.setAttribute('aria-expanded', 'false');
+        row.remove(); more.setAttribute('aria-expanded', 'false'); toast('已改名'); if (s.sid === S.sid) { S.title = t; renderHead(); }
       }).catch(function (e) { ren.disabled = false; msg.textContent = '没改成：' + e.message; });
     };
     ren.addEventListener('click', rename);
@@ -902,7 +1036,7 @@
         if (r && r.error) throw new Error(r.msg || r.error);
         S.sessList = (S.sessList || []).filter(function (x) { return x !== s; });
         if (s.sid === S.sid) newChat(true);
-        renderSess();
+        renderSess(); toast('已删除');
       }).catch(function (e) { del.disabled = false; armed = 0; del.textContent = '删除'; del.classList.remove('armed'); msg.textContent = '删除失败：' + e.message; });
     });
     row.appendChild(inp); row.appendChild(ren); row.appendChild(arc); row.appendChild(del); row.appendChild(msg);
@@ -1447,16 +1581,8 @@
       if (next) tpTm = setTimeout(pollTasks, next);
     }, function () { tpTm = setTimeout(pollTasks, 30000); });
   }
-  function renderStrip() {
-    var el = root && root.querySelector('.xc-tstrip'); if (!el) return;
-    var act = S.tactive || [], n = act.filter(tLive).length, w = act.filter(function (t) { return t.status === 'waiting'; }).length;
-    el.hidden = !(n || w) || !S.authed;
-    if (el.hidden) return;
-    el.innerHTML = TICON;
-    el.appendChild(h('span', '', (n ? n + ' 个任务进行中' : '') + (n && w ? '，' : '') + (w ? w + ' 个待处理' : '')));
-    el.classList.toggle('busy', !!n); el.classList.toggle('wait', !!w);
-    el.setAttribute('aria-label', '任务：' + el.textContent);
-  }
+  // 以前输入框上面的「N 个任务进行中」：现在由小芯岛显示
+  function renderStrip() { renderIsle(); paintFaces(); }
   function stopTask(sid, btn) {
     if (btn) btn.disabled = true;
     call('task_stop', { sid: sid }, 30000).then(function (r) {
@@ -1481,6 +1607,7 @@
   function sheetHead(title) {
     sheetEl.innerHTML = '';
     var hd = h('div', 'xc-sh-hd'), x = h('button', 'xc-ib xc-sh-x');
+    hd.appendChild(h('i', 'xc-sh-grip'));
     x.type = 'button'; x.setAttribute('aria-label', '关掉'); x.innerHTML = svgIcon('x');
     x.addEventListener('click', function () { setSheet(false); });
     hd.appendChild(h('b', '', title)); hd.appendChild(x);
@@ -1604,35 +1731,11 @@
     if (typing_) { var now_ = box.querySelector('.xc-tk-in'); if (now_) { now_.focus({ preventScroll: true }); try { now_.setSelectionRange(caret, caret); } catch (e) { /* 不支持就算了 */ } } }
     box.scrollTop = atEnd ? box.scrollHeight : top;
   }
-  function openTaskCenter() { open(); setDrawer(false); openTaskList(); }
+  function openTaskCenter() { open(); setDrawer(false); setTray(true); }
   // 没有入口的几页（全部任务、小芯的记忆、小芯的文件）：界面上不放，功能留着，按名字还能打开
   function page(name) {
     open(); if (!S.authed) return;
     if (name === 'tasks') loadTasksView(); else if (name === 'mem') loadMemory(); else if (name === 'files') loadFiles(WORK, 'sess'); else if (name === 'daily') loadDaily();
-  }
-  // 后台任务一览：所有没做完的（哪个对话的都算）和这个对话最近的
-  function openTaskList() {
-    S.sheetTask = '';
-    sheetHead('任务');
-    var box = h('div', 'xc-sh-list xc-tl');
-    var act = (S.tactive || []).slice(), seen = {};
-    act.forEach(function (t) { seen[t.sid] = true; });
-    var mine = Object.keys(S.tinfo).map(function (k) { return S.tinfo[k]; }).filter(function (t) { return t.parent === S.sid && !seen[t.sid]; })
-      .sort(function (a, b) { return (b.endedAt || b.created || 0) - (a.endedAt || a.created || 0); }).slice(0, 12);
-    function row(t) {
-      var b = h('button', 'xc-tl-i'); b.type = 'button';
-      b.appendChild(h('b', '', t.title));
-      var m = h('span', 'xc-tl-m'); m.appendChild(h('span', 'xc-task-st st-' + t.status, tStatText(t)));
-      m.appendChild(document.createTextNode([TKIND[t.kind], t.parent && t.parent !== S.sid ? '别的对话' : ''].filter(Boolean).join(' · ')));
-      b.appendChild(m);
-      b.addEventListener('click', function () { openTask(t.sid); });
-      return b;
-    }
-    if (act.length) { box.appendChild(h('p', 'xc-set-h', '进行中')); act.forEach(function (t) { box.appendChild(row(t)); }); }
-    if (mine.length) { box.appendChild(h('p', 'xc-set-h', '当前对话')); mine.forEach(function (t) { box.appendChild(row(t)); }); }
-    if (!act.length && !mine.length) box.appendChild(h('p', 'xc-hint', '暂无任务'));
-    sheetEl.appendChild(box);
-    setSheet(true);
   }
   // 小芯还在回上一句时发的话：先排着（灰色气泡「排队中」，能 ✕ 掉），这一句回完依次发出去
   function saveQueue() {
@@ -1710,12 +1813,12 @@
     send(null, { text: q.map(function (y) { return y.text; }).filter(Boolean).join('\n'), atts: [].concat.apply([], q.map(function (y) { return y.atts; })), queued: q });
   }
 
-  /* ---------- 工作台：全屏的聊天，宽屏左边对话、中间聊天、右边在做的和做好的；首页一张卡片进来 ----------
-     手机、竖着的平板：只有聊天，标题栏的方格按钮把「进行中和成果」从右边滑进来。
+  /* ---------- 工作台：全屏的聊天；首页一张卡片进来 ----------
+     ≥1180 左边对话常驻、中间聊天；更窄只有聊天，☰ 拉出对话。小芯岛点开的面板（.xc-work）在全屏 ≥900 时能「钉住」成右边一栏。
      数据都是现成的：任务卡片和看过程用聊天里那一套（openTask），列表从 tasks {all:true} 来，有在做的 4 秒刷一次。 */
   var SIDE_MIN = 1180, WORK_MIN = 900, wTm = 0, wSeq = 0, thumbs = {}, xwSeen = {};
-  S.wkCat = ls('lm.xin.wkCat') || 'all';
-  // 右栏、首页每次刷新都是重画：循环的动画（进度条、闪的点）按同一个时钟接着走，不从头来；进场动画只给第一次出现的
+  S.wkCat = ls('lm.xin.wkCat') || 'all'; S.tray = false;
+  // 面板、首页每次刷新都是重画：循环的动画（进度条、闪的点）按同一个时钟接着走，不从头来；进场动画只给第一次出现的
   function phase(el) { var t = Date.now(); el.style.setProperty('--p16', -(t % 1600) + 'ms'); el.style.setProperty('--p12', -(t % 1200) + 'ms'); el.style.setProperty('--p10', -(t % 1000) + 'ms'); }
   function work(opt) {
     opt = opt || {};
@@ -1728,29 +1831,81 @@
   }
   function unwork(silent) {
     if (!root) return;
-    S.wb = false; root.classList.remove('wb', 'work-open'); document.body.classList.remove('xc-wb');
+    S.wb = false; root.classList.remove('wb'); document.body.classList.remove('xc-wb');
+    if (S.tray) setTray(false);
     layout();
     if (!silent && location.hash === '#xin-work') try { history.replaceState(history.state, '', location.pathname + location.search); } catch (e) { /* 同上 */ }
   }
+  // 钉住的面板：只有全屏工作台、而且够宽（≥900）才是右边一栏
+  function trayDocked() { return !!(root && S.pin && S.wb && window.innerWidth >= WORK_MIN); }
   function layout() {
     if (!root) return;
-    var w = window.innerWidth, side = !!S.wb && w >= SIDE_MIN, wk = !!S.wb && w >= WORK_MIN;
+    var w = window.innerWidth, side = !!S.wb && w >= SIDE_MIN, dock = trayDocked();
     var was = root.classList.contains('wb-side');
-    root.classList.toggle('wb-side', side); root.classList.toggle('wb-work', wk);
-    if (wk) setWorkOpen(false);
+    root.classList.toggle('wb-side', side); root.classList.toggle('wb-pin', dock);
+    if (dock && S.tray) setTray(false, false, true);
     var dr = root.querySelector('.xc-drawer');
     if (side) { root.classList.remove('dr-open'); S.drawer = false; dr.setAttribute('aria-hidden', 'false'); if (S.authed && (!was || !drawerEl.firstChild)) loadSessions(); }
     else if (was) dr.setAttribute('aria-hidden', S.drawer ? 'false' : 'true');
-    root.querySelector('.xc-wb-b').setAttribute('aria-label', S.wb ? '收起工作台' : '工作台');
+    var wb = root.querySelector('.xc-wb-b'); wb.setAttribute('aria-label', S.wb ? '收起工作台' : '工作台'); wb.title = S.wb ? '收起工作台' : '工作台';
+    var pin = root.querySelector('.xc-wk-pin');
+    pin.hidden = !(S.wb && w >= WORK_MIN); pin.setAttribute('aria-pressed', dock ? 'true' : 'false');
+    pin.setAttribute('aria-label', dock ? '取消钉住' : '钉在右边'); pin.title = pin.getAttribute('aria-label');
+    workEl.setAttribute('role', dock ? 'complementary' : 'dialog');
+    if (dock) { workEl.style.clipPath = ''; workEl.style.left = workEl.style.top = workEl.style.width = ''; renderTray(); if (S.authed) { pollWork(); loadQuota(); } }
     renderWork(); renderHead();
   }
-  function setWorkOpen(on) {
-    if (!root) return;
-    on = !!on && !!S.wb && !root.classList.contains('wb-work');
-    root.classList.toggle('work-open', on);
-    root.querySelector('.xc-work-b').setAttribute('aria-expanded', on ? 'true' : 'false');
-    if (on) { renderWork(); pollWork(); }
+  function setPin(on) {
+    S.pin = !!on; ls('lm.xin.trayPin', S.pin ? '1' : null);
+    if (S.pin && S.tray) setTray(false, false, true);
+    layout();
+    if (!S.pin && S.wb) setTray(true);
   }
+  // 面板摆在小芯岛下面：顶边和小芯岛对齐，左右尽量居中，不出屏幕；手机上左右各留 8px
+  function placeTray() {
+    if (!workEl || trayDocked()) return;
+    var r = root.getBoundingClientRect(), ir = isleEl.getBoundingClientRect(), narrow = r.width < 600;
+    var w = narrow ? r.width - 16 : Math.min(440, r.width - 24);
+    var left = narrow ? 8 : Math.max(12, Math.min(ir.left - r.left + ir.width / 2 - w / 2, r.width - w - 12));
+    workEl.style.width = w + 'px'; workEl.style.left = left + 'px'; workEl.style.top = Math.max(6, ir.top - r.top) + 'px';
+    workEl.style.setProperty('--max', Math.max(240, Math.round(r.height * (narrow ? .8 : .76))) + 'px');
+    return { left: left, w: w, il: ir.left - r.left, iw: ir.width, ih: ir.height };
+  }
+  // 从小芯岛长出来：一开始只露出和药丸一样大的那一块（clip-path），再展开成整块面板；收起时缩回去
+  function isleClip(p) {
+    var h_ = workEl.offsetHeight || 400;
+    return 'inset(0px ' + Math.max(0, p.left + p.w - p.il - p.iw) + 'px ' + Math.max(0, h_ - p.ih) + 'px ' + Math.max(0, p.il - p.left) + 'px round 999px)';
+  }
+  var trayTm = 0;
+  function setTray(on, focusBack, instant) {
+    if (!root) return;
+    on = !!on && !trayDocked() && S.authed;
+    if (on === S.tray) return;
+    S.tray = on; clearTimeout(trayTm);
+    isleEl.setAttribute('aria-expanded', on ? 'true' : 'false');
+    var quick = instant || reduceMotion();
+    if (on) {
+      setMenu(false); setPick(false);
+      workEl.classList.add('pop'); root.classList.add('tray-open');
+      renderTray(); renderWork();
+      var p = placeTray();
+      if (!quick) {
+        workEl.style.transition = 'none'; workEl.style.clipPath = isleClip(p); workEl.classList.remove('in');
+        void workEl.offsetWidth;
+        workEl.style.transition = ''; workEl.style.clipPath = 'inset(0px 0px 0px 0px round 22px)';
+      } else workEl.style.clipPath = '';
+      workEl.classList.add('in');
+      pollWork(); loadQuota();
+      setTimeout(function () { if (S.tray) { var f = workEl.querySelector('.wk-sg.on, .wk-c, .xc-scr-b'); if (f && !touch) f.focus({ preventScroll: true }); } }, quick ? 0 : 180);
+    } else {
+      root.classList.remove('tray-open'); workEl.classList.remove('in');
+      if (!quick && workEl.classList.contains('pop')) { var q = placeTray(); workEl.style.clipPath = isleClip(q); }
+      trayTm = setTimeout(function () { if (!S.tray) { workEl.classList.remove('pop'); workEl.style.clipPath = ''; } }, quick ? 0 : 230);
+      if (focusBack && !touch) isleEl.focus({ preventScroll: true });
+    }
+  }
+  function reduceMotion() { return !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  function flash(el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
   // 左边那栏常驻时，对话有变化（开了新的、发出第一句、切换）就跟着刷新，别等手动拉开
   var sideTm = 0;
   function refreshSide() { if (!root || !root.classList.contains('wb-side')) return; clearTimeout(sideTm); sideTm = setTimeout(loadSessions, 250); }
@@ -1766,11 +1921,45 @@
       nextWork();
     }).catch(function () { if (my === wSeq) wTm = setTimeout(pollWork, 30000); });
   }
+  function workShown() { return !!(S.open && !document.hidden && (S.wb || S.tray)); }
   function nextWork() {
     clearTimeout(wTm);
-    var live = (S.tactive || []).some(tLive), shown = S.open && S.wb && !document.hidden, home = homeShown();
+    var live = (S.tactive || []).some(tLive), shown = workShown(), home = homeShown();
     var ms = shown ? (live ? 4000 : 30000) : home && live ? 10000 : 0;
     if (ms) wTm = setTimeout(pollWork, ms);
+  }
+  /* 面板上面一块：小芯的电脑（在线 / 休息、看屏幕）和额度（每个模型 5 小时 / 每周，几点重置），「用量」进用量页。
+     额度来自 usage（30 秒内用缓存）；没读到就只写一句 */
+  function loadQuota() {
+    if (!S.authed) return;
+    loadUsage().then(function () { renderTray(); }, function () { /* 读不到就不显示额度 */ });
+  }
+  function renderTray() {
+    if (!workEl) return;
+    var top = workEl.querySelector('.xt-top'); if (!top) return;
+    var pc = top.querySelector('.xt-pc');
+    if (!pc) {
+      top.innerHTML = '';
+      pc = h('div', 'xt-pc');
+      pc.innerHTML = '<span class="xt-k">电脑</span><span class="xt-v"><i class="xt-led"></i><span></span></span>';
+      var sb = h('button', 'xt-b xc-scr-b'); sb.type = 'button'; sb.setAttribute('aria-label', '看小芯的屏幕');
+      sb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="11.5" rx="1.8"/><path d="M8.5 19.5h7M12 16v3.5"/></svg><span>看屏幕</span>';
+      sb.addEventListener('click', function () { openScreen(false); });
+      pc.appendChild(sb); top.appendChild(pc);
+      var q = h('div', 'xt-q'); top.appendChild(q);
+    }
+    var on = S.mstate === 'running', sleep = S.mstate === 'suspended' || S.mstate === 'stopped';
+    pc.querySelector('.xt-v span').textContent = on ? '在线' : S.mstate === 'suspended' ? '休息中' : S.mstate === 'stopped' ? '关机了' : S.mstate || '连接中';
+    pc.querySelector('.xt-led').className = 'xt-led' + (on ? ' on' : sleep ? ' off' : '');
+    var qb = top.querySelector('.xt-q'), u = S.uv, sig = u ? String(S.uvAt) : '';
+    if (qb.dataset.sig === sig && qb.childNodes.length) return;
+    qb.dataset.sig = sig; qb.textContent = '';
+    var hd = h('div', 'xt-qh'); hd.appendChild(h('span', 'xt-k', '额度'));
+    var ub = h('button', 'xt-b xt-use'); ub.type = 'button'; ub.innerHTML = '<span>用量</span>' + svgIcon('chev');
+    ub.addEventListener('click', function () { setTray(false); openUsage(); });
+    hd.appendChild(ub); qb.appendChild(hd);
+    if (!u) { qb.appendChild(h('p', 'xt-qe', '正在读取…')); return; }
+    quotaRows(qb, u);
   }
   // 所有任务：最新状态在 S.tinfo（轮询会更新），列表顺序以 tasks {all:true} 为准；没拿到之前就用手上有的
   function allTasks() {
@@ -1882,8 +2071,8 @@
     return wrap;
   }
   function renderWork() {
-    if (!root || !S.wb) return;
-    var box = root.querySelector('.xc-wk-sc'), g = groups(), top = box.scrollTop, focus = document.activeElement && box.contains(document.activeElement) ? document.activeElement.closest('[data-tsid], [data-cat]') : null;
+    if (!root || !(S.tray || trayDocked() || workEl.classList.contains('pop'))) return;
+    var sc = root.querySelector('.xc-wk-sc'), box = root.querySelector('.xt-tasks'), g = groups(), top = sc.scrollTop, focus = document.activeElement && box.contains(document.activeElement) ? document.activeElement.closest('[data-tsid], [data-cat]') : null;
     var fsid = focus && focus.dataset.tsid, fcat = focus && focus.dataset.cat;
     var present = WK_CATS.filter(function (c) { return (g.cats[c[0]] || []).length; });
     var cat = S.wkCat && S.wkCat !== 'all' && present.some(function (c) { return c[0] === S.wkCat; }) ? S.wkCat : 'all';
@@ -1912,13 +2101,13 @@
       else group(list, 'done', 'c-' + c[0], 30);
     });
     if (!g.live.length && !g.wait.length && !g.done.length) {
-      var e = h('div', 'wk-empty'); e.appendChild(avatar('big')); e.appendChild(h('p', '', '暂无任务')); body.appendChild(e);
+      var e = h('div', 'wk-empty'); e.appendChild(h('p', '', '暂无任务')); body.appendChild(e);
     }
     box.appendChild(body);
-    box.scrollTop = top;
+    sc.scrollTop = top;
     var again = fsid ? box.querySelector('[data-tsid="' + fsid + '"]') : fcat ? box.querySelector('.wk-sg[data-cat="' + fcat + '"]') : null;
     if (again) again.focus({ preventScroll: true });
-    var b = root.querySelector('.xc-work-b'); b.classList.toggle('live', g.live.length > 0); b.classList.toggle('wait', g.wait.length > 0);
+    renderIsle();
   }
 
 
@@ -1936,7 +2125,10 @@
     b.classList.toggle('busy', !!(S.run || (S.tactive || []).some(tLive)));
     b.setAttribute('aria-label', '额度' + (S.glow ? '：' + GLOW_TXT[S.glow] : ''));
   }
-  function paintGlow() { [].forEach.call(document.querySelectorAll('.xc-glow'), paintOne); }
+  function paintGlow() {
+    [].forEach.call(document.querySelectorAll('.xc-glow'), paintOne);
+    if (isleEl) { isleEl.classList.remove('g-ok', 'g-warn', 'g-high', 'g-out'); if (S.glow) isleEl.classList.add('g-' + S.glow); }
+  }
   function glowAv(cls, avCls) {
     var b = h('button', 'xc-glow' + (cls ? ' ' + cls : '')); b.type = 'button'; b.setAttribute('aria-haspopup', 'dialog'); b.setAttribute('aria-expanded', 'false'); b.setAttribute('aria-label', '额度');
     b.appendChild(avatar(avCls || ''));
@@ -2205,7 +2397,7 @@
     ul.hidden = !rows.length;
   }
   // 在做的任务计时、「几分钟前」每 15 秒走一下
-  setInterval(function () { if (!document.hidden && (homeShown() || (S.open && S.wb))) { renderHome(); if (S.open && S.wb) renderWork(); } }, 15000);
+  setInterval(function () { if (!document.hidden && (homeShown() || workShown())) { renderHome(); if (workShown()) renderWork(); } }, 15000);
 
   /* ---------- 「＋」菜单、插件 ---------- */
   function setMenu(on) {
@@ -2214,19 +2406,36 @@
     root.querySelector('.xc-plus').setAttribute('aria-expanded', on ? 'true' : 'false');
   }
   function setSheet(on) {
-    S.sheet = !!on; sheetEl.hidden = !on;
-    root.classList.toggle('sheet-open', !!on);
+    on = !!on;
+    if (on && S.tray) setTray(false, false, true);
+    S.sheet = on; sheetEl.hidden = !on; sheetEl.style.transform = '';
+    root.classList.toggle('sheet-open', on);
+    if (on && !sheetEl._drag) dragSheet();
+  }
+  // 手机上的底部页：按住顶上那一条往下拖，松手超过 90px（或者甩得快）就关掉，不够就弹回去
+  function dragSheet() {
+    sheetEl._drag = true;
+    var y0 = 0, t0 = 0, dy = 0, on = false;
+    sheetEl.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'mouse' || !e.target.closest('.xc-sh-hd') || e.target.closest('button') || getComputedStyle(sheetEl).position === 'static') return;
+      if (sheetEl.getBoundingClientRect().bottom < innerHeight - 2) return;   // 侧边一栏（电脑）不拖
+      on = true; y0 = e.clientY; t0 = performance.now(); dy = 0; sheetEl.classList.add('drag');
+      try { sheetEl.setPointerCapture(e.pointerId); } catch (er) { /* 不支持就算了 */ }
+    });
+    sheetEl.addEventListener('pointermove', function (e) { if (!on) return; dy = Math.max(0, e.clientY - y0); sheetEl.style.transform = 'translateY(' + dy + 'px)'; });
+    var end = function () {
+      if (!on) return; on = false; sheetEl.classList.remove('drag');
+      var v = dy / Math.max(1, performance.now() - t0);
+      if (dy > 90 || v > .6) { sheetEl.classList.add('away'); setTimeout(function () { sheetEl.classList.remove('away'); setSheet(false); }, 180); }
+      else sheetEl.style.transform = '';
+    };
+    sheetEl.addEventListener('pointerup', end); sheetEl.addEventListener('pointercancel', end);
   }
   // 插件：Codex 的 MCP 服务器。开关记在小芯电脑上，从下一句开始生效（每一句都重新起一次 AI）
   var PLUG_NAME = { purge: 'Purge', rea: 'REA 逆向', instabox: 'InstaBox', 'open-computer-use': '操作桌面' };
   function openPlugins() {
     var agent = curAgent();
-    sheetEl.innerHTML = '';
-    var hd = h('div', 'xc-sh-hd'), x = h('button', 'xc-ib xc-sh-x');
-    x.type = 'button'; x.setAttribute('aria-label', '关掉'); x.innerHTML = svgIcon('x');
-    x.addEventListener('click', function () { setSheet(false); });
-    hd.appendChild(h('b', '', AGENTS[agent] + ' 插件')); hd.appendChild(x);
-    sheetEl.appendChild(hd);
+    sheetHead(AGENTS[agent] + ' 插件');
     var box = h('div', 'xc-sh-list'); box.appendChild(h('p', 'xc-hint', '正在读取…'));
     sheetEl.appendChild(box);
     setSheet(true);
@@ -2720,6 +2929,7 @@
   function react(ev) {
     if (ev.t === 'status') { if (!NOISE.test(ev.text || '')) S.note = { text: ev.text, at: Date.now() }; return; }
     if (ev.t === 'tool') S.doing = 'work'; else if (ev.t === 'tool_end' || ev.t === 'text') S.doing = 'think';
+    if (ev.t === 'done' && !ev.stopped) setMood(ev.ok ? 'happy' : 'sad'); else if (ev.t === 'tool' || ev.t === 'tool_end' || ev.t === 'text') paintFaces();
     var x = xin(); if (!x) return;
     if (ev.t === 'text') { S.lastText = ev.text; x.ai('think'); var line = firstLine(ev.text); if (line) x.say(line, 0, open); }
     else if (ev.t === 'tool') x.ai('work');
@@ -2753,9 +2963,26 @@
   }
 
   /* ---------- 画消息 ---------- */
-  function toBottom(force) {
+  function toBottom(force, smooth) {
     var b = root.querySelector('.xc-body');
-    if (force || b.scrollHeight - b.scrollTop - b.clientHeight < 160) b.scrollTop = b.scrollHeight;
+    if (force || b.scrollHeight - b.scrollTop - b.clientHeight < 160) {
+      if (smooth && !reduceMotion()) b.scrollTo({ top: b.scrollHeight, behavior: 'smooth' }); else b.scrollTop = b.scrollHeight;
+      jumpEl.classList.remove('new');
+    }
+    jumpCheck();
+  }
+  // 往上翻了一屏多：右下角「回到底部」；这时下面来了新内容就写「新消息」
+  function jumpCheck() {
+    if (!jumpEl) return;
+    var b = root.querySelector('.xc-body'), away = b.scrollHeight - b.scrollTop - b.clientHeight > Math.max(240, b.clientHeight * .6);
+    if (!away) jumpEl.classList.remove('new');
+    if (jumpEl.hidden === !away) return;
+    jumpEl.hidden = !away;
+  }
+  function jumpNew() {
+    var b = root.querySelector('.xc-body');
+    if (b.scrollHeight - b.scrollTop - b.clientHeight > Math.max(240, b.clientHeight * .6)) { jumpEl.classList.add('new'); jumpEl.lastChild.textContent = '新消息'; jumpEl.hidden = false; }
+    else jumpEl.lastChild.textContent = '回到底部';
   }
   // 新的一条加在「正在输入」前面（它永远在最后）
   function put(e) { if (typingEl && typingEl.parentNode === list) list.insertBefore(e, typingEl); else list.appendChild(e); return e; }
@@ -2764,12 +2991,22 @@
     var e = typingEl && typingEl.parentNode === list ? typingEl.previousElementSibling : list.lastElementChild;
     return !!e && e.classList.contains('xc-ai') && !e.classList.contains('xc-typing') && e.dataset.run === (run || '');
   }
+  // 小芯说的一条：左边头像一栏，同一轮里第一条上面写「小芯」，后面接着说的不再画头像；正文不套气泡
   function aiMsg(run, cls) {
     var e = h('div', 'xc-m xc-ai' + (cls ? ' ' + cls : '')), b = h('div', 'xc-bub');
     e.dataset.run = run || '';
     if (lastAi(run)) e.classList.add('cont');
-    e.appendChild(avatar()); e.appendChild(b);
+    e.appendChild(avatar());
+    if (!e.classList.contains('cont')) e.appendChild(h('span', 'xc-who', '小芯'));
+    e.appendChild(b);
     return { e: e, b: b };
+  }
+  // 回答下面的操作：复制。只在这一轮最后一条下面露出来（CSS），复制整轮原文
+  function msgActs(e, text) {
+    e._md = text;
+    var a = h('div', 'xc-acts'), c = h('button', 'xc-mcopy'); c.type = 'button'; c.setAttribute('aria-label', '复制这条回答');
+    c.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.2"/><path d="M15.5 8.5V6.2a1.7 1.7 0 0 0-1.7-1.7H6.2a1.7 1.7 0 0 0-1.7 1.7v7.6a1.7 1.7 0 0 0 1.7 1.7h2.3"/><path class="ok" d="m9 12.5 2.2 2.2 4.3-4.6"/></svg><span>复制</span>';
+    a.appendChild(c); e.appendChild(a);
   }
   function sysChip(text, cls) { return h('div', 'xc-sys' + (cls ? ' ' + cls : ''), text); }
   function byLine(ev, run) {
@@ -2802,7 +3039,7 @@
         var task=S.tinfo[tr.sid];
         if(task&&task.status===tr.status&&resKey(task)===key&&task.delivery?.state==='delivered')return drawTaskResult(task);
       }
-      m = aiMsg(run); var body = md(ev.text); m.b.appendChild(body);
+      m = aiMsg(run); var body = md(ev.text); m.b.appendChild(body); msgActs(m.e, ev.text);
       if(ev.taskResult)m.e.dataset.tres=key;
       if (body.querySelector('.xc-code, .xc-tbl')) m.e.classList.add('wide');
       e = m.e;
@@ -2820,8 +3057,21 @@
       if (!S.tinfo[ev.sid]) S.tinfo[ev.sid] = { sid: ev.sid, no: ev.no, parent: S.sid || '', title: ev.title, kind: ev.kind, model: ev.model, status: ev.status || 'queued', after: ev.after || [], created: ev.at || Date.now() };
       if (!old) pollTasksSoon(1500);
     } else if (ev.t === 'move') e = sysChip('学会了新动作：' + ev.name, 'move');   // 记忆、好感度是小芯自己的事，不在聊天里报
-    if (e) put(e);
+    if (e) {
+      var bd = root.querySelector('.xc-body'), near = !old && bd.scrollHeight - bd.scrollTop - bd.clientHeight < 160;
+      if (!old) e.classList.add('enter');
+      put(e);
+      if (!old) { if (near && ev.t !== 'user') followNew(e); else jumpNew(); }
+    }
     return e;
+  }
+  // 正看着最底下时来了新回答：短的直接滚到底；长的停在它开头，从头读（下面还有的话「回到底部」写「新消息」）
+  function followNew(e) {
+    var b = root.querySelector('.xc-body'), room = b.clientHeight - 120;
+    var top = e.getBoundingClientRect().top - b.getBoundingClientRect().top + b.scrollTop - 16;
+    var to = e.offsetHeight > room ? top : b.scrollHeight;
+    if (reduceMotion()) b.scrollTop = to; else b.scrollTo({ top: to, behavior: 'smooth' });
+    setTimeout(jumpNew, 400);
   }
   // 小芯在干活时，最后面冒一个「正在输入」的气泡（三个点在跳）和一行字：思考中 / 在电脑上忙，用了多久（每秒走）
   var typingEl = null, typingTick = 0;
@@ -2830,15 +3080,16 @@
     if (!on) { clearInterval(typingTick); typingTick = 0; if (typingEl) typingEl.remove(); typingEl = null; return; }
     if (!typingTick) typingTick = setInterval(progress, 1000);
     if (!typingEl) {
+      // 小芯的脸跟着状态换（想事情抬眼、在电脑上忙侧身），旁边一行字和秒数，后面三个像素点一格一格亮
       typingEl = h('div', 'xc-m xc-ai xc-typing'); typingEl.setAttribute('aria-label', '小芯正在回复');
-      typingEl.appendChild(avatar());
+      typingEl.appendChild(h('span', 'xc-av xc-face'));
       var b = h('div', 'xc-bub'); b.innerHTML = '<i></i><i></i><i></i>';
-      typingEl.appendChild(b); typingEl.appendChild(h('span', 'xc-typing-l', '思考中'));
+      typingEl.appendChild(h('span', 'xc-typing-l', '思考中')); typingEl.appendChild(b);
     }
     list.appendChild(typingEl);
     var prev = typingEl.previousElementSibling;
     typingEl.classList.toggle('cont', !!prev && prev.classList.contains('xc-ai'));
-    progress();
+    paintFaces(); progress();
   }
   // Markdown：代码块、标题、列表（可以套一层）、引用、分隔线、表格、段落；行内：代码、粗体、链接、小芯电脑里的路径。全部先转义
   function md(text) {
@@ -2849,9 +3100,16 @@
         var wrap = h('div', 'xc-code'), hd = h('div', 'xc-code-h'), pre = h('pre'), c = h('code'), src = code.replace(/\n$/, '');
         c.innerHTML = hl(src, lang);
         hd.appendChild(h('span', 'xc-lang', lang || '代码'));
+        // 换行：长行在手机上不用左右拖；复制：原文
+        var wb = h('button', 'xc-wrap'); wb.type = 'button'; wb.setAttribute('aria-pressed', 'false'); wb.setAttribute('aria-label', '自动换行');
+        wb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 6.5h15M4.5 12h12a3 3 0 0 1 0 6h-4M14.5 15.5 12 18l2.5 2.5M4.5 17.5h5"/></svg><span>换行</span>';
         var cp = h('button', 'xc-copy'); cp.type = 'button';
-        cp.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></svg><span>复制</span>';
-        hd.appendChild(cp); pre.appendChild(c); wrap.appendChild(hd); wrap.appendChild(pre); box.appendChild(wrap);
+        cp.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.2"/><path d="M15.5 8.5V6.2a1.7 1.7 0 0 0-1.7-1.7H6.2a1.7 1.7 0 0 0-1.7 1.7v7.6a1.7 1.7 0 0 0 1.7 1.7h2.3"/><path class="ok" d="m9 12.5 2.2 2.2 4.3-4.6"/></svg><span>复制</span>';
+        hd.appendChild(wb); hd.appendChild(cp); pre.appendChild(c); wrap.appendChild(hd); wrap.appendChild(pre);
+        // 很长的代码先收起一截，底下「展开全部 N 行」
+        var n = src.split('\n').length;
+        if (n > 24) { wrap.classList.add('fold'); var more = h('button', 'xc-code-more', '展开全部 ' + n + ' 行'); more.type = 'button'; wrap.appendChild(more); }
+        box.appendChild(wrap);
         return;
       }
       blocks(part, box);
@@ -3004,6 +3262,134 @@
     }).join('');
   }
 
+  /* ---------- 命令面板（Ctrl / ⌘ + K，侧边栏的搜索框也打开它） ----------
+     一个输入框找所有东西：对话（标题）、在做的任务、能做的事（新对话、主对话、每日任务、屏幕、用量、文件、设置、主题、全屏）。
+     上下键选、回车执行、Esc 关；鼠标移上去就选中。 */
+  var palIdx = 0, palItems = [], palBack = null;
+  var PICON = {
+    new: '<path d="M12 5.5v13M5.5 12h13"/>', main: '<path d="M9.5 4.5h5l-.8 5.2 3.3 3.3H7l3.3-3.3zM12 13v6.5"/>',
+    daily: '<circle cx="12" cy="13" r="7.2"/><path d="M12 9.5v3.5l2.3 1.8M9.5 3.5h5"/>', tray: '<rect x="4" y="4" width="16" height="16" rx="5"/><path d="M8 12h8M8 8.5h5M8 15.5h6"/>',
+    screen: '<rect x="3.5" y="4.5" width="17" height="11.5" rx="1.8"/><path d="M8.5 19.5h7M12 16v3.5"/>', usage: '<path d="M5 19.5V11M10 19.5V5M15 19.5v-6M20 19.5V8.5"/>',
+    files: '<path d="M3.5 7.5a1.5 1.5 0 0 1 1.5-1.5h4.5l2 2H19a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/>',
+    theme: '<circle cx="12" cy="12" r="7.5"/><path d="M12 4.5a7.5 7.5 0 0 1 0 15z" class="fill"/>', full: '<path d="M14.5 4.5h5v5M19.5 4.5l-6 6M9.5 19.5h-5v-5M4.5 19.5l6-6"/>',
+    chat: '<path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 3.5V16H7.5A2.5 2.5 0 0 1 5 13.5z"/>',
+    task: '<circle cx="12" cy="12" r="7.5"/><path d="M12 8v4l2.5 1.5"/>'
+  };
+  function palActions() {
+    var x = [
+      { ic: 'new', t: '新对话', k: '新建 对话', run: function () { newChat(); input.focus(); } },
+      { ic: 'main', t: '回到主对话', k: '主对话', run: function () { goMain(); } },
+      { ic: 'tray', t: '小芯在做的事', k: '任务 进行中 待处理 成果 工作台', run: function () { if (trayDocked()) flash(workEl); else setTray(true); } },
+      { ic: 'daily', t: '每日任务', k: '每日 签到 清单', run: function () { loadDaily(); } },
+      { ic: 'screen', t: '小芯的屏幕', k: '屏幕 桌面 接管 电脑', run: function () { openScreen(false); } },
+      { ic: 'usage', t: '用量', k: '额度 token 用量 统计', run: function () { openUsage(); } },
+      { ic: 'files', t: '小芯的文件', k: '文件 工作目录 hex 下载', run: function () { loadFiles(WORK, 'sess'); } },
+      { ic: 'gear', t: '设置', k: '设置 天启 通知 备份 登录', run: function () { setDrawer(true); setTimeout(openSettings, 60); } },
+      { ic: 'theme', t: document.documentElement.dataset.theme === 'dark' ? '换成浅色' : '换成深色', k: '主题 深色 浅色 夜间', run: function () { flipTheme(); } }
+    ];
+    x.push(S.wb ? { ic: 'full', t: '收起工作台', k: '小窗 面板', run: function () { unwork(); } } : { ic: 'full', t: '全屏工作台', k: '全屏 工作台', run: function () { work(); } });
+    return x;
+  }
+  function flipTheme() {
+    var dark = document.documentElement.dataset.theme === 'dark';
+    try { localStorage.setItem('lm.theme', dark ? 'light' : 'dark'); } catch (e) { /* 存不了就只换这一次 */ }
+    var h_ = document.documentElement; h_.dataset.theme = dark ? 'light' : 'dark'; h_.dataset.pref = dark ? 'light' : 'dark';
+    var m = document.getElementById('themeColor'); if (m) m.setAttribute('content', dark ? '#faf9f5' : '#1f1e1d');
+    [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { f.contentWindow.postMessage({ type: 'theme' }, location.origin); } catch (er) { /* 别的源 */ } });
+    toast(dark ? '换成浅色了' : '换成深色了');
+  }
+  function openSettings() {
+    var b = drawerEl && drawerEl.querySelector('.xc-set-b'), set = drawerEl && drawerEl.querySelector('.xc-set');
+    if (b && set && set.hidden) b.click(); else if (set) set.scrollIntoView({ block: 'nearest' });
+  }
+  function openPal() {
+    if (!root || !S.authed) return;
+    setTray(false); setMenu(false); setPick(false);
+    if (!palEl.classList.contains('in') && !palEl.contains(document.activeElement)) palBack = document.activeElement;
+    if (!S.sessList) call('sessions', {}, 60000).then(function (d) { S.sessList = d.sessions || []; if (!palEl.hidden) palRender(); }, function () {});
+    palEl.innerHTML = '';
+    var box = h('div', 'xc-pal-box'), top = h('div', 'xc-pal-q'), inp = h('input'), l = h('div', 'xc-pal-l');
+    top.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>';
+    inp.type = 'search'; inp.placeholder = '搜索对话，或者输入要做的事'; inp.setAttribute('aria-label', '搜索对话和功能'); inp.setAttribute('autocomplete', 'off'); inp.setAttribute('enterkeyhint', 'go');
+    inp.setAttribute('role', 'combobox'); inp.setAttribute('aria-controls', 'xin-pal-l'); inp.setAttribute('aria-expanded', 'true');
+    l.id = 'xin-pal-l'; l.setAttribute('role', 'listbox');
+    var esc = h('button', 'xc-pal-x', 'Esc'); esc.type = 'button'; esc.setAttribute('aria-label', '关掉'); esc.addEventListener('click', closePal);
+    top.appendChild(inp); top.appendChild(esc); box.appendChild(top); box.appendChild(l); palEl.appendChild(box);
+    palEl.hidden = false; root.classList.add('pal-open');
+    requestAnimationFrame(function () { palEl.classList.add('in'); });
+    palEl.onclick = function (e) { if (e.target === palEl) closePal(); };
+    inp.addEventListener('input', function () { palIdx = 0; palRender(); });
+    inp.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); palMove(e.key === 'ArrowDown' ? 1 : -1); }
+      else if (e.key === 'Enter') { if (e.isComposing || e.keyCode === 229) return; e.preventDefault(); palRun(palIdx); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePal(); }
+    });
+    palIdx = 0; palRender();
+    // 当场给焦点：按完 Ctrl+K 马上打字不丢字；手机上要在点击的同一刻聚焦才弹得出键盘
+    inp.focus({ preventScroll: true });
+  }
+  function closePal() {
+    if (!palEl || palEl.hidden) return;
+    palEl.classList.remove('in'); root.classList.remove('pal-open');
+    var back = palBack; palBack = null;
+    if (palEl.contains(document.activeElement)) { if (back && back !== document.body && document.contains(back) && !touch) back.focus({ preventScroll: true }); else document.activeElement.blur(); }
+    setTimeout(function () { if (!palEl.classList.contains('in')) palEl.hidden = true; }, reduceMotion() ? 0 : 140);
+  }
+  function palRender() {
+    var inp = palEl.querySelector('input'), l = palEl.querySelector('.xc-pal-l'); if (!inp || !l) return;
+    var q = inp.value.trim().toLowerCase(), hit = function (s) { return !q || String(s || '').toLowerCase().indexOf(q) >= 0; };
+    var acts = palActions().filter(function (a) { return hit(a.t) || hit(a.k); });
+    var sess = (S.sessList || []).filter(function (s_) { return !s_.archived && hit(s_.main ? '主对话 ' + (s_.title || '') : s_.title); }).slice(0, q ? 12 : 6);
+    var tasks = allTasks().filter(function (t) { return (tLive(t) || t.status === 'waiting') && hit(t.title); }).slice(0, 6);
+    palItems = []; l.textContent = '';
+    var group = function (name, arr, mk) {
+      if (!arr.length) return;
+      l.appendChild(h('p', 'xc-pal-g', name));
+      arr.forEach(function (it) { var o = mk(it); palItems.push(o); l.appendChild(o.el); });
+    };
+    var item = function (ic, text, meta, run, cls) {
+      var b = h('button', 'xc-pal-i' + (cls ? ' ' + cls : '')); b.type = 'button'; b.setAttribute('role', 'option'); b.id = 'xin-pal-' + palItems.length;
+      b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + (PICON[ic] || PICON.chat) + '</svg>';
+      b.appendChild(h('span', 'xc-pal-t', text)); if (meta) b.appendChild(h('span', 'xc-pal-m', meta));
+      var o = { el: b, run: run }, i = palItems.length;
+      b.addEventListener('mousemove', function () { if (palIdx !== i) { palIdx = i; palPaint(); } });
+      b.addEventListener('click', function () { palRun(i); });
+      return o;
+    };
+    if (q) group('对话', sess, function (s_) { return item('chat', s_.main ? '主对话' : s_.title || '（无标题）', s_.active ? '进行中' : s_.updated ? when(s_.updated) : '', function () { if (s_.main) goMain(); else openSession(s_.sid); }); });
+    group('在做的事', tasks, function (t) { return item('task', t.title, tStatText(t), function () { openTask(t.sid); }, t.status === 'waiting' ? 'wait' : 'live'); });
+    group(q ? '操作' : '常用', acts, function (a) { return item(a.ic, a.t, '', a.run); });
+    if (!q) group('最近的对话', sess, function (s_) { return item('chat', s_.main ? '主对话' : s_.title || '（无标题）', s_.active ? '进行中' : s_.updated ? when(s_.updated) : '', function () { if (s_.main) goMain(); else openSession(s_.sid); }); });
+    if (!palItems.length) {
+      var e = h('div', 'xc-pal-e'); e.appendChild(h('b', '', '没有找到「' + inp.value.trim() + '」'));
+      var b = h('button', 'xc-pal-i'); b.type = 'button'; b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + PICON.chat + '</svg>';
+      b.appendChild(h('span', 'xc-pal-t', '直接问小芯：' + inp.value.trim()));
+      var said = inp.value.trim(), o = { el: b, run: function () { input.value = said; ls(LS_DRAFT, said); grow(); renderSendBtn(); input.focus(); } };
+      b.addEventListener('click', function () { palRun(0); }); palItems.push(o); e.appendChild(b); l.appendChild(e);
+    }
+    palIdx = Math.min(palIdx, Math.max(0, palItems.length - 1)); palPaint();
+  }
+  function palPaint() {
+    palItems.forEach(function (o, i) { o.el.classList.toggle('on', i === palIdx); o.el.setAttribute('aria-selected', i === palIdx ? 'true' : 'false'); });
+    var cur = palItems[palIdx], inp = palEl.querySelector('input');
+    if (cur) { cur.el.scrollIntoView({ block: 'nearest' }); if (inp) inp.setAttribute('aria-activedescendant', cur.el.id); }
+  }
+  function palMove(d) { if (!palItems.length) return; palIdx = (palIdx + d + palItems.length) % palItems.length; palPaint(); }
+  function palRun(i) { var o = palItems[i]; if (!o) return; closePal(); setDrawer(false); setTimeout(o.run, 10); }
+
+  /* ---------- 轻提示：底部中间一颗小药丸，不抢焦点，3 秒后消失 ---------- */
+  var toastTm = 0;
+  function toast(msg) {
+    if (!toastEl) return;
+    toastEl.textContent = msg; toastEl.classList.remove('in'); void toastEl.offsetWidth; toastEl.classList.add('in');
+    clearTimeout(toastTm); toastTm = setTimeout(function () { toastEl.classList.remove('in'); }, 3000);
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.defaultPrevented || !S.open || !S.authed || !root) return;
+    if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey) && !e.altKey) { e.preventDefault(); if (palEl.classList.contains('in')) closePal(); else openPal(); }
+  });
+
   /* ---------- 启动 ---------- */
   /* ---------- 打开网页就叫醒云电脑：等你发第一句话时它已经醒了 ----------
      登录了才叫；已经醒着什么都不做；离开页面超过 10 分钟再回来时再叫一次（它空闲 30 分钟会自己睡）。失败不提示，发消息时还会再叫。 */
@@ -3021,7 +3407,7 @@
     if (document.hidden) return;
     if (Date.now() - wokeAt > 600000) { wakeVm(); greet(); }
     if (S.bg > 0) pollTasksSoon(500);
-    if (S.authed && (homeShown() || (S.open && S.wb))) pollWork();
+    if (S.authed && (homeShown() || workShown())) pollWork();
   });
 
   /* ---------- 见面打招呼：小芯用 xin next 留的那句话（比如每日任务的结果），打开网页时在气泡里说 ----------

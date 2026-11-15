@@ -11,6 +11,8 @@ chars = set(chr(c) for c in range(0x20, 0x7f))
 for f in ('index.html', 'shell.js', 'shell.css', 'pixel.css', 'tools.js', 'mascot.js', 'tools/stm32/study-core.js'):
     try: chars |= set(open(os.path.join(ROOT, f), encoding='utf8').read())
     except Exception: pass
+# 首页以外只有一处用点阵字：小芯聊天的欢迎页那句（site/xin/chat.js 的 welcome）
+chars |= set('嗨，我是小芯')
 chars = {c for c in chars if ord(c) >= 0x20}
 opts = subset.Options()
 opts.flavor = 'woff'; opts.layout_features = []; opts.name_IDs = [1, 2, 3, 4, 6]

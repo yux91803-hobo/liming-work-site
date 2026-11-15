@@ -220,7 +220,12 @@
     if (e.key === 'Escape') searching(false);
   });
   document.addEventListener('keydown', function (e) {
+    // 小芯聊天已经处理过的键不再处理：在聊天里按 Esc 只收聊天那一层，不顺带关掉工具
+    if (e.defaultPrevented) return;
     if (current) { if (e.key === 'Escape') back(); return; }
+    // 小芯聊天开着时 Ctrl/⌘ K 归它的命令面板；在输入框里打「/」就是在打字（比如路径）
+    var t = e.target, typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    if (document.body.classList.contains('xc-open') || (e.key === '/' && typing)) return;
     if ((e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) && document.activeElement !== q) { e.preventDefault(); searching(true); }
   });
 
