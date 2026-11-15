@@ -196,3 +196,42 @@ test('异步调用交错等待时 locked/key/run 都留在各自上下文，不�
   const [a,b]=await Promise.all([controller.invoke({op:'probe',args:{delay:20},run:'raaaaaa'}),controller.invoke({op:'probe',args:{delay:1},run:'rbbbbbb'})]);
   assert.equal(a.run,'raaaaaa');assert.equal(b.run,'rbbbbbb');assert.equal(a.locked,false);assert.equal(b.locked,false);assert.equal(process.env.XIN_RUN,original);
 });
+
+// 第 2 批（docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md Task 1）
+const ownerRecord=async home=>{const {Ownership}=await import(url('vm-kernel-owner'));const o=new Ownership(home);try{return o.record({waitMs:0});}finally{o.close();}};
+test('owner-legacy：主人活着不改；被 kill -9 后把 kernel 改回 legacy；本来就是 legacy 不动',async t=>{
+  const f=fixture(t,'legacy'),owner=f.start();
+  assert.deepEqual(f.cli('owner-legacy'),{error:'owner_busy'});
+  owner.child.kill('SIGKILL');await owner.exited;
+  assert.equal((await ownerRecord(f.home)).mode,'kernel');
+  assert.deepEqual(f.cli('owner-legacy'),{ok:true,mode:'legacy',epoch:2});
+  assert.deepEqual(f.cli('owner-legacy'),{ok:true,unchanged:true,mode:'legacy',epoch:2});
+  assert.equal(f.cli('sessions').error,undefined);
+});
+test('空闲时一分钟一检，有活时五秒：pendingWork 看待派发、后台任务、通知、交接和控制器回调',async t=>{
+  const f=fixture(t,'legacy');
+  const ask=code=>{const r=spawnSync(process.execPath,['--input-type=module','-e',`import {pendingWork} from ${JSON.stringify(pathToFileURL(AGENT).href)};import {journal} from ${JSON.stringify(url('vm-base'))};${code};process.stdout.write(JSON.stringify(pendingWork()));`],{env:f.env,encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
+  assert.equal(ask(''),false,'什么都没有：一分钟一检');
+  assert.equal(ask("journal.enqueueLaunch('rpendingx01','s0000000001',0)"),true,'有待派发的一轮：五秒一检');
+});
+test('从 legacy 拿到所有权时先备份一份；从 kernel 记录接回不备份',async t=>{
+  const f=fixture(t,'legacy');f.cli('sessions');
+  const dir=path.join(f.home,'backups','owner-switch'),first=f.start();
+  assert.equal(fs.readdirSync(dir).filter(n=>n.endsWith('.sqlite')).length,1);
+  first.child.kill('SIGKILL');await first.exited;
+  f.start();assert.equal(fs.readdirSync(dir).filter(n=>n.endsWith('.sqlite')).length,1);
+});
+test('切换窗口里来写（主人拿了锁还没开始听）：稍等后交给主人，只写一次',async t=>{
+  const f=fixture(t,'legacy');f.cli('sessions');
+  const holder=spawn(process.execPath,['--input-type=module','-e',`import {Ownership} from ${JSON.stringify(url('vm-kernel-owner'))};const o=new Ownership(process.env.XIN_HOME);o.take();console.log('held');setInterval(()=>{},1000);`],{env:f.env,stdio:['ignore','pipe','pipe']});
+  const held=new Promise(resolve=>holder.once('exit',resolve));t.after(()=>{holder.kill('SIGKILL');return held;});
+  await new Promise(resolve=>holder.stdout.once('data',resolve));
+  const writer=spawn(process.execPath,['--input-type=module','-e',`import {journal,BASE} from ${JSON.stringify(url('vm-base'))};journal.append(BASE+'/window.jsonl',{t:'text',text:'切换窗口里的一条'});`],{env:f.env,stdio:['ignore','pipe','pipe']});
+  let err='';writer.stderr.on('data',b=>err+=b);
+  const wrote=new Promise(resolve=>writer.once('exit',code=>resolve(code)));
+  await sleep(300);
+  holder.kill('SIGKILL');await held;
+  f.start();
+  assert.equal(await wrote,0,err);
+  assert.equal(fs.readFileSync(path.join(f.home,'window.jsonl'),'utf8').trim().split('\n').length,1);
+});

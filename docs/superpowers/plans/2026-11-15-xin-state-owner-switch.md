@@ -18,8 +18,8 @@
 
 ## 这一批我定的（和设计文字不同或设计没写到的，站长可以改）
 
-1. **状态进程正常退出（管道断开、SIGTERM、排空）一律把记录交回 legacy。** 设计只在「切回旧模式」时写 legacy。原因：外壳重启、升级、回滚到第 1 批时，记录留在 `kernel` 又没有主人，旧路径写不进；交回 legacy 后空档由旧路径服务，锁保证单写者。代价：外壳每重启一次切换次数加 2。
-2. **状态进程被 `kill -9`（记录留在 `kernel`）时，外壳马上跑 `node <agent> owner-legacy` 把记录改回 legacy 再退避重起。** 设计写的是 Worker 3 分钟后经 exec 改。
+1. **外壳正常停止（收到 SIGTERM：换版本、回滚时 `ensure` 都会先 `systemctl stop`）时，先让状态进程排空、交回 legacy 再退出；状态进程意外失去外壳（管道断开）照 #140 保持 `kernel`，停着不写，等外壳回来。** 设计只在 Worker 要求时才切回旧模式。原因：回滚到第 1 批时第 1 批的 Worker 不发期望、第 1 批的外壳不认识状态进程，记录留在 `kernel` 就谁也写不进；#140 的「父管道断开保留 kernel、不能默默改回 legacy」照旧成立。代价：外壳每次换版本，切换次数加 2，中间有几秒走旧路径。（实施 Task 1 时由「正常退出一律交回 legacy」改成这样，见账本。）
+2. **状态进程意外退出（包括 `kill -9`，记录留在 `kernel`）时，外壳不改记录、按退避马上重起**，执行进程的报告靠「稍等再判断」等过这一小段；连续 3 分钟起不来才用 `node <agent> owner-legacy` 改回旧模式（第 3 条）。外壳把最近一次期望存在 `~/.xin/kernel-owner.json`（0600），外壳自己重启后不等请求就按它拉起状态进程。设计写的是 Worker 3 分钟后经 exec 改。
 3. **「连续 3 分钟起不来就切回旧模式」放在外壳里判断**：只认状态进程真的起不来（端口不通的情况外壳自己就不在，自然不算），按代号记住「这一代放弃了」，代号变大（新部署）才再试；放弃时外壳起一次 `pushq` 推送告诉站长；用量页显示。设计写的是 Worker 判断、记在 Durable Object。效果相同（换部署才清掉），少一份跨网络的状态。
 4. **部署代号由 Durable Object 发**：`/kernel/config` 时看 `CF_VERSION_METADATA.id`，和存的不一样就把代号加一（回滚也是一次新部署，所以也加一）。外壳只认不比已见代号小的期望，新旧两版 isolate 同时在线时不会来回切。
 5. **流仍然调 `poll`，只是改走套接字**；外壳直接读事件文件留给以后。`poll` 在状态进程里实测 0.1–0.25 毫秒，不值得复制一份 `readRunFrom`。目标「一次 poll 不起控制器进程」照样达到。
@@ -47,7 +47,7 @@
 1. **电脑暂停后恢复，墙上时钟一下跳了几个小时。** 期望：状态进程不退出，之后的请求照常回答，不卡住。→ Task 3「墙上时钟往前跳」。
 2. **刚部署时新旧两版的 isolate 同时在发请求，期望不一样。** 期望：模式只跟代号大的走，不来回切。→ Task 2「代号小的期望不改模式」、Task 4「部署代号」。
 3. **切换的那一刻，正在跑的执行进程来报告结果**（主人拿了锁还没开始听）。期望：稍等以后交给主人，或者在记录改回 legacy 后走旧路径，报告只做一次、不报错。→ Task 1「retryUnsent」、Task 3「切换窗口里来写」。
-4. **上线失败、自动回滚到第 1 批**（第 1 批的 Worker 不发期望，第 1 批的外壳不认识状态进程）。期望：状态进程排空后记录是 legacy，第 1 批照常写。→ Task 3「外壳关掉」。
+4. **上线失败、自动回滚到第 1 批**（第 1 批的 Worker 不发期望，第 1 批的外壳不认识状态进程）。期望：旧外壳被 `systemctl stop` 时状态进程排空、记录是 legacy，第 1 批照常写。→ Task 3「外壳正常停止」。
 5. **没人用的时候，常驻的状态进程不能让电脑一直醒着**（InstaBox 按 CPU 有没有负载判断空闲）。期望：没活时一分钟才检查一次。→ Task 1「空闲时一分钟一检」；上线后再只读核对电脑照常自动暂停。
 
 ---
@@ -67,7 +67,7 @@
 - Produces: `retryUnsent(fn, { deadlineMs = 30000, clock = () => performance.now(), sleep = syncSleep } = {})`：只在 `fn` 抛 `executed === false`、且 `code` 不是 `state_request`、`state_too_large`、`state_protocol` 时重跑 `fn`，间隔 50、100、200、400、800、1000、1000… 毫秒，过了期限抛最后一次的错。
 - Produces: `snapshotBeforeSwitch(db, home, { now = Date.now(), everyMs = 86400000, keep = 2 }) -> string | null`：`VACUUM INTO` 到 `home/backups/owner-switch/workflow-<now>.sqlite`，跳过时返回 `null`。
 - Produces: 命令 `node vm-agent.mjs owner-legacy`，标准输出一行 JSON，退出码 0：主人活着 `{"error":"owner_busy"}`；记录是 `kernel` 且没人拿着 `{"ok":true,"mode":"legacy","epoch":n}`；本来就是 legacy `{"ok":true,"unchanged":true,"mode":"legacy","epoch":n}`。
-- Produces: `serve` 正常退出的语义：排空 → 投影刷完 → 记录 `legacy`、`epoch + 1` → 退出码 0。
+- `serve` 的退出语义不变（#140）：管道结束或 SIGTERM 时排空后退出，记录保持 `kernel`；要交回 legacy 用已有的控制命令 `{kind:'control',op:'release',mode:'legacy'}`。
 - Produces: 状态进程控制命令 `{kind:'control',op:'health'}` 的结果 `{ pid, epoch, protocol, up, active, draining, nextTickMs, rss }`。
 
 - [ ] **Step 1: 写失败的测试**
@@ -89,9 +89,6 @@ test('切换前的一致备份：一天最多一次，留最新两份，目录 0
 ```
 `test/xin-state-controller.test.cjs`（真 `serve`，临时目录）：
 ```js
-for (const how of ['管道结束', 'SIGTERM']) test('状态进程正常退出（' + how + '）：排空后记录交回 legacy，旧路径马上能写', async t => {
-  // 起 serve（stateMode 帮手）→ 记录 kernel、epoch 1；按 how 结束 → 退出码 0；Ownership.record() → mode 'legacy'、epoch 2；f.cli('sessions') 没有 error
-});
 test('owner-legacy：主人活着不改；被 kill -9 后把 kernel 改回 legacy；本来就是 legacy 不动', async t => {
   // 活着 → {error:'owner_busy'}；SIGKILL 后 → {ok:true,mode:'legacy',epoch:2}；再跑 → {ok:true,unchanged:true,...}
 });
@@ -146,7 +143,7 @@ git commit -m "feat(xin): 状态进程正常退出交回旧模式，桥稍等再
     - `ready(agent, ms) -> Promise<boolean>`。
     - `call(request, { timeoutMs }) -> Promise<any>`：经 `stateCall`；`hardMs` 到了还没回就 `SIGKILL` 状态进程。
     - `summary() -> { want, mode, epoch, phase, gen, agent, up, restarts, failures, lastError, fallback, spawns }`：`mode` 只有 `phase === 'running'` 时是 `'kernel'`；`agent` 是 12 位哈希或 `null`；`phase` 是 `off | starting | running | stopping | waiting | fallback`。
-    - `close() -> Promise<void>`：结束状态进程的标准输入，不等它排空。
+    - `close({ release = false } = {}) -> Promise<void>`：`release` 为真时先让状态进程交回 legacy（最多等 20 秒）；然后结束它的标准输入。
   - `createKernel(...)` 新增选项 `keeper`（传给 `createStateKeeper` 的选项）和 `readyWaitMs = 15000`。
   - `/xin/op` 回应都带 `owner: summary`；`op === 'usage'` 时再带 `ops: { all: { n, p50, p95, max }, byOp: { <操作名>: { n, p50, p95, max } } }`（走套接字的操作，每个操作名留最近 200 次的毫秒数）。
   - 主人暂时不在：HTTP 503 `{ ok:false, executed:false, error:'owner_unavailable', retryAfter:3, owner }`。不确定：HTTP 200 `{ ok:false, executed:'unknown', error }`。
@@ -156,9 +153,11 @@ git commit -m "feat(xin): 状态进程正常退出交回旧模式，桥稍等再
 规则（实现时照做）：
 - 拉起：`spawnImpl(process.execPath, [agent, 'serve', '--parent-pipe'], { env: { ...env, XIN_HOME: home }, stdio: ['pipe','pipe','pipe'] })`；标准输出第一行 `{"ready":true,...}` 算起来了；`readyMs` 内没起来就杀掉、算一次失败。
 - 起来以前退出：算失败，`lastError` 取标准错误里第一个 `state_*` / `owner_*`，没有就写 `exit <code>`，按 `backoffMs` 重起。
-- 起来以后意外退出：先跑 `node <agent> owner-legacy`（10 秒上限），记 `reset`，再按退避重起。连续跑满 60 秒，失败次数清零。
-- 想要 `kernel` 却从第一次失败起 `giveUpMs` 内一次都没跑起来：`phase = 'fallback'`，记下这一代号，起一次 `node <agent> pushq '{"title":"小芯","body":"常驻状态进程起不来，已自动改回旧方式：<lastError>","tag":"xin-owner","url":"/#xin"}'`，不再重起；`want` 来了更大的代号才重新开始。
-- 期望变成 `legacy`、或代号更大且版本不同：结束标准输入让它排空，60 秒没退就 `SIGKILL` 再 `owner-legacy`；版本不同的接着按新期望拉起。
+- 起来以后意外退出：记 `exit`，记录留在 `kernel`，按退避重起。连续跑满 60 秒，失败次数清零。
+- 应用期望时把 `{ mode, gen, agent }` 写进 `home/kernel-owner.json`（先写临时文件再改名，0600）；`createKernel` 启动时读它，`mode === 'kernel'` 且控制器文件还在就马上 `want`。
+- 外壳收到 SIGTERM（`serve()` 的停止）：`keeper.close({ release: true })` 先发控制命令 `release` 让状态进程排空交回 legacy，最多等 20 秒，再退出。
+- 想要 `kernel` 却从第一次失败起 `giveUpMs` 内一次都没跑起来：先跑 `node <agent> owner-legacy`（10 秒上限，记 `reset`），`phase = 'fallback'`，记下这一代号，起一次 `node <agent> pushq '{"title":"小芯","body":"常驻状态进程起不来，已自动改回旧方式：<lastError>","tag":"xin-owner","url":"/#xin"}'`，不再重起；`want` 来了更大的代号才重新开始。
+- 期望变成 `legacy`、或代号更大且版本不同：发控制命令 `release`（`mode:'legacy'`）让它排空交回 legacy，60 秒没退就 `SIGKILL` 再 `owner-legacy`；版本不同的接着按新期望拉起。
 - `/xin/op`：先 `want`（有 `owner` 字段时），再 `route`；`wait` 时 `await ready(agent, readyWaitMs)` 后重新 `route`。流里每次 `poll` 也按 `route` 走。`spawns` 在 `runAgent` 里加一。
 
 - [ ] **Step 1: 写失败的测试**（`test/xin-kernel.test.cjs`，假控制器的 `serve` 在 `XIN_HOME/run/state.sock` 上按同一协议回 `{via:'state',op,args}`，用 `XIN_HOME` 下的标记文件控制「起不来」「延迟就绪」「不回答」并计数 `owner-legacy`、`pushq`）
@@ -167,8 +166,10 @@ test('期望 kernel：拉起状态进程，之后同版本的操作和轮询走�
   // health.owner.phase === 'running'；记下 spawns；再 10 次 op + 一次流（含 poll）后 spawns 不变；op 回 data.via === 'state'
 test('代号小的期望不改模式；同代号要 legacy 就排空停下；代号更大再拉起', ...);
   // want gen 2 kernel → running；gen 1 legacy → 不理（还是 running）；gen 2 legacy → 状态进程退出、phase 'off'；gen 3 kernel → 又 running
-test('状态进程被 kill -9：先改回 legacy 再按退避重起', ...);
-  // owner-legacy 计数 1；回到 running；summary.restarts >= 1；日志里有 reset
+test('状态进程被 kill -9：记录不动，按退避重起', ...);
+  // owner-legacy 计数 0；回到 running；summary.restarts >= 1；日志里有 exit
+test('外壳正常停止（SIGTERM）：先让状态进程交回 legacy 再退出；外壳自己重启后按存下的期望马上拉起', ...);
+  // close({release:true}) → 假状态进程收到 release；新外壳读 kernel-owner.json，不等请求就 running
 test('一直起不来：超过期限放弃这一代号并推送一次；代号更大再试', ...);
   // keeper: { giveUpMs: 800, backoffMs: [50, 100] }；serve 退出 1 并在标准错误写 state_compat → phase 'fallback'、fallback true、lastError 'state_compat'、pushq 计数 1；再等 500 毫秒没有新的 serve；gen+1 后又开始拉起
 test('启动中的同版本请求等它准备好；等不到就照旧起控制器', ...);
@@ -177,7 +178,7 @@ test('请求的控制器版本和状态进程的不同：照旧起控制器', ..
 test('操作超过上限：先回「不确定」，到硬上限杀掉状态进程并重起', ...);
   // opTimeoutMs 200、hardMs 400、状态进程收到 hang 不回答 → executed 'unknown'；之后 restarts 加一
 test('状态进程回「排空中」：503 owner_unavailable，不起控制器', ...);
-test('外壳关掉：状态进程收到管道结束自己退出', ...);
+test('外壳意外退出（只关管道）：状态进程自己排空退出', ...);
 test('健康检查和 usage 的回应带上主人状态和各操作耗时', ...);
 test('owner 字段格式不对：400', ...);
 test('桥协议号和 vm-kernel-owner.mjs 的一致', ...);
@@ -218,8 +219,8 @@ test('内核模式：send、poll、sessions、tasks 都不起控制器；结果�
 test('带编号的 send：执行前被杀重送只成一轮；执行后被杀重送拿到同一回执；同编号不同内容报冲突', ...);
   // 执行前：SIGSTOP 状态进程 → 发 send → SIGKILL → 回「不确定」或主人不在 → 重起后重送 → 只有 1 轮
   // 执行后：send 回了以后 SIGKILL → 重起后重送 → 同一 run；不同内容 → message_conflict
-test('状态进程被 kill -9 的空档里，旧路径照常写；重起后回到内核，切换次数变大', ...);
-test('外壳关掉：状态进程排空、记录回 legacy；不发期望的旧外壳照常起控制器写（模拟回滚到第 1 批）', ...);
+test('状态进程被 kill -9：外壳重起它，空档里来报告的执行进程稍等后交给新主人；切换次数变大', ...);
+test('外壳正常停止：状态进程排空、记录回 legacy；不发期望的旧外壳照常起控制器写（模拟回滚到第 1 批）', ...);
 test('墙上时钟在状态进程里往前跳 2 小时：之后的请求照常回答，状态进程不退出', ...);
   // keeper 的 env 加 NODE_OPTIONS=--require=test/helpers/clock-jump.cjs；写入 7200000 后 20 次 sessions 都在 2 秒内回答；pid 不变
 test('控制器不停起退时拉起状态进程：20 轮都能起来，没有 state_compat', ...);
@@ -352,6 +353,6 @@ git commit -m "docs(xin): 第 2 批：状态切到内核模式的说明、联调
 | 情况 | 做什么 |
 |---|---|
 | 内核模式有问题、代码没问题 | `wrangler.jsonc` 的 `XIN_STATE_OWNER` 改成 `legacy` 发版：新部署代号更大，外壳排空、记录回 legacy |
-| 新版本有问题 | Actions 自动回滚 Worker；回到第 1 批时它的外壳重新装上，状态进程收到管道结束、交回 legacy（我定的第 1 条） |
+| 新版本有问题 | Actions 自动回滚 Worker；第 1 批的 `ensure` 先 `systemctl stop` 新外壳，新外壳让状态进程排空、交回 legacy（我定的第 1 条）。万一新外壳被强杀、记录还停在 `kernel`：经 exec 跑这一批的控制器 `node <这一批的 vm-agent-hash>.mjs owner-legacy` |
 | 状态进程起不来 | 外壳 3 分钟后自己放弃这一代号、改回旧方式并推送（第 3 条）；修好再发版 |
 | 要退到 #136、#137 那样不懂桥的版本 | 不支持直接退。先用懂桥的版本切回旧模式（上面第一行），确认健康检查 `owner.mode` 是 `legacy`，再退 |

@@ -12,7 +12,7 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
   const file = stateSocket(home), directory = path.dirname(file), before = owner.record();
   if (before.busy) throw Object.assign(new Error('状态主人仍在运行'), { code: 'owner_busy' });
   const lease = owner.take();
-  let timer, active = 0, draining = false, stopped = false, stopPromise, stamp;
+  let timer, active = 0, draining = false, stopped = false, stopPromise, stamp, nextTick = tickMs;
   const waiters = [], sockets = new Set(), started = Date.now();
   const record = value => { try { log(value); } catch { /* Diagnostics never change execution. */ } };
   const idle = () => { if (!active) for (const done of waiters.splice(0)) done(); };
@@ -42,7 +42,7 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
         reply(q || {}, { ok: false, error: 'state_protocol', executed: false }); return;
       }
       if (q.kind === 'control') {
-        if (q.op === 'health') reply(q, { ok: true, result: { pid: process.pid, epoch: lease.epoch, protocol: BRIDGE_PROTOCOL, up: Date.now()-started, active, draining } });
+        if (q.op === 'health') reply(q, { ok: true, result: { pid: process.pid, epoch: lease.epoch, protocol: BRIDGE_PROTOCOL, up: Date.now()-started, active, draining, nextTickMs: nextTick, rss: process.memoryUsage().rss } });
         else if (q.op === 'release' && q.mode === 'legacy') {
           try { reply(q, { ok: true, result: await stop({ legacy: true }) }); }
           catch { reply(q, { ok: false, error: 'state_drain', executed: 'unknown' }); }
@@ -86,10 +86,10 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
     let delay = tickMs;
     try { const next = await tick(); if (Number.isFinite(next) && next > 0) delay = next; }
     catch { record({ kind: 'tick', ok: false }); }
-    finally { active--; idle(); if (!draining) timer = setTimeout(cycle,delay); }
+    finally { active--; idle(); nextTick = delay; if (!draining) timer = setTimeout(cycle,delay); }
   }
   try {
-    const init = initialize(); if (init?.then) throw Error('状态初始化必须同步完成');
+    const init = initialize(before); if (init?.then) throw Error('状态初始化必须同步完成');   // before：拿锁前的记录（从 legacy 接手时要先备份）
     let st; try { st = fs.lstatSync(directory); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     if (st && (!st.isDirectory() || st.isSymbolicLink())) throw Error('状态套接字目录不安全');
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 }); fs.chmodSync(directory,0o700);
@@ -105,4 +105,18 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
     try { beforeRelease(); } catch (flushError) { lease.release(); throw flushError; }
     lease.release(before.mode); throw e;
   }
+}
+// 设计 §6.9 第 2 步：从旧模式切到内核之前留一份一致的备份（VACUUM INTO 是一致的快照）。
+// 第 2 批计划定的：一天最多一次，留最新两份，目录 0700、文件 0600；先写 .tmp 再改名，读的人看不到写了一半的文件。
+const SNAPSHOT = /^workflow-(\d+)\.sqlite$/;
+export function snapshotBeforeSwitch(db, home, { now = Date.now(), everyMs = 86400000, keep = 2 } = {}) {
+  const dir = path.join(path.resolve(home), 'backups', 'owner-switch');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.chmodSync(dir, 0o700);
+  const have = fs.readdirSync(dir).map(n => SNAPSHOT.exec(n)).filter(Boolean).map(m => ({ name: m[0], at: Number(m[1]) })).sort((a, b) => b.at - a.at);
+  if (have.length && now - have[0].at < everyMs) return null;
+  const file = path.join(dir, 'workflow-' + now + '.sqlite'), tmp = file + '.tmp';
+  try { fs.unlinkSync(tmp); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  db.prepare('VACUUM INTO ?').run(tmp); fs.chmodSync(tmp, 0o600); fs.renameSync(tmp, file);
+  for (const old of [{ name: path.basename(file) }, ...have].slice(keep)) fs.unlinkSync(path.join(dir, old.name));
+  return file;
 }

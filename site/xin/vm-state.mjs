@@ -22,8 +22,12 @@ export class StateJournal {
   // 所有写入口都从这里过（docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.2）：旧模式下拿着共享的所有权锁写，
   // 主人活着、或者该内核当主人但它不在，owner.enter() 会抛 owner_unavailable，这里就不写。一次最外层调用只问一次。
   // owner 为空（单独用 StateJournal 的测试）时不检查。
+  // 交给主人时没送出去（主人正在接手、还没开始听），稍等后从头再判断一次（this.retryUnsent 由 vm-base 装上，§6.2）。
   writing(fn,unavailable){
     if(!this.owner||this.writers>0)return fn();
+    return (this.retryUnsent||(f=>f()))(()=>this.writingOnce(fn,unavailable));
+  }
+  writingOnce(fn,unavailable){
     if(!this.owner.owning&&!this.owner.depth&&unavailable&&this.bridge?.available?.())
       return unavailable(Object.assign(Error('owner_alive'),{code:'owner_unavailable'}));
     const held=this.owner.depth>0;let release;

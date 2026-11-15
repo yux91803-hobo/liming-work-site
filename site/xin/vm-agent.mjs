@@ -44,11 +44,12 @@ import { fileURLToPath } from 'node:url';
 import * as runtime from './vm-runtime.mjs';
 import { StateJournal } from './vm-state.mjs';
 import { createController } from './vm-kernel-controller.mjs';
-import { createStateServer } from './vm-kernel-state.mjs';
-import { requestState, requestStateSync } from './vm-kernel-client.mjs';
+import { createStateServer, snapshotBeforeSwitch } from './vm-kernel-state.mjs';
+import { requestState, requestStateSync, retryUnsent, forwardCLI, inputArgs } from './vm-kernel-client.mjs';
 import { callContext, lockHeld } from './vm-kernel-context.mjs';
 import { initializeStateTables } from './vm-kernel-operations.mjs';
 import { checkControllers } from './vm-kernel-compat.mjs';
+import { ownerLegacy } from './vm-kernel-owner.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
 import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership, stateOwned } from './vm-base.mjs';
@@ -261,9 +262,11 @@ const seenF = run => path.join(RUNS, run + '.seen');   // 网页最近一次来�
 // 后台任务的记录（派、排队、收尾、补充、停）都用同一把锁 tasks，等得久一点
 function lockedCall(key, op, args) {
   if (key !== 'new' && key !== 'daily' && key !== 'tasks' && !okId(key, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
+  return retryUnsent(()=>{   // 交不过去（主人正在接手、还没开始听）就稍等、从头再判断（§6.2）
+  const viaOwner=()=>requestStateSync(BASE,{kind:'op',op,args,locked:true,key,run:callContext().run});
   if(ownership.owning)return controller.invoke({op,args,locked:true,key,run:callContext().run});
-  if(stateOwned())return requestStateSync(BASE,{kind:'op',op,args,locked:true,key,run:callContext().run});
-  let release;try{release=ownership.enter();}catch(e){if(e.code!=='owner_unavailable')throw e;return requestStateSync(BASE,{kind:'op',op,args,locked:true,key,run:callContext().run});}
+  if(stateOwned())return viaOwner();
+  let release;try{release=ownership.enter();}catch(e){if(e.code!=='owner_unavailable')throw e;return viaOwner();}
   try{
   const dir = path.join(BASE, 'locks'); mk(dir);
   const r = spawnSync('flock', ['--exclusive', '--timeout', key === 'tasks' ? '20' : '3', '--conflict-exit-code', '73', '--close',
@@ -273,7 +276,7 @@ function lockedCall(key, op, args) {
   if (r.error || r.status !== 0) return { error: 'lock_failed', msg: r.error && r.error.code === 'ENOENT'
     ? '云电脑缺少 flock，暂时不能安全更新对话' : '暂时不能安全更新对话，请重试' };
   try { return JSON.parse(r.stdout); } catch { return { error: 'lock_failed', msg: '保存对话的结果不完整，请重试' }; }
-  }finally{release();}
+  }finally{release();}});
 }
 // 后台任务的记录也是会话文件，但归 tasks 锁管（调度会整份改写它）
 function patchSession(sid, changes) { return lockedCall(isTask(readJ(sessF(sid))) ? 'tasks' : sid, 'session_patch', { sid, changes }); }
@@ -2113,17 +2116,17 @@ function handOverWatchdog(next) {
   mk(path.join(BASE, 'locks'));
   spawn('flock', ['-w', '60', '--close', path.join(BASE, 'locks/watchdog.lock'), process.execPath, next, 'watchdog'], { detached: true, stdio: 'ignore', cwd: os.homedir(), env }).unref();
 }
-async function maintainState(){journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();await flushNotices();await flushControllerEvent();}
+// 还有没有要接着盯的事：没有就让旧看门狗退出、让状态进程一分钟才检查一次（InstaBox 按 CPU 有没有负载判断空闲，不能把电脑撑着不暂停）
+export function pendingWork(){const pending=readJ(path.join(BASE,'controller-event.json')),notices=fs.existsSync(NOTICE_DIR())&&fs.readdirSync(NOTICE_DIR()).some(n=>/^[a-f0-9]{32}\.json$/.test(n)&&readJ(path.join(NOTICE_DIR(),n))?.state==='pending');
+  return listTasks().some(isBackground)||notices||journal.hasPendingHandoffs()||journal.hasOpenLaunches()||!!(pending&&!pending.acknowledged);}
+async function maintainState(){journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();await flushNotices();await flushControllerEvent();return pendingWork()?5000:60000;}
 async function watchdog() {
   for (;;) {
     let release;try{release=ownership.enter();}catch(e){if(e.code==='owner_unavailable')return;throw e;}release();
     const next = newerController();
     if (next) { handOverWatchdog(next); return; }
     try { await maintainState(); } catch { /* transient errors are retried */ }
-    const active = listTasks().some(isBackground);
-    const pending = readJ(path.join(BASE, 'controller-event.json'));
-    const notices=fs.existsSync(NOTICE_DIR()) && fs.readdirSync(NOTICE_DIR()).some(n=>/^[a-f0-9]{32}\.json$/.test(n) && readJ(path.join(NOTICE_DIR(),n))?.state==='pending');
-    if (!active && !notices && !journal.hasPendingHandoffs() && !journal.hasOpenLaunches() && (!pending || pending.acknowledged)) return;
+    if (!pendingWork()) return;
     await new Promise(resolve => setTimeout(resolve, 5000));
   }
 }
@@ -3147,24 +3150,11 @@ function restoreStops() {
 
 // 一次性兼容客户端在 legacy 持共享锁；kernel 时只转发，不取得本地写权。
 const LONG_LIVED = ['run', 'agy-run', 'warm', 'memory-idle', 'callback', 'watchdog', 'login-window', 'pushq'];
-function inputArgs(){try{const t=fs.readFileSync(0,'utf8').trim(),a=t?JSON.parse(t):{};return a&&typeof a==='object'&&!Array.isArray(a)?a:{};}catch{return {};}}
-async function forwardCLI(op){
-  const q=op==='xin'?{kind:'xin',argv:process.argv.slice(3),run:process.env.XIN_RUN||null,stdin:readStdin()}:
-    op==='reap'?{kind:'reap'}:{kind:'op',op:op==='locked'?process.argv[3]:op,locked:op==='locked',key:process.env.XIN_LOCK||null,run:process.env.XIN_RUN||null,args:inputArgs()};
-  try{
-    const r=await requestState(BASE,q);
-    if(op==='xin'){process.stdout.write(r.output||'');process.exitCode=r.code||0;}
-    else process.stdout.write(JSON.stringify(r??{}));
-  }catch(e){
-    if(op==='xin'){process.stderr.write('小芯的状态进程暂时不可用，请稍后重试\n');process.exitCode=1;}
-    else process.stdout.write(JSON.stringify({error:e.code||'owner_unavailable',msg:'小芯的状态进程暂时不可用，请稍后重试',executed:e.executed??false}));
-  }
-}
 async function serveState(){
   checkControllers(BASE,SELF);
   let initialized=false;
   const service=await createStateServer({home:BASE,owner:ownership,
-    initialize:()=>{checkControllers(BASE,SELF);journal.recover();initializeStateTables();restoreStops();markCurrentController();initialized=true;},
+    initialize:before=>{checkControllers(BASE,SELF);journal.recover();initializeStateTables();restoreStops();markCurrentController();if(before.mode==='legacy')snapshotBeforeSwitch(journal.db,BASE);initialized=true;},
     handle:controller.handle,tick:maintainState,beforeRelease:()=>{try{if(initialized)journal.recover();}finally{journal.close();}}
   });
   const stop=()=>service.close().catch(()=>{process.exitCode=1;});
@@ -3178,9 +3168,11 @@ async function serveState(){
 }
 async function main() {
   if(process.argv[2]==='serve')return serveState();
+  if(process.argv[2]==='owner-legacy'){process.stdout.write(JSON.stringify(ownerLegacy(ownership)));return;}
   if(!LONG_LIVED.includes(process.argv[2])){
-    if(stateOwned())return forwardCLI(process.argv[2]);
-    try{ownership.hold();}catch(e){if(e.code!=='owner_unavailable')throw e;return forwardCLI(process.argv[2]);}
+    const forward=()=>forwardCLI(BASE,process.argv[2],{stdin:readStdin});
+    if(stateOwned())return forward();
+    try{ownership.hold();}catch(e){if(e.code!=='owner_unavailable')throw e;return forward();}
     journal.recover();restoreStops();
   }else{
     let release;

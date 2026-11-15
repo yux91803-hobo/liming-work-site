@@ -161,3 +161,25 @@ test('能安全重来的操作：只读的，或者带编号由控制器去重�
   assert.strictEqual(retrySafe('memory_add', { clientId: 'abcdefgh1' }), false);
   assert.strictEqual(retrySafe('forget', {}), false);
 });
+
+// 第 2 批（docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md Task 1）：设计 §6.2「交不过去（主人正在接手、还没开始听），稍等再按表重新判断」
+test('retryUnsent：确定没执行的稍等再判断；不确定的不重来；过了期限照常抛', async () => {
+  const { retryUnsent } = await load('../site/xin/vm-kernel-client.mjs');
+  let t = 0; const sleeps = [], clock = () => t, sleep = ms => { sleeps.push(ms); t += ms; };
+  const fail = (code, executed) => Object.assign(new Error(code), { code, executed });
+  let n = 0;
+  assert.strictEqual(retryUnsent(() => { if (++n < 3) throw fail('owner_unavailable', false); return 'ok'; }, { clock, sleep }), 'ok');
+  assert.strictEqual(n, 3); assert.deepStrictEqual(sleeps, [50, 100]);
+  for (const [code, executed] of [['state_timeout', 'unknown'], ['state_request', false], ['state_too_large', false], ['state_protocol', false]]) {
+    n = 0;
+    assert.throws(() => retryUnsent(() => { n++; throw fail(code, executed); }, { clock, sleep }), e => e.code === code);
+    assert.strictEqual(n, 1, code);
+  }
+  n = 0;
+  assert.throws(() => retryUnsent(() => { n++; throw new Error('boom'); }, { clock, sleep }), /boom/);
+  assert.strictEqual(n, 1, '不是桥的失败：不重来');
+  n = 0; t = 0; sleeps.length = 0;
+  assert.throws(() => retryUnsent(() => { n++; throw fail('owner_unavailable', false); }, { deadlineMs: 300, clock, sleep }), e => e.code === 'owner_unavailable');
+  assert.ok(t >= 300, '等满期限：' + t); assert.ok(n > 2, String(n));
+  assert.deepStrictEqual(sleeps.slice(0, 2), [50, 100]); assert.ok(sleeps.every(ms => ms > 0 && ms <= 1000), String(sleeps));
+});

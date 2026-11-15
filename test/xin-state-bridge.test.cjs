@@ -131,3 +131,19 @@ test('套接字路径是普通文件或目录软链接时拒绝，原文件保�
   fs.unlinkSync(m.stateSocket(h));fs.rmdirSync(path.join(h,'run'));const other=home(t);fs.symlinkSync(other,path.join(h,'run'));
   await assert.rejects(m.createStateServer({home:h,handle:()=>{}}));assert.deepEqual(fs.readdirSync(other),[]);
 });
+
+// 第 2 批 Task 1：设计 §6.9 第 2 步「让控制器做一次一致的备份（VACUUM INTO）」；计划定的：一天最多一次，留最新两份
+test('切换前的一致备份：一天最多一次，留最新两份，目录 0700、文件 0600',async t=>{
+  const h=home(t),m=await load(),{DatabaseSync}=require('node:sqlite');
+  const db=new DatabaseSync(path.join(h,'workflow.sqlite'));t.after(()=>db.close());
+  db.exec("CREATE TABLE notes(text TEXT);INSERT INTO notes VALUES('切换前的一行')");
+  const T=1794550000000,dir=path.join(h,'backups','owner-switch');
+  const first=m.snapshotBeforeSwitch(db,h,{now:T});
+  assert.ok(first&&path.dirname(first)===dir,String(first));
+  const copy=new DatabaseSync(first,{readOnly:true});assert.equal(copy.prepare('SELECT text FROM notes').get().text,'切换前的一行');copy.close();
+  assert.equal(fs.statSync(dir).mode&0o777,0o700);assert.equal(fs.statSync(first).mode&0o777,0o600);
+  assert.equal(m.snapshotBeforeSwitch(db,h,{now:T+3600e3}),null,'一天之内不再备份');
+  const second=m.snapshotBeforeSwitch(db,h,{now:T+25*3600e3});assert.ok(second&&second!==first);
+  const third=m.snapshotBeforeSwitch(db,h,{now:T+50*3600e3});assert.ok(third);
+  assert.deepEqual(fs.readdirSync(dir).sort(),[path.basename(second),path.basename(third)].sort(),'只留最新两份，没有临时文件');
+});
