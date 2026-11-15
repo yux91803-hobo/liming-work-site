@@ -89,9 +89,9 @@ XIN_TASK_RUN = [{'t': 'user', 'text': '编译 blink 工程'}, {'t': 'text', 'tex
                 {'t': 'text', 'text': '编好了：`/data/workspace/blink/build/app.hex`'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 95000}]
 TASK_ISLE_JS = """[!!document.querySelector('.xc-msgs .xc-task'), document.querySelector('.xc-isle').classList.contains('live'), document.querySelector('.xc-isle-n').textContent,
   document.querySelector('.xc-isle').getAttribute('aria-label').includes('1 个任务进行中')]"""
-TASK_RES_JS = """(() => { const r = document.querySelector('.xc-tres'); return [r.querySelector('.xc-tres-h').textContent, r.querySelector('.xc-md').textContent, r.querySelector('.xc-tres-f span').textContent,
-  !!r.querySelector('.xc-path'), document.querySelector('.xc-msgs').lastElementChild === r, !!document.querySelector('.xc-msgs .xc-task'),
-  [...r.querySelectorAll('.xc-task-btn')].map(b => b.textContent), !document.querySelector('.xc-isle').classList.contains('live') && document.querySelector('.xc-isle-n').textContent === ''] })()"""
+TASK_RES_JS = """(() => { const r = document.querySelector('.xc-tres'); return [r.querySelector('.xc-md').textContent,
+  !!r.querySelector('.xc-path'), document.querySelector('.xc-msgs').lastElementChild === r, !!document.querySelector('.xc-msgs .xc-task'), !r.querySelector('.xc-tres-h, .xc-tres-f, .xc-task-btn'),
+  [...r.querySelectorAll('.xc-acts button')].map(b => b.textContent.trim()), !document.querySelector('.xc-isle').classList.contains('live') && document.querySelector('.xc-isle-n').textContent === ''] })()"""
 TASK_CENTER_JS = """(() => { const p = document.querySelector('.xc-sess'); return [[...p.querySelectorAll('.xc-set-h')].map(e => e.textContent), [...p.querySelectorAll('.xc-tl-i b')].map(e => e.textContent),
   [...p.querySelectorAll('.xc-tl-m')].map(e => e.textContent), [...p.querySelectorAll('.xc-tl-from')].map(e => e.textContent), p.querySelector('.xc-dailyst').textContent,
   [...p.querySelectorAll('.xc-tv-st li')].map(e => e.textContent)] })()"""
@@ -1647,12 +1647,12 @@ async def main():
               st[:4] == ['Claude', '高', False, ['低', '中', '高*', '超高', '最高']] and hid and st2 == 'Claude超高' and st3 == ['codex', 'xhigh', True], (st, hid, st2, st3))
         check('新对话还没有用量：输入框底下那一行不显示', not await pg.is_visible('.xc-use'))
         await pg.fill('.xc-row textarea', '看看工作目录'); await pg.keyboard.press('Enter')
-        await pg.wait_for_function("document.querySelector('.xc-typing-l') && document.querySelector('.xc-typing-l').textContent.startsWith('在电脑上忙')", timeout=5000)
+        await pg.wait_for_function("document.querySelector('.xc-typing-l') && document.querySelector('.xc-typing-l').textContent.startsWith('找文件')", timeout=5000)
         st = await pg.evaluate("""[LimingXin.aiState, document.querySelector('.xc').classList.contains('running'), document.querySelectorAll('.xc-me').length, (document.querySelector('.xin-say') || {}).textContent,
           document.querySelector('.xc-sub').textContent, document.querySelector('.xc-msgs').textContent.includes('Model metadata'), document.querySelector('.xc-msgs').textContent.includes('ls /data/workspace'),
           !!document.querySelector('.xc-tool'), document.querySelector('.xc-msgs').lastElementChild.classList.contains('xc-typing')]""")
-        check('发出去：默认模式传 Codex、思考强度最高、不带模型（小芯电脑上挑）；只有自己的一句和小芯的第一句，它执行的命令、无关警告都不显示，最后冒「正在输入」写着在电脑上忙；小芯坐到电脑前敲代码',
-              {k:v for k,v in xs['sent'].items() if k != 'clientId'} == {'agent': 'codex', 'text': '看看工作目录', 'effort': 'max'} and bool(xs['sent'].get('clientId')) and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '正在电脑上忙…' and st[5:] == [False, False, False, True], (xs['sent'], st))
+        check('发出去：默认模式传 Codex、思考强度最高、不带模型（小芯电脑上挑）；只有自己的一句和小芯的第一句，它执行的命令、无关警告都不显示，最后冒「正在输入」按它敲的命令写在干什么（ls → 找文件），标题栏也是；小芯坐到电脑前敲代码',
+              {k:v for k,v in xs['sent'].items() if k != 'clientId'} == {'agent': 'codex', 'text': '看看工作目录', 'effort': 'max'} and bool(xs['sent'].get('clientId')) and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '找文件…' and st[5:] == [False, False, False, True], (xs['sent'], st))
         try:
             await pg.wait_for_function(CHAT_DONE, timeout=8000)
         except Exception:
@@ -2057,11 +2057,11 @@ async def main():
         await pt.evaluate("LimingXinChat.tasks()")
         await pt.wait_for_selector('.xc-tres')
         rs = await pt.evaluate(TASK_RES_JS)
-        check('任务做完：聊天最后小芯说结果（标题就是任务名、正文里的路径能点、用时、「详情」），聊天里没有卡片，小芯岛不再标在做',
-              rs == ['编译 LED', '我编好了：/data/workspace/blink/build/app.hex，直接烧录就行。', '用时 2 分钟', True, True, False, ['查看详情'], True], rs)
+        check('任务做完：聊天最后小芯把结果直接说出来，和别的回答一样是一条消息（正文里的路径能点、能复制、「看过程」），没有卡片的标题和「查看详情」，小芯岛不再标在做',
+              rs == ['我编好了：/data/workspace/blink/build/app.hex，直接烧录就行。', True, True, False, True, ['复制', '看过程'], True], rs)
         await pt.evaluate("LimingXinChat.tasks()"); await pt.wait_for_timeout(400)
         check('同一次结果只说一次（再轮询不重复）', await pt.evaluate("document.querySelectorAll('.xc-tres').length") == 1)
-        await pt.click('.xc-tres .xc-task-btn'); await pt.wait_for_selector('.xc-sheet .xc-tk-log')
+        await pt.click('.xc-tres .xc-tact:has-text("看过程")'); await pt.wait_for_selector('.xc-sheet .xc-tk-log')
         tk = await pt.evaluate(TASK_SHEET_JS)
         check('详情：一页里写着状态、类别、工作目录（能点开）、要求、每一步说的话和执行的命令（去掉 bash 外壳，点开看输出）；做完的能补充后继续（没有说明小字）',
               tk[:3] == ['编译 LED', '已完成写代码', '/data/workspace/blink'] and tk[3] == '要求编译 blink 工程' and tk[4] == ['make'] and tk[5]

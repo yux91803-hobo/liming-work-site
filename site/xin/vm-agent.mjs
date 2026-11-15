@@ -59,7 +59,7 @@ import { loginStore, normalizeSite } from './vm-logins.mjs';
 import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
 import { fromClaude, fromCodex, fromHarness } from './vm-events.mjs';
-import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
+import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
 import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
@@ -2341,9 +2341,9 @@ function usageView(now = Date.now()) {
   const quotas = quotaReadings().filter(q => quotaWindows(q.quota, now).length).map(q => ({ key: q.key, name: q.name, checkedAt: q.quota.checkedAt || 0,
     windows: quotaWindows(q.quota, now).map(w => ({ ...w, forecastAt: forecast(samples.filter(x => x.model === q.quota.model), w, now) })) }));
   const stats = readText(STATS_F()).split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
-  const summary = usageSummary(stats, now), names = {};
-  for (const d of summary.days) for (const id of Object.keys(d.models)) names[id] = modelLabel(id);
-  return { quotas, ...summary, names, now };
+  const summary = usageSummary(stats, now), names = {}, sources = {};
+  for (const d of summary.days) for (const id of Object.keys(d.models)) { names[id] = modelLabel(id); sources[id] = modelSource(id); }
+  return { quotas, ...summary, names, sources, now };
 }
 function bgInfo(all) {
   const state = readJ(path.join(BASE, 'controller-event.json'));

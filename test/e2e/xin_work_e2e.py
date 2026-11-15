@@ -294,8 +294,9 @@ async def main():
         t1 = await pg.evaluate("[document.documentElement.dataset.theme, localStorage.getItem('lm.theme'), document.querySelector('.xc-toast').textContent, document.querySelector('.xc-toast').getAttribute('role')]")
         ui.check('命令面板「换成深色」：整站换成深色并记住，底部轻提示说一声（读屏能念）', t1 == ['dark', 'dark', '换成深色了', 'status'], t1)
         # 复制：一轮回答复制原文；代码块复制代码、能换行
-        acts = await pg.evaluate("[...document.querySelectorAll('.xc-mcopy')].filter(b => b.offsetParent).length")
-        await pg.click('.xc-mcopy:visible')
+        # 只数普通回答（后台做完转达的那几条也是普通消息、也能复制，另算）
+        acts = await pg.evaluate("[...document.querySelectorAll('.xc-ai:not(.xc-tres) .xc-mcopy')].filter(b => b.offsetParent).length")
+        await pg.click('.xc-ai:not(.xc-tres) .xc-mcopy:visible')
         await pg.wait_for_selector('.xc-mcopy.done')
         c1 = await pg.evaluate("(async () => [await navigator.clipboard.readText(), document.querySelector('.xc-mcopy.done span').textContent])()")
         await pg.click('.xc-code .xc-copy')
