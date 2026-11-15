@@ -536,7 +536,8 @@ body.xc-open.xc-wb #home{margin-right:0}
 [data-theme=dark] .xc-work.done{box-shadow:inset 0 1px 0 var(--chip-hi),0 0 0 1px rgba(255,255,255,.07),0 30px 70px -26px rgba(0,0,0,.9)}
 .xc-work.mv{will-change:clip-path}
 .xc-work.mv.in{transition:clip-path .5s var(--e-isle)}
-.xc-work.mv.out{transition:clip-path .26s var(--e-io)}
+/* 收起途中面板不接点击：这时再点小芯岛，点击落到下面的药丸上，从当前的位置展开回去（ui-ux-pro-max「interruptible」） */
+.xc-work.mv.out{transition:clip-path .26s var(--e-io);pointer-events:none}
 .xc-wk-id{display:flex;align-items:center;gap:9px;flex:1;min-width:0}
 .xc-work.mv.in .xc-wk-id{transition:transform .5s var(--e-isle)}
 .xc-work.mv.out .xc-wk-id{transition:transform .26s var(--e-io)}
