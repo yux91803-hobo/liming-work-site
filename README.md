@@ -45,6 +45,9 @@
 
 ## 小芯后台运行方式
 
+- 2026-11-15 第 2 批（[计划](docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md)）：正式站的状态切到内核模式（`wrangler.jsonc` 的 `XIN_STATE_OWNER=kernel`）。电脑上的内核外壳拉起并看住一个常驻的状态进程，网页的每次操作和回复轮询都经本机套接字交给它，不再每次起一个控制器进程。状态进程被杀会按退避马上重起，这个空档里来报告的执行进程稍等一下交给新的；连续 3 分钟起不来，外壳自己改回旧方式并推送提醒，下次上线再试。用量页「叫醒电脑」下面一行写着现在由谁在管。
+  - 回滚：内核模式有问题、代码没问题，把 `XIN_STATE_OWNER` 改成 `legacy` 发版（部署代号加一，外壳让状态进程排空、交回旧方式）；新版本有问题，Actions 自动回滚 Worker，旧版的 `ensure` 先 `systemctl stop` 新外壳，新外壳停下前让状态进程排空、交回旧方式；万一记录停在 `kernel` 又没人管，经 exec 跑这一批的控制器 `node <vm-agent-哈希>.mjs owner-legacy`。要退到 #136、#137 那样不懂桥的版本：先用懂桥的版本切回旧方式，确认用量页写着「旧方式」再退。
+
 - 2026-11-14 接手核对：[现状与安全审查](docs/xin-kernel-handover-review-2026-11-14.md)、[第二阶段实施计划](docs/superpowers/plans/2026-11-14-xin-kernel-stage2.md)。第一阶段已上线，状态与调度仍在旧控制器。待送达按对话分道：同一个对话先来后到，一个对话在忙不堵别的对话，电脑叫不醒或在冷却时才全部等着；文件删除/冲突写回展示具体清单，批准只适用于该清单与文件内容，变化后重新核对。浏览器诊断不记填写内容和网址参数，维护审计不另存命令正文。第二步先引入[所有权锁和记录](docs/superpowers/plans/2026-11-14-xin-owner-lock.md)，建库和 schema 升级也经过写权检查；[常驻状态进程与兼容桥](docs/superpowers/plans/2026-11-14-xin-state-bridge.md)已加入隔离验证路径，具名修改转交所有者，未持写权的数据库句柄原生只读；默认部署仍走旧模式，正式状态切换尚未开启。电脑维护、每日任务、天启能力保留；宿主授权 C 路线和后续隔离的安排以[已确认设计](docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md)为准，不声称已经强隔离。[写者清单](docs/superpowers/plans/2026-11-14-xin-writer-inventory.md)：控制器里每一处直接写文件的地方都登记在 `test/xin-writers.json` 并标了类别，新加一处没登记测试就红。
 
 - 2026-11-14 持久服务：[安装/中断恢复与旧版回退](docs/superpowers/plans/2026-11-14-xin-persistent-kernel.md)。HTTP 外壳由持久用户单元 `xin-kernel-resident.service` 管理，迁移保留后台执行进程；状态模式仍为 legacy。安装、失败回退、被杀后恢复、管理器重启后自启在真的 systemd 255 上实测过（计划末尾的表）；回滚到旧版时持久服务最多重启 10 次就停下。正式电脑上的真实冷启动和正式状态所有者切换另行验收。

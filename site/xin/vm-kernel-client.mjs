@@ -47,6 +47,39 @@ export function requestState(home, request, { timeoutMs = 60000, id = crypto.ran
     socket.on('close', () => { if (!done) finish(new StateUnavailable('state_disconnected', sent ? 'unknown' : false)); });
   });
 }
+export const syncSleep = ms => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+// 设计 §6.2：交不过去（主人正在接手、还没开始听；或者刚被杀、记录还没改回旧模式）就稍等，再按判断规则从头判断一次。
+// 只重来「确定没执行」的失败（executed === false）；发出去以后断开、超时（不确定）的不自动重来，免得做两遍。
+// fn 每次都要重新判断所有权（是不是主人、记录是什么），不能只重发同一个套接字请求。
+const NEVER_RETRY = new Set(['state_request', 'state_too_large', 'state_protocol']);
+export function retryUnsent(fn, { deadlineMs = 30000, clock = () => performance.now(), sleep = syncSleep } = {}) {
+  const start = clock();
+  for (let i = 0; ; i++) {
+    try { return fn(); }
+    catch (e) {
+      if (!e || e.executed !== false || NEVER_RETRY.has(e.code)) throw e;
+      const left = deadlineMs - (clock() - start);
+      if (left <= 0) throw e;
+      sleep(Math.min(50 * 2 ** Math.min(i, 5), 1000, left));
+    }
+  }
+}
+// 一次性兼容客户端：记录归内核（或主人活着）时，把这一次命令行调用整个交给状态进程，不取得本地写权。
+export function inputArgs(read = () => fs.readFileSync(0, 'utf8')) {
+  try { const t = read().trim(), a = t ? JSON.parse(t) : {}; return a && typeof a === 'object' && !Array.isArray(a) ? a : {}; } catch { return {}; }
+}
+export async function forwardCLI(home, op, { argv = process.argv, env = process.env, stdin = () => '', out = process.stdout, err = process.stderr } = {}) {
+  const q = op === 'xin' ? { kind: 'xin', argv: argv.slice(3), run: env.XIN_RUN || null, stdin: stdin() }
+    : op === 'reap' ? { kind: 'reap' } : { kind: 'op', op: op === 'locked' ? argv[3] : op, locked: op === 'locked', key: env.XIN_LOCK || null, run: env.XIN_RUN || null, args: inputArgs() };
+  try {
+    const r = await requestState(home, q);
+    if (op === 'xin') { out.write(r.output || ''); process.exitCode = r.code || 0; }
+    else out.write(JSON.stringify(r ?? {}));
+  } catch (e) {
+    if (op === 'xin') { err.write('小芯的状态进程暂时不可用，请稍后重试\n'); process.exitCode = 1; }
+    else out.write(JSON.stringify({ error: e.code || 'owner_unavailable', msg: '小芯的状态进程暂时不可用，请稍后重试', executed: e.executed ?? false }));
+  }
+}
 export function requestStateSync(home, request, options = {}) {
   const timeoutMs = options.timeoutMs ?? 60000;
   let input;try{input=JSON.stringify({home,request,options:{...options,timeoutMs}});}catch{throw new StateUnavailable('state_request',false);}

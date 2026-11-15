@@ -21,7 +21,10 @@
   // 密钥 OWNER_PASSWORD、INSTABOX_API_KEY 由 Actions 从 GitHub Secrets 写进正式站（XIN_OWNER_PASSWORD、XIN_INSTABOX_API_KEY），测试站不配，功能关着
   // 小芯内核第 1 步（docs/xin-kernel-design.md）：XIN_TRANSPORT=kernel 走电脑上常驻内核的私有端口（不写或写 exec 就照旧走 InstaBox exec）；
   // XIN_INBOX=1 发消息先存进待送达再送。回滚优先改这两个开关；整版回滚前先确认待送达里没有没送完的消息。
-  "vars": { "XIN_MACHINE": "li", "XIN_TRANSPORT": "kernel", "XIN_INBOX": "1" },
+  // 第 2 批（docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md）：XIN_STATE_OWNER=kernel 时小芯的状态由电脑上常驻的状态进程管
+  // （内核外壳拉起、看住，操作不再起控制器进程）；改成 legacy 发版，外壳就让它排空、交回旧方式。部署代号由 Durable Object 按下面的版本信息发。
+  "vars": { "XIN_MACHINE": "li", "XIN_TRANSPORT": "kernel", "XIN_INBOX": "1", "XIN_STATE_OWNER": "kernel" },
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "ratelimits": [{ "name": "XIN_LOGIN_LIMIT", "namespace_id": "1801", "simple": { "limit": 5, "period": 60 } }],
   // 小芯的每日任务（UTC）：0:55 = 北京 8:55 叫醒电脑（网关 9:00 自己签到）；1:10、13:10 = 北京 9:10、21:10 按清单做一遍
   "triggers": { "crons": ["55 0 * * *", "10 1,13 * * *"] },
@@ -38,6 +41,7 @@
       "workers_dev": true,
       "durable_objects": { "bindings": [{ "name": "XIN_TASK_SUPERVISOR", "class_name": "XinTaskSupervisor" }] },
       "vars": { "XIN_MACHINE": "li" },
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
       "ratelimits": [{ "name": "XIN_LOGIN_LIMIT", "namespace_id": "1802", "simple": { "limit": 5, "period": 60 } }],
       "triggers": { "crons": [] },   // 测试站不跑定时任务
       "assets": {

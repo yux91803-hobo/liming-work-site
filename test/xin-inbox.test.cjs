@@ -119,6 +119,17 @@ test('临时错误按退避：5、15、30、60 秒', async () => {
   assert.strictEqual((await x.ib.view('cid-00000007')).state, 'pending');
 });
 
+test('主人暂时不在（控制器转交不过去）：当作临时错误按退避重送，不标成没送到', async () => {
+  let n = 0;
+  const x = await inbox({ deliver: async () => ++n === 1 ? { ok: true, data: { error: 'owner_unavailable', msg: '小芯的状态进程暂时不可用，请稍后重试', executed: false } } : { ok: true, data: { sid: 's1', run: 'r9' } } });
+  const { view } = await x.ib.accept({ id: 'cid-owner-0001', op: 'send', args: ARGS });
+  assert.strictEqual(view.state, 'pending');
+  const row = await x.storage.get('inbox:row:cid-owner-0001');
+  assert.deepStrictEqual([(row.nextAt - x.clock.now) / 1000, row.wait.state, row.wait.scope], [5, 'busy', 'lane']);
+  x.clock.now = row.nextAt; await x.ib.alarm();
+  assert.strictEqual((await x.ib.view('cid-owner-0001')).state, 'delivered');
+});
+
 test('24 小时还没送到：标成没送到，写明原因，不悄悄丢', async () => {
   const x = await inbox({ deliver: async () => ({ ok: false, state: 'cooldown', retryAfter: 7200 }) });
   await x.ib.accept({ id: 'cid-00000008', op: 'send', args: ARGS });

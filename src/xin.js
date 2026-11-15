@@ -234,6 +234,7 @@ function explain(e) {
   const c = e.code;
   if (c === 'machine_not_running' || c === 'operation_conflict' || c === 'host_unavailable') return { ok: false, state: 'waking', msg: '唤醒中…', retryAfter: 3 };
   if (c === 'machine_cooldown') return { ok: false, state: 'cooldown', msg: '云电脑连续跑满了时长，正在冷却', retryAfter: e.retryAfter || 60 };
+  if (c === 'owner_unavailable') return { ok: false, state: 'busy', msg: '小芯正在换状态进程，稍等', retryAfter: e.retryAfter || 3 };
   if (e.status === 429 || e.status === 503) return { ok: false, state: 'busy', msg: 'InstaBox 忙，稍等', retryAfter: e.retryAfter || 5 };
   if (c === 'permission_denied') return { ok: false, state: 'error', msg: '这个 InstaBox key 不能生成桌面链接：要用创建这台云电脑的人自己的 key' };
   if (e.status === 401 || e.status === 403) return { ok: false, state: 'error', msg: 'InstaBox key 不能用（' + c + '）' };
@@ -324,10 +325,14 @@ async function runOp(env, origin, id, op, args, ctx, opts = {}) {
       try { await installKernelKeys(env, id, cfg); await kernel.markInstalled(cfg.kid); cfg = { ...cfg, installedKid: cfg.kid }; }
       catch (e) { if (e && e.code === 'machine_cooldown') throw e; return exec(env, origin, id, op, args); }
     }
-    const r = await kernelRequest({ config: cfg, agentPath: agent.path, op, args });
+    // 期望（第 2 批）：XIN_STATE_OWNER 和部署代号，由 Durable Object 发；外壳按它拉起或停下状态进程
+    const r = await kernelRequest({ config: cfg, agentPath: agent.path, op, args, owner: cfg.owner });
     // 内核文件换了（这次部署带了新版本）而电脑上跑的还是旧的：后台 ensure 一次，换成新版本（每个 isolate 60 秒最多一次）
     if (r.version && r.version !== agent.kernel.sha256.slice(0, 12)) ensureKernel(env, origin, id, ctx);
-    if (r.kind === 'ok') return r.data;
+    if (r.kind === 'ok') {
+      if (op === 'usage' && r.owner && r.data && typeof r.data === 'object') r.data.owner = { ...r.owner, ...(r.ops ? { ops: r.ops } : {}) };
+      return r.data;
+    }
     if (r.kind === 'executed_error') throw { status: 500, code: r.error || 'agent_failed', msg: redact(r.msg || r.error || '控制器出错了') };
     if (r.kind === 'not_sent') {
       if (r.reason === 'gate_auth' && !fixed.has('token')) {
@@ -338,6 +343,8 @@ async function runOp(env, origin, id, op, args, ctx, opts = {}) {
       if (r.reason === 'agent_missing' && !fixed.has('upload')) { fixed.add('upload'); await uploadAgent(env, id, agent); continue; }
       if (r.reason === 'waking') throw { status: 409, code: 'machine_not_running', retryAfter: r.retryAfter || 3 };
       if (r.reason === 'cooldown') throw { status: 409, code: 'machine_cooldown', retryAfter: r.retryAfter };
+      // 主人暂时不在（状态进程正在重起或排空）：不退 exec——exec 起的控制器也只能等它；回「稍等」，网页和待送达过一会儿再来
+      if (r.reason === 'owner_unavailable') throw { status: 503, code: 'owner_unavailable', retryAfter: r.retryAfter || 3, msg: '小芯正在换状态进程，稍等' };
       return exec(env, origin, id, op, args);
     }
     if (r.reason === 'http_502') ensureKernel(env, origin, id, ctx);
@@ -770,7 +777,10 @@ export class XinTaskSupervisor {
     return json({ error: 'bad_action' }, 400);
   }
   // 小芯内核的配置（端口令牌、钥匙）放在实例 xin-inbox 里；Durable Object 自己调 call() 时直接用 kernelAdapter()，不经 stub 请求自己
-  kernelStore() { return this.kernelConfig || (this.kernelConfig = new KernelConfigStore(this.state.storage, { ib: (p, init) => ib(this.env, p, init), ibErr })); }
+  kernelStore() {
+    return this.kernelConfig || (this.kernelConfig = new KernelConfigStore(this.state.storage, { ib: (p, init) => ib(this.env, p, init), ibErr,
+      deploy: this.env.CF_VERSION_METADATA?.id, mode: this.env.XIN_STATE_OWNER }));
+  }
   kernelAdapter() { const s = this.kernelStore(); return { get: id => s.get({ machineId: id }), markInstalled: kid => s.markInstalled(kid), invalidateToken: t => s.invalidateToken(t) }; }
   async kernelRoute(action, req) {
     const a = await req.json().catch(() => ({}));

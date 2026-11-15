@@ -517,6 +517,14 @@ test('Worker 有 scheduled 入口，交给 runCron', async () => {
   assert.deepStrictEqual(await waits[0], { ok: false, state: 'disabled' });
 });
 
+test('wrangler：正式站 XIN_STATE_OWNER=kernel，正式站和测试站都有 version_metadata 绑定', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../wrangler.jsonc'), 'utf8');
+  const top = src.slice(0, src.indexOf('"env"')), stg = src.slice(src.indexOf('"env"'));
+  assert.match(top, /"vars":\s*\{[^}]*"XIN_STATE_OWNER":\s*"kernel"[^}]*\}/);
+  assert.doesNotMatch(stg, /XIN_STATE_OWNER/, '测试站没配小芯，不设');
+  for (const part of [top, stg]) assert.match(part, /"version_metadata":\s*\{\s*"binding":\s*"CF_VERSION_METADATA"\s*\}/);
+});
+
 test('wrangler：正式站有两个定时任务，测试站一个都没有', () => {
   const src = fs.readFileSync(path.join(__dirname, '../wrangler.jsonc'), 'utf8');
   const top = src.slice(0, src.indexOf('"env"')), stg = src.slice(src.indexOf('"env"'));
@@ -2286,6 +2294,39 @@ test('装控制器文件的小程序（在电脑上跑）：按顺序写、摘�
 /* ---------- 待送达和流的接线（计划 Task 8） ---------- */
 const inboxOf = env => { env.XIN_TASK_SUPERVISOR.get('xin-inbox'); return env.XIN_TASK_SUPERVISOR.objs.get('xin-inbox'); };
 const sendArgs = { agent: 'codex', text: '你好', clientId: 'cid-inbox-0001' };
+
+/* ---------- 状态由谁管：期望和部署代号（第 2 批计划 Task 4） ---------- */
+test('内核模式：每次操作把期望放进请求体；usage 的结果带上主人状态和耗时，别的操作不带', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_STATE_OWNER: 'kernel', CF_VERSION_METADATA: { id: 'ver-a' } }), ck = await login(m, env);
+  const owner = { want: 'kernel', mode: 'kernel', epoch: 2, phase: 'running', up: 5000, restarts: 0, lastError: null, spawns: 0 };
+  const ops = { all: { n: 3, p50: 4, p95: 9, max: 9 }, byOp: { usage: { n: 1, p50: 4, p95: 4, max: 4 } } };
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [() => kres(200, { ok: true, data: { sessions: [] }, owner }), () => kres(200, { ok: true, data: { days: [] }, owner, ops })] });
+  try {
+    assert.deepStrictEqual(await callOp(m, env, ck, 'sessions'), { ok: true, data: { sessions: [] } });
+    const u = await callOp(m, env, ck, 'usage');
+    assert.strictEqual(u.ok, true); assert.deepStrictEqual(u.data.owner, { ...owner, ops });
+    const bodies = ib.calls.filter(c => c.key === 'POST /xin/op').map(c => JSON.parse(c.body));
+    assert.deepStrictEqual(bodies.map(b => b.owner), [{ mode: 'kernel', gen: 1 }, { mode: 'kernel', gen: 1 }]);
+  } finally { ib.restore(); }
+});
+
+test('主人暂时不在：不退 exec，回可重试的「稍等」；待送达当作临时错误重送', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_STATE_OWNER: 'kernel', XIN_INBOX: '1' }), ck = await login(m, env);
+  const busy = () => kres(503, { ok: false, executed: false, error: 'owner_unavailable', retryAfter: 3 });
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+    'POST /xin/op': [busy, busy, () => kres(200, { ok: true, data: { sid: 's1', run: 'r5' } })],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"sessions":[]}', stderr: '', exitCode: 0 } }] });
+  try {
+    assert.deepStrictEqual(await callOp(m, env, ck, 'sessions'), { ok: false, state: 'busy', msg: '小芯正在换状态进程，稍等', retryAfter: 3 });
+    assert.ok(!ib.calls.some(c => c.key.endsWith('/exec')), '主人暂时不在不退 exec（exec 起的控制器也只能等它）');
+    const first = await callOp(m, env, ck, 'send', sendArgs);
+    assert.deepStrictEqual([first.ok, first.accepted, first.delivery.state], [false, true, 'pending'], JSON.stringify(first));
+    inboxOf(env).values.get('inbox:row:cid-inbox-0001').nextAt = 0;   // 到了该再送的时间
+    assert.deepStrictEqual(await callOp(m, env, ck, 'send', sendArgs), { ok: true, data: { sid: 's1', run: 'r5' } });
+    assert.ok(!ib.calls.some(c => c.key.endsWith('/exec')));
+  } finally { ib.restore(); }
+});
 
 test('send 走待送达：电脑醒着时和以前一样回 run，控制器拿到的是同一个 clientId', async () => {
   const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);

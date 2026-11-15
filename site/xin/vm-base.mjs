@@ -6,13 +6,14 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { StateJournal } from './vm-state.mjs';
 import { Ownership } from './vm-kernel-owner.mjs';
-import { requestStateSync, stateSocket } from './vm-kernel-client.mjs';
+import { requestStateSync, stateSocket, retryUnsent } from './vm-kernel-client.mjs';
 
 export const BASE = process.env.XIN_HOME || path.join(os.homedir(), '.xin');
 export const journal = new StateJournal(BASE);
 // 写权释放前关闭可写连接；正式部署仍默认 legacy，状态进程由后续的模式开关启用。
 export const ownership = journal.owner = new Ownership(BASE,{beforeRelease:()=>journal.closeWriter()});
 journal.bridge = (kind,args) => requestStateSync(BASE,{kind,...args});
+journal.retryUnsent = retryUnsent;
 // The socket is only a hint. A legacy record still goes through the shared-lock path, even with a stale socket.
 export function stateOwned(){
   if(ownership.owning||!fs.existsSync(stateSocket(BASE)))return false;

@@ -1336,7 +1336,11 @@ async def main():
           .observe(document.body, { childList: true, subtree: true })""")
         # 正在半空（刚起跳）时叫它敲代码：要等落地再敲，不能一落地就被掐掉（以前偶尔这样：笔记本没了也没砸）
         await pg.bring_to_front()
+        # 小芯空闲时自己会随机去荡秋千（约 4% 的机会，一次 7–13 秒）：荡着的时候叫它跳，要等落地才跳，超过下面 5 秒的观察时限
+        # （#148 的 CI：was=swing）。先等它落在平台上，同一个任务里接着叫它跳（playSeq 会先停掉刚开始的别的动作），中间不留空档
         air = await pg.evaluate("""() => new Promise((resolve,reject) => {
+          const AIR = /^(fly|hang|rope|climb|swing|plug|drag)$/, t0 = performance.now();
+          const go = () => {
           let timer; const watch = new MutationObserver(() => {
             if (LimingXin.mode !== 'fly') return;
             watch.disconnect(); clearTimeout(timer);
@@ -1347,6 +1351,9 @@ async def main():
           const ps=LimingXin.plats(), i=ps.findIndex(p => p.kind === 'top' && p.el.dataset.id === 'map'), was=LimingXin.mode;
           timer=setTimeout(() => {watch.disconnect(); reject(new Error('hop did not enter real flight: ' + JSON.stringify({i, was, now: LimingXin.mode, plat: LimingXin.plat && LimingXin.plat.kind})));},5000);
           LimingXin.hop(i);
+          };
+          const wait = () => { if (!AIR.test(LimingXin.mode) && LimingXin.plat) return go(); if (performance.now() - t0 > 20000) return reject(new Error('never landed on a platform: ' + LimingXin.mode)); setTimeout(wait, 50); };
+          wait();
         })""")
         pcs = []
         for i in range(90):

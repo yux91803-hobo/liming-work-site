@@ -119,3 +119,12 @@ export class Ownership {
   }
   close() { this.beforeRelease();try { this.connection?.close(); } catch { /* 已经关了 */ } this.connection = null; this.depth = 0; this.owning = false; }
 }
+// 状态进程被 kill -9 以后记录留在 kernel、又没有主人：外壳用这个把记录改回 legacy，空档里旧路径照常写（第 2 批计划「我定的」第 2 条）。
+// 主人活着（锁拿不到）就不改。
+export function ownerLegacy(owner) {
+  const r = owner.record({ waitMs: 0 });
+  if (r.busy) return { error: 'owner_busy' };
+  if (r.mode === 'legacy') return { ok: true, unchanged: true, mode: 'legacy', epoch: r.epoch };
+  try { return { ok: true, mode: 'legacy', epoch: owner.set('legacy').epoch }; }
+  catch (e) { if (e.code === 'owner_busy') return { error: 'owner_busy' }; throw e; }
+}

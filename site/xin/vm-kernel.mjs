@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import net from 'node:net';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -81,13 +82,208 @@ export function redact(text) {
   return String(text ?? '').replace(/\b(?:ibp|ibk|iba)_[A-Za-z0-9_-]+/g, '<hidden>').replace(/\bBearer\s+\S+/gi, 'Bearer <hidden>').replace(/\bsig=[^,\s]+/g, 'sig=<hidden>');
 }
 
+/* ---------- 状态进程看护（第 2 步第 2 批，docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md） ----------
+   内核模式下唯一写状态库的是常驻状态进程（node vm-agent-<hash>.mjs serve --parent-pipe），由外壳拉起、看住。
+   - 期望（模式 + 代号）随 /xin/op 来，代号由 Durable Object 在看到新部署时加一；只认不比已见代号小的期望，
+     刷新部署时新旧两版 isolate 同时在线也不会来回切。期望存在 kernel-owner.json，外壳自己重启后不等请求就拉起。
+   - 同版本的请求经本机套接字交给它；别的照旧起控制器，那一版控制器自己经桥交给主人。
+   - 状态进程意外退出：记录留在 kernel（停着不写，#140），按退避重起；连续 giveUpMs 起不来才改回旧模式、推送一次，
+     这一代号不再试，代号变大（新部署）才重新开始。
+   - 要旧模式、换版本、外壳正常停止：先发控制命令 release 让它排空交回 legacy。
+   只用内置模块：套接字协议和 vm-kernel-client.mjs 的一样（测试核对协议号）。 */
+export const BRIDGE_PROTOCOL = 1;
+const STATE_FRAME_MAX = 4 * 1024 * 1024;
+const stateError = (code, executed) => Object.assign(new Error(code), { code, executed });
+export function stateCall(home, request, { timeoutMs = 60000 } = {}) {
+  const id = crypto.randomUUID();
+  let body;
+  try { body = Buffer.from(JSON.stringify({ ...request, v: BRIDGE_PROTOCOL, id }) + '\n'); } catch { return Promise.reject(stateError('state_request', false)); }
+  if (body.length > STATE_FRAME_MAX) return Promise.reject(stateError('state_too_large', false));
+  return new Promise((resolve, reject) => {
+    let sent = false, done = false, size = 0;
+    const parts = [], socket = net.createConnection(path.join(home, 'run', 'state.sock'));
+    const finish = (error, value) => { if (done) return; done = true; clearTimeout(timer); socket.destroy(); if (error) reject(error); else resolve(value); };
+    const timer = setTimeout(() => finish(stateError('state_timeout', sent ? 'unknown' : false)), timeoutMs);
+    socket.on('connect', () => { sent = true; socket.end(body); });
+    socket.on('error', () => finish(stateError('owner_unavailable', sent ? 'unknown' : false)));
+    socket.on('data', b => {
+      size += b.length;
+      if (size > STATE_FRAME_MAX) return finish(stateError('state_too_large', 'unknown'));
+      parts.push(b); const data = Buffer.concat(parts), end = data.indexOf(10);
+      if (end < 0) return;
+      let r; try { r = JSON.parse(data.subarray(0, end).toString('utf8')); } catch { return finish(stateError('state_response', 'unknown')); }
+      if (!r || r.v !== BRIDGE_PROTOCOL || r.id !== id) return finish(stateError('state_response', 'unknown'));
+      if (!r.ok) return finish(stateError(r.error || 'state_response', r.executed === false ? false : 'unknown'));
+      finish(null, r.result);
+    });
+    socket.on('close', () => finish(stateError('state_disconnected', sent ? 'unknown' : false)));
+  });
+}
+const agentHash = a => (/vm-agent-([0-9a-f]{12})\.mjs$/.exec(a || '') || [])[1] || null;
+// 每个操作留最近 200 次走套接字的耗时（毫秒）
+function opStats() {
+  const by = new Map(), all = [];
+  const push = (list, ms) => { list.push(ms); if (list.length > 200) list.shift(); };
+  const sum = list => { const s = [...list].sort((a, b) => a - b), at = q => s[Math.min(s.length - 1, Math.floor(q * s.length))]; return { n: s.length, p50: at(0.5), p95: at(0.95), max: s[s.length - 1] }; };
+  return {
+    add(op, ms) { ms = Math.round(ms * 10) / 10; push(all, ms); if (!by.has(op)) by.set(op, []); push(by.get(op), ms); },
+    summary() { return all.length ? { all: sum(all), byOp: Object.fromEntries([...by].map(([k, v]) => [k, sum(v)])) } : { all: { n: 0 }, byOp: {} }; }
+  };
+}
+export function createStateKeeper({ home, env = process.env, clock = () => performance.now(), backoffMs = [1000, 2000, 5000, 10000, 30000, 60000],
+  giveUpMs = 180000, readyMs = 60000, hardMs = 60000, log = () => {}, spawnImpl = spawn } = {}) {
+  const desireFile = path.join(home, 'kernel-owner.json');
+  const s = { want: null, gen: -1, agent: null, phase: 'off', child: null, epoch: null, pid: null, readyAt: 0, restarts: 0, failures: 0,
+    failingSince: null, lastError: null, fallbackGen: null, timer: null, closed: false };
+  let waiters = [];
+  const wake = () => { const ws = waiters; waiters = []; for (const w of ws) w.done(route(w.agent) === 'socket'); };
+  // 一次性跑控制器的一个命令（owner-legacy、pushq）：不经过 runAgent，不算进 spawns
+  function runOnce(agent, args, timeoutMs, { detached = false } = {}) {
+    return new Promise(resolve => {
+      let c, out = '';
+      try { c = spawnImpl(process.execPath, [agent, ...args], { env: { ...env, XIN_HOME: home }, stdio: ['ignore', detached ? 'ignore' : 'pipe', 'ignore'], detached }); }
+      catch { resolve(null); return; }
+      if (detached) { c.on('error', () => {}); c.unref(); resolve(null); return; }
+      const timer = setTimeout(() => { try { c.kill('SIGKILL'); } catch { /* 已经退出 */ } }, timeoutMs);
+      c.stdout.on('data', b => { out += b; });
+      c.on('error', () => { clearTimeout(timer); resolve(null); });
+      c.on('close', () => { clearTimeout(timer); let r = null; try { r = JSON.parse(out); } catch { /* 看不懂 */ } resolve(r); });
+    });
+  }
+  function persist() {
+    const tmp = desireFile + '.' + process.pid + '.tmp';
+    try { fs.writeFileSync(tmp, JSON.stringify({ mode: s.want, gen: s.gen, agent: s.agent }), { mode: 0o600 }); fs.renameSync(tmp, desireFile); }
+    catch { try { fs.unlinkSync(tmp); } catch { /* 没写成 */ } }
+  }
+  function route(agent) {
+    if (!s.child || s.child.agent !== agent) return 'spawn';
+    return s.phase === 'running' ? 'socket' : s.phase === 'starting' ? 'wait' : 'spawn';
+  }
+  function reconcile() {
+    if (s.closed) return;
+    const wanted = s.want === 'kernel' && !!s.agent && !(s.fallbackGen !== null && s.gen <= s.fallbackGen);
+    if (s.child) { if (s.phase !== 'stopping' && (!wanted || s.child.agent !== s.agent)) stop(); return; }
+    if (!wanted) { clearTimeout(s.timer); if (s.phase !== 'fallback') s.phase = 'off'; return; }
+    if (s.phase !== 'waiting') start();
+  }
+  function start() {
+    const agent = s.agent, t0 = clock();
+    let child;
+    s.phase = 'starting'; s.epoch = null; s.pid = null;
+    try { child = spawnImpl(process.execPath, [agent, 'serve', '--parent-pipe'], { env: { ...env, XIN_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] }); }
+    catch { failed('spawn_failed'); return; }
+    child.agent = agent; s.child = child;
+    log({ event: 'start', agent: agentHash(agent) });
+    let out = '', err = '', ready = false, readyTimedOut = false;
+    const readyTimer = setTimeout(() => { if (!ready) { readyTimedOut = true; try { child.kill('SIGKILL'); } catch { /* 已经退出 */ } } }, readyMs);
+    child.stdin.on('error', () => {}); child.on('error', () => {});
+    child.stdout.on('data', b => {
+      if (ready) return;
+      out += b; const nl = out.indexOf('\n');
+      if (nl < 0) { if (out.length > 4096) out = out.slice(-4096); return; }
+      let r = null; try { r = JSON.parse(out.slice(0, nl)); } catch { /* 不是就绪那一行 */ }
+      if (!r || r.ready !== true) { out = out.slice(nl + 1); return; }
+      ready = true; clearTimeout(readyTimer); child.readyAt = clock();
+      if (s.child !== child || s.phase !== 'starting') return;
+      Object.assign(s, { phase: 'running', epoch: Number.isSafeInteger(r.epoch) ? r.epoch : null, pid: child.pid, readyAt: Date.now() });
+      log({ event: 'ready', agent: agentHash(agent), epoch: s.epoch, ms: Math.round(clock() - t0) });
+      wake();
+    });
+    child.stderr.on('data', b => { err = (err + b.toString('utf8')).slice(-ERR_TAIL); });
+    child.on('exit', (code, signal) => {
+      clearTimeout(readyTimer);
+      if (s.child !== child) return;
+      s.child = null; s.epoch = null; s.pid = null;
+      log({ event: 'exit', agent: agentHash(agent), code, signal });
+      const stopping = s.phase === 'stopping';
+      if (stopping || s.closed) { s.phase = 'off'; child.stopped?.(); reconcile(); wake(); return; }
+      if (ready && clock() - child.readyAt >= 60000) { s.failures = 0; s.failingSince = null; }
+      if (ready) s.restarts++;
+      const reason = (/\b((?:state|owner)_[a-z_]+)/.exec(err) || [])[1] || (readyTimedOut ? 'state_ready_timeout' : 'exit ' + (signal || code));
+      failed(reason);
+      wake();
+    });
+  }
+  function failed(reason) {
+    s.failures++; s.lastError = reason;
+    if (s.failingSince === null) s.failingSince = clock();
+    if (s.want === 'kernel' && clock() - s.failingSince >= giveUpMs) { giveUp(); return; }
+    s.phase = 'waiting'; clearTimeout(s.timer);
+    s.timer = setTimeout(() => { if (s.phase === 'waiting') { s.phase = 'off'; reconcile(); } }, backoffMs[Math.min(s.failures - 1, backoffMs.length - 1)]);
+  }
+  async function giveUp() {
+    const agent = s.agent;
+    s.phase = 'fallback'; s.fallbackGen = s.gen; clearTimeout(s.timer);
+    log({ event: 'giveup', agent: agentHash(agent), reason: s.lastError });
+    const r = await runOnce(agent, ['owner-legacy'], 10000);
+    log({ event: 'reset', agent: agentHash(agent), ok: !!(r && r.ok) });
+    runOnce(agent, ['pushq', JSON.stringify({ title: '小芯', body: '常驻状态进程起不来，已自动改回旧方式：' + s.lastError, tag: 'xin-owner', url: '/#xin' })], 0, { detached: true });
+  }
+  // 让它排空交回 legacy；没在听（还在启动）就关标准输入，退出以后用 owner-legacy 补上（主人已经换人就不会改）
+  function stop(waitMs = 60000) {
+    const child = s.child;
+    if (!child || s.phase === 'stopping') return child?.stopping || Promise.resolve();
+    s.phase = 'stopping';
+    log({ event: 'stop', agent: agentHash(child.agent) });
+    child.stopping = new Promise(resolve => { child.stopped = resolve; });
+    stateCall(home, { kind: 'control', op: 'release', mode: 'legacy' }, { timeoutMs: waitMs })
+      .catch(() => { try { child.stdin.end(); } catch { /* 已经关了 */ } });
+    const kill = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* 已经退出 */ } }, waitMs);
+    return child.stopping.then(async () => { clearTimeout(kill); if (s.want !== 'kernel' || s.closed) await runOnce(child.agent, ['owner-legacy'], 10000); });
+  }
+  return {
+    want({ mode, gen, agent }) {
+      if (s.closed || !Number.isSafeInteger(gen) || gen < s.gen) return false;
+      const changed = mode !== s.want || gen !== s.gen || agent !== s.agent;
+      if (s.fallbackGen !== null && gen > s.fallbackGen) Object.assign(s, { fallbackGen: null, failures: 0, failingSince: null, phase: s.phase === 'fallback' ? 'off' : s.phase });
+      Object.assign(s, { want: mode, gen, agent });
+      if (changed) persist();
+      reconcile();
+      return true;
+    },
+    route,
+    ready(agent, ms) {
+      const r = route(agent);
+      if (r !== 'wait') return Promise.resolve(r === 'socket');
+      return new Promise(resolve => {
+        const w = { agent, done: v => { clearTimeout(timer); resolve(v); } };
+        const timer = setTimeout(() => { waiters = waiters.filter(x => x !== w); resolve(route(agent) === 'socket'); }, ms);
+        waiters.push(w);
+      });
+    },
+    async call(request, { timeoutMs = hardMs } = {}) {
+      const child = s.child;
+      const hard = setTimeout(() => { if (child && s.child === child) { log({ event: 'hard_limit', agent: agentHash(child.agent) }); try { child.kill('SIGKILL'); } catch { /* 已经退出 */ } } }, hardMs);
+      try { return await stateCall(home, request, { timeoutMs: Math.max(timeoutMs, hardMs + 1000) }); }
+      finally { clearTimeout(hard); }
+    },
+    summary() {
+      return { want: s.want, mode: s.phase === 'running' ? 'kernel' : 'legacy', epoch: s.epoch, phase: s.phase, gen: s.gen < 0 ? null : s.gen,
+        agent: agentHash(s.child?.agent || s.agent), pid: s.pid, up: s.phase === 'running' ? Date.now() - s.readyAt : null,
+        restarts: s.restarts, failures: s.failures, lastError: s.lastError, fallback: s.phase === 'fallback' };
+    },
+    seen: () => s.gen >= 0,
+    async close({ release = false } = {}) {
+      if (s.closed) return; s.closed = true; clearTimeout(s.timer);
+      if (!s.child) return;
+      if (release) await Promise.race([stop(20000), new Promise(r => setTimeout(r, 25000))]);
+      else { try { s.child.stdin.end(); } catch { /* 已经关了 */ } }
+    },
+    // 外壳启动时：上次存下的期望是 kernel、控制器文件还在，就不等请求马上拉起
+    resume(agentOk = () => true) {
+      let d = null; try { d = JSON.parse(fs.readFileSync(desireFile, 'utf8')); } catch { return; }
+      if (d && d.mode === 'kernel' && Number.isSafeInteger(d.gen) && d.gen >= 0 && agentOk(d.agent) && fs.existsSync(d.agent)) this.want(d);
+    }
+  };
+}
+
 /* ---------- HTTP 外壳（§4.2、§14.2） ----------
    第 1 步不改控制器：/xin/op 在本机起 `node vm-agent-<hash>.mjs <op>`，参数走标准输入，和 InstaBox exec 一模一样。
    每个回应都带 X-Xin-Kernel 头；出错时 executed 说清楚控制器到底跑没跑，Worker 据此决定能不能退回 exec。
    对方断开（超时、网络断）时不杀已经起来的控制器：让它做完并存下结果，同一编号再来就拿到存下的结果。 */
 const OP_NAME = /^[a-z][a-z0-9_]{0,39}$/, AGENT_NAME = /^vm-agent-[0-9a-f]{12}\.mjs$/;
 export async function createKernel({ home, port = 0, env = process.env, now = Date.now, opTimeoutMs = 40000, maxConcurrent = 16, logFile, logMaxBytes = 2 * 1024 * 1024,
-  pollEveryMs = 250, keepWatchMs = 4000, heartbeatMs = 15000, maxStreamMs = 600000 }) {
+  pollEveryMs = 250, keepWatchMs = 4000, heartbeatMs = 15000, maxStreamMs = 600000, keeper: keeperOptions = {}, readyWaitMs = 15000 }) {
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   const agentDir = path.join(home, 'agent'), ring = new KeyRing(path.join(home, 'kernel-keys.json'));
   const nonces = new NonceStore(path.join(home, 'kernel.sqlite'));
@@ -108,13 +304,30 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
     res.end(JSON.stringify(body));
   };
   const agentOk = a => typeof a === 'string' && path.dirname(a) === agentDir && AGENT_NAME.test(path.basename(a));
+  // 状态进程看护：内核模式下操作和轮询经本机套接字交给它；spawns 数外壳起了几次控制器（内核模式下应当不再增加）
+  let spawns = 0;
+  const stats = opStats(), keeper = createStateKeeper({ home, env, log: rec => log({ route: 'state', ...rec }), ...keeperOptions });
+  const ownerView = () => ({ ...keeper.summary(), spawns });
+  const OWNER_OK = o => !!o && typeof o === 'object' && (o.mode === 'kernel' || o.mode === 'legacy') && Number.isSafeInteger(o.gen) && o.gen >= 0;
+  async function viaState(op, args, rec) {
+    rec.via = 'state';
+    const t0 = performance.now(), call = keeper.call({ kind: 'op', op, args, locked: false });
+    // 等它的计时器做完就清掉：外壳常驻，不能每次操作都留一个 opTimeoutMs 长的计时器
+    let timer; const r = await Promise.race([call.then(v => ({ v }), e => ({ e })), new Promise(ok => { timer = setTimeout(() => ok({ timeout: true }), opTimeoutMs); })]);
+    clearTimeout(timer);
+    if (r.timeout) return [200, { ok: false, executed: 'unknown', error: 'agent_timeout', msg: '状态进程超过 ' + Math.round(opTimeoutMs / 1000) + ' 秒没做完' }];
+    if (r.e) return r.e.executed === false ? [503, { ok: false, executed: false, error: 'owner_unavailable', retryAfter: 3 }]
+      : [200, { ok: false, executed: 'unknown', error: typeof r.e.code === 'string' ? r.e.code : 'state_failed' }];
+    stats.add(op, performance.now() - t0);
+    return [200, { ok: true, data: r.v }];
+  }
   // 起一次控制器：结果 {code, stdout, stderr, timedOut}；起不来时 {spawnError}
   function runAgent(agent, op, args) {
     return new Promise(resolve => {
       let child;
       try { child = spawn(process.execPath, [agent, op], { env, stdio: ['pipe', 'pipe', 'pipe'] }); }
       catch (e) { resolve({ spawnError: String(e && e.message || e) }); return; }
-      running++;
+      running++; spawns++;
       let out = [], outLen = 0, err = '', timedOut = false, done = false, code = null;
       const finish = extra => { if (done) return; done = true; running--; clearTimeout(timer); clearTimeout(grace); resolve({ code, stdout: Buffer.concat(out).toString('utf8'), stderr: err, timedOut, ...extra }); };
       const timer = setTimeout(() => { timedOut = true; try { child.kill('SIGKILL'); } catch { /* 已经退出 */ } }, opTimeoutMs);
@@ -132,10 +345,16 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
   async function op(body, rec) {
     let d;
     try { d = JSON.parse(body); } catch { return [400, { ok: false, executed: false, error: 'bad_request' }]; }
-    if (!d || !agentOk(d.agent) || !OP_NAME.test(d.op || '') || (d.args != null && (typeof d.args !== 'object' || Array.isArray(d.args)))) return [400, { ok: false, executed: false, error: 'bad_request' }];
+    if (!d || !agentOk(d.agent) || !OP_NAME.test(d.op || '') || (d.args != null && (typeof d.args !== 'object' || Array.isArray(d.args))) ||
+        (d.owner !== undefined && !OWNER_OK(d.owner))) return [400, { ok: false, executed: false, error: 'bad_request' }];
     rec.op = d.op;
     if (d.args && typeof d.args.clientId === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(d.args.clientId)) rec.id = d.args.clientId;
     if (!fs.existsSync(d.agent)) return [409, { ok: false, executed: false, error: 'agent_missing' }];
+    // 期望（模式 + 代号）先交给看护；同版本的状态进程在跑就走套接字，还在启动就等一会儿
+    if (d.owner) keeper.want({ mode: d.owner.mode, gen: d.owner.gen, agent: d.agent });
+    let route = keeper.route(d.agent);
+    if (route === 'wait') { await keeper.ready(d.agent, readyWaitMs); route = keeper.route(d.agent); }
+    if (route === 'socket') return viaState(d.op, d.args || {}, rec);
     if (running >= maxConcurrent) return [503, { ok: false, executed: false, error: 'kernel_busy' }];
     const r = await runAgent(d.agent, d.op, d.args || {});
     if (r.spawnError) return [500, { ok: false, executed: false, error: 'spawn_failed', msg: redact(r.spawnError) }];
@@ -167,8 +386,15 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
       const cur = stampOf();
       if ((cur !== stamp || now() - lastPoll >= keepWatchMs) && running < maxConcurrent) {
         stamp = cur; lastPoll = now();
-        const r = await runAgent(agent, 'poll', { ...base, off, ...(pos != null ? { pos } : {}) });
-        let d = null; try { d = r.code === 0 && !r.timedOut ? JSON.parse(r.stdout) : null; } catch { d = null; }
+        const args = { ...base, off, ...(pos != null ? { pos } : {}) };
+        let d = null;
+        if (keeper.route(agent) === 'socket') {   // 内核模式：轮询也交给状态进程，不起控制器
+          const t1 = performance.now();
+          try { d = await keeper.call({ kind: 'op', op: 'poll', args, locked: false }, { timeoutMs: opTimeoutMs }); stats.add('poll', performance.now() - t1); } catch { d = null; }
+        } else {
+          const r = await runAgent(agent, 'poll', args);
+          try { d = r.code === 0 && !r.timedOut ? JSON.parse(r.stdout) : null; } catch { d = null; }
+        }
         if (closed) break;
         if (!d || d.error) { res.write('event: error\ndata: ' + JSON.stringify(d && d.error ? d : { error: 'poll_failed' }) + '\n\n'); why = 'error'; break; }
         const evs = Array.isArray(d.events) ? d.events : [];
@@ -196,8 +422,13 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
       const body = Buffer.concat(chunks).toString('utf8');
       const auth = verifyRequest({ method: req.method, target: req.url, header: req.headers['x-xin-auth'], body, keys: ring.keys(), nonces, now: now() });
       if (!auth.ok) { answer(401, { ok: false, executed: false, error: 'kernel_auth', reason: auth.reason }); return; }
-      if (req.method === 'GET' && url.pathname === '/xin/health') { answer(200, { ok: true, kernel: KERNEL_VERSION, pid: process.pid, up: now() - started }); return; }
-      if (req.method === 'POST' && url.pathname === '/xin/op') { const [status, b] = await op(body, rec); answer(status, b); return; }
+      if (req.method === 'GET' && url.pathname === '/xin/health') { answer(200, { ok: true, kernel: KERNEL_VERSION, pid: process.pid, up: now() - started, spawns, owner: ownerView(), ops: stats.summary() }); return; }
+      if (req.method === 'POST' && url.pathname === '/xin/op') {
+        const [status, b] = await op(body, rec);
+        // 收到过期望以后，每个回应都带上状态由谁在管；usage 再带各操作的耗时（用量页显示）
+        answer(status, keeper.seen() ? { ...b, owner: ownerView(), ...(rec.op === 'usage' ? { ops: stats.summary() } : {}) } : b);
+        return;
+      }
       if (req.method === 'GET' && url.pathname === '/xin/stream') { const r = await stream(req, res, url, rec, t0); if (r) answer(r[0], r[1]); return; }
       answer(404, { ok: false, executed: false, error: 'not_found' });
     } catch (e) {
@@ -205,9 +436,14 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
     }
   });
   await new Promise((ok, no) => { server.once('error', no); server.listen(port, '127.0.0.1', ok); });
+  keeper.resume(agentOk);   // 上次存下的期望是内核模式：不等请求就拉起状态进程
   return {
     port: server.address().port,
-    close: () => new Promise(ok => { server.close(() => { try { nonces.db.close(); } catch { /* 已关 */ } ok(); }); server.closeAllConnections(); })
+    // release：外壳正常停止（换版本、回滚时 systemctl stop）先让状态进程排空交回 legacy；只关管道时状态进程保留 kernel 记录（#140）
+    close: async ({ release = false } = {}) => {
+      await keeper.close({ release });
+      await new Promise(ok => { server.close(() => { try { nonces.db.close(); } catch { /* 已关 */ } ok(); }); server.closeAllConnections(); });
+    }
   };
 }
 
@@ -414,7 +650,7 @@ async function serve(port) {
   let env = process.env;
   try { const saved = JSON.parse(fs.readFileSync(path.join(home, 'kernel.env.json'), 'utf8')); if (saved && typeof saved === 'object') env = saved; } catch { /* 没存过就用自己的 */ }
   const k = await createKernel({ home, port, env });
-  const stop = () => k.close().then(() => process.exit(0));
+  const stop = () => k.close({ release: true }).then(() => process.exit(0));
   process.on('SIGTERM', stop); process.on('SIGINT', stop);
 }
 function main() {

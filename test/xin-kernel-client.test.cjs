@@ -26,7 +26,7 @@ async function store(o = {}) {
   const storage = o.storage || memStorage(), ports = o.ports || fakePorts();
   let now = o.now || T0;
   let r = 0; const random = n => Uint8Array.from({ length: n }, () => (r++ % 251) + 1);
-  const s = new KernelConfigStore(storage, { ib: ports.ib, now: () => now, random });
+  const s = new KernelConfigStore(storage, { ib: ports.ib, now: () => now, random, ...('deploy' in o ? { deploy: o.deploy } : {}), ...('mode' in o ? { mode: o.mode } : {}) });
   return { s, storage, ports, setNow: t => { now = t; } };
 }
 
@@ -40,6 +40,20 @@ test('第一次 get：发布私有端口（换新令牌）、生成钥匙，还�
   assert.strictEqual(Buffer.from(c.key, 'base64url').length, 32);
   assert.deepStrictEqual(Object.keys(c.keys), [c.kid]);
   assert.strictEqual(c.installedKid, null);
+});
+
+test('部署代号：同一部署不变；换了部署（包括回滚到旧版本号）加一；期望跟 XIN_STATE_OWNER', async () => {
+  const storage = memStorage();
+  const a = await store({ storage, deploy: 'v1' });
+  assert.deepStrictEqual((await a.s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 1 }, '没说要 kernel 就是 legacy');
+  assert.deepStrictEqual((await a.s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 1 }, '同一部署不变');
+  const b = await store({ storage, deploy: 'v2', mode: 'kernel' });
+  assert.deepStrictEqual((await b.s.get({ machineId: 'm1' })).owner, { mode: 'kernel', gen: 2 });
+  const c = await store({ storage, deploy: 'v1', mode: 'kernel' });
+  assert.deepStrictEqual((await c.s.get({ machineId: 'm1' })).owner, { mode: 'kernel', gen: 3 }, '回滚到旧版本号也是一次新部署');
+  assert.deepStrictEqual(storage.m.get('kernel-owner'), { deploy: 'v1', gen: 3 });
+  assert.deepStrictEqual((await (await store({ storage, deploy: 'v1', mode: 'bogus' })).s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 3 }, '认不得的模式按 legacy');
+  assert.deepStrictEqual((await (await store()).s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 1 }, '默认部署 dev、模式 legacy');
 });
 
 test('第二次 get 不再调 InstaBox；同时来的两个 get 也只发布一次', async () => {
@@ -116,6 +130,25 @@ test('分类：有内核头的三种', async () => {
   assert.deepStrictEqual((await classify(resp(401, { ok: false, executed: false, error: 'kernel_auth', reason: 'replay' }, K))).r, { kind: 'not_sent', reason: 'kernel_auth', version: '0123456789ab' });
 });
 
+test('分类：主人暂时不在算没执行（带 retryAfter）；成功带上主人状态和耗时；不确定带上原因', async () => {
+  const owner = { want: 'kernel', mode: 'kernel', epoch: 3, phase: 'running' }, ops = { all: { n: 1, p50: 2, p95: 2, max: 2 }, byOp: {} };
+  assert.deepStrictEqual((await classify(resp(503, { ok: false, executed: false, error: 'owner_unavailable', retryAfter: 5, owner }, K))).r, { kind: 'not_sent', reason: 'owner_unavailable', retryAfter: 5, version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(503, { ok: false, executed: false, error: 'owner_unavailable' }, K))).r, { kind: 'not_sent', reason: 'owner_unavailable', retryAfter: 3, version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(200, { ok: true, data: { a: 1 }, owner }, K))).r, { kind: 'ok', data: { a: 1 }, version: '0123456789ab', owner });
+  assert.deepStrictEqual((await classify(resp(200, { ok: true, data: { a: 1 }, owner, ops }, K))).r, { kind: 'ok', data: { a: 1 }, version: '0123456789ab', owner, ops });
+  assert.deepStrictEqual((await classify(resp(200, { ok: false, executed: 'unknown', error: 'agent_timeout' }, K))).r, { kind: 'unknown', reason: 'agent_timeout', version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(200, { ok: false, executed: 'unknown', error: 'state_disconnected' }, K))).r, { kind: 'unknown', reason: 'state_disconnected', version: '0123456789ab' });
+  assert.deepStrictEqual((await classify(resp(200, { ok: false, executed: 'unknown', error: { x: 1 } }, K))).r, { kind: 'unknown', reason: 'bad_kernel_reply', version: '0123456789ab' }, '原因不是短代号就不照抄');
+});
+
+test('请求：有期望就放进请求体，没有就不带', async () => {
+  const { kernelRequest } = await load('../src/xin-kernel.js');
+  const seen = [], fetchImpl = async (url, init) => { seen.push(JSON.parse(init.body)); return resp(200, { ok: true, data: {} }, K); };
+  await kernelRequest({ config: CONFIG, agentPath: AGENT, op: 'usage', args: {}, owner: { mode: 'kernel', gen: 4 }, fetchImpl });
+  await kernelRequest({ config: CONFIG, agentPath: AGENT, op: 'usage', args: {}, fetchImpl });
+  assert.deepStrictEqual(seen, [{ agent: AGENT, op: 'usage', args: {}, owner: { mode: 'kernel', gen: 4 } }, { agent: AGENT, op: 'usage', args: {} }]);
+});
+
 test('分类：没有内核头的是 InstaBox 自己回的', async () => {
   assert.deepStrictEqual((await classify(resp(401, 'This URL is private'))).r, { kind: 'not_sent', reason: 'gate_auth' });
   assert.deepStrictEqual((await classify(resp(403, 'token is not valid'))).r, { kind: 'not_sent', reason: 'gate_auth' });
@@ -160,4 +193,26 @@ test('能安全重来的操作：只读的，或者带编号由控制器去重�
   assert.strictEqual(retrySafe('steer', { clientId: 'short' }), false);
   assert.strictEqual(retrySafe('memory_add', { clientId: 'abcdefgh1' }), false);
   assert.strictEqual(retrySafe('forget', {}), false);
+});
+
+// 第 2 批（docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md Task 1）：设计 §6.2「交不过去（主人正在接手、还没开始听），稍等再按表重新判断」
+test('retryUnsent：确定没执行的稍等再判断；不确定的不重来；过了期限照常抛', async () => {
+  const { retryUnsent } = await load('../site/xin/vm-kernel-client.mjs');
+  let t = 0; const sleeps = [], clock = () => t, sleep = ms => { sleeps.push(ms); t += ms; };
+  const fail = (code, executed) => Object.assign(new Error(code), { code, executed });
+  let n = 0;
+  assert.strictEqual(retryUnsent(() => { if (++n < 3) throw fail('owner_unavailable', false); return 'ok'; }, { clock, sleep }), 'ok');
+  assert.strictEqual(n, 3); assert.deepStrictEqual(sleeps, [50, 100]);
+  for (const [code, executed] of [['state_timeout', 'unknown'], ['state_request', false], ['state_too_large', false], ['state_protocol', false]]) {
+    n = 0;
+    assert.throws(() => retryUnsent(() => { n++; throw fail(code, executed); }, { clock, sleep }), e => e.code === code);
+    assert.strictEqual(n, 1, code);
+  }
+  n = 0;
+  assert.throws(() => retryUnsent(() => { n++; throw new Error('boom'); }, { clock, sleep }), /boom/);
+  assert.strictEqual(n, 1, '不是桥的失败：不重来');
+  n = 0; t = 0; sleeps.length = 0;
+  assert.throws(() => retryUnsent(() => { n++; throw fail('owner_unavailable', false); }, { deadlineMs: 300, clock, sleep }), e => e.code === 'owner_unavailable');
+  assert.ok(t >= 300, '等满期限：' + t); assert.ok(n > 2, String(n));
+  assert.deepStrictEqual(sleeps.slice(0, 2), [50, 100]); assert.ok(sleeps.every(ms => ms > 0 && ms <= 1000), String(sleeps));
 });

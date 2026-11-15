@@ -860,7 +860,8 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xu-rg:focus-visible{outline:2px solid var(--clay);outline-offset:1px}
 @media (pointer:coarse){.xu-rg{height:36px}}
 .xu-sum{margin:12px 4px 6px;font:13px/1.6 var(--sans);color:var(--ink-2);font-variant-numeric:tabular-nums}
-.xu-wake{margin:8px 4px 0;font:13px/1.6 var(--sans);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.xu-wake,.xu-owner{margin:8px 4px 0;font:13px/1.6 var(--sans);color:var(--ink-3);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.xu-wake+.xu-owner{margin-top:2px}
 .xu-cw{position:relative;margin:24px 0 0}
 .xu-chart{position:relative;display:flex;align-items:flex-end;justify-content:center;gap:2px;height:132px;padding-top:18px;border-bottom:1px solid var(--line-2)}
 .xu-chart::before{content:"";position:absolute;left:0;right:0;top:18px;border-top:1px dashed var(--line)}

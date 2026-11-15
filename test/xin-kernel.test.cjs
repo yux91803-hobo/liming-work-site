@@ -18,7 +18,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const FAKE_AGENT = `import fs from 'node:fs';
 import {spawn} from 'node:child_process';
 const op = process.argv[2];
-let input = ''; for await (const c of process.stdin) input += c;
+let input = ''; if (op !== 'serve') for await (const c of process.stdin) input += c;   // serve 的标准输入是外壳的管道，一直开着
 const a = input ? JSON.parse(input) : {};
 const count = n => { const f = process.env.XIN_HOME + '/' + n + '.count'; let k = 0; try { k = Number(fs.readFileSync(f, 'utf8')) || 0; } catch {} fs.writeFileSync(f, String(k + 1)); };
 if (op === 'echo') process.stdout.write(JSON.stringify(a));
@@ -35,6 +35,39 @@ else if (op === 'poll') {
   const off = a.off | 0, evs = lines.slice(off).map(l => JSON.parse(l));
   process.stdout.write(JSON.stringify({ events: evs, off: off + evs.length, pos: (off + evs.length) * 10, done: evs.some(e => e.t === 'done') }));
 }
+else if (op === 'serve') {
+  count('serve');
+  const H = process.env.XIN_HOME, net = await import('node:net');
+  const flag = n => fs.existsSync(H + '/' + n), num = n => { try { return Number(fs.readFileSync(H + '/' + n, 'utf8')) || 0; } catch { return 0; } };
+  if (flag('serve-fail')) { process.stderr.write('state_compat: 仍有未接入状态桥的旧控制器\\n'); process.exit(1); }
+  await new Promise(r => setTimeout(r, num('serve-delay')));
+  fs.mkdirSync(H + '/run', { recursive: true }); try { fs.unlinkSync(H + '/run/state.sock'); } catch {}
+  const epoch = num('serve-epoch') + 1; fs.writeFileSync(H + '/serve-epoch', String(epoch));
+  const server = net.createServer({ allowHalfOpen: true }, sock => {   // 和真的状态进程一样：客户端发完就半关，回答还能写回去
+    let buf = '';
+    sock.on('error', () => {});
+    sock.on('data', b => {
+      buf += b; const i = buf.indexOf('\\n'); if (i < 0) return;
+      const q = JSON.parse(buf.slice(0, i)), reply = v => sock.end(JSON.stringify({ v: q.v, id: q.id, ...v }) + '\\n');
+      if (q.kind === 'control' && q.op === 'release') { count('release'); reply({ ok: true, result: { mode: 'legacy' } }); server.close(); setTimeout(() => process.exit(0), 20); return; }
+      if (q.kind === 'control') { reply({ ok: true, result: { pid: process.pid, epoch } }); return; }
+      if (q.op === 'hang') return;
+      if (flag('serve-draining')) { reply({ ok: false, error: 'state_draining', executed: false }); return; }
+      if (q.op === 'poll') {
+        const file = H + '/runs/' + q.args.run + '.jsonl';
+        let lines = []; try { lines = fs.readFileSync(file, 'utf8').split('\\n').filter(Boolean); } catch {}
+        const off = q.args.off | 0, evs = lines.slice(off).map(l => JSON.parse(l));
+        reply({ ok: true, result: { events: evs, off: off + evs.length, pos: (off + evs.length) * 10, done: evs.some(e => e.t === 'done'), via: 'state' } });
+        return;
+      }
+      reply({ ok: true, result: { via: 'state', op: q.op, args: q.args } });
+    });
+  });
+  server.listen(H + '/run/state.sock', () => process.stdout.write(JSON.stringify({ ready: true, pid: process.pid, epoch }) + '\\n'));
+  process.stdin.resume(); process.stdin.on('end', () => { count('pipe-end'); server.close(); process.exit(0); });
+}
+else if (op === 'owner-legacy') { count('owner-legacy'); process.stdout.write('{"ok":true,"mode":"legacy","epoch":1}'); }
+else if (op === 'pushq') { fs.writeFileSync(process.env.XIN_HOME + '/pushq.json', process.argv[3] || ''); count('pushq'); }   // 先写内容再计数：测试看到计数就去读内容
 else process.stdout.write(JSON.stringify({ error: 'bad_op' }));
 `;
 
@@ -574,4 +607,179 @@ test('日志太大就换一份，不会一直长下去', async () => {
     assert.ok(fs.statSync(log).size <= 2000 + 400, '当前日志 ' + fs.statSync(log).size + ' 字节');
     assert.ok(fs.existsSync(log + '.1'), '旧的那份留一份');
   } finally { await f.k.close(); }
+});
+
+/* ---------- 第 2 批：外壳看住状态进程（docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md Task 2） ----------
+   假控制器的 serve 在 XIN_HOME/run/state.sock 上按同一协议回答（via: 'state'）；XIN_HOME 下的标记文件控制
+   起不来（serve-fail）、延迟就绪（serve-delay）、排空中（serve-draining），并按命令计数。 */
+const fileCount = (home, n) => { try { return Number(fs.readFileSync(path.join(home, n + '.count'), 'utf8')) || 0; } catch { return 0; } };
+async function until(check, ms = platformTimeout(5000)) {
+  const end = performance.now() + ms;
+  for (;;) { const v = await check(); if (v || performance.now() > end) return v; await sleep(20); }
+}
+const KERNEL = gen => ({ mode: 'kernel', gen });
+const health = async f => (await f.request('GET', '/xin/health')).json();
+const running = f => until(async () => { const h = await health(f); return h.owner && h.owner.phase === 'running' && h; });
+async function ownerOp(f, name, args, owner, agent = f.agent) {
+  const r = await f.request('POST', '/xin/op', { agent, op: name, args: args || {}, ...(owner !== undefined ? { owner } : {}) });
+  return { status: r.status, body: await r.json() };
+}
+async function keeperFixture(t, keeper = {}, extra = {}) {
+  const f = await kernelFixture({ kernel: { keeper: { backoffMs: [50, 100], ...keeper }, ...extra } });
+  t.after(() => f.k.close());
+  return f;
+}
+const gone = pid => { try { process.kill(pid, 0); return false; } catch { return true; } };
+
+test('期望 kernel：拉起状态进程，之后同版本的操作和轮询走套接字，不再起控制器', async t => {
+  const f = await keeperFixture(t);
+  const first = await ownerOp(f, 'echo', { a: 1 }, KERNEL(1));
+  assert.strictEqual(first.status, 200); assert.strictEqual(first.body.data.via, 'state', '启动中的请求等它准备好');
+  const h = await running(f);
+  assert.ok(h, '状态进程起来了'); assert.strictEqual(h.owner.mode, 'kernel'); assert.strictEqual(h.owner.gen, 1); assert.strictEqual(h.owner.agent, '000000000000');
+  for (let i = 0; i < 10; i++) {
+    const r = await ownerOp(f, 'echo', { i }, KERNEL(1));
+    assert.strictEqual(r.body.data.via, 'state'); assert.deepStrictEqual(r.body.data.args, { i }); assert.strictEqual(r.body.owner.phase, 'running');
+  }
+  fs.writeFileSync(path.join(f.home, 'runs', 'rstate0001.jsonl'), JSON.stringify({ t: 'text', text: '你好' }) + '\n' + JSON.stringify({ t: 'done' }) + '\n');
+  const s = await f.request('GET', '/xin/stream?agent=' + encodeURIComponent(f.agent) + '&run=rstate0001');
+  const text = await s.text();
+  assert.match(text, /"via":"state"/); assert.match(text, /你好/);
+  const after = await health(f);
+  assert.strictEqual(after.spawns, 0, '这一路都没起控制器'); assert.strictEqual(fileCount(f.home, 'poll'), 0);
+});
+
+test('走套接字的操作做完就清掉等它的计时器：外壳常驻，不能每次操作留一个 40 秒的计时器', async t => {
+  const f = await keeperFixture(t);
+  await ownerOp(f, 'echo', {}, KERNEL(1)); assert.ok(await running(f));
+  const timers = () => process.getActiveResourcesInfo().filter(x => x === 'Timeout').length, before = timers();
+  for (let i = 0; i < 20; i++) assert.strictEqual((await ownerOp(f, 'echo', { i }, KERNEL(1))).body.data.via, 'state');
+  assert.ok(timers() - before < 5, '20 次操作以后多了 ' + (timers() - before) + ' 个计时器');
+});
+
+test('代号小的期望不改模式；同代号要 legacy 就排空停下；代号更大再拉起', async t => {
+  const f = await keeperFixture(t);
+  await ownerOp(f, 'echo', {}, KERNEL(2)); assert.ok(await running(f));
+  let r = await ownerOp(f, 'echo', {}, { mode: 'legacy', gen: 1 });
+  assert.strictEqual(r.body.owner.phase, 'running', '旧代号的期望不理'); assert.strictEqual(r.body.data.via, 'state');
+  await ownerOp(f, 'echo', {}, { mode: 'legacy', gen: 2 });
+  assert.ok(await until(async () => (await health(f)).owner.phase === 'off'), '排空停下');
+  assert.strictEqual(fileCount(f.home, 'release'), 1, '用控制命令让它交回 legacy');
+  r = await ownerOp(f, 'echo', { x: 2 }, { mode: 'legacy', gen: 2 });
+  assert.deepStrictEqual(r.body.data, { x: 2 }, '旧模式：起控制器'); assert.strictEqual(r.body.owner.mode, 'legacy');
+  await ownerOp(f, 'echo', {}, KERNEL(3)); assert.ok(await running(f));
+  assert.strictEqual(fileCount(f.home, 'serve'), 2);
+});
+
+test('状态进程被 kill -9：记录不动，按退避重起', async t => {
+  const f = await keeperFixture(t);
+  await ownerOp(f, 'echo', {}, KERNEL(1));
+  const h1 = await running(f); assert.ok(h1);
+  process.kill(h1.owner.pid, 'SIGKILL');
+  const h2 = await until(async () => { const h = await health(f); return h.owner.phase === 'running' && h.owner.pid !== h1.owner.pid && h; });
+  assert.ok(h2, '重起了');
+  assert.strictEqual(fileCount(f.home, 'owner-legacy'), 0, '记录不动（#140）');
+  assert.ok(h2.owner.restarts >= 1); assert.ok(h2.owner.epoch > h1.owner.epoch);
+  assert.match(fs.readFileSync(path.join(f.home, 'logs', 'kernel.jsonl'), 'utf8'), /"route":"state","event":"exit"/);
+});
+
+test('外壳正常停止（SIGTERM）：先让状态进程交回 legacy 再退出；外壳自己重启后按存下的期望马上拉起', async t => {
+  const f = await keeperFixture(t);
+  await ownerOp(f, 'echo', {}, KERNEL(4));
+  const h = await running(f); assert.ok(h);
+  const desire = path.join(f.home, 'kernel-owner.json');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(desire, 'utf8')), { mode: 'kernel', gen: 4, agent: f.agent });
+  assert.strictEqual(fs.statSync(desire).mode & 0o777, 0o600);
+  await f.k.close({ release: true });
+  assert.strictEqual(fileCount(f.home, 'release'), 1); assert.ok(gone(h.owner.pid), '状态进程退出了');
+  const k2 = await f.kernel.createKernel({ home: f.home, env: { ...process.env, XIN_HOME: f.home }, keeper: { backoffMs: [50] } });
+  t.after(() => k2.close());
+  assert.ok(await until(() => fileCount(f.home, 'serve') === 2), '不等请求就按存下的期望拉起');
+});
+
+test('一直起不来：超过期限放弃这一代号，改回旧模式并推送一次；代号更大再试', async t => {
+  const f = await keeperFixture(t, { giveUpMs: 600, backoffMs: [50, 100] });
+  fs.writeFileSync(path.join(f.home, 'serve-fail'), '1');
+  await ownerOp(f, 'echo', {}, KERNEL(1));
+  const h = await until(async () => { const x = await health(f); return x.owner.phase === 'fallback' && x; }, platformTimeout(8000));
+  assert.ok(h, '放弃了'); assert.strictEqual(h.owner.fallback, true); assert.strictEqual(h.owner.lastError, 'state_compat'); assert.strictEqual(h.owner.mode, 'legacy');
+  assert.ok(await until(() => fileCount(f.home, 'pushq') === 1), '推送一次');
+  assert.match(fs.readFileSync(path.join(f.home, 'pushq.json'), 'utf8'), /常驻状态进程起不来，已自动改回旧方式：state_compat/);
+  assert.strictEqual(fileCount(f.home, 'owner-legacy'), 1, '先把记录改回旧模式');
+  const starts = fileCount(f.home, 'serve');
+  await ownerOp(f, 'echo', {}, KERNEL(1)); await sleep(400);
+  assert.strictEqual(fileCount(f.home, 'serve'), starts, '同一代号不再试');
+  fs.unlinkSync(path.join(f.home, 'serve-fail'));
+  await ownerOp(f, 'echo', {}, KERNEL(2)); assert.ok(await running(f), '代号更大：重新开始');
+});
+
+test('启动中的同版本请求等它准备好；等不到就照旧起控制器', async t => {
+  const f = await keeperFixture(t, {}, { readyWaitMs: 2000 });
+  fs.writeFileSync(path.join(f.home, 'serve-delay'), '300');
+  assert.strictEqual((await ownerOp(f, 'echo', {}, KERNEL(1))).body.data.via, 'state');
+  const g = await keeperFixture(t, {}, { readyWaitMs: 200 });
+  fs.writeFileSync(path.join(g.home, 'serve-delay'), '3000');
+  assert.deepStrictEqual((await ownerOp(g, 'echo', { x: 1 }, KERNEL(1))).body.data, { x: 1 }, '等不到：起控制器');
+});
+
+test('请求的控制器版本和状态进程的不同：照旧起控制器', async t => {
+  const f = await keeperFixture(t);
+  await ownerOp(f, 'echo', {}, KERNEL(1)); assert.ok(await running(f));
+  const other = path.join(f.home, 'agent', 'vm-agent-111111111111.mjs'); fs.copyFileSync(f.agent, other);
+  const r = await ownerOp(f, 'echo', { old: 1 }, undefined, other);
+  assert.deepStrictEqual(r.body.data, { old: 1 }); assert.strictEqual(r.body.owner.phase, 'running');
+  assert.strictEqual((await health(f)).spawns, 1);
+});
+
+test('操作超过上限：先回「不确定」，到硬上限杀掉状态进程并重起', async t => {
+  const f = await keeperFixture(t, { hardMs: 600 }, { opTimeoutMs: 200 });
+  await ownerOp(f, 'echo', {}, KERNEL(1));
+  const h1 = await running(f); assert.ok(h1);
+  const r = await ownerOp(f, 'hang', {}, KERNEL(1));
+  assert.deepStrictEqual([r.status, r.body.ok, r.body.executed, r.body.error], [200, false, 'unknown', 'agent_timeout']);
+  assert.ok(await until(async () => { const h = await health(f); return h.owner.phase === 'running' && h.owner.pid !== h1.owner.pid; }), '杀掉重起');
+  assert.ok(gone(h1.owner.pid));
+});
+
+test('状态进程回「排空中」：503 owner_unavailable，不起控制器', async t => {
+  const f = await keeperFixture(t);
+  await ownerOp(f, 'echo', {}, KERNEL(1)); assert.ok(await running(f));
+  fs.writeFileSync(path.join(f.home, 'serve-draining'), '1');
+  const r = await ownerOp(f, 'echo', {}, KERNEL(1));
+  assert.strictEqual(r.status, 503);
+  assert.deepStrictEqual([r.body.ok, r.body.executed, r.body.error, r.body.retryAfter], [false, false, 'owner_unavailable', 3]);
+  assert.strictEqual(r.body.owner.phase, 'running'); assert.strictEqual((await health(f)).spawns, 0);
+});
+
+test('外壳意外退出（只关管道）：状态进程自己排空退出，不交回 legacy', async t => {
+  const f = await keeperFixture(t);
+  await ownerOp(f, 'echo', {}, KERNEL(1));
+  const h = await running(f); assert.ok(h);
+  await f.k.close();
+  assert.ok(await until(() => gone(h.owner.pid)), '状态进程退出了');
+  assert.strictEqual(fileCount(f.home, 'pipe-end'), 1); assert.strictEqual(fileCount(f.home, 'release'), 0, '没有交回 legacy（#140）');
+});
+
+test('健康检查和 usage 的回应带上主人状态和各操作耗时', async t => {
+  const f = await keeperFixture(t);
+  for (let i = 0; i < 3; i++) await ownerOp(f, 'echo', {}, KERNEL(1));
+  const u = await ownerOp(f, 'usage', {}, KERNEL(1));
+  assert.strictEqual(u.body.owner.phase, 'running'); assert.strictEqual(typeof u.body.owner.up, 'number'); assert.strictEqual(u.body.owner.spawns, 0);
+  assert.ok(u.body.ops.all.n >= 3); assert.ok(u.body.ops.byOp.echo.n >= 3);
+  for (const k of ['p50', 'p95', 'max']) assert.ok(Number.isFinite(u.body.ops.all[k]), k);
+  const h = await health(f); assert.ok(h.ops.byOp.usage.n >= 1); assert.strictEqual(h.owner.phase, 'running'); assert.strictEqual(h.spawns, 0);
+  assert.strictEqual((await ownerOp(f, 'echo', {}, KERNEL(1))).body.ops, undefined, '只有 usage 带耗时');
+});
+
+test('owner 字段格式不对：400', async t => {
+  const f = await keeperFixture(t);
+  for (const owner of [{ mode: 'kernel' }, { mode: 'both', gen: 1 }, { mode: 'kernel', gen: -1 }, { mode: 'kernel', gen: 1.5 }, 'kernel', null]) {
+    const r = await f.request('POST', '/xin/op', { agent: f.agent, op: 'echo', args: {}, owner });
+    assert.strictEqual(r.status, 400, JSON.stringify(owner));
+  }
+});
+
+test('桥协议号和 vm-kernel-owner.mjs 的一致', async () => {
+  const kernel = await load('../site/xin/vm-kernel.mjs'), owner = await load('../site/xin/vm-kernel-owner.mjs');
+  assert.strictEqual(kernel.BRIDGE_PROTOCOL, owner.BRIDGE_PROTOCOL);
 });
