@@ -67,7 +67,7 @@ else if (op === 'serve') {
   process.stdin.resume(); process.stdin.on('end', () => { count('pipe-end'); server.close(); process.exit(0); });
 }
 else if (op === 'owner-legacy') { count('owner-legacy'); process.stdout.write('{"ok":true,"mode":"legacy","epoch":1}'); }
-else if (op === 'pushq') { count('pushq'); fs.writeFileSync(process.env.XIN_HOME + '/pushq.json', process.argv[3] || ''); }
+else if (op === 'pushq') { fs.writeFileSync(process.env.XIN_HOME + '/pushq.json', process.argv[3] || ''); count('pushq'); }   // 先写内容再计数：测试看到计数就去读内容
 else process.stdout.write(JSON.stringify({ error: 'bad_op' }));
 `;
 
