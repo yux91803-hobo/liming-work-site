@@ -69,11 +69,12 @@ export function inputArgs(read = () => fs.readFileSync(0, 'utf8')) {
   try { const t = read().trim(), a = t ? JSON.parse(t) : {}; return a && typeof a === 'object' && !Array.isArray(a) ? a : {}; } catch { return {}; }
 }
 export async function forwardCLI(home, op, { argv = process.argv, env = process.env, stdin = () => '', out = process.stdout, err = process.stderr } = {}) {
-  const q = op === 'xin' ? { kind: 'xin', argv: argv.slice(3), run: env.XIN_RUN || null, stdin: stdin() }
-    : op === 'reap' ? { kind: 'reap' } : { kind: 'op', op: op === 'locked' ? argv[3] : op, locked: op === 'locked', key: env.XIN_LOCK || null, run: env.XIN_RUN || null, args: inputArgs() };
+  const context = { run: env.XIN_RUN || null, attempt: env.XIN_ATTEMPT || null };
+  const q = op === 'xin' ? { kind: 'xin', argv: argv.slice(3), ...context, stdin: stdin() }
+    : op === 'reap' ? { kind: 'reap', ...context } : { kind: 'op', op: op === 'locked' ? argv[3] : op, locked: op === 'locked', key: env.XIN_LOCK || null, ...context, args: inputArgs() };
   try {
     const r = await requestState(home, q);
-    if (op === 'xin') { out.write(r.output || ''); process.exitCode = r.code || 0; }
+    if (op === 'xin') { out.write(r.output || (r.error ? r.msg + '\n' : '')); process.exitCode = r.error ? 1 : r.code || 0; }
     else out.write(JSON.stringify(r ?? {}));
   } catch (e) {
     if (op === 'xin') { err.write('小芯的状态进程暂时不可用，请稍后重试\n'); process.exitCode = 1; }

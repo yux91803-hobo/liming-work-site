@@ -8,11 +8,12 @@ import { FRAME_MAX, stateSocket } from './vm-kernel-client.mjs';
 const KINDS = new Set(['op','named','write','append','xin','reap','control']);
 const ID = /^[A-Za-z0-9_-]{8,100}$/;
 export async function createStateServer({ home, owner = new Ownership(home), initialize = () => {}, handle,
-  tick, tickMs = 5000, beforeRelease = () => {}, maxActive = 32, headerMs = 10000, log = () => {} }) {
+  tick, reconcile, hasWork = () => false, tickMs = 5000, wallClock = Date.now, recoveryGapMs = 30000, beforeRelease = () => {}, maxActive = 32, headerMs = 10000, log = () => {} }) {
   const file = stateSocket(home), directory = path.dirname(file), before = owner.record();
   if (before.busy) throw Object.assign(new Error('状态主人仍在运行'), { code: 'owner_busy' });
   const lease = owner.take();
   let timer, active = 0, draining = false, stopped = false, stopPromise, stamp, nextTick = tickMs;
+  let cycling = null, lastSweep = null, timerDue = 0;
   const waiters = [], sockets = new Set(), started = Date.now();
   const record = value => { try { log(value); } catch { /* Diagnostics never change execution. */ } };
   const idle = () => { if (!active) for (const done of waiters.splice(0)) done(); };
@@ -41,6 +42,10 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
       if (!q || typeof q.id!=='string' || !ID.test(q.id) || !Number.isInteger(q.v) || q.v < Math.max(1,BRIDGE_PROTOCOL-1) || q.v > BRIDGE_PROTOCOL || !KINDS.has(q.kind)) {
         reply(q || {}, { ok: false, error: 'state_protocol', executed: false }); return;
       }
+      // Reconcile before handling resumed work. The synchronous state scan starts now;
+      // notification/network waits can finish in the background while reports are served.
+      const wall = wallClock();
+      if ((tick || reconcile) && (q.kind !== 'control' || q.op === 'health') && (lastSweep === null || wall - lastSweep > recoveryGapMs || wall < lastSweep)) cycle();
       if (q.kind === 'control') {
         if (q.op === 'health') reply(q, { ok: true, result: { pid: process.pid, epoch: lease.epoch, protocol: BRIDGE_PROTOCOL, up: Date.now()-started, active, draining, nextTickMs: nextTick, rss: process.memoryUsage().rss } });
         else if (q.op === 'release' && q.mode === 'legacy') {
@@ -57,7 +62,7 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
       active++; const t0 = Date.now(); let ok = false;
       try { const result = await handle(q); ok = true; reply(q, { ok: true, result }); }
       catch (e) { reply(q, { ok: false, error: typeof e.code === 'string' ? e.code : 'state_failed', executed: 'unknown' }); }
-      finally { active--; idle(); record({ kind: q.kind, ok, ms: Date.now()-t0 }); }
+      finally { active--; idle(); wakeForWork(); record({ kind: q.kind, ok, ms: Date.now()-t0 }); }
     });
   });
   let closedResolve;
@@ -80,13 +85,31 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
     })();
     return stopPromise;
   }
-  async function cycle() {
-    if (draining || stopped) return;
-    active++;
-    let delay = tickMs;
-    try { const next = await tick(); if (Number.isFinite(next) && next > 0) delay = next; }
-    catch { record({ kind: 'tick', ok: false }); }
-    finally { active--; idle(); nextTick = delay; if (!draining) timer = setTimeout(cycle,delay); }
+  function workPending() {
+    try { return !!hasWork(); } catch { record({ kind: 'tick', ok: false }); return false; }
+  }
+  function scheduleTick(delay) {
+    clearTimeout(timer); nextTick = delay; timerDue = performance.now() + delay; timer = setTimeout(cycle,delay);
+  }
+  function wakeForWork() {
+    // Only move an existing deadline earlier. Polling must never postpone recovery.
+    if (!draining && !stopped && !cycling && timerDue - performance.now() > tickMs && workPending()) scheduleTick(tickMs);
+  }
+  function cycle() {
+    if (draining || stopped) return cycling;
+    if (cycling) {
+      if (reconcile) { lastSweep = wallClock(); try { reconcile(); } catch { record({ kind: 'tick', ok: false }); } }
+      return cycling;
+    }
+    clearTimeout(timer); active++; lastSweep = wallClock();
+    let next;
+    try { reconcile?.(); next = tick?.(); } catch { record({ kind: 'tick', ok: false }); }
+    cycling = Promise.resolve(next).then(value => {
+      nextTick = Number.isFinite(value) && value > 0 ? value : tickMs;
+    }, () => { nextTick = tickMs; record({ kind: 'tick', ok: false }); }).finally(() => {
+      cycling = null; active--; idle(); if (!draining) scheduleTick(workPending() ? Math.min(nextTick,tickMs) : nextTick);
+    });
+    return cycling;
   }
   try {
     const init = initialize(before); if (init?.then) throw Error('状态初始化必须同步完成');   // before：拿锁前的记录（从 legacy 接手时要先备份）
@@ -97,7 +120,7 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
     if (stale) { if (!stale.isSocket()) throw Error('状态套接字路径不是套接字'); fs.unlinkSync(file); }
     await new Promise((resolve,reject) => { server.once('error',reject); server.listen(file,resolve); });
     fs.chmodSync(file,0o600); stamp = fs.lstatSync(file);
-    if (tick) timer = setTimeout(cycle,tickMs);
+    if (tick || reconcile) scheduleTick(0);
     return { file, epoch: lease.epoch, close: stop, closed };
   } catch (e) {
     clearTimeout(timer); for (const s of sockets) s.destroy();
