@@ -1596,6 +1596,8 @@ export function taskSummary(t, full) {
   const out = { sid: t.sid, no: t.no, parent: t.parent || null, title: t.title, kind: t.tkind, model: t.model, why: t.why || '', status: t.status,
     requestedModel:t.requestedModel||null,actualModel:t.actualModel||((t.runs||[]).length?t.model:null),independent:t.tkind==='review'?!!(t.reviewAuthors?.length)&&!t.reviewAuthors.includes(t.actualModel||t.model):undefined,
     created: t.created, startedAt: t.startedAt || 0, endedAt: t.endedAt || 0, dir: t.dir, after: t.after || [], turns: t.turnsCount ?? (t.runs || []).length, question: t.question || '' };
+  // 最近一轮的编号：网页按它跟这一轮（聊天里的实时终端，2026-11-16）
+  if (r) out.run = r;
   if (t.status === 'running' && r) out.activity = t.stage==='checking'?'正在检查网页的动画和交互':taskActivity(r);
   if (t.result) out.result = { ok: !!t.result.ok, text: full ? t.result.text : cut(t.result.text, 2000), err: t.result.err || '', at: t.result.at || 0 };
   if (t.inbox && t.inbox.length) out.inbox = t.inbox.length;
