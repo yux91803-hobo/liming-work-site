@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 
 // Publish the reader/bridge before enabling allocation, so the rollback target understands in-flight attempts.
-export const ATTEMPTS_DEFAULT = false;
+export const ATTEMPTS_DEFAULT = true;
 export const attemptsEnabled = (env = process.env) => env.XIN_RUN_ATTEMPTS === '1' || env.XIN_RUN_ATTEMPTS !== '0' && ATTEMPTS_DEFAULT;
 export const nextAttempt = meta => meta?.attempt || meta?.attemptProtocol === 1 ? crypto.randomBytes(16).toString('hex') : null;
 export const staleAttempt = () => ({ error: 'stale_attempt', msg: '这一轮的执行尝试已过期，报告未应用' });
