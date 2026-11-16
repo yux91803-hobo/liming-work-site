@@ -1699,7 +1699,7 @@
       if (!b.classList.contains('live')) {
         b.className = 'xc-tb live'; b.removeAttribute('data-st');
         b.innerHTML = '<div class="xc-tb-tx"><b class="xc-tb-t"></b><span class="xc-tb-ln"><span class="xc-sw-w xc-tb-sw"><span class="xc-tb-s"></span></span><i class="xc-tb-sec"></i></span></div>' +
-          '<div class="xc-bub"><i></i><i></i><i></i></div>';
+          '<div class="xc-tb-dots"><i></i><i></i><i></i></div>';   // 不叫 .xc-bub：那是回答正文的类名（正式站联调取最后一个 .xc-ai .xc-bub 当回答，#159 因此被回滚）
       }
       var verb = taskVerb(sid), sec = t.status === 'queued' || !t.startedAt ? 0 : Math.round((Date.now() - t.startedAt) / 1000);
       var te = b.querySelector('.xc-tb-t'); if (te.textContent !== title) te.textContent = title;
@@ -3793,7 +3793,7 @@
         return /^\/data\/workspace(\/[\w.+@%~=-]+)*\/?$/.test(inner) ? pathLink(inner, '<code>' + esc(inner) + '</code>') : '<code>' + esc(seg.slice(1, -1)) + '</code>';
       }
       return esc(seg)
-        .replace(/\[([^\[\]]{1,80})\]\((\/xin\/preview\.html\?id=[a-f0-9]{32})\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+        .replace(/\[([^\[\]]{1,80})\]\((\/xin\/preview\.html\?id=[a-f0-9]{32})\)/g, '<a class="xc-preview xc-plink" href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
         .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
         .replace(/(https?:\/\/[^\s<>()（）]+[^\s<>()（）.,;:!?。，；：！？'"])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
         .replace(PATH_RE, function (m, pre, p) { var t = p.replace(/[.]+$/, ''); return pre + pathLink(t, t) + p.slice(t.length); });

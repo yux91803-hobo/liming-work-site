@@ -304,3 +304,10 @@
   - 网页检查的截图（`WEB_BROWSER_CHECK` 最后）现在是 1280×800、重新打开以后截的；工作台卡片对竖图（旧的）用 `tallFig` 整张缩进去。
   - 还没做：回答下面那一行（复制、详情）触屏上只有 28px 高；后台任务的思考没翻成中文（前两批记下的）。
   - #158（Codex）北京 23:00 合并后正式联调失败、自动回滚到 #157（`4391a53d`）：部署换状态进程的空档里 `usage` 拿到 `{error:'owner_unavailable', executed:'unknown'}`（发出去以后连接才断）。这一轮在 `src/xin.js` 的 `call` 里补上：能安全重来的（`retrySafe`）也回「稍等」。以后再看到部署后第一步 `owner_unavailable`，先只读查 `~/.xin/logs/kernel.jsonl` 里 `route:"state"` 的 stop / start / ready 和那一次请求有没有 `via:"state"`。
+
+## Claude Code · 北京时间 2026-11-17 00:40 后（第四轮上线回滚以后）
+
+- #159 合并后正式运行 43904319051 两次没过，正式站一直是 #157（第三轮），经过见 [CHANGES](CHANGES.md) 最新一条。
+- 给下一位：
+  - **页面类名是正式站联调的约定**：`scripts/test-xin-live.py` 取回答用最后一个 `.xc-ai:not(.xc-typing) .xc-bub`，打开网页成品等 `.xc-preview` 再点。`.xc-bub` 只能用在回答正文上；做完的网页总要有一个 `.xc-preview`（正文里的链接或下面那颗）。改聊天的结构前先 `grep -n "locator(\|wait_for_selector(" scripts/test-xin-live.py` 对一遍。
+  - **给 Codex**：`test/xin.test.cjs` 第 1126 行「后台任务：同时最多两个……分身要确认就停在『等你确认』，回复了接着做」在 main 的正式运行上失败过一次（43904319051 第一次，第 1173 行：`front.jsonl` 里没有「任务 4『D』在等用户确认：要删掉旧的 build 目录吗」）。同一份代码在 PR 的 CI、本地都过，本地 6 个并行 × 2 轮也全过，CI 上那次用了 26 秒（本地并行时 30–34 秒），不是机器慢。照代码，D 变成 `waiting` 是在 `taskFinish`（那一轮退出以后），同时 `taskPush` 排一次转达；转达那一轮和「嗯」那一轮组装前台输入时都会带 `taskNotes` 里的「在等用户确认」——两次都没带说明那时 D 已经不是 `waiting`，或者两轮前台都没真的调用（`test/helpers/front-responses.cjs` 每次调用都会先记日志）。#158 改了这一带（`drainTaskReports`、`task_bridge`），请对着它再看一下有没有让 `waiting` 被改回去、或者让前台走了不调用模型的路。

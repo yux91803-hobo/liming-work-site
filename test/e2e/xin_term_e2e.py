@@ -224,6 +224,10 @@ async def part2(browser):
     ui.check('派出去的活：那段话「好，我去编一下。」下面一个框（同一条回答里，不画头像），上面任务名「编译 blink」、下面此刻那一步「准备中」，是按钮、点开看那件活；最下面不再单独一行',
              bx == ['编译 blink', '准备中', 'rlive00001', '好，我去编一下。', True, 'task:' + TASK, 'button', True, True, True, 1], bx)
     ui.check('前台派活的内部命令不出现在聊天里', 'xin task' not in chat and '帮我编译 blink 工程' not in chat, chat[-160:])
+    # 正式站联调（scripts/test-xin-live.py）取小芯的回答用「最后一个 .xc-ai:not(.xc-typing) .xc-bub」：.xc-bub 只能是回答的正文。
+    # #159 的框里三个点用了 .xc-bub，联调取到空字、判成「不是第一人称」，正式部署被回滚（北京 2026-11-17 00:37）
+    lastbub = await pg.evaluate("[[...document.querySelectorAll('.xc-ai:not(.xc-typing) .xc-bub')].pop().innerText, document.querySelectorAll('.xc-tb .xc-bub').length]")
+    ui.check('框里没有 .xc-bub（那是回答正文的类名）：照正式站联调的取法，最后一条回答的正文还是那段话', lastbub == ['好，我去编一下。', 0], lastbub)
     reply = await pg.evaluate("[document.querySelector('.xc-ai[data-run=\"rlive00001\"] > .xc-av').dataset.term || '', document.querySelectorAll('.xc-av-t').length]")
     ui.check('派了活的那条回答，头像不是按钮、没有小终端标记（看那件活点框）', reply == ['', 0], reply)
 

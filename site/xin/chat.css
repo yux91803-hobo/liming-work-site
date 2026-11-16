@@ -237,11 +237,11 @@ body.xc-open.xc-wb #home{margin-right:0}
   background:linear-gradient(100deg,var(--glow-ink) 0 38%,var(--glow) 50%,var(--glow-ink) 62% 100%) 0 0/300% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:xcshim 2.4s linear infinite}
 .xc-tb-sec{flex:none;font-style:normal;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 @keyframes xcshim{from{background-position:100% 0}to{background-position:0 0}}
-.xc-tb .xc-bub{margin-left:auto;padding-left:6px}
-.xc-typing .xc-bub,.xc-tb .xc-bub{display:flex;gap:3px}
-.xc-typing .xc-bub i,.xc-tb .xc-bub i{width:4px;height:4px;background:var(--glow);animation:xcdot 1.2s steps(1,end) infinite}
-.xc-typing .xc-bub i:nth-child(2),.xc-tb .xc-bub i:nth-child(2){animation-delay:.2s}
-.xc-typing .xc-bub i:nth-child(3),.xc-tb .xc-bub i:nth-child(3){animation-delay:.4s}
+.xc-tb-dots{margin-left:auto;padding-left:6px}
+.xc-typing .xc-bub,.xc-tb-dots{display:flex;gap:3px}
+.xc-typing .xc-bub i,.xc-tb-dots i{width:4px;height:4px;background:var(--glow);animation:xcdot 1.2s steps(1,end) infinite}
+.xc-typing .xc-bub i:nth-child(2),.xc-tb-dots i:nth-child(2){animation-delay:.2s}
+.xc-typing .xc-bub i:nth-child(3),.xc-tb-dots i:nth-child(3){animation-delay:.4s}
 @keyframes xcdot{0%,100%{opacity:.25}35%,60%{opacity:1}}
 .xc-tb:not(.live){gap:8px;padding:7px 10px 7px 11px;font-size:13px;line-height:1.4}
 .xc-tb-i{flex:none;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -290,6 +290,8 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-md a{color:inherit;text-decoration:underline;text-decoration-color:var(--glow-ring);text-decoration-thickness:2px;text-underline-offset:3px;overflow-wrap:anywhere;transition:text-decoration-color .15s}
 @media (hover:hover){.xc-md a:hover{text-decoration-color:var(--glow)}}
 .xc-md a.xc-path code{background:var(--glow-soft);color:var(--glow-ink)}
+/* 正文里指向小芯网页成品的链接（「我画好了。打开网页」）：带 .xc-preview（下面不再重复放按钮，正式站联调也认这个类名），样子还是正文里的链接 */
+.xc-md a.xc-plink{display:inline;height:auto;margin:0;padding:0;background:none;font-size:inherit;font-weight:inherit}
 .xc-tbl{max-width:100%;margin:10px 0 14px;overflow-x:auto;--rad:12px;box-shadow:inset 0 0 0 1px var(--hair)}
 .xc-tbl table{width:100%;border-collapse:collapse;font-size:13.5px;line-height:1.55;font-variant-numeric:tabular-nums}
 .xc-tbl th,.xc-tbl td{padding:8px 12px;text-align:left;vertical-align:top;box-shadow:inset 0 -1px 0 var(--hair)}
@@ -1291,6 +1293,6 @@ body.xs-open{overflow:hidden}
   .xc,.xc.wb,.xc-drawer,.xc-scrim,.xc-work,.xc-sheet,.xc-pal,.xc-pal-box,.xc-toast,.xc-isle,.xc-send,.xc-plus,.xc-sw::after,body.xc-open #home{transition:none !important}
   .xc-m.enter,.xc-me.enter,.xc-sheet,.xc-menu,.xc-pick,.xc-att,.xc-jump,.xq,.xc-sa,.xc-login.no,.wk-body.swap,.xc-dr-ft .xc-set,.xc-work.flash,.xc-isle-n i,.xc-sw-in,.xc-sw-o,.xc-work.enter .wk-c,.xc-work.enter .wk-h,.xc-work.enter .wk-seg{animation:none !important}
   .xc-wk-id,.xc-work .xc-wk-sc,.xc-sw-w{transition:none !important;transform:none !important}
-  .xc-face .c-ew,.xc-face svg,.xc-typing .xc-bub i,.xc-tb .xc-bub i,.xc-tb-s,.xc-tb.enter,.xc-tb.fold,.xc-upchip,.xc-ai.xc-glint > .xc-bub,.xc-tq .tq-g,.wk-bar::after,.wk-c.live .wk-ic::after,.xc-st.wait::before,.xc-task-st::before,.xc.running .xc-send,.xc-dr-st.busy::before,.xc-mainb.live i::before,.xc-tk-cmd.now::before,.xc-glow::before,.xw-t,.xw-st.busy i,.xw-t.run .xw-g{animation:none !important}
+  .xc-face .c-ew,.xc-face svg,.xc-typing .xc-bub i,.xc-tb-dots i,.xc-tb-s,.xc-tb.enter,.xc-tb.fold,.xc-upchip,.xc-ai.xc-glint > .xc-bub,.xc-tq .tq-g,.wk-bar::after,.wk-c.live .wk-ic::after,.xc-st.wait::before,.xc-task-st::before,.xc.running .xc-send,.xc-dr-st.busy::before,.xc-mainb.live i::before,.xc-tk-cmd.now::before,.xc-glow::before,.xw-t,.xw-st.busy i,.xw-t.run .xw-g{animation:none !important}
 }
 @media (prefers-reduced-motion:reduce){.xc-as-th,.xc-as-b,.xc-hello-mk > *{transition:none !important}.xc-hello-mk > *{transform:none !important}}
