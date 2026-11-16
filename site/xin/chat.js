@@ -62,6 +62,20 @@
     if (x && x.portrait) e.innerHTML = x.portrait();
     return e;
   }
+  /* 天启的标志（站长 2026-11-16：天启「属于另一种 agent 形式」）：深蓝底上一颗像素的四角星，冷色星光，旁边几粒星点一闪一闪；
+     不跟着小芯换表情（不是 .xc-face）。天启的东西才用这套冷色，小芯的琥珀色不混用 */
+  var TQ_STAR = (function () {
+    var rows = ['......#......', '......#......', '.....###.....', '.....###.....', '....#####....', '..#########..', '#############', '..#########..', '....#####....', '.....###.....', '.....###.....', '......#......', '......#......'], d = '';
+    rows.forEach(function (r, y) { for (var x = 0; x < r.length; x++) if (r[x] === '#') d += 'M' + x + ' ' + y + 'h1v1h-1z'; });
+    return d;
+  })();
+  function tqMark(cls) {
+    var e = h('span', 'xc-tq' + (cls ? ' ' + cls : ''));
+    e.innerHTML = '<svg class="xc-px" viewBox="-2.5 -2.5 18 18" aria-hidden="true" shape-rendering="crispEdges"><path class="tq-s" d="' + TQ_STAR + '"/>' +
+      '<path class="tq-c" d="M6 4h1v5H6zM4 6h5v1H4z"/><path class="tq-g" d="M0 0h1v1H0zM11 1h1v1h-1zM12 11h1v1h-1zM-1 11h1v1h-1z"/></svg>';
+    return e;
+  }
+  function tqConv() { return curAgent() === 'harness'; }
 
   /* ---------- 请求 ---------- */
   // ms：这次请求的期限。连接被静默丢掉（手机休眠、换 Wi-Fi、宿主机暂停虚拟机）时 fetch 永远不结束也不报错，
@@ -330,7 +344,7 @@
     var k = faceKey();
     [].forEach.call(root.querySelectorAll('.xc-face'), function (el) { paintFace(el, k); });
     var lf = root.querySelector('.xc-login-av'); if (lf) paintFace(lf, faceKey());
-    if (typingEl) paintFace(typingEl.querySelector('.xc-face'), k === 'read' ? 'think' : k);
+    var tfc = typingEl && typingEl.querySelector('.xc-face'); if (tfc) paintFace(tfc, k === 'read' ? 'think' : k);
   }
   // 标题栏「小芯」下面那行：在忙就说在干什么，闲着就说电脑醒没醒
   function statusText() {
@@ -375,7 +389,8 @@
   }
   function render() {
     if (!root) return;
-    var login = S.enabled && !S.authed, off = !S.enabled;
+    var login = S.enabled && !S.authed, off = !S.enabled, ph = tqConv() ? '和天启说点什么…' : '和小芯说点什么…';
+    if (input.placeholder !== ph) input.placeholder = ph;   // 天启的对话（和选了天启的空白页）
     loginEl.hidden = !login;
     foot.hidden = login || off || S.view !== 'chat';
     sessEl.hidden = login || off || S.view === 'chat';
@@ -483,8 +498,9 @@
     useEl.innerHTML = ''; useEl.appendChild(b);
     if (S.useMore) useEl.appendChild(h('div', 'xc-use-more', '上下文 ' + tok(u.ctx) + (u.win > 0 ? ' / ' + tok(u.win) : '') + ' · 输入 ' + tok(u.input) + (typeof u.cached === 'number' ? '（缓存命中 ' + tok(u.cached) + '）' : '') + ' · 输出 ' + tok(u.output)));
   }
-  function newChat(stay, toMain) {
+  function newChat(stay, toMain, agent) {
     detachConversation();
+    S.agent = !toMain && agent === 'harness' ? 'harness' : 'codex'; ls(LS_AGENT, S.agent);
     stopPolling(); S.sid = ''; S.sessAgent = ''; S.run = ''; S.off = 0; S.pos = null; ls(LS_SID, null); S.hModel = hmPref(); S.lastModel = ''; S.queue = []; setPick(false);
     S.toMain = !!toMain; S.more = false; S.title = '';
     if (!stay) { S.view = 'chat'; setDrawer(false); }
@@ -497,11 +513,41 @@
   }
   // 空对话：大一点的小芯（会眨眼、跟着状态换表情）和一句招呼，点阵字
   function welcome() {
-    var p = h('div', 'xc-hello');
-    p.appendChild(avatar('big xc-face'));
-    p.appendChild(h('b', 'xc-hello-t', '嗨，我是小芯'));
+    var tq = S.agent === 'harness', p = h('div', 'xc-hello' + (tq ? ' tq' : ''));
+    // 和谁聊：小芯（默认，小芯自己挑模型）| 天启（自己选模型和思考强度）。开始聊以后这个对话就定了是谁
+    var sw = h('div', 'xc-as'); sw.setAttribute('role', 'radiogroup'); sw.setAttribute('aria-label', '和谁聊');
+    [['codex', '小芯'], ['harness', '天启']].forEach(function (x) {
+      var b = h('button', 'xc-as-b', x[1]); b.type = 'button'; b.dataset.a = x[0]; b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', S.agent === x[0] ? 'true' : 'false'); b.tabIndex = S.agent === x[0] ? 0 : -1;
+      b.addEventListener('click', function () { setAgent(x[0]); });
+      sw.appendChild(b);
+    });
+    sw.appendChild(h('i', 'xc-as-th'));
+    sw.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+      ev.preventDefault(); setAgent(S.agent === 'harness' ? 'codex' : 'harness');
+      var b = sw.querySelector('[aria-checked="true"]'); if (b) b.focus();
+    });
+    p.appendChild(sw);
+    var mk = h('div', 'xc-hello-mk'); mk.appendChild(avatar('big xc-face')); mk.appendChild(tqMark('big')); p.appendChild(mk);
+    var tw = h('span', 'xc-sw-w xc-hello-tw'); tw.appendChild(h('b', 'xc-hello-t', tq ? '天启' : '嗨，我是小芯')); p.appendChild(tw);
     list.appendChild(p);
     paintFaces();
+  }
+  // 空白页上换和谁聊。记进 lm.xin.agent（意思是「现在看的这一页是谁的」：学习台单独打开时按它判断）；
+  // 欢迎页的标志和大标题、输入框底下的模型按钮、标题栏跟着换。开始聊以后不能换
+  function setAgent(a) {
+    a = a === 'harness' ? 'harness' : 'codex';
+    if (S.sid || S.agent === a) return;
+    S.agent = a; ls(LS_AGENT, a);
+    if (a === 'harness') S.hModel = hmPref();
+    var p = list && list.querySelector('.xc-hello');
+    if (p) {
+      p.classList.toggle('tq', a === 'harness');
+      [].forEach.call(p.querySelectorAll('.xc-as-b'), function (b) { var on = b.dataset.a === a; b.setAttribute('aria-checked', on ? 'true' : 'false'); b.tabIndex = on ? 0 : -1; });
+      var t = p.querySelector('.xc-hello-t'); if (t) swapText(t, a === 'harness' ? '天启' : '嗨，我是小芯');
+    }
+    renderPick(); render();
   }
   function loadCurrent() {
     status();
@@ -529,6 +575,7 @@
       if (my !== S.loadSeq) return;
       clearList();
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid; S.toMain = false; S.title = d.session.title || '';
+      ls(LS_AGENT, d.session.agent === 'harness' ? 'harness' : 'codex');
       if (d.session.main) setMain(sid); else if (sid === S.main) setMain('');
       refreshSide();
       S.more = !!d.more; S.first = d.runs.length ? d.runs[0].run : '';
@@ -649,6 +696,9 @@
     var nb = h('button', 'xc-dr-new'); nb.type = 'button'; nb.innerHTML = svgIcon('plus') + '<span>新对话</span>';
     nb.addEventListener('click', function () { newChat(); if (!touch) input.focus(); });
     sc.appendChild(nb);
+    var tb = h('button', 'xc-tqb'); tb.type = 'button'; tb.appendChild(tqMark()); tb.appendChild(h('span', '', '新的天启对话'));
+    tb.addEventListener('click', function () { newChat(false, false, 'harness'); if (!touch) input.focus(); });
+    sc.appendChild(tb);
     // 主对话：一直聊下去的那一个，固定在最上面
     var mb = h('button', 'xc-mainb'); mb.type = 'button'; mb.innerHTML = svgIcon('pin') + '<span>主对话</span><i></i>';
     mb.addEventListener('click', function () { goMain(); if (!touch) input.focus(); });
@@ -864,16 +914,7 @@
   function settings() {
     var box = h('div', 'xc-set');
     box.appendChild(h('p', 'xc-set-h', '设置'));
-    // 天启模式：打开时新对话用 Harness（自己选模型和思考强度）；关着（默认）用 Codex，小芯自己挑模型、思考强度最高。
-    // 只管新对话：已经开着的对话还是原来的 AI（两边的记录不通用）
-    var tq = toggleRow('xc-tianqi', '天启模式', '');
-    tq.set(S.agent === 'harness');
-    tq.btn.addEventListener('click', function () {
-      S.agent = S.agent === 'harness' ? 'codex' : 'harness'; ls(LS_AGENT, S.agent); tq.set(S.agent === 'harness');
-      tq.note(S.sid && S.sessAgent && S.sessAgent !== S.agent ? '下一个新对话生效' : '');
-      renderPick();
-    });
-    box.appendChild(tq.row);
+    // 天启不在设置里了（站长 2026-11-16：「属于另一种 agent 形式」）：新对话空白页上的「小芯 | 天启」、侧边栏和命令面板的「新的天启对话」
     // 附带：发消息时带上学习台里正在看的页面、选中的文字、写的代码。关掉就都不带（记在这个浏览器里）
     var ctx = toggleRow('xc-ctxauto', '附带当前页面', '');
     ctx.set(ls(LS_CTX) !== '0');
@@ -1350,6 +1391,26 @@
      Harness（天启模式）记住自己选的模型，已有对话恢复自己的选择。Claude 沿用原有命令行配置。
      Codex（默认模式）不让选：按钮写「自动 · 最高」，点开只说明小芯怎么挑模型、上一句用的是谁。 */
   var LEVELS = { off: '关', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高' };
+  // 每档一句（参考 OpenAI Codex 的 codex-rs/models-manager/models.json：supported_reasoning_levels 里每档 effort 配一句 description）
+  var EFF_DESC = { off: '不额外思考，直接回答', low: '回得快，想得浅一点', medium: '速度和深度兼顾，日常够用', high: '想得更深，适合复杂的问题', xhigh: '想得很深，适合很复杂的问题', max: '想到最深，留给最难的问题' };
+  // 思考强度的像素格：「关」以外每档一格、从矮到高，亮到当前那一档（关 = 一格都不亮）；档位名藏着给读屏
+  function effMeter(sp, e, cls) {
+    var lv = sp.efforts.filter(function (x) { return x !== 'off'; }), m = h('i', 'xc-em' + (cls ? ' ' + cls : ''));
+    lv.forEach(function (x, i) { var b = h('b'); b.style.setProperty('--h', (i + 1) / lv.length); m.appendChild(b); });
+    m.appendChild(h('span', 'xc-vh', ''));
+    paintMeter(m, sp, e);
+    return m;
+  }
+  function paintMeter(m, sp, e) {
+    var lv = sp.efforts.filter(function (x) { return x !== 'off'; }), k = lv.indexOf(e) + 1, was = m.dataset.lv == null ? k : +m.dataset.lv;
+    m.dataset.lv = k;
+    [].forEach.call(m.querySelectorAll('b'), function (b, i) {
+      // 逐格：往上加从矮到高一格一格亮，往下减从高到矮一格一格灭
+      b.style.transitionDelay = (k > was ? Math.max(0, i - was) : Math.max(0, was - 1 - i)) * 45 + 'ms';
+      b.classList.toggle('on', i < k);
+    });
+    m.lastChild.textContent = LEVELS[e];
+  }
   var SPECS = {
     harness: { name: 'DeepSeek V4.1 Flash', efforts: ['off', 'low', 'high', 'max'] },
     claude: { name: 'Claude', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }
@@ -1370,7 +1431,8 @@
     // 默认模式没有可选的（一直是「自动 最高」），按钮不放（站长 2026-11-11）；天启模式才有模型和思考强度可选
     mdlBtn.hidden = !!sp.auto;
     if (sp.auto) { if (pickEl && !pickEl.hidden) setPick(false); return; }
-    var t = mdlBtn.firstChild; t.textContent = sp.name; t.appendChild(h('i', '', e));
+    var t = mdlBtn.firstChild; t.textContent = sp.name; t.appendChild(effMeter(sp, curEffort()));
+    mdlBtn.classList.toggle('tq', sp.agent === 'harness');
     mdlBtn.setAttribute('aria-label', sp.auto ? '模型：小芯自己安排' : '模型和思考强度：' + sp.name + ' ' + e);
     if (!pickEl.hidden) { if (pickEl.dataset.k !== pickKey()) buildPick(); else paintEff(); }
   }
@@ -1390,7 +1452,8 @@
     var sp = curSpec();
     pickEl.textContent = ''; pickEl.dataset.k = pickKey();
     var hd = h('div', 'xc-pk-hd'), title = h('div', 'xc-pk-heading');
-    title.appendChild(h('b', '', sp.auto ? '工作方式' : '模型与思考')); title.appendChild(h('span', 'xc-pk-agent', sp.auto ? '小芯' : AGENTS[sp.agent]));
+    title.appendChild(h('b', '', sp.auto ? '工作方式' : '模型与思考')); title.appendChild(h('span', 'xc-pk-agent', sp.auto ? '小芯' : sp.agent === 'harness' ? '天启' : AGENTS[sp.agent]));
+    pickEl.classList.toggle('tq', sp.agent === 'harness');
     var close = h('button', 'xc-pk-close'); close.type = 'button'; close.setAttribute('aria-label', '关闭模型设置'); close.innerHTML = svgIcon('x');
     close.addEventListener('click', function () { setPick(false, true); });
     hd.appendChild(title); hd.appendChild(close); pickEl.appendChild(hd);
@@ -1424,12 +1487,14 @@
         if (next >= 0) { ev.preventDefault(); choose(keys[next]); }
       });
     }
-    var t = h('div', 'xc-pk-t'); t.appendChild(h('b', '', '思考强度')); t.appendChild(h('i', '', ''));
+    var t = h('div', 'xc-pk-t'), tv = h('span', 'xc-pk-tv'); t.appendChild(h('b', '', '思考强度'));
+    tv.appendChild(effMeter(sp, curEffort(), 'big')); tv.appendChild(h('i', 'xc-pk-tl', LEVELS[curEffort()])); t.appendChild(tv);
     pickEl.appendChild(t);
     // 档位直接写出名称；支持点击、拖动和方向键，不用猜圆点代表哪一档。
     var n = sp.efforts.length, tr = h('div', 'xc-eff');
     tr.setAttribute('role', 'radiogroup'); tr.setAttribute('aria-label', '思考强度');
     tr.style.setProperty('--n', n);
+    var th = h('i', 'xc-eff-th'); th.setAttribute('aria-hidden', 'true'); tr.appendChild(th);   // 跟着档位滑过去的那块底（弹簧）
     sp.efforts.forEach(function (lv) {
       var b = h('button', 'xc-eff-d'); b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset.v = lv; b.setAttribute('aria-label', LEVELS[lv]);
       b.textContent = LEVELS[lv];
@@ -1450,7 +1515,7 @@
       var f = tr.querySelector('[data-v="' + lv + '"]'); if (f) f.focus();
     });
     pickEl.appendChild(tr);
-    pickEl.appendChild(h('p', 'xc-eff-help'));
+    var hp = h('p', 'xc-eff-hp'), hw = h('span', 'xc-sw-w'); hw.appendChild(h('span', 'xc-eff-help')); hp.appendChild(hw); pickEl.appendChild(hp);
     paintEff();
     fitPick();
   }
@@ -1466,8 +1531,10 @@
       b.classList.toggle('on', i === k); b.classList.toggle('in', i < k);
       b.setAttribute('aria-checked', i === k ? 'true' : 'false'); b.tabIndex = i === k ? 0 : -1;
     });
-    var t = pickEl.querySelector('.xc-pk-t i'); if (t) t.textContent = LEVELS[e];
-    var help = pickEl.querySelector('.xc-eff-help'); if (help) help.textContent = e === 'off' ? '关闭额外思考，直接回答' : e === 'low' ? '减少思考，优先响应速度' : e === 'max' || e === 'xhigh' ? '增加思考时间，适合复杂问题' : '兼顾思考深度与响应速度';
+    tr.style.setProperty('--k', k);
+    var m = pickEl.querySelector('.xc-pk-t .xc-em'); if (m) paintMeter(m, sp, e);
+    var t = pickEl.querySelector('.xc-pk-tl'); if (t) t.textContent = LEVELS[e];
+    var help = pickEl.querySelector('.xc-eff-help'); if (help) swapText(help, EFF_DESC[e] || '');
   }
 
   /* ---------- 后台任务（分身） ----------
@@ -1617,7 +1684,9 @@
   function runModel(m) { return m.model ? modelName(m.model) : curAgent() === 'harness' ? modelName(S.hModel) : ''; }
   function runTab(run) {
     var m = S.runMeta[run] || {};
+    var tq = tqConv();
     return { key: 'run:' + run, label: '这一轮', prompt: m.prompt || '', model: runModel(m), live: run === S.run, endMs: m.ms,
+      who: tq ? '天启' : '', mark: tq ? tqMark('big').outerHTML : '',
       events: (S.runEv[run] || []).filter(function (e) { return e.t !== 'task'; }),
       status: function () { return { verb: doingWord(), sec: (Date.now() - (S.t0 || Date.now())) / 1000 }; } };
   }
@@ -1734,7 +1803,8 @@
     var live = S.sid ? Object.keys(S.tinfo).map(function (k) { return S.tinfo[k]; }).filter(function (t) { return t.parent === S.sid && tLive(t); }) : [];
     if (!live.length || typingEl || S.run || S.sending) { if (bgRowEl) { bgRowEl.remove(); bgRowEl = null; } clearInterval(bgTk); bgTk = 0; return; }
     if (!bgRowEl) {
-      bgRowEl = h('div', 'xc-m xc-ai xc-typing xc-bgrow'); bgRowEl.setAttribute('aria-label', '小芯在电脑上做事');
+      // 不是「正在输入」（那是前台这一轮）：自己的类名，样子借用同一套
+      bgRowEl = h('div', 'xc-m xc-bgrow'); bgRowEl.setAttribute('aria-label', '小芯在电脑上做事');
       var f = h('span', 'xc-av xc-face'); termAv(f, 'live', true); bgRowEl.appendChild(f);
       var lw = h('span', 'xc-sw-w xc-typing-w'); lw.appendChild(h('span', 'xc-typing-l', '')); bgRowEl.appendChild(lw);
       var b = h('div', 'xc-bub'); b.innerHTML = '<i></i><i></i><i></i>'; bgRowEl.appendChild(b);
@@ -3358,8 +3428,9 @@
     var e = h('div', 'xc-m xc-ai' + (cls ? ' ' + cls : '')), b = h('div', 'xc-bub');
     e.dataset.run = run || '';
     if (lastAi(run)) e.classList.add('cont');
-    e.appendChild(avatar());
-    if (!e.classList.contains('cont')) e.appendChild(h('span', 'xc-who', '小芯'));
+    var tq = tqConv() && !/^task-/.test(run || '');   // 天启对话里它自己说的话；后台的活做完是小芯转达的
+    e.appendChild(tq ? tqMark('xc-av') : avatar());
+    if (!e.classList.contains('cont')) e.appendChild(h('span', 'xc-who', tq ? '天启' : '小芯'));
     e.appendChild(b);
     return { e: e, b: b };
   }
@@ -3446,7 +3517,7 @@
     if (!typingEl) {
       // 小芯的脸跟着状态换（想事情抬眼、在电脑上忙侧身），旁边一行字和秒数，后面三个像素点一格一格亮
       typingEl = h('div', 'xc-m xc-ai xc-typing'); typingEl.setAttribute('aria-label', '小芯正在回复');
-      var tf = h('span', 'xc-av xc-face'); termAv(tf, 'live', true); typingEl.appendChild(tf);
+      var tf = tqConv() ? tqMark('xc-av') : h('span', 'xc-av xc-face'); termAv(tf, 'live', true); typingEl.appendChild(tf);
       var b = h('div', 'xc-bub'); b.innerHTML = '<i></i><i></i><i></i>';
       var lw = h('span', 'xc-sw-w xc-typing-w'); lw.appendChild(h('span', 'xc-typing-l', '思考中')); typingEl.appendChild(lw); typingEl.appendChild(b);
     }
@@ -3632,7 +3703,7 @@
      上下键选、回车执行、Esc 关；鼠标移上去就选中。 */
   var palIdx = 0, palItems = [], palBack = null;
   var PICON = {
-    new: '<path d="M12 5.5v13M5.5 12h13"/>', main: '<path d="M9.5 4.5h5l-.8 5.2 3.3 3.3H7l3.3-3.3zM12 13v6.5"/>',
+    new: '<path d="M12 5.5v13M5.5 12h13"/>', star: '<path d="M12 3.5 13.6 10.4 20.5 12 13.6 13.6 12 20.5 10.4 13.6 3.5 12 10.4 10.4z"/>', main: '<path d="M9.5 4.5h5l-.8 5.2 3.3 3.3H7l3.3-3.3zM12 13v6.5"/>',
     daily: '<circle cx="12" cy="13" r="7.2"/><path d="M12 9.5v3.5l2.3 1.8M9.5 3.5h5"/>', tray: '<rect x="4" y="4" width="16" height="16" rx="5"/><path d="M8 12h8M8 8.5h5M8 15.5h6"/>',
     screen: '<rect x="3.5" y="4.5" width="17" height="11.5" rx="1.8"/><path d="M8.5 19.5h7M12 16v3.5"/>', usage: '<path d="M5 19.5V11M10 19.5V5M15 19.5v-6M20 19.5V8.5"/>',
     files: '<path d="M3.5 7.5a1.5 1.5 0 0 1 1.5-1.5h4.5l2 2H19a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>',
@@ -3644,13 +3715,14 @@
   function palActions() {
     var x = [
       { ic: 'new', t: '新对话', k: '新建 对话', run: function () { newChat(); input.focus(); } },
+      { ic: 'star', t: '新的天启对话', k: '天启 新建 对话 模型 思考强度 harness', run: function () { newChat(false, false, 'harness'); input.focus(); } },
       { ic: 'main', t: '回到主对话', k: '主对话', run: function () { goMain(); } },
       { ic: 'tray', t: '小芯在做的事', k: '任务 进行中 待处理 成果 工作台', run: function () { if (trayDocked()) flash(workEl); else setTray(true); } },
       { ic: 'daily', t: '每日任务', k: '每日 签到 清单', run: function () { loadDaily(); } },
       { ic: 'screen', t: '小芯的屏幕', k: '屏幕 桌面 接管 电脑', run: function () { openScreen(false); } },
       { ic: 'usage', t: '用量', k: '额度 token 用量 统计', run: function () { openUsage(); } },
       { ic: 'files', t: '小芯的文件', k: '文件 工作目录 hex 下载', run: function () { loadFiles(WORK, 'sess'); } },
-      { ic: 'gear', t: '设置', k: '设置 天启 通知 备份 登录', run: function () { setDrawer(true); setTimeout(openSettings, 60); } },
+      { ic: 'gear', t: '设置', k: '设置 通知 备份 登录 附带', run: function () { setDrawer(true); setTimeout(openSettings, 60); } },
       { ic: 'theme', t: document.documentElement.dataset.theme === 'dark' ? '换成浅色' : '换成深色', k: '主题 深色 浅色 夜间', run: function () { flipTheme(); } }
     ];
     x.push(S.wb ? { ic: 'full', t: '收起工作台', k: '小窗 面板', run: function () { unwork(); } } : { ic: 'full', t: '全屏工作台', k: '全屏 工作台', run: function () { work(); } });
