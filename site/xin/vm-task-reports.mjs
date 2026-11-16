@@ -1,9 +1,12 @@
 // The directory identifies a producer; the controller owns both effects and receipts.
 import { scopedBridgeWorkspace } from './vm-task-bridge.mjs';
+import { installTaskBridge } from './vm-runtime.mjs';
 
 export function taskBridgeSession(session, meta) {
-  return meta?.bridgeProtocol !== undefined && meta.bridgeProtocol !== 0
-    ? { ...session, workspace: scopedBridgeWorkspace(session?.workspace, meta) } : session;
+  if (meta?.bridgeProtocol === undefined || meta.bridgeProtocol === 0) return session;
+  const workspace = scopedBridgeWorkspace(session?.workspace, meta);
+  installTaskBridge(workspace);
+  return { ...session, workspace };
 }
 
 export function createTaskBridgeHandler({ loadRun, loadTask, isTask, lastRun, remember, ask }) {

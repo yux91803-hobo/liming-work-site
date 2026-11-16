@@ -38,23 +38,9 @@ export function inventory(root) {
 export function taskRoot(controller) { return path.join(path.dirname(controller), path.basename(controller) + '-tasks'); }
 // 旧版放在系统临时目录的副本照样认：续做、清理、删对话都要找得到
 export function taskRoots(controller) { return [...new Set([taskRoot(controller), os.tmpdir()])]; }
-export function prepareWorkspace(t, controller) {
-  if (t.workspace && fs.existsSync(t.workspace.work) && fs.existsSync(t.workspace.manifest)) {if(t.workspace.stm32===undefined)t.workspace.stm32=detectStm32(t.dir,Object.keys(inventory(t.dir)));return t.workspace;}
-  const base = taskRoot(controller); mkdir(base); fs.chmodSync(base, 0o700);
-  const root = path.join(base, 'xin-task-' + t.sid);
-  const work = path.join(root, 'work'), io = path.join(root, 'io'), home = path.join(root, 'home');
-  mkdir(root); fs.chmodSync(root, 0o700); mkdir(work); mkdir(io); mkdir(home); mkdir(path.join(home, 'bin')); mkdir(path.join(root, 'tmp'));
-  const before = inventory(t.dir);
-  // A fresh turn gets a new baseline. This also detects edits made by the foreground in between turns.
-  fs.rmSync(work, { recursive: true, force: true }); mkdir(work);
-  for (const name of Object.keys(before)) {
-    const dest = path.join(work, name); mkdir(path.dirname(dest)); fs.copyFileSync(path.join(t.dir, name), dest);
-    fs.chmodSync(dest, fs.statSync(path.join(t.dir, name)).mode & 0o777);
-  }
-  mkdir(path.join(controller, 'workspaces'));
-  const manifest = path.join(controller, 'workspaces', t.sid + '.json');
-  fs.writeFileSync(manifest, JSON.stringify({ original: fs.realpathSync(t.dir), before }), { mode: 0o600 });
-  const bridge = `#!/usr/bin/env node
+// The script carries no run identity; the immutable mounted IO directory supplies its scope.
+export function taskBridgeScript() {
+  return `#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const a=process.argv.slice(2),dir=process.env.XIN_TASK_IO;
 if(a[0]==='browser'){
@@ -80,8 +66,60 @@ if(!fs.existsSync(reply)){console.error('管理进程没有回应，停止这一
 console.log(fs.readFileSync(reply,'utf8'));fs.unlinkSync(reply);
 fs.closeSync(directory);
 `;
-  fs.writeFileSync(path.join(home, 'bin', 'xin'), bridge, { mode: 0o755 });
-  fs.writeFileSync(path.join(home, 'shell-env.sh'), 'export PATH=' + JSON.stringify(path.join(home, 'bin')) + ':"$PATH"\n');
+}
+
+// Install through pinned directory descriptors. Never follow a writable home/bin symlink.
+export function installTaskBridge(workspace, { shellEnvironment = false } = {}) {
+  const fail = () => Object.assign(new Error('后台任务命令桥目录无效，未更新'), { code: 'bad_bridge_shim' });
+  if (typeof shellEnvironment !== 'boolean' || typeof workspace?.home !== 'string' || !path.isAbsolute(workspace.home)) throw fail();
+  const C = fs.constants; let home, bin, output, temporary;
+  try {
+    home = fs.openSync(workspace.home, C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW);
+    const root = '/proc/self/fd/' + home;
+    try { fs.mkdirSync(path.join(root, 'bin'), { mode: 0o755 }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    bin = fs.openSync(path.join(root, 'bin'), C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW);
+    const files = [{ fd: bin, name: 'xin', body: taskBridgeScript(), mode: 0o755 }];
+    if (shellEnvironment) files.push({ fd: home, name: 'shell-env.sh',
+      body: 'export PATH=' + JSON.stringify(path.join(workspace.home, 'bin')) + ':"$PATH"\n', mode: 0o644 });
+    for (const file of files) {
+      const directory = '/proc/self/fd/' + file.fd;
+      const candidate = path.join(directory, '.xin-' + crypto.randomBytes(16).toString('hex') + '.tmp');
+      output = fs.openSync(candidate, C.O_WRONLY | C.O_CREAT | C.O_EXCL | C.O_NOFOLLOW, 0o600);
+      temporary = candidate; // Only clean up a file whose exclusive creation succeeded.
+      fs.writeFileSync(output, file.body); fs.fchmodSync(output, file.mode); fs.fsyncSync(output);
+      fs.closeSync(output); output = undefined;
+      fs.renameSync(temporary, path.join(directory, file.name)); temporary = undefined;
+      fs.fsyncSync(file.fd);
+    }
+    fs.fsyncSync(home);
+    const sameDirectory = (file, fd) => { const a = fs.lstatSync(file), b = fs.fstatSync(fd); return a.isDirectory() && !a.isSymbolicLink() && a.dev === b.dev && a.ino === b.ino; };
+    if (!sameDirectory(workspace.home, home) || !sameDirectory(path.join(root, 'bin'), bin)) throw fail();
+  } catch { throw fail(); }
+  finally {
+    if (output !== undefined) fs.closeSync(output);
+    if (temporary) try { fs.unlinkSync(temporary); } catch {}
+    if (bin !== undefined) fs.closeSync(bin);
+    if (home !== undefined) fs.closeSync(home);
+  }
+}
+
+export function prepareWorkspace(t, controller) {
+  if (t.workspace && fs.existsSync(t.workspace.work) && fs.existsSync(t.workspace.manifest)) {if(t.workspace.stm32===undefined)t.workspace.stm32=detectStm32(t.dir,Object.keys(inventory(t.dir)));return t.workspace;}
+  const base = taskRoot(controller); mkdir(base); fs.chmodSync(base, 0o700);
+  const root = path.join(base, 'xin-task-' + t.sid);
+  const work = path.join(root, 'work'), io = path.join(root, 'io'), home = path.join(root, 'home');
+  mkdir(root); fs.chmodSync(root, 0o700); mkdir(work); mkdir(io); mkdir(home); mkdir(path.join(root, 'tmp'));
+  const before = inventory(t.dir);
+  // A fresh turn gets a new baseline. This also detects edits made by the foreground in between turns.
+  fs.rmSync(work, { recursive: true, force: true }); mkdir(work);
+  for (const name of Object.keys(before)) {
+    const dest = path.join(work, name); mkdir(path.dirname(dest)); fs.copyFileSync(path.join(t.dir, name), dest);
+    fs.chmodSync(dest, fs.statSync(path.join(t.dir, name)).mode & 0o777);
+  }
+  mkdir(path.join(controller, 'workspaces'));
+  const manifest = path.join(controller, 'workspaces', t.sid + '.json');
+  fs.writeFileSync(manifest, JSON.stringify({ original: fs.realpathSync(t.dir), before }), { mode: 0o600 });
+  installTaskBridge({ home }, { shellEnvironment: true });
   return { work, io, home, tmp: path.join(root, 'tmp'), manifest,stm32:detectStm32(t.dir,Object.keys(before)) };
 }
 
