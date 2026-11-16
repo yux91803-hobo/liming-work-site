@@ -112,11 +112,12 @@ async def main():
                  side[:5] == [['新建对话', '新建天启对话'], True, ['每日任务', '设置'], True, True] and side[5] >= 44 and side[6] >= 44, side)
         # 这台设备上有没发出去的消息时，上面多一组「未发送的消息」：重画对话列表只改「对话」那一行的标题，不改到它
         await pg.click('.xc-dr-x')
-        await pg.evaluate("localStorage.setItem('lm.xin.unsent.e2e', JSON.stringify({text: '没发出去的那句'}))")
+        await pg.evaluate("localStorage.setItem('lm.xin.unsent.e2e', JSON.stringify({text: '没发出去的那句，后面还有很长很长的一段话，用来看会不会把侧边栏撑出横向滚动条'}))")
         await pg.click('.xc-list-b')
         await pg.wait_for_selector('.xc-si')
-        heads = await pg.evaluate("[[...document.querySelectorAll('.xc-dr-h')].map(e => [e.textContent, e.hidden]), [...document.querySelectorAll('.xc-memb')].some(b => b.textContent === '没发出去的那句')]")
-        ui.check('侧边栏有「未发送的消息」时：这一组的标题不被改成「对话」，下面「对话」照常', heads == [[['未发送的消息', False], ['对话', False]], True], heads)
+        heads = await pg.evaluate("""(() => { const sc = document.querySelector('.xc-dr-sc'), b = [...document.querySelectorAll('.xc-memb')].find(x => x.textContent.startsWith('没发出去的那句'));
+          return [[...document.querySelectorAll('.xc-dr-h')].map(e => [e.textContent, e.hidden]), !!b, sc.scrollWidth <= sc.clientWidth, !!b && b.getBoundingClientRect().right <= sc.getBoundingClientRect().right]; })()""")
+        ui.check('侧边栏有「未发送的消息」时：这一组的标题不被改成「对话」，下面「对话」照常；很长的一条也不把侧边栏撑出横向滚动', heads == [[['未发送的消息', False], ['对话', False]], True, True, True], heads)
         await pg.evaluate("localStorage.removeItem('lm.xin.unsent.e2e')")
         await pg.click('.xc-dr-new')
         await pg.wait_for_selector('.xc-hello')
