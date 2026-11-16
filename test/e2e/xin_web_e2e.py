@@ -121,10 +121,18 @@ async def main():
         await page.reload()
         await page.wait_for_function(ui.CHAT_DONE)
         assert await page.locator('.xc-tres').count() == 1
-        # 结果正文里已经有这个网页的链接：下面不再重复放「打开网页」（站长 2026-11-16），能打开网页的地方还是正好一个
+        # 结果正文里已经有这个网页的链接：下面不再重复放「打开网页」（站长 2026-11-16），能打开网页的地方还是正好一个。
+        # 正文里那个链接也带 .xc-preview：正式站联调（scripts/test-xin-live.py）等 .xc-preview 出来再点它打开网页
         links = await page.evaluate("[...document.querySelectorAll('.xc-tres a[href]')].filter(a => a.getAttribute('href') === %s).length" % json.dumps(URL))
         assert links == 1, links
-        assert await page.locator('.xc-preview').count() == 0
+        pv = await page.evaluate("[...document.querySelectorAll('.xc-preview')].map(a => [a.getAttribute('href'), !!a.closest('.xc-bub'), getComputedStyle(a).display, getComputedStyle(a).backgroundColor])")
+        assert len(pv) == 1 and pv[0][0] == URL and pv[0][1] and pv[0][2] == 'inline' and pv[0][3] in ('rgba(0, 0, 0, 0)', 'transparent'), pv
+        await page.wait_for_selector('.xc-preview', timeout=15000)
+        async with page.expect_popup() as opened:
+            await page.locator('.xc-preview').last.click()
+        popup = await opened.value
+        assert popup.url.endswith(URL), popup.url
+        await popup.close()
         await page.context.close()
         print('PASS pending handoff waits for delivery; reload merges one result with its saved message; one link to the page, no duplicate button', flush=True)
 
