@@ -1,6 +1,7 @@
 // 小芯聊天：Worker 登录 / 转发 InstaBox，以及 vm-agent 把 Claude Code / Codex 的输出整理成事件
 const test = require('node:test');
 const { platformTimeout } = require('./helpers/timeout.cjs');
+const { captureRunContext } = require('./helpers/run-context.cjs');
 process.env.XIN_CODEX_TRANSPORT = 'exec'; // Legacy adapter remains covered; app-server has separate protocol tests.
 const assert = require('node:assert');
 const path = require('node:path');
@@ -1127,10 +1128,11 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   const fc = fakeTaskCodex(tmp);
   const { op, work, xin, home } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH, XIN_FRONT_TEST_LOG:path.join(tmp,'front.jsonl') });
   const r = op('send', { agent: 'codex', text: '你好' });
+  const actor = captureRunContext(xin, r.run);
   await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
   const { execFileSync } = require('node:child_process');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
-  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_WORK: work, XIN_RUN: r.run, PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
+  const env = Object.assign({}, process.env, actor, { XIN_HOME: xin, XIN_WORK: work, PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
   const xinTask = (...a) => { try { return execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString(); } catch (e) { return String(e.stdout || '') + String(e.stderr || ''); } };
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
   assert.match(xinTask('new', '--title', 'A', '--dir', path.join(work, 'blink'), '--', '改 blink'), /任务 1「A」/);
@@ -1192,10 +1194,11 @@ test('后台任务：到时间没做完停下（算没做成）；runner 中途�
   // 进程报到（写下 pid）前不会被当成断了：留够启动时间，CI 机器忙时也不误判
   const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '3000' });
   const r = op('send', { agent: 'codex', text: '你好' });
+  const actor = captureRunContext(xin, r.run);
   await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
   const { execFileSync } = require('node:child_process');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
-  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_WORK: work, XIN_RUN: r.run, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '3000', PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
+  const env = Object.assign({}, process.env, actor, { XIN_HOME: xin, XIN_WORK: work, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '3000', PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
   const xinTask = (...a) => execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString();
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
   xinTask('new', '--title', '慢活', '--', '慢慢做');
@@ -1231,10 +1234,11 @@ test('分身配合：--review 做完再派一个分身换个模型、在同一�
   const fc = fakeTaskCodex(tmp);
   const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH });
   const r = op('send', { agent: 'codex', text: '你好' });
+  const actor = captureRunContext(xin, r.run);
   await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
   const { execFileSync } = require('node:child_process');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
-  const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_WORK: work, XIN_RUN: r.run, PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
+  const env = Object.assign({}, process.env, actor, { XIN_HOME: xin, XIN_WORK: work, PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
   const xinTask = (...a) => execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString();
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
   const out = xinTask('new', '--kind', 'code', '--title', '点灯', '--dir', 'pb5', '--review', '--', '写 PB5 点灯并编译');

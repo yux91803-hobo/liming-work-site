@@ -4,6 +4,7 @@ const { spawn } = require('node:child_process'), { pathToFileURL } = require('no
 const url = name => pathToFileURL(path.join(__dirname,'../site/xin/'+name+'.mjs')).href;
 const load = async () => ({ ...(await import(url('vm-kernel-client'))), ...(await import(url('vm-kernel-state'))), ...(await import(url('vm-kernel-owner'))) });
 const pause = ms => new Promise(resolve => setTimeout(resolve,ms));
+async function until(predicate) { const end=performance.now()+3000; while(!predicate()){assert.ok(performance.now()<end,'等待状态检查超时');await pause(5);} }
 function home(t) { const p=fs.mkdtempSync(path.join(os.tmpdir(),'xin-bridge-'));t.after(()=>fs.rmSync(p,{recursive:true,force:true}));return p; }
 async function local(t, handle, extra={}) {
   const h=home(t), m=await load(), logs=[];
@@ -146,4 +147,67 @@ test('切换前的一致备份：一天最多一次，留最新两份，目录 0
   const second=m.snapshotBeforeSwitch(db,h,{now:T+25*3600e3});assert.ok(second&&second!==first);
   const third=m.snapshotBeforeSwitch(db,h,{now:T+50*3600e3});assert.ok(third);
   assert.deepEqual(fs.readdirSync(dir).sort(),[path.basename(second),path.basename(third)].sort(),'只留最新两份，没有临时文件');
+});
+
+test('恢复检查：启动即扫；墙上时间跳过 30 秒或倒退时，请求立即触发检查，空闲仍是 60 秒',async t=>{
+  let wall=100000,calls=0;
+  const f=await local(t,()=>({calls}),{tickMs:60000,wallClock:()=>wall,tick:()=>{calls++;return 60000;}});
+  await until(()=>calls===1);
+  assert.equal((await f.requestState(f.home,{kind:'control',op:'health'})).nextTickMs,60000);
+  wall+=30000;assert.equal((await f.requestState(f.home,{kind:'op',op:'read'})).calls,1);
+  wall++;assert.equal((await f.requestState(f.home,{kind:'op',op:'read'})).calls,2);
+  wall-=3600000;assert.equal((await f.requestState(f.home,{kind:'op',op:'read'})).calls,3);
+  assert.equal((await f.requestState(f.home,{kind:'op',op:'read'})).calls,3);
+  await pause(30);assert.equal(calls,3);
+});
+
+test('恢复检查不重叠：通知异步等待期间仍可处理请求，长时间跳跃也只保持一次检查',async t=>{
+  let wall=100000,calls=0,scans=0,finish;
+  const f=await local(t,()=>({calls,scans}),{tickMs:60000,wallClock:()=>wall,reconcile:()=>{scans++;},tick:()=>{calls++;return new Promise(resolve=>{finish=()=>resolve(60000);});}});
+  await until(()=>calls===1);
+  wall+=3600000;
+  const values=await Promise.all(Array.from({length:8},()=>f.requestState(f.home,{kind:'op',op:'read'})));
+  assert.ok(values.every(r=>r.calls===1&&r.scans===2));assert.equal(calls,1);finish();
+  await pause(10);
+  assert.deepEqual(await f.requestState(f.home,{kind:'op',op:'read'}),{calls:1,scans:2});
+  await pause(10);
+  assert.equal((await f.requestState(f.home,{kind:'control',op:'health'})).active,0);
+});
+
+test('SIGSTOP/CONT：空闲 owner 恢复后的首个请求先扫状态，不等待剩余 60 秒',async t=>{
+  const h=home(t),m=await load(),clock=path.join(h,'wall'),count=path.join(h,'sweeps');fs.writeFileSync(clock,'100000');
+  const source=`import fs from 'node:fs';import {createStateServer} from ${JSON.stringify(url('vm-kernel-state'))};
+    let sweeps=0;const server=await createStateServer({home:${JSON.stringify(h)},tickMs:60000,
+      wallClock:()=>Number(fs.readFileSync(${JSON.stringify(clock)},'utf8')),
+      tick:()=>{fs.writeFileSync(${JSON.stringify(count)},String(++sweeps));return 60000;},handle:()=>({sweeps})});
+    console.log('ready');process.stdin.resume();process.stdin.on('end',()=>server.close({legacy:true}));server.closed.then(()=>process.stdin.destroy());`;
+  const child=spawn(process.execPath,['--input-type=module','-e',source],{stdio:['pipe','pipe','pipe']});
+  let error='';child.stderr.on('data',b=>error+=b);const exited=new Promise(resolve=>child.once('exit',resolve));
+  t.after(async()=>{child.kill('SIGCONT');child.kill('SIGKILL');await exited;});
+  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error(error||'owner 未就绪')),5000);child.stdout.once('data',()=>{clearTimeout(timer);resolve();});});
+  await until(()=>fs.existsSync(count)&&fs.readFileSync(count,'utf8')==='1');
+  child.kill('SIGSTOP');fs.writeFileSync(clock,'3700000');child.kill('SIGCONT');
+  const result=await m.requestState(h,{kind:'op',op:'read'},{timeoutMs:2000});assert.equal(result.sweeps,2);
+  assert.equal((await m.requestState(h,{kind:'control',op:'health'})).nextTickMs,60000);
+});
+
+test('空闲转有活：新工作把 60 秒等待提前，持续轮询不把到期检查往后推',async t=>{
+  let busy=false,calls=0;
+  const f=await local(t,q=>{if(q.op==='new')busy=true;return {calls};},{tickMs:40,hasWork:()=>busy,tick:()=>{calls++;return busy?40:60000;}});
+  await until(()=>calls===1);await f.requestState(f.home,{kind:'op',op:'new'});
+  assert.equal((await f.requestState(f.home,{kind:'control',op:'health'})).nextTickMs,40);
+  const end=performance.now()+300;
+  while(performance.now()<end)await f.requestState(f.home,{kind:'op',op:'poll'});
+  assert.ok(calls>=2,'轮询期间也要按时核对，不能每次请求重置等待');
+  busy=false;await until(()=>calls>=3);
+  await until(()=>!busy);await pause(50);
+  assert.equal((await f.requestState(f.home,{kind:'control',op:'health'})).nextTickMs,60000);
+});
+
+test('新工作在通知结束的边界提交：异步循环结束时重查有无工作，不沿用过期的空闲间隔',async t=>{
+  let busy=false,finish;
+  const f=await local(t,q=>{if(q.op==='new')busy=true;return {};},{tickMs:40,hasWork:()=>busy,tick:()=>new Promise(resolve=>{finish=()=>resolve(60000);})});
+  await until(()=>!!finish);await f.requestState(f.home,{kind:'op',op:'new'});finish();
+  await pause(5);assert.equal((await f.requestState(f.home,{kind:'control',op:'health'})).nextTickMs,40);
+  busy=false;finish();
 });
