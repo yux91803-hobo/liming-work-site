@@ -389,13 +389,22 @@
     x.addEventListener('click', function () { W.close(true); });
     scrim.addEventListener('click', function () { W.close(true); });
 
+    // 收起要等动画走完才藏起来（站长 2026-11-16「不够丝滑」：原来一下就没了）；这期间算已经关了
+    var closing = 0;
+    function hideNow() {
+      clearTimeout(closing); closing = 0;
+      el.hidden = true; scrim.hidden = true;
+      el.classList.remove('tm-in', 'tm-out'); scrim.classList.remove('tm-in', 'tm-out');
+    }
+    function enter(e) { e.classList.remove('tm-in', 'tm-out'); void e.offsetWidth; e.classList.add('tm-in'); }
     W.open = function (o) {
       W.opts = o || {}; W.anchor = W.opts.anchor || null; W.tabs = W.opts.tabs || [];
-      var key = W.opts.active || (W.tabs[0] && W.tabs[0].key), was = !el.hidden;
+      var key = W.opts.active || (W.tabs[0] && W.tabs[0].key), was = !el.hidden && !closing;
+      if (closing) hideNow();   // 正在收起又点开：收完，重新弹出来
       el.hidden = false; place();
       if (!was) {
         boot = performance.now() + 360;
-        el.classList.remove('tm-in'); void el.offsetWidth; el.classList.add('tm-in');
+        enter(el); if (!scrim.hidden) enter(scrim);
         document.addEventListener('keydown', onKey, true); document.addEventListener('pointerdown', onDown, true);
         addEventListener('resize', place);
       }
@@ -412,7 +421,7 @@
     W.tab = function (key) { return W.tabs.filter(function (t) { return t.key === key; })[0] || null; };
     // 开着的时候多了一件活（前台刚派出去）：加一页
     W.add = function (tab) { if (W.tab(tab.key)) return; W.tabs.push(tab); tabsPaint(); };
-    W.isOpen = function () { return !el.hidden; };
+    W.isOpen = function () { return !el.hidden && !closing; };
     W.active = function () { return W.cur; };
     // 活着的那一页来了新事件：存起来；正看着就交给打字机
     W.push = function (key, ev) {
@@ -429,12 +438,18 @@
       if (view && view.tab === tab && !el.hidden) ending();
     };
     W.close = function (focusBack) {
-      if (el.hidden) return;
+      if (el.hidden || closing) return;
       drain(); Q = []; view = null; clearTimeout(bootTm); bootTm = 0;
-      el.hidden = true; scrim.hidden = true; el.classList.remove('tm-in');
       document.removeEventListener('keydown', onKey, true); document.removeEventListener('pointerdown', onDown, true);
       removeEventListener('resize', place);
       clearInterval(tick); tick = 0;
+      // 手机那一张滑下去、遮罩淡出（0.28 秒），电脑上的缩一点淡出（0.14 秒）；减少动态时直接藏
+      if (reduce()) hideNow();
+      else {
+        el.classList.remove('tm-in'); el.classList.add('tm-out');
+        if (!scrim.hidden) { scrim.classList.remove('tm-in'); scrim.classList.add('tm-out'); }
+        closing = setTimeout(hideNow, el.classList.contains('tm-sheet') ? 300 : 160);
+      }
       if (W.opts.onClose) W.opts.onClose();
       if (focusBack && W.anchor && W.anchor.isConnected) W.anchor.focus({ preventScroll: true });
     };

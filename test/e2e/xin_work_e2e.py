@@ -23,6 +23,15 @@ import stm32_e2e as ui  # noqa: E402
 from playwright.async_api import async_playwright  # noqa: E402
 
 NOW = int(time.time() * 1000)
+
+
+def png_wh(w, h, rgb=(18, 24, 48)):
+    """纯色 PNG（只用标准库）：截图卡片的横图、竖图"""
+    import struct, zlib
+    raw = b''.join(b'\x00' + bytes(rgb) * w for _ in range(h))
+    def chunk(t, d):
+        return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
 PID = 'b' * 32
 PNG = bytes.fromhex('89504e470d0a1a0a0000000d4948445200000001000000010806000000'
                     '1f15c4890000000d49444154789c63f8cf50f01f0005fe02fea7d6a4bf0000000049454e44ae426082')
@@ -369,6 +378,32 @@ async def main():
             await pg.wait_for_timeout(350)
             ok = await pg.evaluate("document.documentElement.scrollWidth <= innerWidth && [...document.querySelectorAll('.wk-c')].every(c => c.getBoundingClientRect().right <= innerWidth + 1)")
             ui.check('%d 宽深色：小芯岛面板里的任务都在屏幕里' % width, ok)
+            await pg.context.close()
+
+        # 6. 站长 2026-11-16：「网页」卡片只看到一片深色和半截标题栏——旧截图是手机宽度的竖图（390×800），
+        #    卡片是 16:10 横框、只取最上面一截。竖图整张缩进框里（两边垫同一张图的模糊底）；横图照旧铺满
+        for shape, size in (('竖图', (39, 80)), ('横图', (128, 80))):
+            pg = await ui.page(browser, 390, 844, mobile=True)
+            st = await backend(pg, main='smain000001')
+            # 处理函数只收 route（收两个参数时 Playwright 会把 request 塞进第二个）
+            def shot_for(img):
+                async def shot(route):
+                    await route.fulfill(status=200, content_type='image/png', body=img)
+                return shot
+            await pg.route('**/api/xin/preview/*/preview.png', shot_for(png_wh(*size)))
+            await pg.add_init_script("localStorage.setItem('lm.xin.sid','shist00001')")
+            await pg.goto(ui.BASE + '/#xin-work')
+            await pg.wait_for_selector('.xc.wb.show .xc-isle')
+            await pg.wait_for_function(ui.CHAT_DONE + " && LimingXinChat.state.histFor === 'shist00001'")
+            await pg.click('.xc-isle')
+            await pg.wait_for_function("(() => { const i = document.querySelector('.wk-c[data-tsid=staskweb001] .wk-img'); return i && i.complete && i.naturalWidth > 0; })()", timeout=10000)
+            await pg.wait_for_timeout(100)
+            fig = await pg.evaluate("""(() => { const f = document.querySelector('.wk-c[data-tsid=staskweb001] .wk-fig'), i = f.querySelector('.wk-img'), b = f.getBoundingClientRect(), r = i.getBoundingClientRect();
+              return [f.classList.contains('tall'), getComputedStyle(i).objectFit, getComputedStyle(f, '::before').content !== 'none', Math.round(b.width / b.height * 10) / 10]; })()""")
+            if shape == '竖图':
+                ui.check('网页卡片：旧的竖图整张缩进 16:10 的框里（contain），两边垫模糊底', fig[:3] == [True, 'contain', True] and fig[3] == 1.6, fig)
+            else:
+                ui.check('网页卡片：横图（新的电脑宽度截图）照旧铺满，不垫底', fig[:3] == [False, 'cover', False] and fig[3] == 1.6, fig)
             await pg.context.close()
         await browser.close()
 

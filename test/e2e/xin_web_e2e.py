@@ -121,9 +121,12 @@ async def main():
         await page.reload()
         await page.wait_for_function(ui.CHAT_DONE)
         assert await page.locator('.xc-tres').count() == 1
-        assert await page.locator('.xc-preview').count() == 1
+        # 结果正文里已经有这个网页的链接：下面不再重复放「打开网页」（站长 2026-11-16），能打开网页的地方还是正好一个
+        links = await page.evaluate("[...document.querySelectorAll('.xc-tres a[href]')].filter(a => a.getAttribute('href') === %s).length" % json.dumps(URL))
+        assert links == 1, links
+        assert await page.locator('.xc-preview').count() == 0
         await page.context.close()
-        print('PASS pending handoff waits for delivery; reload merges one result with its saved message', flush=True)
+        print('PASS pending handoff waits for delivery; reload merges one result with its saved message; one link to the page, no duplicate button', flush=True)
 
         shots = os.environ.get('XIN_WEB_SCREENSHOTS')
         if shots: Path(shots).mkdir(parents=True, exist_ok=True)

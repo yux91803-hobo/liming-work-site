@@ -843,6 +843,10 @@ try{
   if(errors.length)throw Error(errors.join('；'));
   viewports.push({width,checks:config.checks.length});
  }
+ // 截图给工作台的「网页」卡片（16:10 横框）：换回电脑宽度、重新打开（不带点击检查改过的样子），等入场动画走完再截。
+ // 站长 2026-11-16：原来最后在 390×800 的手机宽度上截，竖图塞进横框只剩最上面一截空背景
+ await rpc('Emulation.setDeviceMetricsOverride',{width:1280,height:800,deviceScaleFactor:1,mobile:false});await rpc('Page.navigate',{url:origin+'/'});
+ for(let i=0;i<100;i++){if(await evaluate('document.readyState === "complete" && !!document.body'))break;await pause(30);}await pause(600);
  const shot=await rpc('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(tmp,'xin-web-preview.png'),Buffer.from(shot.data,'base64'));
  result={ok:true,viewports};code=0;
 }catch(e){result={ok:false,error:String(e.message).slice(0,1000)};}finally{for(const p of pending.values())clearTimeout(p.timer);ws?.close();chrome?.kill('SIGKILL');server?.closeAllConnections();server?.close();}

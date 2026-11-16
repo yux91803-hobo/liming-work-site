@@ -162,7 +162,7 @@
         '</div>' +
       '</header>' +
       '<div class="xc-st" role="status" aria-live="polite" hidden></div>' +
-      '<div class="xc-body"><div class="xc-msgs" aria-live="polite"></div>' +
+      '<div class="xc-body"><div class="xc-up-w"><button type="button" class="xc-upchip" hidden></button></div><div class="xc-msgs" aria-live="polite"></div>' +
         '<div class="xc-jump-w"><button type="button" class="xc-jump" hidden>' + hi('down') + '<span>回到底部</span></button></div></div>' +
       '<div class="xc-sess" hidden></div>' +
       '<div class="xc-scrim" aria-hidden="true"></div>' +
@@ -296,6 +296,7 @@
     });
     root.querySelector('.xc-body').addEventListener('scroll', jumpCheck, { passive: true });
     jumpEl.addEventListener('click', function () { toBottom(true, true); });
+    upEl = root.querySelector('.xc-upchip'); upEl.addEventListener('click', upGo);
     S.pin = ls('lm.xin.trayPin') === '1';
   }
   function grow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 168) + 'px'; }
@@ -469,7 +470,7 @@
   }
 
   /* ---------- 对话 ---------- */
-  function clearList() { termReset(); list.innerHTML = ''; typingEl = null; bgRowEl = null; S.lastAt = 0; S.errRuns = {}; setUsage(null); }
+  function clearList() { termReset(); list.innerHTML = ''; typingEl = null; S.lastAt = 0; S.errRuns = {}; setUsage(null); hideUp(); }
   /* 聊天框底下那一行：这个对话的上下文用了多少（最近一次请求 / 模型上限）、累计消耗的 token、缓存命中率（输入里有多少是缓存命中的）。
      打开对话时从 history 拿，每轮做完从 done 事件里拿；新对话还没有，不显示。点一下展开明细 */
   function setUsage(u) { S.usage = u && typeof u === 'object' && u.total ? u : null; renderUsage(); }
@@ -1613,20 +1614,24 @@
     var key = resKey(t);
     if (list.querySelector('[data-tres="' + key + '"]')) return null;
     var text = t.status === 'waiting' ? '我需要你确认一下：' + (t.question || '待处理') : (t.result && t.result.text) || (t.status === 'done' ? '我做好了：' + t.title + '。' : '这次还没有完成。');
-    var m = aiMsg('task-' + t.sid, t.status === 'failed' || t.status === 'stopped' ? 'tbad' : ''), body = md(text);
+    var after = resultAfter(t.sid), cls = t.status === 'failed' || t.status === 'stopped' ? 'tbad' : '';
+    var m = after ? contMsg(after.dataset.run, cls) : aiMsg('task-' + t.sid, cls), body = md(text);
     m.e.classList.add('xc-tres'); m.e.dataset.tres = key; m.e.dataset.tsid = t.sid;
     m.b.appendChild(body);
     if (t.status === 'failed' && t.result && t.result.err && text.indexOf(t.result.err) < 0) m.b.appendChild(h('p', 'xc-tres-err', t.result.err));
     msgActs(m.e, text); taskActs(m.e, t);
     if (body.querySelector('.xc-code, .xc-tbl')) m.e.classList.add('wide');
-    put(m.e); termAvTask(m.e);
+    if (after) putAfter(m.e, after); else put(m.e);
+    paintBoxes();
     return m.e;
   }
   // 任务结果下面那行小操作：要你处理时一个主按钮（审批 / 回复 / 登录），网页成品「打开网页」，「详情」打开这件活的详情页（站长 2026-11-16 定的叫法，原来叫「看过程」）
   function taskActs(e, t) {
     var a = e.querySelector('.xc-acts'); if (!a) { a = h('div', 'xc-acts'); e.appendChild(a); }
     if (t.status === 'waiting') { var w = h('button', 'xc-tact on', waitAction(t)); w.type = 'button'; w.addEventListener('click', function () { openTask(t.sid); }); a.insertBefore(w, a.firstChild); }
-    var pv = previewLink(t); if (pv) { pv.className = 'xc-tact pv xc-preview'; a.appendChild(pv); }
+    // 正文里已经链到同一个网页（控制器写的「我画好了。打开网页」）就不再放一颗：站长 2026-11-16「打开网页和打开预览其实重复了」
+    var pv = previewLink(t), same = pv && [].some.call(e.querySelectorAll('.xc-bub a[href]'), function (x) { return x.getAttribute('href') === t.preview.url; });
+    if (pv && !same) { pv.className = 'xc-tact pv xc-preview'; a.appendChild(pv); }
     var v = h('button', 'xc-tact', '详情'); v.type = 'button'; v.addEventListener('click', function () { openTask(t.sid); }); a.appendChild(v);
   }
   /* ---------- 小芯的电脑（终端窗口，画法在 term.js）----------
@@ -1636,12 +1641,12 @@
      头像右下角有个像素小终端标记的才点得开（有东西可看），正在干活时它在闪。
      后台的活只在窗口开着、正看那一页时才去取：按任务摘要里的轮次编号（run）轮询 poll，不带设备和标签页（不算在看这个对话、
      不影响完成通知）；取到的存着，再打开从存着的地方接着取。已经做完的活，点开才去取它的完整记录（history）。 */
-  var TW = null, bgRowEl = null, bgTk = 0;
+  var TW = null, boxTk = 0;
   function termReset() {
     Object.keys(S.tf || {}).forEach(function (k) { clearTimeout(S.tf[k].tm); });
     S.runEv = {}; S.runMeta = {}; S.tf = {};
     if (TW && TW.isOpen()) TW.close(false);
-    clearInterval(bgTk); bgTk = 0;
+    clearInterval(boxTk); boxTk = 0;
   }
   function termLine(ev) { return !!(window.LimingXinTerm && LimingXinTerm.line(ev)); }
   // 记下这一轮在电脑上做的事（历史和正在跑的都走 draw）；你说的那句是终端里「> 要求」那一行
@@ -1653,34 +1658,121 @@
     if (!/^(tool|tool_end|text|err|task|think)$/.test(ev.t)) return;
     var a = S.runEv[run] = S.runEv[run] || [];
     if (a.length < 600) a.push(ev);
-    if (ev.t === 'task' || (ev.t === 'tool' || ev.t === 'tool_end') && termLine(ev)) markAv(run);
   }
   function runTools(run) { return (S.runEv[run] || []).some(function (e) { return (e.t === 'tool' || e.t === 'tool_end') && termLine(e); }); }
   function runTasks(run) { return (S.runEv[run] || []).filter(function (e) { return e.t === 'task'; }).map(function (e) { return e.sid; }); }
-  function runLive(run) { return !!run && (run === S.run || runTasks(run).some(function (sid) { return S.tinfo[sid] && tLive(S.tinfo[sid]); })); }
-  function termAv(el, ctx, live) {
-    if (!el) return;
-    el.dataset.term = ctx; el.classList.add('xc-av-t'); el.classList.toggle('live', !!live);
-    el.setAttribute('role', 'button'); el.tabIndex = 0;
-    el.setAttribute('aria-label', live ? '查看正在执行的步骤' : '查看执行过程'); el.title = live ? '查看正在执行的步骤' : '查看执行过程';
+  /* ---------- 框：聊天里能点开终端的地方 ----------
+     站长 2026-11-16：「终端小标没去掉……不需要这个小标，你不是做了个框框把思考中框住了么，我点那个就可以打开终端就行」，
+     「我让他干的这个活不要让他分成两个独立的话来答，可以弄成他要去画那段话下面搞一个框框加载，显示思考过程的话，左边不要显示头像，然后点开这个加载框可以看到终端」。
+     - 「思考中」那一条（前台这一轮）整条是按钮；
+     - 派出去的活：那段话下面一个框（不画头像），在做时两行（任务名 / 此刻那一步 + 秒数），做完收成一行（✓ 任务名 · 用时）；结果接在这一轮后面，不另起一条；
+     - 前台跑过命令的一轮：回答下面一行「用时 9 秒 · 运行 2 条命令」（和终端结尾同一句）。
+     整块是按钮，里面的字不接指针（CSS）：字一直在换，点击不能落在会被换掉的元素上（照 open-webui 的 StatusHistory：一层按钮盖住、内容 pointer-events-none） */
+  function termBtn(el, ctx, label) { el.dataset.term = ctx; el.setAttribute('role', 'button'); el.tabIndex = 0; el.setAttribute('aria-label', label); }
+  function runSel(run) { return '.xc-ai[data-run="' + String(run || '').replace(/["\\]/g, '') + '"]'; }
+  // 这一轮小芯说的最后一条（不算「思考中」、转达的结果、出错那一条）
+  function runLast(run) {
+    var all = list.querySelectorAll(runSel(run) + ':not(.xc-typing):not(.xc-tres):not(.bad)');
+    return all.length ? all[all.length - 1] : null;
   }
-  // 这一轮第一条回答的头像（同一轮接着说的那几条不画头像）
-  function markAv(run) {
-    if (!list || !run || !(runTools(run) || runTasks(run).length)) return;
-    var m = list.querySelector('.xc-ai[data-run="' + run.replace(/["\\]/g, '') + '"]:not(.cont):not(.xc-typing) > .xc-av');
-    if (m) termAv(m, 'run:' + run, runLive(run));
+  // 框放进这一轮最后说的那一条里（正文和下面那行操作之间）；还没说话就先占一条（xc-tbh），后面说的话填进它的正文，话还在框上面
+  function boxHost(run) {
+    var host = runLast(run);
+    if (!host) { var m = aiMsg(run); m.e.classList.add('xc-tbh'); put(m.e); host = m.e; }
+    return host;
   }
-  function termAvTask(e) {
-    var sid = e && e.dataset.tsid, av = e && e.querySelector(':scope > .xc-av');
-    if (sid && av && window.LimingXinTerm) termAv(av, 'task:' + sid, !!(S.tinfo[sid] && tLive(S.tinfo[sid])));
+  function inHost(host, el) { host.insertBefore(el, host.querySelector(':scope > .xc-acts')); }
+  var TB_ICON = { done: '<path d="m5.5 12.5 4 4 9-9.5"/>', failed: '<path d="m7 7 10 10M17 7 7 17"/>', stopped: '<path d="M8 8h8v8H8z"/>',
+    waiting: '<path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .9-1 1.6v.5M12 17.4v.1"/>', proc: '<path d="M4.5 6h15v12h-15zM8 10l2.5 2L8 14M12.5 14.5h3.5"/>' };
+  var TB_LEAD = { done: '已完成', failed: '失败', stopped: '已停止', waiting: '等待确认' };
+  function tbIcon(k) { return '<svg class="xc-tb-i" viewBox="0 0 24 24" aria-hidden="true">' + TB_ICON[k] + '</svg>'; }
+  function durText(ms) { return window.LimingXinTerm ? LimingXinTerm.dur(ms) : Math.round(ms / 1000) + ' 秒'; }
+  function taskBox(sid, run, fresh) {
+    if (list.querySelector('.xc-tb[data-tsid="' + String(sid).replace(/["\\]/g, '') + '"]')) return;
+    var b = h('div', 'xc-tb'); b.dataset.tsid = sid;
+    inHost(boxHost(run), b); paintBox(b);
+    if (fresh) b.classList.add('enter');
   }
-  function markLive() {
+  function paintBox(b) {
+    var sid = b.dataset.tsid, t = S.tinfo[sid] || { status: 'queued' }, title = t.title || '后台的活';
+    if (tLive(t)) {
+      if (!b.classList.contains('live')) {
+        b.className = 'xc-tb live'; b.removeAttribute('data-st');
+        b.innerHTML = '<div class="xc-tb-tx"><b class="xc-tb-t"></b><span class="xc-tb-ln"><span class="xc-sw-w xc-tb-sw"><span class="xc-tb-s"></span></span><i class="xc-tb-sec"></i></span></div>' +
+          '<div class="xc-bub"><i></i><i></i><i></i></div>';
+      }
+      var verb = taskVerb(sid), sec = t.status === 'queued' || !t.startedAt ? 0 : Math.round((Date.now() - t.startedAt) / 1000);
+      var te = b.querySelector('.xc-tb-t'); if (te.textContent !== title) te.textContent = title;
+      swapText(b.querySelector('.xc-tb-s'), verb, sid + verb);
+      b.querySelector('.xc-tb-sec').textContent = sec >= 1 ? secText(sec) : '';
+      termBtn(b, 'task:' + sid, title + '，进行中，查看正在执行的步骤');
+      return;
+    }
+    // 做完、没做成、停了、等你确认：收成一行（和终端结尾那行同一套词）
+    var st = endState(t), ms = t.startedAt && t.endedAt ? t.endedAt - t.startedAt : null;
+    var meta = st === 'done' ? (ms != null ? '用时 ' + durText(ms) : TB_LEAD.done) : TB_LEAD[st] + (st === 'failed' && ms != null ? ' · 用时 ' + durText(ms) : '');
+    if (b.dataset.st !== st + '|' + meta + '|' + title) {
+      var fold = b.classList.contains('live');
+      b.className = 'xc-tb st-' + st + (fold ? ' fold' : ''); b.dataset.st = st + '|' + meta + '|' + title;
+      b.innerHTML = tbIcon(st) + '<b class="xc-tb-t"></b><span class="xc-tb-m"></span>' + svgIcon('chev');
+      b.querySelector('.xc-tb-t').textContent = title; b.querySelector('.xc-tb-m').textContent = meta;
+    }
+    termBtn(b, 'task:' + sid, title + '，' + TB_LEAD[st] + '，查看执行过程');
+  }
+  // 任务情况变了、每秒：在做的框跟着走（那一步、秒数），做完的收成一行；没有在做的就停下计时
+  function paintBoxes() {
     if (!list) return;
-    [].forEach.call(list.querySelectorAll('.xc-av-t[data-term^="run:"], .xc-av-t[data-term^="task:"]'), function (a) {
-      var k = a.dataset.term, t = S.tinfo[k.slice(5)];
-      a.classList.toggle('live', k.indexOf('run:') === 0 ? runLive(k.slice(4)) : !!(t && tLive(t)));
-    });
+    var any = false;
+    [].forEach.call(list.querySelectorAll('.xc-tb[data-tsid]'), function (b) { paintBox(b); if (b.classList.contains('live')) any = true; });
+    if (any && !boxTk) boxTk = setInterval(paintBoxes, 1000);
+    else if (!any && boxTk) { clearInterval(boxTk); boxTk = 0; }
   }
+  // 前台跑过命令的一轮：回答下面一行，和终端结尾同一句（「用时 9 秒 · 运行 2 条命令」），点开看那一轮
+  function procLine(run, ms) {
+    if (!window.LimingXinTerm || !list || !run || !runTools(run)) return;
+    var host = boxHost(run); if (host.querySelector(':scope > .xc-proc')) return;
+    var text = LimingXinTerm.summary(LimingXinTerm.count(S.runEv[run] || []), null, ms != null ? ms : (S.runMeta[run] || {}).ms);
+    var p = h('div', 'xc-tb xc-proc'); p.innerHTML = tbIcon('proc') + '<span class="xc-tb-t"></span>' + svgIcon('chev');
+    p.querySelector('.xc-tb-t').textContent = text;
+    termBtn(p, 'run:' + run, text + '，查看执行过程');
+    inHost(host, p);
+  }
+  // 后台做完的结果：接在派活那一轮的最后（框在上面），不另起一条、不画头像、不写「小芯」。
+  // 找不到框（派活那一轮还在「更早的消息」里没翻出来）就照旧单独一条
+  function resultAfter(sid) {
+    var b = list.querySelector('.xc-tb[data-tsid="' + String(sid).replace(/["\\]/g, '') + '"]'), host = b && b.closest('.xc-ai');
+    if (!host) return null;
+    var all = list.querySelectorAll(runSel(host.dataset.run) + ':not(.xc-typing)');
+    return all[all.length - 1];
+  }
+  function contMsg(run, cls) {
+    var e = h('div', 'xc-m xc-ai cont' + (cls ? ' ' + cls : '')), b = h('div', 'xc-bub');
+    e.dataset.run = run || ''; e.appendChild(avatar()); e.appendChild(b);
+    return { e: e, b: b };
+  }
+  function putAfter(e, ref) { ref.parentNode.insertBefore(e, ref.nextSibling); }
+  // 结果接回来以后让人看到：就在最下面——照旧跟到底；在眼前——轻轻闪一下；接回了上面那一轮、眼下看不到——聊天顶上冒一个小提示，点了滚过去
+  var upEl = null;
+  function nextMsg(e) { for (var n = e.nextElementSibling; n; n = n.nextElementSibling) if (n !== typingEl && n.classList.contains('xc-m')) return n; return null; }
+  function inView(e) { var b = root.querySelector('.xc-body').getBoundingClientRect(), r = e.getBoundingClientRect(); return r.bottom > b.top + 24 && r.top < b.bottom - 24; }
+  function seeResult(e, t) {
+    if (!nextMsg(e)) { toBottom(); return; }
+    if (inView(e)) { glint(e); return; }
+    if (!upEl) return;
+    var above = e.getBoundingClientRect().top < root.querySelector('.xc-body').getBoundingClientRect().top, st = t && t.status;
+    upEl.innerHTML = hi(above ? 'send' : 'down') + '<span></span>';
+    upEl.lastChild.textContent = (t && t.title ? t.title + ' ' : '') + (st === 'failed' ? '没做成' : st === 'stopped' ? '已停止' : st === 'waiting' ? '需要你确认' : '做好了');
+    upEl._to = e; upEl.hidden = false;
+  }
+  function hideUp() { if (upEl) { upEl.hidden = true; upEl._to = null; } }
+  function upGo() {
+    var e = upEl && upEl._to; hideUp();
+    if (!e || !e.isConnected) return;
+    var b = root.querySelector('.xc-body'), to = e.getBoundingClientRect().top - b.getBoundingClientRect().top + b.scrollTop - Math.max(16, (b.clientHeight - e.offsetHeight) / 3);
+    if (reduceMotion()) b.scrollTop = to; else b.scrollTo({ top: to, behavior: 'smooth' });
+    glint(e);
+  }
+  function glint(e) { e.classList.remove('xc-glint'); void e.offsetWidth; e.classList.add('xc-glint'); clearTimeout(e._gl); e._gl = setTimeout(function () { e.classList.remove('xc-glint'); }, 1400); }
   function endState(t) { return t.status === 'done' ? 'done' : t.status === 'failed' ? 'failed' : t.status === 'waiting' ? 'waiting' : 'stopped'; }
   // 后台的活在干什么：正跟着它就用它最近的命令；没跟着就从任务摘要的 activity 认（内部命令当没有），再不行就是「在想」那几句
   function taskVerb(sid) {
@@ -1793,7 +1885,7 @@
   }
   // 任务情况变了：开着的那一页跟着（结束了补取最后一页、写结果），头像标记、后台那一行跟着
   function termSync() {
-    markLive(); renderBgRow();
+    paintBoxes();
     if (!TW || !TW.isOpen()) return;
     TW.tabs.forEach(function (tab) {
       if (tab.key.indexOf('task:') !== 0 || !tab.live) return;
@@ -1810,29 +1902,6 @@
     if (/^(tool|tool_end|text|err|think)$/.test(ev.t)) TW.push('run:' + run, ev);
     else if (ev.t === 'done') TW.end('run:' + run, null, ev.ms);
   }
-  // 后台有活在做、前台没在回话：聊天最下面一行，点头像看它在做什么。站长 2026-11-16：「派了后台任务也要动态地在动，这样就知道他在干活」
-  // ——上面写任务名，下面写此刻真实那一步（任务摘要的 activity：在搜索：…、在读网页：…、在执行：…），一变就上下换一下，秒数一直走
-  function renderBgRow() {
-    if (!list) return;
-    var live = S.sid ? Object.keys(S.tinfo).map(function (k) { return S.tinfo[k]; }).filter(function (t) { return t.parent === S.sid && tLive(t); }) : [];
-    if (!live.length || typingEl || S.run || S.sending) { if (bgRowEl) { bgRowEl.remove(); bgRowEl = null; } clearInterval(bgTk); bgTk = 0; return; }
-    if (!bgRowEl) {
-      // 不是「正在输入」（那是前台这一轮）：自己的类名，测试判断「这一轮回完了」看的是 .xc-typing
-      bgRowEl = h('div', 'xc-m xc-bgrow'); bgRowEl.setAttribute('aria-label', '后台任务进行中');
-      var f = h('span', 'xc-av xc-face'); termAv(f, 'live', true); bgRowEl.appendChild(f);
-      var tx = h('div', 'xc-bg-tx'), ln = h('span', 'xc-bg-ln'), sw = h('span', 'xc-sw-w xc-bg-sw');
-      tx.appendChild(h('b', 'xc-bg-t')); sw.appendChild(h('span', 'xc-bg-s')); ln.appendChild(sw); ln.appendChild(h('i', 'xc-bg-sec')); tx.appendChild(ln);
-      bgRowEl.appendChild(tx);
-      var b = h('div', 'xc-bub'); b.innerHTML = '<i></i><i></i><i></i>'; bgRowEl.appendChild(b);
-      list.appendChild(bgRowEl); paintFaces();
-    } else if (bgRowEl !== list.lastElementChild) list.appendChild(bgRowEl);
-    var t = live[0], verb = taskVerb(t.sid), sec = t.status === 'queued' || !t.startedAt ? 0 : Math.round((Date.now() - t.startedAt) / 1000);
-    bgRowEl.querySelector('.xc-bg-t').textContent = live.length > 1 ? t.title + ' 等 ' + live.length + ' 件' : t.title;
-    swapText(bgRowEl.querySelector('.xc-bg-s'), verb, t.sid + verb);
-    bgRowEl.querySelector('.xc-bg-sec').textContent = sec >= 1 ? secText(sec) : '';
-    if (!bgTk) bgTk = setInterval(renderBgRow, 1000);
-  }
-
   // 合进轮询到的任务情况：live 时，从「在做」变成结束的，聊天最后说结果；不在看那个对话就让页面上的小芯冒气泡
   function setTasks(arr, live) {
     var changed = [];
@@ -1846,7 +1915,7 @@
     paintCards(); renderWork(); renderHome();
     changed.forEach(function (t) {
       var here = S.open && S.view === 'chat' && S.sid === t.parent;
-      if (here && list) { drawTaskResult(t); toBottom(); }
+      if (here && list) { var re = drawTaskResult(t); if (re) seeResult(re, t); }
       if (t.status !== 'stopped') announce(t, here);
     });
   }
@@ -2340,9 +2409,18 @@
     if (!im) {
       im = thumbs[id] = h('img', 'wk-img'); im.alt = ''; im.loading = 'lazy'; im.decoding = 'async';
       im.addEventListener('error', function () { im.classList.add('bad'); });
+      im.addEventListener('load', function () { tallFig(im); });
       im.src = '/api/xin/preview/' + id + '/preview.png';
     }
     return im;
+  }
+  // 竖的截图（2026-11-16 以前在手机宽度上截的）：卡片是 16:10 横框，cover 只剩最上面一截空背景（站长：「这个网页有显示bug」）。
+  // 整张缩进框里，两边垫同一张图的模糊底；新的截图是电脑宽度的横图，照旧铺满
+  function tallFig(im) {
+    var f = im.parentNode; if (!f || !f.classList || !f.classList.contains('wk-fig')) return;
+    var tall = im.naturalHeight > im.naturalWidth;
+    f.classList.toggle('tall', tall);
+    if (tall) f.style.setProperty('--wk-shot', 'url("' + im.getAttribute('src') + '")'); else f.style.removeProperty('--wk-shot');
   }
   // 一行一个任务（分组列表，不是一张张卡片）：左边类别或状态，中间标题和一句话，右边时间；进行中的下面是操作和一条细进度光。
   // 网页成品例外：截图是这一页唯一的大图。
@@ -2354,7 +2432,7 @@
     var open_ = function () { openTask(t.sid); };
     c.addEventListener('click', function (e) { if (!e.target.closest('button, a')) open_(); });
     c.addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && e.target === c) { e.preventDefault(); open_(); } });
-    if (im) { var fig = h('div', 'wk-fig'); fig.appendChild(im); c.appendChild(fig); }
+    if (im) { var fig = h('div', 'wk-fig'); fig.appendChild(im); c.appendChild(fig); if (im.complete && im.naturalWidth) tallFig(im); }
     if (!im) c.appendChild(wkIcon(kind === 'wait' ? 'wait' : cat));
     var head = h('div', 'wk-hd');
     head.appendChild(h('b', 'wk-t', t.title));
@@ -3415,6 +3493,7 @@
   }
   // 往上翻了一屏多：右下角「回到底部」；这时下面来了新内容就写「新消息」
   function jumpCheck() {
+    if (upEl && upEl._to && (!upEl._to.isConnected || inView(upEl._to))) hideUp();   // 自己滚到了结果那里：顶上的提示收起
     if (!jumpEl) return;
     var b = root.querySelector('.xc-body'), away = b.scrollHeight - b.scrollTop - b.clientHeight > Math.max(240, b.clientHeight * .6);
     if (!away) jumpEl.classList.remove('new');
@@ -3428,7 +3507,7 @@
   }
   // 新的一条加在「正在输入」前面（它永远在最后）
   // 最下面那一行：「正在输入」，或者后台有活在做时的那一行。新画的东西插在它上面
-  function liveAnchor() { return typingEl && typingEl.parentNode === list ? typingEl : bgRowEl && bgRowEl.parentNode === list ? bgRowEl : null; }
+  function liveAnchor() { return typingEl && typingEl.parentNode === list ? typingEl : null; }
   function put(e) { var a = liveAnchor(); if (a) list.insertBefore(e, a); else list.appendChild(e); return e; }
   // 上一条（不算「正在输入」）是不是同一轮里小芯说的：是的话这条不再画头像，和上一条挨着
   function lastAi(run) {
@@ -3479,35 +3558,46 @@
       if (ev.text) e.appendChild(h('div', 'xc-bub', ev.text));
       if (ev.ctx) e.appendChild(h('div', 'xc-ctxm', '附带：' + ev.ctx));
     } else if (ev.t === 'text') {
+      var after = null, hole = null;
       if(ev.taskResult){
         var tr=ev.taskResult,key=tr.sid+'@'+(tr.status==='waiting'?'w'+(tr.endedAt||''):tr.at||'');
         if(list.querySelector('[data-tres="'+key+'"]'))return null;
+        after = resultAfter(tr.sid);
+      } else if ((hole = runLast(run)) && !hole.classList.contains('xc-tbh')) hole = null;
+      var body = md(ev.text);
+      // 先派活、后说话：框先占的那一条，话填进它的正文（话还在框上面）
+      if (hole) {
+        hole.classList.remove('xc-tbh'); hole.querySelector(':scope > .xc-bub').appendChild(body); msgActs(hole, ev.text);
+        if (body.querySelector('.xc-code, .xc-tbl')) hole.classList.add('wide');
+        return hole;
       }
-      m = aiMsg(run); var body = md(ev.text); m.b.appendChild(body); msgActs(m.e, ev.text);
-      // 后台做完、小芯转达的那一句：和普通回答一样，下面多「详情」（不再换成卡片）
+      m = after ? contMsg(after.dataset.run) : aiMsg(run); m.b.appendChild(body); msgActs(m.e, ev.text);
+      // 后台做完、小芯转达的那一句：和普通回答一样，下面多「详情」（不再换成卡片）；派活那一轮还在，就接在那一轮后面（框下面）
       if(ev.taskResult){m.e.dataset.tres=key;m.e.dataset.tsid=tr.sid;m.e.classList.add('xc-tres');taskActs(m.e,S.tinfo[tr.sid]||{sid:tr.sid,status:tr.status});}
       if (body.querySelector('.xc-code, .xc-tbl')) m.e.classList.add('wide');
+      if (after) { putAfter(m.e, after); paintBoxes(); if (!old) { m.e.classList.add('enter'); seeResult(m.e, S.tinfo[tr.sid] || { status: tr.status }); } return m.e; }
       e = m.e;
     } else if (ev.t === 'err') {
       S.errRuns[run] = true;
       m = aiMsg(run, 'bad'); m.b.textContent = ev.text; e = m.e;
     } else if (ev.t === 'done') {
+      procLine(run, ev.ms);
       if (ev.stopped) e = sysChip('已停止');
       else if (!ev.ok && !S.errRuns[run]) { m = aiMsg(run, 'bad'); m.b.textContent = '回复失败，请重新发送'; e = m.e; }
       if (ev.model) S.lastModel = ev.model;
       // 这一轮实际用的模型写在回答下面（默认模式是小芯挑的；用户点名、换了模型也说一声）
       if (ev.model && !ev.stopped && S.sessAgent !== 'codex') { if (e) put(e); e = byLine(ev, run); }
     } else if (ev.t === 'task') {
-      // 前台派出去的后台任务：聊天里不放卡片（站长 2026-11-11），在工作台里看；刚派出去的记下来，好知道它什么时候做完
+      // 前台派出去的后台任务：那段话下面一个框（站长 2026-11-16）。不是卡片（2026-11-11 定的「聊天里不放卡片」还算数：没有按钮，点开是终端，操作在工作台和「详情」）。
+      // 刚派出去的记下来，好知道它什么时候做完
       if (!S.tinfo[ev.sid]) S.tinfo[ev.sid] = { sid: ev.sid, no: ev.no, parent: S.sid || '', title: ev.title, kind: ev.kind, model: ev.model, status: ev.status || 'queued', after: ev.after || [], created: ev.at || Date.now() };
-      if (!old) { pollTasksSoon(1500); renderBgRow(); }
-      markAv(run);
+      taskBox(ev.sid, run, !old);
+      if (!old) { pollTasksSoon(1500); paintBoxes(); }
     } else if (ev.t === 'move') e = sysChip('学会了新动作：' + ev.name, 'move');   // 记忆、好感度是小芯自己的事，不在聊天里报
     if (e) {
       var bd = root.querySelector('.xc-body'), near = !old && bd.scrollHeight - bd.scrollTop - bd.clientHeight < 160;
       if (!old) e.classList.add('enter');
       put(e);
-      if (e.dataset.tsid) termAvTask(e); else if (e.classList.contains('xc-ai')) markAv(run);
       if (!old) { if (near && ev.t !== 'user') followNew(e); else jumpNew(); }
     }
     return e;
@@ -3524,16 +3614,16 @@
   var typingEl = null, typingTick = 0;
   function typing(on) {
     paintGlow();
-    if (!on) { clearInterval(typingTick); typingTick = 0; if (typingEl) typingEl.remove(); typingEl = null; renderBgRow(); markLive(); return; }
+    if (!on) { clearInterval(typingTick); typingTick = 0; if (typingEl) typingEl.remove(); typingEl = null; paintBoxes(); return; }
     if (!typingTick) typingTick = setInterval(progress, 1000);
     if (!typingEl) {
       // 小芯的脸跟着状态换（想事情抬眼、在电脑上忙侧身），旁边一行字和秒数，后面三个像素点一格一格亮
-      typingEl = h('div', 'xc-m xc-ai xc-typing'); typingEl.setAttribute('aria-label', '小芯正在回复');
-      var tf = tqConv() ? tqMark('xc-av') : h('span', 'xc-av xc-face'); termAv(tf, 'live', true); typingEl.appendChild(tf);
+      // 整条是按钮，点开看这一轮正在做的（站长 2026-11-16：「我点那个就可以打开终端就行」）；头像不再带小终端标记
+      typingEl = h('div', 'xc-m xc-ai xc-typing'); termBtn(typingEl, 'live', '查看正在执行的步骤'); typingEl.title = '查看正在执行的步骤';
+      var tf = tqConv() ? tqMark('xc-av') : h('span', 'xc-av xc-face'); typingEl.appendChild(tf);
       var b = h('div', 'xc-bub'); b.innerHTML = '<i></i><i></i><i></i>';
       var lw = h('span', 'xc-sw-w xc-typing-w'); lw.appendChild(h('span', 'xc-typing-l', '思考中')); typingEl.appendChild(lw); typingEl.appendChild(b);
     }
-    if (bgRowEl) { bgRowEl.remove(); bgRowEl = null; }
     list.appendChild(typingEl);
     var prev = typingEl.previousElementSibling;
     typingEl.classList.toggle('cont', !!prev && prev.classList.contains('xc-ai'));
