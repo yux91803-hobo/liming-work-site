@@ -33,6 +33,17 @@
 - **测试**：新单元测试 `test/xin-live-status.test.cjs`（7 项：概括的清洗；请求的样子（DeepSeek Flash、思考关掉、带上一轮）和出错、超时、空问题不用；思考取标题、去客套；Codex 的网页搜索开始就报、读网页记成打开网页、推理给 `think`；天启的思考攒成一句再给、不变成聊天里的话；`stepActivity` 的各种写法；概括的 token 算进当天用量但不算一轮）；`xin-front-agy.test.cjs` 加一条整轮的（概括和 ACP 推来的思考都记成 `think`，概括的用量记成 `status`，回复照旧由 Hydrogen 给；假网关把概括请求单独认出来，原来数网关请求次数的断言不变）；`xin-antigravity.test.cjs` 加一条（搜索开始就报、同一步只报一次，读网页记成打开网页）。浏览器测试 `xin_term_e2e.py` 加了夜景、行号和高亮、思考行、后台那一行自己在动、切换时标题每一帧都是一行、「正在输入」写概括，还有平板上概括写全、手机上太长的按宽度截且秒数还在（先在没改的代码上失败）；`xin_main_e2e.py` 加两条：侧边栏的样子（键帽、搜索、一行一个、底下两颗、触屏 44px，先在没改的样式上失败）和「未发送的消息」的标题（先在没修的代码上失败）。跟着文案改了检查的字，行为不变、没有删测试：`stm32_e2e.py`（「正在输入」写「在执行：ls」、标题栏「执行中…」；命令只在「正在输入」那一行出现，不在消息里）、`xin_main_e2e.py`（空白页大标题「小芯」）、`xin_kernel_e2e.py`（「发送失败：」）、`xin_work_e2e.py`（「登录后可以聊天」）。`vm-agent.mjs` 行数基线只减不增：这一轮少了 9 行。
 - **参考**：Grok（站长点名：状态行跟着它真正在做的事换）；openai/codex `codex-rs/tui/src/chatwidget.rs`（推理摘要取第一个粗体当标题的 `extract_first_bold`，工具调用写「动作 + 对象」）；open-webui `backend/open_webui/utils/middleware.py`（联网前先用小的任务模型从用户这句话生成搜索词，发 `status` 事件，界面写「正在搜索 “…”」）；Claude Code 的欢迎页（站长的截图：像素夜空、点线地平线、带行号的改动）；Monokai 配色；[termynal](https://github.com/ines/termynal)（打字机，沿用上一轮）；impeccable 的 `reference/clarify.md`（文案）和 `reference/craft-floor.md`（不用字符当图标、减少动态、对比度）；frontend-design（按用户能懂的说法命名，同一个动作在整个流程里叫同一个名字；侧边栏不再用通用聊天应用的样子，从「芯片与纸」的材质出发）；ui-ux-pro-max `references/quick-reference.md`（加载反馈要说明在做什么、减少动态、触屏 44px）。
 
+# 修改清单 · 2026-11-16（第 3 批 A：默认启用新轮次编号）
+
+- **先验证回滚基线再启用**：[兼容版 #153](https://github.com/yux91803-hobo/liming-work-site/pull/153) 以 `655d325` 合并，CI/测试站 [43808292216](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43808292216)、正式发布 [43809734994](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43809734994) 全部成功，正式登录/真实模型/后台任务/文件下载联调成功，没有触发回滚。发布后只读确认：持久服务 enabled/active、单一状态进程、运行代码摘要与本地一致、分配默认关闭，没有回填旧 run 的协议。
+- **本版改动**：`ATTEMPTS_DEFAULT` 从 false 改为 true。只给之后新建的轮次选择协议并由调度者分配尝试编号；旧轮次不升级。关闭新分配或回到兼容版，已有编号仍被核对、活执行器继续原尝试。测试名称改为明确验证关闭分配后的兼容保证，原断言不变。没有改变工作台界面、模型选择、天启或工具授权。
+- **并行开发接入**：发布前 main 已合并 Claude 的 #154（`5c65fe7`，正式运行 43812529995 成功）。以正常合并保留双方原提交及两份变更记录；本版沿用其工作台、任务摘要和 Codex 事件输出，未另行改动界面。接入后重新跑完整验证，原 933/12 组只作为接入前证据。
+- **回滚**：最低已验证目标为 #153 / `655d325`，其代码已经懂全部在途尝试字段；不恢复旧数据库快照、不删除新字段。要手动退到 #152 或更早，先排空有编号的轮次并核对结果；不能把“旧代码忽略字段”当作正确回滚。
+- **验证**：接入 #154 后，Node 22.23.4、无编号环境覆盖，本地 `npm run check` **935/935**、`npm run test:kernel` **174/174**、`npm run test:e2e` **13 组全过**（学习台 372/372、新终端 40/40），整条流水线退出码 0。接入前 933 项/12 组证据保留在原提交；兼容版还测过显式关闭/开启配置各 174/174。CI/正式结果以本版 PR 当前 head 和 Actions 为准。
+- **责任和后续**：实际实现 Codex，复核为 Codex 自查，尚无 Claude Code 独立复核。第 3 批 B 收尾暂存/幂等重放尚未实现；同 UID 编号不是权限/凭据隔离。宿主授权 C、凭据代理 PoC、剩余读改写和重活迁出继续按已确认设计，不删除 legacy，不减少现有能力。
+
+- **尚未覆盖的旧入口**：沙盒文件桥复用工作区队列，只接受 remember/ask，请求未带 run/attempt。临时目录加惰性 handler 的局部探针确认旧请求可被下一次 drain 接收，未调用真实控制器、未证明宿主越权；此问题早于默认开关，本次不扩大入口。列为 3B 的队列归属/幂等回执必做项，本次编号保证不宣称覆盖这条旧桥或完整工具授权。参考仍是 Temporal 完成入口先核对 token 的做法。
+
 # 修改清单 · 2026-11-16（小芯工作台第二轮之二：天启的入口、模型和思考强度、「小芯的电脑」终端）
 
 第二轮剩下的两件（设计 [2026-11-16-xin-workbench-round2-design.md](superpowers/specs/2026-11-16-xin-workbench-round2-design.md) 第 3、5 节，计划 [2026-11-16-xin-workbench-round2-b.md](superpowers/plans/2026-11-16-xin-workbench-round2-b.md)）。实现和自查：Claude Code（同一会话，没有另一位审核）。

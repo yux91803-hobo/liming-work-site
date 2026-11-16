@@ -73,7 +73,7 @@ for (const mode of ['legacy', 'kernel']) {
   });
 }
 
-test('兼容版：默认不分配新编号，但已有编号始终隔离；无编号旧 runner 可继续报告', async t => {
+test('关闭新编号分配时仍隔离已有编号；无编号旧 runner 可继续报告', async t => {
   const attempts = await import(url('vm-run-attempt'));
   assert.equal(attempts.attemptsEnabled({ XIN_RUN_ATTEMPTS: '0' }), false);
   assert.equal(attempts.attemptsEnabled({ XIN_RUN_ATTEMPTS: '1' }), true);
