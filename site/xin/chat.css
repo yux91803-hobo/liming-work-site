@@ -113,7 +113,9 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-isle:disabled{opacity:.6;cursor:default}
 .xc-isle.under{opacity:0}
 .xc-face{display:inline-flex;flex:none;width:34px;height:25px}
-.xc-face svg{display:block;width:100%;height:100%}
+/* 脸的 SVG 不接指针：表情一变 paintFace 就整块换掉它；按下落在旧 SVG、松开时它已被换掉，浏览器不发 click，
+   点头像（看小芯的电脑）、点小芯岛那一下就丢了。让点击都落在外面那层（不会被换掉） */
+.xc-face svg{display:block;width:100%;height:100%;pointer-events:none}
 /* 小芯岛、面板标题里的小芯：住在一个圆窗里，窗里一点暖光，黑色机身才看得出轮廓 */
 .xc-isle .xc-face,.xc-wk-hd .xc-face{--rad:999px;display:grid;place-items:center;width:32px;height:32px;padding:0 3px;
   background:radial-gradient(circle at 50% 38%,#4a463f,#2e2b27 62%,#24221f);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.05)}

@@ -218,7 +218,15 @@ async def part2(browser):
     await pg.wait_for_timeout(1500)
     polls0 = len(st['tpolls'])
     ui.check('终端没开时不去取那件活的过程（只看任务摘要）', polls0 == 0, polls0)
-    await pg.click('.xc-bgrow .xc-av')
+    # 按下去和松开之间小芯的脸正好重画（回完 3.6 秒笑脸收回去时 paintFace 整块换掉 SVG）：这一下点击不能丢。
+    # CI 上碰到过：按下落在旧脸的 polygon 上、松开时它已被换掉，浏览器就不发 click，终端没打开
+    box = await pg.locator('.xc-bgrow .xc-av').bounding_box()
+    await pg.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    await pg.mouse.down()
+    await pg.evaluate("(() => { const a = document.querySelector('.xc-bgrow .xc-av'); a.innerHTML = a.innerHTML; })()")
+    await pg.mouse.up()
+    opened = await pg.evaluate("!document.querySelector('.tm-win').hidden")
+    ui.check('点头像的那一下里脸正好重画：点击照样打开终端', opened, opened)
     await pg.wait_for_function("[...document.querySelectorAll('.tm-win:not([hidden]) .tm-l')].some(r => r.textContent.includes('ls'))", timeout=10000)
     st['tp_rel']['rtask00b01'] = 2
     await pg.wait_for_function("[...document.querySelectorAll('.tm-win .tm-l')].some(r => r.textContent.includes('make -j4'))", timeout=10000)
