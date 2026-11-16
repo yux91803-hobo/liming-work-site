@@ -274,4 +274,5 @@
   - 文案按设计文档第 4 节的术语表写；小芯头顶气泡里的话是它的性格，不按这个改。
   - 还没做：回答下面那一行（复制、详情）触屏上只有 28px 高（前两批记下的）；后台任务的思考没翻成中文（Antigravity 不流式给思考，要多一次模型调用），聊天里只写步骤。
   - 不要和浏览器测试同时跑 `npm run check`（内核那几条偶尔会超时）。
+  - #156 北京 19:47 合并后，正式联调在部署换状态进程的几秒里收到包在结果里的 `owner_unavailable`，判失败、20:00 自动回滚到 #155（`580cdaae`）。原因和修复见 CHANGES 最新一条：`src/xin.js` 的 `call` 把控制器回来的「没执行」（`{error:'owner_unavailable', executed:false}`）也回成「稍等」。修复另开 PR 合并后，第三轮随正式部署一起再上线一次。查电脑上换状态进程的经过：`~/.xin/logs/kernel.jsonl` 里 `"route":"state"` 的 stop / exit / start / ready 和 `agent_missing`（只读）。
   - 小芯的脸（`.xc-face` 里的 SVG）会被 `paintFace` 整块换掉（表情变了就换），所以脸的 SVG 一律 `pointer-events: none`，点击落在外面那层：按下和松开之间 SVG 被换掉，浏览器就不发 click（#156 的 CI 抓到过，`xin_term_e2e.py` 有一条专门核对）。以后在会被整块重画的东西里放可点的内容，也要这样处理。
