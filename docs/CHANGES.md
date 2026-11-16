@@ -7,6 +7,7 @@
 - **修复**（`src/xin.js` 的 `call`）：控制器回来的结果是 `{error:'owner_unavailable', executed:false}` 时，和内核自己回的一样当「稍等」（`state:'busy'`，3 秒后再来）；网页的调用和正式站联调本来就会对「稍等」等一会儿再试。只有确定没执行的才这样，别的出错照旧交出去。
 - **测试**：`test/xin.test.cjs` 加一条，先在没改的 Worker 上失败：内核通道、exec 通道各一次，控制器把「没执行」当结果回来时回「稍等」；换好以后照常；没写 `executed:false` 的出错照旧交给网页。
 - **数据**：新控制器在正式环境那几分钟没写任何用量记录（`model-stats.jsonl` 09:40 以后没动过），和回滚后的 #155 控制器不冲突；电脑上的状态进程在下一个请求时换回网站对应的版本。
+- **顺手修了一条不稳的测试**（这个 PR 的 CI 上失败了一次，交接记录里也早记过它不稳）：`test/xin-kernel.test.cjs` 的「流：对方断开就停，不再调 poll」。假控制器读完标准输入才给 poll 计数，慢机器上要几百毫秒；断开前一刻起的那次 poll 还没来得及计数，测试断开后固定等 150 毫秒就数，于是数成了 2 !== 1——内核本身没在断开后再 poll。本地让第二次 poll 的计数晚 300 毫秒，原写法每次都失败（期望 1、实际 2），复现了 CI 上的样子。改成等内核记下「这条流因为对方断开而结束」（退出循环前会等手上的 poll 做完）再数，断言不变；带着那 300 毫秒也通过。
 - **参考**：这个仓库自己定的规矩——确定没执行的 `owner_unavailable` 当「稍等」（`src/xin-kernel.js` 第 100 行、`src/xin.js` 的 `explain`）；gRPC 的状态码约定 [grpc/grpc doc/statuscodes.md](https://github.com/grpc/grpc/blob/master/doc/statuscodes.md)：`UNAVAILABLE` 是暂时的，退避重试即可。
 
 # 修改清单 · 2026-11-16（小芯工作台第三轮：状态行写真实在做的事、后台的活一直在动、终端照 Claude Code 的欢迎页、侧边栏重做、文案）

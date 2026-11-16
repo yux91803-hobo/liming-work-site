@@ -293,7 +293,11 @@ test('流：对方断开就停，不再调 poll', async () => {
   try {
     const s = await openStream(f, { run: 'rstream05', off: '0' });
     await sleep(200); s.ac.abort(); await s.done;
-    await sleep(150);
+    // 断开前一刻起的那次 poll 可能还在跑：假控制器读完标准输入才计数，慢机器上要几百毫秒（#157 的 CI 上就数成了 2 !== 1）。
+    // 等内核记下这条流因为对方断开而结束（退出循环前会等手上的 poll 做完）再数，之后不该再有 poll
+    const closedLine = () => { try { return fs.readFileSync(path.join(f.home, 'logs', 'kernel.jsonl'), 'utf8').split('\n').some(l => l.includes('"op":"stream"') && l.includes('"reason":"closed"')); } catch { return false; } };
+    for (const end = performance.now() + platformTimeout(3000); performance.now() < end && !closedLine();) await sleep(20);
+    assert.ok(closedLine(), '流因为对方断开而结束');
     const n = pollCount(f);
     appendEv(f, 'rstream05', { t: 'text', text: 'x' });
     await sleep(500);
