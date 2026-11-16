@@ -23,6 +23,12 @@
 - 用量页「状态：常驻进程在管……」那一行文字和位置不动；测试只改结构、行为保留、不删。
 - 1280 / 1024 / 768 / 390 × 浅色、深色截图自查，390 不横向滚动。
 
+> **2026-11-16 改了方向**（站长看过第一版）：终端不常驻在聊天里，改成点小芯的头像弹出「小芯的电脑」窗口；像素风、像 Claude Code
+> （欢迎框里放小芯的像素小人）；所有字一个一个敲出来。Task 2–4 照设计文档第 5 节的「最终做法」实现：`term.js` 变成一个窗口
+> （`LimingXinTerm.win(root)`：`open({anchor, tabs, active, onTab, onClose})`、`push`、`fill`、`end`、`add`、`close`），
+> `chat.js` 管头像标记（`data-term`）、每一轮的事件（`S.runEv`）、后台的活读到哪（`S.tf`）、最下面那一行（`renderBgRow`）。
+> 浏览器测试 `xin_term_e2e.py` 按新做法写：窗口本身、聊天里的几种头像、前台这一轮。
+
 ## Review Focus
 
 1. 内部命令漏进终端：前台派活的 `xin task new --kind code …「要求原文」` 不能出现在终端里（Task 3 的测试）。
