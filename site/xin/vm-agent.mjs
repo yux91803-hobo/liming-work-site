@@ -74,6 +74,8 @@ import {openFrontProvider,preferredFrontModel,frontModelInfo,AGY_FRONT_MODEL} fr
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
 import { createDispatcher } from './vm-dispatch.mjs';
 import { attemptError, assertAttempt, attemptsEnabled } from './vm-run-attempt.mjs';
+import { bridgeEnabled } from './vm-task-bridge.mjs';
+import { taskBridgeSession, createTaskBridgeHandler, drainTaskReports } from './vm-task-reports.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 import { transientFailure, finalFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
@@ -670,7 +672,7 @@ function runner(run) {
   assertAttempt(meta,callContext());
   if(meta.stopped){endStoppedRun(run,meta);return;}
   meta.pid = process.pid; meta.identity = processIdentity(process.pid); patchRun(run,{pid:meta.pid,identity:meta.identity});
-  const sess = readJ(sessF(meta.sid));
+  const sess = taskBridgeSession(readJ(sessF(meta.sid)), meta);
   mk(WORK); installXin();
   const cwd = meta.cwd || WORK; mk(cwd);
   if (meta.task) setScreenTag('[任务 ' + meta.no + '] ');   // 「小芯在干什么」终端里分得清是哪个分身
@@ -772,7 +774,7 @@ function runner(run) {
     // 每次都重新读会话：重来时 AI 的会话号可能已经有了，要接着那个会话
     let patch = null;
     if (meta.agent === 'harness') { try { patch = writePersona(meta.effort, meta.model); } catch { /* 写不了就用 Harness 自己的设定 */ } }
-    const currentSession = readJ(sessF(meta.sid), sess);
+    const currentSession = taskBridgeSession(readJ(sessF(meta.sid), sess), meta);
     if(currentSession.tkind==='review'&&reviewAuthors(currentSession).includes(meta.model)){finish(127,'独立复核模型与实际作者相同，已拒绝启动。');return;}
     let invocation;
     try { invocation = meta.task&&runtime.isAgyModel(meta.model)?[process.execPath,[SELF,'agy-run',run]]:agentArgs(meta.agent, currentSession, meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model, role, sandbox: !!meta.sandbox }); }
@@ -896,11 +898,7 @@ function runner(run) {
   if (meta.deadline) deadTm = setTimeout(() => { state.timeout = true; restarting = false; emit(run, { t: 'status', text: '到时间了，先停下' }); killTree(child); }, Math.max(1000, meta.deadline - Date.now()));
   bridgeTm = setInterval(async () => {
     try {
-      runtime.drainBridge(sess.workspace, a => {
-        if (a.op === 'remember') { const r = addMemory({ content: a.text, source: 'worker', evidence: { sid: meta.sid, run } }); return r.error ? r.msg : '已记成待确认的项目记录：' + r.item.content; }
-        if (a.op === 'ask') { const r = lockedCall('tasks', 'task_ask', { sid: meta.sid, question: a.text }); return r.error ? r.msg : '已记下问题，请结束本轮，等待用户回复。'; }
-        return '不支持这个操作';
-      });
+      drainTaskReports(sess.workspace, meta, {drain:runtime.drainBridge,submit:a=>lockedCall('tasks','task_bridge',a),remember:addMemory,ask:a=>lockedCall('tasks','task_ask',a)});
       if (!app || steering || finished) return;
       const m = readJ(metaF(run), meta), queue = (m.steers || []).filter(x => x.state === 'pending');
       if (!queue.length || !m.turnId) return;
@@ -1394,7 +1392,7 @@ export function sessionUsage(s) {
 function launch(s, m, userEv) {
   memoryActivity(); // All foreground/background work preempts an in-flight idle review.
   const run = rid('r');
-  writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, attemptsEnabled()?{attemptProtocol:1}:{}, m));
+  writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, attemptsEnabled()?{attemptProtocol:1,...(m.sandbox&&bridgeEnabled()?{bridgeProtocol:1}:{})}:{}, m));
   if(userEv)emit(run, userEv);
   if(isTask(s))delete s.browserStep;   // 新的一轮：上一轮请站长登录的那一步已经过去了
   s.runs.push(run); s.updated = Date.now(); if(isTask(s))saveTask(s);else writeJ(sessF(s.sid),s);
@@ -2775,7 +2773,7 @@ const iops = {
     for (const q of pending) q.state = 'consumed'; writeJ(metaF(a.run), m);
     return ops.send({ sid: a.sid, text: pending.map(x => x.text).join('\n') });
   },
-  front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick, task_expire: () => { expireWaits(); return { ok: true }; },
+  task_bridge:createTaskBridgeHandler({loadRun:r=>readJ(metaF(r)),loadTask:s=>readJ(sessF(s)),isTask,lastRun,remember:addMemory,ask:taskAsk}),front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick, task_expire: () => { expireWaits(); return { ok: true }; },
   // 浏览器代理请站长登录（vm-browser.mjs 的 loginStep）：照 xin task ask 记一个问题，这一轮结束后任务停成「等你登录」
   task_browser_step(a) {
     const t = findTask(a), st = a.step || {};
@@ -3132,7 +3130,8 @@ async function main() {
   let op=process.argv[2];const locked=op==='locked';if(locked)op=process.argv[3];
   if (op === 'run') { runner(process.argv[3]); return; }
   if(op==='agy-run'){
-    const run=process.argv[3],m=readJ(metaF(run)),t=m&&readJ(sessF(m.sid));
+    const run=process.argv[3],m=readJ(metaF(run));assertAttempt(m,callContext());
+    const t=m&&taskBridgeSession(readJ(sessF(m.sid)),m);
     if(!m?.task||!t?.workspace||!runtime.isAgyModel(m.model)){process.exitCode=1;return;}
     const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
     runtime.antigravityWork(t,{effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why})})
