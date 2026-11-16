@@ -58,7 +58,7 @@ import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './v
 import { loginStore, normalizeSite } from './vm-logins.mjs';
 import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
-import { fromClaude, fromCodex, fromHarness } from './vm-events.mjs';
+import { fromClaude, fromCodex, fromHarness, stepActivity } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
 import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
 import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
 export * from './vm-base.mjs';
@@ -389,7 +389,7 @@ function statAdd(rec) {
   try {
     mk(BASE);
     const f = STATS_F();
-    if (rec.run && readText(f).split('\n').some(line => { try { return JSON.parse(line).run === rec.run; } catch { return false; } })) return;
+    if (rec.run && readText(f).split('\n').some(line => { try { const o = JSON.parse(line); return (o.key || o.run) === (rec.key || rec.run); } catch { return false; } })) return;
     fs.appendFileSync(f, JSON.stringify(rec) + '\n');
     if (fs.statSync(f).size > 2 * 1024 * 1024) { const lines = readText(f).trim().split('\n'), tmp=f+'.'+process.pid+'.tmp'; fs.writeFileSync(tmp, lines.slice(-8000).join('\n') + '\n');fs.renameSync(tmp,f); }   // 用量页要看 30 天
   } catch { /* 记不下来不影响干活 */ }
@@ -398,7 +398,7 @@ export function modelStats(days = 14) {
   const since = Date.now() - days * 86400e3, out = {};
   for (const line of readText(STATS_F()).split('\n')) {
     let r; try { r = JSON.parse(line); } catch { continue; }
-    if (!r || r.at < since || !r.model) continue;
+    if (!r || r.at < since || !r.model || r.kind === 'status') continue;
     const k = r.agent + ':' + r.model, s = out[k] || (out[k] = { agent: r.agent, model: r.model, n: 0, ok: 0, ms: 0, fails: 0, fellBack: 0 });
     s.n++; if (r.ok) { s.ok++; s.ms += r.ms || 0; } else if (!r.stopped) s.fails++;
     if (r.from) s.fellBack++;
@@ -956,7 +956,7 @@ function runner(run) {
     let provider;const protocol={};
     const infer=async()=>{
       provider=await openFrontProvider({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,signal:controller.signal,
-        protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},
+        protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},thought:t=>{if(!finished)emit(run,{t:'think',text:t,src:'model'});},
         quotaState:readJ(path.join(BASE,'front-antigravity-quota.json')),
         quota:quota=>lockedCall('tasks','front_quota',{quota}),
         model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;meta.providerModel=chosen.providerModel;if(['quota','format','front_model','unavailable'].includes(chosen.reason))meta.from=AGY_FRONT_MODEL;}
@@ -977,7 +977,8 @@ function runner(run) {
         patchRun(run,{frontUsage:state.frontUsage});
       }}
     });};
-    waitWarm({signal:controller.signal,notify:()=>emit(run,{t:'status',text:'电脑刚醒，网络在热身，稍等一下'})}).then(()=>infer()).then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
+    if(!meta.handoff)frontStatus({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,text:meta.frontRequest,history:input,signal:controller.signal}).then(s=>{if(s&&!finished){emit(run,{t:'think',text:s.text,src:'status'});lockedCall('tasks','run_stat',{at:Date.now(),run,key:run+'.status',kind:'status',model:s.model,usage:s.usage});}}).catch(()=>{});
+    waitWarm({signal:controller.signal,notify:()=>emit(run,{t:'status',text:'电脑刚唤醒，正在连接网络'})}).then(()=>infer()).then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
       .catch(e=>{if(!finished){frontLog({run,outcome:usedFallback?'fallback':'error',error:String(e.message||e).slice(0,300),calls,...(Object.keys(protocol).length?{protocol}:{})});state.failed=true;finish(1,e.message);}})
       .finally(()=>provider?.close());
   } else start();
@@ -1529,18 +1530,8 @@ function tailEvents(run, n = 32768) {
   for (const line of readTail(runF(run), n).split('\n')) { if (!line) continue; try { out.push(JSON.parse(line)); } catch { /* 读到的第一行可能是半截 */ } }
   return out;
 }
-// 任务现在在干什么（卡片上一行小字）
-function taskActivity(run) {
-  const evs = tailEvents(run, 16384);
-  for (let i = evs.length - 1; i >= 0; i--) {
-    const e = evs[i];
-    if (e.t === 'tool') return '在执行：' + bareCmd(e.detail || e.name || '').replace(/\s+/g, ' ').slice(0, 90);
-    if (e.t === 'tool_end') return e.ok ? '执行完：' + bareCmd(e.detail || e.name || '').replace(/\s+/g, ' ').slice(0, 80) : '有一步没成功，在想办法';
-    if (e.t === 'text') return plainText(e.text, 90);
-    if (e.t === 'status' && e.text && !/^Model metadata/i.test(e.text)) return String(e.text).slice(0, 90);
-  }
-  return '';
-}
+// 任务现在在干什么（卡片、小芯岛、聊天里后台那一行）：最近一个有意义的步骤，写法见 vm-events.mjs 的 stepActivity
+function taskActivity(run) { return stepActivity(tailEvents(run, 16384)); }
 export function taskSummary(t, full) {
   const r = lastRun(t);
   const out = { sid: t.sid, no: t.no, parent: t.parent || null, title: t.title, kind: t.tkind, model: t.model, why: t.why || '', status: t.status,

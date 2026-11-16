@@ -190,7 +190,7 @@ async def main():
             await pg.goto(ui.BASE + '/#xin')
             await pg.wait_for_selector('.xc.show .xc-row textarea')
             try:
-                await pg.wait_for_function("document.querySelector('.xc').textContent.includes('没送到：24 小时都没送到')", timeout=8000)
+                await pg.wait_for_function("document.querySelector('.xc').textContent.includes('发送失败：24 小时都没送到')", timeout=8000)
             except Exception:
                 pass
             bubbles = await pg.evaluate(BUBBLES)
@@ -198,7 +198,7 @@ async def main():
             idle = await pg.evaluate(ui.CHAT_DONE)
             wide = await pg.evaluate("document.documentElement.scrollWidth <= innerWidth")
             ui.check('没送到 %d 宽：刷新后画出那句话和原因，只画一次，页面不在等待状态、不横向滚动' % width,
-                     bubbles.count('昨天发的那句') == 1 and text.count('没送到：24 小时都没送到') == 1 and idle and wide, (bubbles[-2:], text.count('没送到'), idle, wide))
+                     bubbles.count('昨天发的那句') == 1 and text.count('发送失败：24 小时都没送到') == 1 and idle and wide, (bubbles[-2:], text.count('没送到'), idle, wide))
             ui.check('没送到 %d 宽：读过就向服务器确认（下次不再报）' % width, st['acks'] == ['cid-failed-0001'], st['acks'])
             await pg.context.close()
 

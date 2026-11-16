@@ -113,7 +113,9 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-isle:disabled{opacity:.6;cursor:default}
 .xc-isle.under{opacity:0}
 .xc-face{display:inline-flex;flex:none;width:34px;height:25px}
-.xc-face svg{display:block;width:100%;height:100%}
+/* 脸的 SVG 不接指针：表情一变 paintFace 就整块换掉它；按下落在旧 SVG、松开时它已被换掉，浏览器不发 click，
+   点头像（看小芯的电脑）、点小芯岛那一下就丢了。让点击都落在外面那层（不会被换掉） */
+.xc-face svg{display:block;width:100%;height:100%;pointer-events:none}
 /* 小芯岛、面板标题里的小芯：住在一个圆窗里，窗里一点暖光，黑色机身才看得出轮廓 */
 .xc-isle .xc-face,.xc-wk-hd .xc-face{--rad:999px;display:grid;place-items:center;width:32px;height:32px;padding:0 3px;
   background:radial-gradient(circle at 50% 38%,#4a463f,#2e2b27 62%,#24221f);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.05)}
@@ -211,6 +213,16 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-typing > .xc-face,.xc-bgrow > .xc-face{--rad:999px;display:grid;place-items:center;width:30px;height:30px;padding:0 3px;background:radial-gradient(circle at 50% 38%,#4a463f,#2e2b27 62%,#24221f)}
 .xc-typing > .xc-face svg,.xc-bgrow > .xc-face svg{width:23px;height:17px;margin-top:1px}
 .xc-typing-l{font-size:13px;font-weight:500;color:var(--glow-ink);white-space:nowrap;font-variant-numeric:tabular-nums}
+/* 后台那一行（站长 2026-11-16：派了后台任务也要一直在动）：两行——任务名、此刻那一步 + 秒数；那一步有一道光扫过去 */
+.xc-bgrow{--rad:18px;padding:7px 15px 7px 7px;max-width:min(100%,480px)}
+.xc-bg-tx{display:flex;flex-direction:column;min-width:0;line-height:1.38}
+.xc-bg-t{font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xc-bg-ln{display:flex;align-items:baseline;gap:7px;min-width:0;font-size:12.5px}
+.xc-bg-sw{min-width:0;max-width:100%}
+.xc-bg-s{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;color:var(--glow-ink);
+  background:linear-gradient(100deg,var(--glow-ink) 0 38%,var(--glow) 50%,var(--glow-ink) 62% 100%) 0 0/300% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:xcshim 2.4s linear infinite}
+.xc-bg-sec{flex:none;font-style:normal;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+@keyframes xcshim{from{background-position:100% 0}to{background-position:0 0}}
 .xc-typing .xc-bub,.xc-bgrow .xc-bub{display:flex;gap:3px}
 .xc-typing .xc-bub i,.xc-bgrow .xc-bub i{width:4px;height:4px;background:var(--glow);animation:xcdot 1.2s steps(1,end) infinite}
 .xc-typing .xc-bub i:nth-child(2),.xc-bgrow .xc-bub i:nth-child(2){animation-delay:.2s}
@@ -272,7 +284,7 @@ body.xc-open.xc-wb #home{margin-right:0}
   background:radial-gradient(circle at 50% 40%,#ffffff 0,#efece6 62%,#e6e2da 100%);box-shadow:inset 0 0 0 1px var(--hair),0 22px 50px -26px rgba(30,22,10,.45)}
 .xc-hello .xc-face svg{width:96px;height:68px;margin-top:4px}
 [data-theme=dark] .xc-hello .xc-face{background:radial-gradient(circle at 50% 38%,#48443d 0,#2c2a26 62%,#211f1c 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 0 0 1px rgba(255,255,255,.04),0 0 60px -10px rgba(255,201,101,.18)}
-.xc-hello-t{font:32px/1 var(--px);letter-spacing:.04em;color:var(--ink)}
+.xc-hello-t{font:32px/1 var(--px);letter-spacing:.04em;color:var(--ink);white-space:nowrap}
 /* ---------- 和谁聊：小芯 | 天启（新对话空白页上方；站长 2026-11-16「天启属于另一种 agent 形式」）----------
    两颗按钮、一块滑动的底（弹簧曲线，和小芯岛同一条）；选天启，小芯的脸淡出缩小、天启的星从 0.9 放大淡入（cult-ui 的进场参数），
    大标题换成点阵字「天启」。天启的东西用冷色星光，小芯的琥珀色不混用 */
@@ -301,11 +313,6 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-av.xc-tq{--rad:999px;background:radial-gradient(circle at 50% 38%,var(--tq-chip-2),var(--tq-chip) 70%)}
 .xc-av.xc-tq svg{width:17px;height:17px}
 .xc-typing > .xc-tq{--rad:999px;width:30px;height:30px}
-.xc-tqb .xc-tq{--rad:8px;width:24px;height:24px;background:var(--tq-chip)}
-.xc-tqb .xc-tq svg{width:15px;height:15px}
-.xc-tqb{--rad:12px;display:flex;align-items:center;gap:10px;width:100%;height:42px;margin:0 0 4px;padding:0 10px;font-size:14px;font-weight:600;color:var(--ink);transition:background-color .15s,transform .12s var(--e-out)}
-@media (hover:hover){.xc-tqb:hover{background:var(--tq-soft)}}
-.xc-tqb:active{transform:scale(.98)}
 /* 终端里天启那一轮：欢迎框的小人换成星（深蓝底） */
 .tm-mk:has(.xc-tq){display:grid;place-items:center;padding:0;background:var(--tq-chip);border-color:#2f4479}
 .tm-mk .xc-tq.big{width:100%;height:100%;background:none;box-shadow:none}
@@ -477,46 +484,59 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-dr-st.on::before,.xc-dr-st.busy::before{content:"";display:inline-block;width:6px;height:6px;margin-right:6px;vertical-align:1px;background:var(--ok)}
 .xc-dr-st.busy::before{background:var(--glow);animation:xcpix 1s steps(2,end) infinite}
 .xc-dr-sc{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:4px 12px calc(14px + var(--sb))}
-.xc-dr-q{--rad:12px;display:flex;align-items:center;gap:10px;width:100%;height:40px;margin:0 0 8px;padding:0 10px 0 12px;background:var(--surface);box-shadow:0 0 0 1px var(--hair);font-size:13.5px;color:var(--ink-3);text-align:left;transition:box-shadow .18s}
-.xc-dr-q svg{width:17px;height:17px}
+/* ---------- 侧边栏（第三轮重做。站长 2026-11-16：「侧边这个感觉还是之前的模版，不好看」）----------
+   「芯片与纸」：上面两颗键帽（1px 边、底下 2px 硬阴影，按下去沉 2px，像键盘）；主对话是一块带琥珀色竖条的卡；
+   对话一行一个：标题、右边等宽的时间，在回话亮一个像素点、天启的前面一颗星；选中的不是白卡片，是纸色底 + 左边一道墨色竖条；
+   底下一排「每日任务」「设置」。小标题用点阵字。 */
+.xc-dr-keys{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:2px 0 12px}
+.xc-key{--rad:11px;position:relative;display:flex;align-items:center;justify-content:center;gap:7px;min-width:0;height:42px;padding:0 10px;font-size:13.5px;font-weight:600;white-space:nowrap;
+  background:var(--surface);color:var(--ink);box-shadow:inset 0 0 0 1px var(--hair-2),0 2px 0 var(--hair-2);transition:transform .07s steps(1,end),box-shadow .07s steps(1,end),background-color .15s}
+.xc-key span{overflow:hidden;text-overflow:ellipsis}
+.xc-key:active{transform:translateY(2px);box-shadow:inset 0 0 0 1px var(--hair-2),0 0 0 var(--hair-2)}
+.xc-key svg{flex:none;width:16px;height:16px;stroke-width:2.2}
+@media (hover:hover){.xc-key:hover{background:var(--surface-2)}}
+.xc-tqb.xc-key{background:var(--tq-chip);color:#eef3ff;box-shadow:inset 0 0 0 1px rgba(143,176,255,.28),0 2px 0 #070b18}
+.xc-tqb.xc-key:active{box-shadow:inset 0 0 0 1px rgba(143,176,255,.28),0 0 0 #070b18}
+@media (hover:hover){.xc-tqb.xc-key:hover{background:var(--tq-chip-2)}}
+.xc-tqb .xc-tq{width:16px;height:16px}
+.xc-tqb .xc-tq svg{width:16px;height:16px}
+.xc-dr-q{--rad:10px;display:flex;align-items:center;gap:9px;width:100%;height:38px;margin:0 0 14px;padding:0 8px 0 11px;background:var(--paper);box-shadow:inset 0 0 0 1px var(--hair-2);font-size:13.5px;color:var(--ink-3);text-align:left;transition:box-shadow .18s}
+.xc-dr-q svg{width:16px;height:16px}
 .xc-dr-q span{flex:1}
-.xc-dr-q kbd{--rad:6px;padding:1px 6px;font:11px/18px var(--sans);color:var(--ink-3);box-shadow:inset 0 0 0 1px var(--hair-2)}
-@media (hover:hover){.xc-dr-q:hover{box-shadow:0 0 0 1px var(--hair-2)}}
-.xc-dr-new{--rad:12px;display:flex;align-items:center;gap:10px;width:100%;height:44px;margin:0 0 4px;padding:0 10px;font-size:14px;font-weight:600;transition:background-color .15s,transform .12s var(--e-out)}
-.xc-dr-new svg{--rad:999px;width:24px;height:24px;padding:4px;background:var(--ink);color:var(--paper);stroke-width:2.3;transition:transform .26s var(--e-out)}
-.xc-dr-new:active{transform:scale(.98)}
-@media (hover:hover){.xc-dr-new:hover{background:color-mix(in srgb,var(--ink) 5%,transparent)}.xc-dr-new:hover svg{transform:rotate(90deg)}}
-.xc-mainrow{display:flex;flex-wrap:wrap;align-items:stretch;--rad:12px;margin:0 0 2px;transition:background-color .2s}
-.xc-mainrow:has(.xc-mainb.cur){background:var(--surface);box-shadow:0 0 0 1px var(--hair),var(--sh-1)}
-.xc-mainb{flex:1;min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;min-height:46px;padding:0 6px 0 12px;--rad:12px;text-align:left;font-size:14px;font-weight:600}
-.xc-mainb svg{width:17px;height:17px;color:var(--glow-ink)}
-.xc-mainb i{font:normal 12px var(--sans);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.xc-dr-q kbd{--rad:5px;padding:0 6px;font:11px/18px var(--mono);color:var(--ink-3);background:var(--surface);box-shadow:inset 0 0 0 1px var(--hair-2),0 1px 0 var(--hair-2)}
+@media (hover:hover){.xc-dr-q:hover{box-shadow:inset 0 0 0 1px var(--ink-3)}}
+/* 主对话：一块卡，左边一道琥珀色竖条；在回话时竖条那里一个像素点在闪 */
+.xc-mainrow{position:relative;display:flex;flex-wrap:wrap;align-items:stretch;--rad:12px;margin:0 0 6px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--hair);transition:box-shadow .2s}
+.xc-mainrow::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;background:var(--glow);--rad:0 2px 2px 0}
+.xc-mainrow:has(.xc-mainb.cur){box-shadow:inset 0 0 0 1px var(--hair-2),0 2px 0 var(--hair)}
+.xc-mainb{flex:1;min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:9px;min-height:46px;padding:0 4px 0 14px;--rad:12px;text-align:left;font-size:14px;font-weight:600}
+.xc-mainb svg{width:16px;height:16px;color:var(--glow-ink)}
+.xc-mainb i{font:normal 12px var(--mono);color:var(--ink-3);font-variant-numeric:tabular-nums}
 .xc-mainb.live i::before{content:"";display:inline-block;width:6px;height:6px;margin-right:6px;vertical-align:1px;background:var(--glow);animation:xcpix 1s steps(2,end) infinite}
-@media (hover:hover){.xc-mainrow:not(:has(.xc-mainb.cur)):hover{background:color-mix(in srgb,var(--ink) 5%,transparent)}}
-.xc-nav{display:flex;flex-direction:column;margin:0 0 4px}
-.xc-memb{--rad:12px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;min-height:42px;padding:0 10px 0 12px;text-align:left;font-size:14px;color:var(--ink);transition:background-color .15s}
-.xc-memb svg{width:17px;height:17px;color:var(--ink-2)}
-.xc-memb svg:last-child{width:14px;height:14px;color:var(--ink-3)}
-@media (hover:hover){.xc-memb:hover{background:color-mix(in srgb,var(--ink) 5%,transparent)}}
-.xc-dr-h{display:flex;align-items:baseline;gap:6px;margin:16px 12px 6px;font-size:12px;font-weight:600;color:var(--ink-3)}
-.xc-dr-h i{font-style:normal;font-weight:500;font-variant-numeric:tabular-nums}
+@media (hover:hover){.xc-mainrow:not(:has(.xc-mainb.cur)):hover{box-shadow:inset 0 0 0 1px var(--hair-2)}}
+/* 小标题：点阵字 */
+.xc-dr-h{display:flex;align-items:baseline;gap:6px;margin:18px 10px 6px;font:13px/1 var(--px);letter-spacing:.06em;color:var(--ink-3)}
+.xc-dr-h i{font:normal 11px var(--mono);font-variant-numeric:tabular-nums}
 .xc-sl{list-style:none;margin:0;padding:0}
-.xc-sli{position:relative;display:flex;flex-wrap:wrap;align-items:stretch;--rad:12px;margin:1px 0;transition:background-color .18s}
-.xc-sli:has(.xc-si.cur){background:var(--surface);box-shadow:0 0 0 1px var(--hair),var(--sh-1)}
+.xc-sli{position:relative;display:flex;flex-wrap:wrap;align-items:stretch;--rad:9px;margin:0;transition:background-color .15s}
+.xc-sli:has(.xc-si.cur){background:var(--surface);box-shadow:inset 2px 0 0 var(--ink)}
 @media (hover:hover){.xc-sli:not(:has(.xc-si.cur)):hover{background:color-mix(in srgb,var(--ink) 5%,transparent)}}
-.xc-si{flex:1;min-width:0;display:block;padding:9px 6px 9px 12px;--rad:12px;text-align:left}
-.xc-si-t{display:block;font-size:14px;line-height:1.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xc-si{flex:1;min-width:0;display:grid;grid-template-columns:14px minmax(0,1fr) auto;align-items:center;column-gap:8px;min-height:40px;padding:0 4px 0 10px;--rad:9px;text-align:left}
+.xc-si-tq{width:14px;height:14px}
+.xc-si-tq svg{width:14px;height:14px}
+.xc-si .xc-si-tq.xc-tq{--rad:4px;background:var(--tq-chip)}
+.xc-si-t{font-size:14px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .xc-si.cur .xc-si-t{font-weight:600}
-.xc-si-m{display:block;margin-top:1px;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.xc-si-m > span + span{margin-left:8px}
-.xc-si-m > .on{color:var(--glow-ink)}
-.xc-si-more{--rad:10px;flex:none;display:grid;place-items:center;width:38px;color:var(--ink-3);opacity:0;transition:opacity .15s,background-color .15s}
-.xc-si-more svg{width:18px;height:18px}
+.xc-si-m{display:flex;align-items:center;gap:6px;font:12px var(--mono);color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.xc-si-m > .on{width:6px;height:6px;background:var(--glow);animation:xcpix 1s steps(2,end) infinite}
+.xc-si-who{font-family:var(--sans)}
+.xc-si-more{--rad:9px;flex:none;display:grid;place-items:center;width:34px;color:var(--ink-3);opacity:0;transition:opacity .15s,background-color .15s}
+.xc-si-more svg{width:17px;height:17px}
 .xc-sli:hover .xc-si-more,.xc-si-more:focus-visible,.xc-si-more[aria-expanded=true],.xc-sli:has(.xc-si.cur) .xc-si-more{opacity:1}
 @media (hover:none){.xc-si-more{opacity:1}}
 .xc-si-more[aria-expanded=true]{background:var(--sunk);color:var(--ink)}
 .xc-sl-wait{padding:10px 12px}
-.xc-dr-fold{--rad:10px;display:flex;align-items:center;gap:6px;width:100%;margin:4px 0 0;padding:9px 12px;font-size:13px;color:var(--ink-2);transition:background-color .15s}
+.xc-dr-fold{--rad:9px;display:flex;align-items:center;gap:6px;width:100%;margin:4px 0 0;padding:8px 10px;font-size:13px;color:var(--ink-2);transition:background-color .15s}
 .xc-dr-fold svg{width:14px;height:14px;transform:rotate(90deg);transition:transform .2s var(--e-out)}
 .xc-dr-fold[aria-expanded=true] svg{transform:rotate(-90deg)}
 @media (hover:hover){.xc-dr-fold:hover{background:color-mix(in srgb,var(--ink) 5%,transparent);color:var(--ink)}}
@@ -536,17 +556,24 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-sa-m:empty{display:none}
 .xc-mainrow .xc-si-more{opacity:1}
 .xc-mainrow .xc-sa{padding:2px 8px 10px}
-/* 侧边栏底：设置（展开成分组的设置卡）、退出登录 */
-.xc-dr-ft{margin:18px 0 0;padding:8px 0 0;box-shadow:inset 0 1px 0 var(--hair)}
-.xc-dr-row{--rad:12px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;min-height:42px;padding:0 10px 0 12px;text-align:left;font-size:14px;transition:background-color .15s}
-.xc-dr-row svg:first-child{width:17px;height:17px;color:var(--ink-2)}
-.xc-dr-row svg:last-child{width:14px;height:14px;color:var(--ink-3);transition:transform .2s var(--e-out)}
+/* 底下一排：每日任务、设置并排（设置原地展开成设置卡），下面退出登录 */
+.xc-dr-ft{margin:20px 0 0;padding:12px 0 0;background:repeating-linear-gradient(90deg,var(--hair-2) 0 2px,transparent 2px 6px) top/100% 1px no-repeat}
+.xc-dr-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.xc-nav{display:contents}
+.xc-memb,.xc-dr-row{--rad:10px;display:flex;align-items:center;justify-content:center;gap:7px;min-width:0;height:38px;padding:0 10px;font-size:13.5px;color:var(--ink-2);background:var(--paper);box-shadow:inset 0 0 0 1px var(--hair-2);white-space:nowrap;transition:background-color .15s,color .15s}
+.xc-memb svg,.xc-dr-row svg:first-child{flex:none;width:16px;height:16px;color:var(--ink-2)}
+.xc-dr-row svg:last-child{flex:none;width:13px;height:13px;color:var(--ink-3);transition:transform .2s var(--e-out)}
+.xc-dr-row[aria-expanded=true]{color:var(--ink);background:var(--surface)}
 .xc-dr-row[aria-expanded=true] svg:last-child{transform:rotate(90deg)}
-@media (hover:hover){.xc-dr-row:hover{background:color-mix(in srgb,var(--ink) 5%,transparent)}}
-.xc-dr-ft .xc-set{margin:4px 0 6px;padding:2px 14px;--rad:14px;background:var(--surface);box-shadow:0 0 0 1px var(--hair);animation:xcin .2s var(--e-out)}
+@media (hover:hover){.xc-memb:hover,.xc-dr-row:hover{color:var(--ink);background:var(--surface)}}
+/* 未发送的消息：一行一条、占满宽、太长省略（按钮默认按内容宽，长消息会把侧边栏撑出横向滚动） */
+.xc-dr-sc > .xc-memb{display:block;width:100%;margin:0 0 6px;overflow:hidden;text-overflow:ellipsis;text-align:left;line-height:38px}
+/* 触屏：侧边栏里能点的都到 44px（ui-ux-pro-max 的 touch-target-size） */
+@media (pointer:coarse){.xc-key,.xc-dr-q,.xc-memb,.xc-dr-row{height:44px}.xc-si{min-height:44px}.xc-si-more{width:44px}.xc-dr-sc > .xc-memb{line-height:44px}}
+.xc-dr-ft .xc-set{margin:8px 0 6px;padding:2px 14px;--rad:14px;background:var(--surface);box-shadow:0 0 0 1px var(--hair);animation:xcin .2s var(--e-out)}
 .xc-set-h{margin:0 0 4px;padding:0 4px;font-size:12px;font-weight:600;color:var(--ink-3)}
 .xc-dr-ft .xc-set-h{display:none}
-.xc-dr-out{display:block;margin:10px 0 0 12px;padding:8px 0;font-size:13px;color:var(--ink-3);text-decoration:underline;text-underline-offset:3px}
+.xc-dr-out{display:block;margin:12px 0 0 4px;padding:8px 0;font-size:13px;color:var(--ink-3);text-decoration:underline;text-underline-offset:3px}
 .xc-link{display:block;margin:14px auto 0;padding:8px 12px;font-size:13px;color:var(--ink-3);text-decoration:underline;text-underline-offset:3px}
 .xc-inl{display:inline;margin:0;padding:0 2px}
 .xc-tg{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 12px;padding:12px 0;box-shadow:inset 0 -1px 0 var(--hair)}
@@ -1121,14 +1148,25 @@ body.xs-open{overflow:hidden}
 /* 屏幕 */
 .tm-scr{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:16px 18px 10px;scrollbar-width:thin;scrollbar-color:var(--t-line) transparent}
 .tm-scr ::selection{background:rgba(244,183,74,.35);color:var(--t-ink)}
-/* 欢迎框：左边小芯的像素小人（Claude Code 那里是小螃蟹），右边在哪台电脑、模型、工作目录 */
-.tm-ban{display:flex;align-items:center;gap:16px;margin-bottom:16px;padding:10px 14px;border:2px solid #5d4a26}
-.tm-mk{flex:none;width:76px;height:72px;padding:4px;background:#efe9dc;border:2px solid #5d4a26}
-.tm-mk svg{display:block;width:100%;height:100%}
-.tm-bt{display:flex;flex-direction:column;gap:1px;min-width:0;color:var(--t-dim);font-size:12.5px}
-.tm-bn{margin-bottom:5px;font:32px/1 var(--px);font-weight:normal;color:var(--t-glow)}
+/* 开头（照站长给的 Claude Code 欢迎页）：琥珀色的名字、工作目录 → 点线 → 像素夜景（灰云、* 星、月牙，小芯站在地平线上）→ 点线 */
+.tm-ban{margin-bottom:14px}
+.tm-bt{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:12px;row-gap:2px;min-width:0;color:var(--t-dim);font-size:12.5px}
+.tm-bn{font-weight:700;font-size:14px;color:var(--t-glow)}
 .tm-bm{color:var(--t-mid)}
-.tm-cwd{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tm-cwd{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tm-rule{display:block;height:2px;margin:9px 0;background:repeating-linear-gradient(90deg,var(--t-line) 0 2px,transparent 2px 6px)}
+.tm-scene{position:relative;margin:0 2px}
+.tm-sky{display:block;width:100%;height:auto;max-height:132px}
+.tm-cl1{fill:#4a4640}
+.tm-cl2{fill:#34312d}
+.tm-moon{fill:#d9d3c7}
+.tm-star{font:2.2px/1 var(--mono);fill:#b9b2a5;animation:tmtw 2.4s steps(1,end) infinite}
+@keyframes tmtw{50%{opacity:.25}}
+/* 小芯是深色芯片：描一圈 1px 的浅色像素边（照像素画的描边），站在夜里也看得清 */
+.tm-mk{position:absolute;left:5%;bottom:-9px;width:15%;max-width:74px;aspect-ratio:20/19;
+  filter:drop-shadow(1px 0 0 #e9e2d4) drop-shadow(-1px 0 0 #e9e2d4) drop-shadow(0 1px 0 #e9e2d4) drop-shadow(0 -1px 0 #e9e2d4)}
+.tm-mk svg{display:block;width:100%;height:100%}
+.tm-mk:has(.xc-tq){filter:none;width:12%;max-width:58px;aspect-ratio:1;bottom:6%}
 /* 「> 要求」：Claude Code 里你说的那句是一条灰底 */
 .tm-pr{display:flex;gap:10px;margin:0 0 16px;padding:6px 10px;background:var(--t-bg2);overflow-wrap:anywhere}
 .tm-pp{flex:none;font-style:normal;font-weight:700;color:var(--t-glow)}
@@ -1139,6 +1177,9 @@ body.xs-open{overflow:hidden}
 .tm-l.tm-run > .tm-b{background:var(--t-glow);animation:tmblink 1s steps(1,end) infinite}
 .tm-l.tm-ok > .tm-b,.tm-sum .tm-b.tm-ok{background:var(--t-ok)}
 .tm-l.tm-said > .tm-b{background:var(--t-ink)}
+.tm-l.tm-k-think > .tm-b{width:11px;height:11px;margin:.42em 0 0 -1px;background:none}
+.tm-k-think > .tm-b svg{display:block;width:11px;height:11px;fill:none;stroke:var(--t-dim);stroke-width:1.8;stroke-linecap:round}
+.tm-k-think .tm-say{color:var(--t-dim);font-style:italic}
 .tm-l.tm-bad > .tm-b,.tm-sum .tm-b.tm-bad{background:var(--t-bad)}
 .tm-sum .tm-b.tm-stop{background:var(--t-dim)}
 @keyframes tmblink{50%{opacity:.2}}
@@ -1155,23 +1196,16 @@ body.xs-open{overflow:hidden}
 .tm-l.tm-bad .tm-pre{color:#f2b6a8}
 .tm-more{display:block;color:var(--t-dim)}
 .tm-df{margin-bottom:3px;color:var(--t-mid)}
-.tm-dl{display:grid;grid-template-columns:2ch minmax(0,1fr);margin-left:-6px;padding:0 6px}
-.tm-dl.tm-add{background:rgba(123,211,160,.12);color:#b6edcb}
-.tm-dl.tm-del{background:rgba(242,123,98,.13);color:#f8bdb0}
-.tm-dl.tm-hunk,.tm-dl.tm-ctx{color:var(--t-dim)}
+.tm-dl{display:grid;grid-template-columns:auto 2ch minmax(0,1fr);margin-left:-6px;padding:0 6px}
+.tm-n{min-width:3ch;padding-right:1ch;font-style:normal;text-align:right;color:#6f6a62;font-variant-numeric:tabular-nums;user-select:none}
+.tm-dl.tm-hunk{display:block;padding-left:4ch;color:var(--t-dim)}
+.tm-dl.tm-add{background:rgba(64,140,72,.32);color:#e7f6e4}
+.tm-dl.tm-del{background:rgba(170,52,52,.36);color:#f8e1dc}
+/* 代码按 Monokai Extended 配色（站长图里 Claude Code 用的主题） */
+.tm-hkw{color:#f92672}.tm-hst{color:#e6db74}.tm-hnu{color:#ae81ff}.tm-hcm{color:#8c8676}.tm-hfn{color:#a6e22e}.tm-hty{color:#66d9ef;font-style:italic}
+.tm-dl.tm-ctx{color:var(--t-mid)}
 .tm-g{font-style:normal}
 .tm-c{white-space:pre-wrap;overflow-wrap:anywhere}
-/* 打开网页：自己画的小浏览器（地址栏、一格一格走的加载条、标题），不是它电脑的画面 */
-.tm-web{grid-column:2;max-width:420px;margin-top:7px;border:2px solid var(--t-line);background:var(--t-bg2)}
-.tm-url{display:flex;align-items:center;gap:7px;padding:4px 8px;color:var(--t-mid);border-bottom:2px solid var(--t-line)}
-.tm-url svg{width:10px;height:10px;flex:none;fill:var(--t-dim);stroke:none}
-.tm-host{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.tm-load{display:block;height:4px;background:repeating-linear-gradient(90deg,var(--t-glow) 0 6px,transparent 6px 10px);background-size:20px 100%;animation:tmload .5s steps(2,end) infinite}
-@keyframes tmload{to{background-position:20px 0}}
-.tm-l:is(.tm-ok,.tm-bad) .tm-load{height:2px;background:var(--t-ok);animation:none}
-.tm-l.tm-bad .tm-load{background:var(--t-bad)}
-.tm-pg{display:block;padding:6px 8px;color:var(--t-ink)}
-.tm-pg:empty{display:none}
 .tm-mark{display:flex;align-items:center;gap:10px;margin:14px 0 2px;color:var(--t-dim)}
 .tm-mark::before,.tm-mark::after{content:"";flex:1;height:2px;background:var(--t-line)}
 /* 结尾：做完那一行、闪着的光标 */
@@ -1204,7 +1238,7 @@ body.xs-open{overflow:hidden}
 @media (hover:hover){.xc-av-t:hover{transform:translate(-1px,-1px)}}
 .xc-av-t:focus-visible{outline:2px solid var(--glow-ring);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){
-  .tm-win.tm-in,.tm-win.tm-sheet.tm-in,.tm-l.tm-run > .tm-b,.tm-tp::after,.tm-load,.tm-caret,.tm-tl,.xc-av-t.live::after{animation:none}
+  .tm-win.tm-in,.tm-win.tm-sheet.tm-in,.tm-l.tm-run > .tm-b,.tm-tp::after,.tm-star,.tm-caret,.tm-tl,.xc-av-t.live::after{animation:none}
   .tm-sv{animation:none;background:none;-webkit-text-fill-color:currentColor}
   .xc-av-t{transition:none}
 }
@@ -1214,6 +1248,6 @@ body.xs-open{overflow:hidden}
   .xc,.xc.wb,.xc-drawer,.xc-scrim,.xc-work,.xc-sheet,.xc-pal,.xc-pal-box,.xc-toast,.xc-isle,.xc-send,.xc-plus,.xc-sw::after,body.xc-open #home{transition:none !important}
   .xc-m.enter,.xc-me.enter,.xc-sheet,.xc-menu,.xc-pick,.xc-att,.xc-jump,.xq,.xc-sa,.xc-login.no,.wk-body.swap,.xc-dr-ft .xc-set,.xc-work.flash,.xc-isle-n i,.xc-sw-in,.xc-sw-o,.xc-work.enter .wk-c,.xc-work.enter .wk-h,.xc-work.enter .wk-seg{animation:none !important}
   .xc-wk-id,.xc-work .xc-wk-sc,.xc-sw-w{transition:none !important;transform:none !important}
-  .xc-face .c-ew,.xc-face svg,.xc-typing .xc-bub i,.xc-bgrow .xc-bub i,.xc-tq .tq-g,.wk-bar::after,.wk-c.live .wk-ic::after,.xc-st.wait::before,.xc-task-st::before,.xc.running .xc-send,.xc-dr-st.busy::before,.xc-mainb.live i::before,.xc-tk-cmd.now::before,.xc-glow::before,.xw-t,.xw-st.busy i,.xw-t.run .xw-g{animation:none !important}
+  .xc-face .c-ew,.xc-face svg,.xc-typing .xc-bub i,.xc-bgrow .xc-bub i,.xc-bg-s,.xc-tq .tq-g,.wk-bar::after,.wk-c.live .wk-ic::after,.xc-st.wait::before,.xc-task-st::before,.xc.running .xc-send,.xc-dr-st.busy::before,.xc-mainb.live i::before,.xc-tk-cmd.now::before,.xc-glow::before,.xw-t,.xw-st.busy i,.xw-t.run .xw-g{animation:none !important}
 }
 @media (prefers-reduced-motion:reduce){.xc-as-th,.xc-as-b,.xc-hello-mk > *{transition:none !important}.xc-hello-mk > *{transform:none !important}}

@@ -62,19 +62,32 @@ async def part1(browser):
     early = await pg.evaluate(WIN)
     await pg.wait_for_function("!document.querySelector('.tm-win .tm-tp') && !!document.querySelector('.tm-win .tm-cur')", timeout=8000)
     r = await pg.evaluate(WIN)
-    ui.check('欢迎框：小芯的像素小人、「小芯」、模型、工作目录（~/workspace/blink）；标题栏写「小芯的电脑」；下面「> 要求」',
+    ui.check('开头：「小芯」、模型、工作目录（~/workspace/blink）；标题栏写「小芯的电脑」；下面「> 要求」',
              r['ban'] == [True, '小芯', ['GLM-5.3', '~/workspace/blink']] and r['title'] == '小芯的电脑' and r['prompt'] == '>编一下 blink', (r['ban'], r['title'], r['prompt']))
+    sky = await pg.evaluate("""() => { const b = document.querySelector('.tm-win .tm-ban'), sc = b.querySelector('.tm-scene'), m = sc.querySelector('.tm-mk'), r = m.getBoundingClientRect(), g = b.querySelectorAll('.tm-rule')[1].getBoundingClientRect();
+      return [b.querySelectorAll('.tm-rule').length, !!sc.querySelector('.tm-sky .tm-moon'), !!sc.querySelector('.tm-sky .tm-cl1'), sc.querySelectorAll('.tm-sky .tm-star').length >= 6,
+        getComputedStyle(sc.querySelector('.tm-sky .tm-cl1')).stroke === 'none', !!m.querySelector('svg'), Math.abs(r.bottom - g.top) <= 3]; }""")
+    ui.check('照 Claude Code 的欢迎页：两条点线中间一幅像素夜景（点画的云、月牙、* 星星，不描粗边），小芯站在下面那条点线（地平线）上', sky == [2, True, True, True, True, True, True], sky)
     ui.check('一个字一个字敲：打开半秒时只敲出了一部分，敲完才有结尾的光标', early and len(early['text']) < len(r['text']) * 0.8 and not early['cur'] and r['cur'], (len(early['text']) if early else None, len(r['text'])))
     ui.check('一步一行：说的话、运行(make -j4)、打开网页(…)、修改(src/tim.c)；内部命令（派活）不画',
              r['rows'][0] == '我先看看工程。' and r['rows'][1] == '运行(make -j4)' and r['rows'][2] == '打开网页(example.com/a)' and r['rows'][3] == '修改(src/tim.c)' and len(r['rows']) == 4 and 'xin task' not in r['text'], r['rows'])
     det = await pg.evaluate("""() => { const w = document.querySelector('.tm-win'), c = w.querySelector('.tm-k-cmd'), web = w.querySelector('.tm-k-web'), ed = w.querySelector('.tm-k-edit');
       return [c.querySelector('.tm-pre').textContent.split('\\n').length, (c.querySelector('.tm-more') || {}).textContent, c.classList.contains('tm-ok'),
-        web.querySelector('.tm-host').textContent, web.querySelector('.tm-pg').textContent,
-        ed.querySelector('.tm-df').textContent, ed.querySelectorAll('.tm-dl.tm-add').length, ed.querySelectorAll('.tm-dl.tm-del').length, [...ed.querySelectorAll('.tm-dl .tm-c')].map(e => e.textContent)[1]]; }""")
-    ui.check('输出最多 8 行，多的写「… 还有 12 行」；网页卡片有地址和标题；改动先写「文件 +3 −1」，再一行一行（红一行、绿三行）',
-             det[:3] == [8, '… 还有 12 行', True] and det[3:5] == ['example.com/a', '示例页面'] and det[5] == 'src/tim.c  +3  −1' and det[6:8] == [3, 1] and det[8] == '  TIM2->CCR2 = 500;', det)
-    ui.check('结尾：「在电脑上做了 48 秒 · 1 条命令 · 改了 1 个文件 · 看了 1 个网页」，再一个闪着的光标；没在做就没有转圈那一行',
-             r['sum'] == '在电脑上做了 48 秒 · 1 条命令 · 改了 1 个文件 · 看了 1 个网页' and r['cur'] and r['st'] is None, (r['sum'], r['st']))
+        web.querySelector('.tm-a').textContent, (web.querySelector('.tm-pre') || {}).textContent, !web.querySelector('.tm-web'),
+        ed.querySelector('.tm-df').textContent, ed.querySelectorAll('.tm-dl.tm-add').length, ed.querySelectorAll('.tm-dl.tm-del').length, [...ed.querySelectorAll('.tm-dl .tm-c')].map(e => e.textContent)[0],
+        [...ed.querySelectorAll('.tm-dl .tm-n')].map(e => e.textContent), (ed.querySelector('.tm-dl.tm-add .tm-hkw') || {}).textContent, (ed.querySelector('.tm-dl.tm-add .tm-hty') || {}).textContent, (ed.querySelector('.tm-dl.tm-add .tm-hnu') || {}).textContent]; }""")
+    ui.check('输出最多 8 行，多的写「… 还有 12 行」；打开网页照终端写法（地址、折角线下「标题：…」，不画小浏览器）；改动先写「文件 +3 −1」，再一行一行（红一行、绿三行）',
+             det[:3] == [8, '… 还有 12 行', True] and det[3:6] == ['example.com/a', '标题：示例页面', True] and det[6] == 'src/tim.c  +3  −1' and det[7:9] == [3, 1] and det[9] == '  TIM2->CCR2 = 500;', det)
+    ui.check('改动照 Claude Code：左边一列行号（删的写旧行号、加的写新行号），代码按 Monokai 上色（static 关键字、uint16_t 类型、数字）',
+             det[10] == ['9', '9', '10', '11', '12'] and det[11:] == ['static', 'uint16_t', '0'], det[10:])
+    ui.check('结尾：「用时 48 秒 · 运行 1 条命令 · 修改 1 个文件 · 打开 1 个网页」（和每一步的动词一致），再一个闪着的光标；没在做就没有转圈那一行',
+             r['sum'] == '用时 48 秒 · 运行 1 条命令 · 修改 1 个文件 · 打开 1 个网页' and r['cur'] and r['st'] is None, (r['sum'], r['st']))
+    # 模型的思考：暗色斜体一行，圆点是星；前台概括的那一句（status）不画（终端里已经有「> 要求」）
+    await pg.evaluate("""() => { __w.open({ anchor: document.getElementById('anc'), tabs: [{ key: 'run:th', label: '本轮', prompt: '看看', live: false, endMs: 3000,
+      events: [{ t: 'think', src: 'status', text: '查看工作目录' }, { t: 'think', src: 'model', text: 'Checking what is in the build folder first.' }, { t: 'text', text: '好了。' }] }] }); }""")
+    await pg.wait_for_function("!!document.querySelector('.tm-win .tm-cur')", timeout=8000)
+    th = await pg.evaluate("""() => { const r = document.querySelector('.tm-win .tm-k-think'), s = r && r.querySelector('.tm-say'); return [document.querySelectorAll('.tm-win .tm-k-think').length, s && s.textContent, s && getComputedStyle(s).fontStyle, !!(r && r.querySelector('.tm-b svg')), document.querySelector('.tm-win .tm-scr').textContent.includes('查看工作目录')]; }""")
+    ui.check('模型的思考画成暗色斜体的一行、圆点是一颗星；前台概括那一句不画', th == [1, 'Checking what is in the build folder first.', 'italic', True, False], th)
     # 积压很多也不会落后太久：一下来了 25 条命令（一万多个字），还是一个字一个字敲，但 3 秒内敲完
     big = '\n'.join('line %03d ' % i + 'x' * 40 for i in range(12))
     await pg.evaluate("""(big) => { __w.open({ anchor: document.getElementById('anc'), tabs: [{ key: 'run:r2', label: '这一轮', prompt: '跑一下', live: true, events: [], status: () => ({ verb: '编译中', sec: 12 }) }] });
@@ -170,13 +183,13 @@ async def part2(browser):
     await open_work(pg)
     await pg.wait_for_function("LimingXinChat.state.sid === 'shist00001' && !!document.querySelector('.xc-ai')", timeout=10000)
     av = await pg.evaluate("[...document.querySelectorAll('.xc-msgs .xc-ai > .xc-av')].map(a => a.dataset.term || '')")
-    ui.check('回答的头像：那一轮在电脑上执行过命令才点得开（带小终端标记），读屏念「看小芯在电脑上做了什么」',
-             av[:1] == ['run:rhist00001'] and await pg.evaluate("document.querySelector('.xc-av-t').getAttribute('role') === 'button' && document.querySelector('.xc-av-t').getAttribute('aria-label') === '看小芯在电脑上做了什么'"), av)
+    ui.check('回答的头像：那一轮在电脑上执行过命令才点得开（带小终端标记），读屏念「查看执行过程」',
+             av[:1] == ['run:rhist00001'] and await pg.evaluate("document.querySelector('.xc-av-t').getAttribute('role') === 'button' && document.querySelector('.xc-av-t').getAttribute('aria-label') === '查看执行过程'"), av)
     await pg.click('.xc-av-t[data-term="run:rhist00001"]')
     await pg.wait_for_function("!!document.querySelector('.tm-win:not([hidden]) .tm-cur')", timeout=8000)
     h = await pg.evaluate(WIN)
     ui.check('点开：「> 编译 main.c」，运行(arm-none-eabi-gcc -c main.c) 失败标红、报错在下面，结尾写做了多久',
-             h['prompt'] == '>编译 main.c' and h['rows'][-1] == '运行(arm-none-eabi-gcc -c main.c)' and 'error: boom' in h['text'] and h['sum'] and h['sum'].startswith('在电脑上做了 3 秒') and h['tabs'] == [], h)
+             h['prompt'] == '>编译 main.c' and h['rows'][-1] == '运行(arm-none-eabi-gcc -c main.c)' and 'error: boom' in h['text'] and h['sum'] and h['sum'].startswith('用时 3 秒') and h['tabs'] == [], h)
     await pg.keyboard.press('Escape')
 
     # 新对话里让它做事：前台派活（内部命令不画），回完以后最下面一行，点头像看那件活
@@ -184,20 +197,36 @@ async def part2(browser):
     await pg.fill('.xc-row textarea', '帮我编一下 blink')
     await pg.keyboard.press('Enter')
     await pg.wait_for_function("!!document.querySelector('.xc-bgrow')", timeout=10000)
-    row = await pg.evaluate("(() => { const r = document.querySelector('.xc-bgrow'), l = document.querySelector('.xc-msgs'); return [r.querySelector('.xc-typing-l').textContent, l.lastElementChild === r, r.querySelector('.xc-av').dataset.term]; })()")
+    row = await pg.evaluate("(() => { const r = document.querySelector('.xc-bgrow'), l = document.querySelector('.xc-msgs'); return [r.querySelector('.xc-bg-t').textContent, r.querySelector('.xc-bg-s').textContent, l.lastElementChild === r, r.querySelector('.xc-av').dataset.term]; })()")
     chat = await pg.evaluate("document.querySelector('.xc-msgs').textContent")
-    ui.check('派出去的活：回完以后最下面一行「编译 blink · 准备中」（和正在输入一个样），头像点开看它', row == ['编译 blink · 准备中', True, 'live'], row)
+    ui.check('派出去的活：回完以后最下面一行，上面任务名「编译 blink」、下面此刻那一步「准备中」，头像点开看它', row == ['编译 blink', '准备中', True, 'live'], row)
     ui.check('前台派活的内部命令不出现在聊天里', 'xin task' not in chat and '帮我编译 blink 工程' not in chat, chat[-160:])
     reply = await pg.evaluate("document.querySelector('.xc-ai[data-run=\"rlive00001\"] > .xc-av').dataset.term || ''")
     ui.check('派了活的那条回答，头像也点得开（看那件活）', reply == 'run:rlive00001', reply)
 
+    # 站长：派了后台任务也要一直在动——最下面那一行跟着任务摘要的 activity 换步骤（2 秒取一次，不用点开终端）
+    st['tasks'] = [task(status='running', run='rtask00b01', startedAt=now() - 3000, activity='在搜索：Gemini 4 Hydrogen review')]
+    await pg.evaluate('LimingXinChat.tasks()')
+    await pg.wait_for_function("(document.querySelector('.xc-bgrow .xc-bg-s') || {}).textContent === '在搜索：Gemini 4 Hydrogen review'", timeout=5000)
+    st['tasks'] = [task(status='running', run='rtask00b01', startedAt=now() - 4000, activity='在读网页：deepmind.google/models')]
+    await pg.wait_for_function("(document.querySelector('.xc-bgrow .xc-bg-s') || {}).textContent === '在读网页：deepmind.google/models'", timeout=5000)
+    live = await pg.evaluate("[document.querySelector('.xc-bgrow .xc-bg-sec').textContent, getComputedStyle(document.querySelector('.xc-bgrow .xc-bg-s')).animationName]")
+    ui.check('后台在做时最下面那一行自己在动：步骤跟着任务摘要换（2 秒一取，没点终端），秒数在走，那一步有一道光扫过去', live[0].endswith('秒') and live[1] == 'xcshim', live)
     st['tasks'] = [task(status='running', run='rtask00b01', startedAt=now() - 3000)]
     st['tp_rel']['rtask00b01'] = 1
     await pg.evaluate('LimingXinChat.tasks()')
     await pg.wait_for_timeout(1500)
     polls0 = len(st['tpolls'])
     ui.check('终端没开时不去取那件活的过程（只看任务摘要）', polls0 == 0, polls0)
-    await pg.click('.xc-bgrow .xc-av')
+    # 按下去和松开之间小芯的脸正好重画（回完 3.6 秒笑脸收回去时 paintFace 整块换掉 SVG）：这一下点击不能丢。
+    # CI 上碰到过：按下落在旧脸的 polygon 上、松开时它已被换掉，浏览器就不发 click，终端没打开
+    box = await pg.locator('.xc-bgrow .xc-av').bounding_box()
+    await pg.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    await pg.mouse.down()
+    await pg.evaluate("(() => { const a = document.querySelector('.xc-bgrow .xc-av'); a.innerHTML = a.innerHTML; })()")
+    await pg.mouse.up()
+    opened = await pg.evaluate("!document.querySelector('.tm-win').hidden")
+    ui.check('点头像的那一下里脸正好重画：点击照样打开终端', opened, opened)
     await pg.wait_for_function("[...document.querySelectorAll('.tm-win:not([hidden]) .tm-l')].some(r => r.textContent.includes('ls'))", timeout=10000)
     st['tp_rel']['rtask00b01'] = 2
     await pg.wait_for_function("[...document.querySelectorAll('.tm-win .tm-l')].some(r => r.textContent.includes('make -j4'))", timeout=10000)
@@ -208,13 +237,13 @@ async def part2(browser):
              t1['prompt'] == '>编译 blink' and t1['ban'][2] == ['~/workspace/blink'] and 'GLM' not in t1['text'] and [x.split('(')[0] for x in t1['rows']] == ['运行', '我先编一遍看看。', '运行']
              and 'xin remember' not in t1['text'] and '内部要求原文' not in t1['text'], (t1['rows'], t1['ban']))
     ui.check('开着时才轮询：按 off 往前走，不带设备和标签页（不算在看这个对话）', offs[:1] == [0] and max(offs) >= 3 and not any(w for _, _, w in st['tpolls']), offs[:6])
-    ui.check('最底下一行写它在干什么（make → 编译中）', t1['st'] and t1['st'].startswith('编译中'), t1['st'])
+    ui.check('最底下一行写它此刻在做的那一步（在执行：make -j4）', t1['st'] and t1['st'].startswith('在执行：make -j4'), t1['st'])
     await pg.keyboard.press('Escape')
     n1 = len(st['tpolls'])
     await pg.wait_for_timeout(2500)
     ui.check('关上终端：不再去取', len(st['tpolls']) == n1, len(st['tpolls']) - n1)
 
-    # 再打开：接着上次取到的地方；做完了，那一页写「干完了 · 用时 2 分钟」
+    # 再打开：接着上次取到的地方；做完了，那一页写「已完成 · 用时 2 分钟」
     st['tp_rel']['rtask00b01'] = 3
     await pg.click('.xc-bgrow .xc-av')
     await pg.wait_for_function("[...document.querySelectorAll('.tm-win .tm-l')].some(r => r.textContent.includes('make -j4') && r.textContent.includes('ok'))", timeout=10000)
@@ -227,8 +256,8 @@ async def part2(browser):
     await pg.wait_for_function("[...document.querySelectorAll('.xc-tres')].some(e => e.textContent.includes('编好了'))", timeout=10000)
     d = await pg.evaluate(WIN)
     res = await pg.evaluate("(() => { const r = [...document.querySelectorAll('.xc-tres')].pop(); return [r.querySelector(':scope > .xc-av').dataset.term, !document.querySelector('.xc-bgrow')]; })()")
-    ui.check('做完：终端那一页写「干完了 · 用时 2 分钟 · 2 条命令」、不再转圈；聊天里是小芯转达的答案，它的头像点开看这件活，最下面那一行没了',
-             d['sum'] == '干完了 · 用时 2 分钟 · 2 条命令' and d['st'] is None and res == ['task:' + TASK, True], (d['sum'], d['st'], res))
+    ui.check('做完：终端那一页写「已完成 · 用时 2 分钟 · 运行 2 条命令」、不再转圈；聊天里是小芯转达的答案，它的头像点开看这件活，最下面那一行没了',
+             d['sum'] == '已完成 · 用时 2 分钟 · 运行 2 条命令' and d['st'] is None and res == ['task:' + TASK, True], (d['sum'], d['st'], res))
     await pg.keyboard.press('Escape')
 
     # 换对话：终端关上，不再取
@@ -258,8 +287,8 @@ async def part2(browser):
     await pg.click('.xc-tres .xc-av-t')
     await pg.wait_for_function("!!document.querySelector('.tm-win:not([hidden]) .tm-cur')", timeout=10000)
     r2 = await pg.evaluate(WIN)
-    ui.check('刷新以后：点任务结果的头像才去取（一次），画出 ls、说的话、make，结尾「干完了 · 用时 2 分钟 · 2 条命令」',
-             c0 == 0 and st['task_hist_calls'] == 1 and len(r2['rows']) == 3 and r2['sum'] == '干完了 · 用时 2 分钟 · 2 条命令', (c0, st['task_hist_calls'], r2['rows'], r2['sum']))
+    ui.check('刷新以后：点任务结果的头像才去取（一次），画出 ls、说的话、make，结尾「已完成 · 用时 2 分钟 · 运行 2 条命令」',
+             c0 == 0 and st['task_hist_calls'] == 1 and len(r2['rows']) == 3 and r2['sum'] == '已完成 · 用时 2 分钟 · 运行 2 条命令', (c0, st['task_hist_calls'], r2['rows'], r2['sum']))
     await pg.context.close()
 
 
@@ -273,17 +302,17 @@ async def part3(browser):
     await open_work(pg)
     await pg.fill('.xc-row textarea', '编一下')
     await pg.keyboard.press('Enter')
-    await pg.wait_for_function("(document.querySelector('.xc-typing-l') || {}).textContent && document.querySelector('.xc-typing-l').textContent.startsWith('找文件')", timeout=10000)
+    await pg.wait_for_function("(document.querySelector('.xc-typing-l') || {}).textContent && document.querySelector('.xc-typing-l').textContent.startsWith('在执行：ls')", timeout=10000)
     face = await pg.evaluate("(() => { const f = document.querySelector('.xc-typing > .xc-av'); return [f.dataset.term, f.classList.contains('live'), f.getAttribute('aria-label')]; })()")
-    ui.check('正在回话：「正在输入」的头像点得开（标记在闪），读屏念「看小芯正在电脑上做什么」', face == ['live', True, '看小芯正在电脑上做什么'], face)
+    ui.check('正在回话：「正在输入」的头像点得开（标记在闪），读屏念「查看正在执行的步骤」', face == ['live', True, '查看正在执行的步骤'], face)
     await pg.click('.xc-typing > .xc-av')
     await pg.wait_for_function("[...document.querySelectorAll('.tm-win:not([hidden]) .tm-l')].some(r => r.textContent.includes('make -j4'))", timeout=10000)
     await pg.wait_for_function("document.querySelector('.tm-win .tm-st').textContent.includes('秒')", timeout=5000)
     a = await pg.evaluate(WIN)
-    ui.check('点开：这一轮「> 编一下」、ls 和正在跑的 make；最底下一行写在干什么和秒数', a['prompt'] == '>编一下' and a['rows'][1].startswith('运行(ls)') and a['st'] and ('编译中' in a['st'] or '找文件' in a['st']) and '秒' in a['st'], (a['rows'], a['st']))
+    ui.check('点开：这一轮「> 编一下」、ls 和正在跑的 make；最底下一行写在干什么和秒数', a['prompt'] == '>编一下' and a['rows'][1].startswith('运行(ls)') and a['st'] and '在执行：' in a['st'] and '秒' in a['st'], (a['rows'], a['st']))
     await pg.wait_for_function("!!document.querySelector('.tm-win .tm-sum')", timeout=15000)
     b = await pg.evaluate(WIN)
-    ui.check('回完：make 标绿，「编好了。」接在后面，结尾「在电脑上做了 9 秒 · 2 条命令」，不再转圈', b['sum'] == '在电脑上做了 9 秒 · 2 条命令' and b['st'] is None and b['rows'][-1] == '编好了。', (b['sum'], b['rows']))
+    ui.check('回完：make 标绿，「编好了。」接在后面，结尾「用时 9 秒 · 运行 2 条命令」，不再转圈', b['sum'] == '用时 9 秒 · 运行 2 条命令' and b['st'] is None and b['rows'][-1] == '编好了。', (b['sum'], b['rows']))
     # 回完以后这一轮的记录里有模型（done 带的）：关上再点回答的头像，欢迎框照样只写工作目录
     await pg.keyboard.press('Escape')
     await pg.click('.xc-msgs .xc-ai > .xc-av-t')
@@ -291,10 +320,43 @@ async def part3(browser):
     c = await pg.evaluate(WIN)
     ui.check('小芯这一轮的欢迎框只写工作目录：回完再点回答的头像，带了模型也不露出来（天启才写模型）', c['ban'][1:] == ['小芯', ['~/workspace']] and 'DeepSeek' not in c['text'], c['ban'])
     await pg.context.close()
+    # 站长：「希望像 grok bot 那样根据用户的输入问题显示相关的文字」——「正在输入」那一行先「思考中」，前台概括的那一句来了换成它；
+    # 模型的英文思考不放进这一行（只在终端里画）
+    pg = await ui.page(browser, 1280, 860)
+    live = [[], [{'t': 'think', 'src': 'status', 'text': '查 Gemini 4 Hydrogen 的评测'}, {'t': 'think', 'src': 'model', 'text': 'Looking up public benchmark results first.'}]] + [[]] * 4 + \
+           [[{'t': 'text', 'text': '查好了。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 6000}]]
+    await ui.xin_mock(pg, authed=True, live=live)
+    await open_work(pg)
+    await pg.fill('.xc-row textarea', '不要你感觉，要查一下')
+    await pg.keyboard.press('Enter')
+    await pg.wait_for_function("((document.querySelector('.xc-typing-l') || {}).textContent || '').startsWith('思考中')", timeout=10000)
+    await pg.wait_for_function("((document.querySelector('.xc-typing-l') || {}).textContent || '').startsWith('查 Gemini 4 Hydrogen 的评测')", timeout=10000)
+    await pg.wait_for_timeout(1300)
+    lab = await pg.evaluate("[document.querySelector('.xc-typing-l').textContent, document.querySelector('.xc-msgs').textContent.includes('Looking up')]")
+    ui.check('「正在输入」那一行：先「思考中」，前台概括的那一句来了换成它（秒数照走）；英文思考不放进聊天', lab[0].startswith('查 Gemini 4 Hydrogen 的评测 · ') and lab[0].endswith('秒') and not lab[1], lab)
+    await pg.wait_for_function(ui.CHAT_DONE, timeout=15000)
+    await pg.context.close()
+    # 平板（触屏）上概括写全，不跟手机一样截短；手机上太长的按显示宽度截、加「…」，秒数还在，整行不出屏幕
+    LONG = '查 Gemini 4 Hydrogen 在 SWE-bench 和 LiveCodeBench 上的评测'
+    for w, h, phrase in ((768, 1024, '查 Gemini 4 Hydrogen 的评测'), (390, 844, LONG)):
+        pg = await ui.page(browser, w, h, mobile=True)
+        await ui.xin_mock(pg, authed=True, live=[[], [{'t': 'think', 'src': 'status', 'text': phrase}]] + [[]] * 4 + [[{'t': 'text', 'text': '查好了。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 6000}]])
+        await open_work(pg)
+        await pg.fill('.xc-row textarea', '不要你感觉，要查一下')
+        await pg.click('.xc-send')
+        await pg.wait_for_function("((document.querySelector('.xc-typing-l') || {}).textContent || '').startsWith('查 Gemini')", timeout=10000)
+        await pg.wait_for_timeout(1300)
+        lab = await pg.evaluate("(() => { const l = document.querySelector('.xc-typing-l'), r = document.querySelector('.xc-typing').getBoundingClientRect(); return [l.textContent, r.right <= innerWidth, document.documentElement.scrollWidth <= innerWidth]; })()")
+        if w == 768:
+            ui.check('平板上「正在输入」写全概括（不按手机的长度截）', lab[0].startswith(phrase + ' · ') and lab[0].endswith('秒') and lab[1] and lab[2], lab)
+        else:
+            ui.check('手机上概括太长：按显示宽度截、加「…」，秒数还在，整行在屏幕里', lab[0].startswith('查 Gemini 4 Hydrogen') and '…' in lab[0] and not lab[0].startswith(LONG) and lab[0].endswith('秒') and lab[1] and lab[2], lab)
+        await pg.wait_for_function(ui.CHAT_DONE, timeout=15000)
+        await pg.context.close()
 
 
 async def part4(browser):
-    """天启：新对话空白页上「小芯 | 天启」；侧边栏、命令面板「新的天启对话」；天启对话里是星和「天启」。"""
+    """天启：新对话空白页上「小芯 | 天启」；侧边栏、命令面板「新建天启对话」；天启对话里是星和「天启」。"""
     pg = await ui.page(browser, 1280, 860)
     st = await ui.xin_mock(pg, authed=True, live=[[{'t': 'text', 'text': '在呢。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 2000, 'model': 'deepseek-v4.1-flash'}]])
     await open_work(pg)
@@ -303,11 +365,20 @@ async def part4(browser):
       p.querySelector('.xc-as').getAttribute('role'), p.classList.contains('tq'), p.querySelector('.xc-hello-t').textContent, getComputedStyle(mk.querySelector('.xc-tq')).opacity === '1',
       document.querySelector('.xc-mdl').hidden, document.querySelector('.xc-row textarea').placeholder]; }"""
     h0 = await pg.evaluate(HELLO)
-    ui.check('新对话空白页上方「小芯 | 天启」（单选组，默认小芯），小芯的标志和「嗨，我是小芯」，没有模型按钮', h0 == [['小芯*', '天启'], 'radiogroup', False, '嗨，我是小芯', False, True, '和小芯说点什么…'], h0)
+    ui.check('新对话空白页上方「小芯 | 天启」（单选组，默认小芯），小芯的标志和大标题「小芯」，没有模型按钮，输入框写「给小芯发消息」', h0 == [['小芯*', '天启'], 'radiogroup', False, '小芯', False, True, '给小芯发消息'], h0)
     await pg.click('.xc-as-b[data-a=harness]')
     await pg.wait_for_timeout(700)
     h1 = await pg.evaluate(HELLO)
-    ui.check('选天启：底滑过去，标志换成像素星、大标题「天启」，输入框底下出现模型按钮，写「和天启说点什么」', h1 == [['小芯', '天启*'], 'radiogroup', True, '天启', True, False, '和天启说点什么…'], h1)
+    ui.check('选天启：底滑过去，标志换成像素星、大标题「天启」，输入框底下出现模型按钮，写「给天启发消息」', h1 == [['小芯', '天启*'], 'radiogroup', True, '天启', True, False, '给天启发消息'], h1)
+    # 站长：从天启切回小芯时大标题闪一下（第二轮被挤成两行、和淡出的「天启」叠在一起）。逐帧看：一直是一行、不比单行高
+    await pg.evaluate("""() => { window.__hf = []; const w = document.querySelector('.xc-hello-tw'), t0 = performance.now();
+      const tick = () => { window.__hf.push([...w.children].map(e => Math.round(e.getBoundingClientRect().height))); if (performance.now() - t0 < 500) requestAnimationFrame(tick); }; requestAnimationFrame(tick); }""")
+    await pg.click('.xc-as-b[data-a=codex]')
+    await pg.wait_for_timeout(650)
+    hf = await pg.evaluate("[window.__hf, Math.round(document.querySelector('.xc-hello-t').getBoundingClientRect().height), document.querySelector('.xc-hello-t').textContent]")
+    ui.check('切回小芯：大标题换成「小芯」，换的过程中每一帧都是一行（不被挤成两行叠在一起）', hf[2] == '小芯' and all(h <= hf[1] + 2 for fr in hf[0] for h in fr), (hf[1], max((h for fr in hf[0] for h in fr), default=0), hf[2]))
+    await pg.click('.xc-as-b[data-a=harness]')
+    await pg.wait_for_timeout(500)
     await pg.focus('.xc-as-b[data-a=harness]')
     await pg.keyboard.press('ArrowLeft')
     await pg.wait_for_timeout(200)
@@ -321,14 +392,14 @@ async def part4(browser):
     sent = st['sent']
     conv = await pg.evaluate("(() => { const a = document.querySelector('.xc-ai'); return [a.querySelector(':scope > .xc-av').classList.contains('xc-tq'), a.querySelector('.xc-who').textContent, !document.querySelector('.xc-hello'), localStorage.getItem('lm.xin.agent')]; })()")
     ui.check('用天启发出去：是天启的新对话（agent harness、不带 main），回答的头像是星、名字写「天启」', sent.get('agent') == 'harness' and 'main' not in sent and conv == [True, '天启', True, 'harness'], (sent, conv))
-    # 侧边栏「新的天启对话」、标题栏的「+」（新对话 = 小芯）
+    # 侧边栏「新建天启对话」、标题栏的「+」（新对话 = 小芯）
     await pg.click('.xc-tqb')
     await pg.wait_for_selector('.xc-hello')
     a1 = await pg.evaluate("[document.querySelector('.xc-hello').classList.contains('tq'), document.querySelector('.xc-tqb > span:last-child').textContent]")
     await pg.click('.xc-new-b')
     await pg.wait_for_timeout(300)
     a2 = await pg.evaluate("[document.querySelector('.xc-hello').classList.contains('tq'), localStorage.getItem('lm.xin.agent')]")
-    ui.check('侧边栏「新的天启对话」：空白页直接是天启；标题栏的「+」新对话还是小芯', a1 == [True, '新的天启对话'] and a2 == [False, 'codex'], (a1, a2))
+    ui.check('侧边栏键帽「新建天启对话」：空白页直接是天启；标题栏的「+」新对话还是小芯', a1 == [True, '新建天启对话'] and a2 == [False, 'codex'], (a1, a2))
     # 命令面板：搜「天启」
     await pg.keyboard.press('Control+k')
     await pg.wait_for_selector('.xc-pal:not([hidden]) input')
@@ -338,7 +409,7 @@ async def part4(browser):
     await pg.keyboard.press('Enter')
     await pg.wait_for_timeout(300)
     a3 = await pg.evaluate("document.querySelector('.xc-hello').classList.contains('tq')")
-    ui.check('命令面板搜「天启」：第一个是「新的天启对话」，回车就是天启的空白页', '新的天启对话' in first and a3, (first, a3))
+    ui.check('命令面板搜「天启」：第一个是「新建天启对话」，回车就是天启的空白页', '新建天启对话' in first and a3, (first, a3))
     await pg.context.close()
 
 
@@ -359,18 +430,18 @@ async def part5(browser):
     PICK = """() => { const p = document.querySelector('.xc-pick'), th = p.querySelector('.xc-eff-th').getBoundingClientRect(), on = p.querySelector('.xc-eff-d.on').getBoundingClientRect(), m = p.querySelector('.xc-pk-t .xc-em');
       return [p.classList.contains('tq'), p.querySelector('.xc-pk-agent').textContent, Math.abs((th.left + th.width / 2) - (on.left + on.width / 2)) < 2, m.querySelectorAll('b.on').length, p.querySelector('.xc-eff-help').textContent, p.querySelector('.xc-pk-tl').textContent]; }"""
     p0 = await pg.evaluate(PICK)
-    ui.check('面板：写着「天启」；滑块停在「高」那一格正中，强度格亮两格，下面一句「想得更深，适合复杂的问题」', p0 == [True, '天启', True, 2, '想得更深，适合复杂的问题', '高'], p0)
+    ui.check('面板：写着「天启」；滑块停在「高」那一格正中，强度格亮两格，下面一句「思考更深，适合复杂问题」', p0 == [True, '天启', True, 2, '思考更深，适合复杂问题', '高'], p0)
     await pg.click('.xc-eff-d[data-v=max]')
     await pg.wait_for_timeout(80)
     mid = await pg.evaluate("(() => { const th = document.querySelector('.xc-eff-th').getBoundingClientRect(), on = document.querySelector('.xc-eff-d.on').getBoundingClientRect(); return Math.abs((th.left + th.width / 2) - (on.left + on.width / 2)) > 2; })()")
     await pg.wait_for_timeout(700)
     p1 = await pg.evaluate(PICK)
     c1 = await pg.evaluate(CHIP)
-    ui.check('点「最高」：底滑过去（不是一下跳过去），三格都亮，说明换成「想到最深，留给最难的问题」，按钮上也三格', mid and p1[2:] == [True, 3, '想到最深，留给最难的问题', '最高'] and c1[2:] == [3, '最高'], (mid, p1, c1))
+    ui.check('点「最高」：底滑过去（不是一下跳过去），三格都亮，说明换成「思考最深，适合最难的问题」，按钮上也三格', mid and p1[2:] == [True, 3, '思考最深，适合最难的问题', '最高'] and c1[2:] == [3, '最高'], (mid, p1, c1))
     await pg.click('.xc-eff-d[data-v=off]')
     await pg.wait_for_timeout(700)
     p2 = await pg.evaluate(PICK)
-    ui.check('点「关」：一格都不亮，说明「不额外思考，直接回答」', p2[2:] == [True, 0, '不额外思考，直接回答', '关'], p2)
+    ui.check('点「关」：一格都不亮，说明「不思考，直接回复」', p2[2:] == [True, 0, '不思考，直接回复', '关'], p2)
     await pg.click('.xc-pk-o[data-v="glm-5.3"]')
     await pg.wait_for_timeout(500)
     g = await pg.evaluate("[[...document.querySelectorAll('.xc-eff-d')].map(b => b.textContent), document.querySelectorAll('.xc-pk-t .xc-em b').length]")

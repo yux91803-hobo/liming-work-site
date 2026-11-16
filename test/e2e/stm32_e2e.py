@@ -1648,12 +1648,12 @@ async def main():
               st[:4] == ['Claude', '高', False, ['低', '中', '高*', '超高', '最高']] and hid and st2 == 'Claude超高' and st3 == ['codex', 'xhigh', True], (st, hid, st2, st3))
         check('新对话还没有用量：输入框底下那一行不显示', not await pg.is_visible('.xc-use'))
         await pg.fill('.xc-row textarea', '看看工作目录'); await pg.keyboard.press('Enter')
-        await pg.wait_for_function("document.querySelector('.xc-typing-l') && document.querySelector('.xc-typing-l').textContent.startsWith('找文件')", timeout=5000)
+        await pg.wait_for_function("document.querySelector('.xc-typing-l') && document.querySelector('.xc-typing-l').textContent.startsWith('在执行：ls')", timeout=5000)
         st = await pg.evaluate("""[LimingXin.aiState, document.querySelector('.xc').classList.contains('running'), document.querySelectorAll('.xc-me').length, (document.querySelector('.xin-say') || {}).textContent,
-          document.querySelector('.xc-sub').textContent, document.querySelector('.xc-msgs').textContent.includes('Model metadata'), document.querySelector('.xc-msgs').textContent.includes('ls /data/workspace'),
+          document.querySelector('.xc-sub').textContent, document.querySelector('.xc-msgs').textContent.includes('Model metadata'), [...document.querySelectorAll('.xc-msgs > :not(.xc-typing)')].some(e => e.textContent.includes('ls /data/workspace')),
           !!document.querySelector('.xc-tool'), document.querySelector('.xc-msgs').lastElementChild.classList.contains('xc-typing')]""")
-        check('发出去：默认模式传 Codex、思考强度最高、不带模型（小芯电脑上挑）；只有自己的一句和小芯的第一句，它执行的命令、无关警告都不显示，最后冒「正在输入」按它敲的命令写在干什么（ls → 找文件），标题栏也是；小芯坐到电脑前敲代码',
-              {k:v for k,v in xs['sent'].items() if k != 'clientId'} == {'agent': 'codex', 'text': '看看工作目录', 'effort': 'max'} and bool(xs['sent'].get('clientId')) and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '找文件…' and st[5:] == [False, False, False, True], (xs['sent'], st))
+        check('发出去：默认模式传 Codex、思考强度最高、不带模型（小芯电脑上挑）；只有自己的一句和小芯的第一句，它执行的命令、无关警告都不显示，最后冒「正在输入」写它此刻在做的那一步（在执行：ls …），标题栏写「执行中」；小芯坐到电脑前敲代码',
+              {k:v for k,v in xs['sent'].items() if k != 'clientId'} == {'agent': 'codex', 'text': '看看工作目录', 'effort': 'max'} and bool(xs['sent'].get('clientId')) and st[:4] == ['work', True, 1, '收到，我看看。'] and st[4] == '执行中…' and st[5:] == [False, False, False, True], (xs['sent'], st))
         try:
             await pg.wait_for_function(CHAT_DONE, timeout=8000)
         except Exception:

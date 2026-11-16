@@ -256,3 +256,22 @@
   - 后台在做时聊天最下面那一行是 `.xc-bgrow`，不要给它加 `.xc-typing`：浏览器测试判断「这一轮回完了」看的是有没有 `.xc-typing`。
   - 天启入口：`setAgent` / `newChat(stay, toMain, agent)`；`lm.xin.agent` 的意思是「现在看的这一页是谁的」，学习台单独打开时还按它判断。天启的颜色 token 是 `--tq*`，只用在天启的东西上。
   - 还没做（上一批记下的）：触屏上回答下面那一行按钮只有 28px 高。这一批没动那一行。
+
+## Claude Code · 北京时间 2026-11-16 15:00 后（工作台第三轮）
+
+- #154 北京 13:47 合并（`5c65fe7`），正式运行全绿、线上文件和合并的代码一致；分支照老办法接上 main（`966e638`，内容和 main 一样）后做第三轮。
+- 站长看了 #154 提的五件事（侧边栏像模板；切回小芯时标题闪一下、文案太口语；终端要像 Claude Code 的欢迎页；思考文字要跟着问题走；派了后台任务也要一直在动），原话、只读查到的事实和做法见设计 [2026-11-16-xin-workbench-round3-design.md](superpowers/specs/2026-11-16-xin-workbench-round3-design.md)，改了什么见 [CHANGES](CHANGES.md) 最新一条。一个 PR 上线。
+- 只读查过小芯电脑上的记录（前台 ACP 的思考、Antigravity 后台的步骤）；在电脑上试过的小探针都在临时目录里，跑完删了。没动用户的网关面板、没删机器和快照。
+- 给下一位：
+  - 状态行写什么，从具体到概括：真实的一步（前台事件在 `chat.js` 的 `stepOf`；任务摘要的 `activity` 在 `vm-events.mjs` 的 `stepActivity`）→ 前台开始时的概括（`vm-status.mjs`，事件 `{t:'think', src:'status'}`）→「思考中」。别再加轮换的字（impeccable：同一个概念同一个词）。
+  - `think` 事件：`src:'status'` 是概括（中文，放「正在输入」那一行）；`src:'model'` 是模型自己的思考——Hydrogen 的是英文，只画在终端里；天启（Harness）的是中文，概括没来时也放进「正在输入」。概括来了以后（`S.thinkFixed`）不再被模型的思考换掉。
+  - 概括的用量记成 `run_stat`，带 `key: run + '.status'`、`kind: 'status'`：`statAdd` 改成按 `key` 去重（原来按 `run`，状态那条会顶掉这一轮自己的记录），`modelStats` 不把它算一轮，`vm-usage` 不加 `runs`。内核的 RUN_REPORTS 要求 `args.run` 等于调用方自己的 run，不能编一个假的 run。
+  - 概括请求的提示词以「你是聊天界面的状态栏」开头，测试的假网关靠这一句认出它（`test/helpers/front-responses.cjs`、`xin-front-agy.test.cjs`）；改提示词的开头要一起改。
+  - 后台那一行 `.xc-bgrow` 两行：`.xc-bg-t` 任务名、`.xc-bg-s` 那一步（`swapText` 上下换）、`.xc-bg-sec` 秒数；后台有活、正看着这个对话时 `pollTasks` 2 秒一次。还是不要给它加 `.xc-typing`。
+  - 终端：夜景是 `term.js` 的 `SKY`（96×18 格）和 `scene()`。像素图的 SVG 一定要带 `xc-px` 类：全局的 `.xc svg:not(.xc-px)` 会加描边，云和星会糊成一团。改动的高亮 `hlCode` 一行一行认，不跨行。
+  - 侧边栏：「对话」小标题找 `.xc-dr-conv`——`.xc-dr-h` 可能有两个（有未发送的消息时上面还有一个）。触屏上侧边栏能点的都是 44px，`xin_main_e2e.py` 核对着。
+  - 欢迎页大标题只写名字（「小芯」「天启」）、不换行；`xin_term_e2e.py` 逐帧核对切换时标题一直是一行。点阵字（`scripts/build-font.py` 从 Unifont 取子集）没有「日」这些字，标题要用点阵字先看字库里有没有。
+  - 文案按设计文档第 4 节的术语表写；小芯头顶气泡里的话是它的性格，不按这个改。
+  - 还没做：回答下面那一行（复制、详情）触屏上只有 28px 高（前两批记下的）；后台任务的思考没翻成中文（Antigravity 不流式给思考，要多一次模型调用），聊天里只写步骤。
+  - 不要和浏览器测试同时跑 `npm run check`（内核那几条偶尔会超时）。
+  - 小芯的脸（`.xc-face` 里的 SVG）会被 `paintFace` 整块换掉（表情变了就换），所以脸的 SVG 一律 `pointer-events: none`，点击落在外面那层：按下和松开之间 SVG 被换掉，浏览器就不发 click（#156 的 CI 抓到过，`xin_term_e2e.py` 有一条专门核对）。以后在会被整块重画的东西里放可点的内容，也要这样处理。
