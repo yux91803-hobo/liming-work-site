@@ -98,8 +98,11 @@ export function fromCodex(o, state) {
       break;
     }
     case 'file_change': if (done) {
-      const detail = (it.changes || []).map(c => (c.kind ? (typeof c.kind==='object'?c.kind.type:c.kind) + ' ' : '') + c.path).join('\n');
-      out.push({ t: 'tool_end', id: it.id, name: 'Edit', detail: cut(detail, 600), ok: it.status !== 'failed', out: '' });
+      const kind = c => c.kind ? (typeof c.kind==='object'?c.kind.type:c.kind) + ' ' : '', changes = it.changes || [];
+      const detail = changes.map(c => kind(c) + c.path).join('\n');
+      // 改动差异（Codex app-server 的 FileUpdateChange.diff）按文件拼起来，网页的终端画成红绿行；旧的 exec 事件没有就是空的
+      const diff = changes.filter(c => typeof c.diff === 'string' && c.diff).map(c => '--- ' + kind(c) + c.path + '\n' + c.diff.replace(/\n+$/, '')).join('\n');
+      out.push({ t: 'tool_end', id: it.id, name: 'Edit', detail: cut(detail, 600), ok: it.status !== 'failed', out: cut(diff, OUT_MAX) });
     } break;
     case 'mcp_tool_call': {
       const detail = [it.server, it.tool].filter(Boolean).join(' · ');
