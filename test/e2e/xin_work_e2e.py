@@ -154,6 +154,22 @@ async def main():
         await pg.keyboard.press('Escape')
         await pg.wait_for_function("!document.querySelector('.xc').classList.contains('tray-open') && document.querySelector('.xc').classList.contains('show')")
         ui.check('Esc 先收起小芯岛的面板，工作台还开着', True)
+        # 收起途中再点小芯岛（站长 2026-11-16：动画不能卡）：收起的面板不接点击，这一下落到药丸上，面板从当前的位置展开回去
+        await pg.wait_for_function("!document.querySelector('.xc-work').classList.contains('pop')")
+        await pg.click('.xc-isle'); await pg.wait_for_function("document.querySelector('.xc-work').classList.contains('done')")
+        await pg.keyboard.press('Escape'); await pg.wait_for_timeout(60)
+        mid = await pg.evaluate("""(() => { const w = document.querySelector('.xc-work'), r = document.querySelector('.xc-isle').getBoundingClientRect(),
+          hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return [w.classList.contains('out'), !!(hit && hit.closest('.xc-isle'))]; })()""")
+        await pg.click('.xc-isle', force=True)
+        try:
+            await pg.wait_for_function("document.querySelector('.xc-work').classList.contains('done')", timeout=4000)
+        except Exception:
+            pass   # 没展开回去：下面照常记一条失败，别让整套停在这里
+        back = await pg.evaluate("[LimingXinChat.state.tray, document.querySelector('.xc-isle').getAttribute('aria-expanded'), document.querySelector('.xc').classList.contains('tray-open')]")
+        ui.check('小芯岛收起途中再点它：收起的面板不挡，这一下点在药丸上，面板从当前的位置展开回去', mid[1] and back == [True, 'true', True], (mid, back))
+        if back[0]:
+            await pg.keyboard.press('Escape')
+        await pg.wait_for_function("!document.querySelector('.xc').classList.contains('tray-open') && !document.querySelector('.xc-work').classList.contains('pop')")
         await pg.click('.xc-x')
         await pg.wait_for_function("!document.querySelector('.xc').classList.contains('show')")
         await pg.wait_for_timeout(300)
@@ -294,8 +310,9 @@ async def main():
         t1 = await pg.evaluate("[document.documentElement.dataset.theme, localStorage.getItem('lm.theme'), document.querySelector('.xc-toast').textContent, document.querySelector('.xc-toast').getAttribute('role')]")
         ui.check('命令面板「换成深色」：整站换成深色并记住，底部轻提示说一声（读屏能念）', t1 == ['dark', 'dark', '换成深色了', 'status'], t1)
         # 复制：一轮回答复制原文；代码块复制代码、能换行
-        acts = await pg.evaluate("[...document.querySelectorAll('.xc-mcopy')].filter(b => b.offsetParent).length")
-        await pg.click('.xc-mcopy:visible')
+        # 只数普通回答（后台做完转达的那几条也是普通消息、也能复制，另算）
+        acts = await pg.evaluate("[...document.querySelectorAll('.xc-ai:not(.xc-tres) .xc-mcopy')].filter(b => b.offsetParent).length")
+        await pg.click('.xc-ai:not(.xc-tres) .xc-mcopy:visible')
         await pg.wait_for_selector('.xc-mcopy.done')
         c1 = await pg.evaluate("(async () => [await navigator.clipboard.readText(), document.querySelector('.xc-mcopy.done span').textContent])()")
         await pg.click('.xc-code .xc-copy')

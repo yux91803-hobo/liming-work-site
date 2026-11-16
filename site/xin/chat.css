@@ -12,7 +12,7 @@
   --glow:#f4b74a;--glow-ink:#8a5a0f;--glow-soft:rgba(244,183,74,.16);--glow-ring:rgba(232,166,52,.42);
   --wait:#d9622b;--wait-ink:#ae4516;--ok:#2f8a57;--bad:#c5432e;--bad-ink:#b13a26;
   --code:#1a1917;--code-ink:#ece6da;--code-mute:#958f84;
-  --e-out:cubic-bezier(.22,1,.36,1);--e-in:cubic-bezier(.4,0,1,1);--e-spring:cubic-bezier(.3,1.32,.6,1);
+  --e-out:cubic-bezier(.22,1,.36,1);--e-in:cubic-bezier(.4,0,1,1);--e-spring:cubic-bezier(.3,1.32,.6,1);--e-io:cubic-bezier(.32,.72,0,1);--e-isle:var(--e-io);
   --sh-1:0 1px 2px rgba(28,24,18,.06),0 6px 18px -12px rgba(28,24,18,.22);
   --sh-2:0 2px 8px -2px rgba(28,24,18,.12),0 30px 60px -28px rgba(28,24,18,.42);
   --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","MiSans","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei","Noto Sans SC","Noto Sans CJK SC",system-ui,"Segoe UI",Roboto,sans-serif;
@@ -98,16 +98,18 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-wb-b .xc-wb-in{display:contents}
 @media (max-width:899px){.xc.wb .xc-wb-b{display:none}}
 
-/* 小芯岛：一颗芯片黑的药丸，像小芯的身体。脸会眨眼、想事情抬眼、在电脑上忙侧身；右边是在做几件、几件等你 */
+/* 小芯岛：一颗芯片黑的药丸，像小芯的身体。脸会眨眼、想事情抬眼、在电脑上忙侧身；右边是在做几件、几件等你。
+   背景和展开的面板顶上那一截一模一样（同一条渐变），展开第一帧看不出换了个东西 */
+@supports (transition-timing-function:linear(0,1)){.xc{--e-isle:linear(0,.065,.212,.386,.555,.7,.815,.901,.959,.996,1.017,1.026,1.028,1.026,1.022,1.017,1.012,1.008,1.005,1.003,1.001,1,.999,.999,.999,1)}}
 .xc-isle{--rad:999px;position:relative;display:inline-flex;align-items:center;gap:9px;height:42px;max-width:min(330px,60vw);padding:0 14px 0 5px;
-  background:linear-gradient(180deg,var(--chip-2),var(--chip));color:var(--chip-ink);
+  background:linear-gradient(180deg,var(--chip-2) 0,var(--chip) 160px);color:var(--chip-ink);
   box-shadow:inset 0 1px 0 var(--chip-hi),0 0 0 1px rgba(0,0,0,.04),0 6px 16px -8px rgba(20,16,10,.55);
-  transition:transform .2s var(--e-spring),box-shadow .2s var(--e-out);-webkit-tap-highlight-color:transparent;cursor:pointer}
+  transition:width .34s var(--e-isle),transform .2s var(--e-io),box-shadow .2s var(--e-out);-webkit-tap-highlight-color:transparent;cursor:pointer}
 [data-theme=dark] .xc-isle{box-shadow:inset 0 1px 0 var(--chip-hi),0 0 0 1px rgba(255,255,255,.06),0 6px 18px -8px rgba(0,0,0,.8)}
 @media (hover:hover){.xc-isle:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 var(--chip-hi),0 0 0 1px rgba(0,0,0,.04),0 10px 22px -10px rgba(20,16,10,.6)}}
 .xc-isle:active{transform:scale(.96);transition-duration:.1s}
 .xc-isle:disabled{opacity:.6;cursor:default}
-.xc-isle[aria-expanded=true]{opacity:0}
+.xc-isle.under{opacity:0}
 .xc-face{display:inline-flex;flex:none;width:34px;height:25px}
 .xc-face svg{display:block;width:100%;height:100%}
 /* 小芯岛、面板标题里的小芯：住在一个圆窗里，窗里一点暖光，黑色机身才看得出轮廓 */
@@ -119,11 +121,20 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-sub{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;color:var(--chip-ink-2);font-variant-numeric:tabular-nums}
 .xc-sub:empty{display:none}
 .xc-sub.busy{color:var(--glow)}
-.xc-isle-n{display:inline-flex;gap:4px}
-.xc-isle-n:empty{display:none}
-.xc-isle-n i{--rad:999px;display:grid;place-items:center;min-width:20px;height:20px;padding:0 6px;font:600 11.5px/1 var(--sans);font-style:normal;font-variant-numeric:tabular-nums}
-.xc-isle-n i.r{color:var(--glow);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--glow) 55%,transparent)}
-.xc-isle-n i.w{background:var(--wait);color:#1a0d06}
+.xc-isle-n,.xc-wk-n{display:inline-flex;flex:none;gap:4px}
+.xc-isle-n:empty,.xc-wk-n:empty{display:none}
+.xc-isle-n i,.xc-wk-n i{--rad:999px;display:grid;place-items:center;min-width:20px;height:20px;padding:0 6px;font:600 11.5px/1 var(--sans);font-style:normal;font-variant-numeric:tabular-nums}
+.xc-isle-n i{animation:xcbadge .36s var(--e-isle) both}
+@keyframes xcbadge{from{opacity:0;transform:scale(.5)}}
+.xc-isle-n i.r,.xc-wk-n i.r{color:var(--glow);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--glow) 55%,transparent)}
+.xc-isle-n i.w,.xc-wk-n i.w{background:var(--wait);color:#1a0d06}
+/* 换字：旧字往上淡出、新字从下面进来，叠在同一格里；外面这一层的宽度跟着平滑变 */
+.xc-sw-w{display:inline-grid;min-width:0;overflow:hidden;transition:width .34s var(--e-isle)}
+.xc-sw-w > *{grid-area:1/1;min-width:0}
+.xc-sw-in{animation:xcswin .32s var(--e-out) both}
+.xc-sw-o{animation:xcswout .2s var(--e-in) both;pointer-events:none}
+@keyframes xcswin{from{opacity:0;transform:translateY(60%)}}
+@keyframes xcswout{to{opacity:0;transform:translateY(-60%)}}
 .xc-isle.busy .xc-face svg,.xc-face.f-work svg{animation:xcbob .5s steps(2,end) infinite}
 @keyframes xcbob{50%{transform:translateY(1px)}}
 /* 眨眼、左右看：只动眼睛的像素 */
@@ -517,25 +528,40 @@ body.xc-open.xc-wb #home{margin-right:0}
 
 /* ---------- 小芯岛展开的面板：芯片黑，从药丸里长出来；钉住以后是右边一栏 ---------- */
 .xc-work{position:absolute;z-index:12;display:none;flex-direction:column;--rad:22px;
-  background:linear-gradient(180deg,var(--chip-2),var(--chip) 160px);color:var(--chip-ink);
-  box-shadow:inset 0 1px 0 var(--chip-hi),0 0 0 1px rgba(0,0,0,.05),0 30px 70px -26px rgba(16,12,6,.62);
-  transition:clip-path .36s var(--e-spring)}
-[data-theme=dark] .xc-work{box-shadow:inset 0 1px 0 var(--chip-hi),0 0 0 1px rgba(255,255,255,.07),0 30px 70px -26px rgba(0,0,0,.9)}
+  background:linear-gradient(180deg,var(--chip-2) 0,var(--chip) 160px);color:var(--chip-ink);
+  box-shadow:inset 0 1px 0 var(--chip-hi),0 0 0 1px rgba(0,0,0,.05),0 0 0 0 transparent}
+[data-theme=dark] .xc-work{box-shadow:inset 0 1px 0 var(--chip-hi),0 0 0 1px rgba(255,255,255,.07),0 0 0 0 transparent}
 .xc-work.pop{display:flex}
-.xc.tray-open::after{content:"";position:absolute;inset:0;z-index:11;background:rgba(18,15,10,.18);pointer-events:none;animation:xcfade .2s var(--e-out)}
-[data-theme=dark] .xc.tray-open::after{background:rgba(0,0,0,.35)}
-.xc:not(.tray-open) .xc-work.pop{transition:clip-path .22s var(--e-in)}
-.xc-work .xc-wk-sc{opacity:0;transition:opacity .14s var(--e-in)}
-.xc-work.in .xc-wk-sc{opacity:1;transition:opacity .22s var(--e-out) .1s}
+.xc-work.done{box-shadow:inset 0 1px 0 var(--chip-hi),0 0 0 1px rgba(0,0,0,.05),0 30px 70px -26px rgba(16,12,6,.62);transition:box-shadow .28s var(--e-out)}
+[data-theme=dark] .xc-work.done{box-shadow:inset 0 1px 0 var(--chip-hi),0 0 0 1px rgba(255,255,255,.07),0 30px 70px -26px rgba(0,0,0,.9)}
+.xc-work.mv{will-change:clip-path}
+.xc-work.mv.in{transition:clip-path .5s var(--e-isle)}
+/* 收起途中面板不接点击：这时再点小芯岛，点击落到下面的药丸上，从当前的位置展开回去（ui-ux-pro-max「interruptible」） */
+.xc-work.mv.out{transition:clip-path .26s var(--e-io);pointer-events:none}
+.xc-wk-id{display:flex;align-items:center;gap:9px;flex:1;min-width:0}
+.xc-work.mv.in .xc-wk-id{transition:transform .5s var(--e-isle)}
+.xc-work.mv.out .xc-wk-id{transition:transform .26s var(--e-io)}
+/* 遮罩：一直在，淡入淡出（以前收起时一下子没了） */
+.xc::before{content:"";position:absolute;inset:0;z-index:11;background:rgba(18,15,10,.18);pointer-events:none;opacity:0;visibility:hidden;transition:opacity .2s var(--e-in),visibility 0s .2s}
+[data-theme=dark] .xc::before{background:rgba(0,0,0,.35)}
+.xc.tray-open::before{opacity:1;visibility:visible;transition:opacity .3s var(--e-out)}
+/* 面板里的东西：形状长到一半再进来（往上一点、淡入），收起时先走 */
+.xc-work .xc-wk-sc{opacity:0;transform:translateY(8px);transition:opacity .1s var(--e-in),transform .1s var(--e-in)}
+.xc-work.in .xc-wk-sc{opacity:1;transform:none;transition:opacity .26s var(--e-out) .12s,transform .5s var(--e-isle) .06s}
+.xc-work .xc-wk-pin,.xc-work .xc-wk-x{opacity:0;transition:opacity .08s var(--e-in)}
+.xc-work.in .xc-wk-pin,.xc-work.in .xc-wk-x{opacity:1;transition:opacity .22s var(--e-out) .16s}
+.xc-work.enter .wk-c,.xc-work.enter .wk-h,.xc-work.enter .wk-seg{animation:xcwkin .42s var(--e-out) both;animation-delay:calc(150ms + var(--i,0) * 28ms)}
+@keyframes xcwkin{from{opacity:0;transform:translateY(8px)}}
 .xc-work.flash{animation:xcflash .6s var(--e-out)}
 @keyframes xcflash{30%{box-shadow:inset 0 0 0 2px var(--glow-ring)}}
 .xc.wb.wb-pin:not(.locked) .xc-work{grid-area:work;position:relative;display:flex;--rad:0;clip-path:none;background:var(--chip);
   box-shadow:inset 1px 0 0 rgba(0,0,0,.2)}
-.xc.wb.wb-pin .xc-work .xc-wk-sc{opacity:1}
+.xc.wb.wb-pin .xc-work .xc-wk-sc{opacity:1;transform:none}
+.xc.wb.wb-pin .xc-work .xc-wk-pin,.xc.wb.wb-pin .xc-work .xc-wk-x{opacity:1}
 .xc-wk-hd{display:flex;align-items:center;gap:9px;flex:none;height:42px;padding:0 4px 0 5px}
 .xc.wb.wb-pin .xc-wk-hd{height:calc(62px + var(--st));padding:var(--st) 8px 0 14px;box-shadow:inset 0 -1px 0 var(--chip-hair)}
 
-.xc-wk-t{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px;white-space:nowrap}
+.xc-wk-t{min-width:0;display:flex;align-items:baseline;gap:8px;white-space:nowrap}
 .xc-wk-t b{font-size:14px;font-weight:600;letter-spacing:.02em}
 .xc-wk-st{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;color:var(--chip-ink-2)}
 .xc-wk-st.busy{color:var(--glow)}
@@ -700,20 +726,18 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-tk-note{flex-basis:100%;margin:0;font-size:12.5px;color:var(--glow-ink)}
 .xc-tk-note:empty{display:none}
 .xc-preview{--rad:999px;display:inline-flex;align-items:center;height:32px;margin:0 0 10px;padding:0 14px;background:var(--ink);color:var(--surface);font-size:13px;font-weight:500;text-decoration:none}
-/* 任务结果：小芯在聊天里说的一条 */
-.xc-tres-h{display:flex;align-items:baseline;gap:8px;margin:0 0 6px;font-size:14px;font-weight:650;line-height:1.5}
-.xc-tres-h span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.xc-tres-st{flex:none;font-style:normal;font-weight:500;font-size:12.5px;color:var(--wait-ink)}
-.xc-tres.tbad .xc-tres-st,.xc-tres-err{color:var(--bad-ink)}
-.xc-tres-q{margin:0;font-size:15px}
-.xc-tres-err{margin:6px 0 0;font-size:13px;white-space:pre-wrap}
-.xc-tres > .xc-bub{padding:12px 16px 10px;--rad:4px 18px 18px 18px;background:var(--surface);box-shadow:0 0 0 1px var(--hair),var(--sh-1)}
-.xc-tres-f{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;padding-top:9px;box-shadow:inset 0 1px 0 var(--hair);font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.xc-tres-f span{flex:1}
+/* 任务结果：小芯在聊天里说的一条，和别的回答一样（站长 2026-11-16：不要卡片）；没做成的错误原文小一号、红字 */
+.xc-tres-err{margin:6px 0 0;font-size:13px;white-space:pre-wrap;color:var(--bad-ink)}
 .xc-task-btn{--rad:999px;display:inline-flex;align-items:center;min-height:32px;padding:5px 13px;background:var(--paper);box-shadow:inset 0 0 0 1px var(--hair-2);font-size:13px;color:var(--ink);text-decoration:none;transition:background-color .15s}
 .xc-task-btn:disabled{opacity:.5}
 @media (hover:hover){.xc-task-btn:not(:disabled):hover{background:var(--sunk)}}
-.xc-tres-f .xc-preview{margin:0;height:32px}
+/* 任务结果下面那行小操作：和「复制」一样轻；要你处理的主按钮实心 */
+.xc-tact{--rad:8px;display:inline-flex;align-items:center;height:28px;padding:0 10px;font-size:12.5px;color:var(--ink-3);text-decoration:none;transition:background-color .15s,color .15s}
+@media (hover:hover){.xc-tact:hover{background:var(--sunk);color:var(--ink)}}
+.xc-tact.on{--rad:999px;margin-right:4px;padding:0 14px;background:var(--ink);color:var(--surface);font-weight:550}
+@media (hover:hover){.xc-tact.on:hover{background:var(--ink);color:var(--surface);opacity:.88}}
+.xc-acts .xc-tact.pv{--rad:8px;height:28px;margin:0;padding:0 10px;background:transparent;color:var(--ink-2);font-weight:550}
+@media (hover:hover){.xc-acts .xc-tact.pv:hover{background:var(--sunk);color:var(--ink)}}
 /* 以前的任务卡片（聊天里不再放，任务中心页还在用） */
 .xc-task{padding:10px 12px;--rad:14px;background:var(--surface);box-shadow:0 0 0 1px var(--hair);font-size:13px}
 .xc-task-h{display:flex;align-items:center;gap:7px;min-width:0}
@@ -912,6 +936,13 @@ body.xs-open{overflow:hidden}
 .xu-rg{--rad:9px;min-width:60px;height:32px;padding:0 12px;font-size:13px;font-weight:500;color:var(--ink-2);transition:background-color .18s,color .18s}
 .xu-rg.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(20,16,10,.14)}
 @media (pointer:coarse){.xu-rg{height:38px}}
+/* 来源：Google | 网关（站长 2026-11-16）——整行两等分，比时间范围那组大一号；切换时下面淡入 */
+.xu-src{display:flex;width:100%;margin:10px 0 2px}
+.xu-sc{flex:1;--rad:9px;height:36px;padding:0 12px;font-size:14px;font-weight:550;color:var(--ink-2);transition:background-color .18s,color .18s}
+.xu-sc.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(20,16,10,.14)}
+@media (hover:hover){.xu-sc:not(.on):hover{color:var(--ink)}}
+@media (pointer:coarse){.xu-sc{height:40px}}
+.xu-sb.swap{animation:xcfade .22s var(--e-out)}
 .xu-sum{margin:14px 2px 6px;font-size:13.5px;line-height:1.6;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .xu-wake,.xu-owner{margin:10px 2px 0;font-size:13px;line-height:1.6;color:var(--ink-3);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .xu-wake+.xu-owner{margin-top:2px}
@@ -1002,6 +1033,7 @@ body.xs-open{overflow:hidden}
 /* ---------- 减少动态：只留颜色和状态 ---------- */
 @media (prefers-reduced-motion:reduce){
   .xc,.xc.wb,.xc-drawer,.xc-scrim,.xc-work,.xc-sheet,.xc-pal,.xc-pal-box,.xc-toast,.xc-isle,.xc-send,.xc-plus,.xc-sw::after,body.xc-open #home{transition:none !important}
-  .xc-m.enter,.xc-me.enter,.xc-sheet,.xc-menu,.xc-pick,.xc-att,.xc-jump,.xq,.xc-sa,.xc-login.no,.wk-body.swap,.xc-dr-ft .xc-set,.xc-work.flash{animation:none !important}
+  .xc-m.enter,.xc-me.enter,.xc-sheet,.xc-menu,.xc-pick,.xc-att,.xc-jump,.xq,.xc-sa,.xc-login.no,.wk-body.swap,.xc-dr-ft .xc-set,.xc-work.flash,.xc-isle-n i,.xc-sw-in,.xc-sw-o,.xc-work.enter .wk-c,.xc-work.enter .wk-h,.xc-work.enter .wk-seg{animation:none !important}
+  .xc-wk-id,.xc-work .xc-wk-sc,.xc-sw-w{transition:none !important;transform:none !important}
   .xc-face .c-ew,.xc-face svg,.xc-typing .xc-bub i,.wk-bar::after,.wk-c.live .wk-ic::after,.xc-st.wait::before,.xc-task-st::before,.xc.running .xc-send,.xc-dr-st.busy::before,.xc-mainb.live i::before,.xc-tk-cmd.now::before,.xc-glow::before,.xw-t,.xw-st.busy i,.xw-t.run .xw-g{animation:none !important}
 }

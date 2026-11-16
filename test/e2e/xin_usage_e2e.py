@@ -163,13 +163,24 @@ async def main():
         wake = await pg.evaluate("(document.querySelector('.xc-sheet .xu-wake') || {}).textContent || ''")
         ui.check('用量页：显示最近几次叫醒电脑用了多久', wake == '叫醒电脑：最近 3 次，一般 40 秒，最长 52 秒', wake)
         ui.check('用量页：没有主人状态（旧 Worker、exec 通道）就不显示「状态」这一行', await pg.evaluate("!document.querySelector('.xc-sheet .xu-owner')"))
-        page = await pg.evaluate("""(() => { const s = document.querySelector('.xc-sheet'); return {title: s.querySelector('.xc-sh-hd b').textContent,
+        PAGE = """(() => { const s = document.querySelector('.xc-sheet'); return {title: s.querySelector('.xc-sh-hd b').textContent,
+          srcs: [...s.querySelectorAll('.xu-sc')].map(e => e.textContent), src: (s.querySelector('.xu-sc.on') || {}).textContent,
           quota: s.querySelectorAll('.xq-row').length, tabs: [...s.querySelectorAll('.xu-rg')].map(e => e.textContent), on: (s.querySelector('.xu-rg.on') || {}).textContent,
           days: s.querySelectorAll('.xu-day').length, empty: s.querySelectorAll('.xu-day.empty').length, legend: [...s.querySelectorAll('.xu-lg li')].map(e => e.textContent),
-          models: [...s.querySelectorAll('.xu-m')].map(e => e.innerText.replace(/\\s+/g, ' ')), sum: s.querySelector('.xu-sum').textContent}; })()""")
-        ok = page['title'] == '用量' and page['quota'] == 2 and page['tabs'] == ['今天', '7 天', '30 天'] and page['on'] == '7 天' and page['days'] == 7 \
-            and len(page['legend']) >= 2 and any('Gemini 4 Hydrogen' in m for m in page['models']) and '缓存命中' in page['sum']
-        ui.check('用量页：额度、范围（默认 7 天）、合计含缓存命中、7 根柱、图例和按模型列表', ok, page)
+          models: [...s.querySelectorAll('.xu-m')].map(e => e.innerText.replace(/\\s+/g, ' ')), sum: s.querySelector('.xu-sum').textContent}; })()"""
+        page = await pg.evaluate(PAGE)
+        ok = page['title'] == '用量' and page['srcs'] == ['Google', '网关'] and page['src'] == 'Google' and page['quota'] == 2 and page['tabs'] == ['今天', '7 天', '30 天'] \
+            and page['on'] == '7 天' and page['days'] == 7 and page['legend'] == ['Gemini 4 Hydrogen'] and all('Gemini' in m for m in page['models']) and '缓存命中' in page['sum'] and '18 轮' in page['sum']
+        ui.check('用量页：Google 和网关分开（默认 Google）；Google 这边有额度、范围（默认 7 天）、只算 Gemini 的合计（含缓存命中）、7 根柱、图例和按模型列表', ok, page)
+        calls = st.get('usage_calls')
+        await pg.click('.xc-sheet .xu-sc:has-text("网关")')
+        await pg.wait_for_timeout(300)
+        gw = await pg.evaluate(PAGE)
+        ok = gw['src'] == '网关' and gw['quota'] == 0 and gw['days'] == 7 and sorted(gw['legend']) == sorted(['DeepSeek V4.1 Flash', 'GLM-5.3', 'Kimi K3.1 Pro', 'GLM-5.3 Flash']) \
+            and not any('Gemini' in m for m in gw['models']) and '缓存命中' in gw['sum'] and st.get('usage_calls') == calls
+        ui.check('切到网关：没有额度卡，只算 DeepSeek、GLM、Kimi（图例和列表里没有 Gemini），不再请求；记在这个浏览器里', ok and await pg.evaluate("localStorage.getItem('lm.xin.uSrc')") == 'gateway', gw)
+        await pg.click('.xc-sheet .xu-sc:has-text("Google")')
+        await pg.wait_for_timeout(200)
         calls = st.get('usage_calls')
         await pg.click('.xc-sheet .xu-rg:has-text("30 天")')
         await pg.wait_for_timeout(300)
@@ -183,7 +194,7 @@ async def main():
         await pg.context.close()
 
         # 5b. 用量页每分钟刷新一次：数据换了，读到一半的位置不跳回顶部；头像弹出的卡片标着展开状态
-        pg, st = await setup(browser, clock=True)
+        pg, st = await setup(browser, 1280, 600, clock=True)   # 矮一点：Google 那边内容短，窗口高了页面滚不动
         av = pg.locator('#xinWork .xc-glow')
         ui.check('额度卡关着时头像标着未展开', await av.get_attribute('aria-expanded') == 'false', await av.get_attribute('aria-expanded'))
         await av.click()
@@ -193,9 +204,9 @@ async def main():
         await pg.wait_for_selector('.xc-sheet:not([hidden]) .xu-ms', timeout=15000)
         top = await pg.evaluate("(() => { const b = document.querySelector('.xc-sheet .xu'); b.scrollTop = b.scrollHeight; return b.scrollTop; })()")
         calls = st.get('usage_calls')
-        st['usage']['totals']['d7']['runs'] += 1
+        st['usage']['days'][-1]['models']['gemini-4-hydrogen']['runs'] += 1   # 合计按天加：今天 Gemini 多一轮 → 7 天 19 轮
         await pg.clock.fast_forward(61000)
-        await pg.wait_for_function("document.querySelector('.xc-sheet .xu-sum') && /%d 轮/.test(document.querySelector('.xc-sheet .xu-sum').textContent)" % st['usage']['totals']['d7']['runs'], timeout=10000)
+        await pg.wait_for_function("document.querySelector('.xc-sheet .xu-sum') && /19 轮/.test(document.querySelector('.xc-sheet .xu-sum').textContent)", timeout=10000)
         after = await pg.evaluate("document.querySelector('.xc-sheet .xu').scrollTop")
         ui.check('用量页每分钟刷新，滚到的位置不跳回顶部', top > 0 and st.get('usage_calls') > calls and abs(after - top) <= 1, (top, after, calls, st.get('usage_calls')))
         await pg.context.close()

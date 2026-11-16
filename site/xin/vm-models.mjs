@@ -46,6 +46,13 @@ export function codexModel(id) { return CODEX_MODELS.find(m => m.id === id) || C
 // 只用来显示名字：认得后台的 Gemini（Antigravity）和前台的 Opus；不认识的原样显示编号，不冒充成列表里第一个（审查问题 13）
 const OTHER_NAMES = { 'gemini-4-hydrogen': 'Gemini 4 Hydrogen' };
 export function modelLabel(id) { const m = CODEX_MODELS.find(x => x.id === id) || HARNESS_MODELS.find(x => x.id === id); return m ? m.name : OTHER_NAMES[id] || String(id || '未知模型'); }
+// 用量页按来源分（站长 2026-11-16：「把网关和谷歌的分开」）：Google = Antigravity 的 Gemini；网关 = 小芯电脑上 WorkBuddy 网关的模型；其他（以前的 Claude 之类）
+export function modelSource(id) {
+  id = String(id || '');
+  if (id === runtime.AGY_MODEL || /^gemini/i.test(id)) return 'google';
+  if (CODEX_MODELS.some(m => m.id === id) || HARNESS_MODELS.some(m => m.id === id) || /^(?:glm|kimi|deepseek|qwen)/i.test(id)) return 'gateway';
+  return 'other';
+}
 
 /* ---------- 默认模式（Codex 自动）：路由器 ----------
    网页上「天启模式」关着（默认）时，新对话用 Codex：用户不选模型和思考强度。思考强度一律最高（AUTO_EFFORT），
