@@ -15,7 +15,8 @@ function agentEnv(extraEnv = {}) {
 }
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 
-test('云电脑刚醒、网关在预热：前台先等预热做完再发请求，不再 25 秒就放弃；等的时候告诉网页「刚醒」', async () => {
+// 告诉网页的那句 2026-11-16 按文案标准改成「电脑刚唤醒，正在连接网络」（原来「电脑刚醒，网络在热身，稍等一下」），下面按「刚唤醒」认
+test('云电脑刚醒、网关在预热：前台先等预热做完再发请求，不再 25 秒就放弃；等的时候告诉网页「刚唤醒」', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-b2-cold-')), cold = path.join(tmp, 'cold'), log = path.join(tmp, 'front.log');
   const { xin, op } = agentEnv({ XIN_FRONT_TEST_COLD: cold, XIN_FRONT_TEST_LOG: log });
   fs.mkdirSync(xin, { recursive: true });
@@ -29,7 +30,7 @@ test('云电脑刚醒、网关在预热：前台先等预热做完再发请求�
   // 参考 Node.js doc/contributing/writing-tests.md 的 Timers 一节：除非测的就是计时，别用定时器，它是不稳定的主要来源。
   let told = false;
   for (const end = performance.now() + platformTimeout(20000); performance.now() < end;) {
-    if (op('poll', { run: r.run, off: 0 }).events.some(e => e.t === 'status' && /刚醒/.test(e.text))) { told = true; break; }
+    if (op('poll', { run: r.run, off: 0 }).events.some(e => e.t === 'status' && /刚唤醒/.test(e.text))) { told = true; break; }
     await sleep(200);
   }
   assert.ok(told, '等预热时告诉网页');
@@ -43,7 +44,7 @@ test('云电脑刚醒、网关在预热：前台先等预热做完再发请求�
   const done = p.events.find(e => e.t === 'done');
   assert.equal(done.ok, true, JSON.stringify(p.events.slice(-3)));
   assert.ok(p.events.some(e => e.t === 'text' && e.text === '好的'), '有回答');
-  assert.ok(p.events.some(e => e.t === 'status' && /刚醒/.test(e.text)), '等预热时告诉网页');
+  assert.ok(p.events.some(e => e.t === 'status' && /刚唤醒/.test(e.text)), '等预热时告诉网页');
   assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1, '只发了一次请求，而且是在预热之后');
 });
 
@@ -56,7 +57,7 @@ test('预热记录坏了或卡死（超过 200 秒还标着在跑）：前台不
   let p = null;
   for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await sleep(150); }
   assert.ok(p && p.done && p.events.find(e => e.t === 'done').ok);
-  assert.ok(!p.events.some(e => e.t === 'status' && /刚醒/.test(e.text)), '没有等');
+  assert.ok(!p.events.some(e => e.t === 'status' && /刚唤醒/.test(e.text)), '没有等');
   assert.ok(performance.now() - t0 < platformTimeout(10000));
 });
 

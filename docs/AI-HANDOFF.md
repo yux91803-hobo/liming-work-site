@@ -264,5 +264,26 @@
 - 已核对最新 main #155 / `eb1afaa`、正式 43831290224 全绿；3A 发布与编号只读证据见 #155。已在恢复计划中落账 3A 完成，不再把旧截图 #151 当最新进度。
 - 独立工作树 `/workspace/liming-kernel-finalize`，分支 `codex/xin-kernel-finalize-20261116`。实际实现与交叉检查均为 Codex（根代理与子代理），没有 Claude Code 独立复核；旧分支、提交和工作树均保留。
 - 本子批：run/attempt 私有文件队列、事务内的 remember/ask 与请求回执、重送/冲突/结束校验、临时错误留队、文件与目录 fsync、Codex 和 Antigravity 的局部工作区副本。工作台界面未改，天启不启用沙盒队列协议。
+- 后续继续时重新核对发现 main 已到 #157 / `a50b912`，正式 43868469062 成功；正常合并保留 #156/#157 的 UI、事件输出和 owner_unavailable 修复，仅合并文档冲突。此前 966/174/174 对应旧基线，浏览器进程中断只跑到部分，不能当成完整 E2E；接入后重新验收。
 - 发布：兼容读取方 `BRIDGE_DEFAULT=false`，正式验证后再独立 PR 开启新轮次分配；已有协议不受关闭分配影响。开启后的最低回滚目标必须是已正式验证的本子批读取方，不能直接回 #155。测试/CI/正式最终结果以本批 PR 描述为准，未通过不合并。
 - 剩余：[持久收尾计划](superpowers/plans/2026-11-16-xin-finalization.md) 尚未实现，包含固定结果包、阶段回执、受控验收/文件发布与长失联报告；不把队列回执当整个 3B 完成。同 UID 身份不是权限凭据，宿主授权 C 与凭据代理另批；legacy 继续保留。
+
+## Claude Code · 北京时间 2026-11-16 15:00 后（工作台第三轮）
+
+- #154 北京 13:47 合并（`5c65fe7`），正式运行全绿、线上文件和合并的代码一致；分支照老办法接上 main（`966e638`，内容和 main 一样）后做第三轮。
+- 站长看了 #154 提的五件事（侧边栏像模板；切回小芯时标题闪一下、文案太口语；终端要像 Claude Code 的欢迎页；思考文字要跟着问题走；派了后台任务也要一直在动），原话、只读查到的事实和做法见设计 [2026-11-16-xin-workbench-round3-design.md](superpowers/specs/2026-11-16-xin-workbench-round3-design.md)，改了什么见 [CHANGES](CHANGES.md) 最新一条。一个 PR 上线。
+- 只读查过小芯电脑上的记录（前台 ACP 的思考、Antigravity 后台的步骤）；在电脑上试过的小探针都在临时目录里，跑完删了。没动用户的网关面板、没删机器和快照。
+- 给下一位：
+  - 状态行写什么，从具体到概括：真实的一步（前台事件在 `chat.js` 的 `stepOf`；任务摘要的 `activity` 在 `vm-events.mjs` 的 `stepActivity`）→ 前台开始时的概括（`vm-status.mjs`，事件 `{t:'think', src:'status'}`）→「思考中」。别再加轮换的字（impeccable：同一个概念同一个词）。
+  - `think` 事件：`src:'status'` 是概括（中文，放「正在输入」那一行）；`src:'model'` 是模型自己的思考——Hydrogen 的是英文，只画在终端里；天启（Harness）的是中文，概括没来时也放进「正在输入」。概括来了以后（`S.thinkFixed`）不再被模型的思考换掉。
+  - 概括的用量记成 `run_stat`，带 `key: run + '.status'`、`kind: 'status'`：`statAdd` 改成按 `key` 去重（原来按 `run`，状态那条会顶掉这一轮自己的记录），`modelStats` 不把它算一轮，`vm-usage` 不加 `runs`。内核的 RUN_REPORTS 要求 `args.run` 等于调用方自己的 run，不能编一个假的 run。
+  - 概括请求的提示词以「你是聊天界面的状态栏」开头，测试的假网关靠这一句认出它（`test/helpers/front-responses.cjs`、`xin-front-agy.test.cjs`）；改提示词的开头要一起改。
+  - 后台那一行 `.xc-bgrow` 两行：`.xc-bg-t` 任务名、`.xc-bg-s` 那一步（`swapText` 上下换）、`.xc-bg-sec` 秒数；后台有活、正看着这个对话时 `pollTasks` 2 秒一次。还是不要给它加 `.xc-typing`。
+  - 终端：夜景是 `term.js` 的 `SKY`（96×18 格）和 `scene()`。像素图的 SVG 一定要带 `xc-px` 类：全局的 `.xc svg:not(.xc-px)` 会加描边，云和星会糊成一团。改动的高亮 `hlCode` 一行一行认，不跨行。
+  - 侧边栏：「对话」小标题找 `.xc-dr-conv`——`.xc-dr-h` 可能有两个（有未发送的消息时上面还有一个）。触屏上侧边栏能点的都是 44px，`xin_main_e2e.py` 核对着。
+  - 欢迎页大标题只写名字（「小芯」「天启」）、不换行；`xin_term_e2e.py` 逐帧核对切换时标题一直是一行。点阵字（`scripts/build-font.py` 从 Unifont 取子集）没有「日」这些字，标题要用点阵字先看字库里有没有。
+  - 文案按设计文档第 4 节的术语表写；小芯头顶气泡里的话是它的性格，不按这个改。
+  - 还没做：回答下面那一行（复制、详情）触屏上只有 28px 高（前两批记下的）；后台任务的思考没翻成中文（Antigravity 不流式给思考，要多一次模型调用），聊天里只写步骤。
+  - 不要和浏览器测试同时跑 `npm run check`（内核那几条偶尔会超时）。其中「流：对方断开就停，不再调 poll」的原因已经查清并修了（#157：断开前起的那次 poll 计数晚到，现在等流结束的记录再数）。
+  - #156 北京 19:47 合并后，正式联调在部署换状态进程的几秒里收到包在结果里的 `owner_unavailable`，判失败、20:00 自动回滚到 #155（`580cdaae`）。原因和修复见 CHANGES 最新一条：`src/xin.js` 的 `call` 把控制器回来的「没执行」（`{error:'owner_unavailable', executed:false}`）也回成「稍等」。修复另开 PR 合并后，第三轮随正式部署一起再上线一次。查电脑上换状态进程的经过：`~/.xin/logs/kernel.jsonl` 里 `"route":"state"` 的 stop / exit / start / ready 和 `agent_missing`（只读）。
+  - 小芯的脸（`.xc-face` 里的 SVG）会被 `paintFace` 整块换掉（表情变了就换），所以脸的 SVG 一律 `pointer-events: none`，点击落在外面那层：按下和松开之间 SVG 被换掉，浏览器就不发 click（#156 的 CI 抓到过，`xin_term_e2e.py` 有一条专门核对）。以后在会被整块重画的东西里放可点的内容，也要这样处理。

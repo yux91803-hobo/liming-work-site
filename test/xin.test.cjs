@@ -2332,6 +2332,32 @@ test('主人暂时不在：不退 exec，回可重试的「稍等」；待送达
   } finally { ib.restore(); }
 });
 
+// #156 正式联调失败（北京 2026-11-16 20:00）：部署后外壳换状态进程的几秒里，内核起的控制器进程连不上它，
+// 把「没执行」当结果打印回来（vm-kernel-client.mjs：{error:'owner_unavailable', executed:false}），内核包成 ok 交回来，
+// Worker 当成功给了网页和联调，联调第一个 usage 就判失败、自动回滚。和内核自己回 owner_unavailable 是一回事：都回「稍等」
+test('状态进程正在换：控制器把「没执行」当结果回来，也回可重试的「稍等」（内核和 exec 两条路）；别的出错照旧', async () => {
+  const unavailable = { error: 'owner_unavailable', msg: '小芯的状态进程暂时不可用，请稍后重试', executed: false };
+  {
+    const m = await fresh(), env = kernelEnv(m, { XIN_STATE_OWNER: 'kernel' }), ck = await login(m, env);
+    const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+      'POST /xin/op': [() => kres(200, { ok: true, data: unavailable }), () => kres(200, { ok: true, data: { usage: { today: 1 } } }), () => kres(200, { ok: true, data: { error: 'not_found', msg: '没有这个对话' } })] });
+    try {
+      assert.deepStrictEqual(await callOp(m, env, ck, 'usage'), { ok: false, state: 'busy', msg: '小芯正在换状态进程，稍等', retryAfter: 3 });
+      assert.ok(!ib.calls.some(c => c.key.endsWith('/exec')), '不退 exec');
+      const after = await callOp(m, env, ck, 'usage');
+      assert.deepStrictEqual([after.ok, after.data && after.data.usage], [true, { today: 1 }], '换好以后照常');
+      assert.deepStrictEqual(await callOp(m, env, ck, 'history', { sid: 'sx' }), { ok: true, data: { error: 'not_found', msg: '没有这个对话' } }, '没写 executed:false 的出错照旧交给网页');
+    } finally { ib.restore(); }
+  }
+  {
+    const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined }), ck = await login(m, env);
+    const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify(unavailable), stderr: '', exitCode: 0 } }] });
+    try {
+      assert.deepStrictEqual(await callOp(m, env, ck, 'sessions'), { ok: false, state: 'busy', msg: '小芯正在换状态进程，稍等', retryAfter: 3 });
+    } finally { ib.restore(); }
+  }
+});
+
 test('send 走待送达：电脑醒着时和以前一样回 run，控制器拿到的是同一个 clientId', async () => {
   const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);
   const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify({ sid: 's1', run: 'r1' }), stderr: '', exitCode: 0 } }] });

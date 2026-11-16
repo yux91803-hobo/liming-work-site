@@ -6,7 +6,7 @@
   "扫不到的：通过 cp、tar、sqlite3 这类子进程写的文件。状态库里的写不在这里管，靠只读连接和写入口（vm-state.mjs 的 writing）。",
   "agentLines 是 vm-agent.mjs 的行数基线（只减不增）；rmw 是「读了再写」的条数；atomic 是各文件里直接开事务（journal.atomic）的次数。"
  ],
- "agentLines": 3164,
+ "agentLines": 3155,
  "rmw": 5,
  "atomic": {
   "vm-agent.mjs": 1,

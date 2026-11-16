@@ -9,7 +9,9 @@ function fixture(t,mode='ok'){
  const preload=root+'/preload.cjs';fs.writeFileSync(preload,`
  require('node:os').homedir=()=>${JSON.stringify(home)};require('node:module').syncBuiltinESMExports();
  const fs=require('node:fs'),real=fetch;global.fetch=async function(url,init){
- if(!String(url).endsWith('/v1/responses'))return real(url,init);const body=JSON.parse(init.body);fs.appendFileSync(${JSON.stringify(gateway)},JSON.stringify(body)+'\\n');
+ if(!String(url).endsWith('/v1/responses'))return real(url,init);const body=JSON.parse(init.body);
+ if(String(body.instructions||'').startsWith('你是聊天界面的状态栏')){const st=${JSON.stringify(root+'/status-text')};fs.appendFileSync(${JSON.stringify(root+'/status.jsonl')},JSON.stringify(body)+'\\n');return new Response(JSON.stringify({output:[{type:'message',content:[{type:'output_text',text:fs.existsSync(st)?fs.readFileSync(st,'utf8'):''}]}],usage:{input_tokens:30,output_tokens:4}}));}
+ fs.appendFileSync(${JSON.stringify(gateway)},JSON.stringify(body)+'\\n');
  return new Response(JSON.stringify({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'deepseek-quota-answer'}]}],usage:{input_tokens:8,output_tokens:5}}));};`);
  fs.writeFileSync(bin+'/agy','#!'+process.execPath+'\n'+`
  const fs=require('node:fs'),a=process.argv.slice(2),modeFile=${JSON.stringify(root+'/mode')},mode=fs.existsSync(modeFile)?fs.readFileSync(modeFile,'utf8'):${JSON.stringify(mode)},log=${JSON.stringify(log)};
@@ -44,8 +46,9 @@ function fixture(t,mode='ok'){
  if(mode==='claim')text=prompts===1?'我查了，今天已经签到了。':'查不到当天记录，暂时不能确认。';
  if(mode==='midquota'&&prompts===1){text='';calls=[{name:'xin',argv:['xin','remember','--basis','stated','--type','profile','喜欢先看时序图']}];}
  if((body.tools||[]).some(t=>t.name==='finish_event')){text='';calls=[{name:'finish_event',action:'deliver',text:'我核对好了，原生前台已交付结果。'}];}
- const answer=mode==='plain'&&prompts===1?text:mode==='broken'?'{"text":"半截回复':mode==='fenced'?'好的，按格式回复：\\n'+String.fromCharCode(96).repeat(3)+'json\\n'+JSON.stringify({text})+'\\n'+String.fromCharCode(96).repeat(3)+'\\n':JSON.stringify({text,calls});send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:answer}}}});
- send({id:q.id,result:{stopReason:'end_turn'}});
+ if(mode==='think')send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:"I'm thinking through how to approach this.\\n\\nThe user is greeting me, so a short friendly reply fits. Keep it brief."}}}});
+ const answer=mode==='plain'&&prompts===1?text:mode==='broken'?'{"text":"半截回复':mode==='fenced'?'好的，按格式回复：\\n'+String.fromCharCode(96).repeat(3)+'json\\n'+JSON.stringify({text})+'\\n'+String.fromCharCode(96).repeat(3)+'\\n':JSON.stringify({text,calls});const reply=()=>{send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:answer}}}});
+ send({id:q.id,result:{stopReason:'end_turn'}});};if(mode==='think')setTimeout(reply,400);else reply();
  }else send({id:q.id,result:{}});
  });`,{mode:0o755});
  // Only dispatched test tasks use this fake CLI; no real service is contacted.
@@ -224,4 +227,15 @@ test('账号里没有 Gemini 4 Hydrogen：本轮改用 DeepSeek 回复、记下�
  assert.equal(done.events.find(e=>e.t==='text').text,'deepseek-quota-answer');
  assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,0);
  assert.ok(!f.rows(f.log).some(r=>r.method==='session/set_model'&&/claude/.test(r.params.modelId)),'不改用 Claude');
+});
+test('前台的状态行：一开始用 DeepSeek Flash（思考关掉）概括站长这句话记成 think；Hydrogen 推来的思考也记成 think（src model，去掉开头客套）；回复照旧由 Hydrogen 给、不走网关',async t=>{
+ const f=fixture(t,'think');fs.writeFileSync(f.root+'/status-text','回复问候');
+ const sent=f.call('send',{agent:'codex',text:'你好呀'}),done=await f.wait(sent.run);
+ assert.equal(done.events.find(e=>e.t==='done').model,'gemini-4-hydrogen');assert.equal(f.rows(f.gateway).length,0,'回复没有走 DeepSeek');
+ const thinks=done.events.filter(e=>e.t==='think').map(e=>[e.src,e.text]);
+ assert.deepEqual(thinks.find(x=>x[0]==='status'),['status','回复问候']);
+ assert.deepEqual(thinks.find(x=>x[0]==='model'),['model','The user is greeting me, so a short friendly reply fits.']);
+ const st=f.rows(f.root+'/status.jsonl');assert.equal(st.length,1);assert.equal(st[0].model,'deepseek-v4.1-flash');assert.deepEqual(st[0].reasoning,{effort:'none'});assert.match(JSON.stringify(st[0].input),/你好呀/);
+ const stat=f.rows(f.control+'/model-stats.jsonl').find(r=>r.kind==='status');assert.ok(stat,'状态那一句的 token 记进用量');assert.equal(stat.model,'deepseek-v4.1-flash');assert.equal(stat.run,sent.run);
+ assert.ok(f.rows(f.control+'/model-stats.jsonl').some(r=>r.run===sent.run&&r.kind!=='status'),'这一轮自己的记录还在');
 });

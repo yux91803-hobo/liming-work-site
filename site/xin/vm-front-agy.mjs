@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {BASE,processIdentity,signalProcessGroup} from './vm-base.mjs';
 import {antigravityBinary,antigravityQuota,FRONT_MODEL,AGY_MODEL} from './vm-runtime.mjs';
+import {thoughtLine} from './vm-events.mjs';
 
 // 记录里用模型名 gemini-4-hydrogen（和后台同一个，用量页并成一条）；实际在 Antigravity 里选的是带思考强度的 gemini-4-hydrogen-medium
 export const AGY_FRONT_MODEL=AGY_MODEL;
@@ -67,6 +68,7 @@ class ACP {
    }else if(o.method==='session/update'){
     const u=o.params?.update;if(u?.sessionUpdate==='agent_message_chunk'&&u.content?.type==='text')this.text+=u.content.text;
     if(u?.sessionUpdate==='usage_update')this.update=u;
+    if(u?.sessionUpdate==='agent_thought_chunk'&&u.content?.type==='text'){const t=thoughtLine(u.content.text);if(t&&t!==this.lastThought){this.lastThought=t;try{this.onThought?.(t);}catch{}}}
    }
    return;
   }
@@ -158,7 +160,7 @@ export async function openFrontProvider(o={}){
   if(global.useG1Credits===true)throw Error('前台不会动用付费额度；当前 CLI 不能单独关闭这项设置');
  }
  try{
-  acp=new ACP(binary,args,cwd,o.signal,o.protocol);
+  acp=new ACP(binary,args,cwd,o.signal,o.protocol);acp.onThought=o.thought;
   const init=await acp.request('initialize',{protocolVersion:1,clientInfo:{name:'xin-front',version:'1'},clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},terminal:false}},o.signal);
   images=init.agentCapabilities?.promptCapabilities?.image===true;
   const session=await acp.request('session/new',{cwd,mcpServers:[]},o.signal);sid=session.sessionId;if(!sid)throw Error('Antigravity 没有创建可用的前台会话');
@@ -184,7 +186,7 @@ export async function openFrontProvider(o={}){
   const blocks=promptBlocks(payload,offset);if(!images&&blocks.some(b=>b.type==='image'))throw Error('当前前台接口没有接收到图片能力，未发送不一致的看图提示');
   const cancel=()=>acp.close(),prose=!(payload.tools||[]).some(t=>t?.name==='finish_event');signal?.addEventListener('abort',cancel,{once:true});
   try{
-   acp.text='';acp.update=null;await acp.request('session/prompt',{sessionId:sid,prompt:blocks},signal,65000);
+   acp.text='';acp.update=null;acp.lastThought='';await acp.request('session/prompt',{sessionId:sid,prompt:blocks},signal,65000);
    let out;
    try{out=frontOutput(acp.text,{prose});}catch{
     o.protocol?.({kind:'format_repair',bytes:Buffer.byteLength(acp.text)});

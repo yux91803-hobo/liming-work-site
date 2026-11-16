@@ -1,5 +1,6 @@
 // Normalises Claude Code / Codex / Harness JSON output into the controller's event format.
 import { cut } from './vm-base.mjs';
+import { bareCmd } from './vm-screen.mjs';
 export const OUT_MAX = 2000;   // 一个工具输出最多带回多少字
 
 /* ---------- 把 Claude Code / Codex 的 JSON 输出整理成统一的事件 ----------
@@ -7,6 +8,7 @@ export const OUT_MAX = 2000;   // 一个工具输出最多带回多少字
    {t:'tool', id, name, detail}        AI 开始执行一个工具（命令、改文件…）
    {t:'tool_end', id, ok, out, name?, detail?}
    {t:'status', text}                  临时状态（重连之类），不算错
+   {t:'think', text, src}              它在想什么：src 'model' 是模型自己的思考（英文居多，只在终端里画），'status' 是前台概括的一句（状态行）
    {t:'err', text}                     出错
    state 里记 sid（AI 自己的会话号）、failed、cost */
 export function detailOf(name, input) {
@@ -110,9 +112,17 @@ export function fromCodex(o, state) {
       else if (done) out.push({ t: 'tool_end', id: it.id, name: 'MCP', detail, ok: it.status !== 'failed', out: cut(it.error ? (it.error.message || JSON.stringify(it.error)) : resultText(it.result && it.result.content), OUT_MAX) });
       break;
     }
-    case 'web_search': if (done) out.push({ t: 'tool_end', id: it.id, name: 'WebSearch', detail: String(it.query || ''), ok: true, out: '' }); break;
+    case 'web_search': {
+      // 开始时就说在搜什么（知道的话），做完再给一条；打开网页（action.type = open_page）记成 WebFetch，不混成搜索
+      const open = (it.action && it.action.type === 'open_page') || false, name = open ? 'WebFetch' : 'WebSearch';
+      const detail = String((open ? it.action.url || it.query : it.query || (it.action && it.action.query)) || '');
+      if (o.type === 'item.started') { if (detail) out.push({ t: 'tool', id: it.id, name, detail }); }
+      else if (done) out.push({ t: 'tool_end', id: it.id, name, detail, ok: true, out: '' });
+      break;
+    }
+    case 'reasoning': if (done && it.text) { const t = thoughtLine(it.text); if (t) out.push({ t: 'think', text: t, src: 'model' }); } break;
     case 'error': if (done) out.push({ t: 'status', text: String(it.message || '') }); break;   // Codex 的警告（真失败看 turn.failed）
-    default: break;   // reasoning、todo_list 之类不显示
+    default: break;   // todo_list 之类不显示
   }
   return out;
 }
@@ -159,7 +169,62 @@ export function fromHarness(o, state) {
       if (!state.errShown) { state.errShown = true; out.push({ t: 'err', text: String(o.message || (o.error && (o.error.message || o.error.code)) || o.code || '出错了') }); }
       break;
     }
-    default: break;   // thinking、final 不显示（final 和 text 一样）
+    case 'thinking': {
+      // 天启的思考（DeepSeek 多半想的是中文）：一段一段来，攒到一句话完了再给；思考从来不变成聊天里的话
+      state.think = (state.think || '') + String(o.text || o.thinking || '');
+      const m = /^([\s\S]*[。！？.!?])([^。！？.!?]*)$/.exec(state.think);
+      if (m) { state.think = m[2]; const t = thoughtLine(lastSentence(m[1])); if (t) out.push({ t: 'think', text: t, src: 'model' }); }
+      else if (state.think.length > 400) state.think = state.think.slice(-200);
+      break;
+    }
+    default: break;   // final 不显示（final 和 text 一样）
   }
   return out;
+}
+
+/* ---------- 它在想什么、在做哪一步（状态行、任务卡片上的一行字）----------
+   站长 2026-11-16：「希望像 grok bot 那样根据用户的输入问题显示相关的文字」「派了后台任务也要动态地在动」。 */
+// 模型的思考 → 一行：有 **粗体** 标题就用标题（openai/codex codex-rs/tui/src/chatwidget.rs 的 extract_first_bold），
+// 没有就去掉 Gemini 开头那句客套、取第一句（最多 160 字）；太短的不要
+export function thoughtLine(text) {
+  const raw = String(text || ''), bold = /\*\*([^*\n]{3,80})\*\*/.exec(raw);
+  if (bold) return bold[1].trim();
+  let t = raw.replace(/\s+/g, ' ').trim().replace(/^(I'm|I am) thinking through how to approach this\.?\s*/i, '');
+  const m = /^(.{4,160}?[。！？.!?])(\s|$|[^.\d])/.exec(t);
+  t = (m ? m[1] : t).slice(0, 160).trim();
+  return [...t].length >= 8 ? t : '';
+}
+function lastSentence(s) {
+  const parts = String(s || '').replace(/\s+/g, ' ').trim().split(/(?<=[。！？.!?])\s*/).filter(Boolean);
+  // 最后一句太碎（只有几个字）就把前一句也带上
+  let t = parts.pop() || '';
+  while (parts.length && [...t].length < 8) t = parts.pop() + t;
+  return t;
+}
+const hasCJK = s => /[\u3400-\u9fff]/.test(String(s || ''));
+const shortPath = p => { const a = String(p || '').split('/').filter(Boolean); return a.length > 2 ? a.slice(-2).join('/') : a.join('/'); };
+const shortUrl = u => String(u || '').replace(/^[a-z]+:\/\//i, '').replace(/^www\./, '').replace(/[?#].*$/, '').replace(/\/+$/, '');
+const plain = (t, n) => { const s = String(t || '').replace(/```[\s\S]*?(```|$)/g, ' ').replace(/^[ \t]*(#{1,6}|>+)[ \t]*/gm, '').replace(/\*\*|`/g, '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+// 最近的事件 → 「现在在做什么」一句（任务摘要的 activity；小芯岛和聊天里后台那一行用）。
+// 从后往前找第一个有意义的：搜索、打开 / 读网页、执行命令、修改文件、它自己说的话、中文的思考、临时状态；内部命令（xin 后面不是 browser 的）不算
+export function stepActivity(evs) {
+  for (let i = (evs || []).length - 1; i >= 0; i--) {
+    const e = evs[i] || {}, name = String(e.name || ''), d = bareCmd(String(e.detail || '')).replace(/\s+/g, ' ').trim();
+    if (e.t === 'tool' || e.t === 'tool_end') {
+      if (name === 'Bash' && /^xin(\s|$)/.test(d)) {
+        const b = /^xin\s+browser\s+open\s+(\S+)/.exec(d);
+        if (b) return (e.t === 'tool' ? '在打开网页：' : '在读网页：') + shortUrl(b[1]).slice(0, 80);
+        continue;
+      }
+      if (e.t === 'tool_end' && e.ok === false) return '上一步失败，正在调整';
+      if (name === 'WebSearch') return (e.t === 'tool' ? '在搜索：' : '在看搜索结果：') + d.slice(0, 80);
+      if (name === 'WebFetch') return (e.t === 'tool' ? '在打开网页：' : '在读网页：') + shortUrl(d).slice(0, 80);
+      if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(name)) return (e.t === 'tool' ? '在修改：' : '修改了：') + d.split('\n').map(l => shortPath(l.replace(/^(add|update|delete|create)\s+/, ''))).join('、').slice(0, 80);
+      return (e.t === 'tool' ? '在执行：' : '执行完：') + (d || name).slice(0, e.t === 'tool' ? 90 : 80);
+    }
+    if (e.t === 'text' && e.text) return plain(e.text, 90);
+    if (e.t === 'think' && e.text && hasCJK(e.text)) return '在想：' + plain(e.text, 80);
+    if (e.t === 'status' && e.text && !/^Model metadata/i.test(e.text)) return String(e.text).slice(0, 90);
+  }
+  return '';
 }
