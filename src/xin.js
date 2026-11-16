@@ -408,8 +408,10 @@ async function call(env, origin, op, args, ctx, now, opts = {}) {
     const data = await runOp(env, origin, m.id, op, args, ctx, opts);
     // 状态进程正在换（部署后外壳停旧的、起新的那几秒）：内核或 exec 起的控制器连不上它，把「没执行」当结果打印回来
     // （vm-kernel-client.mjs：{error:'owner_unavailable', executed:false}）。和内核自己回 owner_unavailable 一样回「稍等」，
-    // 网页和正式站联调过一会儿再来；不能当成功交出去（#156 的正式联调因此判失败、回滚）
-    if (data && data.error === 'owner_unavailable' && data.executed === false) return explain({ code: 'owner_unavailable', retryAfter: 3 });
+    // 网页和正式站联调过一会儿再来；不能当成功交出去（#156 的正式联调因此判失败、回滚）。
+    // 发出去以后连接才断的（executed:'unknown'：连上了正在停的旧进程，#158 的正式联调因此失败）不知道做没做：
+    // 能安全重来的（retrySafe：只读、本身重做无害、带去重标识，和换通道重来同一条规则）也回「稍等」，别的照旧交出去
+    if (data && data.error === 'owner_unavailable' && (data.executed === false || (data.executed === 'unknown' && retrySafe(op, args)))) return explain({ code: 'owner_unavailable', retryAfter: 3 });
     // 打开网页（greet）时顺手核对云电脑上的控制器脚本有没有被改过；不挡这次请求
     if (op === 'greet' && ctx) ctx.waitUntil(verifyAgent(env, origin, m.id, now).catch(() => null));
     // AI 在等模型回话时云电脑看起来是闲着的：挂一个「有活在干」的租约，别让它半路自己暂停

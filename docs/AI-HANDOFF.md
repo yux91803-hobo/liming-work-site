@@ -303,3 +303,4 @@
   - 终端收起要等动画（`term.js` 的 `closing`，手机 300 毫秒、电脑 160 毫秒后才 `hidden`），这期间 `isOpen()` 已经是 false。浏览器测试里关了以后要等 `.tm-win` 的 `hidden` 再查。
   - 网页检查的截图（`WEB_BROWSER_CHECK` 最后）现在是 1280×800、重新打开以后截的；工作台卡片对竖图（旧的）用 `tallFig` 整张缩进去。
   - 还没做：回答下面那一行（复制、详情）触屏上只有 28px 高；后台任务的思考没翻成中文（前两批记下的）。
+  - #158（Codex）北京 23:00 合并后正式联调失败、自动回滚到 #157（`4391a53d`）：部署换状态进程的空档里 `usage` 拿到 `{error:'owner_unavailable', executed:'unknown'}`（发出去以后连接才断）。这一轮在 `src/xin.js` 的 `call` 里补上：能安全重来的（`retrySafe`）也回「稍等」。以后再看到部署后第一步 `owner_unavailable`，先只读查 `~/.xin/logs/kernel.jsonl` 里 `route:"state"` 的 stop / start / ready 和那一次请求有没有 `via:"state"`。

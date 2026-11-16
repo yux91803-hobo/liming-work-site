@@ -18,6 +18,9 @@
   - 照 Vaul（emilkowalski/vaul：`src/constants.ts` 的 `TRANSITIONS = { DURATION: 0.5, EASE: [0.32, 0.72, 0, 1] }`，`src/style.css` 的 `slideFromBottom` / `slideToBottom`、遮罩 `fadeIn` / `fadeOut`）：整张 `translate3d(0, 100%, 0)` 滑上来，`cubic-bezier(.32, .72, 0, 1)`，进 0.42 秒、出 0.28 秒（出比进快）；遮罩同一条曲线淡入淡出；`will-change: transform`。电脑上的弹窗从点的地方 0.92 → 1 放大淡入，关的时候缩一点淡出。`term.js` 关的时候等动画走完再藏（这期间 `isOpen()` 已经算关了）；减少动态效果时直接开关。
   - 量过：手机宽度、CPU 降速 4 倍，打开那一下同步工作 31 毫秒，动画开始后每帧 17 毫秒。
 - **「打开预览」和「打开网页」重复**（站长：「打开网页和打开预览其实重复了」）：网页做好时控制器写的结果是「我画好了。[打开预览](地址)」，下面一行又放「打开网页」。结果正文里已经链到同一个网页就不再放那一颗；控制器那句改成「我画好了。[打开网页](地址)」，和工作台卡片的按钮同名（旧记录里的「打开预览」照旧能点）。
+- **顺带补上 #158 正式联调失败的原因**（Codex 的 #158 北京 23:00 合并，正式运行 [43891724636](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43891724636) 联调第一步 `usage` 收到 `owner_unavailable`，23:12 自动回滚到 #157 的 `4391a53d`；这一轮合并时会把 #158 一起再部署，不补的话很可能再被回滚）：
+  - 只读查了电脑上的 `logs/kernel.jsonl`：23:12:44 新控制器还没传上去（`agent_missing`）；45.267 外壳停旧的状态进程、45.952 新的就绪；中间 45.481 那次 `usage` 没走状态进程（日志里没有 `via:state`），交给当场起的控制器——它连上了正在停的旧进程、发出去以后连接断了，`vm-kernel-client.mjs` 记成「不知道执行没有」（`executed:'unknown'`），不是 #157 认的 `executed:false`，于是原样交给了联调。
+  - `src/xin.js` 的 `call`：`owner_unavailable` 又是「不知道执行没有」时，能安全重来的操作（`retrySafe`：只读、本身重做无害、带去重标识——和 Worker 换通道重来用的同一条规则）也回「稍等」；改名这类不知道做没做的，照旧交出去。`test/xin.test.cjs` 加一条（内核、exec 两条路），先在没改的 Worker 上失败。
 - **测试**（都先写、先在没改的代码上失败再改）：
   - `test/xin-web.test.cjs` 新加一条真浏览器的：截图是 1280×800，左上角是重新打开后的白底（不是点完「变红」以后）——读 PNG 第一行第一个像素（哪种过滤都按原值存）。
   - `test/xin-completion.test.cjs`：网页成品那句写「打开网页」。
