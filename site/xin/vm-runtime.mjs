@@ -70,12 +70,15 @@ if(a[0]==='browser'){
 }
 if(!dir||!(a[0]==='remember'||a[0]==='task'&&a[1]==='ask')){console.error('后台只允许 xin remember、xin task ask 和 xin browser');process.exit(1);}
 const body={op:a[0]==='remember'?'remember':'ask',text:a.slice(a[0]==='remember'?1:2).join(' ').slice(0,1000)};
-const id=crypto.randomBytes(12).toString('hex'),file=path.join(dir,id+'.request');
-fs.writeFileSync(file+'.tmp',JSON.stringify(body));fs.renameSync(file+'.tmp',file);
-const until=Date.now()+15000,reply=path.join(dir,id+'.reply');
+const directory=fs.openSync(dir,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW),root='/proc/self/fd/'+directory;
+const id=crypto.randomBytes(12).toString('hex'),file=path.join(root,id+'.request'),output=fs.openSync(file+'.tmp','wx',0o600);
+try{fs.writeFileSync(output,JSON.stringify(body));fs.fsyncSync(output);}finally{fs.closeSync(output);}
+fs.renameSync(file+'.tmp',file);fs.fsyncSync(directory);
+const until=Date.now()+15000,reply=path.join(root,id+'.reply');
 while(!fs.existsSync(reply)&&Date.now()<until)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50);
 if(!fs.existsSync(reply)){console.error('管理进程没有回应，停止这一步');process.exit(1);}
 console.log(fs.readFileSync(reply,'utf8'));fs.unlinkSync(reply);
+fs.closeSync(directory);
 `;
   fs.writeFileSync(path.join(home, 'bin', 'xin'), bridge, { mode: 0o755 });
   fs.writeFileSync(path.join(home, 'shell-env.sh'), 'export PATH=' + JSON.stringify(path.join(home, 'bin')) + ':"$PATH"\n');
@@ -498,25 +501,28 @@ export function drainBridge(workspace, handle) {
     // Resolve every operation through the pinned directory inode, even if its path is replaced.
     const root='/proc/self/fd/'+directory;
     for(const name of fs.readdirSync(root).filter(n=>/^[a-f0-9]{24}\.request$/.test(n)).slice(0,32)){
-      const request=path.join(root,name),reply=path.join(root,name.replace(/\.request$/,'.reply'));let input,output,temporary;
+      const request=path.join(root,name),reply=path.join(root,name.replace(/\.request$/,'.reply'));let input,output,temporary,consumed=true;
       try{
         input=fs.openSync(request,C.O_RDONLY|C.O_NOFOLLOW|C.O_NONBLOCK);
         const stat=fs.fstatSync(input);if(!stat.isFile()||stat.size>4096)continue;
         const data=Buffer.alloc(4097),length=fs.readSync(input,data,0,data.length,0);
         if(length>4096)continue;
         const a=JSON.parse(data.subarray(0,length).toString('utf8'));
-        try{fs.lstatSync(reply);continue;}catch(e){if(e.code!=='ENOENT')throw e;}
+        consumed=false;
+        try{fs.lstatSync(reply);consumed=true;continue;}catch(e){if(e.code!=='ENOENT')throw e;}
         // Publish only a complete reply. Both temporary creation and final link refuse existing entries.
         temporary=path.join(root,'.reply-'+crypto.randomBytes(16).toString('hex'));
         output=fs.openSync(temporary,C.O_WRONLY|C.O_CREAT|C.O_EXCL|C.O_NOFOLLOW,0o600);
-        fs.writeFileSync(output,String(handle(a)).slice(0,1500));
-        fs.linkSync(temporary,reply);
-      }catch{ /* malformed requests and occupied reply names fail closed */ }
+        const result=handle(a,{id:name.slice(0,-'.request'.length)});
+        if(typeof result!=='string')break;
+        fs.writeFileSync(output,result.slice(0,1500));fs.fsyncSync(output);
+        fs.linkSync(temporary,reply);fs.fsyncSync(directory);consumed=true;
+      }catch{if(!consumed)break; /* uncertain delivery must retain the original request ID */ }
       finally{
         if(input!==undefined)fs.closeSync(input);
         if(output!==undefined)fs.closeSync(output);
         if(temporary)try{fs.unlinkSync(temporary);}catch{}
-        try{fs.unlinkSync(request);}catch{}
+        if(consumed)try{fs.unlinkSync(request);}catch{}
       }
     }
   }catch{ /* a replaced or unavailable bridge directory cannot grant controller access */ }

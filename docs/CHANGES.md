@@ -1,3 +1,13 @@
+# 修改清单 · 2026-11-16（3B 子批：队列运行归属与请求回执，兼容读取方先行）
+
+- **责任与范围**：从 #155 / `eb1afaa` 继续，Codex 实现，Codex 根代理与子代理交叉检查，尚无 Claude Code 独立复核。Claude #154 的界面与控制器增量保留；本批不改工作台、学习台页面或天启流程。
+- **修改既有实现的原因**：旧沙盒文件桥复用工作区 io，请求仅 op/text，残留请求可被下一轮消费；异常路径仍删除 request，提交后回复失败又可能重复。临时目录红测已复现，修为私有 run/attempt 目录与控制器事务回执。沿用旧 shim 的环境接口，不往共享脚本硬编码身份。
+- **控制器保证**：仅新协议 remember/ask，固定 tasks 锁，源 run/attempt 与目标当前轮次核对；记忆/提问与稳定请求回执在同一 SQLite 事务。重复返回原结果，同 ID 不同参数冲突，已结束轮次的新请求拒绝。Antigravity 子进程先核对启动身份，避免读取新元数据借号。
+- **文件与兼容**：请求和回复同步文件/目录；临时失败、未知交付或回复发布失败保留原请求，已有回复不重做。保留 nofollow 与固定目录 inode。旧轮次不自动升级；未知协议、缺身份、畸形请求不会降级或永久堵队列。读取方默认关闭新协议分配，正式验证后再独立启用。
+- **验证与回滚**：本地与 Actions 结果随后记录于本批 PR，以当前 head 为准；原有有效测试保留。回滚顺序、兼容边界与验收矩阵见[子批计划](superpowers/plans/2026-11-16-xin-task-bridge.md)。没有数据库 schema 迁移或用户数据删除。
+- **尚未完成**：真正持久收尾涉及非事务文件发布、统计、通知和运行中报告，不能只外包一层 SQLite 事务；已另写[分阶段计划](superpowers/plans/2026-11-16-xin-finalization.md)，不宣称长期失联结果不丢。宿主授权 C、凭据代理与工具权限不变，编号不是同 UID 安全凭据。
+- **参考**：重新核对 Temporal `respondactivitytaskcompleted/api.go`（先对当前任务身份）、现有 journal 命令回执、npm/write-file-atomic 与目录 fsync issue64；无新依赖、付费服务或 VPS 改动。
+
 # 修改清单 · 2026-11-16（第 3 批 A：默认启用新轮次编号）
 
 - **先验证回滚基线再启用**：[兼容版 #153](https://github.com/yux91803-hobo/liming-work-site/pull/153) 以 `655d325` 合并，CI/测试站 [43808292216](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43808292216)、正式发布 [43809734994](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43809734994) 全部成功，正式登录/真实模型/后台任务/文件下载联调成功，没有触发回滚。发布后只读确认：持久服务 enabled/active、单一状态进程、运行代码摘要与本地一致、分配默认关闭，没有回填旧 run 的协议。
