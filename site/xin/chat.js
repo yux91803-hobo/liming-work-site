@@ -729,7 +729,7 @@
     sc.appendChild(mrow); paintMainB();
     var unsent=[];try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k.indexOf('lm.xin.unsent.')===0){var v=JSON.parse(ls(k)||'null');if(v)unsent.push({key:k,value:v});}}}catch{}
     if(unsent.length){sc.appendChild(h('p','xc-dr-h','未发送的消息'));unsent.slice(0,20).forEach(function(item){var b=h('button','xc-memb',String(item.value.text||'附件消息').slice(0,40));b.type='button';b.addEventListener('click',function(){var v=item.value,p=v.sid?openSession(v.sid):newChat(),generation=S.convSeq;Promise.resolve(p).then(function(){if(generation!==S.convSeq)return;input.value=v.text||'';S.atts=v.atts||[];S.retrySend=v;ls(LS_DRAFT,input.value||null);ls(item.key,null);renderAtts();grow();render();input.focus();});});sc.appendChild(b);});}
-    var dh = h('p', 'xc-dr-h', '对话');
+    var dh = h('p', 'xc-dr-h xc-dr-conv', '对话');   // 自己的类名：上面有「未发送的消息」时，重画列表不能改到那一行
     sc.appendChild(dh);
     var ul = h('ul', 'xc-sl xc-sl-main');
     ul.appendChild(h('li', 'xc-hint xc-sl-wait', '正在读取…'));
@@ -801,7 +801,7 @@
   }
   function renderSess() {
     var ul = drawerEl && drawerEl.querySelector('.xc-sl-main'), aul = drawerEl && drawerEl.querySelector('.xc-sl-arch'), ab = drawerEl && drawerEl.querySelector('.xc-arch-b');
-    var dh = drawerEl && drawerEl.querySelector('.xc-dr-h');
+    var dh = drawerEl && drawerEl.querySelector('.xc-dr-conv');
     if (!ul || !aul || !ab) return;
     var list = (S.sessList || []).filter(function (s) { return !s.main; }), main = list.filter(function (s) { return !s.archived; }), arch = list.filter(function (s) { return s.archived; });
     ul.innerHTML = ''; aul.innerHTML = '';

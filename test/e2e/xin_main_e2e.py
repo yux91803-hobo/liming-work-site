@@ -83,7 +83,7 @@ async def main():
             const who = s ? [...s.querySelectorAll('.xc-as-b')].map(b => b.textContent + (b.getAttribute('aria-checked') === 'true' ? '✓' : '')) : null;
             if (s) s.remove();
             return [c.textContent, who, !!document.querySelector('.xc-login:not([hidden])'), LimingXinChat.state.toMain]; })()""")
-        ui.check('第一次打开：空白页只有小芯和一句招呼，没有说明小字（上面一排选和谁聊，默认小芯）；停在主对话上', hello == ['嗨，我是小芯', ['小芯✓', '天启'], False, True], hello)
+        ui.check('第一次打开：空白页只有小芯和大标题「小芯」，没有说明小字（上面一排选和谁聊，默认小芯）；停在主对话上', hello == ['小芯', ['小芯✓', '天启'], False, True], hello)
         await pg.fill('.xc-row textarea', '你好')
         await pg.click('.xc-send')
         await pg.wait_for_function(ui.CHAT_DONE + ' && !!LimingXinChat.state.sid', timeout=10000)
@@ -102,6 +102,14 @@ async def main():
         dr = await pg.evaluate("""[document.querySelector('.xc-mainb span').textContent, document.querySelector('.xc-mainb').classList.contains('cur'),
           [...document.querySelectorAll('.xc-sl-main .xc-si-t')].map(e => e.textContent), document.querySelector('.xc-dr-h').textContent, !document.querySelector('.xc-main-more').hidden]""")
         ui.check('侧边栏：第一行「主对话」（正在看，标出来），普通对话列表里没有它', dr == ['主对话', True, ['编译 main.c'], '对话', True], dr)
+        # 这台设备上有没发出去的消息时，上面多一组「未发送的消息」：重画对话列表只改「对话」那一行的标题，不改到它
+        await pg.click('.xc-dr-x')
+        await pg.evaluate("localStorage.setItem('lm.xin.unsent.e2e', JSON.stringify({text: '没发出去的那句'}))")
+        await pg.click('.xc-list-b')
+        await pg.wait_for_selector('.xc-si')
+        heads = await pg.evaluate("[[...document.querySelectorAll('.xc-dr-h')].map(e => [e.textContent, e.hidden]), [...document.querySelectorAll('.xc-memb')].some(b => b.textContent === '没发出去的那句')]")
+        ui.check('侧边栏有「未发送的消息」时：这一组的标题不被改成「对话」，下面「对话」照常', heads == [[['未发送的消息', False], ['对话', False]], True], heads)
+        await pg.evaluate("localStorage.removeItem('lm.xin.unsent.e2e')")
         await pg.click('.xc-dr-new')
         await pg.wait_for_selector('.xc-hello')
         await pg.fill('.xc-row textarea', '另一个话题')

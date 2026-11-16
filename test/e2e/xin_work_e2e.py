@@ -109,7 +109,7 @@ async def main():
         await pg.goto(ui.BASE + '/')
         await pg.wait_for_selector('#xinWork:not([hidden]) .xw-card')
         head = await pg.evaluate("[document.querySelector('.xw-st').textContent, document.querySelector('.xw-ask input').placeholder, document.querySelector('.xw-list').hidden]")
-        ui.check('没登录：首页有「小芯」卡片，写着未登录，没有任务行', head == ['未登录', '登录后就能聊', True], head)
+        ui.check('没登录：首页有「小芯」卡片，写着未登录（输入框写「登录后可以聊天」），没有任务行', head == ['未登录', '登录后可以聊天', True], head)
         await pg.click('.xw-head')
         await pg.wait_for_selector('.xc.wb.show .xc-login input')
         locked = await pg.evaluate("[document.querySelector('.xc').classList.contains('locked'), getComputedStyle(document.querySelector('.xc-work')).display, location.hash]")
