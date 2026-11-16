@@ -7,6 +7,11 @@ const real = global.fetch;
 global.fetch = async function(url, init) {
   if (!String(url).endsWith('/v1/responses')) return real(url, init);
   const body = JSON.parse(init.body);
+  // 状态行那一句（site/xin/vm-status.mjs）：不是前台回复，不记进回复请求的日志；默认回空（状态行保持「思考中」），要测时用 XIN_STATUS_TEST_TEXT
+  if (String(body.instructions || '').startsWith('你是聊天界面的状态栏')) {
+    if (process.env.XIN_STATUS_TEST_LOG) fs.appendFileSync(process.env.XIN_STATUS_TEST_LOG, JSON.stringify(body)+'\n');
+    return new Response(JSON.stringify({status:'completed',output:[{type:'message',content:[{type:'output_text',text:process.env.XIN_STATUS_TEST_TEXT || ''}]}],usage:{input_tokens:30,output_tokens:4}}));
+  }
   if (process.env.XIN_FRONT_TEST_LOG) fs.appendFileSync(process.env.XIN_FRONT_TEST_LOG, JSON.stringify(body)+'\n');
   // 网关刚醒：这个文件在的时候到达的请求一直卡着（正式机实测第一个请求卡 124–126 秒），直到被取消
   if (process.env.XIN_FRONT_TEST_COLD && fs.existsSync(process.env.XIN_FRONT_TEST_COLD))

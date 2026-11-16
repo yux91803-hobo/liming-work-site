@@ -63,7 +63,7 @@ export function usageSummary(lines, now = Date.now()) {
     since = since == null ? r.at : Math.min(since, r.at);
     const date = bjDate(r.at), day = byDate.get(date);
     if (!day) continue;
-    const u = inclusive(r.model, r.usage || {}), add = t => { t.input += u.input || 0; t.cached += u.cached || 0; t.output += u.output || 0; t.runs++; };
+    const u = inclusive(r.model, r.usage || {}), add = t => { t.input += u.input || 0; t.cached += u.cached || 0; t.output += u.output || 0; if (r.kind !== 'status') t.runs++; };   // 状态行那一句（vm-status.mjs）只算 token、不算一轮
     add(day[r.model] || (day[r.model] = zero()));
     add(totals.d30); if (seven.has(date)) add(totals.d7); if (date === today) add(totals.today);
   }
