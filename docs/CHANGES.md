@@ -21,6 +21,7 @@
 - **顺带补上 #158 正式联调失败的原因**（Codex 的 #158 北京 23:00 合并，正式运行 [43891724636](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43891724636) 联调第一步 `usage` 收到 `owner_unavailable`，23:12 自动回滚到 #157 的 `4391a53d`；这一轮合并时会把 #158 一起再部署，不补的话很可能再被回滚）：
   - 只读查了电脑上的 `logs/kernel.jsonl`：23:12:44 新控制器还没传上去（`agent_missing`）；45.267 外壳停旧的状态进程、45.952 新的就绪；中间 45.481 那次 `usage` 没走状态进程（日志里没有 `via:state`），交给当场起的控制器——它连上了正在停的旧进程、发出去以后连接断了，`vm-kernel-client.mjs` 记成「不知道执行没有」（`executed:'unknown'`），不是 #157 认的 `executed:false`，于是原样交给了联调。
   - `src/xin.js` 的 `call`：`owner_unavailable` 又是「不知道执行没有」时，能安全重来的操作（`retrySafe`：只读、本身重做无害、带去重标识——和 Worker 换通道重来用的同一条规则）也回「稍等」；改名这类不知道做没做的，照旧交出去。`test/xin.test.cjs` 加一条（内核、exec 两条路），先在没改的 Worker 上失败。
+- **部署后的冒烟检查更稳**（`.github/workflows/deploy.yml`）：这个 PR 的测试站冒烟两次都是 CI 机器连 Cloudflare 时连接卡了二三十秒到一分钟后被断开（curl 56），失败的地址不同（第一次 `/xin/chat.js`，重跑那次 `/tools/stm32/`——这两个都由 Cloudflare 直接从静态资源返回，不经过 Worker 代码，`wrangler.jsonc` 的 `run_worker_first` 只有 `/api/*` 等）；同一时间从这里连那几个地址三轮 21 次全是 200、内容和本地一样；GitHub 状态页那时有一个影响 Actions 的事故在排查。原来的 `curl --retry` 不重试「连接被断开」，`set -e` 又让整步直接退出、连哪个地址都没打印。改成 `--retry-all-errors --max-time 20`，最后还拿不到就记 `000` 接着查下一个，最后照样判失败（每个地址仍要 200）。正式部署用的是同一步——网络抖一下不该误触发回滚。
 - **测试**（都先写、先在没改的代码上失败再改）：
   - `test/xin-web.test.cjs` 新加一条真浏览器的：截图是 1280×800，左上角是重新打开后的白底（不是点完「变红」以后）——读 PNG 第一行第一个像素（哪种过滤都按原值存）。
   - `test/xin-completion.test.cjs`：网页成品那句写「打开网页」。
