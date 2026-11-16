@@ -38,23 +38,9 @@ export function inventory(root) {
 export function taskRoot(controller) { return path.join(path.dirname(controller), path.basename(controller) + '-tasks'); }
 // 旧版放在系统临时目录的副本照样认：续做、清理、删对话都要找得到
 export function taskRoots(controller) { return [...new Set([taskRoot(controller), os.tmpdir()])]; }
-export function prepareWorkspace(t, controller) {
-  if (t.workspace && fs.existsSync(t.workspace.work) && fs.existsSync(t.workspace.manifest)) {if(t.workspace.stm32===undefined)t.workspace.stm32=detectStm32(t.dir,Object.keys(inventory(t.dir)));return t.workspace;}
-  const base = taskRoot(controller); mkdir(base); fs.chmodSync(base, 0o700);
-  const root = path.join(base, 'xin-task-' + t.sid);
-  const work = path.join(root, 'work'), io = path.join(root, 'io'), home = path.join(root, 'home');
-  mkdir(root); fs.chmodSync(root, 0o700); mkdir(work); mkdir(io); mkdir(home); mkdir(path.join(home, 'bin')); mkdir(path.join(root, 'tmp'));
-  const before = inventory(t.dir);
-  // A fresh turn gets a new baseline. This also detects edits made by the foreground in between turns.
-  fs.rmSync(work, { recursive: true, force: true }); mkdir(work);
-  for (const name of Object.keys(before)) {
-    const dest = path.join(work, name); mkdir(path.dirname(dest)); fs.copyFileSync(path.join(t.dir, name), dest);
-    fs.chmodSync(dest, fs.statSync(path.join(t.dir, name)).mode & 0o777);
-  }
-  mkdir(path.join(controller, 'workspaces'));
-  const manifest = path.join(controller, 'workspaces', t.sid + '.json');
-  fs.writeFileSync(manifest, JSON.stringify({ original: fs.realpathSync(t.dir), before }), { mode: 0o600 });
-  const bridge = `#!/usr/bin/env node
+// The script carries no run identity; the immutable mounted IO directory supplies its scope.
+export function taskBridgeScript() {
+  return `#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const a=process.argv.slice(2),dir=process.env.XIN_TASK_IO;
 if(a[0]==='browser'){
@@ -70,15 +56,70 @@ if(a[0]==='browser'){
 }
 if(!dir||!(a[0]==='remember'||a[0]==='task'&&a[1]==='ask')){console.error('后台只允许 xin remember、xin task ask 和 xin browser');process.exit(1);}
 const body={op:a[0]==='remember'?'remember':'ask',text:a.slice(a[0]==='remember'?1:2).join(' ').slice(0,1000)};
-const id=crypto.randomBytes(12).toString('hex'),file=path.join(dir,id+'.request');
-fs.writeFileSync(file+'.tmp',JSON.stringify(body));fs.renameSync(file+'.tmp',file);
-const until=Date.now()+15000,reply=path.join(dir,id+'.reply');
+const directory=fs.openSync(dir,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW),root='/proc/self/fd/'+directory;
+const id=crypto.randomBytes(12).toString('hex'),file=path.join(root,id+'.request'),output=fs.openSync(file+'.tmp','wx',0o600);
+try{fs.writeFileSync(output,JSON.stringify(body));fs.fsyncSync(output);}finally{fs.closeSync(output);}
+fs.renameSync(file+'.tmp',file);fs.fsyncSync(directory);
+const until=Date.now()+15000,reply=path.join(root,id+'.reply');
 while(!fs.existsSync(reply)&&Date.now()<until)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50);
 if(!fs.existsSync(reply)){console.error('管理进程没有回应，停止这一步');process.exit(1);}
 console.log(fs.readFileSync(reply,'utf8'));fs.unlinkSync(reply);
+fs.closeSync(directory);
 `;
-  fs.writeFileSync(path.join(home, 'bin', 'xin'), bridge, { mode: 0o755 });
-  fs.writeFileSync(path.join(home, 'shell-env.sh'), 'export PATH=' + JSON.stringify(path.join(home, 'bin')) + ':"$PATH"\n');
+}
+
+// Install through pinned directory descriptors. Never follow a writable home/bin symlink.
+export function installTaskBridge(workspace, { shellEnvironment = false } = {}) {
+  const fail = () => Object.assign(new Error('后台任务命令桥目录无效，未更新'), { code: 'bad_bridge_shim' });
+  if (typeof shellEnvironment !== 'boolean' || typeof workspace?.home !== 'string' || !path.isAbsolute(workspace.home)) throw fail();
+  const C = fs.constants; let home, bin, output, temporary;
+  try {
+    home = fs.openSync(workspace.home, C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW);
+    const root = '/proc/self/fd/' + home;
+    try { fs.mkdirSync(path.join(root, 'bin'), { mode: 0o755 }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    bin = fs.openSync(path.join(root, 'bin'), C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW);
+    const files = [{ fd: bin, name: 'xin', body: taskBridgeScript(), mode: 0o755 }];
+    if (shellEnvironment) files.push({ fd: home, name: 'shell-env.sh',
+      body: 'export PATH=' + JSON.stringify(path.join(workspace.home, 'bin')) + ':"$PATH"\n', mode: 0o644 });
+    for (const file of files) {
+      const directory = '/proc/self/fd/' + file.fd;
+      const candidate = path.join(directory, '.xin-' + crypto.randomBytes(16).toString('hex') + '.tmp');
+      output = fs.openSync(candidate, C.O_WRONLY | C.O_CREAT | C.O_EXCL | C.O_NOFOLLOW, 0o600);
+      temporary = candidate; // Only clean up a file whose exclusive creation succeeded.
+      fs.writeFileSync(output, file.body); fs.fchmodSync(output, file.mode); fs.fsyncSync(output);
+      fs.closeSync(output); output = undefined;
+      fs.renameSync(temporary, path.join(directory, file.name)); temporary = undefined;
+      fs.fsyncSync(file.fd);
+    }
+    fs.fsyncSync(home);
+    const sameDirectory = (file, fd) => { const a = fs.lstatSync(file), b = fs.fstatSync(fd); return a.isDirectory() && !a.isSymbolicLink() && a.dev === b.dev && a.ino === b.ino; };
+    if (!sameDirectory(workspace.home, home) || !sameDirectory(path.join(root, 'bin'), bin)) throw fail();
+  } catch { throw fail(); }
+  finally {
+    if (output !== undefined) fs.closeSync(output);
+    if (temporary) try { fs.unlinkSync(temporary); } catch {}
+    if (bin !== undefined) fs.closeSync(bin);
+    if (home !== undefined) fs.closeSync(home);
+  }
+}
+
+export function prepareWorkspace(t, controller) {
+  if (t.workspace && fs.existsSync(t.workspace.work) && fs.existsSync(t.workspace.manifest)) {if(t.workspace.stm32===undefined)t.workspace.stm32=detectStm32(t.dir,Object.keys(inventory(t.dir)));return t.workspace;}
+  const base = taskRoot(controller); mkdir(base); fs.chmodSync(base, 0o700);
+  const root = path.join(base, 'xin-task-' + t.sid);
+  const work = path.join(root, 'work'), io = path.join(root, 'io'), home = path.join(root, 'home');
+  mkdir(root); fs.chmodSync(root, 0o700); mkdir(work); mkdir(io); mkdir(home); mkdir(path.join(root, 'tmp'));
+  const before = inventory(t.dir);
+  // A fresh turn gets a new baseline. This also detects edits made by the foreground in between turns.
+  fs.rmSync(work, { recursive: true, force: true }); mkdir(work);
+  for (const name of Object.keys(before)) {
+    const dest = path.join(work, name); mkdir(path.dirname(dest)); fs.copyFileSync(path.join(t.dir, name), dest);
+    fs.chmodSync(dest, fs.statSync(path.join(t.dir, name)).mode & 0o777);
+  }
+  mkdir(path.join(controller, 'workspaces'));
+  const manifest = path.join(controller, 'workspaces', t.sid + '.json');
+  fs.writeFileSync(manifest, JSON.stringify({ original: fs.realpathSync(t.dir), before }), { mode: 0o600 });
+  installTaskBridge({ home }, { shellEnvironment: true });
   return { work, io, home, tmp: path.join(root, 'tmp'), manifest,stm32:detectStm32(t.dir,Object.keys(before)) };
 }
 
@@ -498,25 +539,28 @@ export function drainBridge(workspace, handle) {
     // Resolve every operation through the pinned directory inode, even if its path is replaced.
     const root='/proc/self/fd/'+directory;
     for(const name of fs.readdirSync(root).filter(n=>/^[a-f0-9]{24}\.request$/.test(n)).slice(0,32)){
-      const request=path.join(root,name),reply=path.join(root,name.replace(/\.request$/,'.reply'));let input,output,temporary;
+      const request=path.join(root,name),reply=path.join(root,name.replace(/\.request$/,'.reply'));let input,output,temporary,consumed=true;
       try{
         input=fs.openSync(request,C.O_RDONLY|C.O_NOFOLLOW|C.O_NONBLOCK);
         const stat=fs.fstatSync(input);if(!stat.isFile()||stat.size>4096)continue;
         const data=Buffer.alloc(4097),length=fs.readSync(input,data,0,data.length,0);
         if(length>4096)continue;
         const a=JSON.parse(data.subarray(0,length).toString('utf8'));
-        try{fs.lstatSync(reply);continue;}catch(e){if(e.code!=='ENOENT')throw e;}
+        consumed=false;
+        try{fs.lstatSync(reply);consumed=true;continue;}catch(e){if(e.code!=='ENOENT')throw e;}
         // Publish only a complete reply. Both temporary creation and final link refuse existing entries.
         temporary=path.join(root,'.reply-'+crypto.randomBytes(16).toString('hex'));
         output=fs.openSync(temporary,C.O_WRONLY|C.O_CREAT|C.O_EXCL|C.O_NOFOLLOW,0o600);
-        fs.writeFileSync(output,String(handle(a)).slice(0,1500));
-        fs.linkSync(temporary,reply);
-      }catch{ /* malformed requests and occupied reply names fail closed */ }
+        const result=handle(a,{id:name.slice(0,-'.request'.length)});
+        if(typeof result!=='string')break;
+        fs.writeFileSync(output,result.slice(0,1500));fs.fsyncSync(output);
+        fs.linkSync(temporary,reply);fs.fsyncSync(directory);consumed=true;
+      }catch{if(!consumed)break; /* uncertain delivery must retain the original request ID */ }
       finally{
         if(input!==undefined)fs.closeSync(input);
         if(output!==undefined)fs.closeSync(output);
         if(temporary)try{fs.unlinkSync(temporary);}catch{}
-        try{fs.unlinkSync(request);}catch{}
+        if(consumed)try{fs.unlinkSync(request);}catch{}
       }
     }
   }catch{ /* a replaced or unavailable bridge directory cannot grant controller access */ }
