@@ -37,7 +37,7 @@ test('复用旧工作区时仅新协议迁移旧shim，规范元数据和shell�
 
 test('新旧进程各持原IO环境，刷新共享shim不会把旧请求换成新身份', async t => {
   const f = await fixture(t);
-  const old = `#!/usr/bin/env node\nconst fs=require('node:fs'),path=require('node:path');const dir=process.env.XIN_TASK_IO,id='a'.repeat(24);fs.writeFileSync(path.join(dir,id+'.request'),JSON.stringify({op:'ask',text:'old question'}));const reply=path.join(dir,id+'.reply'),until=Date.now()+15000;while(!fs.existsSync(reply)&&Date.now()<until)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);if(!fs.existsSync(reply))process.exit(1);console.log('OLD '+fs.readFileSync(reply,'utf8'));fs.unlinkSync(reply);\n`;
+  const old = `#!/usr/bin/env node\nconst fs=require('node:fs'),path=require('node:path');const dir=process.env.XIN_TASK_IO,id='a'.repeat(24);fs.writeFileSync(path.join(dir,id+'.request'),JSON.stringify({op:'ask',text:'old question'}));const reply=path.join(dir,id+'.reply'),until=performance.now()+15000;while(!fs.existsSync(reply)&&performance.now()<until)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);if(!fs.existsSync(reply))process.exit(1);console.log('OLD '+fs.readFileSync(reply,'utf8'));fs.unlinkSync(reply);\n`;
   fs.writeFileSync(f.shim, old, { mode: 0o755 });
   const launch = io => {
     const child = spawn(process.execPath, [f.shim, 'task', 'ask', 'new question'], { env: { PATH: '/usr/bin:/bin', XIN_TASK_IO: io }, stdio: ['ignore', 'pipe', 'pipe'] });
