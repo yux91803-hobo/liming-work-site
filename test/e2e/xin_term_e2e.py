@@ -204,8 +204,8 @@ async def part2(browser):
     await pg.wait_for_timeout(2500)
     t1 = await pg.evaluate(WIN)
     offs = [o for r, o, _ in st['tpolls'] if r == 'rtask00b01']
-    ui.check('点开：这件活一页，欢迎框写它的模型和目录，「> 编译 blink」；画出 ls、说的话、make，内部命令和要求原文不画',
-             t1['prompt'] == '>编译 blink' and t1['ban'][2] == ['GLM-5.3', '~/workspace/blink'] and [x.split('(')[0] for x in t1['rows']] == ['运行', '我先编一遍看看。', '运行']
+    ui.check('点开：这件活一页，欢迎框写它的目录、不露模型（小芯的默认界面不露模型），「> 编译 blink」；画出 ls、说的话、make，内部命令和要求原文不画',
+             t1['prompt'] == '>编译 blink' and t1['ban'][2] == ['~/workspace/blink'] and 'GLM' not in t1['text'] and [x.split('(')[0] for x in t1['rows']] == ['运行', '我先编一遍看看。', '运行']
              and 'xin remember' not in t1['text'] and '内部要求原文' not in t1['text'], (t1['rows'], t1['ban']))
     ui.check('开着时才轮询：按 off 往前走，不带设备和标签页（不算在看这个对话）', offs[:1] == [0] and max(offs) >= 3 and not any(w for _, _, w in st['tpolls']), offs[:6])
     ui.check('最底下一行写它在干什么（make → 编译中）', t1['st'] and t1['st'].startswith('编译中'), t1['st'])
@@ -284,6 +284,12 @@ async def part3(browser):
     await pg.wait_for_function("!!document.querySelector('.tm-win .tm-sum')", timeout=15000)
     b = await pg.evaluate(WIN)
     ui.check('回完：make 标绿，「编好了。」接在后面，结尾「在电脑上做了 9 秒 · 2 条命令」，不再转圈', b['sum'] == '在电脑上做了 9 秒 · 2 条命令' and b['st'] is None and b['rows'][-1] == '编好了。', (b['sum'], b['rows']))
+    # 回完以后这一轮的记录里有模型（done 带的）：关上再点回答的头像，欢迎框照样只写工作目录
+    await pg.keyboard.press('Escape')
+    await pg.click('.xc-msgs .xc-ai > .xc-av-t')
+    await pg.wait_for_function("!!document.querySelector('.tm-win:not([hidden]) .tm-sum')", timeout=10000)
+    c = await pg.evaluate(WIN)
+    ui.check('小芯这一轮的欢迎框只写工作目录：回完再点回答的头像，带了模型也不露出来（天启才写模型）', c['ban'][1:] == ['小芯', ['~/workspace']] and 'DeepSeek' not in c['text'], c['ban'])
     await pg.context.close()
 
 

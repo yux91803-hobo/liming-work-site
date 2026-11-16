@@ -1681,7 +1681,8 @@
     if (f && f.verb) return f.verb;
     return actFrom(t.activity) || thinkWord(f || (S.tfIdle[sid] = S.tfIdle[sid] || {}));
   }
-  function runModel(m) { return m.model ? modelName(m.model) : curAgent() === 'harness' ? modelName(S.hModel) : ''; }
+  // 欢迎框里的模型只在天启写（天启的模型是站长自己选的）；小芯的默认界面不露模型（后台的活也一样）
+  function runModel(m) { return tqConv() ? modelName(m.model || S.hModel) : ''; }
   function runTab(run) {
     var m = S.runMeta[run] || {};
     var tq = tqConv();
@@ -1693,7 +1694,7 @@
   function taskTab(sid) {
     var t = S.tinfo[sid]; if (!t) return null;
     var f = S.tf[sid], live = tLive(t);
-    var tab = { key: 'task:' + sid, label: t.title || '后台的活', prompt: t.title || '', model: modelName(t.model) || '', cwd: t.dir || '', live: live, events: f ? f.events.slice() : [],
+    var tab = { key: 'task:' + sid, label: t.title || '后台的活', prompt: t.title || '', cwd: t.dir || '', live: live, events: f ? f.events.slice() : [],
       status: function () { var x = S.tinfo[sid] || t; return { verb: taskVerb(sid), sec: x.status === 'queued' || !x.startedAt ? null : (Date.now() - x.startedAt) / 1000 }; } };
     if (!live) { tab.endState = endState(t); tab.endMs = t.startedAt && t.endedAt ? t.endedAt - t.startedAt : null; if (!f || !f.full) tab.loading = true; }
     return tab;
