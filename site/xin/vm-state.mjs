@@ -24,6 +24,7 @@ export class StateJournal {
   // owner 为空（单独用 StateJournal 的测试）时不检查。
   // 交给主人时没送出去（主人正在接手、还没开始听），稍等后从头再判断一次（this.retryUnsent 由 vm-base 装上，§6.2）。
   writing(fn,unavailable){
+    if(!this.active&&!this.writers)this.checkWriter?.();
     if(!this.owner||this.writers>0)return fn();
     return (this.retryUnsent||(f=>f()))(()=>this.writingOnce(fn,unavailable));
   }
@@ -105,6 +106,7 @@ export class StateJournal {
     const d=this.db;d.exec('BEGIN IMMEDIATE');this.active=true;this.overlay.clear();this.after=[];this.eventSequence=0;this.operation=command?.id||crypto.randomUUID();
     let result;
     try{
+      this.checkWriter?.(true);
       if(command){const old=d.prepare('SELECT digest,result FROM commands WHERE id=?').get(command.id);if(old){
         if(old.digest!==command.digest){d.exec('ROLLBACK');return {error:'message_conflict',msg:'同一个消息标识对应了不同内容，请重新发送'};}
         result=JSON.parse(old.result);d.exec('COMMIT');return result;

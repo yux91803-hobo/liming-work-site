@@ -7,12 +7,24 @@ import { spawnSync } from 'node:child_process';
 import { StateJournal } from './vm-state.mjs';
 import { Ownership } from './vm-kernel-owner.mjs';
 import { requestStateSync, stateSocket, retryUnsent } from './vm-kernel-client.mjs';
+import { callContext } from './vm-kernel-context.mjs';
+import { assertAttempt } from './vm-run-attempt.mjs';
 
 export const BASE = process.env.XIN_HOME || path.join(os.homedir(), '.xin');
 export const journal = new StateJournal(BASE);
 // 写权释放前关闭可写连接；正式部署仍默认 legacy，状态进程由后续的模式开关启用。
 export const ownership = journal.owner = new Ownership(BASE,{beforeRelease:()=>journal.closeWriter()});
-journal.bridge = (kind,args) => requestStateSync(BASE,{kind,...args});
+journal.bridge = (kind,args) => requestStateSync(BASE,{kind,...args,run:callContext().run,attempt:callContext().attempt});
+journal.checkWriter = (transaction=false) => {
+  const context=callContext();
+  if(!context.run)return;
+  if(!okId(context.run,'r'))assertAttempt(null,{...context,attempt:context.attempt||'invalid'});
+  const name='runs/'+context.run+'.json',file=path.join(BASE,name),db=transaction?journal.db:journal.connection||journal.reader;
+  const stored=db?.prepare('SELECT body FROM documents WHERE name=?').get(name);
+  let meta=readJ(file);
+  if(stored)try{meta=JSON.parse(stored.body);}catch{throw Object.assign(new Error('执行状态损坏，报告未应用'),{code:'invalid_run_state'});}
+  assertAttempt(meta,context);
+};
 journal.retryUnsent = retryUnsent;
 // The socket is only a hint. A legacy record still goes through the shared-lock path, even with a stale socket.
 export function stateOwned(){

@@ -72,6 +72,8 @@ import {recallAll,turnGuidance,safeContextEvents,dropRecall} from './vm-context.
 import {dailyEvidence,dailyContext} from './vm-daily.mjs';
 import {openFrontProvider,preferredFrontModel,frontModelInfo,AGY_FRONT_MODEL} from './vm-front-agy.mjs';
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
+import { createDispatcher } from './vm-dispatch.mjs';
+import { attemptError, assertAttempt, attemptsEnabled } from './vm-run-attempt.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
 import { transientFailure, finalFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
@@ -263,8 +265,8 @@ const seenF = run => path.join(RUNS, run + '.seen');   // 网页最近一次来�
 function lockedCall(key, op, args) {
   if (key !== 'new' && key !== 'daily' && key !== 'tasks' && !okId(key, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
   return retryUnsent(()=>{   // 交不过去（主人正在接手、还没开始听）就稍等、从头再判断（§6.2）
-  const viaOwner=()=>requestStateSync(BASE,{kind:'op',op,args,locked:true,key,run:callContext().run});
-  if(ownership.owning)return controller.invoke({op,args,locked:true,key,run:callContext().run});
+  const viaOwner=()=>requestStateSync(BASE,{kind:'op',op,args,locked:true,key,run:callContext().run,attempt:callContext().attempt});
+  if(ownership.owning)return controller.invoke({op,args,locked:true,key,run:callContext().run,attempt:callContext().attempt},{internal:true});
   if(stateOwned())return viaOwner();
   let release;try{release=ownership.enter();}catch(e){if(e.code!=='owner_unavailable')throw e;return viaOwner();}
   try{
@@ -293,7 +295,7 @@ function patchRun(run,changes){
   const r=lockedCall(key,'run_patch',{run,changes});if(r.error)throw new Error(r.msg||r.error);return r.meta;
 }
 function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
-function emit(run, ev) { if(journal.active)journal.append(runF(run),ev);else fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
+function emit(run, ev) { try{journal.checkWriter();}catch(e){if(e.code==='stale_attempt')return;throw e;} if(journal.active)journal.append(runF(run),ev);else fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
 // 从字节位置 from 开始读一轮的事件，只到最后一个完整行：items 每条带它那一行结束处的字节位置（解析不了的行 ev 为 null）。
 // 参考 Agent HUD docs/performance.md：日志从上次读到的位置接着读，半行等下次，不整份重读。
 function readRunFrom(file, from, maxBytes = Infinity) {
@@ -661,10 +663,11 @@ export function exportState(keep = 7) {
 // 只重试尚未开始工作的 CLI：开始处理后可能长时间不输出，网络超时由 CLI 自己处理，避免重复投递同一轮。
 const STALL_MS = Number(process.env.XIN_STALL_MS) || 75000;
 // 开工前就停了（站长先按了停，或者用备份恢复时备份那一刻没做完）：不起模型，写一条「已停止」收尾，后台任务跟着标成停了
-function endStoppedRun(run,meta){emit(run,{t:'done',ok:false,stopped:true,code:0});patchRun(run,{stopped:true,ended:Date.now()});journal.finishLaunch(run);if(meta.task)lockedCall('tasks','task_finish',{sid:meta.sid,run,ok:false,stopped:true});}
+function endStoppedRun(run,meta){const key=meta.task?'tasks':meta.sid;if(!lockHeld(key))return lockedCall(key,'run_stopped',{run});if(meta.ended)return {};emit(run,{t:'done',ok:false,stopped:true,code:0});patchRun(run,{stopped:true,ended:Date.now()});journal.finishLaunch(run);if(meta.task)iops.task_finish({sid:meta.sid,run,ok:false,stopped:true});return {};}
 function runner(run) {
   const meta = readJ(metaF(run));
   if (!meta) process.exit(1);
+  assertAttempt(meta,callContext());
   if(meta.stopped){endStoppedRun(run,meta);return;}
   meta.pid = process.pid; meta.identity = processIdentity(process.pid); patchRun(run,{pid:meta.pid,identity:meta.identity});
   const sess = readJ(sessF(meta.sid));
@@ -742,6 +745,7 @@ function runner(run) {
     if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {}, meta.providerModel ? {providerModel:meta.providerModel} : {});
     const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,fromErr:meta.fromErr||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0)),...(doneEv.usage.incl?{incl:true}:{})}}:{}) } : null;
     const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv,stat});
+    if(completion.error==='stale_attempt')return;
     if(completion.error){finished=false;setTimeout(()=>finish(code,why),1000);return;}
     if(completion.done){Object.assign(doneEv,completion.done);ok=doneEv.ok;stopped=doneEv.stopped;}
     if (meta.task) {
@@ -1389,7 +1393,7 @@ export function sessionUsage(s) {
 function launch(s, m, userEv) {
   memoryActivity(); // All foreground/background work preempts an in-flight idle review.
   const run = rid('r');
-  writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, m));
+  writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, attemptsEnabled()?{attemptProtocol:1}:{}, m));
   if(userEv)emit(run, userEv);
   if(isTask(s))delete s.browserStep;   // 新的一轮：上一轮请站长登录的那一步已经过去了
   s.runs.push(run); s.updated = Date.now(); if(isTask(s))saveTask(s);else writeJ(sessF(s.sid),s);
@@ -1399,61 +1403,7 @@ function launch(s, m, userEv) {
   journal.defer(ensureWatchdog);
   return run;
 }
-function dispatchLaunches(){
-  if(journal.active||ownership.draining)return;
-  let release;try{release=ownership.enter();}catch(e){if(e.code==='owner_unavailable')return;throw e;}
-  try{
-  for(const job of callContext().key?[]:journal.launchedRuns()){
-    const m=readJ(metaF(job.run));if(!m||m.ended){journal.finishLaunch(job.run);continue;}
-    if(alive(m.pid,m.identity)||Date.now()-Math.max(m.started,job.dispatchedAt||0)<15000)continue;
-    if(!m.task&&m.agent==='codex'&&!m.stopped&&job.attempts<2){startRunner(job.run);journal.dispatched(job.run);}
-    else if(runDone(job.run))journal.finishLaunch(job.run);
-  }
-  for(const job of journal.pendingLaunches()){
-    const meta=readJ(metaF(job.run));if(!meta||meta.ended){journal.finishLaunch(job.run);continue;}
-    if(alive(meta.pid,meta.identity)){journal.dispatched(job.run);continue;}
-    const own=readJ(sessF(job.sid));
-    // Only the latest turns can still be running; a long-lived conversation must not re-read its whole history here.
-    const earlier=(own?.runs||[]).slice(-4).filter(r=>r!==job.run).some(r=>{const m=readJ(metaF(r));return m&&!runDone(r)&&alive(m.pid,m.identity);});
-    if(earlier)continue;
-    startRunner(job.run);journal.dispatched(job.run);
-  }
-  }finally{if(!ownership.owning&&ownership.depth===1)journal.closeWriter();release();}
-}
-function startRunner(run){
-  // The per-run lifetime lock prevents a crash/retry between spawn and receipt from executing twice.
-  mk(path.join(BASE,'locks'));
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK' && !/^CODEX_(?!HOME$)/.test(k)));
-  const child = spawn('flock', ['-n','--close',path.join(BASE,'locks',run+'.lock'),process.execPath, SELF, 'run', run], { detached: true, stdio: 'ignore', cwd: os.homedir(), env });
-  child.on('error',()=>{emit(run,{t:'err',text:'执行进程未能启动，已保留输入'});patchRun(run,{died:true,ended:Date.now()});journal.finishLaunch(run);});
-  child.unref();
-}
 function lastRun(s) { return s && s.runs && s.runs.length ? s.runs[s.runs.length - 1] : null; }
-function runDone(run) {
-  const m = readJ(metaF(run));
-  if (m && m.ended) return true;
-  // done 总是最后一条：只看文件尾巴（后台任务的记录可能很长）
-  if (readTail(runF(run), 8192).includes('"t":"done"')) return true;
-  // 后台进程没了却没写 done（云电脑重启、被杀）：补一条，记下是断掉的（后台任务据此决定要不要接着做）
-  if (m && Date.now() - m.started > (Number(process.env.XIN_DEAD_MS) || 15000) && !alive(m.pid, m.identity)) {
-    if(!m.task&&m.agent==='codex'&&!m.stopped){
-      const job=journal.launchRecord(run);
-      if(job&&job.state!=='finished'&&(job.attempts<2||Date.now()-job.dispatchedAt<15000)){
-        if(!journal.active&&!callContext().key)dispatchLaunches();return false;
-      }
-    }
-    if(m.childPid && processGroupMembers(m.childPid,m.childIdentity).length){
-      signalProcessGroup(m.childPid,m.childIdentity,m.orphanStopping && Date.now()-m.orphanStopping>2000?'SIGKILL':'SIGTERM');
-      if(!m.orphanStopping)patchRun(run,{orphanStopping:Date.now()});
-      if(processGroupMembers(m.childPid,m.childIdentity).length) return false;
-    }
-    emit(run, { t: 'err', text: '这一轮中途断了（云电脑重启或进程被杀）' });
-    emit(run, { t: 'done', ok: false, code: -1, ms: Date.now() - m.started });
-    patchRun(run,{died:true,ended:Date.now()});
-    return true;
-  }
-  return false;
-}
 function summary(s) {
   const r = lastRun(s);
   return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null, archived: !!s.archived, model: s.model || null, ...(s.main ? { main: true } : {}) };
@@ -2037,7 +1987,7 @@ function ensureWatchdog() {
   if(journal.active){journal.defer(ensureWatchdog);return;}
   // flock lives outside every task's writable roots and is released by the kernel on exit.
   mk(path.join(BASE, 'locks'));
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK' && !/^CODEX_(?!HOME$)/.test(k)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !['XIN_RUN','XIN_ATTEMPT','XIN_LOCK'].includes(k) && !/^CODEX_(?!HOME$)/.test(k)));
   spawn('flock', ['-n', '--close', path.join(BASE, 'locks/watchdog.lock'), process.execPath, SELF, 'watchdog'],
     { detached: true, stdio: 'ignore', cwd: os.homedir(), env }).unref();
 }
@@ -2046,7 +1996,7 @@ function ensureMemoryIdle() {
   if (!(readText(CODEX_KEY()) || readText(HARNESS_KEY())).trim()) return;
   mk(path.join(BASE, 'locks'));
   // Only a local child after real work completes. Never registered as a task, callback, alarm or lease.
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK'));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !['XIN_RUN','XIN_ATTEMPT','XIN_LOCK'].includes(k)));
   const child = spawn('flock', ['-w','3','--close',path.join(BASE,'locks/memory-idle.lock'),process.execPath,SELF,'memory-idle'],
     {detached:true,stdio:'ignore',cwd:os.homedir(),env});
   child.on('error', () => {}); child.unref();
@@ -2111,7 +2061,7 @@ function newerController() {
   return ok && fs.existsSync(cur.self) ? cur.self : null;
 }
 function handOverWatchdog(next) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'XIN_RUN' && k !== 'XIN_LOCK' && !/^CODEX_(?!HOME$)/.test(k)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !['XIN_RUN','XIN_ATTEMPT','XIN_LOCK'].includes(k) && !/^CODEX_(?!HOME$)/.test(k)));
   // -w：等这个旧 watchdog 退出、放开锁以后接上
   mk(path.join(BASE, 'locks'));
   spawn('flock', ['-w', '60', '--close', path.join(BASE, 'locks/watchdog.lock'), process.execPath, next, 'watchdog'], { detached: true, stdio: 'ignore', cwd: os.homedir(), env }).unref();
@@ -2119,7 +2069,9 @@ function handOverWatchdog(next) {
 // 还有没有要接着盯的事：没有就让旧看门狗退出、让状态进程一分钟才检查一次（InstaBox 按 CPU 有没有负载判断空闲，不能把电脑撑着不暂停）
 export function pendingWork(){const pending=readJ(path.join(BASE,'controller-event.json')),notices=fs.existsSync(NOTICE_DIR())&&fs.readdirSync(NOTICE_DIR()).some(n=>/^[a-f0-9]{32}\.json$/.test(n)&&readJ(path.join(NOTICE_DIR(),n))?.state==='pending');
   return listTasks().some(isBackground)||notices||journal.hasPendingHandoffs()||journal.hasOpenLaunches()||!!(pending&&!pending.acknowledged);}
-async function maintainState(){journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();await flushNotices();await flushControllerEvent();return pendingWork()?5000:60000;}
+function reconcileState(){journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();}
+async function flushState(){await flushNotices();await flushControllerEvent();return pendingWork()?5000:60000;}
+async function maintainState(){reconcileState();return flushState();}
 async function watchdog() {
   for (;;) {
     let release;try{release=ownership.enter();}catch(e){if(e.code==='owner_unavailable')return;throw e;}release();
@@ -2801,6 +2753,8 @@ const iops = {
     return {done};
   },
   run_patch(a){if(!okId(a.run,'r'))return {error:'bad_run'};return {meta:applyRunPatch(a.run,a.changes)};},
+  run_recover(a){return okId(a.run,'r')?{done:runDone(a.run)}:{error:'bad_run'};},
+  run_stopped(a){const m=okId(a.run,'r')&&readJ(metaF(a.run));return !m?{error:'no_run'}:callContext().run&&!m.stopped?{error:'not_stopped'}:endStoppedRun(a.run,m);},
   task_index(){listTasks();return {ok:true};},
   push_gone(a){writeSubs(readSubs().filter(s=>!(a.endpoints||[]).some(x=>x.endpoint===s.endpoint&&x.revision===(s.revision||String(s.at||'')+JSON.stringify(s.keys)))));return {ok:true};},
   notice_claim(a) {
@@ -3155,7 +3109,7 @@ async function serveState(){
   let initialized=false;
   const service=await createStateServer({home:BASE,owner:ownership,
     initialize:before=>{checkControllers(BASE,SELF);journal.recover();initializeStateTables();restoreStops();markCurrentController();if(before.mode==='legacy')snapshotBeforeSwitch(journal.db,BASE);initialized=true;},
-    handle:controller.handle,tick:maintainState,beforeRelease:()=>{try{if(initialized)journal.recover();}finally{journal.close();}}
+    handle:controller.handle,reconcile:reconcileState,tick:flushState,hasWork:pendingWork,beforeRelease:()=>{try{if(initialized)journal.recover();}finally{journal.close();}}
   });
   const stop=()=>service.close().catch(()=>{process.exitCode=1;});
   process.on('SIGTERM',stop);process.on('SIGINT',stop);
@@ -3170,6 +3124,7 @@ async function main() {
   if(process.argv[2]==='serve')return serveState();
   if(process.argv[2]==='owner-legacy'){process.stdout.write(JSON.stringify(ownerLegacy(ownership)));return;}
   if(!LONG_LIVED.includes(process.argv[2])){
+    const stale=callContext().run&&attemptError(readJ(metaF(callContext().run)),callContext());if(stale){if(process.argv[2]==='xin'){process.stderr.write(stale.msg+'\n');process.exitCode=1;}else process.stdout.write(JSON.stringify(stale));return;}
     const forward=()=>forwardCLI(BASE,process.argv[2],{stdin:readStdin});
     if(stateOwned())return forward();
     try{ownership.hold();}catch(e){if(e.code!=='owner_unavailable')throw e;return forward();}
@@ -3201,9 +3156,10 @@ async function main() {
   if(op==='reap'){const res=reapNow();try{lockedCall('tasks','task_expire',{});}catch{}process.stdout.write(JSON.stringify(res));return;}
   if(op==='xin'){process.exitCode=xinCmd(process.argv.slice(3));return;}
   if(op==='pushq'){let m=null;try{m=JSON.parse(process.argv[3]||'');}catch{}if(m)pushAll(m).catch(()=>{});return;}
-  try{const res=await controller.invoke({op,args:inputArgs(),locked,key:process.env.XIN_LOCK||null,run:process.env.XIN_RUN||null});process.stdout.write(JSON.stringify(res??{}));}
-  catch(e){process.stdout.write(JSON.stringify({error:'internal',msg:String(e?.message||e)}));}
+  try{const res=await controller.invoke({op,args:inputArgs(),locked,key:process.env.XIN_LOCK||null,run:process.env.XIN_RUN||null,attempt:process.env.XIN_ATTEMPT||null});process.stdout.write(JSON.stringify(res??{}));}
+  catch(e){process.stdout.write(JSON.stringify({error:e.code==='stale_attempt'?e.code:'internal',msg:String(e?.message||e)}));}
 }
+const {dispatchLaunches,runDone}=createDispatcher({self:SELF,metaF,sessF,runF,lockedCall,emit,patchRun});
 const controller=createController({ops,iops,isTask,saveTask,rememberAgentSession,mainSid,listTasks,lockedCall,dispatchLaunches,markCurrentController,xinCmd,reapNow});
 
 if (process.argv[1] && path.resolve(process.argv[1]) === SELF) main().catch(e=>{process.stderr.write((e.code==='owner_unavailable'?e.message:e.code||'state_failed')+'\n');process.exitCode=1;});

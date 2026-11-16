@@ -6,6 +6,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { platformTimeout } = require('./helpers/timeout.cjs');
 const { lockedSpawn } = require('./helpers/locked.cjs');
+const { captureRunContext } = require('./helpers/run-context.cjs');
 
 const AGENT = path.join(__dirname, '../site/xin/vm-agent.mjs');
 function agentEnv(extraEnv = {}) {
@@ -36,9 +37,10 @@ test('集合目录不能当项目目录：上传的文件（uploads 和下面每
 test('xin task new --dir 指到上传目录：不派，说清楚改用 --file 带上要用的文件', async () => {
   const { work, xin, env, op } = agentEnv();
   const r = op('send', { agent: 'codex', text: '你好' });
+  const actor = captureRunContext(xin, r.run);
   for (const end = performance.now() + platformTimeout(15000); performance.now() < end && !op('poll', { run: r.run, off: 0 }).done;) await sleep(200);
   fs.mkdirSync(path.join(work, 'uploads', '2026-11-12'), { recursive: true });
-  const e = Object.assign({}, env, { XIN_RUN: r.run, PATH: path.join(xin, 'bin') + ':' + process.env.PATH });
+  const e = Object.assign({}, env, actor, { PATH: path.join(xin, 'bin') + ':' + process.env.PATH });
   const xinTask = (...a) => { try { return execFileSync(process.execPath, [AGENT, 'xin', 'task', ...a], { env: e, input: '' }).toString(); } catch (err) { return String(err.stdout || '') + String(err.stderr || ''); } };
   const out = xinTask('new', '--title', '看看上传', '--dir', 'uploads/2026-11-12', '--', '整理一下');
   assert.match(out, /不能把 .*uploads.* 当项目目录/);
