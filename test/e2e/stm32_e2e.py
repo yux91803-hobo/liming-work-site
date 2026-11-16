@@ -1573,8 +1573,8 @@ async def main():
         await pg.wait_for_selector('.xc-hello'); await pg.wait_for_timeout(200)
         check('没登录不叫醒云电脑，登录以后马上叫醒', 'wake' not in ops_before and 'wake' in xs['ops'], (ops_before, xs['ops']))
         st = await pg.evaluate("[!!document.querySelector('.xc-hello .xc-av'), [...document.querySelectorAll('.xc-hello .xc-chip')].map(b => b.textContent), document.querySelector('.xc-row .xc-mdl').hidden, document.querySelector('.xc-sub').textContent]")
-        check('登录以后：欢迎页（小芯头像和一句话，没有建议按钮），默认模式输入框底下没有模型按钮（没有可选的），标题下面写着在线',
-              await pg.is_visible('.xc-row textarea') and st == [True, [], True, '在线'] and not await pg.evaluate("!!document.querySelector('.xc-hello button')"), st)
+        check('登录以后：欢迎页（小芯头像和一句话，没有建议按钮；上面只有「小芯 | 天启」切换），默认模式输入框底下没有模型按钮（没有可选的），标题下面写着在线',
+              await pg.is_visible('.xc-row textarea') and st == [True, [], True, '在线'] and not await pg.evaluate("!!document.querySelector('.xc-hello button:not(.xc-as-b)')"), st)
         PK = """(() => { const p = document.querySelector('.xc-pick'), t = p.querySelector('.xc-pk-t'), m = p.querySelector('.xc-pk-g[data-g=model]'), on = b => b.getAttribute('aria-checked') === 'true' ? '*' : '';
           return [document.querySelector('.xc-mdl span').firstChild.textContent, t ? t.querySelector('i').textContent : null, !!m,
             [...p.querySelectorAll('.xc-eff-d')].map(b => b.getAttribute('aria-label') + on(b)), document.querySelector('.xc-mdl span').firstChild.textContent,
@@ -1588,13 +1588,14 @@ async def main():
         async def close_dr():
             await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')")
         async def set_tianqi(on):
-            await open_set()
-            if await pg.evaluate("document.querySelector('.xc-tianqi .xc-sw').getAttribute('aria-checked') === 'true'") != on: await pg.click('.xc-tianqi .xc-sw')
-            await close_dr()
+            # 天启不在设置里了（站长 2026-11-16「属于另一种 agent 形式」）：新对话空白页上的「小芯 | 天启」切换
+            if not await pg.evaluate("!!document.querySelector('.xc-hello .xc-as')"):
+                await pg.click('.xc-new-b'); await pg.wait_for_selector('.xc-hello .xc-as')
+            await pg.click('.xc-as-b[data-a=%s]' % ('harness' if on else 'codex')); await pg.wait_for_timeout(150)
         await set_tianqi(True)
         await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
         st = await pg.evaluate(PK)
-        check('打开天启模式：Harness 模型面板直接显示三个模型，当前 DeepSeek V4.1 Flash；分段按钮写出四档名称，默认高',
+        check('空白页切到天启：Harness 模型面板直接显示三个模型，当前 DeepSeek V4.1 Flash；分段按钮写出四档名称，默认高',
               st == ['DeepSeek V4.1 Flash', '高', True, ['关', '低', '高*', '最高'], 'DeepSeek V4.1 Flash', '高', ['DeepSeek V4.1 Flash*', 'GLM-5.3', 'GLM-5.3 Flash'], False], st)
         await pg.click('.xc-eff-d[data-v=off]'); await pg.wait_for_timeout(100)
         st = await pg.evaluate(PK)
@@ -1624,14 +1625,14 @@ async def main():
         check('Harness 插件页只列 Purge，开关请求明确带 Harness，不会开关 Codex 的 MCP', hp == ['purge'] and xs.get('plugins_agent') == 'harness' and xs.get('plugin_set') == [{'agent': 'harness', 'name': 'purge', 'on': False}], (hp, xs.get('plugin_set')))
         await pg.click('.xc-sh-x')
         await open_set()
-        st = await pg.evaluate("""[document.querySelector('.xc-tianqi .xc-sw').getAttribute('aria-checked'), document.querySelector('.xc-tianqi .xc-tg-t b').textContent, (document.querySelector('.xc-tianqi .xc-tg-t span') || {}).textContent || null,
+        st = await pg.evaluate("""[!!document.querySelector('.xc-tianqi'), document.querySelector('.xc-set').textContent.includes('天启'),
           !!document.querySelector('.xc-set [data-agent]'), document.querySelector('.xc-set').textContent.includes('Claude'), !!document.querySelector('.xc-set .xc-effort, .xc-set .xc-cxmodel'), localStorage.getItem('lm.xin.agent')]""")
-        check('设置里是「天启模式」开关（开着 = Harness，不带说明小字），没有三选一、没有 Claude；思考强度、模型不在设置里；面板按 Esc 关、聊天不关',
-              st == ['true', '天启模式', None, False, False, False, 'harness'] and st0 == [True, True], (st, st0))
-        await pg.click('.xc-tianqi .xc-sw'); await pg.wait_for_timeout(100)
+        check('设置里没有天启（它是新对话的入口），没有三选一、没有 Claude；思考强度、模型不在设置里；面板按 Esc 关、聊天不关',
+              st == [False, False, False, False, False, 'harness'] and st0 == [True, True], (st, st0))
         await close_dr()
+        await set_tianqi(False)
         st = await pg.evaluate("[document.querySelector('.xc-mdl').hidden, localStorage.getItem('lm.xin.agent'), localStorage.getItem('lm.xin.agent.v')]")
-        check('关掉天启模式：回到默认模式，模型按钮收起，记在这个浏览器里', st == [True, 'codex', '3'], st)
+        check('空白页切回小芯：回到默认模式，模型按钮收起，记在这个浏览器里', st == [True, 'codex', '3'], st)
         # 以前的 Claude 对话照样能打开：按钮写 Claude 和它的档位（五档），能改；回到新对话又是默认模式
         await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-si')
         await pg.click('.xc-si:has-text("旧对话")'); await pg.wait_for_selector('.xc-code')
@@ -1946,7 +1947,7 @@ async def main():
         await pv.click('.xc-set-b'); await pv.wait_for_selector('.xc-set')
         rows = await pv.evaluate("[...document.querySelectorAll('.xc-tg-t b')].map(b => b.textContent)")
         await pv.wait_for_function("document.querySelector('.xc-push .xc-sw').getAttribute('aria-checked') === 'false' && !document.querySelector('.xc-push .xc-sw').disabled")
-        check('设置：天启模式、附带正在看的页面、做完提醒、机外备份、网站登录（没有学习记录、主动跟进），做完提醒默认关着', rows == ['天启模式', '附带当前页面', '完成通知', '机外备份', '网站登录'] and not await pv.evaluate("!!document.querySelector('.xc-learning, .xc-followups')"), rows)
+        check('设置：附带正在看的页面、做完提醒、机外备份、网站登录（天启不在这里，是新对话的入口；没有学习记录、主动跟进），做完提醒默认关着', rows == ['附带当前页面', '完成通知', '机外备份', '网站登录'] and not await pv.evaluate("!!document.querySelector('.xc-learning, .xc-followups')"), rows)
         await pv.click('.xc-set-b'); await pv.click('.xc-set-b')
         check('重新打开设置：不报错，开关还在', await pv.is_visible('.xc-push .xc-sw'))
         c0 = await pv.evaluate("document.querySelector('.xc-ctxauto .xc-sw').getAttribute('aria-checked')")
