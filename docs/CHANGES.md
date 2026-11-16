@@ -7,9 +7,9 @@
 - **暂停恢复**：状态服务启动即检查，墙上时间跳过 30 秒或倒退时，请求立即触发检查。同步状态核对与异步通知投递分开，已有通知等待网络时也能核对到期状态，不同时起两个通知循环；空闲仍 60 秒一轮。
 - **内核回归抓到并修复本批的定时回归**：启动立即检查后会先选 60 秒空闲间隔；新任务到来后若未提前唤醒，短延迟重试和超时就等到了下一分钟。首轮内核关闭编号回归 170/174，4 项原有重试/每日任务超时断言失败，没有放宽时限。新增空闲转有活、连续轮询不推迟、通知结束边界三项保证；修正后两个原失败重试用例 2/2、状态桥 18/18，最终全量重新执行。CI 的常驻内核回归显式启用编号，预发布也覆盖新协议。定时器只提前的做法参考 [Temporal LocalGate.Update](https://github.com/temporalio/temporal/blob/main/common/timer/local_gate.go)。
 - **参考**：[Temporal activity 完成入口](https://github.com/temporalio/temporal/blob/main/service/history/api/respondactivitytaskcompleted/api.go)先把 task token 对到当前执行再处理完成。未找到可直接复用的旧/新控制器兼容派发，保留小芯已有 SQLite journal 与 flock。后续收尾文件的原子写参考 [npm/write-file-atomic](https://github.com/npm/write-file-atomic/blob/main/lib/index.js) 和[目录 fsync 讨论](https://github.com/npm/write-file-atomic/issues/64)，本次尚未写收尾文件。
-- **验证状态**：接手基线 Node 22.23.4，`npm run check` 915/915。新增测试先复现旧编号仍可写状态/记忆和遗留子进程未清理就重派，再验证修正。修改后专项 70/70，另加的真实派发事务提交前/后 SIGKILL 用例也通过（尝试协议整组 9/9）；完整 `npm run check` 930/930。修正定时回归后的完整检查、双配置内核回归、浏览器测试与 CI/正式联调还在后续验证，以补充记录和 PR 当前 head 为准。
+- **本地最终验证**：Node 22.23.4。`XIN_RUN_ATTEMPTS=1 npm run check` **933/933**；`XIN_RUN_ATTEMPTS=0 npm run test:kernel`、`XIN_RUN_ATTEMPTS=1 npm run test:kernel` 各 **174/174**；`CHROMIUM_PATH=/usr/bin/chromium npm run test:e2e` **12 组全部通过**（学习台 372/372）。完整检查和浏览器测试顺序运行。损坏元数据/CI 快检 19/19、旧任务 CLI 身份适配专项 5/5 与 3/3 也通过。早期失败和修正见下两条；CI、测试站及正式发布结果以 PR 当前 head/Actions 为准，本地全过不代表已部署。
+- **保留旧测试的行为保证**：全面开启编号时，上传集合目录保护测试手工拼的 `xin` 环境只有 run，没有 attempt，被新闸门提前拒绝。修正 fixture 为启动时捕获身份并固定使用；同时补齐三项后台任务 CLI 用例的同类模拟环境，原来的目录拒绝、并发/互斥、超时和复核断言都保留。上传保护专项 5/5、三项后台用例 3/3 通过；没有靠关闭协议或删断言变绿。损坏 SQLite run 文档的解析错误使用固定错误码/消息，新增合成 Cookie 标记测试确认错误不会带出正文片段。
 - **未完成**：第 3 批 B 的持久收尾包、暂存与幂等重放；长期 owner 失联的完成结果尚无持久暂存保证；宿主授权 C、凭据代理 PoC、剩余读改写清零和重活迁出。保留 legacy，尚未达到内核模式正式稳定 7 天的删除门槛。实施与验收清单见 [恢复计划](superpowers/plans/2026-11-16-xin-recovery.md)。
-
 # 修改清单 · 2026-11-16（小芯工作台第二轮之一：答案直接说在聊天里、小芯岛动画、用量分网关和 Google、状态字）
 
 站长看了 #150 的新工作台后提了六件事，设计 [2026-11-16-xin-workbench-round2-design.md](superpowers/specs/2026-11-16-xin-workbench-round2-design.md)。这一批做其中四件（天启的新入口、实时终端下一批）。实现和自查：Claude Code（同一会话，没有另一位审核）。
