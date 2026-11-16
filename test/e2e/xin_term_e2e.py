@@ -287,12 +287,99 @@ async def part3(browser):
     await pg.context.close()
 
 
+async def part4(browser):
+    """天启：新对话空白页上「小芯 | 天启」；侧边栏、命令面板「新的天启对话」；天启对话里是星和「天启」。"""
+    pg = await ui.page(browser, 1280, 860)
+    st = await ui.xin_mock(pg, authed=True, live=[[{'t': 'text', 'text': '在呢。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 2000, 'model': 'deepseek-v4.1-flash'}]])
+    await open_work(pg)
+    await pg.wait_for_selector('.xc-hello .xc-as')
+    HELLO = """() => { const p = document.querySelector('.xc-hello'), mk = p.querySelector('.xc-hello-mk'); return [[...p.querySelectorAll('.xc-as-b')].map(b => b.textContent + (b.getAttribute('aria-checked') === 'true' ? '*' : '')),
+      p.querySelector('.xc-as').getAttribute('role'), p.classList.contains('tq'), p.querySelector('.xc-hello-t').textContent, getComputedStyle(mk.querySelector('.xc-tq')).opacity === '1',
+      document.querySelector('.xc-mdl').hidden, document.querySelector('.xc-row textarea').placeholder]; }"""
+    h0 = await pg.evaluate(HELLO)
+    ui.check('新对话空白页上方「小芯 | 天启」（单选组，默认小芯），小芯的标志和「嗨，我是小芯」，没有模型按钮', h0 == [['小芯*', '天启'], 'radiogroup', False, '嗨，我是小芯', False, True, '和小芯说点什么…'], h0)
+    await pg.click('.xc-as-b[data-a=harness]')
+    await pg.wait_for_timeout(700)
+    h1 = await pg.evaluate(HELLO)
+    ui.check('选天启：底滑过去，标志换成像素星、大标题「天启」，输入框底下出现模型按钮，写「和天启说点什么」', h1 == [['小芯', '天启*'], 'radiogroup', True, '天启', True, False, '和天启说点什么…'], h1)
+    await pg.focus('.xc-as-b[data-a=harness]')
+    await pg.keyboard.press('ArrowLeft')
+    await pg.wait_for_timeout(200)
+    k = await pg.evaluate("[document.querySelector('.xc-as-b[aria-checked=true]').dataset.a, document.activeElement.dataset.a, localStorage.getItem('lm.xin.agent')]")
+    ui.check('方向键也能换（焦点跟着），选了记在这个浏览器里', k == ['codex', 'codex', 'codex'], k)
+    await pg.keyboard.press('ArrowRight')
+    await pg.wait_for_timeout(200)
+    await pg.fill('.xc-row textarea', '天启你好')
+    await pg.keyboard.press('Enter')
+    await pg.wait_for_function(ui.CHAT_DONE + " && !!document.querySelector('.xc-ai')", timeout=10000)
+    sent = st['sent']
+    conv = await pg.evaluate("(() => { const a = document.querySelector('.xc-ai'); return [a.querySelector(':scope > .xc-av').classList.contains('xc-tq'), a.querySelector('.xc-who').textContent, !document.querySelector('.xc-hello'), localStorage.getItem('lm.xin.agent')]; })()")
+    ui.check('用天启发出去：是天启的新对话（agent harness、不带 main），回答的头像是星、名字写「天启」', sent.get('agent') == 'harness' and 'main' not in sent and conv == [True, '天启', True, 'harness'], (sent, conv))
+    # 侧边栏「新的天启对话」、标题栏的「+」（新对话 = 小芯）
+    await pg.click('.xc-tqb')
+    await pg.wait_for_selector('.xc-hello')
+    a1 = await pg.evaluate("[document.querySelector('.xc-hello').classList.contains('tq'), document.querySelector('.xc-tqb > span:last-child').textContent]")
+    await pg.click('.xc-new-b')
+    await pg.wait_for_timeout(300)
+    a2 = await pg.evaluate("[document.querySelector('.xc-hello').classList.contains('tq'), localStorage.getItem('lm.xin.agent')]")
+    ui.check('侧边栏「新的天启对话」：空白页直接是天启；标题栏的「+」新对话还是小芯', a1 == [True, '新的天启对话'] and a2 == [False, 'codex'], (a1, a2))
+    # 命令面板：搜「天启」
+    await pg.keyboard.press('Control+k')
+    await pg.wait_for_selector('.xc-pal:not([hidden]) input')
+    await pg.keyboard.type('天启')
+    await pg.wait_for_timeout(200)
+    first = await pg.evaluate("(document.querySelector('.xc-pal [aria-selected=true]') || {}).textContent || ''")
+    await pg.keyboard.press('Enter')
+    await pg.wait_for_timeout(300)
+    a3 = await pg.evaluate("document.querySelector('.xc-hello').classList.contains('tq')")
+    ui.check('命令面板搜「天启」：第一个是「新的天启对话」，回车就是天启的空白页', '新的天启对话' in first and a3, (first, a3))
+    await pg.context.close()
+
+
+async def part5(browser):
+    """模型和思考强度：按钮上的像素格、面板里滑过去的底、逐格亮、每档一句说明。"""
+    pg = await ui.page(browser, 1280, 860)
+    await ui.xin_mock(pg, authed=True)
+    await open_work(pg)
+    await pg.wait_for_selector('.xc-hello .xc-as')
+    await pg.click('.xc-as-b[data-a=harness]')
+    await pg.wait_for_timeout(300)
+    CHIP = "(() => { const m = document.querySelector('.xc-mdl'), e = m.querySelector('.xc-em'); return [m.classList.contains('tq'), e.querySelectorAll('b').length, e.querySelectorAll('b.on').length, e.textContent]; })()"
+    c0 = await pg.evaluate(CHIP)
+    ui.check('输入框底下：模型名后面一组像素强度格（关以外三格），默认「高」亮两格；天启的冷色', c0 == [True, 3, 2, '高'], c0)
+    await pg.click('.xc-mdl')
+    await pg.wait_for_selector('.xc-pick:not([hidden])')
+    await pg.wait_for_timeout(600)
+    PICK = """() => { const p = document.querySelector('.xc-pick'), th = p.querySelector('.xc-eff-th').getBoundingClientRect(), on = p.querySelector('.xc-eff-d.on').getBoundingClientRect(), m = p.querySelector('.xc-pk-t .xc-em');
+      return [p.classList.contains('tq'), p.querySelector('.xc-pk-agent').textContent, Math.abs((th.left + th.width / 2) - (on.left + on.width / 2)) < 2, m.querySelectorAll('b.on').length, p.querySelector('.xc-eff-help').textContent, p.querySelector('.xc-pk-tl').textContent]; }"""
+    p0 = await pg.evaluate(PICK)
+    ui.check('面板：写着「天启」；滑块停在「高」那一格正中，强度格亮两格，下面一句「想得更深，适合复杂的问题」', p0 == [True, '天启', True, 2, '想得更深，适合复杂的问题', '高'], p0)
+    await pg.click('.xc-eff-d[data-v=max]')
+    await pg.wait_for_timeout(80)
+    mid = await pg.evaluate("(() => { const th = document.querySelector('.xc-eff-th').getBoundingClientRect(), on = document.querySelector('.xc-eff-d.on').getBoundingClientRect(); return Math.abs((th.left + th.width / 2) - (on.left + on.width / 2)) > 2; })()")
+    await pg.wait_for_timeout(700)
+    p1 = await pg.evaluate(PICK)
+    c1 = await pg.evaluate(CHIP)
+    ui.check('点「最高」：底滑过去（不是一下跳过去），三格都亮，说明换成「想到最深，留给最难的问题」，按钮上也三格', mid and p1[2:] == [True, 3, '想到最深，留给最难的问题', '最高'] and c1[2:] == [3, '最高'], (mid, p1, c1))
+    await pg.click('.xc-eff-d[data-v=off]')
+    await pg.wait_for_timeout(700)
+    p2 = await pg.evaluate(PICK)
+    ui.check('点「关」：一格都不亮，说明「不额外思考，直接回答」', p2[2:] == [True, 0, '不额外思考，直接回答', '关'], p2)
+    await pg.click('.xc-pk-o[data-v="glm-5.3"]')
+    await pg.wait_for_timeout(500)
+    g = await pg.evaluate("[[...document.querySelectorAll('.xc-eff-d')].map(b => b.textContent), document.querySelectorAll('.xc-pk-t .xc-em b').length]")
+    ui.check('换成 GLM：只有低 / 高 / 最高三档，强度格也是三格', g == [['低', '高', '最高'], 3], g)
+    await pg.context.close()
+
+
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
         await part1(browser)
         await part2(browser)
         await part3(browser)
+        await part4(browser)
+        await part5(browser)
         await browser.close()
     bad = [name for name, ok in ui.results if not ok]
     real = [e for e in ui.errors if 'Failed to load resource' not in e]
