@@ -78,8 +78,12 @@ async def main():
         st = await backend(pg)
         await pg.goto(ui.BASE + '/#xin')
         await pg.wait_for_selector('.xc.show .xc-hello')
-        hello = await pg.evaluate("[document.querySelector('.xc-hello').textContent, !!document.querySelector('.xc-login:not([hidden])'), LimingXinChat.state.toMain]")
-        ui.check('第一次打开：空白页只有小芯和一句招呼，没有说明小字；停在主对话上', hello == ['嗨，我是小芯', False, True], hello)
+        # 上面那一排「小芯 | 天启」是选和谁聊（第二轮之二加的），不算说明小字：拿掉它再看剩下的字
+        hello = await pg.evaluate("""(() => { const c = document.querySelector('.xc-hello').cloneNode(true), s = c.querySelector('.xc-as');
+            const who = s ? [...s.querySelectorAll('.xc-as-b')].map(b => b.textContent + (b.getAttribute('aria-checked') === 'true' ? '✓' : '')) : null;
+            if (s) s.remove();
+            return [c.textContent, who, !!document.querySelector('.xc-login:not([hidden])'), LimingXinChat.state.toMain]; })()""")
+        ui.check('第一次打开：空白页只有小芯和一句招呼，没有说明小字（上面一排选和谁聊，默认小芯）；停在主对话上', hello == ['嗨，我是小芯', ['小芯✓', '天启'], False, True], hello)
         await pg.fill('.xc-row textarea', '你好')
         await pg.click('.xc-send')
         await pg.wait_for_function(ui.CHAT_DONE + ' && !!LimingXinChat.state.sid', timeout=10000)
