@@ -34,7 +34,7 @@ function scrubCompletion(s,t,hideModels){
   return s.split(/(?<=[。！？!?\n])/).filter(p=>!internal(p)).join('').trim();
 }
 export function publicCompletion(t,text){
-  if(t.status==='done'&&t.web&&t.preview?.ready)return '我画好了。[打开预览]('+t.preview.url+')';
+  if(t.status==='done'&&t.web&&t.preview?.ready)return '我画好了。[打开网页]('+t.preview.url+')';   // 和工作台卡片的按钮同名；网页上结果下面不再另放「打开网页」
   if(t.status==='waiting')return '我需要你确认一下：'+String(t.question||'请打开详情看看需要确认的内容。').slice(0,500);
   if(t.status==='failed')return '这次还没有完成，我保留了进度。'+(t.web?'网页尚未通过检查，可以继续处理。':String(t.result?.err||'').slice(0,300));
   let s=String(text||t.result?.text||'我做好了。').trim().slice(0,4000);

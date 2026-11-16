@@ -2358,6 +2358,32 @@ test('状态进程正在换：控制器把「没执行」当结果回来，也�
   }
 });
 
+// #158 的正式联调这样失败、回滚（北京 2026-11-16 23:12，只读查了电脑上的 kernel.jsonl）：部署后外壳停旧的状态进程的那几百毫秒里，
+// usage 交给当场起的控制器，它连上了正在停的旧进程、发出去以后连接断了，vm-kernel-client.mjs 记成「不知道执行没有」（executed:'unknown'），
+// 不是 #157 认的 executed:false。只读的、带去重标识的（retrySafe，和换通道重来用同一条规则）重来无害，也回「稍等」；别的不知道做没做，照旧交出去
+test('状态进程正在换、请求发出去后连接断了（executed:unknown）：能安全重来的（只读、带 clientId）也回「稍等」；改名这类照旧交出去', async () => {
+  const lost = { error: 'owner_unavailable', msg: '小芯的状态进程暂时不可用，请稍后重试', executed: 'unknown' };
+  const busy = { ok: false, state: 'busy', msg: '小芯正在换状态进程，稍等', retryAfter: 3 };
+  {
+    const m = await fresh(), env = kernelEnv(m, { XIN_STATE_OWNER: 'kernel' }), ck = await login(m, env);
+    const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+      'POST /xin/op': [() => kres(200, { ok: true, data: lost }), () => kres(200, { ok: true, data: lost }), () => kres(200, { ok: true, data: lost })] });
+    try {
+      assert.deepStrictEqual(await callOp(m, env, ck, 'usage'), busy, '只读的 usage');
+      assert.deepStrictEqual(await callOp(m, env, ck, 'tasks'), busy, '只读的 tasks');
+      assert.deepStrictEqual(await callOp(m, env, ck, 'rename', { sid: 'sx', title: '新名字' }), { ok: true, data: lost }, '改名不知道做没做：照旧交出去，不叫人重来');
+      assert.ok(!ib.calls.some(c => c.key.endsWith('/exec')), '不退 exec');
+    } finally { ib.restore(); }
+  }
+  {
+    const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined }), ck = await login(m, env);
+    const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify(lost), stderr: '', exitCode: 0 } }] });
+    try {
+      assert.deepStrictEqual(await callOp(m, env, ck, 'greet'), busy, 'exec 通道也一样（greet 只读）');
+    } finally { ib.restore(); }
+  }
+});
+
 test('send 走待送达：电脑醒着时和以前一样回 run，控制器拿到的是同一个 clientId', async () => {
   const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);
   const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify({ sid: 's1', run: 'r1' }), stderr: '', exitCode: 0 } }] });

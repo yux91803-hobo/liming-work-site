@@ -176,3 +176,21 @@ test('网页验收用真浏览器点击：变化在下一帧或稍后（1.5 秒�
  const attr=check('attr','wave.onclick=()=>{wave.dataset.count="2";}',[{selector:'#wave',expectSelector:'#wave',expectAttribute:{name:'data-count',value:'1'}}]);
  assert.equal(attr.ok,false);assert.match(attr.error,/#wave 的 data-count 是 "2"，不是 "1"/);
 });
+// PNG 第一行第一个像素不管哪种过滤都按原值存（左边、上边都当 0），解压 IDAT 就能读出左上角的颜色
+function pngInfo(file){
+ const b=fs.readFileSync(file),idat=[];let color=0;
+ for(let o=8;o<b.length;){const n=b.readUInt32BE(o),type=b.toString('latin1',o+4,o+8),d=b.subarray(o+8,o+8+n);if(type==='IHDR')color=d[9];if(type==='IDAT')idat.push(d);o+=12+n;}
+ const raw=require('node:zlib').inflateSync(Buffer.concat(idat));
+ return {width:b.readUInt32BE(16),height:b.readUInt32BE(20),topLeft:[raw[1],raw[2],raw[3]],color};
+}
+test('网页检查的截图给工作台卡片用：电脑宽度的横图（1280×800，和卡片一样 16:10），检查完重新打开页面再截，不带点击检查改过的样子',async()=>{
+ // 站长 2026-11-16：工作台「网页」卡片只看到一片深色和半截标题栏——原来最后在 390×800 的手机宽度、点完检查后截图，竖图塞进横框只剩最上面一截
+ const browser=chromium();assert.ok(browser,'需要 Chromium：设置 CHROMIUM_PATH');
+ const r=await load(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'xin-webshot-')),file=path.join(dir,'index.html'),tmp=fs.mkdtempSync(path.join(dir,'tmp-'));
+ fs.writeFileSync(file,'<!doctype html><html><head><title>换颜色</title><style>html,body{margin:0;background:#fff}</style></head><body><button id="paint" data-count="0" style="width:120px;height:40px;margin:300px 0 0 40px">变红</button><script>paint.onclick=()=>{document.documentElement.style.background=document.body.style.background="#f00";paint.dataset.count="1";}</script></body></html>');
+ const o=spawnSync(process.execPath,['--input-type=module','-e',r.WEB_BROWSER_CHECK,file,tmp,JSON.stringify({checks:[{selector:'#paint',expectSelector:'#paint',expectAttribute:{name:'data-count',value:'1'}}]}),r.WEB_PREVIEW_CSP,browser],{encoding:'utf8',timeout:60000});
+ const res=JSON.parse(o.stdout.trim());assert.equal(res.ok,true,res.error);
+ const shot=pngInfo(path.join(tmp,'xin-web-preview.png'));
+ assert.deepEqual([shot.width,shot.height],[1280,800],'截图是电脑宽度的横图');
+ assert.deepEqual(shot.topLeft,[255,255,255],'截的是重新打开后的页面（白底），不是点完「变红」以后的样子');
+});

@@ -289,3 +289,18 @@
   - 不要和浏览器测试同时跑 `npm run check`（内核那几条偶尔会超时）。其中「流：对方断开就停，不再调 poll」的原因已经查清并修了（#157：断开前起的那次 poll 计数晚到，现在等流结束的记录再数）。
   - #156 北京 19:47 合并后，正式联调在部署换状态进程的几秒里收到包在结果里的 `owner_unavailable`，判失败、20:00 自动回滚到 #155（`580cdaae`）。原因和修复见 CHANGES 最新一条：`src/xin.js` 的 `call` 把控制器回来的「没执行」（`{error:'owner_unavailable', executed:false}`）也回成「稍等」。修复另开 PR 合并后，第三轮随正式部署一起再上线一次。查电脑上换状态进程的经过：`~/.xin/logs/kernel.jsonl` 里 `"route":"state"` 的 stop / exit / start / ready 和 `agent_missing`（只读）。
   - 小芯的脸（`.xc-face` 里的 SVG）会被 `paintFace` 整块换掉（表情变了就换），所以脸的 SVG 一律 `pointer-events: none`，点击落在外面那层：按下和松开之间 SVG 被换掉，浏览器就不发 click（#156 的 CI 抓到过，`xin_term_e2e.py` 有一条专门核对）。以后在会被整块重画的东西里放可点的内容，也要这样处理。
+
+## Claude Code · 北京时间 2026-11-16 21:20 后（工作台第四轮）
+
+- #157 北京 20:38 合并（`a50b912`，第三轮随它重新上线），正式运行 43868469062 全绿（联调 12 项全过、没有回滚），线上 `chat.js`、`chat.css`、`term.js` 和合并的代码一致。这次部署控制器和 #156 一样（文件上次已经传上去了），没再换状态进程，所以 #157 的「稍等」这次没用上，有单元测试兜着。分支照老办法接上 main（`e033f1c`）后做第四轮。
+- 站长看了第三轮提的：头像上的终端小标不要、点「思考中」那个框开终端；派活的那一轮不要分成两条，话下面一个加载框（不画头像），点开是终端。我复述（加了三点：底部那一行去掉、结果接回上面时顶上提示、只跑过命令的回答下面留一行过程框），站长说「可以开始做」，又提了三个：网页卡片显示不对、终端弹出卡、「打开网页」和「打开预览」重复。做了什么见 [CHANGES](CHANGES.md) 最新一条和设计 [round4](superpowers/specs/2026-11-16-xin-workbench-round4-design.md)。
+- 只读查过小芯电脑上那张网页截图（`~/.xin/previews/5217…/preview.png`，390×800）；用的是 `scratchpad/ib_exec.sh`（只读命令），没改电脑上的任何东西。
+- 给下一位：
+  - 聊天里能点开终端的只有这几块，都用 `termBtn(el, ctx, label)`（`data-term`、`role=button`、`tabindex`）：「思考中」整条（`.xc-typing`，`live`）、派出去的活的框（`.xc-tb[data-tsid]`，`task:sid`）、前台过程那一行（`.xc-tb.xc-proc`，`run:run`）。头像不再是按钮，`.xc-av-t` 和底部的 `.xc-bgrow` 都删了。这几块里面的元素一律 `pointer-events: none`（字和脸一直在换，见第三轮那条）。
+  - 框放在那段话所在的那一条里（`inHost`：正文和 `.xc-acts` 之间）；先派活后说话时框先占一条 `.xc-tbh`，`draw` 的 text 分支把话填进它的正文。结果用 `resultAfter(sid)` 找到派活那一轮的最后一条、`contMsg` 接在后面（`.cont`、不画头像、`data-run` 是派活那一轮）；找不到框就照旧 `aiMsg('task-'+sid)` 单独一条。「复制」那一行只在一轮最后一条下面露出来的老规则（CSS `:has(+ .xc-ai.cont)`）不用改。
+  - `paintBoxes()` 在任务情况变了（`termSync`）、每秒（有在做的框才开计时器 `boxTk`）重画框；做完的框按 `data-st`（状态 + 用时 + 名字）没变就不重画。
+  - 结果接回来以后的提示：`seeResult(e, t)`——在最下面照旧 `toBottom()`，在眼前 `glint`，看不到就顶上的 `.xc-upchip`（`upGo` 滚过去；`jumpCheck` 里滚到了就收起）。
+  - 终端收起要等动画（`term.js` 的 `closing`，手机 300 毫秒、电脑 160 毫秒后才 `hidden`），这期间 `isOpen()` 已经是 false。浏览器测试里关了以后要等 `.tm-win` 的 `hidden` 再查。
+  - 网页检查的截图（`WEB_BROWSER_CHECK` 最后）现在是 1280×800、重新打开以后截的；工作台卡片对竖图（旧的）用 `tallFig` 整张缩进去。
+  - 还没做：回答下面那一行（复制、详情）触屏上只有 28px 高；后台任务的思考没翻成中文（前两批记下的）。
+  - #158（Codex）北京 23:00 合并后正式联调失败、自动回滚到 #157（`4391a53d`）：部署换状态进程的空档里 `usage` 拿到 `{error:'owner_unavailable', executed:'unknown'}`（发出去以后连接才断）。这一轮在 `src/xin.js` 的 `call` 里补上：能安全重来的（`retrySafe`）也回「稍等」。以后再看到部署后第一步 `owner_unavailable`，先只读查 `~/.xin/logs/kernel.jsonl` 里 `route:"state"` 的 stop / start / ready 和那一次请求有没有 `via:"state"`。

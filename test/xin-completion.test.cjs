@@ -40,9 +40,10 @@ test('全是内部安排：退回后台自己的结果原文；原文也不行�
   assert.equal(out, '我做好了：整理资料。');
 });
 
-test('网页成品、要确认、没做成：说法不变', async () => {
+// 链接写「打开网页」：和工作台卡片的按钮同名（站长 2026-11-16 说结果下面「打开网页」和这句的「打开预览」重复了，下面那颗不再放）
+test('网页成品、要确认、没做成：说法不变（网页成品的链接写「打开网页」）', async () => {
   const { publicCompletion } = await load();
-  assert.equal(publicCompletion(task({ web: true, preview: { ready: true, url: '/xin/preview.html?id=' + 'a'.repeat(32) } }), 'x'), '我画好了。[打开预览](/xin/preview.html?id=' + 'a'.repeat(32) + ')');
+  assert.equal(publicCompletion(task({ web: true, preview: { ready: true, url: '/xin/preview.html?id=' + 'a'.repeat(32) } }), 'x'), '我画好了。[打开网页](/xin/preview.html?id=' + 'a'.repeat(32) + ')');
   assert.match(publicCompletion(task({ status: 'waiting', question: '要删掉 old 吗？' }), ''), /要删掉 old 吗/);
   assert.match(publicCompletion(task({ status: 'failed', result: { err: '编译失败', at: 1 } }), ''), /还没有完成/);
 });
