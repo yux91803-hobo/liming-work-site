@@ -2771,7 +2771,7 @@
     }
     [].forEach.call(ul.querySelectorAll('.xw-t'), function (b) {
       var t = S.tinfo[b.dataset.tsid] || rows.filter(function (x) { return x.sid === b.dataset.tsid; })[0]; if (!t) return;
-      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? (t.retryAt > Date.now() ? '稍后接着做' : '排队中') : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? (waitLeft(t) || '待处理') : ago(t.endedAt || t.created || Date.now());
+      b.querySelector('.xw-tm').textContent = tLive(t) ? (t.status === 'queued' ? (t.retryAt > Date.now() ? '稍后重试' : '排队中') : dur(Date.now() - (t.startedAt || t.created || Date.now()))) : t.status === 'waiting' ? (waitLeft(t) || '待处理') : ago(t.endedAt || t.created || Date.now());
     });
     ul.hidden = !rows.length;
   }
@@ -3297,7 +3297,7 @@
     var sec = Math.round((Date.now() - (S.t0 || Date.now())) / 1000), lab = typingEl.querySelector('.xc-typing-l');
     if (S.sending) { lab.textContent = sendingText(); return; }
     if (S.note && Date.now() - S.note.at < 6000) { swapText(lab, S.note.text, S.note.text); return; }
-    var verb = clip(doingWord(), touch ? 16 : 26);
+    var verb = clip(doingWord(), innerWidth < 600 ? 32 : 52);
     swapText(lab, verb + (sec >= 1 ? ' · ' + secText(sec) : ''), verb);
   }
   /* 状态行（站长 2026-11-16：「希望像 grok bot 那样根据用户的输入问题显示相关的文字」「派了后台任务也要动态地在动」）：
@@ -3327,7 +3327,13 @@
     return '执行中';
   }
   function doingWord() { return S.doing === 'work' && S.act ? S.act : S.thinkS || '思考中'; }
-  function clip(t, n) { var a = Array.from(String(t || '')); return a.length > n ? a.slice(0, n - 1).join('') + '…' : a.join(''); }
+  // 按显示宽度截：中文和全角算 2、英文数字算 1，超过 n 就截到 n - 2 再加「…」。状态行常是中英混排（查 Gemini 4 Hydrogen 的评测），
+  // 按字数截会截得太早；手机按屏幕宽度给 32（约 16 个汉字），平板和电脑 52，平板不再跟手机一样短
+  function clip(t, n) {
+    var a = Array.from(String(t || '')), w = 0, cut = -1;
+    for (var i = 0; i < a.length; i++) { w += a[i].charCodeAt(0) > 0x2e7f ? 2 : 1; if (cut < 0 && w > n - 2) cut = i; if (w > n) return a.slice(0, cut).join('').replace(/\s+$/, '') + '…'; }
+    return a.join('');
+  }
   function secText(sec) { return sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒' : sec + ' 秒'; }
   /* 换字：旧字往上淡出、新字从下面进来；外面那一层的宽度跟着平滑变。旧字是叠在同一格里的影子（不在 el 里），
      读 el 的人（读屏、测试）只看到新字。key 一样（比如只是秒数在走）就直接换，不动画 */

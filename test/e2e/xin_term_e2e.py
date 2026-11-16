@@ -328,6 +328,23 @@ async def part3(browser):
     ui.check('「正在输入」那一行：先「思考中」，前台概括的那一句来了换成它（秒数照走）；英文思考不放进聊天', lab[0].startswith('查 Gemini 4 Hydrogen 的评测 · ') and lab[0].endswith('秒') and not lab[1], lab)
     await pg.wait_for_function(ui.CHAT_DONE, timeout=15000)
     await pg.context.close()
+    # 平板（触屏）上概括写全，不跟手机一样截短；手机上太长的按显示宽度截、加「…」，秒数还在，整行不出屏幕
+    LONG = '查 Gemini 4 Hydrogen 在 SWE-bench 和 LiveCodeBench 上的评测'
+    for w, h, phrase in ((768, 1024, '查 Gemini 4 Hydrogen 的评测'), (390, 844, LONG)):
+        pg = await ui.page(browser, w, h, mobile=True)
+        await ui.xin_mock(pg, authed=True, live=[[], [{'t': 'think', 'src': 'status', 'text': phrase}]] + [[]] * 4 + [[{'t': 'text', 'text': '查好了。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 6000}]])
+        await open_work(pg)
+        await pg.fill('.xc-row textarea', '不要你感觉，要查一下')
+        await pg.click('.xc-send')
+        await pg.wait_for_function("((document.querySelector('.xc-typing-l') || {}).textContent || '').startsWith('查 Gemini')", timeout=10000)
+        await pg.wait_for_timeout(1300)
+        lab = await pg.evaluate("(() => { const l = document.querySelector('.xc-typing-l'), r = document.querySelector('.xc-typing').getBoundingClientRect(); return [l.textContent, r.right <= innerWidth, document.documentElement.scrollWidth <= innerWidth]; })()")
+        if w == 768:
+            ui.check('平板上「正在输入」写全概括（不按手机的长度截）', lab[0].startswith(phrase + ' · ') and lab[0].endswith('秒') and lab[1] and lab[2], lab)
+        else:
+            ui.check('手机上概括太长：按显示宽度截、加「…」，秒数还在，整行在屏幕里', lab[0].startswith('查 Gemini 4 Hydrogen') and '…' in lab[0] and not lab[0].startswith(LONG) and lab[0].endswith('秒') and lab[1] and lab[2], lab)
+        await pg.wait_for_function(ui.CHAT_DONE, timeout=15000)
+        await pg.context.close()
 
 
 async def part4(browser):

@@ -564,6 +564,8 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-dr-row[aria-expanded=true]{color:var(--ink);background:var(--surface)}
 .xc-dr-row[aria-expanded=true] svg:last-child{transform:rotate(90deg)}
 @media (hover:hover){.xc-memb:hover,.xc-dr-row:hover{color:var(--ink);background:var(--surface)}}
+/* 触屏：侧边栏里能点的都到 44px（ui-ux-pro-max 的 touch-target-size） */
+@media (pointer:coarse){.xc-key,.xc-dr-q,.xc-memb,.xc-dr-row{height:44px}.xc-si{min-height:44px}.xc-si-more{width:44px}}
 .xc-dr-ft .xc-set{margin:8px 0 6px;padding:2px 14px;--rad:14px;background:var(--surface);box-shadow:0 0 0 1px var(--hair);animation:xcin .2s var(--e-out)}
 .xc-set-h{margin:0 0 4px;padding:0 4px;font-size:12px;font-weight:600;color:var(--ink-3)}
 .xc-dr-ft .xc-set-h{display:none}
