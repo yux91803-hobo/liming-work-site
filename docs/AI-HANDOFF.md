@@ -349,3 +349,13 @@
 - **#162 失败的交叉审查**：失败在 `xin-steer.test.cjs:153`，期望 note 回执，实际读取到 prompt=acp。fake-agy 把非 usage 调用放同一日志、无 -p 时把 argv[0] 当 prompt，前台 `agy acp --help`/ACP 启动会污染后台脚本序号。noteStart 本身不调模型，但任务若先异常完成，普通失败 handoff 会启动前台并产生 acp；不能只过滤 acp 就认定产品正确，应先保存任务结果/错误、run 事件与 handoff 原因。独立 claimLaunch 审查未发现新漏洞，不解释首次失败根因，也不替代后续完整验收。
 - **插话未知交付探针**：`/workspace/xin-review/probe-steer-take-lost-reply.cjs` 在临时目录用真实 CLI/tasks 锁/SQLite 得到 pending1 → take1（丢弃回包、不交模型）→ accepted1 → 再取0 → 正常收尾 done/inbox0，run 仍留 accepted1。未做真实套接字断线，没有模型/网络/VM调用；说明逻辑输入未交付时没有重投递路径，不是物理记录删除。见持久收尾计划新增输入交付边界。
 - **下一步与发布门槛**：支持 note 的兼容 main 和本地默认开启/显式关闭路径均已过门槛；最新核对 main 仍为 `c421176`。本次独立 PR 的 CI/测试站通过后再核对 main/head、保留历史合并，正式真实联调成功、回滚 skipped 并只读核对实际新源码/协议后才算上线。最终 PR/Actions 链接和准确提交以本分支启用 PR 当前描述为准；未过不合并，不自行重跑 Claude 的发布。整个持久收尾、凭据代理、宿主授权 C、工具权限和 legacy 清理仍未完成。
+
+## Claude Code · 北京时间 2026-11-17 12:00 后（终端不重放、在做的活跟着最新消息走）
+
+实现和自查：Claude Code（同一会话，没有另一位审核）。设计 `docs/superpowers/specs/2026-11-17-xin-term-follow-design.md`，改动清单见 `docs/CHANGES.md` 同日条目。
+
+- **框的位置**：任务框现在单独一条（`.xc-tbw[data-tsid]`，里面是原来的 `.xc-tb`），在做的带 `dock` 放在 `.xc-msgs` 最后。`put()` 和 `typing()` 都插在第一个 `.xc-tbw.dock` 前面（`liveAnchor`）；`paintBox` 按状态挪（不在做 → `settleBox` 落到这时候的最后，又在做 → `dockBox` 回到最底下）；`resultAfter` 找框、必要时先落下来——结果比任务状态先到时，框上记一个 `data-held`（那时任务摘要里的 `run`）：任务摘要还说在做这一轮，`paintBox` 就不把它拉回最底下，换了新的一轮或者轮询到不在做才清掉（不然每秒刷新会把框拉回最底下，变成「结果在上、框在最底下」）。历史里的 `task` 事件不再画框，`openSession` 读完记录以后：做完的按结束时间 `placeEnded`（框 + 结果），在做的统一 `taskBox` 到最底下。**别再把框塞回派活那条回答里**，也别让历史里的 `task` 事件画框（往前翻会多出一个）。
+- **复制那一行**：`.xc-ai:has(+ .xc-ai.cont…) > .xc-acts{display:none}` 是「同一轮后面还有一条就只在最后一条下面露复制」，框那一条要排除在外（`:not(.xc-tbw)`），不然派活那段话的复制被藏掉。
+- **终端**：`term.js` 的 `paint` 画完已有事件就 `drain()`；读记录时（`tab.loading`）不画结尾和光标。还在做的活：`termFollow` 打开（或换到）那一页时置 `f.catchup`，`tfFetch` 取回来的用 `TW.push(key, ev, true)` 一次画好，取到不满一页（400 条）才清掉，之后来的才逐字敲——打开前就做过的步骤是打开以后才取回来的，别当成新来的去敲。测试等光标（`.tm-cur`）就表示这一页齐了。
+- **#162 正式运行第三次偶发失败**（Actions 44006809632 第一次，常驻进程模式那一步）：`test/xin-steer.test.cjs`「Gemini 后台主动说一句」第 158 行 `c[1].prompt` 是 `'acp'`。假 agy 把前台（完成交接那一轮）的 `agy acp --help` 也当成一步记进 `calls.jsonl`，说明那件任务在第一次调用以后就提前结束了、完成交接起了前台。本地常驻进程模式整组跑了 7 遍（其中 4 遍带两份诊断副本）都没再出现；只抓到过一次正常结束后的交接调了 `acp`（测试末尾，不影响断言）。没找到它提前结束的原因；重跑一次通过（Codex 在上一节的交叉审查也是这个判断：任务先异常结束、普通交接起了前台才调到 `acp`）。再出现就在假 agy 里把 `acp` 调用单独记下来（看父进程是哪一轮），并把那件任务每一轮的事件打出来。
+

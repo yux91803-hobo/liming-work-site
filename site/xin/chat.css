@@ -162,6 +162,7 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-msgs > *{margin-top:18px}
 .xc-msgs > :first-child{margin-top:0}
 .xc-msgs > .xc-ai.cont{margin-top:8px}
+.xc-msgs > .xc-ai.xc-tbw{margin-top:2px}   /* 后台的活那个框单独一条：紧跟上一条（框自己上面还有 10px） */
 .xc-hint{margin:0;color:var(--ink-3);font-size:13.5px;line-height:1.6}
 .xc-loading{align-self:center;padding:24px 0}
 .xc-m{min-width:0;max-width:100%}
@@ -186,7 +187,7 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-ai > .xc-bub{grid-column:2;min-width:0;font-size:15px;line-height:1.78;color:var(--ink);overflow-wrap:anywhere}
 .xc-ai.bad > .xc-bub{--rad:12px;justify-self:start;padding:9px 14px;background:color-mix(in srgb,var(--bad) 9%,transparent);color:var(--bad-ink);white-space:pre-wrap;font-size:14px;line-height:1.6}
 .xc-acts{grid-column:2;display:flex;gap:4px;margin:2px 0 0 -9px}
-.xc-ai:has(+ .xc-ai.cont:not(.xc-typing):not(.bad)) > .xc-acts{display:none}
+.xc-ai:has(+ .xc-ai.cont:not(.xc-typing):not(.bad):not(.xc-tbw)) > .xc-acts{display:none}   /* 后台的活那个框单独一条（.xc-tbw），不算同一轮的下一条：派活那段话的复制照旧在 */
 @media (hover:none){.xc-mcopy span{display:none}.xc-mcopy{width:32px;justify-content:center;padding:0}}
 /* 手机：头像和「小芯」一行，正文占满整行，不让出头像那一栏 */
 @media (max-width:599px){
