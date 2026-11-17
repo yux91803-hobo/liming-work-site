@@ -195,12 +195,18 @@ test('Gemini 后台主动说一句：相关的两条合成一条，任务还在�
  }
 });
 
+// 把这件事还没发的那句「主动说」拨到现在到点。只动测试临时目录里的库，不等真时间：
+// 同 oban-bg/oban 测试用的 drain_queue(with_scheduled: true)（lib/oban.ex），排在以后的活直接拿来跑。
+function noteDueNow(f,task){const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(path.join(f.control,'workflow.sqlite'));try{db.exec('PRAGMA busy_timeout=5000');return Number(db.prepare("UPDATE handoffs SET nextAt=0 WHERE task=? AND state='pending' AND id LIKE 'note-%'").run(task).changes);}finally{db.close();}}
+function noteStates(f,task){const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(path.join(f.control,'workflow.sqlite'),{readOnly:true});try{return db.prepare("SELECT state FROM handoffs WHERE task=? AND id LIKE 'note-%'").all(task).map(r=>r.state);}finally{db.close();}}
 test('主动说的那句还没发出去任务就做完了：不再冒出来（最终结果先到了）',async t=>{
- const f=fixture(t,[{action:'note',text:'我先核一下实际启动的是哪个'},{action:'final',text:'实际启用的是 A'}],{XIN_NOTE_WAIT_MS:'1500'});
+ // 那句要等 10 分钟才到点，任务一定先做完；不再赌「两步之间不超过等待窗口」（原来窗口 1.5 秒，CI 忙时两步之间会更久，那句就按规矩先发了）
+ const f=fixture(t,[{action:'note',text:'我先核一下实际启动的是哪个'},{action:'final',text:'实际启用的是 A'}],{XIN_NOTE_WAIT_MS:'600000'});
  const sid=conversation(f),task=f.call('task_new',{kind:'research',goal:'查模型',parent:sid}).task;
  await f.status(task.sid,['done']);
- await new Promise(r=>setTimeout(r,2500));
- f.call('tasks',{sid});f.call('tasks',{sid});
+ assert.equal(noteDueNow(f,task.sid),1,'任务做完时，那句还排着没发');
+ f.call('tasks',{sid});
+ assert.deepEqual(noteStates(f,task.sid),['superseded'],'到点时任务已经做完：这句作废');
  assert.equal((f.call('tasks',{sid}).notes||[]).length,0,'最终结果先到了，那句「我先核一下」不发');
  // 原对话里只有交付结果的那一轮（完成交接），没有主动说的那一轮
  assert.equal(f.call('history',{sid}).runs.filter(r=>f.meta(r.run).kind==='note').length,0);
