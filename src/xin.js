@@ -421,8 +421,12 @@ async function call(env, origin, op, args, ctx, now, opts = {}) {
     // 后台任务（分身）：vm-agent 说有任务在做就续一个小时（它每 20 分钟提醒一次），都做完了就撤
     if (!supervisor(env) && !env.XIN_TASK_LEASE_MANAGED && data && data.lease === 'renew' && ctx) ctx.waitUntil(lease('PUT', 'tasks', 3600));
     if (!supervisor(env) && !env.XIN_TASK_LEASE_MANAGED && data && data.lease === 'drop' && ctx) ctx.waitUntil(lease('DELETE', 'tasks'));
+    // 后台任务记账（监督实例据此续 / 撤「有活在干」的租约）不挡这次回复：交给 waitUntil 在后台做，失败了也不把已经做完的操作报成失败。
+    // 2026-11-17：后台没任务时记账要同步调 InstaBox 撤租约，那次请求慢了好几秒，网页上的消息就从「接收中」变成「唤醒中」
     if (supervisor(env) && data && Number.isInteger(data.bg)) {
-      await recordTasks(env, { bg: data.bg, ...(data.version != null ? { version: data.version } : {}), machine: m.id, observedAt: Date.now() });
+      const rec = recordTasks(env, { bg: data.bg, ...(data.version != null ? { version: data.version } : {}), machine: m.id, observedAt: Date.now() })
+        .catch(e => { console.warn('xin: 后台任务记账没存上：' + String(e && e.message || e)); });
+      if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(rec); else await rec;
     }
     return { ok: true, data };
   } catch (e) {
