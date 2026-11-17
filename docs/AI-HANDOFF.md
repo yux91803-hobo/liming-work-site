@@ -339,13 +339,13 @@
 
 
 <a id="task-bridge-enable-20261117"></a>
-## Codex · 2026-11-17 接入 #161/#162：启用准备，等待兼容基线通过
+## Codex · 2026-11-17 接入 #161/#162：兼容基线已验证，启用版独立验收
 
-- **真实进度**：已核对 main `c4211767620c8152a3cf91595a8c9ab1f353685e`、PR #161/#162 和当前计划。#161 加插话与 note，#162 修旧模式重复派发。正式 [44006809632](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44006809632) check 的完整单元 1006 过、kernel 187/188，E2E 成功、部署跳过；不是线上已经部署再回滚。Claude 正在查，不改其活跃分支或重复修实现。
+- **真实进度**：已核对 main `c4211767620c8152a3cf91595a8c9ab1f353685e`、PR #161/#162 和当前计划。#161 加插话与 note，#162 修旧模式重复派发。正式 [44006809632](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44006809632) 首次完整单元 1006 过、kernel 187/188、E2E 成功、部署跳过；第二次 check/e2e/deploy 全绿，真实模型/插话联调于北京时间 11:44 成功，回滚 skipped。重跑由 Claude 发起，Codex 没有操作其发布。期间只读核验实际 note 兼容模块 `vm-agent-56a06227b481.mjs`、外壳摘要、单 owner 和 bridge 默认 false 通过。
 - **工作分支**：`codex/xin-kernel-bridge-enable-20261117`，独立工作树 `/workspace/liming-kernel-bridge-next162`。实际实现：Codex（默认值/测试/文档）；交叉复核：Codex 根代理、outcome_review、notice_flake。Claude #161/#162 作者与提交原样保留；没有 Claude Code 对本启用补丁的独立复核。原 `codex/xin-kernel-bridge-enable-20261116` 的未提交工作、旧分支/工作树和补丁保留。
-- **已完成验证**：本次 note 文件队列丢 ACK、owner kill/重启及防重复回归 14/14；队列/作用域/报告/shim/执行尝试/SQLite 状态组合专项 **73/73**、退出 0、无跳过，Node 22.23.4。完整 #162 默认开启 check/kernel/13 组 E2E 尚未执行，CI/正式亦未通过，不能合并启用。
+- **已完成验证**：Node 22.23.4，默认开启完整 check **1008/1008**、内核回归 **188/188**、**13 组 E2E 全过**（学习台 372、主流程 19、工作流 42、终端 61）；显式 `XIN_TASK_BRIDGE=0` 的内核回归 **188/188**、已有协议报告专项 **14/14**。各阶段退出 0、无跳过，前后源码指纹一致。note 文件队列报告专项 14/14、组合专项 73/73 也通过。源码/测试提交 `f4a0196`，后续仅更新文档；日志 `/workspace/xin-review/bridge-activation-main162-{check,kernel,e2e,kernel-off,reports-off}.log`，对应状态 JSON 均成功、sourceChanged=false。CI/测试站和正式结果以本次启用 PR 当前 head 描述为准，本地通过不等于已经上线。
 - **历史证据**：#160 / `0b185d4` 正式 [43917294330](https://github.com/yux91803-hobo/liming-work-site/actions/runs/43917294330) 全绿、真实联调成功、回滚 skipped；当时只读核验实际模块 `vm-agent-57705127bfa4.mjs`、单 owner、默认 bridge false。其启用工作树后来本地 check 991、kernel 176、13 组 E2E 全过且 sourceChanged=false。日志前缀 `/workspace/xin-review/bridge-activation-main160-`，不是新 #162 的验收。
-- **回滚门槛已变化**：#161 在协议 1 增加 note，#160 仅识别 remember/ask，会把 note 当永久错误消费。因此最低回滚目标必须是支持 note 且正式验证通过的兼容版，准确 SHA 待 Claude 的基线修复/发布完成后记录，不能沿用 #160。已有协议不得因关新分配降级；旧在途队列不擦除、不升级。
-- **#162 失败的交叉审查**：失败在 `xin-steer.test.cjs:153`，期望 note 回执，实际读取到 prompt=acp。fake-agy 把非 usage 调用放同一日志、无 -p 时把 argv[0] 当 prompt，前台 `agy acp --help`/ACP 启动会污染后台脚本序号。noteStart 本身不调模型，但任务若先异常完成，普通失败 handoff 会启动前台并产生 acp；不能只过滤 acp 就认定产品正确，应先保存任务结果/错误、run 事件与 handoff 原因。独立 claimLaunch 审查未发现新漏洞，不替代失败的完整内核检查。
+- **回滚门槛已变化**：#161 在协议 1 增加 note，#160 仅识别 remember/ask，会把 note 当永久错误消费。因此最低回滚目标已更新为正式验证成功的 note 兼容版 #162 / `c421176`，不能沿用 #160。已有协议不得因关新分配降级；旧在途队列不擦除、不升级。
+- **#162 失败的交叉审查**：失败在 `xin-steer.test.cjs:153`，期望 note 回执，实际读取到 prompt=acp。fake-agy 把非 usage 调用放同一日志、无 -p 时把 argv[0] 当 prompt，前台 `agy acp --help`/ACP 启动会污染后台脚本序号。noteStart 本身不调模型，但任务若先异常完成，普通失败 handoff 会启动前台并产生 acp；不能只过滤 acp 就认定产品正确，应先保存任务结果/错误、run 事件与 handoff 原因。独立 claimLaunch 审查未发现新漏洞，不解释首次失败根因，也不替代后续完整验收。
 - **插话未知交付探针**：`/workspace/xin-review/probe-steer-take-lost-reply.cjs` 在临时目录用真实 CLI/tasks 锁/SQLite 得到 pending1 → take1（丢弃回包、不交模型）→ accepted1 → 再取0 → 正常收尾 done/inbox0，run 仍留 accepted1。未做真实套接字断线，没有模型/网络/VM调用；说明逻辑输入未交付时没有重投递路径，不是物理记录删除。见持久收尾计划新增输入交付边界。
-- **下一步**：先等支持 note 的兼容 main 正式验证，重新核对并接入 Claude 最新修复；冻结源码后完整默认开启 check/kernel/13 组 E2E → 独立 PR → CI/测试站 → 合并后正式真实联调、回滚跳过与实际源码/协议只读核验。未过不合并，不自行重跑 Claude 的正式发布。整个持久收尾、凭据代理、宿主授权 C、工具权限和 legacy 清理仍未完成。
+- **下一步与发布门槛**：支持 note 的兼容 main 和本地默认开启/显式关闭路径均已过门槛；最新核对 main 仍为 `c421176`。本次独立 PR 的 CI/测试站通过后再核对 main/head、保留历史合并，正式真实联调成功、回滚 skipped 并只读核对实际新源码/协议后才算上线。最终 PR/Actions 链接和准确提交以本分支启用 PR 当前描述为准；未过不合并，不自行重跑 Claude 的发布。整个持久收尾、凭据代理、宿主授权 C、工具权限和 legacy 清理仍未完成。

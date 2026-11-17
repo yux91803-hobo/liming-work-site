@@ -45,7 +45,7 @@
 
 ## 小芯后台运行方式
 
-- 2026-11-17 第 3 批 B 队列子批（[计划](docs/superpowers/plans/2026-11-16-xin-task-bridge.md)）：本分支准备默认给新沙盒轮次分配 run/attempt 私有队列，覆盖 remember/ask/note 的事务回执，旧在途轮次不升级。启用发布须先正式验证支持 note 的兼容读取方；#160 只认识 remember/ask，不能作为新增 note 后的安全回滚版本。当前启用验收尚未完成，不代表线上已开启。真正的持久收尾和未知交付的插话重投递仍待实现，见[后续计划](docs/superpowers/plans/2026-11-16-xin-finalization.md)。
+- 2026-11-17 第 3 批 B 队列子批（[计划](docs/superpowers/plans/2026-11-16-xin-task-bridge.md)）：支持 note 的兼容读取方 #162 已正式验证，本版默认给新沙盒轮次分配 run/attempt 私有文件队列，remember/ask/note 的副作用与请求回执同事务提交；旧在途轮次不升级。`XIN_TASK_BRIDGE=0` 只关闭新分配，已有协议继续处理；最低回滚版本为 #162（`c421176`）或更新的 note 兼容版，不能退到只懂 remember/ask 的 #160。真正的持久收尾、原生 action 回调的持久交付和插话未知交付重投递仍待实现，见[后续计划](docs/superpowers/plans/2026-11-16-xin-finalization.md)。
 
 - 2026-11-16 第 3 批 A（[实施与回滚计划](docs/superpowers/plans/2026-11-16-xin-recovery.md)）：先发布并正式验证 [兼容版 #153](https://github.com/yux91803-hobo/liming-work-site/pull/153)，本版默认给新建轮次启用执行尝试编号。旧在途轮次不升级，已有协议即使关闭新分配也始终校验；旧报告不能覆盖新尝试。状态进程启动、暂停恢复和空闲转有活时及时检查，空闲仍每 60 秒一轮；启动器身份、生命周期锁和旧进程组清理约束重新派发。回滚至少到 #153（`655d325`）或更新的兼容版本，更早版本要先排空协议轮次。收尾暂存留给第 3 批 B，尚不能宣称长时间失联也不丢完成结果。
 
