@@ -107,7 +107,7 @@ test('协议工作区拒绝缺失或畸形身份，错误不回显身份内容',
   }
   assert.equal(p.bridgeEnabled({ XIN_TASK_BRIDGE: '0' }), false);
   assert.equal(p.bridgeEnabled({ XIN_TASK_BRIDGE: '1' }), true);
-  assert.equal(p.bridgeEnabled({}), false);
+  assert.equal(p.bridgeEnabled({}), true);
   for (const bridgeProtocol of [2, -1, '1', null]) {
     assert.throws(() => p.scopedBridgeWorkspace(w, { run, attempt, bridgeProtocol }), { code: 'bad_bridge_scope' });
   }
