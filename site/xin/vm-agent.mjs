@@ -52,8 +52,7 @@ import { checkControllers } from './vm-kernel-compat.mjs';
 import { ownerLegacy } from './vm-kernel-owner.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
-import { heldBlock, handoverBlock, steerBlock, HAND_MODE } from './vm-steer.mjs';
-import { createSteerOps } from './vm-steer-ops.mjs';
+import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps } from './vm-steer.mjs';
 import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership, stateOwned } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
@@ -1816,11 +1815,11 @@ function taskFinish(a) {
   scheduleNow();
   return notice ? { notice, notify } : {};
 }
-// 补充（taskTell、tellMode）、前台的 <手上的事>、后台主动说一句：在 vm-steer-ops.mjs（docs/superpowers/specs/2026-11-17-xin-steer-design.md）。
+// 补充（taskTell、tellMode）、前台的 <手上的事>、后台主动说一句：在 vm-steer.mjs（docs/superpowers/specs/2026-11-17-xin-steer-design.md）。
 // 后面才定义的（runDone、taskVersion）包一层，用到时再取
 const { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover } = createSteerOps({
   metaF, sessF, findTask, taskSummary, saveTask, scheduleNow, cleanupFinishedTask, listTasks, emit, isTask, isFinished, lastRun, TASK_STATUS,
-  runDone: r => runDone(r), taskVersion: t => taskVersion(t) });
+  runDone: r => runDone(r), taskVersion: t => taskVersion(t), readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel });
 function taskStop(a) {
   const t = findTask(a);
   if (!t) return { error: 'no_task', msg: '找不到这个任务' };

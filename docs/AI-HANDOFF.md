@@ -316,6 +316,7 @@
 
 实现和自查：Claude Code（同一会话，没有另一位审核）。设计 `docs/superpowers/specs/2026-11-17-xin-steer-design.md`，改动清单见 `docs/CHANGES.md` 同日条目。先读这几条：
 
+- **代码在哪**：都在 `site/xin/vm-steer.mjs`（纯函数 + `createSteerOps`，只引 `node:crypto`，控制器的读写由 vm-agent 传入）。别再拆成两个文件：冷启动装控制器每个模块一个子请求，`test/xin.test.cjs` 要求不超过 40 个，现在正好 40。
 - **补充怎么接**：`taskTell` 的回执带 `delivery`（now / next / start / reply / resumed / ended），`tellMode(t)` 算同一件事给前台看。能进当前轮的只有这一轮记录里 `transport` 是 `app-server` 或 `antigravity`、还没 `modelDone` 的（`steerable`）。Gemini 后台在 `antigravityWork` 每一步之前调 `options.steers()`（控制器 `steer_take`，在 tasks 锁里把 pending 标成 accepted 并在这一轮显示成兄弟的一句话），final / ask 之前再取一次，有就再走一步（`LATE_STEER_MAX`）。
 - **补充不丢**：`taskFinish` 里这一轮没送进去的（pending / next）带进 `t.inbox`；没正常做完时送进去了的也带上（`held: true`，不触发「接着做」，只跟着下一轮走）。`startTask` 把收件箱放进下一轮开头并清空；`taskTell` 的继续路径同样一次取完。同一轮换执行入口时 `steer_handover` 把这一轮的补充交给新模型。`taskStop` 不再清收件箱。去重靠任务里的 `t.tells`（最近 32 个编号和回执）。
 - **前台**：`handNotes` 只在 `mentionsWork(text)`（`vm-steer.mjs` 的说法表）为真时附 `<手上的事>`，**不要改成按词重合**——正式联调「只回复 陀螺 茶壶 贝壳……也不要等待后台」和派活原话共用很多词，#117 就是每轮带进行中被 DeepSeek 答成进度。`frontAction` 的 tell：`--continue` 才对已结束的任务开工；`ended` 回执不结束这一轮、不写 `.front.json` 回执（写了会挡住同一轮后面的调用）；`frontHandModes` 和实际 `delivery` 对不上时带 `reword`，`frontTurn` 不用预先写好的话、走 `ownWords`。
