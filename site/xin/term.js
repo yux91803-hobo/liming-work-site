@@ -431,11 +431,11 @@
     W.add = function (tab) { if (W.tab(tab.key)) return; W.tabs.push(tab); tabsPaint(); };
     W.isOpen = function () { return !el.hidden && !closing; };
     W.active = function () { return W.cur; };
-    // 活着的那一页来了新事件：存起来；正看着就交给打字机
-    W.push = function (key, ev) {
+    // 活着的那一页来了新事件：存起来；正看着就交给打字机。now：打开前就已经发生的（打开以后第一次才取回来），一次画好不敲
+    W.push = function (key, ev, now) {
       var tab = W.tab(key); if (!tab) return;
       (tab.events = tab.events || []).push(ev);
-      if (view && view.tab === tab && !el.hidden) feed(ev);
+      if (view && view.tab === tab && !el.hidden) { feed(ev); if (now) drain(); }
     };
     // 整页换内容（读完了历史）
     W.fill = function (key, events) { var tab = W.tab(key); if (!tab) return; tab.events = events || []; tab.loading = false; if (view && view.tab === tab && !el.hidden) paint(tab); };

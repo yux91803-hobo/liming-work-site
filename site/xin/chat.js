@@ -1848,7 +1848,8 @@
     if (!key || key.indexOf('task:') !== 0) return;
     var sid = key.slice(5), t = S.tinfo[sid]; if (!t) return;
     var f = S.tf[sid] = S.tf[sid] || { sid: sid, run: '', off: 0, pos: null, events: [], busy: false, tm: 0, full: false, done: false };
-    if (tLive(t)) { tfRun(f, t); tfPoll(f); } else if (!f.full) tfLoad(f);
+    // 在做的活：打开（或换到这一页）以后第一次取回来的是打开前就做过的，一次画好（catchup）；之后来的才逐字敲
+    if (tLive(t)) { f.catchup = true; tfRun(f, t); tfPoll(f); } else if (!f.full) tfLoad(f);
   }
   function termUnfollow() { Object.keys(S.tf).forEach(function (k) { clearTimeout(S.tf[k].tm); S.tf[k].tm = 0; }); }
   // 补充要求、批准以后开了新的一轮：中间画一行「接着做」，从新一轮的开头取
@@ -1870,10 +1871,11 @@
       f.busy = false;
       if (gen !== S.convSeq || f.run !== run) return -1;
       if (d && d.error) throw new Error(d.msg || d.error);
-      var evs = d.events || [];
-      evs.forEach(function (ev) { tfEvent(f, ev); });
+      var evs = d.events || [], now = !!f.catchup;
+      evs.forEach(function (ev) { tfEvent(f, ev, now); });
       f.off = d.off; f.pos = typeof d.pos === 'number' ? d.pos : null;
-      if (d.next && d.next !== run) { tfEvent(f, { t: 'mark', text: '继续' }); f.run = d.next; f.off = 0; f.pos = null; return 1; }
+      if (d.next && d.next !== run) { tfEvent(f, { t: 'mark', text: '继续' }, now); f.run = d.next; f.off = 0; f.pos = null; return 1; }
+      if (evs.length < 400) f.catchup = false;   // 打开前积下的取完了（一页最多 400 条，换到下一轮也接着算）
       if (d.done) f.done = true;
       return evs.length;
     }).catch(function () { f.busy = false; return gen === S.convSeq ? 0 : -1; });
@@ -1884,13 +1886,13 @@
     if (ev.t === 'note' && ev.text) return { t: 'text', text: '告诉兄弟：' + ev.text, at: ev.at };
     return ev;
   }
-  function tfEvent(f, ev) {
+  function tfEvent(f, ev, now) {
     ev = termEv(ev);
     if (!/^(tool|tool_end|text|err|mark|think|ask)$/.test(ev.t)) return;   // 要求原文（user）、状态、结束不画
     if (ev.t === 'tool' && termLine(ev)) f.verb = stepOf(ev);
     else if (ev.t === 'tool_end' || ev.t === 'text') f.verb = '';
     f.events.push(ev);
-    if (TW && TW.isOpen()) TW.push('task:' + f.sid, ev);
+    if (TW && TW.isOpen()) TW.push('task:' + f.sid, ev, now);
   }
   function tfLoad(f) {
     if (f.loading) return; f.loading = true;

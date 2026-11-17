@@ -291,7 +291,16 @@ async def part2(browser):
     opened = await pg.evaluate("!document.querySelector('.tm-win').hidden")
     ui.check('点框的那一下里框里的字整块换掉：点击照样打开终端', opened, opened)
     await pg.wait_for_function("[...document.querySelectorAll('.tm-win:not([hidden]) .tm-l')].some(r => r.textContent.includes('ls'))", timeout=10000)
+    # 站长 2026-11-17「我每次点开这个，都是从头在加载一遍」：在做的活点开，打开前已经做过的步骤（打开以后第一次取回来的）一次画好，不逐字敲
+    fresh = await pg.evaluate("(() => { const w = document.querySelector('.tm-win'); return [!w.querySelector('.tm-tp'), w.textContent.includes('Makefile')]; })()")
+    ui.check('在做的活第一次点开：打开前已经做过的步骤（打开以后才取回来）一次画好、连输出一起，不逐字敲', fresh == [True, True], fresh)
     st['tp_rel']['rtask00b01'] = 2
+    typed = True
+    try:
+        await pg.wait_for_function("!!document.querySelector('.tm-win .tm-tp')", timeout=8000)
+    except Exception:
+        typed = False
+    ui.check('打开以后新来的步骤照旧一个字一个字敲', typed, typed)
     await pg.wait_for_function("[...document.querySelectorAll('.tm-win .tm-l')].some(r => r.textContent.includes('make -j4'))", timeout=10000)
     await pg.wait_for_timeout(2500)
     t1 = await pg.evaluate(WIN)
@@ -314,11 +323,18 @@ async def part2(browser):
     ui.check('接着聊了一句：新的一问一答在框上面，框还在聊天最底下（不用翻上去找）', fol == [True, True, '在的，你说。', '在吗', True], fol)
 
     # 再打开：接着上次取到的地方；做完了，那一页写「已完成 · 用时 2 分钟」
+    # 从点开那一刻起记下有没有逐字敲过（.tm-tp 出现过，哪怕同一帧里又敲完）：关着时做的那一步也是打开前就有的
+    await pg.evaluate("""(() => { window.__tp = 0;
+      new MutationObserver(ms => ms.forEach(m => { if ((m.oldValue || '').includes('tm-tp') || m.target.classList.contains('tm-tp')) window.__tp++; }))
+        .observe(document.querySelector('.tm-win'), { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true }); })()""")
     st['tp_rel']['rtask00b01'] = 3
     await pg.click(BOX)
     await pg.wait_for_function("[...document.querySelectorAll('.tm-win .tm-l')].some(r => r.textContent.includes('make -j4') && r.textContent.includes('ok'))", timeout=10000)
     again = [o for r, o, _ in st['tpolls'][n1:] if r == 'rtask00b01']
     ui.check('再打开：从上次取到的地方接着取，不重取', again and min(again) >= 3, again[:4])
+    await pg.wait_for_timeout(300)
+    gap = await pg.evaluate('window.__tp')
+    ui.check('关上以后再点开：关着时做的那一步（打开以后第一次取回来）也一次画好，一个字都不敲', gap == 0, gap)
     st['tp_done']['rtask00b01'] = True
     st['tasks'] = [task(status='done', run='rtask00b01', startedAt=now() - 125000, endedAt=now(), result={'ok': True, 'text': '编好了：`/data/workspace/blink/build/app.hex`。', 'at': now()}, delivery={'state': 'delivered'})]
     await pg.evaluate('LimingXinChat.tasks()')
