@@ -219,7 +219,8 @@ async def xin_mock(pg, authed=False, live=None):
                 return await ok({'ok': True, 'data': {'tasks': ts, 'active': [t for t in ts if t['status'] in ('queued', 'running', 'waiting')], 'recent': [], 'bg': len(live_),
                                                       'titles': {'snew000001': '编译一下 blink'}, 'daily': {'last': {'date': '2026-11-06', 'run': 'rdaily00001', 'sid': 'shist00001', 'ok': True}, 'done': None, 'today': '2026-11-06'},
                                                       'stats': [{'agent': 'codex', 'model': 'glm-5.3', 'n': 4, 'ok': 3, 'ms': 0, 'fails': 1, 'fellBack': 1, 'avgMs': 150000}, {'agent': 'harness', 'model': 'deepseek-v4.1-flash', 'n': 2, 'ok': 2, 'ms': 0, 'fails': 0, 'fellBack': 0, 'avgMs': 20000}], 'glow': st.get('glow')}})
-            return await ok({'ok': True, 'data': {'tasks': [t for t in ts if t.get('parent') == args.get('sid')], 'active': [t for t in ts if t['status'] in ('queued', 'running', 'waiting')], 'recent': [], 'bg': len(live_), 'glow': st.get('glow')}})
+            return await ok({'ok': True, 'data': {'tasks': [t for t in ts if t.get('parent') == args.get('sid')], 'active': [t for t in ts if t['status'] in ('queued', 'running', 'waiting')], 'recent': [], 'bg': len(live_), 'glow': st.get('glow'),
+                                                  **({'notes': st['notes']} if st.get('notes') else {})}})   # 后台主动回来说的一句（xin_term_e2e.py part7）
         if op == 'usage':   # 用量看板：额度、预计用完、每天的 token（xin_usage_e2e.py 填 st['usage']）
             st['usage_calls'] = st.get('usage_calls', 0) + 1
             return await ok({'ok': True, 'data': st.get('usage') or {'quotas': [], 'days': [], 'totals': {}, 'names': {}}})

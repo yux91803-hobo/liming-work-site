@@ -10,7 +10,7 @@ import { attemptError, staleAttempt } from './vm-run-attempt.mjs';
 
 const object = a => a && typeof a === 'object' && !Array.isArray(a);
 const bad = () => ({ error: 'bad_op', msg: '不认识的操作' });
-const RUN_REPORTS = new Set(['session_patch','run_patch','run_complete','task_finish','task_stage','task_model','agy_conversation','front_reply','front_model','front_immediate','front_action','front_fallback','handoff_start','handoff_finish','continue_steers','run_stat','task_bridge']);
+const RUN_REPORTS = new Set(['session_patch','run_patch','run_complete','task_finish','task_stage','task_model','agy_conversation','front_reply','front_model','front_immediate','front_action','front_fallback','handoff_start','handoff_finish','continue_steers','run_stat','task_bridge','steer_take','steer_handover']);
 export function createController({ ops, iops, isTask, saveTask, rememberAgentSession, mainSid, listTasks,
   lockedCall, dispatchLaunches, markCurrentController, xinCmd, reapNow }) {
   const sessF = sid => path.join(BASE,'sessions',sid+'.json'), metaF = run => path.join(BASE,'runs',run+'.json');
@@ -27,7 +27,7 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
     if(op==='send'||op==='continue_steers'){mk(path.join(BASE,'sessions'));mk(path.join(BASE,'runs'));listTasks();}
     let command=null;
     if(op==='task_bridge'){
-      if(!/^[a-f0-9]{24}$/.test(args.id||'')||!['remember','ask'].includes(args.op)||typeof args.text!=='string'||!args.text.trim()||args.text.length>1000)return {error:'bad_bridge_request',msg:'不认识的任务请求'};
+      if(!/^[a-f0-9]{24}$/.test(args.id||'')||!['remember','ask','note'].includes(args.op)||typeof args.text!=='string'||!args.text.trim()||args.text.length>1000)return {error:'bad_bridge_request',msg:'不认识的任务请求'};
       command={id:'task-bridge:'+args.run+':'+callContext().attempt+':'+args.id,digest:inputDigest(args)};
     }
     if(op==='send'&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){

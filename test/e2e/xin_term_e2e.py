@@ -516,6 +516,57 @@ async def part6(browser):
     await pg.context.close()
 
 
+async def part7(browser):
+    """后台干活时插话（站长 2026-11-17，docs/superpowers/specs/2026-11-17-xin-steer-design.md）：任务主动回来说的一句画在聊天最后、只画一次；
+    任务的终端里看得到兄弟中途补充的话（一行「> …」，落在它被送进去的那一步前面）和主动告诉兄弟的那句。"""
+    pg = await ui.page(browser, 1280, 860)
+    await pg.emulate_media(reduced_motion='reduce')
+    front = [[{'t': 'text', 'text': '好，我去查一下。'}, {'t': 'task', 'sid': TASK, 'no': 1, 'title': '查电脑上的 Agent 模型', 'kind': 'research', 'status': 'queued', 'after': [], 'at': now()}],
+             [{'t': 'done', 'ok': True, 'code': 0, 'ms': 1500}]]
+    st = await ui.xin_mock(pg, authed=True, live=front)
+    NOTE = '两份配置写的默认模型不一样，我再核一下实际启动的是哪个'
+    run = [{'t': 'user', 'text': '内部要求原文：查电脑上有哪些 Agent 模型'}, {'t': 'tool', 'id': 'a', 'name': 'Bash', 'detail': B('cat ~/.codex/config.toml')},
+           {'t': 'tool_end', 'id': 'a', 'name': 'Bash', 'detail': B('cat ~/.codex/config.toml'), 'ok': True, 'out': 'model = "glm-5.3"'},
+           {'t': 'user', 'text': '备用的别列，只列实际启用的', 'steer': True}, {'t': 'note', 'text': NOTE},
+           {'t': 'tool', 'id': 'b', 'name': 'Bash', 'detail': B('ps aux')}]
+    st.update({'tasks': []})
+
+    async def overlay(route):
+        body = json.loads(route.request.post_data or '{}')
+        op, args = body.get('op'), body.get('args') or {}
+        if op == 'poll' and args.get('run') == 'rtask00s01':
+            off = int(args.get('off', 0))
+            return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': {'events': run[off:], 'off': len(run), 'done': False}}))
+        await route.fallback()
+    await pg.route('**/api/xin/call', overlay)
+    await open_work(pg)
+    await pg.fill('.xc-row textarea', '查一下电脑上有哪些 Agent 模型')
+    await pg.click('.xc-send')
+    BOX = '.xc-tb[data-tsid="%s"]' % TASK
+    await pg.wait_for_function("!!document.querySelector('%s') && !document.querySelector('.xc-typing')" % BOX, timeout=10000)
+    sid = await pg.evaluate("LimingXinChat.state.sid")
+    st['tasks'] = [task(parent=sid, title='查电脑上的 Agent 模型', kind='research', status='running', startedAt=now() - 60000, run='rtask00s01')]
+    st['notes'] = [{'run': 'rnote00001', 'text': NOTE, 'at': now(), 'task': {'sid': TASK, 'no': 1}}]
+    await pg.evaluate("LimingXinChat.tasks()")
+    await pg.wait_for_function("!!document.querySelector('.xc-ai[data-run=\"rnote00001\"]')", timeout=8000)
+    await pg.evaluate("LimingXinChat.tasks()")
+    await pg.wait_for_timeout(600)
+    n = await pg.evaluate("""(() => { const a = [...document.querySelectorAll('.xc-ai[data-run="rnote00001"]')], all = [...document.querySelectorAll('.xc-msgs .xc-m')];
+      return [a.length, a[0] && a[0].querySelector(':scope > .xc-bub').textContent, all[all.length - 1] === a[0], !!a[0] && !a[0].querySelector('.xc-tb')]; })()""")
+    ui.check('后台主动回来说的一句：画在聊天最后、是小芯的一条消息（不带任务框）；再轮询也只画一次', n == [1, NOTE, True, True], n)
+    await pg.click(BOX)
+    await pg.wait_for_function("!!document.querySelector('.tm-win:not([hidden]) .tm-log .tm-ask')", timeout=8000)
+    await pg.wait_for_timeout(300)
+    tm = await pg.evaluate("""(() => { const w = document.querySelector('.tm-win'), log = w.querySelector('.tm-log'), kids = [...log.children];
+      const ask = log.querySelector('.tm-ask'), said = [...log.querySelectorAll('.tm-said')].map(e => e.textContent);
+      const i = kids.indexOf(ask), j = kids.findIndex(e => e.classList.contains('tm-said'));
+      return [ask.textContent, ask.querySelector('.tm-pp').textContent, said, i > 0 && j > i, kids.slice(0, i).some(e => e.classList.contains('tm-l'))]; })()""")
+    ui.check('终端：兄弟中途补充的话是一行「> …」，落在送进去的那一步前面；主动告诉兄弟的那句写成「告诉兄弟：…」',
+             tm[0] == '>备用的别列，只列实际启用的' and tm[1] == '>' and any(x.endswith('告诉兄弟：' + NOTE) for x in tm[2]) and tm[3] and tm[4], tm)
+    await pg.keyboard.press('Escape')
+    await pg.context.close()
+
+
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
@@ -525,6 +576,7 @@ async def main():
         await part4(browser)
         await part5(browser)
         await part6(browser)
+        await part7(browser)
         await browser.close()
     bad = [name for name, ok in ui.results if not ok]
     real = [e for e in ui.errors if 'Failed to load resource' not in e]

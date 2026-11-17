@@ -294,6 +294,11 @@
         return;
       }
       if (ev.t === 'mark' && ev.text) step(function () { put(h('div', 'tm-mark', ev.text)); return null; });
+      // 兄弟在它干活时补充的话：和开头的要求一样一行「> …」，落在它被送进去的那一步前面（docs/superpowers/specs/2026-11-17-xin-steer-design.md）
+      if (ev.t === 'ask' && ev.text) {
+        var q = String(ev.text).slice(0, 300);
+        step(function () { var p = h('div', 'tm-pr tm-ask'); p.appendChild(h('i', 'tm-pp', '>')); var sp = h('span', ''); p.appendChild(sp); put(p); return { node: sp, text: q, kind: 'say' }; }, q.length);
+      }
     }
 
     /* 一页的内容：欢迎框、「> 要求」、各步、结尾（做完那一行 / 光标）*/

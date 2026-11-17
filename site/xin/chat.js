@@ -1860,8 +1860,15 @@
       return evs.length;
     }).catch(function () { f.busy = false; return gen === S.convSeq ? 0 : -1; });
   }
+  // 终端里也看得到：兄弟中途补充的话（一行「> …」）、后台主动回聊天说的那句（站长 2026-11-17）
+  function termEv(ev) {
+    if (ev.t === 'user' && ev.steer && ev.text) return { t: 'ask', text: ev.text, at: ev.at };
+    if (ev.t === 'note' && ev.text) return { t: 'text', text: '告诉兄弟：' + ev.text, at: ev.at };
+    return ev;
+  }
   function tfEvent(f, ev) {
-    if (!/^(tool|tool_end|text|err|mark|think)$/.test(ev.t)) return;   // 要求原文（user）、状态、结束不画
+    ev = termEv(ev);
+    if (!/^(tool|tool_end|text|err|mark|think|ask)$/.test(ev.t)) return;   // 要求原文（user）、状态、结束不画
     if (ev.t === 'tool' && termLine(ev)) f.verb = stepOf(ev);
     else if (ev.t === 'tool_end' || ev.t === 'text') f.verb = '';
     f.events.push(ev);
@@ -1877,7 +1884,7 @@
       var evs = [];
       (d.runs || []).forEach(function (r) {
         if (evs.length) evs.push({ t: 'mark', text: '继续' });
-        (r.events || []).forEach(function (ev) { if (/^(tool|tool_end|text|err|think)$/.test(ev.t)) evs.push(ev); });
+        (r.events || []).forEach(function (ev) { ev = termEv(ev); if (/^(tool|tool_end|text|err|think|ask)$/.test(ev.t)) evs.push(ev); });
       });
       f.events = evs; f.full = true;
       if (TW && TW.isOpen()) TW.fill('task:' + f.sid, evs);
@@ -1937,11 +1944,20 @@
       if (d && d.error) throw new Error(d.msg || d.error);
       S.bg = d.bg || 0; S.tactive = d.active || []; glowFrom(d);
       setTasks((d.active || []).concat(d.recent || [], sid === S.sid ? d.tasks || [] : []), true);
+      if (sid && sid === S.sid && !S.loadingConversation) drawNotes(d.notes);   // 历史还在读的话，读完由历史画
       renderStrip(); renderWork(); renderHome();
       var waits = (d.active || []).some(function (t) { return t.status === 'waiting'; });
       var next = S.open && convLive() ? (S.view === 'chat' && !document.hidden ? 2000 : 4000) : S.bg > 0 ? 20000 : waits ? 60000 : 0;
       if (next) tpTm = setTimeout(pollTasks, next);
     }, function () { tpTm = setTimeout(pollTasks, 30000); });
+  }
+  // 后台主动回来说的一句（控制器在原对话里记的一轮说完的话，站长 2026-11-17）：正看着这个对话时画在最后；同一轮只画一次，刷新以后由历史画
+  function drawNotes(notes) {
+    if (!list || !(notes || []).length) return;
+    notes.forEach(function (n) {
+      if (!n || !n.run || !n.text || list.querySelector('.xc-ai[data-run="' + String(n.run).replace(/["\\]/g, '') + '"]')) return;
+      draw({ t: 'text', text: n.text, note: n.task }, false, n.run);
+    });
   }
   // 以前输入框上面的「N 个任务进行中」：现在由小芯岛显示
   function renderStrip() { renderIsle(); paintFaces(); }

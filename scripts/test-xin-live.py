@@ -9,6 +9,7 @@ import os
 import time
 import uuid
 from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, owner_brief
+from xin_live_steer import steer_live
 from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
@@ -29,6 +30,7 @@ async def main():
     alternate_sid = None
     web_sid = None
     image_sid = None
+    steer_sids = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
         context = await browser.new_context(viewport={'width': 1280, 'height': 860})
@@ -470,14 +472,16 @@ async def main():
             print('PASS real Gemini animated web preview, actual clicks and complete temporary cleanup', flush=True)
             print('PREVIEW_URL ' + BASE + preview['url'], flush=True)
             await art.close()
-            # 这一路（真对话、后台任务、流、备份、网页预览）都做完了：常驻进程没重启，外壳一个控制器进程都没起
+            # 后台干活时插话（docs/superpowers/specs/2026-11-17-xin-steer-design.md）：Gemini 补一句、停下再继续、Codex（点名 Kimi）
+            await steer_live(page, call, settle, errors, LEAKS, steer_sids, directory)
+            # 这一路（真对话、后台任务、流、备份、网页预览、插话）都做完了：常驻进程没重启，外壳一个控制器进程都没起
             same_resident_owner(owner, await call('usage', {}))
             print('PASS state owner is the resident process (kernel mode, no controller process per request)', flush=True)
         finally:
             # Forget only this run's own conversation. Leave its small result artifact for diagnosis.
-            for owned_sid in [s for s in (sid,alternate_sid,image_sid) if s]:
+            for owned_sid in [s for s in (sid,alternate_sid,image_sid) if s] + steer_sids:
                 try:
-                    await forget_owned(owned_sid, lambda t: owned_sid == image_sid or (t.get('title') == marker and t.get('dir') == directory) or t['sid'] == web_sid)
+                    await forget_owned(owned_sid, lambda t: owned_sid == image_sid or owned_sid in steer_sids or (t.get('title') == marker and t.get('dir') == directory) or t['sid'] == web_sid)
                 except Exception as error:
                     print('Smoke records retained for diagnosis: ' + (str(error)[:160] if isinstance(error, RuntimeError) else type(error).__name__), flush=True)
             await browser.close()

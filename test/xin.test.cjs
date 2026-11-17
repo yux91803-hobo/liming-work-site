@@ -1152,7 +1152,7 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   assert.match(xinTask('new', '--title', 'X', '--kind', 'nope', '--', 'x'), /类型只能是/);
   assert.match(xinTask('new', '--title', 'X', '--dir', '/etc', '--', 'x'), /项目目录要在/);
   // 补充要求：A 在做，记下来
-  assert.match(xinTask('tell', '1', '再加个呼吸灯'), /任务 1 这一步做完就按你说的接着做/);
+  assert.match(xinTask('tell', '1', '再加个呼吸灯'), /任务 1 这一轮跑完就按你说的接着做/);   // exec 方式中途接不了补充：这一轮跑完再按补充接着做（下面检查确实接着做了）
   // 停掉 C
   assert.match(xinTask('stop', '3'), /停了：任务 3/);
   await until(() => st().C === 'stopped', 10000, 'C 停了');

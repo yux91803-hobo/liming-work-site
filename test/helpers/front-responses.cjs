@@ -20,6 +20,17 @@ global.fetch = async function(url, init) {
   if (delay) await new Promise(r=>setTimeout(r,delay));
   const content = [...body.input].reverse().find(x=>x.role==='user')?.content || '';
   const latest = typeof content === 'string' ? content : content.filter(x=>x.type==='input_text').map(x=>x.text).join('\n');
+  // 按脚本回（XIN_FRONT_TEST_SCRIPT 是一个 JSON 数组文件）：最新一条用户消息里含 when 的第一项用掉一次，回它的 text 和 calls（argv 数组）
+  const scriptFile = process.env.XIN_FRONT_TEST_SCRIPT;
+  if (scriptFile && fs.existsSync(scriptFile)) {
+    const items = JSON.parse(fs.readFileSync(scriptFile, 'utf8')), i = items.findIndex(x => latest.includes(x.when));
+    if (i >= 0) {
+      const [item] = items.splice(i, 1); fs.writeFileSync(scriptFile, JSON.stringify(items));
+      const output = [...(item.text ? [{type:'message',content:[{type:'output_text',text:item.text}]}] : []),
+        ...(item.calls || []).map((argv, n) => ({type:'function_call',name:'xin',call_id:'script-'+n+'-'+items.length,arguments:JSON.stringify({argv})}))];
+      return new Response(JSON.stringify({status:'completed',output,usage:{input_tokens:10,output_tokens:3,total_tokens:13}}));
+    }
+  }
   const output = latest.includes('TEST_DISPATCH')
     ? [{type:'function_call',name:'xin',call_id:'dispatch',arguments:JSON.stringify({argv:['xin','task','new','--kind','code','--title','编译 LED','--','编译 blink 工程']})}]
     : [{type:'message',content:[{type:'output_text',text:process.env.XIN_FRONT_TEST_TEXT || '好的'}]}];

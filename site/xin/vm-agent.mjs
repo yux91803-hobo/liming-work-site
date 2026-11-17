@@ -52,6 +52,7 @@ import { checkControllers } from './vm-kernel-compat.mjs';
 import { ownerLegacy } from './vm-kernel-owner.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
+import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps } from './vm-steer.mjs';
 import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership, stateOwned } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
@@ -287,7 +288,7 @@ function patchSession(sid, changes) { return lockedCall(isTask(readJ(sessF(sid))
 function applyRunPatch(run,changes){
   const current=readJ(metaF(run));if(!current)return null;
   if(changes?.stopped&&current.ended)return current;
-  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','effort','from','fallbacks','frontUsage','webCheck','pageCheck'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
+  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','modelDone','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','effort','from','fallbacks','frontUsage','webCheck','pageCheck'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
   writeJ(metaF(run),current);return current;
 }
 function patchRun(run,changes){
@@ -704,6 +705,8 @@ function runner(run) {
       setTimeout(()=>finish(code,why),100);return;
     }
     finished = true; clearTimeout(stallTm); clearTimeout(deadTm); clearInterval(bridgeTm);
+    // 模型这一步做完了：之后来的补充进不了这一轮（检查网页、编译核验时），taskTell 回「这一轮跑完再接着做」
+    if (meta.task) { try { patchRun(run, { modelDone: true }); } catch { /* 记不下来只是这期间的补充按「进了这一轮」回执，结束时照样带到下一轮 */ } }
     if (state.timeout && !why) why = '超过 ' + Math.round(((meta.deadline || 0) - meta.started) / 60e3) + ' 分钟还没做完，停下了';
     // Harness 的用量：这个对话以前的加上这一轮的（只在做完时加一次）
     if (meta.agent === 'harness' && state.hu) {
@@ -761,7 +764,7 @@ function runner(run) {
     }
     if (meta.kind === 'daily') dailyDone(run, meta, ok);
     // 做完提醒：你不在看（关了网页、切到别的应用）才发；你自己停的、每日任务不发
-    else if (!stopped&&meta.kind!=='handoff') {
+    else if (!stopped&&meta.kind!=='handoff'&&meta.kind!=='note') {
       const last = events(run).filter(e => e.t === 'text').pop();
       const text = plainText(last && last.text, 120);
       setTimeout(() => process.exit(0), 20000).unref();
@@ -779,6 +782,8 @@ function runner(run) {
     let invocation;
     try { invocation = meta.task&&runtime.isAgyModel(meta.model)?[process.execPath,[SELF,'agy-run',run]]:agentArgs(meta.agent, currentSession, meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model, role, sandbox: !!meta.sandbox }); }
     catch (e) { finish(127, e.message); return; }
+    // Gemini 后台每一步之间接补充（vm-runtime.mjs 的 antigravityWork）：这一轮能把补充送进去（taskTell 的 steerable）
+    if (meta.task && runtime.isAgyModel(meta.model)) { try { patchRun(run, { transport: 'antigravity' }); } catch { /* 记不下来就按接不了：补充等这一轮跑完 */ } }
     const [cmd, args] = invocation;
     let got = false, buf = '';
     const accept = o => {
@@ -877,9 +882,12 @@ function runner(run) {
         // 记下为什么换（2026-11-12 正式站联调里点名 Gemini 的任务开工前失败换了模型，原因没处查）
         const fromErr=cut(String(state.heldErr?.text||state.lastErr||stderr||'').trim().split('\n').filter(Boolean).slice(-3).join(' '),300);
         state.switched = true; meta.from = from; meta.fromErr = fromErr; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);meta.effort=AUTO_EFFORT;
-        patchRun(run,{model:meta.model,effort:meta.effort,from,fromErr,fallbacks:meta.fallbacks});
+        // 换了执行入口，原来那条插话通道没了：新入口自己报能不能插话（app-server 开始这一轮时写 transport）
+        patchRun(run,{model:meta.model,effort:meta.effort,from,fromErr,fallbacks:meta.fallbacks,transport:null});
         if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         else if(stallFallback)meta.text='原执行入口没有回应。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
+        // 接手的模型从头开始，看不到前一个入口收到的补充：这一轮收到的补充全部交给它（还没送的也算送达）
+        if(meta.task){const h=lockedCall('tasks','steer_handover',{run});if(Array.isArray(h?.steers)&&h.steers.length)meta.text+='\n\n'+handoverBlock(h.steers);}
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
         emit(run, { t: 'status', text: runtime.isAgyModel(from)?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
         Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
@@ -898,13 +906,14 @@ function runner(run) {
   if (meta.deadline) deadTm = setTimeout(() => { state.timeout = true; restarting = false; emit(run, { t: 'status', text: '到时间了，先停下' }); killTree(child); }, Math.max(1000, meta.deadline - Date.now()));
   bridgeTm = setInterval(async () => {
     try {
-      drainTaskReports(sess.workspace, meta, {drain:runtime.drainBridge,submit:a=>lockedCall('tasks','task_bridge',a),remember:addMemory,ask:a=>lockedCall('tasks','task_ask',a)});
+      drainTaskReports(sess.workspace, meta, {drain:runtime.drainBridge,submit:a=>lockedCall('tasks','task_bridge',a),remember:addMemory,ask:a=>lockedCall('tasks','task_ask',a),note:a=>lockedCall('tasks','task_note',a)});
       if (!app || steering || finished) return;
       const m = readJ(metaF(run), meta), queue = (m.steers || []).filter(x => x.state === 'pending');
       if (!queue.length || !m.turnId) return;
       steering = true;
       for (const q of queue) {
-        try { await app.steer(q.text, q.id); lockedCall(meta.task ? 'tasks' : meta.sid, 'steer_ack', { run, id: q.id, state: 'accepted' }); }
+        // 后台任务的补充带上怎么照着做（和 Gemini 后台同一个说法）；对话里的插话照原话
+        try { await app.steer(meta.task ? steerBlock([q]) : q.text, q.id); lockedCall(meta.task ? 'tasks' : meta.sid, 'steer_ack', { run, id: q.id, state: 'accepted' }); }
         catch (e) { lockedCall(meta.task ? 'tasks' : meta.sid, 'steer_ack', { run, id: q.id, state: 'next', error: e.message }); }
       }
     } catch { /* pending input stays durable and is retried */ }
@@ -932,6 +941,8 @@ function runner(run) {
       // 后台任务快照单独一条、放在兄弟这句话前面，他的原话永远是最后一条。以前接在他的话后面，
       // DeepSeek 会把快照当成这一句要回的内容（联调 #113、#114：「只回复 三个词」被答成了进度）
       if(meta.frontTaskNotes)input.push({role:'user',content:meta.frontTaskNotes});
+      // 兄弟这句可能和手上的事有关时才有：供前台对照是哪件事、补充现在怎么接（handNotes）
+      if(meta.frontHands)input.push({role:'user',content:meta.frontHands});
       if(!meta.handoff){const guide=turnGuidance({sid:meta.sid,text:meta.frontRequest||'',context:meta.context||''});if(guide)input.push({role:'user',content:guide});}
       input.push(frontUserInput(meta));
     }
@@ -1673,12 +1684,14 @@ function startTask(t, all) {
   try { if (!hostTask(t)) t.workspace = runtime.prepareWorkspace(t, BASE); }
   catch (e) { failTask(t, '没有启动任务：' + e.message); return false; }
   if (lost) { t.agentSid = null; t.started = false; delete t.antigravityConversation; }
+  // 上一轮没正常做完带下来的补充（断线重启后自动续做、临时出错后续做）：放在这一轮开头一起交出去，一次取完
+  const held = first ? [] : (t.inbox || []).map(x => x.text).filter(Boolean), heldText = held.length ? '\n\n' + heldBlock(held) : '';
   const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps)
-    : lost ? forAgent('电脑重启过，上一轮的项目副本和过程记录都没了，现在的目录是按原项目重新拷贝的。原来的要求：\n' + cut(t.goal || '', 10000) + '\n先看看现在的文件，再接着做' + (t.next ? '：' + t.next : '。'), '')
-    : forAgent(t.next || '接着做。', '');
+    : lost ? forAgent('电脑重启过，上一轮的项目副本和过程记录都没了，现在的目录是按原项目重新拷贝的。原来的要求：\n' + cut(t.goal || '', 10000) + '\n先看看现在的文件，再接着做' + (t.next ? '：' + t.next : '。') + heldText, '')
+    : forAgent((t.next || '接着做。') + heldText, '');
   const userText = first ? t.goal : String(t.nextShow || t.next || '接着做');
   const cm = codexModel(t.model);
-  Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, retryAt: 0, startedAt: t.startedAt || Date.now() });
+  Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, retryAt: 0, startedAt: t.startedAt || Date.now() }, held.length ? { inbox: [] } : {});
   const run = launch(t, { text, effort: runtime.isAgyModel(t.model)?runtime.agyEffort(t.tkind):AUTO_EFFORT, kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||t.model===runtime.AGY_MODEL ? t.fallbacks || [] : [],
     images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !hostTask(t) && TASK_SANDBOX(),
     deadline: t.deadline }, { t: 'user', text: userText, at: Date.now() });
@@ -1723,8 +1736,11 @@ function taskFinish(a) {
   // 这一轮结束了，挂在它上面的问题不能再按 approval 回复（taskTell 会说「这一轮已经结束」）：超时、断了、停了的直接丢掉；
   // 正常结束的（到点锁忙、问题没记成 pendingQuestion）状态还是 waiting，下面照样停在「等你确认」，回复走普通的接着做
   delete t.approval;
-  const pending = (runMeta.steers || []).filter(x => x.state === 'pending' || x.state === 'next');
-  if (pending.length) t.inbox = (t.inbox || []).concat(pending.map(x => ({ text: x.text, at: x.at })));
+  // 补充（docs/superpowers/specs/2026-11-17-xin-steer-design.md §2）：这一轮没送进去的带到下一轮，正常做完时它们让任务接着做；
+  // 这一轮没正常做完（超时、断线、重启、停下、出错）的话，送进去了的也带上（held）：没法确定模型已经照着做了，下一轮开头再交一次
+  const okEnd = !!a.ok && !a.stopped && !a.timeout && !a.died && !a.transient;
+  const carry = (runMeta.steers || []).filter(x => x.state === 'pending' || x.state === 'next' || (!okEnd && x.state === 'accepted'));
+  if (carry.length) t.inbox = (t.inbox || []).concat(carry.map(x => ({ id: x.id, text: x.text, at: x.at, ...(x.state === 'accepted' ? { held: true } : {}) })));
   const last = evs.filter(e => e.t === 'text').pop(), err = evs.filter(e => e.t === 'err').pop();
   let notify = null;
   if (t.status === 'stopping') { t.status = 'stopped'; t.endedAt = Date.now(); }                  // 进程真正退出后才释放目录
@@ -1732,7 +1748,7 @@ function taskFinish(a) {
     t.status='waiting';t.question=t.pendingQuestion||t.question;delete t.pendingQuestion;
     Object.assign(t,{endedAt:Date.now(),frontSeen:false});notify=taskPush(t,(t.browserStep?'我这边需要你登录：':'我这边需要你确认：')+t.title,t.question);
   }
-  else if (!a.stopped && !a.timeout && !a.died && t.inbox && t.inbox.length) {                  // 干活时用户补充了话：接着做
+  else if (!a.stopped && !a.timeout && !a.died && t.inbox && t.inbox.some(x => !x.held)) {       // 干活时用户补充了、模型还没拿到的话：接着做
     t.next = '用户在你干活时补充了：\n' + t.inbox.map(x => '- ' + x.text).join('\n') + '\n按补充的要求接着做（已经做对的不用重做）。';
     t.nextShow = t.inbox.map(x => x.text).join('\n');
     Object.assign(t, { inbox: [], status: 'queued', queuedAt: Date.now() });
@@ -1799,99 +1815,19 @@ function taskFinish(a) {
   scheduleNow();
   return notice ? { notice, notify } : {};
 }
-// 用户（或前台）给任务补充要求：在做就等这一步做完接着做；还没开始就并进要求；做完了、停了、在等确认就接着做
-function taskTell(a) {
-  const t = findTask(a);
-  if (!t) return { error: 'no_task', msg: '找不到这个任务' };
-  const expectedApproval = t.publication ? t.publication.id || 'publish' : t.approval?.id;
-  if (a.approvalId !== undefined && a.approvalId !== expectedApproval || a.decision && !t.approval && !t.publication && !t.browserStep)
-    return { error: 'stale_approval', msg: '这次确认已结束或已变化，请刷新任务后核对' };
-  if (t.approval) {
-    if (t.approval.kind !== 'input' && !['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '请点「批准」或「拒绝」' };
-    if (t.approval.kind === 'input' && !String(a.text || '').trim()) return { error: 'empty', msg: '请回复问题' };
-    const r = lastRun(t), m = readJ(metaF(r));
-    if (!m || runDone(r)) return { error: 'ended', msg: '这一轮已经结束，不能再批准' };
-    m.approvalReplies = { ...(m.approvalReplies || {}), [t.approval.id]: t.approval.kind === 'input' ? String(a.text).slice(0,4000) : a.decision }; writeJ(metaF(r), m);
-    delete t.approval; t.question = ''; t.status = 'running'; saveTask(t);
-    return { ok: true, msg: a.decision === 'approve' ? '已批准' : '已拒绝', task: taskSummary(t) };
-  }
-  if (t.publication) {
-    if (!['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '结果涉及删除或覆盖冲突，请明确选择是否允许' };
-    if (t.publication.id && a.approvalId !== t.publication.id) return { error: 'stale_approval', msg: '这份写回清单已变化，请刷新任务后核对新的清单' };
-    if (a.decision === 'approve') {
-      try {
-        const publication = runtime.publishWorkspace(t, BASE, t.publication);
-        if (publication.pending) {
-          t.publication = publication; t.question = '写回内容有变化，尚未执行。请核对下面的新文件清单，批准这次写回吗？'; saveTask(t);
-          return { ok: true, msg: '写回清单或文件内容有变化，尚未执行，请核对新清单后再批准', task: taskSummary(t) };
-        }
-        t.publicationReceipt = publication;
-        if(t.web){t.preview=runtime.publishWebPreview(t,BASE,readJ(metaF(lastRun(t)),{}).webCheck);t.result.text='我画好了，点下面的预览就能看。';t.stage='ready';}
-      }
-      catch (e) { return { error: 'conflict', msg: e.message }; }
-      t.status = 'done'; t.result.ok = true;
-    } else { t.status = 'stopped'; t.result.ok = false; t.result.text += '\n原项目未更改，任务副本保留。'; }
-    delete t.publication; t.question = ''; t.endedAt = Date.now(); t.result.at = Date.now(); t.frontSeen = false; cleanupFinishedTask(t);saveTask(t); scheduleNow();
-    return { ok: true, msg: a.decision === 'approve' ? '结果已写回' : '已保留原文件', task: taskSummary(t) };
-  }
-  if(t.status==='stopping')return {error:'busy',msg:'任务正在停止，退出后再继续'};
-  // 等站长登录（docs/xin-browser-v2-design.md 第 6 节）：「已登录，继续」把网站加进任务，下一轮浏览器带上它的登录；「跳过登录」不加；直接回话当普通回复
-  let decided = '';
-  if (t.browserStep) {
-    const site = t.browserStep.site;
-    if (a.decision === 'approve') { t.sites = [...new Set((t.sites || []).concat(site))]; decided = '站长同意用 ' + site + ' 的登录（这一轮浏览器已经带上了），接着做。'; }
-    else if (a.decision === 'deny') decided = '站长不用 ' + site + ' 的登录。别换别的办法登录；做不了的部分写进结果。';
-    delete t.browserStep;
-  }
-  const text = decided || String(a.text || '').trim().slice(0, 4000) || '接着做';
-  t.transientRetries = 0;
-  if(t.tkind==='review'&&t.status==='waiting'){const requested=namedModel(text);if(requested){t.requestedModel=requested;t.requestedNamed=true;}}
-  if (t.status === 'running') {
-    const r = lastRun(t), m = r && readJ(metaF(r));
-    if (m?.transport === 'app-server' && !t.pendingQuestion) {
-      m.steers = (m.steers || []).concat([{ id: a.clientId || rid('u'), text, at: Date.now(), state: 'pending' }]);
-      writeJ(metaF(r), m);
-      return { ok: true, msg: '已送入当前任务', task: taskSummary(t) };
-    }
-    t.inbox = (t.inbox || []).concat([{ text, at: Date.now() }]);
-    if(t.pendingQuestion){delete t.pendingQuestion;t.question='';}
-    saveTask(t);
-    return { ok: true, msg: '记下了：任务 ' + t.no + ' 这一步做完就按你说的接着做', task: taskSummary(t) };
-  }
-  if (t.status === 'queued' && !(t.runs && t.runs.length)) {
-    t.goal += '\n补充：' + text; saveTask(t);
-    return { ok: true, msg: '任务 ' + t.no + ' 还没开始，补充的要求并进去了', task: taskSummary(t) };
-  }
-  if (t.status === 'queued') { t.next = (t.next ? t.next + '\n' : '') + '用户又说：' + text; t.nextShow = (t.nextShow ? t.nextShow + '\n' : '') + text; saveTask(t); return { ok: true, msg: '记下了', task: taskSummary(t) }; }
-  const waiting = t.status === 'waiting', interrupted = waiting && /中途断了/.test(t.question || '') || t.result?.err === '中途断了两次';
-  const expired = t.expired; delete t.expired;
-  if (isFinished(t)) { if(t.status==='done') { t.workspace = null; t.started = false; t.agentSid = null; } t.deadline = null; t.validationRetries = 0; delete t.publicationError; }
-  const active = lastRun(t);
-  if (active && !runDone(active)) {
-    t.inbox = (t.inbox || []).concat([{ text, at: Date.now() }]);
-    if(t.pendingQuestion||t.status==='waiting'){delete t.pendingQuestion;t.question='';t.status='running';}
-    saveTask(t);
-    return { ok: true, msg: '已收到，当前进程退出后接着做', task: taskSummary(t) };
-  }
-  // 停下前压着的补充（干活时收到、这一轮结束时停在等确认没顾上的）跟这句一起交给模型，这句放最后、以它为准；
-  // 不留在收件箱里等这一轮做完再翻出来重新开工（站长回「不用了」后任务又被旧补充叫起来，2026-11-12）。
-  // 参考 Codex codex-rs/core/src/session/input_queue.rs：补充一次取完、和下一轮一起交出去。
-  const held = (t.inbox || []).map(x => '- ' + x.text);
-  Object.assign(t, { next: (held.length ? '你停下前用户补充过（按先后）：\n' + held.join('\n') + '\n' : '') + (waiting || expired ? '用户回复：' : '用户又说：') + text + (waiting && t.question ? '\n（你之前问的是：' + t.question + '）' : expired?.question ? '\n（你之前问的是：' + expired.question + '）' : '') + (held.length ? '\n以用户最后的回复为准。' : ''), nextShow: text,
-    inbox: [], status: 'queued', queuedAt: Date.now(), question: '', frontSeen: true });
-  if (waiting) t.deadline = null;
-  if (interrupted) t.resumes = 0;
-  saveTask(t);
-  scheduleNow();
-  return { ok: true, msg: '任务 ' + t.no + ' 接着做了', task: taskSummary(readJ(sessF(t.sid)) || t) };
-}
+// 补充（taskTell、tellMode）、前台的 <手上的事>、后台主动说一句：在 vm-steer.mjs（docs/superpowers/specs/2026-11-17-xin-steer-design.md）。
+// 后面才定义的（runDone、taskVersion）包一层，用到时再取
+const { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover } = createSteerOps({
+  metaF, sessF, findTask, taskSummary, saveTask, scheduleNow, cleanupFinishedTask, listTasks, emit, isTask, isFinished, lastRun, TASK_STATUS,
+  runDone: r => runDone(r), taskVersion: t => taskVersion(t), readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel });
 function taskStop(a) {
   const t = findTask(a);
   if (!t) return { error: 'no_task', msg: '找不到这个任务' };
   if (isFinished(t)) return { ok: true, already: true, task: taskSummary(t) };
   const activeRun = lastRun(t), wasRunning = !!activeRun && !runDone(activeRun);
   delete t.approval; delete t.publication; delete t.pendingQuestion; delete t.browserStep;
-  Object.assign(t, { status: wasRunning ? 'stopping' : 'stopped', result: { ok: false, text: wasRunning ? '做到一半被停下了。' : '还没做完就停了。', at: Date.now() }, endedAt: wasRunning ? 0 : Date.now(), inbox: [], frontSeen: false });
+  // 补充是要求、不是操作：停下不清掉，兄弟之后说继续照样按补充做（docs/superpowers/specs/2026-11-17-xin-steer-design.md §2）
+  Object.assign(t, { status: wasRunning ? 'stopping' : 'stopped', result: { ok: false, text: wasRunning ? '做到一半被停下了。' : '还没做完就停了。', at: Date.now() }, endedAt: wasRunning ? 0 : Date.now(), frontSeen: false });
   cleanupFinishedTask(t);
   saveTask(t);
   const r = lastRun(t), m = r && readJ(metaF(r));
@@ -2095,6 +2031,7 @@ function handoffStart(a){
   const h=journal.handoff(a.id);if(!h||!['pending','running'].includes(h.state))return {};
   const t=readJ(sessF(h.task)),s=readJ(sessF(h.parent));
   if(!s||s.agent!=='codex'){journal.settleHandoff(h.id,'cancelled');return {};}
+  if(h.payload?.kind==='note')return noteStart(h,t,s);
   if(!t||taskVersion(t)!==h.version){journal.settleHandoff(h.id,'superseded');return {};}
   if(h.state==='running'){
     if(h.run&&!runDone(h.run))return {};
@@ -2137,6 +2074,8 @@ export function frontImmediate(a){
   // Natural-language intent and follow-up routing belong to structured inference, not keyword dispatch.
   return {};
 }
+// 转过去以后的兜底回话（前台自己的话要不到时才用）：按补充怎么接说，只说一次
+const TELL_TEXT = { now: '行，接下来就按你说的来。', next: '好，这一轮跑完我就按你补的再来一遍。', start: '好，开始的时候一起带上。', reply: '好，我接着做。', resumed: '好，我接着做。' };
 function frontOriginalRequest(run, meta) {
   const original = events(run).find(e=>e.t==='user');
   return String(original?.text || meta.frontRequest || ((meta.frontFiles||[]).length ?
@@ -2190,7 +2129,15 @@ export function frontAction(a) {
       if((t.autoContinues||0)>=2)return {error:'budget',msg:'自动续接预算已用完，请如实汇报结果'};
       t.autoContinues=(t.autoContinues||0)+1;saveTask(t);
     }
-    r = sub === 'tell' ? taskTell({no:t.no,text:rest.slice(1).join(' ')}) : taskStop({no:t.no});
+    if (sub === 'tell') {
+      // --continue：兄弟明确说继续一件做完、停了、没做成的事（站长 2026-11-17）；完成事件里让原工作接着改不用写
+      const resume = rest[1] === '--continue', said = rest.slice(resume ? 2 : 1).join(' ').trim();
+      // 同一轮里同一句只算一次（前台中断后重放）：编号由这一轮和这句话定
+      const clientId = 'ft-' + crypto.createHash('sha256').update(a.run + '\n' + t.no + '\n' + said).digest('hex').slice(0, 24);
+      r = taskTell({ no: t.no, text: said, front: !handoff, resume: !!handoff || resume, clientId });
+      // 已经结束、没有接着做：不结束这一轮，把状态交回前台，让它先告诉兄弟、问要不要接着做
+      if (r.ended) return { ...r, terminal: false };
+    } else r = taskStop({no:t.no});
   }
   if (r.error) return r;
   if(handoff){journal.settleHandoff(handoff.id,'continued');const result={terminal:true,text:'',task:r.task};writeJ(path.join(RUNS,a.run+'.front.json'),result);return result;}
@@ -2201,7 +2148,12 @@ export function frontAction(a) {
     if (review.task) emit(a.run,{t:'task',...review.task,at:Date.now()});
     else r.reviewError=review.msg||review.error;
   }
-  const result = {terminal:true,text:sub === 'stop' ? (r.task?.status==='stopping' ? '好，我正在停下。' : '好，我停下了。') : '好，我这就去弄。',task:r.task,...(r.reviewError?{reviewError:r.reviewError}:{} )};
+  // tell：回执带 delivery（补充怎么接）。前台多半在调用前就写好了回话（Gemini 前台一次返回文字和调用），那是照 <手上的事> 里写的接法写的；
+  // 实际接法和它不一样（或者这一轮没附 <手上的事>），就不用预先写好的那句，带着回执再要一句（vm-runtime.mjs 的 ownWords）
+  const shown = sub === 'tell' && m.frontHandModes ? m.frontHandModes[r.task?.no] : undefined;
+  const reword = sub === 'tell' && !(shown && (shown === r.delivery || shown === 'ended' && r.delivery === 'resumed'));
+  const result = {terminal:true,text:sub === 'stop' ? (r.task?.status==='stopping' ? '好，我正在停下。' : '好，我停下了。') : sub === 'tell' ? TELL_TEXT[r.delivery] || '好，我这就去弄。' : '好，我这就去弄。',task:r.task,
+    ...(sub === 'tell' ? { delivery: r.delivery || '', ...(reword ? { reword: true } : {}) } : {}),...(r.reviewError?{reviewError:r.reviewError}:{} )};
   if(r.reviewError) result.text+='复核还没安排成功，我需要再确认一下。';
   writeJ(path.join(RUNS,a.run+'.front.json'),result);
   if (r.task) emit(a.run,{t:'task',...r.task,at:Date.now()});
@@ -2228,7 +2180,8 @@ export function frontFallback(a) {
 export function frontTaskList(sid, all) {
   all = all || listTasks();
   const others = all.filter(t => t.parent !== sid && !isFinished(t)).map(t => ({ ...taskSummary(t), from: '别的对话里派的' }));
-  return { tasks: all.filter(t => t.parent === sid).map(t => taskSummary(t)), others,
+  // steer：补充现在怎么接（同 <手上的事>），前台按它说话
+  return { tasks: all.filter(t => t.parent === sid).map(t => { const full = readJ(sessF(t.sid)) || t, mode = tellMode(full); return { ...taskSummary(t), steer: mode, steerHow: HAND_MODE[mode] || '' }; }), others,
     note: others.length ? 'others 是别的对话里派的、还没做完的任务（网页上的进行中、待确认也算它们）；能 task show 编号 看，补充或停止要兄弟在工作台的任务详情里点，或者回到那个对话说' : '' };
 }
 export function frontTaskByNo(sid, no, all) {
@@ -2416,7 +2369,8 @@ const ops = {
     // 默认模式：带上这个对话的后台任务情况（做完的结果前台还不知道的、在等确认的、在做的）
     const all = s.agent === 'codex' ? listTasks() : [];
     const tn = s.agent === 'codex' ? taskNotes(s.sid, all, { active: false }) : { text: '', seen: [] };
-    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, frontTaskNotes: tn.text, effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
+    const hands = s.agent === 'codex' && s.runs.length ? handNotes(s.sid, text, all) : null;
+    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, frontTaskNotes: tn.text, ...(hands ? { frontHands: hands.text, frontHandModes: hands.modes } : {}), effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
       cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
     const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, s.main ? { main: true, turns: s.runs.length } : {}, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
     if (receipt) { mk(path.dirname(receipt)); writeJ(receipt, result); }
@@ -2666,6 +2620,7 @@ const ops = {
     // 最近 10 分钟结束的（哪个对话的都算）：网页据此知道别的对话里的任务做完了，让小芯冒个气泡
     const recent = all.filter(t => isFinished(t) && (t.endedAt || 0) > Date.now() - 600e3 && !mine.includes(t));
     const out = Object.assign({ tasks: mine.map(t => taskSummary(t)), active: active.map(t => taskSummary(t)), recent: recent.map(t => taskSummary(t)) }, bgInfo(all));
+    if (okId(a.sid, 's')) { const notes = recentNotes(a.sid); if (notes.length) out.notes = notes; }
     if (a.all) {
       // 任务中心：各模型最近 14 天用得怎么样、每个任务是哪个对话派的、每日任务做得怎么样
       out.stats = modelStats();
@@ -2773,7 +2728,7 @@ const iops = {
     for (const q of pending) q.state = 'consumed'; writeJ(metaF(a.run), m);
     return ops.send({ sid: a.sid, text: pending.map(x => x.text).join('\n') });
   },
-  task_bridge:createTaskBridgeHandler({loadRun:r=>readJ(metaF(r)),loadTask:s=>readJ(sessF(s)),isTask,lastRun,remember:addMemory,ask:taskAsk}),front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick, task_expire: () => { expireWaits(); return { ok: true }; },
+  task_bridge:createTaskBridgeHandler({loadRun:r=>readJ(metaF(r)),loadTask:s=>readJ(sessF(s)),isTask,lastRun,remember:addMemory,ask:taskAsk,note:taskNote}),task_note:taskNote,front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick, task_expire: () => { expireWaits(); return { ok: true }; },
   // 浏览器代理请站长登录（vm-browser.mjs 的 loginStep）：照 xin task ask 记一个问题，这一轮结束后任务停成「等你登录」
   task_browser_step(a) {
     const t = findTask(a), st = a.step || {};
@@ -2803,12 +2758,7 @@ const iops = {
     delete t.approval; Object.assign(t, { status: 'running', pendingQuestion: t.question }); saveTask(t);
     return { ok: true };
   },
-  steer_ack(a) {
-    const m = readJ(metaF(a.run)); if (!m) return { error: 'no_run' };
-    const q = (m.steers || []).find(x => x.id === a.id);
-    if (q) { q.state = a.state; if (a.error) q.error = cut(a.error, 200); writeJ(metaF(a.run), m); }
-    return { ok: true };
-  },
+  steer_ack: steerAck, steer_take: steerTake, steer_handover: steerHandover,
   task_drop(a) {
     let bytes = 0;
     for (const entry of listTasks().filter(x => x.parent === a.parent && !occupiesTask(x) && x.status !== 'queued')) {
@@ -2917,6 +2867,12 @@ function taskCmd(argv,print=console.log) {
     }
     print(out + '它在后台做，做完结果会自动出现在聊天里；你不用等，回用户一句就结束这一轮。');
     return 0;
+  }
+  // 主动回原聊天说一句（docs/superpowers/specs/2026-11-17-xin-steer-design.md §4）：说完接着做，不等回复
+  if (sub === 'note') {
+    if (!meta || !meta.task) { print('xin task note 只在后台任务里用（前台直接在回答里说）'); return 1; }
+    const r = lockedCall('tasks', 'task_note', { sid: meta.sid, run, text: argv.slice(1).join(' ') });
+    print(r.msg || r.error); return r.error ? 1 : 0;
   }
   if (sub === 'ask') {
     if (!meta || !meta.task) { print('xin task ask 只在后台任务里用（要问用户就直接在回答里问）'); return 1; }
@@ -3134,7 +3090,11 @@ async function main() {
     const t=m&&taskBridgeSession(readJ(sessF(m.sid)),m);
     if(!m?.task||!t?.workspace||!runtime.isAgyModel(m.model)){process.exitCode=1;return;}
     const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
-    runtime.antigravityWork(t,{effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why})})
+    runtime.antigravityWork(t,{effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why}),
+      // 兄弟在它干活时的补充：每一步之前取走还没送的（docs/superpowers/specs/2026-11-17-xin-steer-design.md §1）；取不到就下一步再取，结束时照样带到下一轮
+      steers:()=>{try{const r=lockedCall('tasks','steer_take',{run});return Array.isArray(r?.steers)?r.steers:[];}catch{return [];}},
+      // 主动回原聊天说一句（§4）：控制器记下、合并、到时候看还有没有用再发；回执交回给模型
+      note:text=>{try{const r=lockedCall('tasks','task_note',{sid:t.sid,run,text});return r?.msg||'';}catch{return '';}}})
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }
