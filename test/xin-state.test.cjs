@@ -114,7 +114,7 @@ test('主人活着时状态库的写入口都不执行、不落任何行；读�
   denied(() => j.write(root + '/b.json', '{}'));
   denied(() => j.append(root + '/e.jsonl', { t: 'x' }));
   denied(() => j.recover());
-  for (const f of [() => j.enqueueLaunch('r2', 's1'), () => j.dispatched('r1'), () => j.finishLaunch('r1'), () => j.enqueueHandoff({ id: 'h2', parent: 'sp', task: 'st', version: 'v1', payload: {} }),
+  for (const f of [() => j.enqueueLaunch('r2', 's1'), () => j.dispatched('r1'), () => j.claimLaunch({ run: 'r1', state: 'pending', attempts: 0 }), () => j.finishLaunch('r1'), () => j.enqueueHandoff({ id: 'h2', parent: 'sp', task: 'st', version: 'v1', payload: {} }),
     () => j.startHandoff('h1', 'r1'), () => j.settleHandoff('h1', 'delivered'), () => j.retryHandoff('h1')]) denied(f);
   assert.equal(j.db.prepare('SELECT COUNT(*) AS n FROM documents').get().n, 1);
   assert.equal(j.launchRecord('r1').state, 'pending');

@@ -38,12 +38,18 @@ export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, p
     patchRun(run, { died: true, ended: Date.now() });
     return true;
   }
-  function startRunner(run) {
-    const meta = readJ(metaF(run)), attempt = nextAttempt(meta);
-    if (attempt) journal.atomic(() => {
-      writeJ(metaF(run), { ...meta, attempt, pid: null, identity: null, launcher: null, childPid: null, childIdentity: null });
-      journal.dispatched(run);
+  // job 是派发表里读到的那一行。先认领再起执行进程：认领和写新编号在同一个事务里，没认领到（别的进程已经派了）就什么也不做。
+  // 不然两个进程同时读到同一条待派发，后一个写的新编号盖掉前一个的，前一个执行进程对不上编号退出、后一个拿不到锁也退出，
+  // 这一轮没人做，15 秒后被当成中途断了（2026-11-17 #161 正式运行的单元测试）
+  function startRunner(job) {
+    const run = job.run;
+    let attempt = null, claimed = false;
+    journal.atomic(() => {
+      if (!(claimed = journal.claimLaunch(job))) return;
+      const meta = readJ(metaF(run)); attempt = nextAttempt(meta);
+      if (attempt) writeJ(metaF(run), { ...meta, attempt, pid: null, identity: null, launcher: null, childPid: null, childIdentity: null });
     });
+    if (!claimed) return false;
     mk(path.join(BASE, 'locks'));
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !['XIN_RUN', 'XIN_ATTEMPT', 'XIN_LOCK'].includes(k) && !/^CODEX_(?!HOME$)/.test(k)));
     if (attempt) Object.assign(env, { XIN_RUN: run, XIN_ATTEMPT: attempt });
@@ -61,7 +67,7 @@ export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, p
       const current = readJ(metaF(run));
       if (current?.attempt === attempt && !current.ended) writeJ(metaF(run), { ...current, launcher: { pid: child.pid, identity } });
     });
-    if (!attempt) journal.dispatched(run);
+    return true;
   }
   function dispatch(scan) {
     if (journal.active || ownership.draining) return;
@@ -73,18 +79,18 @@ export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, p
         if (!m || m.ended) { journal.finishLaunch(job.run); continue; }
         if (Date.now() - Math.max(m.started, job.dispatchedAt || 0) < 15000 || runnerAlive(job.run, m)) continue;
         if (m.childPid && processGroupMembers(m.childPid, m.childIdentity).length) { runDone(job.run); continue; }
-        if (!m.task && m.agent === 'codex' && !m.stopped && job.attempts < 2) startRunner(job.run);
+        if (!m.task && m.agent === 'codex' && !m.stopped && job.attempts < 2) startRunner(job);
         else if (runDone(job.run)) journal.finishLaunch(job.run);
       }
       for (const job of journal.pendingLaunches()) {
         const meta = readJ(metaF(job.run));
         if (!meta || meta.ended) { journal.finishLaunch(job.run); continue; }
-        if (runnerAlive(job.run, meta)) { journal.dispatched(job.run); continue; }
+        if (runnerAlive(job.run, meta)) { journal.claimLaunch(job); continue; }
         const own = readJ(sessF(job.sid));
         const earlier = (own?.runs || []).slice(-4).filter(r => r !== job.run).some(r => {
           const m = readJ(metaF(r)); return m && !runDone(r) && runnerAlive(r, m);
         });
-        if (!earlier) startRunner(job.run);
+        if (!earlier) startRunner(job);
       }
     } finally {
       if (!ownership.owning && ownership.depth === 1) journal.closeWriter();
