@@ -1,3 +1,11 @@
+## 2026-11-17 21:19 · #166 已合并；「Gemini 后台主动说一句」偶发失败不再追根因（Claude Code）
+
+- **站长决定**：Codex 和 Claude 都没找到这条偶发失败的根因，不再追。#166（状态进程失联时报告恢复、执行进程不再挂住）最新一次检查 [44083072428](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44083072428) 全绿（含测试站），首轮挂的就是这条和本 PR 无关的偶发失败（main 上 44018154230 也挂过）。经站长同意，Claude Code 按合并提交把它合进 main（`0bea2df`），Codex 的两个提交原样保留；Claude 没有审核它的代码。下面 Codex 那节里「#166 未合并、合并暂停」已经过时。
+- **接下来**：#165（回复不再等后台任务记账）合 main 后重新跑检查、上线，再用云电脑上的内核记录核对回程。然后另开一个 PR，让测试默认不碰执行机器上的 systemd：
+  - Codex 实测 GitHub 托管机器有用户总线（UID 1001，linger=yes）；测试里设了 `XIN_SYSTEMD_BUS` 的只有 `xin-kernel`、`xin-reaper` 两个文件，别的测试的后台运行会真的进 `xin-run-*.scope`，还会把清理定时器装进机器的真实用户目录。
+  - 清理器用某个测试的目录去对别的测试的 scope：`vm-reaper.mjs` 的 `decide` 里找不到记录的轮次 `ended()` 返回 0，会被当成「对话删了」停掉。这能解释 `acp` 那种失败（后台 Gemini 做到一半被停 → 换 Codex 提前做完 → 完成交接起前台），但没在正常检查里直接抓到它停进程，算最可能的原因，不算查实。
+- **以后再挂**：隔离做完以后它还偶尔挂，就照规矩重跑一次，不再专门追。#166 在这条测试里加了失败现场（`noteDiagnostics`：调用记录、`model-stats` 里的 `fromErr`、SQLite 里的 launches / handoffs、最后一次轮询结果），失败时用 `t.diagnostic` 打进测试输出，挂了先看那份。
+
 ## 2026-11-17 · #166 失败取证进度（Codex 接续 Claude，合并暂停）
 
 - **当前代码**：main 仍为 #164 / `21d7bdf`；[#166](https://github.com/yux91803-hobo/liming-work-site/pull/166) 运行代码提交 `bc1d208`，未合并、未部署。分支 `codex/xin-note-kernel-recovery-20261117`、工作树 `/workspace/liming-kernel-note-recovery`。本次后续提交只增强测试失败现场和记录，不改运行代码、原断言、等待预算或模型脚本。
