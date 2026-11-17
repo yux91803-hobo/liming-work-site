@@ -183,7 +183,7 @@ async def part2(browser):
     front = [[{'t': 'text', 'text': '好，我去编一下。'}, {'t': 'tool', 'id': 'f1', 'name': 'Bash', 'detail': B('xin task new --kind code 帮我编译 blink 工程')},
               {'t': 'tool_end', 'id': 'f1', 'name': 'Bash', 'detail': B('xin task new --kind code 帮我编译 blink 工程'), 'ok': True, 'out': '任务 1 已派出'},
               {'t': 'task', 'sid': TASK, 'no': 1, 'title': '编译 blink', 'kind': 'code', 'model': 'glm-5.3', 'status': 'queued', 'after': [], 'at': now()}],
-             [{'t': 'done', 'ok': True, 'code': 0, 'ms': 2000}]]
+             [], [], [{'t': 'done', 'ok': True, 'code': 0, 'ms': 2000}]]
     st = await ui.xin_mock(pg, authed=True, live=front)
     st.update({'tasks': [], 'tp': {'rtask00b01': RUN1}, 'tp_rel': {}, 'tp_done': {}, 'tpolls': [], 'task_hist_calls': 0})
 
@@ -198,6 +198,12 @@ async def part2(browser):
             evs = pub[off:off + 400]
             data = {'events': evs, 'off': off + len(evs), 'done': bool(st['tp_done'].get(run)) and off + len(evs) >= len(pub)}
             return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': data}))
+        if op == 'send' and st.get('send2'):
+            st['send2'] = False
+            return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': {'sid': CONV, 'run': 'rlive00002', 'agent': 'codex'}}))
+        if op == 'poll' and args.get('run') == 'rlive00002':
+            evs = [{'t': 'text', 'text': '在的，你说。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 800}][int(args.get('off', 0)):]
+            return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': {'events': evs, 'off': 2, 'done': True}}))
         if op == 'history' and args.get('sid') == TASK and st.get('task_hist'):
             st['task_hist_calls'] += 1
             return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': {'session': {'sid': TASK, 'agent': 'codex'}, 'task': st['tasks'][0], 'runs': st['task_hist'], 'active': None}}))
@@ -229,14 +235,20 @@ async def part2(browser):
     await pg.fill('.xc-row textarea', '帮我编一下 blink')
     await pg.keyboard.press('Enter')
     BOX = '.xc-tb[data-tsid="%s"]' % TASK
+    # 站长 2026-11-17「图一的那个要跟着相应的最新对话下面，不然我还得翻上去找着看」：在做的框一直在最底下
+    await pg.wait_for_function("!!document.querySelector('%s') && !!document.querySelector('.xc-typing')" % BOX, timeout=10000)
+    mid = await pg.evaluate("""(() => { const w = document.querySelector('%s').closest('.xc-tbw'), t = document.querySelector('.xc-typing'), l = document.querySelector('.xc-msgs');
+      return [!!w && w.classList.contains('dock'), l.lastElementChild === w, !!w && !!(t.compareDocumentPosition(w) & 4), !!(t.compareDocumentPosition(document.querySelector('.xc-ai[data-run="rlive00001"] > .xc-bub')) & 2)]; })()""" % BOX)
+    ui.check('前台还在回话时派出了活：框在「思考中」那一行下面、在聊天最底下；回话的字在「思考中」上面', mid == [True, True, True, True], mid)
     await pg.wait_for_function("!!document.querySelector('%s') && !document.querySelector('.xc-typing')" % BOX, timeout=10000)
-    bx = await pg.evaluate("""(() => { const b = document.querySelector('%s'), host = b.closest('.xc-ai'), bub = host.querySelector(':scope > .xc-bub');
-      return [b.querySelector('.xc-tb-t').textContent, b.querySelector('.xc-tb-s').textContent, host.dataset.run, bub.textContent, !!(bub.compareDocumentPosition(b) & 4),
-        b.dataset.term, b.getAttribute('role'), !b.querySelector('.xc-av, .xc-face, svg.xin-portrait'), !document.querySelector('.xc-bgrow'), b.classList.contains('live'),
-        document.querySelectorAll('.xc-msgs .xc-who').length]; })()""" % BOX)
+    bx = await pg.evaluate("""(() => { const b = document.querySelector('%s'), w = b.closest('.xc-tbw'), prev = w && w.previousElementSibling, l = document.querySelector('.xc-msgs');
+      return [b.querySelector('.xc-tb-t').textContent, b.querySelector('.xc-tb-s').textContent, !!w && w.classList.contains('dock'), l.lastElementChild === w,
+        prev && prev.dataset.run, prev && (prev.querySelector(':scope > .xc-bub') || {}).textContent, !b.closest('.xc-ai:not(.xc-tbw)'), !!w && !w.querySelector('.xc-bub'),
+        b.dataset.term, b.getAttribute('role'), !!w && !w.querySelector('.xc-av, .xc-face, svg.xin-portrait, .xc-who'), !document.querySelector('.xc-bgrow'), b.classList.contains('live'),
+        document.querySelectorAll('.xc-msgs .xc-who').length, !!prev && getComputedStyle(prev.querySelector(':scope > .xc-acts')).display !== 'none']; })()""" % BOX)
     chat = await pg.evaluate("document.querySelector('.xc-msgs').textContent")
-    ui.check('派出去的活：那段话「好，我去编一下。」下面一个框（同一条回答里，不画头像），上面任务名「编译 blink」、下面此刻那一步「准备中」，是按钮、点开看那件活；最下面不再单独一行',
-             bx == ['编译 blink', '准备中', 'rlive00001', '好，我去编一下。', True, 'task:' + TASK, 'button', True, True, True, 1], bx)
+    ui.check('派出去的活：框不塞进那段话里，单独一条（不画头像）紧跟在「好，我去编一下。」下面、在聊天最底下；那段话下面的「复制」还在；上面任务名「编译 blink」、下面此刻那一步「准备中」，是按钮、点开看那件活',
+             bx == ['编译 blink', '准备中', True, True, 'rlive00001', '好，我去编一下。', True, True, 'task:' + TASK, 'button', True, True, True, 1, True], bx)
     ui.check('前台派活的内部命令不出现在聊天里', 'xin task' not in chat and '帮我编译 blink 工程' not in chat, chat[-160:])
     # 正式站联调（scripts/test-xin-live.py）取小芯的回答用「最后一个 .xc-ai:not(.xc-typing) .xc-bub」：.xc-bub 只能是回答的正文。
     # #159 的框里三个点用了 .xc-bub，联调取到空字、判成「不是第一人称」，正式部署被回滚（北京 2026-11-17 00:37）
@@ -283,6 +295,13 @@ async def part2(browser):
     n1 = len(st['tpolls'])
     await pg.wait_for_timeout(2500)
     ui.check('关上终端：不再去取', len(st['tpolls']) == n1, len(st['tpolls']) - n1)
+    st['send2'] = True
+    await pg.fill('.xc-row textarea', '在吗')
+    await pg.keyboard.press('Enter')
+    await pg.wait_for_function("[...document.querySelectorAll('.xc-ai .xc-bub')].some(e => e.textContent === '在的，你说。') && !document.querySelector('.xc-typing')", timeout=10000)
+    fol = await pg.evaluate("""(() => { const w = document.querySelector('%s').closest('.xc-tbw'), l = document.querySelector('.xc-msgs'), prev = w.previousElementSibling, me = [...l.querySelectorAll('.xc-me')].pop();
+      return [w.classList.contains('dock'), l.lastElementChild === w, (prev.querySelector(':scope > .xc-bub') || {}).textContent, me.textContent, !!(me.compareDocumentPosition(w) & 4)]; })()""" % BOX)
+    ui.check('接着聊了一句：新的一问一答在框上面，框还在聊天最底下（不用翻上去找）', fol == [True, True, '在的，你说。', '在吗', True], fol)
 
     # 再打开：接着上次取到的地方；做完了，那一页写「已完成 · 用时 2 分钟」
     st['tp_rel']['rtask00b01'] = 3
@@ -290,34 +309,29 @@ async def part2(browser):
     await pg.wait_for_function("[...document.querySelectorAll('.tm-win .tm-l')].some(r => r.textContent.includes('make -j4') && r.textContent.includes('ok'))", timeout=10000)
     again = [o for r, o, _ in st['tpolls'][n1:] if r == 'rtask00b01']
     ui.check('再打开：从上次取到的地方接着取，不重取', again and min(again) >= 3, again[:4])
-    # 这期间又聊了别的（下面垫一大段，滚到最下面）：结果照样接回上面那一轮，顶上冒一个小提示
-    await pg.evaluate("(() => { const s = document.createElement('div'); s.className = 'xc-m xc-spacer'; s.style.height = '2400px'; document.querySelector('.xc-msgs').appendChild(s); const b = document.querySelector('.xc-body'); b.scrollTop = b.scrollHeight; })()")
     st['tp_done']['rtask00b01'] = True
     st['tasks'] = [task(status='done', run='rtask00b01', startedAt=now() - 125000, endedAt=now(), result={'ok': True, 'text': '编好了：`/data/workspace/blink/build/app.hex`。', 'at': now()}, delivery={'state': 'delivered'})]
     await pg.evaluate('LimingXinChat.tasks()')
     await pg.wait_for_function("!!document.querySelector('.tm-win .tm-sum')", timeout=10000)
     await pg.wait_for_function("[...document.querySelectorAll('.xc-tres')].some(e => e.textContent.includes('编好了'))", timeout=10000)
     d = await pg.evaluate(WIN)
-    res = await pg.evaluate("""(() => { const r = [...document.querySelectorAll('.xc-tres')].pop(), b = document.querySelector('%s'), host = b.closest('.xc-ai');
-      return [r.classList.contains('cont'), r.dataset.run, host.nextElementSibling === r, !r.querySelector('.xc-who'), b.classList.contains('live'), b.querySelector('.xc-tb-t').textContent,
-        (b.querySelector('.xc-tb-m') || {}).textContent, b.dataset.term, document.querySelectorAll('.xc-msgs .xc-who').length, !document.querySelector('.xc-bgrow'), !!r.querySelector(':scope > .xc-acts .xc-mcopy')]; })()""" % BOX)
-    ui.check('做完：终端那一页写「已完成 · 用时 2 分钟 · 运行 2 条命令」、不再转圈；结果接在那段话和框下面（同一条回答，不画头像、不写「小芯」），框收成一行「编译 blink · 用时 2 分钟」，还能点开',
-             d['sum'] == '已完成 · 用时 2 分钟 · 运行 2 条命令' and d['st'] is None and res == [True, 'rlive00001', True, True, False, '编译 blink', '用时 2 分钟', 'task:' + TASK, 1, True, True], (d['sum'], d['st'], res))
+    res = await pg.evaluate("""(() => { const r = [...document.querySelectorAll('.xc-tres')].pop(), b = document.querySelector('%s'), w = b.closest('.xc-tbw'), l = document.querySelector('.xc-msgs');
+      return [r.classList.contains('cont'), w.nextElementSibling === r, l.lastElementChild === r, !w.classList.contains('dock'), (w.previousElementSibling.querySelector(':scope > .xc-bub') || {}).textContent,
+        !r.querySelector('.xc-who'), b.classList.contains('live'), b.querySelector('.xc-tb-t').textContent, (b.querySelector('.xc-tb-m') || {}).textContent, b.dataset.term,
+        document.querySelectorAll('.xc-msgs .xc-who').length, !document.querySelector('.xc-bgrow'), !!r.querySelector(':scope > .xc-acts .xc-mcopy')]; })()""" % BOX)
+    ui.check('做完：终端那一页写「已完成 · 用时 2 分钟 · 运行 2 条命令」、不再转圈；框收成一行「编译 blink · 用时 2 分钟」停在这时候的最后（「在的，你说。」下面），结果接在框下面（不画头像、不写「小芯」），还能点开',
+             d['sum'] == '已完成 · 用时 2 分钟 · 运行 2 条命令' and d['st'] is None and res == [True, True, True, True, '在的，你说。', True, False, '编译 blink', '用时 2 分钟', 'task:' + TASK, 2, True, True], (d['sum'], d['st'], res))
     await pg.keyboard.press('Escape')
     chip = await pg.evaluate("(() => { const c = document.querySelector('.xc-upchip'); return c && !c.hidden ? c.textContent : null; })()")
-    ui.check('结果接回了上面那一轮、眼下看不到：顶上冒「编译 blink 做好了」', chip == '编译 blink 做好了', chip)
-    await pg.click('.xc-upchip')
-    await pg.wait_for_function("(() => { const r = [...document.querySelectorAll('.xc-tres')].pop().getBoundingClientRect(), b = document.querySelector('.xc-body').getBoundingClientRect(); return r.top >= b.top && r.bottom <= b.bottom; })()", timeout=3000)
-    await pg.wait_for_timeout(200)
-    hid = await pg.evaluate("document.querySelector('.xc-upchip').hidden")
-    ui.check('点提示：平滑滚到结果，提示收起', hid, hid)
-    await pg.evaluate("document.querySelector('.xc-spacer').remove()")
+    ui.check('结果就在最下面：不用往上翻，顶上不冒提示', chip is None, chip)
 
     # 换对话：终端关上，不再取
     st['tasks'] = [task(status='running', run='rtask00b01', startedAt=now())]
     st['tp_done']['rtask00b01'] = False
     await pg.evaluate('LimingXinChat.tasks()')
     await pg.wait_for_function("document.querySelector('%s').classList.contains('live')" % BOX, timeout=5000)
+    redock = await pg.evaluate("(() => { const w = document.querySelector('%s').closest('.xc-tbw'), l = document.querySelector('.xc-msgs'); return [w.classList.contains('dock'), l.lastElementChild === w, w.previousElementSibling.classList.contains('xc-tres')]; })()" % BOX)
+    ui.check('做完以后又接着做（比如回复了确认）：框回到聊天最底下，结果留在原处', redock == [True, True, True], redock)
     await pg.click(BOX)
     await pg.wait_for_selector('.tm-win:not([hidden])')
     await pg.click('.xc-si:has-text("编译 main.c")')
@@ -336,15 +350,28 @@ async def part2(browser):
     await pg.evaluate("localStorage.setItem('lm.xin.sid', '%s')" % CONV)
     await pg.reload()
     await pg.wait_for_function("LimingXinChat.state.sid === '%s' && !!document.querySelector('.xc-tres') && !!document.querySelector('%s')" % (CONV, BOX), timeout=15000)
-    hm = await pg.evaluate("""(() => { const r = document.querySelector('.xc-tres'), b = document.querySelector('%s'), host = b.closest('.xc-ai');
-      return [host.nextElementSibling === r, r.classList.contains('cont'), r.dataset.run, document.querySelectorAll('.xc-msgs .xc-who').length, b.classList.contains('live'), (b.querySelector('.xc-tb-m') || {}).textContent]; })()""" % BOX)
-    ui.check('刷新以后：还是一条回答——那段话、框（收成一行「用时 2 分钟」）、结果，只有一个「小芯」', hm == [True, True, 'rlive00001', 1, False, '用时 2 分钟'], hm)
+    hm = await pg.evaluate("""(() => { const r = document.querySelector('.xc-tres'), b = document.querySelector('%s'), w = b.closest('.xc-tbw');
+      return [w.nextElementSibling === r, r.classList.contains('cont'), !w.classList.contains('dock'), !document.querySelector('.xc-ai[data-run="rlive00001"] .xc-tb'),
+        (w.previousElementSibling.querySelector(':scope > .xc-bub') || {}).textContent, document.querySelectorAll('.xc-msgs .xc-who').length, b.classList.contains('live'), (b.querySelector('.xc-tb-m') || {}).textContent,
+        document.querySelectorAll('.xc-tb[data-tsid]').length]; })()""" % BOX)
+    ui.check('刷新以后：派活那段话里没有框；框（收成一行「用时 2 分钟」）和结果按做完的时间排在它后面，只有一个「小芯」、一个框',
+             hm == [True, True, True, True, '好，我去编一下。', 1, False, '用时 2 分钟', 1], hm)
     c0 = st['task_hist_calls']
     await pg.click(BOX)
     await pg.wait_for_function("!!document.querySelector('.tm-win:not([hidden]) .tm-cur')", timeout=10000)
     r2 = await pg.evaluate(WIN)
     ui.check('刷新以后：点框才去取（一次），画出 ls、说的话、make，结尾「已完成 · 用时 2 分钟 · 运行 2 条命令」',
              c0 == 0 and st['task_hist_calls'] == 1 and len(r2['rows']) == 3 and r2['sum'] == '已完成 · 用时 2 分钟 · 运行 2 条命令', (c0, st['task_hist_calls'], r2['rows'], r2['sum']))
+    await pg.keyboard.press('Escape')
+    # 还在做的活：刷新以后照样在聊天最底下（派活那一轮在历史里，也只有一个框）
+    st['tasks'] = [task(status='running', run='rtask00b01', startedAt=now() - 5000)]
+    st['conv_hist'] = st['conv_hist'][:1] + [{'run': 'rlive00003', 'started': now() - 500, 'done': True, 'events': [{'t': 'user', 'text': '还要多久'}, {'t': 'text', 'text': '快了。'}, {'t': 'done', 'ok': True}]}]
+    await pg.reload()
+    await pg.wait_for_function("LimingXinChat.state.sid === '%s' && !!document.querySelector('%s') && [...document.querySelectorAll('.xc-ai .xc-bub')].some(e => e.textContent === '快了。')" % (CONV, BOX), timeout=15000)
+    rl = await pg.evaluate("""(() => { const w = document.querySelector('%s').closest('.xc-tbw'), l = document.querySelector('.xc-msgs');
+      return [w.classList.contains('dock'), l.lastElementChild === w, (w.previousElementSibling.querySelector(':scope > .xc-bub') || {}).textContent, document.querySelectorAll('.xc-tb[data-tsid]').length,
+        !document.querySelector('.xc-ai[data-run="rlive00001"] .xc-tb')]; })()""" % BOX)
+    ui.check('刷新以后还在做的活：框在聊天最底下（在最新的「快了。」下面），只有一个框，不在派活那段话里', rl == [True, True, '快了。', 1, True], rl)
     await pg.context.close()
 
 
@@ -510,7 +537,7 @@ async def part5(browser):
 
 
 async def part6(browser):
-    """先派活、后说话：话还是在框上面（填进框所在的那一条），不另起一条；手机上框占满正文那一栏。"""
+    """先派活、后说话：话还是在框上面（框单独一条、在最底下，2026-11-17 起），这一轮只有一条带「小芯」；手机上框占满正文那一栏、和正文左边对齐。"""
     pg = await ui.page(browser, 390, 844, mobile=True)
     live = [[{'t': 'tool', 'id': 'f1', 'name': 'Bash', 'detail': B('xin task new --kind code 帮我编译 blink 工程')},
              {'t': 'task', 'sid': TASK, 'no': 1, 'title': '编译 blink', 'kind': 'code', 'status': 'queued', 'after': [], 'at': now()}],
@@ -523,10 +550,10 @@ async def part6(browser):
     await pg.click('.xc-send')
     BOX = '.xc-tb[data-tsid="%s"]' % TASK
     await pg.wait_for_function("!!document.querySelector('%s') && !document.querySelector('.xc-typing')" % BOX, timeout=10000)
-    o = await pg.evaluate("""(() => { const b = document.querySelector('%s'), host = b.closest('.xc-ai'), bub = host.querySelector(':scope > .xc-bub'), r = b.getBoundingClientRect(), br = bub.getBoundingClientRect();
-      return [document.querySelectorAll('.xc-ai[data-run="rlive00001"]').length, bub.textContent, !!(bub.compareDocumentPosition(b) & 4), !!host.querySelector(':scope > .xc-who'),
-        Math.round(r.left) === Math.round(br.left), document.documentElement.scrollWidth <= innerWidth]; })()""" % BOX)
-    ui.check('先派活、后说话：话填进框所在的那一条、在框上面（这一轮只有一条，带「小芯」）；手机上框和正文左边对齐、不横向滚动', o == [1, '好，我去编一下，编好叫你。', True, True, True, True], o)
+    o = await pg.evaluate("""(() => { const b = document.querySelector('%s'), w = b.closest('.xc-tbw'), m = document.querySelector('.xc-ai[data-run="rlive00001"]'), bub = m.querySelector(':scope > .xc-bub'), r = b.getBoundingClientRect(), br = bub.getBoundingClientRect();
+      return [document.querySelectorAll('.xc-ai[data-run="rlive00001"]').length, bub.textContent, !!(m.compareDocumentPosition(w) & 4), !!m.querySelector(':scope > .xc-who'),
+        Math.round(r.left) === Math.round(br.left), document.documentElement.scrollWidth <= innerWidth, document.querySelector('.xc-msgs').lastElementChild === w]; })()""" % BOX)
+    ui.check('先派活、后说话：话在框上面（这一轮只有一条，带「小芯」），框单独一条在最底下；手机上框和正文左边对齐、不横向滚动', o == [1, '好，我去编一下，编好叫你。', True, True, True, True, True], o)
     await pg.context.close()
 
 
@@ -565,9 +592,9 @@ async def part7(browser):
     await pg.wait_for_function("!!document.querySelector('.xc-ai[data-run=\"rnote00001\"]')", timeout=8000)
     await pg.evaluate("LimingXinChat.tasks()")
     await pg.wait_for_timeout(600)
-    n = await pg.evaluate("""(() => { const a = [...document.querySelectorAll('.xc-ai[data-run="rnote00001"]')], all = [...document.querySelectorAll('.xc-msgs .xc-m')];
-      return [a.length, a[0] && a[0].querySelector(':scope > .xc-bub').textContent, all[all.length - 1] === a[0], !!a[0] && !a[0].querySelector('.xc-tb')]; })()""")
-    ui.check('后台主动回来说的一句：画在聊天最后、是小芯的一条消息（不带任务框）；再轮询也只画一次', n == [1, NOTE, True, True], n)
+    n = await pg.evaluate("""(() => { const a = [...document.querySelectorAll('.xc-ai[data-run="rnote00001"]')], all = [...document.querySelectorAll('.xc-msgs .xc-m:not(.dock)')];
+      return [a.length, a[0] && a[0].querySelector(':scope > .xc-bub').textContent, all[all.length - 1] === a[0], !!a[0] && !a[0].querySelector('.xc-tb'), !!a[0] && !!a[0].nextElementSibling && a[0].nextElementSibling.classList.contains('dock')]; })()""")
+    ui.check('后台主动回来说的一句：画在聊天最后、是小芯的一条消息（不带任务框）、还在做的那件活的框在它下面；再轮询也只画一次', n == [1, NOTE, True, True, True], n)
     await pg.click(BOX)
     await pg.wait_for_function("!!document.querySelector('.tm-win:not([hidden]) .tm-log .tm-ask')", timeout=8000)
     await pg.wait_for_timeout(300)

@@ -588,10 +588,11 @@
       (d.tasks || []).forEach(function (t) { S.tinfo[t.sid] = t; });
       var ended = (d.tasks || []).filter(function (t) { return !tLive(t); }).sort(function (a, b) { return (a.endedAt || 0) - (b.endedAt || 0); });
       d.runs.forEach(function (r) {
-        while (ended.length && r.started && (ended[0].endedAt || 0) < r.started) drawTaskResult(ended.shift());
+        while (ended.length && r.started && (ended[0].endedAt || 0) < r.started) placeEnded(ended.shift());
         r.events.forEach(function (ev) { draw(ev, true, r.run); });
       });
-      ended.forEach(drawTaskResult);
+      ended.forEach(placeEnded);
+      (d.tasks || []).filter(tLive).forEach(function (t) { taskBox(t.sid, false); });   // 在做的：聊天最底下
       termSync();
       if ((d.tasks || []).some(function(t){return tLive(t)||t.delivery?.state==='pending';})) pollTasksSoon(1500);
       setUsage(d.usage);
@@ -1687,14 +1688,25 @@
   var TB_LEAD = { done: '已完成', failed: '失败', stopped: '已停止', waiting: '等待确认' };
   function tbIcon(k) { return '<svg class="xc-tb-i" viewBox="0 0 24 24" aria-hidden="true">' + TB_ICON[k] + '</svg>'; }
   function durText(ms) { return window.LimingXinTerm ? LimingXinTerm.dur(ms) : Math.round(ms / 1000) + ' 秒'; }
-  function taskBox(sid, run, fresh) {
-    if (list.querySelector('.xc-tb[data-tsid="' + String(sid).replace(/["\\]/g, '') + '"]')) return;
-    var b = h('div', 'xc-tb'); b.dataset.tsid = sid;
-    inHost(boxHost(run), b); paintBox(b);
+  /* 站长 2026-11-17：「图一的那个要跟着相应的最新对话下面，不然我还得翻上去找着看」——框不再塞进派活那条回答里，
+     单独一条（.xc-tbw，不画头像，和结果那条同一种排法）：在做的（带 dock）一直在聊天最底下，新消息和「思考中」插在它上面；
+     做完、没做成、停了、等你确认：落到这时候聊天的最后，结果接在它下面；又接着做就回到最底下。刷新以后在做的照样在最底下，
+     做完的按结束时间排在各轮之间（openSession）。设计 docs/superpowers/specs/2026-11-17-xin-term-follow-design.md */
+  function boxWrap(sid) { return list.querySelector('.xc-tbw[data-tsid="' + String(sid).replace(/["\\]/g, '') + '"]'); }
+  function dockBox(w) { w.classList.add('dock'); list.appendChild(w); }
+  function settleBox(w) { w.classList.remove('dock'); w.remove(); put(w); }
+  function taskBox(sid, fresh) {
+    if (boxWrap(sid)) return null;
+    var w = h('div', 'xc-m xc-ai cont xc-tbw'), b = h('div', 'xc-tb'), t = S.tinfo[sid];
+    w.dataset.tsid = sid; w.dataset.run = 'tb-' + sid; b.dataset.tsid = sid; w.appendChild(b);
+    if (!t || tLive(t)) dockBox(w); else put(w);
+    paintBox(b);
     if (fresh) b.classList.add('enter');
+    return w;
   }
   function paintBox(b) {
-    var sid = b.dataset.tsid, t = S.tinfo[sid] || { status: 'queued' }, title = t.title || '后台的活';
+    var sid = b.dataset.tsid, t = S.tinfo[sid] || { status: 'queued' }, title = t.title || '后台的活', w = b.parentNode;
+    if (w && w.classList && w.classList.contains('xc-tbw')) { if (tLive(t)) { if (!w.classList.contains('dock')) dockBox(w); } else if (w.classList.contains('dock')) settleBox(w); }
     if (tLive(t)) {
       if (!b.classList.contains('live')) {
         b.className = 'xc-tb live'; b.removeAttribute('data-st');
@@ -1737,14 +1749,16 @@
     termBtn(p, 'run:' + run, text + '，查看执行过程');
     inHost(host, p);
   }
-  // 后台做完的结果：接在派活那一轮的最后（框在上面），不另起一条、不画头像、不写「小芯」。
-  // 找不到框（派活那一轮还在「更早的消息」里没翻出来）就照旧单独一条
+  // 后台做完的结果：接在框（和它后面已经有的这件活的结果）后面，不另起一条、不画头像、不写「小芯」。
+  // 框还在最底下（结果比任务状态先到）就先把它落到这时候的最后；找不到框（太早的、别处派的）就照旧单独一条
   function resultAfter(sid) {
-    var b = list.querySelector('.xc-tb[data-tsid="' + String(sid).replace(/["\\]/g, '') + '"]'), host = b && b.closest('.xc-ai');
-    if (!host) return null;
-    var all = list.querySelectorAll(runSel(host.dataset.run) + ':not(.xc-typing)');
-    return all[all.length - 1];
+    var w = boxWrap(sid); if (!w) return null;
+    if (w.classList.contains('dock')) settleBox(w);
+    var e = w; while (e.nextElementSibling && e.nextElementSibling.classList.contains('xc-tres') && e.nextElementSibling.dataset.tsid === String(sid)) e = e.nextElementSibling;
+    return e;
   }
+  // 历史里做完的活：结束的时候框落在那里，结果接在下面
+  function placeEnded(t) { if (!boxWrap(t.sid)) taskBox(t.sid, false); return drawTaskResult(t); }
   function contMsg(run, cls) {
     var e = h('div', 'xc-m xc-ai cont' + (cls ? ' ' + cls : '')), b = h('div', 'xc-bub');
     e.dataset.run = run || ''; e.appendChild(avatar()); e.appendChild(b);
@@ -1753,7 +1767,7 @@
   function putAfter(e, ref) { ref.parentNode.insertBefore(e, ref.nextSibling); }
   // 结果接回来以后让人看到：就在最下面——照旧跟到底；在眼前——轻轻闪一下；接回了上面那一轮、眼下看不到——聊天顶上冒一个小提示，点了滚过去
   var upEl = null;
-  function nextMsg(e) { for (var n = e.nextElementSibling; n; n = n.nextElementSibling) if (n !== typingEl && n.classList.contains('xc-m')) return n; return null; }
+  function nextMsg(e) { for (var n = e.nextElementSibling; n; n = n.nextElementSibling) if (n !== typingEl && n.classList.contains('xc-m') && !n.classList.contains('dock')) return n; return null; }
   function inView(e) { var b = root.querySelector('.xc-body').getBoundingClientRect(), r = e.getBoundingClientRect(); return r.bottom > b.top + 24 && r.top < b.bottom - 24; }
   function seeResult(e, t) {
     if (!nextMsg(e)) { toBottom(); return; }
@@ -3521,9 +3535,8 @@
     if (b.scrollHeight - b.scrollTop - b.clientHeight > Math.max(240, b.clientHeight * .6)) { jumpEl.classList.add('new'); jumpEl.lastChild.textContent = '新消息'; jumpEl.hidden = false; }
     else jumpEl.lastChild.textContent = '回到底部';
   }
-  // 新的一条加在「正在输入」前面（它永远在最后）
-  // 最下面那一行：「正在输入」，或者后台有活在做时的那一行。新画的东西插在它上面
-  function liveAnchor() { return typingEl && typingEl.parentNode === list ? typingEl : null; }
+  // 最下面：「思考中」那一行，再下面是在做的活的框（dock）。新画的东西插在它们上面
+  function liveAnchor() { return typingEl && typingEl.parentNode === list ? typingEl : list.querySelector(':scope > .xc-tbw.dock'); }
   function put(e) { var a = liveAnchor(); if (a) list.insertBefore(e, a); else list.appendChild(e); return e; }
   // 上一条（不算「正在输入」）是不是同一轮里小芯说的：是的话这条不再画头像，和上一条挨着
   function lastAi(run) {
@@ -3607,8 +3620,7 @@
       // 前台派出去的后台任务：那段话下面一个框（站长 2026-11-16）。不是卡片（2026-11-11 定的「聊天里不放卡片」还算数：没有按钮，点开是终端，操作在工作台和「详情」）。
       // 刚派出去的记下来，好知道它什么时候做完
       if (!S.tinfo[ev.sid]) S.tinfo[ev.sid] = { sid: ev.sid, no: ev.no, parent: S.sid || '', title: ev.title, kind: ev.kind, model: ev.model, status: ev.status || 'queued', after: ev.after || [], created: ev.at || Date.now() };
-      taskBox(ev.sid, run, !old);
-      if (!old) { pollTasksSoon(1500); paintBoxes(); }
+      if (!old) { taskBox(ev.sid, true); pollTasksSoon(1500); paintBoxes(); }
     } else if (ev.t === 'move') e = sysChip('学会了新动作：' + ev.name, 'move');   // 记忆、好感度是小芯自己的事，不在聊天里报
     if (e) {
       var bd = root.querySelector('.xc-body'), near = !old && bd.scrollHeight - bd.scrollTop - bd.clientHeight < 160;
@@ -3640,7 +3652,7 @@
       var b = h('div', 'xc-bub'); b.innerHTML = '<i></i><i></i><i></i>';
       var lw = h('span', 'xc-sw-w xc-typing-w'); lw.appendChild(h('span', 'xc-typing-l', '思考中')); typingEl.appendChild(lw); typingEl.appendChild(b);
     }
-    list.appendChild(typingEl);
+    list.insertBefore(typingEl, list.querySelector(':scope > .xc-tbw.dock'));   // 在做的活的框还在它下面
     var prev = typingEl.previousElementSibling;
     typingEl.classList.toggle('cont', !!prev && prev.classList.contains('xc-ai'));
     paintFaces(); progress();
