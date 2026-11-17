@@ -18,7 +18,7 @@ function fixture(t, mode) {
   fs.writeFileSync(home + '/runs/' + RUN + '.json', JSON.stringify(meta));
   fs.writeFileSync(home + '/runs/' + RUN + '.jsonl', JSON.stringify({ t: 'user', text: '先看波形，再看寄存器' }) + '\n');
   fs.writeFileSync(home + '/sessions/' + SID + '.json', JSON.stringify({ sid: SID, agent: 'codex', runs: [RUN], title: '尝试隔离', created: Date.now() }));
-  const owner = mode === 'kernel' ? stateMode(t, env, { force: true }) : null;
+  const owner = mode === 'kernel' ? stateMode(t, env) : null;
   t.after(() => stopOwned(home, dir));
   const cli = (op, args = {}, extra = {}) => {
     const r = spawnSync(process.execPath, [AGENT, ...op], { env: { ...env, ...extra }, input: JSON.stringify(args), encoding: 'utf8', timeout: 15000 });

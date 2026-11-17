@@ -11,7 +11,7 @@ function fixture(t,mode='kernel'){
   for(const name of ['codex','claude','agy','dsh'])fs.writeFileSync(path.join(bin,name),'#!/bin/sh\nexit 0\n',{mode:0o755});
   const env={...process.env,XIN_HOME:home,XIN_WORK:path.join(dir,'work'),XIN_DSH:path.join(bin,'dsh'),XIN_AGY_HOME:dir,
     XIN_ANTIGRAVITY_BIN:'',XIN_FRONT_PROVIDER:'deepseek',CODEX_HOME:path.join(dir,'codex'),CLAUDE_CONFIG_DIR:path.join(dir,'claude'),PATH:bin+':'+process.env.PATH};
-  const start=()=>stateMode(t,env,{force:true});
+  const start=()=>stateMode(t,env);
   const owner=mode==='kernel'?start():null;
   t.after(()=>stopOwned(home,dir));
   const cli=(op,args={})=>{const r=spawnSync(process.execPath,[AGENT,op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};

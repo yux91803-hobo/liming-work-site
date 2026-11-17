@@ -35,7 +35,7 @@ function fixture(t, reportOp) {
     XIN_SYSTEMD_BUS: path.join(root, 'no-systemd-bus'), XIN_AGY_IDLE_MS: '60000',
     XIN_NOTE_WAIT_MS: '600000', XIN_STATE_TEST_FAULT: 'after:' + reportOp };
   t.after(() => stopOwned(home, root));
-  const startOwner = () => stateMode(t, env, { force: true, agent });
+  const startOwner = () => stateMode(t, env, { agent });
   const owner = startOwner();
   const call = (name, args = {}) => {
     const r = lockedSpawn(agent, name, args, { env, encoding: 'utf8', timeout: platformTimeout(20000) });

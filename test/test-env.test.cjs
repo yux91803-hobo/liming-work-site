@@ -35,8 +35,8 @@ test('测试环境：机器上有用户总线，测试里的运行也不进 syst
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('测试环境：npm run check 和 npm run test:kernel 都用它起测试', () => {
-  for (const f of ['scripts/check.mjs', 'scripts/test-xin-state-mode.mjs']) {
+test('测试环境：npm run check 用它起测试（常驻状态进程那一遍已经并进 check）', () => {
+  for (const f of ['scripts/check.mjs']) {
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     assert.match(src, /import \{ hermeticTestEnv \} from '\.\/test-env\.mjs';/, f);
     assert.match(src, /spawnSync\(process\.execPath, ?\['--test',[^\n]*\n?[^\n]*env: ?hermeticTestEnv\(/, f);

@@ -1,7 +1,7 @@
-// Reuse controller behavior tests against an actual resident owner, using only temporary state.
+// 测试里起一个真的常驻状态进程（只用临时目录）。旧模式要删（docs/superpowers/plans/2026-11-18-xin-remove-legacy.md），
+// 不再有「不起状态进程」的那一遍：调了就起，不看 XIN_TEST_STATE_MODE。
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),{spawn}=require('node:child_process');
-function stateMode(t,env,{force=false,agent=path.join(__dirname,'../../site/xin/vm-agent.mjs')}={}){
-  if(!force&&process.env.XIN_TEST_STATE_MODE!=='kernel')return null;
+function stateMode(t,env,{agent=path.join(__dirname,'../../site/xin/vm-agent.mjs')}={}){
   const home=path.resolve(env.XIN_HOME);
   if(!home.startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('state-mode tests require temporary state');
   fs.mkdirSync(home,{recursive:true});
