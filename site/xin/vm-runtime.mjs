@@ -8,6 +8,7 @@ import net from 'node:net';
 import dns from 'node:dns';
 import { spawn, spawnSync } from 'node:child_process';
 import { browserBroker } from './vm-browser.mjs';
+import { steerBlock, LATE_STEER, LATE_STEER_MAX, DELIVERY } from './vm-steer.mjs';
 
 const mkdir = p => fs.mkdirSync(p, { recursive: true });
 const hash = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
@@ -648,6 +649,14 @@ export function frontCommand(argv, acts = []) {
   if (argv[1] === 'task') return ['new','list','show','tell','stop'].includes(argv[2]);
   return acts.includes(argv[1]);
 }
+// 补充转过去以后那一句怎么说：照实际接法，只说一次（站长 2026-11-17：不先说「已记下」再说「已送进当前轮」）
+const TELL_HINT = {
+  now: '补充已经接进它正在做的这一轮，下一步就按新要求来：顺着他的话应一声，说清最后会按新要求给（像「行，最后只给你列正在用的」）。',
+  next: '这一轮中途接不了，这一轮跑完才会按补充接着做：顺口告诉他这轮跑完会按他补的再来一遍（像「这轮跑完我就按你补的范围再核一遍」）。',
+  start: '它还没开始，补充会在开始时一起带上：顺口应一声。',
+  reply: '他这句当回复交过去了，接着做了。',
+  resumed: '按他说的接着做了，之前的补充也带上了。'
+};
 export const frontLookupRequired=text=>/签到|每日任务|签到了|签过到/.test(String(text||''));
 const claimsLookup=text=>/我(?:(?!没|未|不|想|要|会|打算|可以|需要)[^。！？!?，,\n]){0,12}(?:查了|查过|查到|翻了|翻过|翻到)/u.test(text)||/\bI(?:'ve| have| just| already| also)* (?:checked|looked up|searched)\b/i.test(text);
 export async function frontTurn(o) {
@@ -677,9 +686,9 @@ export async function frontTurn(o) {
   // 工作已经交出去以后要一句回兄弟的话：带上回执，tool_choice none；失败、超时、又想调工具都只是要不到这句话
   const ownWords = async (payload, calls, i, call, result) => {
     try {
-      input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify({ok:true,title:result.task.title,status:result.task.status})});
+      input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify({ok:true,title:result.task.title,status:result.task.status,...(result.delivery?{delivery:result.delivery,how:DELIVERY[result.delivery]||''}:{})})});
       for (const c of calls.slice(i + 1)) input.push({type:'function_call_output',call_id:c.call_id,output:JSON.stringify({skipped:true})});
-      input.push({role:'user',content:'已经交出去了。用你自己的话简短回兄弟一句，像朋友顺口应一声那样接住他这句话里的具体内容；别套固定说法，别预告结果和要多久，别提编号、模型和分身；不要再调用工具。'});
+      input.push({role:'user',content:'已经交出去了。'+(TELL_HINT[result.delivery]||'')+'用你自己的话简短回兄弟一句，像朋友顺口应一声那样接住他这句话里的具体内容；别套固定说法，别预告结果和要多久，别提编号、模型和分身；不要再调用工具。'});
       const req = {...payload, input, tool_choice:'none'};
       let data;
       if (o.request) data = await o.request(req, abort.signal);
@@ -749,7 +758,8 @@ export async function frontTurn(o) {
           // 派活、转达、停下之后用它自己的话回兄弟，不套「好，我这就去弄」（站长 2026-11-11）：
           // 同一条回复里写了话就用；没写就再要一句，不许再调工具；要不到才用控制器的那句。
           if (o.handoff || !result.task || !result.text) return result.text;
-          if (said && !claimsLookup(said)) return said.trim().slice(0, 2000);
+          // 补充：预先写好的话是照快照里的接法写的，实际接法不一样（reword）时不用它，带着回执再要一句（docs/superpowers/specs/2026-11-17-xin-steer-design.md §3）
+          if (said && !claimsLookup(said) && !result.reword) return said.trim().slice(0, 2000);
           const own = await ownWords(payload, calls, i, call, result);
           return own || result.text;
         }
@@ -1034,8 +1044,11 @@ export async function antigravityWork(t,options) {
   // Requested shell commands run in the task container; they reach the public web only through egress.
   const network=await taskNetwork(t.workspace,null,options.browser||{});
   try{
+  let late=0;
   for(let turn=0;turn<48;turn++){
     if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
+    // 兄弟刚补充的要求：放在这次请求最前面。正在跑的命令已经做完了，下一步起按新要求（Muse Code「applies it on its next step」）
+    const fresh=options.steers?.()||[];if(fresh.length)prompt=steerBlock(fresh)+'\n\n'+prompt;
     const args=['-p',prompt,'--agent','xin-confined-worker','--model',provider,'--effort',effort,'--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
     const started=new Set(),r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(!s||!['search_web','read_url_content'].includes(name))return;const p=s.tool_info?.parameters||{},id='web-'+turn+'-'+s.step_index,open=name==='read_url_content',item={id,type:'web_search',query:(open?p.url:p.query)||p.query||p.url||'',...(open?{action:{type:'open_page',url:p.url||''}}:{})};if(s.state==='DONE')report({type:'item.completed',item:{...item,query:item.query||name}});else if(item.query&&!started.has(id)){started.add(id);report({type:'item.started',item});}},AGY_IDLE_MS());
     // 卡住：退出码 76，控制器换候选里的下一个模型，让它先读副本里的现有文件再接着做（和额度用尽 75 一样）；15 分钟内新任务先不派给 Gemini
@@ -1057,6 +1070,9 @@ export async function antigravityWork(t,options) {
     let a=result.structured_output;try{a=a||JSON.parse(result.response);}catch{throw Error('Antigravity 未返回可执行的结构化动作');}
     if(!a||!AGY_SCHEMA.properties.action.enum.includes(a.action)||typeof a.command!=='string'||typeof a.text!=='string')throw Error('Antigravity 动作字段无效');
     if(a.action==='final'||a.action==='ask'){
+      // 交结果（或问问题）前再看一眼：这时又来了补充就不结束，带着补充再走一步（Codex：这一轮还有待处理的输入就接着处理）
+      const more=late<LATE_STEER_MAX?options.steers?.()||[]:[];
+      if(more.length){late++;prompt=steerBlock(more)+'\n\n'+(a.action==='ask'?'你刚才想问兄弟：'+a.text+'\n先按补充判断还要不要问；能做就接着做。\n':'')+LATE_STEER;continue;}
       if(a.action==='ask')options.ask(a.text);
       report({type:'item.completed',item:{type:'agent_message',text:a.text}});
       try{options.quota(await readAntigravityQuota(binary,clientDir));}catch{}return 0;
