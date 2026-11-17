@@ -1,3 +1,16 @@
+## 2026-11-17 · #166 失败取证进度（Codex 接续 Claude，合并暂停）
+
+- **当前代码**：main 仍为 #164 / `21d7bdf`；[#166](https://github.com/yux91803-hobo/liming-work-site/pull/166) 运行代码提交 `bc1d208`，未合并、未部署。分支 `codex/xin-note-kernel-recovery-20261117`、工作树 `/workspace/liming-kernel-note-recovery`。本次后续提交只增强测试失败现场和记录，不改运行代码、原断言、等待预算或模型脚本。
+- **真实失败**：CI [44072501817](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44072501817) 完整单元 **1028/1028**、E2E 成功；kernel **187/188**，原 `xin-steer.test.cjs` 主动 note 用例在约 16.5 秒后 `c[1].prompt === 'acp'`。deploy skipped。本地原完整矩阵全绿不解释这条历史偶发失败；不能靠过滤 acp、放宽时限或反复重跑声称修好了。
+- **Claude 的新记录**：[评论 6947692016](https://github.com/yux91803-hobo/liming-work-site/pull/166#issuecomment-6947692016)。他在 `bc1d208` 排查，没有提交代码、没有找到根因；单项无负载/4与8空转负载合计 33 遍、整组内核 7 遍均通过。`acp` 来自前台 `openFrontProvider` 的 help/启动；第 3 次 fake 调用写 `at-3` 会使测试继续，但不是预期第 3 个后台动作。证据指向后台提前结束、普通完成交接被启动，仍缺真正提前结束的错误。
+- **保留的判断**：note 分支 `noteStart` 不调用模型；临时失败和首次 died 会回队列。`requestBudget` 写本地文件，不经过 owner RPC，这不等于已证明预算内容永不出错。AGY idle 在该用例为 60 秒，16.5 秒不能归为 1.5 秒 idle；SQLite busy_timeout 和死亡判断都是 15 秒，只能作为待证假设。GitHub 托管机默认无用户 bus，systemd 清理跨测试误杀缺少可达条件；真实有 bus 时的 scope 归属隐患单独留待验证。
+- **新增第二症状**：Claude [评论 6947791681](https://github.com/yux91803-hobo/liming-work-site/pull/166#issuecomment-6947791681)：#165 第二次 CI 44048354885 单元 1010/1010、kernel 187/188，同一用例前两条 note 回执都过，却在 32.3 秒后等不到原聊天 note。先按独立症状取证，不假定与 acp 同因。
+- **新线索实测纠正**：Codex 私有真实 owner trace 显示 13 次 kernel `tasks` 调用全部 `journal.active=false`，紧跟 `pumpHandoffs`，启动 flush 仅 1ms；该 fixture 无 callback/推送订阅。普通 op 没有 RPC 外层事务，因此“内核 tasks 都跳交接、只能等 cycle”这个前提不成立。另用受控 deferred tick 确认长挂 tick 会阻滞定期 reconcile，但尚不能连到这条自然 CI 失败；不据此直接改 tasks 或断言两症状同源。
+- **本次诊断**：失败时、清理前只读本合成 fixture 的 calls（保留 acp）、sessions、run 元数据/事件、SQLite documents/launches/handoffs/commands 计数、最后一次原有 tasks 轮询返回值及双时钟、model-stats 的完整 `fromErr`、quota/issue/budgets、owner stderr 和假 Codex 参数；不发额外控制器请求推动调度，不读环境或真实凭据，只另外记录固定用户 bus 路径是否存在的布尔值。输出按 section/数组项分行；诊断自身失败仍抛原测试错误。实现 Codex，根代理自查，独立只读复核 Codex 子代理；Claude 对问题独立排查，不列为本补丁代码作者或已完成的独立代码审核。
+- **验证**：增加诊断后的本地完整 kernel **188/188**（`note-diag-full-kernel-runner.log`）；私有强制错误模型副本证明原 acp 断言仍失败、真正 `model-stats.fromErr` 能保留。最终诊断在 legacy/kernel 的原单项各 1/1 通过；私有诊断自身故障也保持原 AssertionError。这是验证诊断，不是自然复现。Codex 私有原用例多次仍绿，不能据此排除 CI 缺陷；原 `bc1d208` 的完整 1028/188/13 组/关闭分配 188+14 证据保留。
+- **下一步**：以新提交 CI 的失败快照分流：确认第一调用是否后台、task/run 是否已失败或换 Codex、`modelStats.fromErr` 是模型身份/预算/传输/其他错误；若只有通用 StateUnavailable，再在隔离 owner 副本捕获原始错误 code/errcode，不记录请求正文。若父 runner 先退出，核对 launch、PID/进程组和 15 秒后判死路径。拿到具体路径后做稳定红→绿回归，再改运行代码和完整验证。#165 原分支/head `6c4025c` 保留，Claude 对其失败重跑的说明见该 PR，不能把 #166 当成已经上线。
+- **未完成项**：整个 3B 的持久终态包、输入未知交付、原生 note ACK、前台 quota 报告持久恢复、宿主授权 C、凭据代理及正式暂停恢复仍未完成。旧工作树与未提交工作保留；临时排查在 `/workspace/xin-review`，没有在正式电脑注入故障。
+
 <a id="report-recovery-20261117"></a>
 ## Codex · 2026-11-17 接手 #164 / #165（当前工作）
 
