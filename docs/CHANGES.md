@@ -1,3 +1,18 @@
+# 修改清单 · 2026-11-17（测试默认不碰执行机器上的 systemd）
+
+实现和自查：Claude Code（同一会话，没有另一位审核）。
+
+- **为什么**：
+  - 「Gemini 后台主动说一句」那条测试，最近大约每 4 次检查挂 1 次。Codex 和 Claude 都没找到根因，站长决定不再追。
+  - Codex 在 #166 实测 GitHub 托管机器有用户总线（UID 1001，linger=yes），而自己设了 `XIN_SYSTEMD_BUS` 的测试只有少数几个。其余测试的模型运行会进机器上真的 `xin-run-*.scope`，清理定时器也会装进机器的真实用户目录。
+  - 清理器拿某个测试的目录去对别的测试的 scope，找不到记录就当「对话删了」停掉（`vm-reaper.mjs` 的 `decide`）。这能解释挂在 `acp` 的那种失败，但没在正常检查里直接抓到，所以不说修好了那条偶发失败。
+- **改了什么**（只改测试入口，线上代码不动）：
+  - 新 `scripts/test-env.mjs`：`hermeticTestEnv()` 把 `XIN_SYSTEMD_BUS` 指到一个不存在、以 `/bus` 结尾的路径。生产代码碰 systemd 的三处（`scoped`、`ensureReaperTimer`、内核常驻服务）都先看这个路径在不在。
+  - `npm run check`、`npm run test:kernel` 都用它起测试；要测 systemd 的测试照旧自己设（xin-kernel、xin-reaper、xin-agy-report-recovery）。README「本地运行」补了单独跑测试时怎么带这个变量。
+  - 参考 git/git `t/test-lib.sh` 第 2011–2017 行：整套测试默认 `GIT_TEST_MAINT_SCHEDULER="none:exit 1"`，注释说是不让测试意外碰真的定时任务、永久改动用户的系统；测调度的测试自己另设。
+- **测试**：新 `test/test-env.test.cjs` 先红后绿。假装机器有用户总线时，不隔开会进 scope，隔开后不进；两个入口都用它。
+- **以后再挂**：照规矩重跑一次，先看 #166 在这条测试里加的失败现场。
+
 # 修改清单 · 2026-11-17（修：发消息后先「接收中」再「唤醒中」，大部分要等好几秒）
 
 实现和自查：Claude Code（同一会话，没有另一位审核）。
