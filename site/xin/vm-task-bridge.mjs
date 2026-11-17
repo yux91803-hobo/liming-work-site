@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const BRIDGE_DEFAULT = false;
+export const BRIDGE_DEFAULT = true;
 export const bridgeEnabled = (env = process.env) => env.XIN_TASK_BRIDGE === '1' || env.XIN_TASK_BRIDGE !== '0' && BRIDGE_DEFAULT;
 const badScope = () => Object.assign(new Error('后台任务桥的执行身份或目录无效'), { code: 'bad_bridge_scope' });
 
