@@ -27,7 +27,7 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
     if(op==='send'||op==='continue_steers'){mk(path.join(BASE,'sessions'));mk(path.join(BASE,'runs'));listTasks();}
     let command=null;
     if(op==='task_bridge'){
-      if(!/^[a-f0-9]{24}$/.test(args.id||'')||!['remember','ask'].includes(args.op)||typeof args.text!=='string'||!args.text.trim()||args.text.length>1000)return {error:'bad_bridge_request',msg:'不认识的任务请求'};
+      if(!/^[a-f0-9]{24}$/.test(args.id||'')||!['remember','ask','note'].includes(args.op)||typeof args.text!=='string'||!args.text.trim()||args.text.length>1000)return {error:'bad_bridge_request',msg:'不认识的任务请求'};
       command={id:'task-bridge:'+args.run+':'+callContext().attempt+':'+args.id,digest:inputDigest(args)};
     }
     if(op==='send'&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){

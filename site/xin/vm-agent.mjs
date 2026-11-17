@@ -764,7 +764,7 @@ function runner(run) {
     }
     if (meta.kind === 'daily') dailyDone(run, meta, ok);
     // 做完提醒：你不在看（关了网页、切到别的应用）才发；你自己停的、每日任务不发
-    else if (!stopped&&meta.kind!=='handoff') {
+    else if (!stopped&&meta.kind!=='handoff'&&meta.kind!=='note') {
       const last = events(run).filter(e => e.t === 'text').pop();
       const text = plainText(last && last.text, 120);
       setTimeout(() => process.exit(0), 20000).unref();
@@ -906,7 +906,7 @@ function runner(run) {
   if (meta.deadline) deadTm = setTimeout(() => { state.timeout = true; restarting = false; emit(run, { t: 'status', text: '到时间了，先停下' }); killTree(child); }, Math.max(1000, meta.deadline - Date.now()));
   bridgeTm = setInterval(async () => {
     try {
-      drainTaskReports(sess.workspace, meta, {drain:runtime.drainBridge,submit:a=>lockedCall('tasks','task_bridge',a),remember:addMemory,ask:a=>lockedCall('tasks','task_ask',a)});
+      drainTaskReports(sess.workspace, meta, {drain:runtime.drainBridge,submit:a=>lockedCall('tasks','task_bridge',a),remember:addMemory,ask:a=>lockedCall('tasks','task_ask',a),note:a=>lockedCall('tasks','task_note',a)});
       if (!app || steering || finished) return;
       const m = readJ(metaF(run), meta), queue = (m.steers || []).filter(x => x.state === 'pending');
       if (!queue.length || !m.turnId) return;
@@ -2138,6 +2138,7 @@ function handoffStart(a){
   const h=journal.handoff(a.id);if(!h||!['pending','running'].includes(h.state))return {};
   const t=readJ(sessF(h.task)),s=readJ(sessF(h.parent));
   if(!s||s.agent!=='codex'){journal.settleHandoff(h.id,'cancelled');return {};}
+  if(h.payload?.kind==='note')return noteStart(h,t,s);
   if(!t||taskVersion(t)!==h.version){journal.settleHandoff(h.id,'superseded');return {};}
   if(h.state==='running'){
     if(h.run&&!runDone(h.run))return {};
@@ -2165,6 +2166,53 @@ function handoffFinish(a){
     enqueueNotice(t,taskPush(t,t.status==='done'?'我弄好了：'+t.title:'我这边有个进展：'+t.title,text));
   }
   saveTask(t);return {terminal:true,text:''};
+}
+/* ---------- 后台主动回原聊天说一句（docs/superpowers/specs/2026-11-17-xin-steer-design.md §4） ----------
+   Meta Muse：「comes back when something changes or when it needs approval」「notifies you only when something is meaningfully new or needs your input」。
+   后台 xin task note / action=note：记下来，NOTE_WAIT 之内同一件事后面的合成一条；每件事最多 NOTE_MAX 条，超了只进过程。
+   发之前看还有没有用：任务已经不在说这句的那一轮（做完、停了、没做成、接着做了下一轮）就不发，最终结果先到了就不再冒一句「我正在核对」。
+   原对话正在回话时等它说完。发法：在原对话里直接记一轮说完的话，不起模型、不推送（最终结果照旧推送）。 */
+const NOTE_WAIT_MS = () => Number(process.env.XIN_NOTE_WAIT_MS) || 20000;
+const NOTE_MAX = 3;
+function taskNote(a) {
+  const t = readJ(sessF(a.sid)), m = okId(a.run, 'r') && readJ(metaF(a.run));
+  if (!isTask(t) || !m || m.sid !== t.sid || lastRun(t) !== a.run || m.stopped || m.ended || t.status !== 'running') return { error: 'stale', msg: '这一轮已经结束，没有转告。' };
+  const text = String(a.text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (!text) return { error: 'empty', msg: '要说的话是空的' };
+  const id = /^[a-zA-Z0-9_-]{8,80}$/.test(a.id || '') ? a.id : rid('n');
+  if ((t.noteIds || []).includes(id)) return { ok: true, duplicate: true, msg: '已经转告了，接着做。' };
+  t.noteIds = (t.noteIds || []).concat(id).slice(-32);
+  emit(a.run, { t: 'note', text, at: Date.now() });   // 工作台的过程里看得到
+  let msg;
+  if (!t.parent) msg = '这件事不是从聊天里派的，记在过程里了；接着做。';
+  else if (t.noteRow && journal.appendNote(t.noteRow, text)) msg = '和刚才那条合成一条转告兄弟；接着做。';
+  else if ((t.notesSent || 0) >= NOTE_MAX) msg = '这件事已经主动说过 ' + NOTE_MAX + ' 次了，这条只记在过程里；后面的发现写进最后的结果。接着做。';
+  else {
+    const row = 'note-' + crypto.createHash('sha256').update(t.sid + ':' + id).digest('hex').slice(0, 26);
+    journal.enqueueHandoff({ id: row, parent: t.parent, task: t.sid, version: taskVersion(t), payload: { kind: 'note', no: t.no, texts: [text] }, nextAt: Date.now() + NOTE_WAIT_MS() });
+    t.noteRow = row; t.notesSent = (t.notesSent || 0) + 1;
+    msg = '记下了，过一会儿回原聊天告诉兄弟（这期间相关的发现会合成一条）；接着做。';
+  }
+  saveTask(t);
+  return { ok: true, msg };
+}
+// 交接队列到点（vm-agent.mjs 的 pumpHandoffs，在原对话的锁里）：还有用、对话空着就在原对话里记一轮说完的话
+function noteStart(h, t, s) {
+  if (!t || taskVersion(t) !== h.version || t.status !== 'running') { journal.settleHandoff(h.id, 'superseded'); return {}; }
+  const last = lastRun(s); if (last && !runDone(last)) return { waiting: true };
+  if (journal.pendingLaunches().some(j => j.sid === s.sid && j.lane === 0)) return { waiting: true };
+  const text = cut((h.payload.texts || []).join('\n'), 800), at = Date.now(), run = rid('r'), note = { sid: t.sid, no: t.no };
+  writeJ(metaF(run), { run, sid: s.sid, agent: s.agent, started: at, kind: 'note', note, reply: text, ended: at });
+  emit(run, { t: 'text', text, note }); emit(run, { t: 'done', ok: true, stopped: false, code: 0, ms: 0 });
+  s.runs.push(run); s.updated = at; writeJ(sessF(s.sid), s);
+  journal.settleHandoff(h.id, 'delivered');
+  return { run };
+}
+// 这个对话最近主动说的话：网页在看这个对话时按 run 画出来（刷新以后由历史画）
+function recentNotes(sid) {
+  const s = okId(sid, 's') && readJ(sessF(sid)); if (!s || isTask(s)) return [];
+  return (s.runs || []).slice(-8).map(r => readJ(metaF(r))).filter(m => m?.kind === 'note' && Date.now() - m.started < 6 * 3600e3)
+    .map(m => ({ run: m.run, text: m.reply, at: m.started, task: m.note }));
 }
 export function frontImmediate(a){
   const m=okId(a.run,'r')&&readJ(metaF(a.run));if(!m||m.stopped||m.ended||m.task||m.kind==='daily')return {};
@@ -2744,6 +2792,7 @@ const ops = {
     // 最近 10 分钟结束的（哪个对话的都算）：网页据此知道别的对话里的任务做完了，让小芯冒个气泡
     const recent = all.filter(t => isFinished(t) && (t.endedAt || 0) > Date.now() - 600e3 && !mine.includes(t));
     const out = Object.assign({ tasks: mine.map(t => taskSummary(t)), active: active.map(t => taskSummary(t)), recent: recent.map(t => taskSummary(t)) }, bgInfo(all));
+    if (okId(a.sid, 's')) { const notes = recentNotes(a.sid); if (notes.length) out.notes = notes; }
     if (a.all) {
       // 任务中心：各模型最近 14 天用得怎么样、每个任务是哪个对话派的、每日任务做得怎么样
       out.stats = modelStats();
@@ -2851,7 +2900,7 @@ const iops = {
     for (const q of pending) q.state = 'consumed'; writeJ(metaF(a.run), m);
     return ops.send({ sid: a.sid, text: pending.map(x => x.text).join('\n') });
   },
-  task_bridge:createTaskBridgeHandler({loadRun:r=>readJ(metaF(r)),loadTask:s=>readJ(sessF(s)),isTask,lastRun,remember:addMemory,ask:taskAsk}),front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick, task_expire: () => { expireWaits(); return { ok: true }; },
+  task_bridge:createTaskBridgeHandler({loadRun:r=>readJ(metaF(r)),loadTask:s=>readJ(sessF(s)),isTask,lastRun,remember:addMemory,ask:taskAsk,note:taskNote}),task_note:taskNote,front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick, task_expire: () => { expireWaits(); return { ok: true }; },
   // 浏览器代理请站长登录（vm-browser.mjs 的 loginStep）：照 xin task ask 记一个问题，这一轮结束后任务停成「等你登录」
   task_browser_step(a) {
     const t = findTask(a), st = a.step || {};
@@ -3023,6 +3072,12 @@ function taskCmd(argv,print=console.log) {
     }
     print(out + '它在后台做，做完结果会自动出现在聊天里；你不用等，回用户一句就结束这一轮。');
     return 0;
+  }
+  // 主动回原聊天说一句（docs/superpowers/specs/2026-11-17-xin-steer-design.md §4）：说完接着做，不等回复
+  if (sub === 'note') {
+    if (!meta || !meta.task) { print('xin task note 只在后台任务里用（前台直接在回答里说）'); return 1; }
+    const r = lockedCall('tasks', 'task_note', { sid: meta.sid, run, text: argv.slice(1).join(' ') });
+    print(r.msg || r.error); return r.error ? 1 : 0;
   }
   if (sub === 'ask') {
     if (!meta || !meta.task) { print('xin task ask 只在后台任务里用（要问用户就直接在回答里问）'); return 1; }
@@ -3242,7 +3297,9 @@ async function main() {
     const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
     runtime.antigravityWork(t,{effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,'antigravity-quota.json')),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why}),
       // 兄弟在它干活时的补充：每一步之前取走还没送的（docs/superpowers/specs/2026-11-17-xin-steer-design.md §1）；取不到就下一步再取，结束时照样带到下一轮
-      steers:()=>{try{const r=lockedCall('tasks','steer_take',{run});return Array.isArray(r?.steers)?r.steers:[];}catch{return [];}}})
+      steers:()=>{try{const r=lockedCall('tasks','steer_take',{run});return Array.isArray(r?.steers)?r.steers:[];}catch{return [];}},
+      // 主动回原聊天说一句（§4）：控制器记下、合并、到时候看还有没有用再发；回执交回给模型
+      note:text=>{try{const r=lockedCall('tasks','task_note',{sid:t.sid,run,text});return r?.msg||'';}catch{return '';}}})
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }

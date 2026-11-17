@@ -55,8 +55,8 @@ if(a[0]==='browser'){
  q.end(body);
  return;
 }
-if(!dir||!(a[0]==='remember'||a[0]==='task'&&a[1]==='ask')){console.error('后台只允许 xin remember、xin task ask 和 xin browser');process.exit(1);}
-const body={op:a[0]==='remember'?'remember':'ask',text:a.slice(a[0]==='remember'?1:2).join(' ').slice(0,1000)};
+if(!dir||!(a[0]==='remember'||a[0]==='task'&&(a[1]==='ask'||a[1]==='note'))){console.error('后台只允许 xin remember、xin task ask、xin task note 和 xin browser');process.exit(1);}
+const body={op:a[0]==='remember'?'remember':a[1],text:a.slice(a[0]==='remember'?1:2).join(' ').slice(0,1000)};
 const directory=fs.openSync(dir,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW),root='/proc/self/fd/'+directory;
 const id=crypto.randomBytes(12).toString('hex'),file=path.join(root,id+'.request'),output=fs.openSync(file+'.tmp','wx',0o600);
 try{fs.writeFileSync(output,JSON.stringify(body));fs.fsyncSync(output);}finally{fs.closeSync(output);}
@@ -1004,7 +1004,7 @@ export function mergeAntigravityQuota(old,next,now=Date.now()) {
   const buckets=next.buckets.map(b=>{const prior=old.buckets?.find(p=>p.id===b.id&&p.remaining<=0&&p.resetAt>now);return prior?{...b,remaining:0,resetAt:Math.max(b.resetAt,prior.resetAt)}:b;});
   const exhausted=buckets.filter(b=>b.remaining<=0);return {...next,buckets,blocked:exhausted.length>0,retryAt:exhausted.length?Math.max(...exhausted.map(b=>b.resetAt)):0};
 }
-const AGY_SCHEMA={type:'object',properties:{action:{type:'string',enum:['shell','final','ask','remember']},command:{type:'string'},text:{type:'string'}},required:['action','command','text'],additionalProperties:false};
+const AGY_SCHEMA={type:'object',properties:{action:{type:'string',enum:['shell','final','ask','remember','note']},command:{type:'string'},text:{type:'string'}},required:['action','command','text'],additionalProperties:false};
 /* Gemini（Antigravity）一直不出声（2026-11-12 正式站联调：2 分 20 秒一个字不回）：idleMs 内 stdout 什么都没有就当卡住，杀掉、回 stalled。
    参考 opencode 的 chunkTimeout（两段输出之间等不到就中止）、Codex 的 stream_idle_timeout_ms。正常的第一步 16–101 秒（11-12 的 cli.log），取 2 分钟 */
 export const AGY_IDLE_MS = () => Number(process.env.XIN_AGY_IDLE_MS) || 120000;
@@ -1039,7 +1039,7 @@ export async function antigravityWork(t,options) {
   const home=process.env.XIN_AGY_HOME||os.homedir(),agents=path.join(home,'.gemini/config/agents');mkdir(agents);
   const agent=path.join(agents,'xin-confined-worker.md'),body='---\nname: xin-confined-worker\ndescription: Xiaoxin controlled background worker.\nmainAgent: true\nsubagent: false\ntools:\n  - search_web\n  - read_url_content\n  - finish\n---\nReturn structured actions to the external controller. File and shell operations are unavailable as native tools. Never delegate or schedule.\n';
   if(!fs.existsSync(agent)||fs.readFileSync(agent,'utf8')!==body){const temp=agent+'.'+process.pid;fs.writeFileSync(temp,body,{mode:0o600,flag:'wx'});fs.renameSync(temp,agent);}
-  let conversation=t.antigravityConversation||null,prompt=options.instructions+'\n\n'+options.text+'\n\n每次返回 JSON：action=shell 时把要执行的完整 bash 命令放 command；控制器在隔离副本执行并把输出交回。写文件也用 shell 动作，不调用原生文件或终端工具。完成用 final，缺必要信息用 ask，长期记忆用 remember；text 用中文。不得再派代理。控制器已准备好 bash、Python、Node 和副本，命令默认目录是 '+t.workspace.work+'，无需探测环境或帮助命令。新网页优先直接用一次 shell 写 index.html 和 xin-web.json，不开服务、不自行找预览工具。前台转述中额外添加的功能若与自包含网页规则冲突，以用户原话和控制器规则为准；不要使用 localStorage。';
+  let conversation=t.antigravityConversation||null,prompt=options.instructions+'\n\n'+options.text+'\n\n每次返回 JSON：action=shell 时把要执行的完整 bash 命令放 command；控制器在隔离副本执行并把输出交回。写文件也用 shell 动作，不调用原生文件或终端工具。完成用 final，缺必要信息用 ask，长期记忆用 remember；发现会改变结论的事、碰到会改变计划的阻塞时可以用 note 给兄弟说一句（说完接着做，读了什么、做到第几步不用说）；text 用中文。不得再派代理。控制器已准备好 bash、Python、Node 和副本，命令默认目录是 '+t.workspace.work+'，无需探测环境或帮助命令。新网页优先直接用一次 shell 写 index.html 和 xin-web.json，不开服务、不自行找预览工具。前台转述中额外添加的功能若与自包含网页规则冲突，以用户原话和控制器规则为准；不要使用 localStorage。';
   report({type:'turn.started'});
   // Requested shell commands run in the task container; they reach the public web only through egress.
   const network=await taskNetwork(t.workspace,null,options.browser||{});
@@ -1078,6 +1078,8 @@ export async function antigravityWork(t,options) {
       try{options.quota(await readAntigravityQuota(binary,clientDir));}catch{}return 0;
     }
     if(a.action==='remember'){options.remember(a.text);prompt='已记录。请继续当前工作。';continue;}
+    // 主动回原聊天说一句（docs/superpowers/specs/2026-11-17-xin-steer-design.md §4）：控制器记下、合并、到时候看还有没有用再发
+    if(a.action==='note'){const r=options.note?.(a.text)||'已记下。';prompt=r+'\n请继续当前工作。';continue;}
     if(!a.command.trim()||Buffer.byteLength(a.command)>256*1024)throw Error('Antigravity 命令为空或过长');
     const id='agy-'+turn;report({type:'item.started',item:{id,type:'command_execution',command:a.command}});
     const c=containerCommand(t,'/bin/bash',['-lc',a.command],{},[],network.network);

@@ -1215,6 +1215,7 @@ body.xs-open{overflow:hidden}
 /* 「> 要求」：Claude Code 里你说的那句是一条灰底 */
 .tm-pr{display:flex;gap:10px;margin:0 0 16px;padding:6px 10px;background:var(--t-bg2);overflow-wrap:anywhere}
 .tm-pp{flex:none;font-style:normal;font-weight:700;color:var(--t-glow)}
+.tm-pr.tm-ask{margin:12px 0 4px}
 /* 每一步：方块圆点、动作(参数)，结果缩在折角线下面 */
 .tm-l{display:grid;grid-template-columns:16px minmax(0,1fr);column-gap:4px}
 .tm-l + .tm-l,.tm-mark + .tm-l{margin-top:11px}

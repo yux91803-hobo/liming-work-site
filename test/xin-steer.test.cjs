@@ -147,3 +147,65 @@ test('前台什么时候附 <手上的事>：只认补充、改主意、要停�
  for(const text of ['只回复 陀螺 茶壶 贝壳，不要执行命令，也不要等待后台。','在吗','今天天气怎么样','解释一下 GPIO 的推挽输出','嗯'])
   assert.equal(mentionsWork(text),false,text);
 });
+
+// 原对话：note 要回到这里（测试直接建一个对话记录）
+function conversation(f){const sid='sconvnote'+Math.random().toString(36).slice(2,8);fs.writeFileSync(f.control+'/sessions/'+sid+'.json',JSON.stringify({sid,agent:'codex',title:'查模型',runs:[],created:Date.now(),updated:Date.now()}));return sid;}
+test('Gemini 后台主动说一句：相关的两条合成一条，任务还在做时回原聊天（不起模型）；回执交回模型、它接着做',async t=>{
+ const f=fixture(t,[{action:'note',text:'两份配置写的默认模型不一样，我再核一下实际启动的是哪个'},{action:'note',text:'实际启动的是 config.toml 里的那个'},{action:'shell',command:'echo checked',gate:true},{action:'final',text:'实际启用的只有一个'}],{XIN_NOTE_WAIT_MS:'1200'});
+ const sid=conversation(f),task=f.call('task_new',{kind:'research',goal:'查电脑上有哪些 Agent 模型',parent:sid}).task;
+ await f.at(3);
+ const c=f.calls();
+ assert.match(c[1].prompt,/^记下了，过一会儿回原聊天告诉兄弟/);assert.match(c[2].prompt,/^和刚才那条合成一条转告兄弟/);
+ const notes=await f.until(()=>{const n=f.call('tasks',{sid}).notes;return n&&n.length&&n;},'原聊天里出现那一句',10000);
+ assert.equal(notes.length,1,'合成一条');
+ assert.equal(notes[0].text,'两份配置写的默认模型不一样，我再核一下实际启动的是哪个\n实际启动的是 config.toml 里的那个');
+ assert.deepEqual(notes[0].task,{sid:task.sid,no:task.no});
+ const h=f.call('history',{sid}),run=h.runs.at(-1);
+ assert.deepEqual(run.events.map(e=>e.t),['text','done']);assert.equal(run.events[0].text,notes[0].text);
+ assert.equal(f.meta(run.run).kind,'note');assert.ok(!f.meta(run.run).model,'没有调模型');
+ // 任务的过程里也看得到这两句
+ const th=f.call('history',{sid:task.sid});assert.equal(th.runs[0].events.filter(e=>e.t==='note').length,2);
+ f.go(3);
+ assert.equal((await f.status(task.sid,['done','failed'])).task.status,'done');
+});
+
+test('主动说的那句还没发出去任务就做完了：不再冒出来（最终结果先到了）',async t=>{
+ const f=fixture(t,[{action:'note',text:'我先核一下实际启动的是哪个'},{action:'final',text:'实际启用的是 A'}],{XIN_NOTE_WAIT_MS:'1500'});
+ const sid=conversation(f),task=f.call('task_new',{kind:'research',goal:'查模型',parent:sid}).task;
+ await f.status(task.sid,['done']);
+ await new Promise(r=>setTimeout(r,2500));
+ f.call('tasks',{sid});f.call('tasks',{sid});
+ assert.equal((f.call('tasks',{sid}).notes||[]).length,0,'最终结果先到了，那句「我先核一下」不发');
+ // 原对话里只有交付结果的那一轮（完成交接），没有主动说的那一轮
+ assert.equal(f.call('history',{sid}).runs.filter(r=>f.meta(r.run).kind==='note').length,0);
+});
+
+test('每件事最多主动说 3 次：之后的只进过程，回执让它把后面的发现写进最后的结果',async t=>{
+ const f=fixture(t,[{action:'shell',command:'echo working',gate:true},{action:'final',text:'好了'}],{XIN_NOTE_WAIT_MS:'200'});
+ const sid=conversation(f),task=f.call('task_new',{kind:'research',goal:'查模型',parent:sid}).task;
+ await f.at(1);
+ const run=f.call('history',{sid:task.sid}).runs[0].run;
+ for(let i=1;i<=3;i++){
+  assert.match(f.call('task_note',{sid:task.sid,run,text:'第 '+i+' 个发现'}).msg,/过一会儿回原聊天告诉兄弟/);
+  await f.until(()=>{f.call('tasks',{sid});return (f.call('tasks',{sid}).notes||[]).length===i;},'第 '+i+' 条回到原聊天',30000);
+ }
+ assert.match(f.call('task_note',{sid:task.sid,run,text:'第 4 个发现'}).msg,/已经主动说过 3 次了，这条只记在过程里；后面的发现写进最后的结果/);
+ await new Promise(r=>setTimeout(r,800));f.call('tasks',{sid});
+ assert.equal(f.call('tasks',{sid}).notes.length,3);
+ assert.equal(f.call('history',{sid:task.sid}).runs[0].events.filter(e=>e.t==='note').length,4,'4 条都在过程里');
+ // 同一编号再来一次（重送）：只算一次
+ assert.equal(f.call('task_note',{sid:task.sid,run,text:'重送',id:'note-dup-0001'}).ok,true);
+ assert.equal(f.call('task_note',{sid:task.sid,run,text:'重送',id:'note-dup-0001'}).duplicate,true);
+ f.go(1);
+ await f.status(task.sid,['done','failed']);
+});
+
+test('Codex 任务经任务桥主动说一句：请求编号去重，转给控制器记下',async()=>{
+ const {createTaskBridgeHandler}=await import('../site/xin/vm-task-reports.mjs');
+ const seen=[],run={task:true,bridgeProtocol:1,sid:'stask0001',run:'rtask0001'},task={kind:'task',status:'running',workspace:{}};
+ const h=createTaskBridgeHandler({loadRun:()=>run,loadTask:()=>task,isTask:t=>t.kind==='task',lastRun:()=>'rtask0001',remember:()=>({}),ask:()=>({}),note:a=>{seen.push(a);return {ok:true,msg:'记下了，过一会儿回原聊天告诉兄弟'};}});
+ const r=h({op:'note',sid:'stask0001',run:'rtask0001',id:'0123456789abcdef01234567',text:'两份配置写的默认模型不一样'});
+ assert.equal(r.text,'记下了，过一会儿回原聊天告诉兄弟');
+ assert.deepEqual(seen,[{sid:'stask0001',run:'rtask0001',id:'b0123456789abcdef01234567',text:'两份配置写的默认模型不一样'}]);
+ assert.equal(h({op:'unknown',sid:'stask0001',run:'rtask0001',text:'x'}).error,'bad_bridge_request');
+});

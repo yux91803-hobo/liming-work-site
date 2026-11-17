@@ -165,8 +165,16 @@ export class StateJournal {
   launchedRuns(){return this.db.prepare("SELECT * FROM launches WHERE state='dispatched' ORDER BY at LIMIT 128").all();}
   finishLaunch(run){this.writing(()=>this.db.prepare("UPDATE launches SET state='finished' WHERE run=?").run(run));}
   hasOpenLaunches(){return !!this.db.prepare("SELECT 1 FROM launches WHERE state IN ('pending','dispatched') LIMIT 1").get();}
-  enqueueHandoff({id,parent,task,version,payload}){
-    this.writing(()=>this.db.prepare('INSERT OR IGNORE INTO handoffs(id,parent,task,version,payload,nextAt) VALUES(?,?,?,?,?,?)').run(id,parent,task,version,JSON.stringify(payload),Date.now()));
+  enqueueHandoff({id,parent,task,version,payload,nextAt}){
+    this.writing(()=>this.db.prepare('INSERT OR IGNORE INTO handoffs(id,parent,task,version,payload,nextAt) VALUES(?,?,?,?,?,?)').run(id,parent,task,version,JSON.stringify(payload),nextAt||Date.now()));
+  }
+  // 后台主动说的一句还没发出去：后面相关的发现合进同一条（vm-agent.mjs 的 taskNote）；已经发了或作废了返回 false
+  appendNote(id,text){
+    return this.writing(()=>{
+      const r=this.db.prepare("SELECT payload FROM handoffs WHERE id=? AND state='pending'").get(id);if(!r)return false;
+      const p=JSON.parse(r.payload);if(p.kind!=='note')return false;
+      p.texts=(p.texts||[]).concat(String(text)).slice(-6);this.db.prepare('UPDATE handoffs SET payload=? WHERE id=?').run(JSON.stringify(p),id);return true;
+    });
   }
   handoff(id){const r=this.db.prepare('SELECT * FROM handoffs WHERE id=?').get(id);return r?{...r,payload:JSON.parse(r.payload)}:null;}
   dueHandoffs(){return this.db.prepare("SELECT id,parent,task,state,run FROM handoffs WHERE state IN ('pending','running') AND nextAt<=? ORDER BY nextAt LIMIT 16").all(Date.now());}
