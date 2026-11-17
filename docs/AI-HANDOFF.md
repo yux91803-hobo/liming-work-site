@@ -368,6 +368,8 @@
 - **怎么查的（以后同类问题照这个来，只读）**：
   - 会话里有 `INSTABOX_API_KEY` 时，先读 https://instabox.sh/llms.txt ，再用 `GET /v1/machines/{id}/files/content?path=/data/home/.xin/logs/kernel.jsonl` 下载常驻内核的请求记录。每条只有时间、路由、操作名、状态、耗时、走哪条路（`via: state` 就是套接字），没有消息内容；`id` 是消息编号，别打印。
   - `send` 那一条的 `at` 是电脑上处理完的时间。紧跟着的那条 `/xin/stream`，用 `at - ms` 算出网页开始拉回话的时间。两者之差就是回程耗时：正常在 1 秒内，6 秒以上网页就会显示「唤醒中」。
-- **原因**：`src/xin.js` 的 `call()` 同步 `await recordTasks()`。后台没任务时，监督实例 `/state` 还要同步调 InstaBox `DELETE …/activity-leases/xin-tasks`，`ib()` 没有超时。这次请求慢了好几秒，回复就跟着慢。联调期间后台有任务、不撤租约，所以联调不受影响。InstaBox 不能列租约，没法证实它为什么慢。
+- **原因**：`src/xin.js` 的 `call()` 同步 `await recordTasks()`。后台没任务时，监督实例 `/state` 还要同步调 InstaBox `DELETE …/activity-leases/xin-tasks`，`ib()` 没有超时。这次请求慢了好几秒，回复就跟着慢。联调期间后台大多有任务、不撤租约，发的句子都快；15:45 联调停掉后台任务（`task_stop`）以后，紧接着的两句回程就是 38 秒、4 秒。InstaBox 不能列租约，没法证实它为什么慢。
+- **用量页「叫醒电脑」不一定是真叫醒**：数字来自待送达的 `inbox:wakes`，送到用时超过 5 秒（`src/xin-inbox.js` 的 `WAKE_MS`）就记一次。上线后慢过 5 秒的正好 6 句（联调那句 38 秒，站长的 5.4、5.7、9.3、9.4、37 秒），和用量页的「最近 6 次，一般 9 秒，最长 38 秒」次数、中间值、最长都一致，电脑其实醒着。用量页一共就这 6 次，说明上线前那些回程超过 5 秒的句子不是待送达慢（多半是网页切到后台、晚了才拉流）。看到这个数突然变多，先按上面的办法查回程，别先怀疑电脑睡着了。
+- **算回程时要剔掉的**：网页走轮询（`poll`）拿回话的那几句，后面紧跟的流不是它自己的，算出来的间隔不准（联调 15:39 那句就是）。
 - **修法**：记账交给 `ctx.waitUntil`，失败只 `console.warn`。待送达的 `deliver` 传的 ctx 带 `waitUntil`（`this.state.waitUntil`），Worker 入口也带；没有 ctx 时照旧等。**别再把 InstaBox 调用放在回复路径上同步等**；需要的话放 `waitUntil`，或者加超时。
 - **还留着的**：每发一句都挂一个 30 分钟的「这一轮在干活」租约（`lease('PUT', run)`）。只有轮询 `poll` 读到 done 时才撤；走流（stream）拿回话时不撤，只能等它过期。电脑因此会多醒一会儿，联调后可能一下子堆很多租约。要改的话，在流结束（done）时也撤一次。
