@@ -150,13 +150,30 @@ test('前台什么时候附 <手上的事>：只认补充、改主意、要停�
 
 // 原对话：note 要回到这里（测试直接建一个对话记录）
 function conversation(f){const sid='sconvnote'+Math.random().toString(36).slice(2,8);fs.writeFileSync(f.control+'/sessions/'+sid+'.json',JSON.stringify({sid,agent:'codex',title:'查模型',runs:[],created:Date.now(),updated:Date.now()}));return sid;}
+// Read this synthetic fixture only, before teardown; extra controller calls could change the failed state.
+function noteDiagnostics(f){
+ const read=(name,format='json')=>{try{const body=fs.readFileSync(path.join(f.root,name),'utf8');return format==='text'?body.slice(-16000):format==='jsonl'?body.trim().split('\n').filter(Boolean).map(JSON.parse):JSON.parse(body);}catch(e){return {error:e.code||e.name};}};
+ const files=dir=>{try{return fs.readdirSync(path.join(f.control,dir)).filter(n=>/\.jsonl?$/.test(n)).map(name=>({name,value:read('control/'+dir+'/'+name,name.endsWith('.jsonl')?'jsonl':'json')}));}catch(e){return {error:e.code||e.name};}};
+ let journal,db;
+ try{
+  const {DatabaseSync}=require('node:sqlite');db=new DatabaseSync(path.join(f.control,'workflow.sqlite'),{readOnly:true});
+  journal={launches:db.prepare('SELECT * FROM launches ORDER BY at').all(),handoffs:db.prepare('SELECT * FROM handoffs ORDER BY nextAt,id').all(),commands:db.prepare('SELECT COUNT(*) AS count FROM commands').get(),
+   documents:db.prepare("SELECT name,body FROM documents WHERE name GLOB 'sessions/s*.json' OR name GLOB 'runs/r*.json' ORDER BY name").all().map(r=>({name:r.name,value:JSON.parse(r.body)}))};
+ }catch(e){journal={error:e.code||e.name};}finally{db?.close();}
+ const calls=read('calls.jsonl','jsonl');
+ return {root:f.root,snapshotAt:Date.now(),monotonicMs:performance.now(),defaultUserBusExists:fs.existsSync('/run/user/'+process.getuid()+'/bus'),calls:Array.isArray(calls)?calls.map(c=>({...c,promptLength:String(c?.prompt??'').length,prompt:String(c?.prompt??'').slice(0,2000)})):calls,sessions:files('sessions'),runs:files('runs'),journal,
+  modelStats:read('control/model-stats.jsonl','jsonl'),quota:read('control/antigravity-quota.json'),issue:read('control/antigravity-stall.json'),
+  budgets:files('budgets'),ownerError:read('control/test-state-error.log','text'),codexFallback:read('codex.args','jsonl')};
+}
 test('Gemini 后台主动说一句：相关的两条合成一条，任务还在做时回原聊天（不起模型）；回执交回模型、它接着做',async t=>{
  const f=fixture(t,[{action:'note',text:'两份配置写的默认模型不一样，我再核一下实际启动的是哪个'},{action:'note',text:'实际启动的是 config.toml 里的那个'},{action:'shell',command:'echo checked',gate:true},{action:'final',text:'实际启用的只有一个'}],{XIN_NOTE_WAIT_MS:'1200'});
+ let lastTasksReply;
+ try{
  const sid=conversation(f),task=f.call('task_new',{kind:'research',goal:'查电脑上有哪些 Agent 模型',parent:sid}).task;
  await f.at(3);
  const c=f.calls();
  assert.match(c[1].prompt,/^记下了，过一会儿回原聊天告诉兄弟/);assert.match(c[2].prompt,/^和刚才那条合成一条转告兄弟/);
- const notes=await f.until(()=>{const n=f.call('tasks',{sid}).notes;return n&&n.length&&n;},'原聊天里出现那一句',10000);
+ const notes=await f.until(()=>{lastTasksReply=f.call('tasks',{sid});const n=lastTasksReply.notes;return n&&n.length&&n;},'原聊天里出现那一句',10000);
  assert.equal(notes.length,1,'合成一条');
  assert.equal(notes[0].text,'两份配置写的默认模型不一样，我再核一下实际启动的是哪个\n实际启动的是 config.toml 里的那个');
  assert.deepEqual(notes[0].task,{sid:task.sid,no:task.no});
@@ -167,6 +184,15 @@ test('Gemini 后台主动说一句：相关的两条合成一条，任务还在�
  const th=f.call('history',{sid:task.sid});assert.equal(th.runs[0].events.filter(e=>e.t==='note').length,2);
  f.go(3);
  assert.equal((await f.status(task.sid,['done','failed'])).task.status,'done');
+ }catch(error){
+  try{
+  const snapshot={...noteDiagnostics(f),lastTasksReply},print=(section,value)=>{for(const row of Array.isArray(value)?value:[value])t.diagnostic(section+' '+JSON.stringify(row));};
+  for(const [section,value] of Object.entries(snapshot)){
+   if(section==='journal')for(const [key,rows] of Object.entries(value))print('journal.'+key,rows);else print(section,value);
+  }
+  }catch(diagnosticError){t.diagnostic('note diagnostics failed: '+(diagnosticError?.code||diagnosticError?.name||'unknown'));}
+  throw error;
+ }
 });
 
 test('主动说的那句还没发出去任务就做完了：不再冒出来（最终结果先到了）',async t=>{

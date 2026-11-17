@@ -1,3 +1,27 @@
+## 2026-11-17 · #166 失败取证进度（Codex 接续 Claude，合并暂停）
+
+- **当前代码**：main 仍为 #164 / `21d7bdf`；[#166](https://github.com/yux91803-hobo/liming-work-site/pull/166) 运行代码提交 `bc1d208`，未合并、未部署。分支 `codex/xin-note-kernel-recovery-20261117`、工作树 `/workspace/liming-kernel-note-recovery`。本次后续提交只增强测试失败现场和记录，不改运行代码、原断言、等待预算或模型脚本。
+- **真实失败**：CI [44072501817](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44072501817) 完整单元 **1028/1028**、E2E 成功；kernel **187/188**，原 `xin-steer.test.cjs` 主动 note 用例在约 16.5 秒后 `c[1].prompt === 'acp'`。deploy skipped。本地原完整矩阵全绿不解释这条历史偶发失败；不能靠过滤 acp、放宽时限或反复重跑声称修好了。
+- **Claude 的新记录**：[评论 6947692016](https://github.com/yux91803-hobo/liming-work-site/pull/166#issuecomment-6947692016)。他在 `bc1d208` 排查，没有提交代码、没有找到根因；单项无负载/4与8空转负载合计 33 遍、整组内核 7 遍均通过。`acp` 来自前台 `openFrontProvider` 的 help/启动；第 3 次 fake 调用写 `at-3` 会使测试继续，但不是预期第 3 个后台动作。证据指向后台提前结束、普通完成交接被启动，仍缺真正提前结束的错误。
+- **保留的判断**：note 分支 `noteStart` 不调用模型；临时失败和首次 died 会回队列。`requestBudget` 写本地文件，不经过 owner RPC，这不等于已证明预算内容永不出错。AGY idle 在该用例为 60 秒，16.5 秒不能归为 1.5 秒 idle；SQLite busy_timeout 和死亡判断都是 15 秒，只能作为待证假设。GitHub 托管机默认无用户 bus，systemd 清理跨测试误杀缺少可达条件；真实有 bus 时的 scope 归属隐患单独留待验证。
+- **新增第二症状**：Claude [评论 6947791681](https://github.com/yux91803-hobo/liming-work-site/pull/166#issuecomment-6947791681)：#165 第二次 CI 44048354885 单元 1010/1010、kernel 187/188，同一用例前两条 note 回执都过，却在 32.3 秒后等不到原聊天 note。先按独立症状取证，不假定与 acp 同因。
+- **新线索实测纠正**：Codex 私有真实 owner trace 显示 13 次 kernel `tasks` 调用全部 `journal.active=false`，紧跟 `pumpHandoffs`，启动 flush 仅 1ms；该 fixture 无 callback/推送订阅。普通 op 没有 RPC 外层事务，因此“内核 tasks 都跳交接、只能等 cycle”这个前提不成立。另用受控 deferred tick 确认长挂 tick 会阻滞定期 reconcile，但尚不能连到这条自然 CI 失败；不据此直接改 tasks 或断言两症状同源。
+- **本次诊断**：失败时、清理前只读本合成 fixture 的 calls（保留 acp）、sessions、run 元数据/事件、SQLite documents/launches/handoffs/commands 计数、最后一次原有 tasks 轮询返回值及双时钟、model-stats 的完整 `fromErr`、quota/issue/budgets、owner stderr 和假 Codex 参数；不发额外控制器请求推动调度，不读环境或真实凭据，只另外记录固定用户 bus 路径是否存在的布尔值。输出按 section/数组项分行；诊断自身失败仍抛原测试错误。实现 Codex，根代理自查，独立只读复核 Codex 子代理；Claude 对问题独立排查，不列为本补丁代码作者或已完成的独立代码审核。
+- **验证**：增加诊断后的本地完整 kernel **188/188**（`note-diag-full-kernel-runner.log`）；私有强制错误模型副本证明原 acp 断言仍失败、真正 `model-stats.fromErr` 能保留。最终诊断在 legacy/kernel 的原单项各 1/1 通过；私有诊断自身故障也保持原 AssertionError。这是验证诊断，不是自然复现。Codex 私有原用例多次仍绿，不能据此排除 CI 缺陷；原 `bc1d208` 的完整 1028/188/13 组/关闭分配 188+14 证据保留。
+- **下一步**：以新提交 CI 的失败快照分流：确认第一调用是否后台、task/run 是否已失败或换 Codex、`modelStats.fromErr` 是模型身份/预算/传输/其他错误；若只有通用 StateUnavailable，再在隔离 owner 副本捕获原始错误 code/errcode，不记录请求正文。若父 runner 先退出，核对 launch、PID/进程组和 15 秒后判死路径。拿到具体路径后做稳定红→绿回归，再改运行代码和完整验证。#165 原分支/head `6c4025c` 保留，Claude 对其失败重跑的说明见该 PR，不能把 #166 当成已经上线。
+- **未完成项**：整个 3B 的持久终态包、输入未知交付、原生 note ACK、前台 quota 报告持久恢复、宿主授权 C、凭据代理及正式暂停恢复仍未完成。旧工作树与未提交工作保留；临时排查在 `/workspace/xin-review`，没有在正式电脑注入故障。
+
+<a id="report-recovery-20261117"></a>
+## Codex · 2026-11-17 接手 #164 / #165（当前工作）
+
+- 远端 main `21d7bdfa567d06122e6584a6fad956ac590392fa`（#164）；Claude #165 head `6c4025cb7f84858f5f493f3cda97dd2c69147b50` 开放，Worker 回程改后台记账；其原提交/分支保留，不混改 UI。#165 的 CI 44048354885 在原 owner kill9 用例约 60.8 秒不收尾，部署跳过；不能称为记账补丁引入。
+- 队列启用 #163 首次正式 44018154230 在原 note 用例 187/188，未部署；随后 #164 携带相同 VM 代码的正式 44038526459 全绿、联调成功、回滚跳过。只读确认实际 `vm-agent-f46e8f743f9a.mjs`、外壳 `vm-kernel-e1a29f7279b5.mjs`、单 owner、尝试/bridge 默认 true。查询时 bridge 文档数为 0，尚无实际新沙盒分配的正向见证，不虚称这条已验收。
+- 本次独立工作树 `/workspace/liming-kernel-note-recovery`，分支 `codex/xin-note-kernel-recovery-20261117`；未清除其他工作树或上一位未提交内容。问题发现 Claude；本次实现/回归 Codex；独立复核 Codex 子代理（不是 Claude 审核，也不把审核者列共同代码作者）。
+- 已复现：front_immediate 处理前失联被 timer 挂住；front_model 处理前失联在模型调用前失败；agy_conversation 已提交后丢回应误换 Codex。固定请求 ID 的真实 append/write/非幂等 named 在原 client 也稳定失败。视觉专项另外暴露新派发进程的单次 startup health 竞争，增加专用只读健康探测恢复；辅助 timer 的反向验证在仅把临时副本恢复 ref 时稳定失败。当前实现范围与回滚见 [报告恢复计划](superpowers/plans/2026-11-17-xin-report-recovery.md)，默认本地完整 check **1028/1028**、常驻内核 **188/188**、**13 组 E2E 全过**，均退出 0、无跳过，源码指纹 `be66f493248fa36638f48e795975c676fa9103d8e6c71b78f066ee4ca03e5017` 不变。显式 `XIN_RUN_ATTEMPTS=0 XIN_TASK_BRIDGE=0` 的内核回归 **188/188**、已有协议队列 **14/14** 也通过，关闭新分配仍处理已有协议。各项退出 0、无跳过且指纹一致；CI/正式结果以本批 PR 当前记录为准。
+- 未完成/下一步：完成本批回归、全量验证及 PR 发布门槛；#165 单独保留，待内核修复进入 main 后核对并接续验证。随后才推进 [持久收尾计划](superpowers/plans/2026-11-16-xin-finalization.md) 的终态包/输入交付，不重复队列隔离工作。真实暂停恢复、宿主授权 C 和凭据代理不冒称完成。
+
+以下保留各轮原始交接及历史判断，当前状态以本段和后续 PR 最终记录为准。
+
 # 小芯 AI 轮流开发与交接
 
 最新内核交接：[2026-11-17 接入 #161/#162 后的队列启用准备](#task-bridge-enable-20261117)；原队列实现见[先前子批](#task-bridge-20261116)。

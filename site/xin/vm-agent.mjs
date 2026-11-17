@@ -45,7 +45,7 @@ import * as runtime from './vm-runtime.mjs';
 import { StateJournal } from './vm-state.mjs';
 import { createController } from './vm-kernel-controller.mjs';
 import { createStateServer, snapshotBeforeSwitch } from './vm-kernel-state.mjs';
-import { requestState, requestStateSync, retryUnsent, forwardCLI, inputArgs } from './vm-kernel-client.mjs';
+import { requestStateSync, retryLockedReport, waitForState, forwardCLI, inputArgs } from './vm-kernel-client.mjs';
 import { callContext, lockHeld } from './vm-kernel-context.mjs';
 import { initializeStateTables } from './vm-kernel-operations.mjs';
 import { checkControllers } from './vm-kernel-compat.mjs';
@@ -267,8 +267,8 @@ const seenF = run => path.join(RUNS, run + '.seen');   // 网页最近一次来�
 // 后台任务的记录（派、排队、收尾、补充、停）都用同一把锁 tasks，等得久一点
 function lockedCall(key, op, args) {
   if (key !== 'new' && key !== 'daily' && key !== 'tasks' && !okId(key, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
-  return retryUnsent(()=>{   // 交不过去（主人正在接手、还没开始听）就稍等、从头再判断（§6.2）
-  const viaOwner=()=>requestStateSync(BASE,{kind:'op',op,args,locked:true,key,run:callContext().run,attempt:callContext().attempt});
+  return retryLockedReport(op,remainingMs=>{   // 每次重新判断所有权；已发送报告仅在有明确重放保证时重试。
+  const viaOwner=()=>requestStateSync(BASE,{kind:'op',op,args,locked:true,key,run:callContext().run,attempt:callContext().attempt},{timeoutMs:remainingMs});
   if(ownership.owning)return controller.invoke({op,args,locked:true,key,run:callContext().run,attempt:callContext().attempt},{internal:true});
   if(stateOwned())return viaOwner();
   let release;try{release=ownership.enter();}catch(e){if(e.code!=='owner_unavailable')throw e;return viaOwner();}
@@ -918,7 +918,7 @@ function runner(run) {
       }
     } catch { /* pending input stays durable and is retried */ }
     finally { steering = false; }
-  }, 300);
+  }, 300).unref();
   const term = external => {
     restarting = false;
     // Host shutdown sends SIGTERM too. Only an explicit stop owns the stopped flag;
@@ -3079,7 +3079,7 @@ async function main() {
     try{release=ownership.enter();journal.recover();restoreStops();}
     catch(e){
       if(e.code!=='owner_unavailable')throw e;if(process.argv[2]==='watchdog')return;
-      try{await requestState(BASE,{kind:'control',op:'health'},{timeoutMs:3000});}catch{throw e;}
+      try{await waitForState(BASE);}catch{throw e;}
     }
     finally{if(release){journal.closeWriter();release();}}
   }

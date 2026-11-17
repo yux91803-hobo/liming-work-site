@@ -1033,7 +1033,9 @@ export async function antigravityWork(t,options) {
   const report=o=>process.stdout.write(JSON.stringify(o)+'\n');
   if(options.quotaState?.blocked&&options.quotaState.retryAt>Date.now()){report({type:'error',message:'Antigravity 额度仍在倒计时，按已记录的恢复时间等待。'});return 75;}
   const clientDir=options.clientDir;if(!clientDir||under(clientDir,t.workspace.work))throw Error('Antigravity 客户端目录必须由控制器单独持有');
-  let quota;try{quota=await readAntigravityQuota(binary,clientDir);options.quota(quota);}catch{quota=null;}
+  let quota;try{quota=await readAntigravityQuota(binary,clientDir);}catch{quota=null;}
+  // A lost cache-report reply cannot invalidate the fresh provider reading; never replay its sample here.
+  if(quota)try{options.quota(quota);}catch(e){if(!['owner_unavailable','state_disconnected','state_timeout','state_client_failed'].includes(e?.code)||![false,'unknown'].includes(e?.executed))throw e;}
   if(quota?.blocked){report({type:'error',message:'Antigravity 额度暂不可用，已记录服务端恢复时间。'});return 75;}
   if(!quota)throw Error('暂时无法核对 Antigravity 额度，保留任务交给其他执行入口');
   const home=process.env.XIN_AGY_HOME||os.homedir(),agents=path.join(home,'.gemini/config/agents');mkdir(agents);
