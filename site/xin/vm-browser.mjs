@@ -534,19 +534,24 @@ export async function loginWindow({ chrome, profileDir, headless = false, displa
   // 站长要在屏幕上看得到、点得到：有桌面就开在桌面上，不退回无头（测试才无头）
   const r = await launch({ chrome, profileDir, proxyPort: proxy.port, headless, display, noSandbox });
   if (!r.ok) { proxy.close(); removeDir(profileDir); throw Error(launchError(r).replace('浏览器', '登录窗口')); }
-  const child = r.c, cdp = r.conn, visited = new Set([site]), saved = new Set(), sessions = new Map();
+  const child = r.c, cdp = r.conn, visited = new Set([site]), saved = new Set(), sessions = new Map(), attaching = new Map();
   let done = null, timer = null, closing = false;
   const cleanup = () => { clearInterval(timer); clearTimeout(limit); killGroup(child); try { proxy.close(); } catch { /* 已经关了 */ } removeDir(profileDir); };
   process.once('exit', cleanup);
   const visit = u => { const s = urlSite(u); if (s) visited.add(s); };
-  const watch = async targetId => {
-    if (sessions.has(targetId)) return;
-    sessions.set(targetId, null);
-    try {
-      const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
-      sessions.set(targetId, sessionId);
-      await cdp.send('Network.enable', {}, sessionId);
-    } catch { /* 页面已经关了 */ }
+  // 同一页只接一次；谁要用这一页，都等这一次接好、开始记网络请求以后再用。
+  // 开头那一页可能在「发现目标」以后才登记上：监听器先去接，下面打开网址的路紧跟着要它。
+  // 以前它见到「正在接」就直接往下走，打开网址发到浏览器上被吞掉，窗口停在空白页
+  // （Puppeteer TargetManager.initialize() 也是等发现的页面都接好才返回，为的是不偶发出错）
+  const watch = targetId => {
+    if (!attaching.has(targetId)) attaching.set(targetId, (async () => {
+      try {
+        const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+        sessions.set(targetId, sessionId);
+        await cdp.send('Network.enable', {}, sessionId);
+      } catch { /* 页面已经关了 */ }
+    })());
+    return attaching.get(targetId);
   };
   cdp.listeners.add(m => {
     const p = m.params || {};

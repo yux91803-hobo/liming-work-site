@@ -270,10 +270,55 @@ test('登录窗口：开着时隔一会儿就存（站长直接关窗口也不�
   const { loginStore } = await imp('vm-logins.mjs');
   const store = loginStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xin-lwin-st-')), 'logins'));
   const h = await loginWin(t, store, { maxMs: 3000 }); if (!h) return;
-  await until(() => store.has('shop.test') && store.has('sso.test'), 15000, '开着时就存了');
+  // 等不到时带上测试服务器收到的请求：一个都没有，就是窗口没打开网址（下面「开头那一页晚登记上」那类）
+  await until(() => store.has('shop.test') && store.has('sso.test'), 15000, '开着时就存了').catch(e => {
+    e.message += '（测试服务器收到的请求：' + JSON.stringify(h.s.hits) + '）'; throw e;
+  });
   const end = await h.w.ended;
   assert.equal(end.reason, 'timeout');
   assert.equal(fs.existsSync(path.join(h.root, 'profile')), false);
+});
+
+// 假浏览器（照 --remote-debugging-pipe：从 fd 3 读命令、往 fd 4 写回应，一条消息以 \0 结尾）。
+// 开头那一页在「发现目标」以后才登记上：处理 Target.getTargets 时它才出现，先发 targetCreated 再回应
+// （真浏览器刚起来、机器又忙时会这样，见 browserBroker 的 somePage；本机并行加压 60 次里见到 1 次）。
+// 不带会话发 Page.navigate 照真浏览器回「wasn't found」。收到的每条命令记一行「方法 会话」。
+function lateTabChrome(dir) {
+  const bin = path.join(dir, 'fake-chrome'), log = path.join(dir, 'cdp.log');
+  fs.writeFileSync(bin, '#!' + process.execPath + '\n' + `
+const fs = require('node:fs'), net = require('node:net');
+const log = ${JSON.stringify(log)}, out = new net.Socket({ fd: 4, readable: false });
+const tab = { targetId: 'T1', type: 'page', title: '', url: 'about:blank', attached: false, canAccessOpener: false, browserContextId: 'C1' };
+let buf = '', born = false;
+const put = (...ms) => out.write(ms.map(m => JSON.stringify(m) + '\\0').join(''));
+new net.Socket({ fd: 3, writable: false }).setEncoding('utf8').on('data', d => {
+  buf += d;
+  for (let i; (i = buf.indexOf('\\0')) >= 0;) {
+    const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+    fs.appendFileSync(log, m.method + ' ' + (m.sessionId || '-') + '\\n');
+    const ok = result => put({ id: m.id, result });
+    if (m.method === 'Target.getTargets') { put(...(born ? [] : [{ method: 'Target.targetCreated', params: { targetInfo: tab } }]), { id: m.id, result: { targetInfos: [tab] } }); born = true; }
+    else if (m.method === 'Target.attachToTarget') ok({ sessionId: 'S1' });
+    else if (m.method === 'Page.navigate' && m.sessionId !== 'S1') put({ id: m.id, error: { code: -32601, message: "'Page.navigate' wasn't found" } });
+    else if (m.method === 'Storage.getCookies') ok({ cookies: [] });
+    else if (m.method === 'Browser.close') { ok({}); setTimeout(() => process.exit(0), 20); }
+    else ok({});
+  }
+});
+`, { mode: 0o755 });
+  return { bin, calls: () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : [] };
+}
+
+test('登录窗口：开头那一页晚登记上时，也等它接好、开始记网络请求以后再打开网址（不然打开网址发到浏览器上被吞掉，窗口停在空白页、什么都存不上）', { timeout: platformTimeout(30000) }, async t => {
+  const { loginWindow } = await imp('vm-browser.mjs'), { loginStore } = await imp('vm-logins.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-lwin-late-')), fake = lateTabChrome(dir);
+  const w = await loginWindow({ chrome: fake.bin, profileDir: path.join(dir, 'profile'), headless: true, ...(await testNet()), logins: loginStore(path.join(dir, 'logins')),
+    site: 'shop.test', url: 'http://shop.test/auto-login', saveMs: 60000 });
+  t.after(() => w.closeNow());
+  const calls = fake.calls(), net = calls.indexOf('Network.enable S1');
+  assert.ok(!calls.includes('Page.navigate -'), '打开网址没发到浏览器上：' + calls.join(' | '));
+  assert.ok(net >= 0 && calls.indexOf('Page.navigate S1') > net, '先开始记网络请求（跳转经过的网站才记得上），再在这一页上打开网址：' + calls.join(' | '));
+  assert.equal((await w.finish()).reason, 'done');
 });
 
 /* ---------- 控制器：任务点名网站、停成「等你登录」、站长点按钮后接着做 ---------- */
