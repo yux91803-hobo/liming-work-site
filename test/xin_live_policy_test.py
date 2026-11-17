@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner
+from xin_live_policy import HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, after_steer, canned_reply
 
 
 class SpokenMarker(unittest.TestCase):
@@ -22,6 +22,32 @@ class SpokenMarker(unittest.TestCase):
         self.assertFalse(says('青柠、风筝', '青柠 风筝 海盐'))
         self.assertFalse(says('', '青柠 风筝 海盐'))
         self.assertFalse(says('anything', ''))
+
+
+class Steer(unittest.TestCase):
+    ITEMS = [('alpha-main', True), ('beta-backup', False)]
+
+    def test_fixture_is_a_cleanable_smoke_with_one_named_model_only_when_asked(self):
+        r = steer_request('xin-steer-x', '/data/workspace/.xin-live-smoke/x', self.ITEMS)
+        self.assertTrue(is_leftover_smoke({'title': r[:40]}))
+        self.assertIn('alpha-main（启用）、beta-backup（备用）', r); self.assertNotIn('--model', r)
+        k = steer_request('xin-steer-k', '/d', self.ITEMS, '用 Kimi 做')
+        self.assertIn('这个后台任务用 Kimi 做。', k); self.assertIn('--model kimi-k3.1-pro', k)
+
+    def test_final_list_keeps_enabled_and_drops_backups(self):
+        self.assertEqual(list_verdict('alpha-main,gamma-main', ['alpha-main', 'gamma-main'], ['beta-backup']), {'keeps': True, 'drops': True})
+        self.assertEqual(list_verdict('alpha-main,beta-backup', ['alpha-main'], ['beta-backup']), {'keeps': True, 'drops': False})
+        self.assertEqual(list_verdict('', ['alpha-main'], []), {'keeps': False, 'drops': True})
+
+    def test_after_steer_finds_later_commands_on_dropped_names(self):
+        ev = [{'t': 'tool', 'detail': 'echo alpha-main'}, {'t': 'user', 'steer': True, 'text': 'x'}, {'t': 'tool', 'detail': 'echo gamma-main'}]
+        self.assertEqual(after_steer(ev, ['beta-backup']), {'steered': True, 'laterDrop': False, 'steers': 1})
+        self.assertTrue(after_steer(ev + [{'t': 'tool_end', 'detail': 'echo beta-backup >> checked.txt'}], ['beta-backup'])['laterDrop'])
+        self.assertEqual(after_steer(ev[:1], ['beta-backup'])['steered'], False)
+
+    def test_canned_controller_receipts_are_not_own_words(self):
+        self.assertTrue(canned_reply('好，我这就去弄。')); self.assertTrue(canned_reply(' 好，我接着做。 '))
+        self.assertFalse(canned_reply('行，最后只给你列正在用的'))
 
 
 class ReplyShape(unittest.TestCase):

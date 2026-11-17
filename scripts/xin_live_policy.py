@@ -31,7 +31,7 @@ def front_reply_limit(model):
 # Opening lines of the conversations this smoke test creates (a conversation's title is its first line, cut to 40 chars).
 # An earlier run whose cleanup failed leaves them behind; cross-conversation recall then quotes their old instructions
 # into this run's turns, and the foreground may follow those instead of the current line (seen 2026-11-11 with DeepSeek).
-SMOKE_TITLES = ('这是发布后的真实联调，使用默认后台安排，', '只读取这张图片中唯一一行字符并照写出来。', '只回复 generation-original-', '只回复 generation-current-')
+SMOKE_TITLES = ('这是发布后的真实联调，使用默认后台安排，', '这是发布后的真实联调（插话），', '只读取这张图片中唯一一行字符并照写出来。', '只回复 generation-original-', '只回复 generation-current-')
 
 
 def is_leftover_smoke(session):
@@ -126,3 +126,32 @@ def same_resident_owner(first, usage):
         raise RuntimeError('State owner restarted during the run: epoch ' + str(first['epoch']) + ' -> ' + str(now['epoch']))
     if now['spawns'] != first['spawns']:
         raise RuntimeError('The kernel started controller processes in kernel mode: ' + str(now['spawns'] - first['spawns']))
+
+
+# ---------- 后台干活时插话（docs/superpowers/specs/2026-11-17-xin-steer-design.md，scripts/xin_live_steer.py） ----------
+# 夹具：按顺序核对几个模型名（启用的、备用的），每个名字单独一条 shell 命令、先 sleep，好让补充落在中途；最终只写一行名单。
+def steer_request(title, directory, items, model=''):
+    names = '、'.join(n + ('（启用）' if on else '（备用）') for n, on in items)
+    return ('这是发布后的真实联调（插话），只派一个后台任务并立即回复，不要等待它完成。' + (model and '这个后台任务' + model + '。') +
+            '使用 xin task new --kind research' + (' --model kimi-k3.1-pro' if 'Kimi' in model else '') + ' --title ' + title + ' --dir ' + directory +
+            ' -- 后台测试：核对这份 Agent 模型清单：' + names + '。按顺序一个一个核对：每个名字单独执行一次 shell 命令 sleep 20; echo 名字 >> checked.txt，'
+            '一次只核对一个，不要合并成一条命令。全部核对完后，最终结果只写一行：用英文逗号连接核对过的模型名。'
+            '不要访问其它项目、记事本、设备或用户服务。请只派这个任务，不要派审查。')
+
+# 最终名单：要的都在、不要的一个都没有（只回布尔值，不回原文）
+def list_verdict(text, keep, drop):
+    t = str(text or '')
+    return {'keeps': all(n in t for n in keep), 'drops': not any(n in t for n in drop)}
+
+# 补充送进了这一轮（过程里有兄弟的补充），之后的命令有没有再处理不要的名字
+def after_steer(events, drop):
+    i = next((k for k, e in enumerate(events) if e.get('t') == 'user' and e.get('steer')), None)
+    if i is None:
+        return {'steered': False, 'laterDrop': False, 'steers': 0}
+    later = [e for e in events[i + 1:] if e.get('t') in ('tool', 'tool_end') and any(n in str(e.get('detail', '')) for n in drop)]
+    return {'steered': True, 'laterDrop': bool(later), 'steers': sum(1 for e in events if e.get('t') == 'user' and e.get('steer'))}
+
+# 控制器兜底的固定说法（前台自己的话要不到时才用）；站长要的是顺着对话的一句
+CANNED = ('好，我这就去弄。', '行，接下来就按你说的来。', '好，这一轮跑完我就按你补的再来一遍。', '好，开始的时候一起带上。', '好，我接着做。')
+def canned_reply(text):
+    return str(text or '').strip() in CANNED
