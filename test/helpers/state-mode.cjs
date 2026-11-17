@@ -27,4 +27,9 @@ function stateClient(t,env,options){
   let started=false;
   return ()=>{if(!started){stateMode(t,env,options);started=true;}};
 }
-module.exports={stateMode,stateClient};
+// 一个测试里用到好几个状态目录（比如备份前、恢复后的）：每个目录第一次用到时起它自己的状态进程
+function stateHomes(t,options){
+  const started=new Map();
+  return env=>{const home=path.resolve(env.XIN_HOME);if(!started.has(home))started.set(home,stateMode(t,env,options));return started.get(home);};
+}
+module.exports={stateMode,stateClient,stateHomes};

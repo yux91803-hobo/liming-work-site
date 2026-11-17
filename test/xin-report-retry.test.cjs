@@ -80,7 +80,8 @@ async function actor(t, mode = 'after') {
       socket.end(JSON.stringify({v:q.v,id:q.id,ok:true,result})+'\\n');
     });});
     server.listen(stateSocket(home),()=>console.log('ready'));`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', source], {
+  // 它扮演常驻状态进程：先拿所有权再处理写入（test/helpers/own-state.cjs）
+  const child = spawn(process.execPath, [...require('./helpers/own-state.cjs').OWN_IMPORT, '--input-type=module', '-e', source], {
     env: { ...process.env, XIN_HOME: home }, stdio: ['ignore', 'pipe', 'pipe']
   });
   let errors = ''; child.stderr.on('data', b => errors += b);

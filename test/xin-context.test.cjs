@@ -1,9 +1,11 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');
+// 脚本在测试里扮演常驻状态进程：先拿所有权再调模块（test/helpers/own-state.cjs）
+const {OWN_IMPORT}=require('./helpers/own-state.cjs');
 function fixture(t){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xin-context-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const xin=path.join(dir,'xin');fs.mkdirSync(path.join(xin,'runs'),{recursive:true});fs.mkdirSync(path.join(xin,'sessions'));
- return code=>{const r=spawnSync(process.execPath,['--input-type=module','-e',`
+ return code=>{const r=spawnSync(process.execPath,[...OWN_IMPORT,'--input-type=module','-e',`
  import * as c from ${JSON.stringify(new URL('../site/xin/vm-context.mjs','file://'+__filename).href)};
  import * as m from ${JSON.stringify(new URL('../site/xin/vm-memory.mjs','file://'+__filename).href)};
  import * as b from ${JSON.stringify(new URL('../site/xin/vm-base.mjs','file://'+__filename).href)};

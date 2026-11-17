@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const {spawnSync} = require('node:child_process');
+// 脚本在测试里扮演常驻状态进程：先拿所有权再调模块（test/helpers/own-state.cjs）
+const {OWN_IMPORT} = require('./helpers/own-state.cjs');
 const {pathToFileURL} = require('node:url');
 const url = name => JSON.stringify(pathToFileURL(path.join(__dirname,'../site/xin/'+name+'.mjs')).href);
 
@@ -9,7 +11,7 @@ function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(),'xin-idle-'));
   t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   return code => {
-    const r = spawnSync(process.execPath,['--input-type=module','-e',String.raw`
+    const r = spawnSync(process.execPath,[...OWN_IMPORT,'--input-type=module','-e',String.raw`
       import fs from 'node:fs';import path from 'node:path';
       import * as i from ${url('vm-memory-idle')};import * as m from ${url('vm-memory')};
       import {journal} from ${url('vm-base')};

@@ -3,7 +3,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spa
 function fixture(t){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-daily-context-')),xin=path.join(root,'xin');fs.mkdirSync(path.join(xin,'sessions'),{recursive:true});fs.mkdirSync(path.join(xin,'runs'));
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
-  return code=>{const r=spawnSync(process.execPath,['--input-type=module','-e',`
+  return code=>{const r=spawnSync(process.execPath,[...require('./helpers/own-state.cjs').OWN_IMPORT,'--input-type=module','-e',`
     import fs from 'node:fs';import path from 'node:path';
     import * as d from ${JSON.stringify(new URL('../site/xin/vm-daily.mjs','file://'+__filename).href)};
     import * as b from ${JSON.stringify(new URL('../site/xin/vm-base.mjs','file://'+__filename).href)};

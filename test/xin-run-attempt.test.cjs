@@ -25,7 +25,8 @@ function fixture(t, mode) {
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };
   const report = (op, args, attempt = CURRENT, run = RUN) => cli(['locked', op], args, { XIN_LOCK: SID, XIN_RUN: run, XIN_ATTEMPT: attempt });
-  const js = (source, attempt = CURRENT) => spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+  // 没起状态进程时（legacy 夹具），脚本扮演主人：先拿所有权再写（test/helpers/own-state.cjs）
+  const js = (source, attempt = CURRENT) => spawnSync(process.execPath, [...(owner ? [] : require('./helpers/own-state.cjs').OWN_IMPORT), '--input-type=module', '-e', source], {
     env: { ...env, XIN_RUN: RUN, XIN_ATTEMPT: attempt }, encoding: 'utf8', timeout: 15000
   });
   return { dir, home, env, owner, cli, report, js, meta: () => JSON.parse(fs.readFileSync(home + '/runs/' + RUN + '.json')) };
@@ -122,9 +123,9 @@ for(const committed of [false,true])test('派发尝试在'+(committed?'提交后
     ${committed?"journal.recover=()=>process.kill(process.pid,'SIGKILL');":"journal.checkWriter=transaction=>{if(transaction)process.kill(process.pid,'SIGKILL');};"}
     const dispatcher=createDispatcher({self:${JSON.stringify(self)},metaF,sessF:s=>BASE+'/sessions/'+s+'.json',runF:r=>BASE+'/runs/'+r+'.jsonl',lockedCall:()=>({}),emit:()=>{},patchRun:()=>{}});
     dispatcher.dispatchLaunches();`;
-  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:f.env,encoding:'utf8',timeout:10000});
+  const child=spawnSync(process.execPath,[...require('./helpers/own-state.cjs').OWN_IMPORT,'--input-type=module','-e',code],{env:f.env,encoding:'utf8',timeout:10000});
   assert.equal(child.signal,'SIGKILL',child.stderr);assert.equal(fs.existsSync(sentinel),false);
-  const recovered=spawnSync(process.execPath,['--input-type=module','-e',`import {BASE,journal,readJ} from ${JSON.stringify(url('vm-base'))};journal.recover();console.log(JSON.stringify({meta:readJ(BASE+'/runs/${run}.json'),launch:journal.launchRecord('${run}')}));`],{env:f.env,encoding:'utf8',timeout:10000});
+  const recovered=spawnSync(process.execPath,[...require('./helpers/own-state.cjs').OWN_IMPORT,'--input-type=module','-e',`import {BASE,journal,readJ} from ${JSON.stringify(url('vm-base'))};journal.recover();console.log(JSON.stringify({meta:readJ(BASE+'/runs/${run}.json'),launch:journal.launchRecord('${run}')}));`],{env:f.env,encoding:'utf8',timeout:10000});
   assert.equal(recovered.status,0,recovered.stderr);const data=JSON.parse(recovered.stdout);
   assert.equal(data.launch.state,committed?'dispatched':'pending');assert.equal(data.launch.attempts,committed?1:0);
   if(committed)assert.match(data.meta.attempt,/^[a-f0-9]{32}$/);else assert.equal(data.meta.attempt,undefined);
@@ -152,7 +153,7 @@ test('两个进程同时读到同一条待派发：只有认领到的那个起�
     dispatcher.dispatchLaunches();
     await new Promise(r=>setTimeout(r,800));
     console.log(JSON.stringify({meta:readJ(metaF('${run}')),launch:journal.launchRecord('${run}')}));`;
-  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:f.env,encoding:'utf8',timeout:20000});
+  const child=spawnSync(process.execPath,[...require('./helpers/own-state.cjs').OWN_IMPORT,'--input-type=module','-e',code],{env:f.env,encoding:'utf8',timeout:20000});
   assert.equal(child.status,0,child.stderr);
   const data=JSON.parse(child.stdout.trim().split('\n').pop()),started=fs.readFileSync(record,'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(started.length,1,'同一条只起一个执行进程：'+JSON.stringify(started));

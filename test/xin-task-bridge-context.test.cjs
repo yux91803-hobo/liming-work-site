@@ -29,10 +29,12 @@ function fixture(t, { dispatched = true } = {}) {
   t.after(() => stopOwned(control, root));
   // Seed the journal so the long-lived CLI prelude only reads. The regression must
   // reach agy-run's preflight, not happen to fail during an unrelated first-open write.
-  const seeded = spawnSync(process.execPath, ['--input-type=module', '-e',
+  // 建库的脚本扮演主人；建好以后起真的常驻状态进程，执行进程和加锁命令都交给它（test/helpers/own-state.cjs、state-mode.cjs）
+  const seeded = spawnSync(process.execPath, [...require('./helpers/own-state.cjs').OWN_IMPORT, '--input-type=module', '-e',
     `import {journal} from ${JSON.stringify(BASE_MODULE)};journal.recover();journal.close();`],
     { env, encoding: 'utf8', timeout: 10000 });
   assert.equal(seeded.status, 0, seeded.stderr);
+  require('./helpers/state-mode.cjs').stateMode(t, env);
   return { root, control, workspace, marker, env,
     scope: path.join(path.dirname(workspace.io), 'io-' + RUN + '-' + ATTEMPT) };
 }

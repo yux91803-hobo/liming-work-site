@@ -5,20 +5,22 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const { execFileSync } = require('node:child_process');
 const { platformTimeout } = require('./helpers/timeout.cjs');
 
-function agentEnv(extraEnv = {}) {
+// 起控制器之前先起真的常驻状态进程（test/helpers/state-mode.cjs）
+function agentEnv(t, extraEnv = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-b2-')), work = path.join(home, 'work');
   const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: work }, extraEnv);
+  const ensureState = require('./helpers/state-mode.cjs').stateClient(t, env);
   env.NODE_OPTIONS = (env.NODE_OPTIONS || '') + ' --require=' + path.join(__dirname, 'helpers/front-responses.cjs');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
-  const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
-  return { home, work, xin: env.XIN_HOME, op };
+  const op = (name, args) => { ensureState(); return JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString()); };
+  return { home, work, xin: env.XIN_HOME, op, ensureState };
 }
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 
 // 告诉网页的那句 2026-11-16 按文案标准改成「电脑刚唤醒，正在连接网络」（原来「电脑刚醒，网络在热身，稍等一下」），下面按「刚唤醒」认
-test('云电脑刚醒、网关在预热：前台先等预热做完再发请求，不再 25 秒就放弃；等的时候告诉网页「刚唤醒」', async () => {
+test('云电脑刚醒、网关在预热：前台先等预热做完再发请求，不再 25 秒就放弃；等的时候告诉网页「刚唤醒」', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-b2-cold-')), cold = path.join(tmp, 'cold'), log = path.join(tmp, 'front.log');
-  const { xin, op } = agentEnv({ XIN_FRONT_TEST_COLD: cold, XIN_FRONT_TEST_LOG: log });
+  const { xin, op } = agentEnv(t, { XIN_FRONT_TEST_COLD: cold, XIN_FRONT_TEST_LOG: log });
   fs.mkdirSync(xin, { recursive: true });
   // 预热刚开始（greet 叫醒电脑时起的）：网关这时收到的请求会卡很久
   fs.writeFileSync(path.join(xin, 'warm.json'), JSON.stringify({ at: Date.now(), running: true }));
@@ -48,9 +50,9 @@ test('云电脑刚醒、网关在预热：前台先等预热做完再发请求�
   assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1, '只发了一次请求，而且是在预热之后');
 });
 
-test('预热记录坏了或卡死（超过 200 秒还标着在跑）：前台不等，照常发', async () => {
+test('预热记录坏了或卡死（超过 200 秒还标着在跑）：前台不等，照常发', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-b2-stale-')), log = path.join(tmp, 'front.log');
-  const { xin, op } = agentEnv({ XIN_FRONT_TEST_LOG: log });
+  const { xin, op } = agentEnv(t, { XIN_FRONT_TEST_LOG: log });
   fs.mkdirSync(xin, { recursive: true });
   fs.writeFileSync(path.join(xin, 'warm.json'), JSON.stringify({ at: Date.now() - 300e3, running: true }));
   const t0 = performance.now(), r = op('send', { agent: 'codex', text: '在吗' });
@@ -63,7 +65,8 @@ test('预热记录坏了或卡死（超过 200 秒还标着在跑）：前台不
 
 /* ---------- 第一批留下的小问题 ---------- */
 const AGENT = path.join(__dirname, '../site/xin/vm-agent.mjs');
-const loadAgent = () => { process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-b2-import-')); return import(require('node:url').pathToFileURL(AGENT).href); };
+// 在测试进程里直接加载控制器：测试进程自己当主人（正式环境里这些代码跑在常驻状态进程里，test/helpers/own-state.cjs）
+const loadAgent = async () => { process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-b2-import-')); await require('./helpers/own-state.cjs').ownState(); return import(require('node:url').pathToFileURL(AGENT).href); };
 
 test('等回答到点时「记下问题」抢不到锁：隔几秒再试，记下了才交还；重试期间来了回答就用回答', async () => {
   const { awaitTaskInput } = await loadAgent();
@@ -87,10 +90,10 @@ test('等回答到点时「记下问题」抢不到锁：隔几秒再试，记�
   assert.ok(t <= 1000 + 125e3 && tries >= 20, JSON.stringify({ t, tries }));
 });
 
-test('删 7 天前做完的任务副本改由任务锁里的操作来做（和重新打开任务互斥）；每日清理照常', () => {
-  const { op, xin } = agentEnv();
+test('删 7 天前做完的任务副本改由任务锁里的操作来做（和重新打开任务互斥）；每日清理照常', t => {
+  const { op, xin, ensureState } = agentEnv(t);
   fs.mkdirSync(xin, { recursive: true });
-  const r = JSON.parse(execFileSync(process.execPath, [AGENT, 'locked', 'task_copies_prune'], { env: { ...process.env, XIN_HOME: xin }, input: '{}' }).toString());
+  ensureState(); const r = JSON.parse(execFileSync(process.execPath, [AGENT, 'locked', 'task_copies_prune'], { env: { ...process.env, XIN_HOME: xin }, input: '{}' }).toString());
   assert.deepEqual(r, { removed: 0, bytes: 0 });
   assert.equal(typeof op('prune').bytes, 'number');
 });

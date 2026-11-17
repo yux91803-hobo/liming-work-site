@@ -15,7 +15,8 @@ function fixture(t,agyScript,frontScript){
  const env={...process.env,PATH:bin+':'+process.env.PATH,NODE_OPTIONS:'--require='+preload+' --require='+path.join(__dirname,'helpers/front-responses.cjs'),XIN_HOME:xin,XIN_WORK:root+'/work',
   CODEX_HOME:profile+'/.codex',XIN_AGY_HOME:profile,XIN_ANTIGRAVITY_BIN:bin+'/agy',XIN_CODEX_TRANSPORT:'exec',XIN_TASK_SANDBOX:'0',XIN_AGY_IDLE_MS:'60000',
   XIN_FRONT_TEST_LOG:root+'/front.jsonl',XIN_FRONT_TEST_SCRIPT:root+'/front-script.json'};
- const op=(name,args)=>JSON.parse(execFileSync(process.execPath,[agent,name],{env,input:JSON.stringify(args||{})}).toString());
+ const ensureState=require('./helpers/state-mode.cjs').stateClient(t,env);
+ const op=(name,args)=>{ensureState();return JSON.parse(execFileSync(process.execPath,[agent,name],{env,input:JSON.stringify(args||{})}).toString());};
  t.after(()=>stopOwned(xin,root));
  const until=async(fn,what,ms=15000)=>{let v;for(const end=performance.now()+platformTimeout(ms);performance.now()<end;){v=fn();if(v)return v;await new Promise(r=>setTimeout(r,40));}assert.fail('等不到：'+what);};
  // 发一句、等这一轮做完，返回这一轮的事件

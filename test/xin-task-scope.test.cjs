@@ -107,6 +107,7 @@ test('前台看任务：task list 也列出别的对话里没做完的任务（�
 
 test('提示词：后台任务知道容器里连不上这台电脑本机的服务，连不上就直说做不了、别反复试、别让用户启动面板；前台知道 task list 也有别的对话的任务、签到积分派电脑维护（2026-11-12 站长定：小芯要能管自己的电脑）', async () => {
   process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-scope-p-'));
+  await require('./helpers/own-state.cjs').ownState();   // 测试进程里直接调提示词模块：测试进程自己当主人（正式环境里这段跑在常驻状态进程里）
   const { taskSystemPrompt, systemPrompt } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-persona.mjs')).href);
   const p = taskSystemPrompt({ no: 1, title: '查积分', dir: '/data/workspace/x', workspace: { work: '/w/work', home: '/w/home', tmp: '/w/tmp' }, goal: '现在有多少积分' });
   assert.match(p, /127\.0\.0\.1/); assert.match(p, /连不上/); assert.match(p, /直接说做不了/); assert.match(p, /不要反复试/); assert.match(p, /启动/);

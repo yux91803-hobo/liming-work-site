@@ -84,8 +84,10 @@ function fixture(t, extra = {}) {
     NODE_OPTIONS: [process.env.NODE_OPTIONS, '--require=' + preload].filter(Boolean).join(' ')
   }, extra);
   const session = path.join(env.XIN_HOME, 'sessions', SID + '.json');
+  // 控制器和执行进程都对着真的常驻状态进程（test/helpers/state-mode.cjs）
+  const ensureState = require('./helpers/state-mode.cjs').stateClient(t, env);
   const op = (name, args = {}) => {
-    const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8', timeout: 15000 });
+    ensureState(); const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8', timeout: 15000 });
     assert.equal(r.status, 0, r.stderr || String(r.error || ''));
     return JSON.parse(r.stdout);
   };
@@ -96,7 +98,7 @@ function fixture(t, extra = {}) {
     return op('send', { sid, text });
   };
   const asyncOp = (name, args) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [AGENT, name], { env });
+    ensureState(); const child = spawn(process.execPath, [AGENT, name], { env });
     let out = '', err = '';
     child.stdout.on('data', d => { out += d; }); child.stderr.on('data', d => { err += d; });
     child.on('error', reject); child.on('close', code => {
@@ -126,7 +128,7 @@ function fixture(t, extra = {}) {
     fs.writeFileSync(session,JSON.stringify({sid:SID,agent:'codex',title:'CLI executor',runs:[run],created:1,updated:1}));
     fs.writeFileSync(path.join(env.XIN_HOME,'runs',run+'.json'),JSON.stringify({run,sid:SID,agent:'codex',kind:'daily',text:'CLI test',started:Date.now(),model:'deepseek-v4.1-flash',fallbacks:[]}));
     fs.writeFileSync(path.join(env.XIN_HOME,'runs',run+'.jsonl'),JSON.stringify({t:'user',text:'CLI test'})+'\n');
-    spawn(process.execPath,[AGENT,'run',run],{env,detached:true,stdio:'ignore'}).unref();
+    ensureState(); spawn(process.execPath,[AGENT,'run',run],{env,detached:true,stdio:'ignore'}).unref();
     return {run,sid:SID};
   };
   return { dir, env, session, op, asyncOp, wait, seed, barrier, cliSend, claudeSend };

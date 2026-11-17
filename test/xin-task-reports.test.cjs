@@ -41,7 +41,7 @@ function fixture(t, mode, { parent = false } = {}) {
     ...(parent ? { XIN_NOTE_WAIT_MS: '600000' } : {}) };
   // The owner is a coordinator, never an executor with an inherited source context.
   const ownerEnv = { ...env }; delete ownerEnv.XIN_RUN; delete ownerEnv.XIN_ATTEMPT; delete ownerEnv.XIN_LOCK;
-  const owner = mode === 'kernel' ? stateMode(t, ownerEnv, { force: true }) : null;
+  const owner = mode === 'kernel' ? stateMode(t, ownerEnv) : null;
   t.after(() => stopOwned(home, dir));
   const call = (changes = {}, extra = {}) => {
     const a = { run: RUN, sid: SID, id: ID, op: 'remember', text: '板子的串口接在 USART2', ...changes };
@@ -74,7 +74,7 @@ for (const mode of ['legacy', 'kernel']) {
     assert.match(first.text, /^记下了，过一会儿回原聊天告诉兄弟/);
     if (mode === 'kernel') {
       f.owner.child.kill('SIGKILL'); await f.owner.exited;
-      stateMode(t, f.ownerEnv, { force: true });
+      stateMode(t, f.ownerEnv);
     }
     drainTaskReports(workspace, meta, { drain: drainBridge, submit: a => f.call(a) });
     assert.equal(fs.readFileSync(reply, 'utf8'), first.text);
@@ -136,7 +136,7 @@ for (const mode of ['legacy', 'kernel']) {
 test('状态进程提交后崩溃，重送仍返回同一回执和单份记忆证据', async t => {
   const f = fixture(t, 'kernel'), first = f.call();
   f.owner.child.kill('SIGKILL'); await f.owner.exited;
-  stateMode(t, f.ownerEnv, { force: true });
+  stateMode(t, f.ownerEnv);
   assert.deepEqual(f.call(), first);
   assert.equal(f.rows('SELECT * FROM memory_evidence').length, 1);
 });
@@ -162,7 +162,7 @@ test('真实文件队列：提交后丢回应并重启 owner，原请求保留�
   drainTaskReports(w, m, { drain: drainBridge, submit: a => { submit(a); throw Error('simulated lost response'); } });
   assert.equal(fs.existsSync(req), true); assert.equal(fs.existsSync(reply), false);
   f.owner.child.kill('SIGKILL'); await f.owner.exited;
-  stateMode(t, f.ownerEnv, { force: true });
+  stateMode(t, f.ownerEnv);
   drainTaskReports(w, m, { drain: drainBridge, submit });
   assert.equal(fs.existsSync(req), false); assert.match(fs.readFileSync(reply, 'utf8'), /待确认/);
   assert.equal(f.rows('SELECT * FROM memory_evidence').length, 1);

@@ -3,6 +3,8 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {spawnSync,spawn}=require('node:child_process'),{pathToFileURL}=require('node:url');
 const {stateMode}=require('./helpers/state-mode.cjs'),{stopOwned}=require('./helpers/stop-owned.cjs');
 const AGENT=path.join(__dirname,'../site/xin/vm-agent.mjs');
+// 测试进程里直接加载的控制器模块用临时目录，不碰这台机器真的 ~/.xin（以前这里没设，会写进运行测试那台机器的家目录）
+process.env.XIN_HOME=fs.mkdtempSync(path.join(os.tmpdir(),'xin-controller-proc-'));
 const url=name=>pathToFileURL(path.join(__dirname,'../site/xin/'+name+'.mjs')).href;
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function fixture(t,mode='kernel'){
@@ -189,6 +191,7 @@ test('取得独占锁后再次检查旧控制器；等待期间出现未兼容�
 });
 
 test('异步调用交错等待时 locked/key/run 都留在各自上下文，不改全局环境',async()=>{
+  await require('./helpers/own-state.cjs').ownState();   // 测试进程里直接调控制器：测试进程自己当主人
   const {createController}=await import(url('vm-kernel-controller')),{callContext}=await import(url('vm-kernel-context'));
   const original=process.env.XIN_RUN;
   const controller=createController({ops:{async probe(a){await sleep(a.delay);return {...callContext()};}},iops:{},isTask:()=>false,
@@ -210,7 +213,7 @@ test('owner-legacy：主人活着不改；被 kill -9 后把 kernel 改回 legac
 });
 test('空闲时一分钟一检，有活时五秒：pendingWork 看待派发、后台任务、通知、交接和控制器回调',async t=>{
   const f=fixture(t,'legacy');
-  const ask=code=>{const r=spawnSync(process.execPath,['--input-type=module','-e',`import {pendingWork} from ${JSON.stringify(pathToFileURL(AGENT).href)};import {journal} from ${JSON.stringify(url('vm-base'))};${code};process.stdout.write(JSON.stringify(pendingWork()));`],{env:f.env,encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
+  const ask=code=>{const r=spawnSync(process.execPath,[...require('./helpers/own-state.cjs').OWN_IMPORT,'--input-type=module','-e',`import {pendingWork} from ${JSON.stringify(pathToFileURL(AGENT).href)};import {journal} from ${JSON.stringify(url('vm-base'))};${code};process.stdout.write(JSON.stringify(pendingWork()));`],{env:f.env,encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
   assert.equal(ask(''),false,'什么都没有：一分钟一检');
   assert.equal(ask("journal.enqueueLaunch('rpendingx01','s0000000001',0)"),true,'有待派发的一轮：五秒一检');
 });

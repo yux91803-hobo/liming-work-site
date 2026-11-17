@@ -476,6 +476,7 @@ test('网站登录：列表、删掉；登录窗口：网址认不出、电脑�
 
 test('提示词：前台知道 --site 只写用户说到的网站；后台知道要登录就 xin browser login 然后结束这一轮、密码由用户自己输；带登录的任务写明是哪些网站、只能在这些网站里浏览', async () => {
   process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-bl-prompt-'));
+  await require('./helpers/own-state.cjs').ownState();   // 测试进程里直接调提示词模块：测试进程自己当主人（正式环境里这段跑在常驻状态进程里）
   const { taskSystemPrompt, systemPrompt } = await imp('vm-persona.mjs');
   const ws = { work: '/w/work', home: '/w/home', tmp: '/w/tmp' };
   const plain = taskSystemPrompt({ no: 1, title: '查手册', dir: '/data/workspace/x', workspace: ws, goal: '找手册' });

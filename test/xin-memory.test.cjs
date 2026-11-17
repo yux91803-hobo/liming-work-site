@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
+const { stateMode } = require('./helpers/state-mode.cjs'), { OWN_IMPORT } = require('./helpers/own-state.cjs');
 const AGENT = path.join(__dirname, '../site/xin/vm-agent.mjs');
 const MEMORY = pathToFileURL(path.join(__dirname, '../site/xin/vm-memory.mjs')).href;
 
@@ -13,16 +14,18 @@ function home(t, notebook) {
   if (notebook != null) fs.writeFileSync(path.join(xin, 'memory.md'), notebook);
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const env = { ...process.env, XIN_HOME: xin, XIN_WORK: path.join(dir, 'work') };
+  // 起控制器的（op、xin 命令）要真的状态进程；只调记忆模块的脚本在它起来之前自己当主人（test/helpers/own-state.cjs）
+  let state = null; const ensureState = () => { state ||= stateMode(t, env); };
   // Each call is a fresh process, like the controller on the VM.
   const js = code => {
-    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import * as m from ${JSON.stringify(MEMORY)};const out=await (async()=>{${code}})();process.stdout.write(JSON.stringify(out??null));`], { env, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [...(state ? [] : OWN_IMPORT), '--input-type=module', '-e', `import * as m from ${JSON.stringify(MEMORY)};const out=await (async()=>{${code}})();process.stdout.write(JSON.stringify(out??null));`], { env, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };
   const op = (name, args = {}) => {
-    const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8' });
+    ensureState(); const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };
-  const xinCmd = (run, ...argv) => spawnSync(process.execPath, [AGENT, 'xin', ...argv], { env: { ...env, XIN_RUN: run }, encoding: 'utf8' });
+  const xinCmd = (run, ...argv) => (ensureState(), spawnSync)(process.execPath, [AGENT, 'xin', ...argv], { env: { ...env, XIN_RUN: run }, encoding: 'utf8' });
   return { xin, env, js, op, xinCmd };
 }
 

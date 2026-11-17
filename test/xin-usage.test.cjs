@@ -61,7 +61,7 @@ test('按北京日汇总 token：日界线、今天/7 天/30 天、缓存命中�
 });
 
 // 站长 2026-11-13：前台、后台都用 Gemini 4 Hydrogen，Claude 不再用：额度卡只显示一项 Gemini，旧的 Claude、Flash 记录不算
-test('usage op：额度卡只显示一项 Gemini（前台、后台同一组）；旧的 Claude 记录不算；文件坏了不报错；tasks 带光环等级', () => {
+test('usage op：额度卡只显示一项 Gemini（前台、后台同一组）；旧的 Claude 记录不算；文件坏了不报错；tasks 带光环等级', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-usage-')), xin = path.join(dir, 'xin');
   fs.mkdirSync(xin, { recursive: true });
   try {
@@ -69,8 +69,8 @@ test('usage op：额度卡只显示一项 Gemini（前台、后台同一组）�
     fs.writeFileSync(path.join(xin, 'front-antigravity-quota.json'), JSON.stringify({ model: 'gemini-4-hydrogen', checkedAt: now, buckets: [{ id: 'gemini-5h', remaining: 0.2, resetAt: now + H }, { id: 'gemini-weekly', remaining: 0.7, resetAt: now + 80 * H }] }));
     fs.writeFileSync(path.join(xin, 'antigravity-quota.json'), '{坏了');
     fs.writeFileSync(path.join(xin, 'model-stats.jsonl'), JSON.stringify({ at: now, agent: 'codex', model: 'kimi-k3.1-pro', usage: { input: 10, cached: 5, output: 2 } }) + '\n');
-    const env = { ...process.env, XIN_HOME: xin, XIN_WORK: path.join(dir, 'work') };
-    const op = (name, args) => { const r = spawnSync(process.execPath, [path.join(__dirname, '../site/xin/vm-agent.mjs'), name], { env, input: JSON.stringify(args || {}), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+    const env = { ...process.env, XIN_HOME: xin, XIN_WORK: path.join(dir, 'work') }, ensureState = require('./helpers/state-mode.cjs').stateClient(t, env);
+    const op = (name, args) => { ensureState(); const r = spawnSync(process.execPath, [path.join(__dirname, '../site/xin/vm-agent.mjs'), name], { env, input: JSON.stringify(args || {}), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
     const u = op('usage');
     assert.deepEqual(u.quotas.map(q => q.key), ['gemini']);
     assert.deepEqual(u.quotas[0].windows.map(w => [w.kind, Math.round(w.used * 100)]), [['5h', 80], ['week', 30]]);
@@ -81,15 +81,16 @@ test('usage op：额度卡只显示一项 Gemini（前台、后台同一组）�
     // 旧账号留下的 Claude 记录（还标着用完）不算：额度卡不显示，光环也不因它变红
     fs.writeFileSync(path.join(xin, 'front-antigravity-quota.json'), JSON.stringify({ model: 'claude-opus-4.6', checkedAt: now, blocked: true, retryAt: now + H, buckets: [{ id: '3p-weekly', remaining: 0, resetAt: now + H }] }));
     assert.deepEqual(op('usage').quotas, []);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { t.after(() => fs.rmSync(dir, { recursive: true, force: true })); }   // 状态进程停下以后再删
 });
 
-test('前台每次读到额度都记一条读数，用量页据此给出预计用完的时间', () => {
+test('前台每次读到额度都记一条读数，用量页据此给出预计用完的时间', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-usage-')), xin = path.join(dir, 'xin');
   fs.mkdirSync(xin, { recursive: true });
   try {
     const now = Date.now(), env = { ...process.env, XIN_HOME: xin, XIN_WORK: path.join(dir, 'work') }, agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
-    const run = (argv, args) => { const r = spawnSync(process.execPath, [agent, ...argv], { env, input: JSON.stringify(args || {}), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+    const ensureState = require('./helpers/state-mode.cjs').stateClient(t, env);
+    const run = (argv, args) => { ensureState(); const r = spawnSync(process.execPath, [agent, ...argv], { env, input: JSON.stringify(args || {}), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
     const read = (at, r5) => ({ model: 'gemini-4-hydrogen', checkedAt: at, blocked: false, retryAt: 0, buckets: [{ id: 'gemini-5h', remaining: r5, resetAt: now + 4 * H }, { id: 'gemini-weekly', remaining: 0.9, resetAt: now + 80 * H }] });
     assert.ok(run(['locked', 'front_quota'], { quota: read(now - 40 * 60e3, 0.8) }).quota);
     assert.ok(run(['locked', 'front_quota'], { quota: read(now - 5 * 60e3, 0.6) }).quota);
@@ -98,7 +99,7 @@ test('前台每次读到额度都记一条读数，用量页据此给出预计�
     const five = w.find(x => x.kind === '5h'), week = w.find(x => x.kind === 'week');
     assert.ok(five.forecastAt > now && five.forecastAt < now + 4 * H, JSON.stringify(five));
     assert.equal(week.forecastAt, null, '每周额度没在动');
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { t.after(() => fs.rmSync(dir, { recursive: true, force: true })); }   // 状态进程停下以后再删
 });
 
 test('Antigravity 的输入不含缓存读取（total = 输入 + 输出）：记账时换算成「输入含缓存」，旧记录读的时候补上，不重复加', async () => {

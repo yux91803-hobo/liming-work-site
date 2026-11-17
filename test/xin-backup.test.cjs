@@ -164,13 +164,15 @@ test('每日定时任务做完顺手备份；备份失败不影响定时任务�
 
 /* ---------- 云电脑这边：导出给备份用、在新电脑上从备份重建 ---------- */
 const AGENT = path.join(__dirname, '../site/xin/vm-agent.mjs');
-function vm(xin) {
+// 起控制器之前先起这个目录的常驻状态进程（test/helpers/state-mode.cjs）
+function vm(t, xin) {
   const env = { ...process.env, XIN_HOME: xin, XIN_WORK: path.join(path.dirname(xin), 'work'), XIN_FRONT_PROVIDER: 'deepseek' };
-  return (name, args = {}) => { const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  const ensureState = require('./helpers/state-mode.cjs').stateClient(t, env);
+  return (name, args = {}) => { ensureState(); const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
 }
 
-test('backup_export：打一个包（状态库快照 + 对话过程、消息、清单），返回的大小和 sha256 和文件一致；同一天再叫复用同一份；密钥和推送私钥不进包', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-bk-vm-')), xin = path.join(dir, 'xin'), op = vm(xin);
+test('backup_export：打一个包（状态库快照 + 对话过程、消息、清单），返回的大小和 sha256 和文件一致；同一天再叫复用同一份；密钥和推送私钥不进包', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-bk-vm-')), xin = path.join(dir, 'xin'), op = vm(t, xin);
   assert.ok(op('memory_add', { content: '讲代码先给结论', type: 'profile' }).ok);
   fs.mkdirSync(path.join(xin, 'runs'), { recursive: true }); fs.mkdirSync(path.join(xin, 'push'), { recursive: true });
   fs.writeFileSync(path.join(xin, 'runs', 'r1.jsonl'), '{"t":"user","text":"早上好"}\n');
@@ -189,6 +191,6 @@ test('backup_export：打一个包（状态库快照 + 对话过程、消息、�
   assert.equal(fs.readFileSync(path.join(out, 'runs', 'r1.jsonl'), 'utf8'), '{"t":"user","text":"早上好"}\n');
   assert.equal(fs.readFileSync(path.join(out, 'daily.md'), 'utf8'), '- 网关签到\n');
   assert.ok(!fs.existsSync(path.join(out, 'codex.key')) && !fs.existsSync(path.join(out, 'push')));
-  const op2 = vm(out);
+  const op2 = vm(t, out);
   assert.deepEqual(op2('memory_export').items.map(i => i.content), ['讲代码先给结论'], '恢复后记忆照样读得出');
 });
