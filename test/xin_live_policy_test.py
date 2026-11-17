@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, after_steer, canned_reply
+from xin_live_policy import HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, after_steer, steer_count, canned_reply
 
 
 class SpokenMarker(unittest.TestCase):
@@ -33,6 +33,8 @@ class Steer(unittest.TestCase):
         self.assertIn('alpha-main（启用）、beta-backup（备用）', r); self.assertNotIn('--model', r)
         k = steer_request('xin-steer-k', '/d', self.ITEMS, '用 Kimi 做')
         self.assertIn('这个后台任务用 Kimi 做。', k); self.assertIn('--model kimi-k3.1-pro', k)
+        # 每一步先睡多久可调，默认 20 秒；都要小于控制器杀命令的 60 秒
+        self.assertIn('sleep 20; echo', r); self.assertIn('sleep 40; echo', steer_request('xin-steer-b', '/d', self.ITEMS, '', 40))
 
     def test_final_list_keeps_enabled_and_drops_backups(self):
         self.assertEqual(list_verdict('alpha-main,gamma-main', ['alpha-main', 'gamma-main'], ['beta-backup']), {'keeps': True, 'drops': True})
@@ -40,10 +42,30 @@ class Steer(unittest.TestCase):
         self.assertEqual(list_verdict('', ['alpha-main'], []), {'keeps': False, 'drops': True})
 
     def test_after_steer_finds_later_commands_on_dropped_names(self):
-        ev = [{'t': 'tool', 'detail': 'echo alpha-main'}, {'t': 'user', 'steer': True, 'text': 'x'}, {'t': 'tool', 'detail': 'echo gamma-main'}]
+        ev = [{'t': 'tool', 'detail': 'echo alpha-main'}, {'t': 'user', 'steer': True, 'text': 'x', 'clientId': 'ft-0123456789abcdef01234567'}, {'t': 'tool', 'detail': 'echo gamma-main'}]
         self.assertEqual(after_steer(ev, ['beta-backup']), {'steered': True, 'laterDrop': False, 'steers': 1})
         self.assertTrue(after_steer(ev + [{'t': 'tool_end', 'detail': 'echo beta-backup >> checked.txt'}], ['beta-backup'])['laterDrop'])
         self.assertEqual(after_steer(ev[:1], ['beta-backup'])['steered'], False)
+
+    def test_only_the_chat_supplement_counts_as_steered_by_chat(self):
+        # 网页任务详情那样直接补的（别的编号）在前面也不算聊天里那句；之后处理备用的命令照样算在聊天那句之后
+        direct = {'t': 'user', 'steer': True, 'text': 'x', 'clientId': 'steer-resend-0123456789abcdef'}
+        chat = {'t': 'user', 'steer': True, 'text': 'x', 'clientId': 'ft-0123456789abcdef01234567'}
+        backup = {'t': 'tool', 'detail': 'sleep 30; echo beta-backup >> checked.txt'}
+        self.assertEqual(after_steer([direct, backup], ['beta-backup']), {'steered': False, 'laterDrop': False, 'steers': 1})
+        self.assertEqual(after_steer([direct, backup, chat], ['beta-backup']), {'steered': True, 'laterDrop': False, 'steers': 2})
+        self.assertTrue(after_steer([chat, direct, backup], ['beta-backup'])['laterDrop'])
+        # 按新要求把之前查到的备用的筛掉（命令里带着名字）不算再核对；只看命令，不看输出
+        for cleanup in ("sed -i '/beta-backup/d' checked.txt", 'grep -v -e beta-backup -e delta-backup checked.txt > list.txt'):
+            self.assertFalse(after_steer([chat, {'t': 'tool_end', 'detail': cleanup}], ['beta-backup', 'delta-backup'])['laterDrop'], cleanup)
+        self.assertFalse(after_steer([chat, {'t': 'tool_end', 'detail': 'cat checked.txt', 'out': 'alpha-main\nbeta-backup'}], ['beta-backup'])['laterDrop'])
+        self.assertTrue(after_steer([chat, {'t': 'tool', 'detail': "/bin/bash -lc 'sleep 30; echo \"delta-backup\" >> checked.txt'"}], ['delta-backup'])['laterDrop'])
+
+    def test_steer_count_counts_one_client_id(self):
+        e = lambda c: {'t': 'user', 'steer': True, 'text': 'x', 'clientId': c}
+        self.assertEqual(steer_count([e('a-12345678'), e('b-12345678'), {'t': 'user', 'text': 'x', 'clientId': 'a-12345678'}], 'a-12345678'), 1)
+        self.assertEqual(steer_count([e('a-12345678'), e('a-12345678')], 'a-12345678'), 2)
+        self.assertEqual(steer_count([], 'a-12345678'), 0)
 
     def test_canned_controller_receipts_are_not_own_words(self):
         self.assertTrue(canned_reply('好，我这就去弄。')); self.assertTrue(canned_reply(' 好，我接着做。 '))

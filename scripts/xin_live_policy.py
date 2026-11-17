@@ -1,5 +1,6 @@
 """Production smoke policy for the owner's configured foreground model."""
 # 站长 2026-11-13：前台用 Antigravity 的 Gemini 4 Hydrogen（思考强度中），Gemini 额度用完再切 DeepSeek；Claude 不再用。
+import re
 HYDROGEN = 'gemini-4-hydrogen'
 DEEPSEEK = 'deepseek-v4.1-flash'
 # The foreground allows 65 s for Hydrogen and 25 s for DeepSeek inference. Allow
@@ -130,11 +131,12 @@ def same_resident_owner(first, usage):
 
 # ---------- 后台干活时插话（docs/superpowers/specs/2026-11-17-xin-steer-design.md，scripts/xin_live_steer.py） ----------
 # 夹具：按顺序核对几个模型名（启用的、备用的），每个名字单独一条 shell 命令、先 sleep，好让补充落在中途；最终只写一行名单。
-def steer_request(title, directory, items, model=''):
+# pause：每一步先睡几秒，好让聊天里那句补充赶在这件事做完之前（命令 60 秒会被控制器杀掉，要小于它）
+def steer_request(title, directory, items, model='', pause=20):
     names = '、'.join(n + ('（启用）' if on else '（备用）') for n, on in items)
     return ('这是发布后的真实联调（插话），只派一个后台任务并立即回复，不要等待它完成。' + (model and '这个后台任务' + model + '。') +
             '使用 xin task new --kind research' + (' --model kimi-k3.1-pro' if 'Kimi' in model else '') + ' --title ' + title + ' --dir ' + directory +
-            ' -- 后台测试：核对这份 Agent 模型清单：' + names + '。按顺序一个一个核对：每个名字单独执行一次 shell 命令 sleep 20; echo 名字 >> checked.txt，'
+            ' -- 后台测试：核对这份 Agent 模型清单：' + names + '。按顺序一个一个核对：每个名字单独执行一次 shell 命令 sleep ' + str(int(pause)) + '; echo 名字 >> checked.txt，'
             '一次只核对一个，不要合并成一条命令。全部核对完后，最终结果只写一行：用英文逗号连接核对过的模型名。'
             '不要访问其它项目、记事本、设备或用户服务。请只派这个任务，不要派审查。')
 
@@ -143,13 +145,24 @@ def list_verdict(text, keep, drop):
     t = str(text or '')
     return {'keeps': all(n in t for n in keep), 'drops': not any(n in t for n in drop)}
 
-# 补充送进了这一轮（过程里有兄弟的补充），之后的命令有没有再处理不要的名字
+# 核对某个名字的命令：照任务的说法是 sleep N; echo 名字 >> checked.txt（只看命令，不看输出）。
+# 按新要求把之前查到的筛掉（sed -i '/名字/d'、grep -v 名字）是站长要的「重新筛一遍」，不算再核对
+def checks_name(detail, names):
+    return any(re.search(r"echo\s+['\"]?" + re.escape(n) + r"['\"]?\s*>>", str(detail or '')) for n in names)
+
+# 聊天里那句补充送进了这一轮（过程里有前台转来的补充：编号 ft- 开头，vm-agent.mjs 的 frontAction），它之后还有没有再核对不要的名字；
+# 网页任务详情那样直接补的（别的编号）不算聊天里那句
 def after_steer(events, drop):
-    i = next((k for k, e in enumerate(events) if e.get('t') == 'user' and e.get('steer')), None)
+    i = next((k for k, e in enumerate(events) if e.get('t') == 'user' and e.get('steer') and str(e.get('clientId', '')).startswith('ft-')), None)
+    steers = sum(1 for e in events if e.get('t') == 'user' and e.get('steer'))
     if i is None:
-        return {'steered': False, 'laterDrop': False, 'steers': 0}
-    later = [e for e in events[i + 1:] if e.get('t') in ('tool', 'tool_end') and any(n in str(e.get('detail', '')) for n in drop)]
-    return {'steered': True, 'laterDrop': bool(later), 'steers': sum(1 for e in events if e.get('t') == 'user' and e.get('steer'))}
+        return {'steered': False, 'laterDrop': False, 'steers': steers}
+    later = [e for e in events[i + 1:] if e.get('t') in ('tool', 'tool_end') and checks_name(e.get('detail', ''), drop)]
+    return {'steered': True, 'laterDrop': bool(later), 'steers': steers}
+
+# 同一编号的补充在这一轮的过程里出现了几次（断线重送只该算一次）
+def steer_count(events, client_id):
+    return sum(1 for e in events if e.get('t') == 'user' and e.get('steer') and e.get('clientId') == client_id)
 
 # 控制器兜底的固定说法（前台自己的话要不到时才用）；站长要的是顺着对话的一句
 CANNED = ('好，我这就去弄。', '行，接下来就按你说的来。', '好，这一轮跑完我就按你补的再来一遍。', '好，开始的时候一起带上。', '好，我接着做。')
