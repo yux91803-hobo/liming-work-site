@@ -2413,6 +2413,46 @@ test('send 走待送达：电脑在睡时先回「已收到」和 waking；到�
   } finally { ib.restore(); }
 });
 
+// 2026-11-17 站长：「这次上线之后……先是显示接收中，然后又显示唤醒中」。云电脑上的内核记录里 send 只要几十毫秒，
+// 慢在回程：电脑回了以后还同步等后台任务记账（没任务时顺带调 InstaBox 撤租约，那次请求没有超时），拖过待送达当场等的 6 秒。
+// 回复不等记账：记账交给 waitUntil 在后台做，慢了、失败了都不拖住、不重发这一句
+test('send 走待送达：电脑回了就交给网页，不等后台任务记账（撤租约一直不回也当场回 run，放行以后记账照样做完）', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);
+  let release; const slow = new Promise(r => { release = r; });
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify({ sid: 's1', run: 'r1', bg: 0 }), stderr: '', exitCode: 0 } }],
+    'PUT /v1/machines/m_abc/activity-leases/xin-r1': [{ body: {} }],
+    'DELETE /v1/machines/m_abc/activity-leases/xin-tasks': [() => slow.then(() => new Response('{}'))] });
+  try {
+    const t0 = performance.now(), d = await callOp(m, env, ck, 'send', sendArgs);
+    assert.deepStrictEqual(d, { ok: true, data: { sid: 's1', run: 'r1', bg: 0 } });
+    assert.ok(performance.now() - t0 < 3000, '没等撤租约：' + Math.round(performance.now() - t0) + ' 毫秒');
+    assert.strictEqual(inboxOf(env).values.get('inbox:row:cid-inbox-0001').state, 'delivered');
+    release();
+    const tasks = () => env.XIN_TASK_SUPERVISOR.objs.get('xin-tasks')?.values.get('tasks');
+    await until(() => tasks() && tasks().leaseCleanup === false, 5000, '记账做完');
+    assert.deepStrictEqual([tasks().bg, tasks().machine], [0, 'm_abc']);
+  } finally { release(); ib.restore(); }
+});
+
+test('后台任务记账失败（监督实例出错）：已经送到的这一句照样算送到、不重发；直接调用的操作也照样拿到结果', async () => {
+  const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env), w = waiter();
+  const ns = env.XIN_TASK_SUPERVISOR, get = ns.get.bind(ns);
+  ns.get = id => id === 'xin-tasks' ? { fetch: async () => new Response('{"error":"down"}', { status: 500 }) } : get(id);
+  const ib = fakeIB({ 'GET /v1/machines': [MACHINES],
+    'POST /v1/machines/m_abc/exec': [{ body: { stdout: JSON.stringify({ sid: 's1', run: 'r1', bg: 0 }), stderr: '', exitCode: 0 } },
+      { body: { stdout: JSON.stringify({ tasks: [], bg: 0 }), stderr: '', exitCode: 0 } }],
+    'PUT /v1/machines/m_abc/activity-leases/xin-r1': [{ body: {} }] });
+  try {
+    assert.deepStrictEqual(await callOp(m, env, ck, 'send', sendArgs), { ok: true, data: { sid: 's1', run: 'r1', bg: 0 } });
+    const row = inboxOf(env).values.get('inbox:row:cid-inbox-0001');
+    assert.deepStrictEqual([row.state, row.attempts], ['delivered', 1]);
+    assert.deepStrictEqual(await callOp(m, env, ck, 'tasks', { sid: 's1' }, w.ctx), { ok: true, data: { tasks: [], bg: 0 } });
+    await w.settle();
+    assert.strictEqual(ib.calls.filter(c => c.key.endsWith('/exec')).length, 2, '这一句只送了一次');
+  } finally { ib.restore(); }
+});
+
 test('send：待送达存不上时回「消息没存上，请再发一次」，也不去碰电脑', async () => {
   const m = await fresh(), env = kernelEnv(m, { XIN_TRANSPORT: undefined, XIN_INBOX: '1' }), ck = await login(m, env);
   inboxOf(env).state.storage.put = async () => { throw new Error('storage down'); };
