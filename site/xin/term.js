@@ -327,6 +327,7 @@
       var tab = view.tab;
       st.hidden = !tab.live; el.classList.toggle('tm-live', !!tab.live);
       if (tab.live) { status(); startTick(); return; }
+      if (tab.loading) return;   // 还在读记录：只写「正在读取…」；读完（fill）再写结尾和光标——光标在就说明这一页齐了
       step(function () {
         if (!view || view.tab !== tab) return null;
         view.end.textContent = '';
