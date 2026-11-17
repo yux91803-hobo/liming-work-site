@@ -19,7 +19,7 @@ test('畸形对象不能永久堵住队列；未知协议或丢失工作区不�
   for(const version of [1,2]) assert.throws(()=>taskBridgeSession({}, {bridgeProtocol:version,run:RUN,attempt:ATTEMPT}),{code:'bad_bridge_scope'});
 });
 
-function fixture(t, mode) {
+function fixture(t, mode, { parent = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-bridge-receipt-')), home = path.join(dir, 'xin');
   const io = path.join(dir, 'workspace', 'io');
   for (const d of [home + '/runs', home + '/sessions', io]) fs.mkdirSync(d, { recursive: true });
@@ -27,11 +27,18 @@ function fixture(t, mode) {
     bridgeProtocol: 1, started: Date.now(), pid: process.pid };
   const task = { kind: 'task', sid: SID, agent: 'codex', no: 1, title: '队列回执', status: 'running',
     runs: [RUN], dir, workspace: { io, work: dir, home: dir, tmp: dir } };
+  if (parent) {
+    task.parent = 'sbridgeparent';
+    fs.writeFileSync(home + '/sessions/' + task.parent + '.json', JSON.stringify({
+      sid: task.parent, agent: 'codex', title: '原聊天', runs: [], created: Date.now(), updated: Date.now() }));
+  }
   fs.writeFileSync(home + '/runs/' + RUN + '.json', JSON.stringify(meta));
   fs.writeFileSync(home + '/sessions/' + SID + '.json', JSON.stringify(task));
   const env = { ...process.env, XIN_HOME: home, XIN_WORK: path.join(dir, 'work'), XIN_TASK_SANDBOX: '0',
     XIN_DSH: '/nonexistent/xin-test-dsh', CODEX_HOME: path.join(dir, 'codex'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'),
-    XIN_AGY_HOME: dir, XIN_FRONT_PROVIDER: 'deepseek', XIN_RUN: RUN, XIN_ATTEMPT: ATTEMPT, XIN_LOCK: 'tasks' };
+    XIN_AGY_HOME: dir, XIN_FRONT_PROVIDER: 'deepseek', XIN_RUN: RUN, XIN_ATTEMPT: ATTEMPT, XIN_LOCK: 'tasks',
+    // Inspect the queued transaction before the separate handoff dispatcher runs; no real wait or model call.
+    ...(parent ? { XIN_NOTE_WAIT_MS: '600000' } : {}) };
   // The owner is a coordinator, never an executor with an inherited source context.
   const ownerEnv = { ...env }; delete ownerEnv.XIN_RUN; delete ownerEnv.XIN_ATTEMPT; delete ownerEnv.XIN_LOCK;
   const owner = mode === 'kernel' ? stateMode(t, ownerEnv, { force: true }) : null;
@@ -47,6 +54,55 @@ function fixture(t, mode) {
 }
 
 for (const mode of ['legacy', 'kernel']) {
+  test(mode + '：note 文件桥丢回执重送及重启不重复事件、计数或合并内容；过期与结束后的新请求拒绝', async t => {
+    const f = fixture(t, mode, { parent: true });
+    const firstRequest = { op: 'note', text: '两个配置里的引脚定义不同，正在核对实际接线' };
+    const { drainTaskReports, taskBridgeSession } = await import(url('vm-task-reports'));
+    const { drainBridge } = await import(url('vm-runtime'));
+    const meta = JSON.parse(fs.readFileSync(f.home + '/runs/' + RUN + '.json'));
+    const task = JSON.parse(fs.readFileSync(f.home + '/sessions/' + SID + '.json'));
+    const workspace = taskBridgeSession(task, meta).workspace;
+    const request = path.join(workspace.io, ID + '.request'), reply = path.join(workspace.io, ID + '.reply');
+    fs.writeFileSync(request, JSON.stringify(firstRequest));
+    let first;
+    drainTaskReports(workspace, meta, { drain: drainBridge, submit: a => {
+      first = f.call(a); throw Error('simulated lost acknowledgement after commit');
+    } });
+    assert.ok(fs.existsSync(request), '未确认的原文件和编号保留');
+    assert.ok(!fs.existsSync(reply));
+    assert.equal(first.sid, SID);
+    assert.match(first.text, /^记下了，过一会儿回原聊天告诉兄弟/);
+    if (mode === 'kernel') {
+      f.owner.child.kill('SIGKILL'); await f.owner.exited;
+      stateMode(t, f.ownerEnv, { force: true });
+    }
+    drainTaskReports(workspace, meta, { drain: drainBridge, submit: a => f.call(a) });
+    assert.equal(fs.readFileSync(reply, 'utf8'), first.text);
+    assert.ok(!fs.existsSync(request));
+    assert.deepEqual(f.call(firstRequest), first, '结果丢失后仍取原回执');
+    assert.equal(f.call({ ...firstRequest, text: '同编号不能换正文' }).error, 'message_conflict');
+    const secondRequest = { id: 'b'.repeat(24), op: 'note', text: '实际接线使用 PA1，另一份配置已过期' };
+    const second = f.call(secondRequest);
+    assert.match(second.text, /^和刚才那条合成一条转告兄弟/);
+    assert.deepEqual(f.call(secondRequest), second);
+    assert.equal(f.call({ id: 'c'.repeat(24), op: 'note', text: '过期报告' }, { XIN_ATTEMPT: '2'.repeat(32) }).error, 'stale_attempt');
+    assert.equal(f.call({ id: 'c'.repeat(24), op: 'note', text: '另一任务', sid: 'sbridge002' }).error, 'bridge_ended');
+    const ended = spawnSync(process.execPath, [AGENT, 'locked', 'run_patch'], { env: f.env,
+      input: JSON.stringify({ run: RUN, changes: { ended: Date.now() } }), encoding: 'utf8', timeout: 20000 });
+    assert.equal(ended.status, 0, ended.stderr);
+    assert.deepEqual(f.call(firstRequest), first, '结束后已提交请求仍能取回执');
+    assert.equal(f.call({ id: 'c'.repeat(24), op: 'note', text: '结束后不得转告' }).error, 'bridge_ended');
+    const saved = JSON.parse(fs.readFileSync(f.home + '/sessions/' + SID + '.json'));
+    assert.equal(saved.notesSent, 1, '合并仍只是一条主动转告');
+    assert.equal(saved.noteIds.length, 2);
+    const events = fs.readFileSync(f.home + '/runs/' + RUN + '.jsonl', 'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(events.filter(e => e.t === 'note').map(e => e.text), [firstRequest.text, secondRequest.text]);
+    const handoffs = f.rows("SELECT payload FROM handoffs WHERE task='" + SID + "'");
+    assert.equal(handoffs.length, 1);
+    assert.deepEqual(JSON.parse(handoffs[0].payload).texts, [firstRequest.text, secondRequest.text]);
+    assert.equal(f.rows("SELECT * FROM commands WHERE id LIKE 'task-bridge:%'").length, 2);
+    assert.equal(f.rows("SELECT * FROM launches WHERE sid='sbridgeparent'").length, 0, '排队转告不启动原聊天模型');
+  });
   test(mode + '：同一文件请求重送返回原回执，不再添加记忆证据；不同内容冲突', t => {
     const f = fixture(t, mode), first = f.call();
     assert.match(first.text, /待确认/); assert.deepEqual(f.call(), first);
