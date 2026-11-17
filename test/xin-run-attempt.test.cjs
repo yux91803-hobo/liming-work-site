@@ -147,7 +147,7 @@ test('两个进程同时读到同一条待派发：只有认领到的那个起�
     const stale=journal.pendingLaunches();
     dispatcher.dispatchLaunches();
     const launcher=()=>readJ(metaF('${run}')).launcher;
-    for(const end=Date.now()+10000;Date.now()<end&&!(fs.existsSync(${JSON.stringify(record)})&&launcher()&&!alive(launcher().pid,launcher().identity));)await new Promise(r=>setTimeout(r,20));
+    for(const end=performance.now()+10000;performance.now()<end&&!(fs.existsSync(${JSON.stringify(record)})&&launcher()&&!alive(launcher().pid,launcher().identity));)await new Promise(r=>setTimeout(r,20));
     journal.pendingLaunches=()=>stale;
     dispatcher.dispatchLaunches();
     await new Promise(r=>setTimeout(r,800));
