@@ -131,6 +131,35 @@ for(const committed of [false,true])test('派发尝试在'+(committed?'提交后
   assert.equal(data.meta.pid,committed?null:undefined);assert.equal(fs.existsSync(sentinel),false);
 });
 
+// 旧模式每个请求一个进程：任务一轮做完时，执行进程在收尾里派下一轮，同一刻网页（或测试）来查的进程也在派发，
+// 两个都读到同一条待派发。2026-11-17 #161 正式运行的单元测试：后一个写的新编号盖掉前一个，前一个执行进程对不上编号退出，
+// 后一个拿不到锁也退出，这一轮没人做，15 秒后被当成中途断了、多起一轮（本地加压 60 次里复现 2 次，日志里两次派发相隔 7 毫秒）
+test('两个进程同时读到同一条待派发：只有认领到的那个起执行进程，编号不被后来的覆盖',t=>{
+  const f=fixture(t,'legacy'),run='rdispatch002',sid='sdispatch002',record=path.join(f.dir,'executed.jsonl'),self=path.join(f.dir,'executor.mjs');
+  fs.writeFileSync(self,`import fs from 'node:fs';fs.appendFileSync(${JSON.stringify(record)},JSON.stringify({run:process.argv[3],attempt:process.env.XIN_ATTEMPT})+'\\n');`);
+  const code=`import fs from 'node:fs';
+    import {BASE,journal,writeJ,readJ,alive} from ${JSON.stringify(url('vm-base'))};
+    import {createDispatcher} from ${JSON.stringify(url('vm-dispatch'))};
+    const metaF=r=>BASE+'/runs/'+r+'.json';
+    journal.atomic(()=>{writeJ(metaF('${run}'),{run:'${run}',sid:'${sid}',agent:'codex',started:Date.now(),attemptProtocol:1});journal.enqueueLaunch('${run}','${sid}');});
+    const dispatcher=createDispatcher({self:${JSON.stringify(self)},metaF,sessF:s=>BASE+'/sessions/'+s+'.json',runF:r=>BASE+'/runs/'+r+'.jsonl',lockedCall:()=>({}),emit:()=>{},patchRun:()=>{}});
+    // 另一个进程在第一个认领之前读到的样子：同一条还是待派发
+    const stale=journal.pendingLaunches();
+    dispatcher.dispatchLaunches();
+    const launcher=()=>readJ(metaF('${run}')).launcher;
+    for(const end=Date.now()+10000;Date.now()<end&&!(fs.existsSync(${JSON.stringify(record)})&&launcher()&&!alive(launcher().pid,launcher().identity));)await new Promise(r=>setTimeout(r,20));
+    journal.pendingLaunches=()=>stale;
+    dispatcher.dispatchLaunches();
+    await new Promise(r=>setTimeout(r,800));
+    console.log(JSON.stringify({meta:readJ(metaF('${run}')),launch:journal.launchRecord('${run}')}));`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:f.env,encoding:'utf8',timeout:20000});
+  assert.equal(child.status,0,child.stderr);
+  const data=JSON.parse(child.stdout.trim().split('\n').pop()),started=fs.readFileSync(record,'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(started.length,1,'同一条只起一个执行进程：'+JSON.stringify(started));
+  assert.equal(data.meta.attempt,started[0].attempt,'执行进程拿到的编号就是记录里的，没被后来的覆盖');
+  assert.equal(data.launch.state,'dispatched');assert.equal(data.launch.attempts,1);
+});
+
 test('损坏的权威元数据拒绝写入，解析错误不夹带 Cookie 或正文片段',t=>{
   const f=fixture(t,'legacy');
   const r=f.js(`import {BASE,journal,writeJ} from ${JSON.stringify(url('vm-base'))};

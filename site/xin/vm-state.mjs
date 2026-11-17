@@ -161,6 +161,10 @@ export class StateJournal {
   enqueueLaunch(run,sid,lane=0){this.writing(()=>this.db.prepare('INSERT OR IGNORE INTO launches(run,sid,lane,at) VALUES(?,?,?,?)').run(run,sid,lane,Date.now()));}
   pendingLaunches(){return this.db.prepare("SELECT * FROM launches WHERE state='pending' ORDER BY lane,at LIMIT 32").all();}
   dispatched(run){this.writing(()=>this.db.prepare("UPDATE launches SET state='dispatched',attempts=attempts+1,dispatchedAt=? WHERE run=?").run(Date.now(),run));}
+  // 认领一条派发：只有把它从读到的样子（待派发，或者读到的那一次派发）改成「已派发」的那个进程去起执行进程。
+  // 旧模式每个请求一个进程，两个进程可能同时读到同一条待派发；条件更新只有一个能成（照 maragudk/goqite 的 goqite.go Receive：
+  // SQLite 里取消息就是一条带条件的 UPDATE … RETURNING，改到了才算拿到，PostgreSQL 那边用 FOR UPDATE SKIP LOCKED）
+  claimLaunch(job){return this.writing(()=>this.db.prepare("UPDATE launches SET state='dispatched',attempts=attempts+1,dispatchedAt=? WHERE run=? AND state=? AND attempts=?").run(Date.now(),job.run,job.state,job.attempts).changes===1);}
   launchRecord(run){return this.db.prepare('SELECT * FROM launches WHERE run=?').get(run);}
   launchedRuns(){return this.db.prepare("SELECT * FROM launches WHERE state='dispatched' ORDER BY at LIMIT 128").all();}
   finishLaunch(run){this.writing(()=>this.db.prepare("UPDATE launches SET state='finished' WHERE run=?").run(run));}
