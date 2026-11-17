@@ -1,4 +1,4 @@
-// Private VM-local protocol. No payloads/credentials in logs, no automatic retry after a write.
+// Private VM-local protocol. No payloads/credentials in logs; unknown writes need an explicit replay guarantee.
 // The sync adapter is the small-process fallback in the approved design §6.3.
 import net from 'node:net';
 import path from 'node:path';
@@ -64,6 +64,59 @@ export function retryUnsent(fn, { deadlineMs = 30000, clock = () => performance.
     }
   }
 }
+const TRANSPORT_RETRY = new Set(['owner_unavailable', 'state_disconnected', 'state_timeout', 'state_client_failed']);
+const REPORT_UNSENT = new Set(['owner_unavailable', 'state_busy', 'state_draining']);
+const reportUnavailable = e => e && (e.executed === false && REPORT_UNSENT.has(e.code) || e.executed === 'unknown' && TRANSPORT_RETRY.has(e.code));
+// Startup probes are read-only; losing their reply must not abandon a newly dispatched runner.
+export async function waitForState(home, { deadlineMs = 30000 } = {}) {
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 300000) throw new StateUnavailable('state_request', false);
+  const start = performance.now(); let failure;
+  for (let i = 0; ; i++) {
+    const remaining = deadlineMs - (performance.now() - start);
+    if (i && remaining <= 0) throw failure;
+    try { return await requestState(home, { kind: 'control', op: 'health' }, { timeoutMs: Math.min(3000, Math.max(1, Math.ceil(remaining))) }); }
+    catch (e) {
+      if (!reportUnavailable(e)) throw e;
+      failure = e;
+      const left = deadlineMs - (performance.now() - start);
+      if (left <= 0) throw e;
+      await new Promise(resolve => setTimeout(resolve, Math.min(50 * 2 ** Math.min(i, 5), 1000, left)));
+    }
+  }
+}
+// Same-attempt reports only: assignments, or the foreground's existing run/frontRun receipt.
+// Quota reports also append a sample outside the journal, so are not safe to replay here.
+const LOCKED_REPORTS = new Set(['front_immediate', 'front_model', 'agy_conversation']);
+function retryReport(fn, { deadlineMs = 30000, clock = () => performance.now(), sleep = syncSleep } = {}) {
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 300000) throw new StateUnavailable('state_request', false);
+  const start = clock(); let failure, uncertain;
+  for (let i = 0; ; i++) {
+    const remaining = deadlineMs - (clock() - start);
+    if (i && remaining <= 0) throw failure;
+    try { return fn(Math.max(1, Math.ceil(remaining))); }
+    catch (e) {
+      if (!reportUnavailable(e)) throw e;
+      // A later connection refusal cannot prove an earlier, unanswered attempt did
+      // not commit. Preserve uncertainty so an outer retry cannot mint a new ID.
+      if (e.executed === 'unknown') uncertain = e;
+      failure = uncertain || e;
+      const left = deadlineMs - (clock() - start);
+      if (left <= 0) throw failure;
+      sleep(Math.min(50 * 2 ** Math.min(i, 5), 1000, left));
+    }
+  }
+}
+export function retryLockedReport(op, fn, options) {
+  return LOCKED_REPORTS.has(op) ? retryReport(fn, options) : retryUnsent(fn, options);
+}
+// These named callbacks only change journal/SQLite state. Keep this list explicit: a new
+// callback that sends network requests or performs external actions must not inherit replay.
+const RECEIPTED_NAMES = new Set([
+  'memory.preferences', 'memory.meta', 'memory.snapshot', 'memory.supersede', 'memory.restore',
+  'memory.add', 'memory.update', 'memory.learning', 'memory.forget', 'memory.forgetKeyword', 'memory.import',
+  'recall.sync', 'recall.drop', 'learning.report', 'memoryReview.apply', 'memoryReview.reserve',
+  'memoryReview.settle', 'companion.claim', 'companion.bond'
+]);
 // 一次性兼容客户端：记录归内核（或主人活着）时，把这一次命令行调用整个交给状态进程，不取得本地写权。
 export function inputArgs(read = () => fs.readFileSync(0, 'utf8')) {
   try { const t = read().trim(), a = t ? JSON.parse(t) : {}; return a && typeof a === 'object' && !Array.isArray(a) ? a : {}; } catch { return {}; }
@@ -82,17 +135,30 @@ export async function forwardCLI(home, op, { argv = process.argv, env = process.
   }
 }
 export function requestStateSync(home, request, options = {}) {
-  const timeoutMs = options.timeoutMs ?? 60000;
-  let input;try{input=JSON.stringify({home,request,options:{...options,timeoutMs}});}catch{throw new StateUnavailable('state_request',false);}
+  const timeoutMs = options.timeoutMs ?? 60000, id = options.id ?? crypto.randomUUID();
+  const deadlineMs = options.deadlineMs ?? 30000;
+  let input;try{input=JSON.stringify({home,request,options:{timeoutMs,id}});}catch{throw new StateUnavailable('state_request',false);}
+  const message = JSON.parse(input);
+  const q = message.request;
+  const receipted = q?.kind === 'write' || q?.kind === 'append' || q?.kind === 'named' && RECEIPTED_NAMES.has(q.name);
   if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>300000)throw new StateUnavailable('state_request',false);
+  if(receipted&&(!Number.isSafeInteger(deadlineMs)||deadlineMs<1||deadlineMs>300000))throw new StateUnavailable('state_request',false);
   // stdin carries request data; argv and the helper environment contain no request or gateway key.
   const env = Object.fromEntries(['PATH','LANG','LC_ALL','TZ'].filter(k => process.env[k]).map(k => [k, process.env[k]]));
-  const r = spawnSync(process.execPath, [SELF], { input,
-    encoding: 'utf8', env, timeout: timeoutMs + 3000, maxBuffer: FRAME_MAX + 65536 });
-  if (r.error || r.status !== 0) throw new StateUnavailable('state_client_failed', 'unknown');
-  let value; try { value = JSON.parse(r.stdout); } catch { throw new StateUnavailable('state_response', 'unknown'); }
-  if (!value.ok) throw new StateUnavailable(value.error, value.executed);
-  return value.result;
+  const send = remaining => {
+    const waitMs = Math.min(timeoutMs, remaining ?? timeoutMs);
+    message.options.timeoutMs = waitMs;
+    const payload = waitMs === timeoutMs ? input : JSON.stringify(message);
+    const r = spawnSync(process.execPath, [SELF], { input: payload,
+      encoding: 'utf8', env, timeout: waitMs + 3000, maxBuffer: FRAME_MAX + 65536 });
+    if (r.error || r.status !== 0) throw new StateUnavailable('state_client_failed', 'unknown');
+    let value; try { value = JSON.parse(r.stdout); } catch { throw new StateUnavailable('state_response', 'unknown'); }
+    if (!value.ok) throw new StateUnavailable(value.error, value.executed);
+    return value.result;
+  };
+  // The controller commits bridge:<id> with the change. Retransmission keeps both the
+  // exact request and its ID, including when COMMIT succeeded but the reply was lost.
+  return receipted ? retryReport(send, { deadlineMs }) : send();
 }
 async function main() {
   let q;

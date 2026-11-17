@@ -1,3 +1,14 @@
+<a id="report-recovery-20261117"></a>
+## Codex · 2026-11-17 接手 #164 / #165（当前工作）
+
+- 远端 main `21d7bdfa567d06122e6584a6fad956ac590392fa`（#164）；Claude #165 head `6c4025cb7f84858f5f493f3cda97dd2c69147b50` 开放，Worker 回程改后台记账；其原提交/分支保留，不混改 UI。#165 的 CI 44048354885 在原 owner kill9 用例约 60.8 秒不收尾，部署跳过；不能称为记账补丁引入。
+- 队列启用 #163 首次正式 44018154230 在原 note 用例 187/188，未部署；随后 #164 携带相同 VM 代码的正式 44038526459 全绿、联调成功、回滚跳过。只读确认实际 `vm-agent-f46e8f743f9a.mjs`、外壳 `vm-kernel-e1a29f7279b5.mjs`、单 owner、尝试/bridge 默认 true。查询时 bridge 文档数为 0，尚无实际新沙盒分配的正向见证，不虚称这条已验收。
+- 本次独立工作树 `/workspace/liming-kernel-note-recovery`，分支 `codex/xin-note-kernel-recovery-20261117`；未清除其他工作树或上一位未提交内容。问题发现 Claude；本次实现/回归 Codex；独立复核 Codex 子代理（不是 Claude 审核，也不把审核者列共同代码作者）。
+- 已复现：front_immediate 处理前失联被 timer 挂住；front_model 处理前失联在模型调用前失败；agy_conversation 已提交后丢回应误换 Codex。固定请求 ID 的真实 append/write/非幂等 named 在原 client 也稳定失败。视觉专项另外暴露新派发进程的单次 startup health 竞争，增加专用只读健康探测恢复；辅助 timer 的反向验证在仅把临时副本恢复 ref 时稳定失败。当前实现范围与回滚见 [报告恢复计划](superpowers/plans/2026-11-17-xin-report-recovery.md)，默认本地完整 check **1028/1028**、常驻内核 **188/188**、**13 组 E2E 全过**，均退出 0、无跳过，源码指纹 `be66f493248fa36638f48e795975c676fa9103d8e6c71b78f066ee4ca03e5017` 不变。显式 `XIN_RUN_ATTEMPTS=0 XIN_TASK_BRIDGE=0` 的内核回归 **188/188**、已有协议队列 **14/14** 也通过，关闭新分配仍处理已有协议。各项退出 0、无跳过且指纹一致；CI/正式结果以本批 PR 当前记录为准。
+- 未完成/下一步：完成本批回归、全量验证及 PR 发布门槛；#165 单独保留，待内核修复进入 main 后核对并接续验证。随后才推进 [持久收尾计划](superpowers/plans/2026-11-16-xin-finalization.md) 的终态包/输入交付，不重复队列隔离工作。真实暂停恢复、宿主授权 C 和凭据代理不冒称完成。
+
+以下保留各轮原始交接及历史判断，当前状态以本段和后续 PR 最终记录为准。
+
 # 小芯 AI 轮流开发与交接
 
 最新内核交接：[2026-11-17 接入 #161/#162 后的队列启用准备](#task-bridge-enable-20261117)；原队列实现见[先前子批](#task-bridge-20261116)。
