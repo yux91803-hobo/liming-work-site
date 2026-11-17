@@ -1706,7 +1706,11 @@
   }
   function paintBox(b) {
     var sid = b.dataset.tsid, t = S.tinfo[sid] || { status: 'queued' }, title = t.title || '后台的活', w = b.parentNode;
-    if (w && w.classList && w.classList.contains('xc-tbw')) { if (tLive(t)) { if (!w.classList.contains('dock')) dockBox(w); } else if (w.classList.contains('dock')) settleBox(w); }
+    // 在做 → 最底下；不在做 → 落下。结果先到落下的（held 记着那时的一轮）：任务摘要还说在做这一轮就不拉回去，换了新的一轮才回最底下
+    if (w && w.classList && w.classList.contains('xc-tbw')) {
+      if (!tLive(t)) { delete w.dataset.held; if (w.classList.contains('dock')) settleBox(w); }
+      else if (!w.classList.contains('dock') && w.dataset.held !== String(t.run || '')) { delete w.dataset.held; dockBox(w); }
+    }
     if (tLive(t)) {
       if (!b.classList.contains('live')) {
         b.className = 'xc-tb live'; b.removeAttribute('data-st');
@@ -1753,7 +1757,7 @@
   // 框还在最底下（结果比任务状态先到）就先把它落到这时候的最后；找不到框（太早的、别处派的）就照旧单独一条
   function resultAfter(sid) {
     var w = boxWrap(sid); if (!w) return null;
-    if (w.classList.contains('dock')) settleBox(w);
+    if (w.classList.contains('dock')) { w.dataset.held = String((S.tinfo[sid] || {}).run || ''); settleBox(w); }
     var e = w; while (e.nextElementSibling && e.nextElementSibling.classList.contains('xc-tres') && e.nextElementSibling.dataset.tsid === String(sid)) e = e.nextElementSibling;
     return e;
   }

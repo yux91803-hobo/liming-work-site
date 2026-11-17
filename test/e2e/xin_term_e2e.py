@@ -204,11 +204,21 @@ async def part2(browser):
         if op == 'poll' and args.get('run') == 'rlive00002':
             evs = [{'t': 'text', 'text': '在的，你说。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 800}][int(args.get('off', 0)):]
             return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': {'events': evs, 'off': 2, 'done': True}}))
+        # 转达结果的那一轮：任务摘要还没轮询到「做完」时它的话已经到了
+        if op == 'send' and st.get('send3'):
+            st['send3'] = False
+            return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': {'sid': CONV, 'run': 'rhand00002', 'agent': 'codex'}}))
+        if op == 'poll' and args.get('run') == 'rhand00002':
+            tr = {'sid': TASK, 'status': 'done', 'at': st['res_at'], 'endedAt': st['res_at']}
+            evs = [{'t': 'text', 'text': '编好了：`/data/workspace/blink/build/app.hex`。', 'taskResult': tr}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 600}][int(args.get('off', 0)):]
+            return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': {'events': evs, 'off': 2, 'done': True}}))
         if op == 'history' and args.get('sid') == TASK and st.get('task_hist'):
             st['task_hist_calls'] += 1
             return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': {'session': {'sid': TASK, 'agent': 'codex'}, 'task': st['tasks'][0], 'runs': st['task_hist'], 'active': None}}))
         if op == 'history' and args.get('sid') == CONV and st.get('conv_hist'):
-            return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': {'session': {'sid': CONV, 'agent': 'codex', 'title': '编译 blink'}, 'runs': st['conv_hist'], 'tasks': st['tasks'], 'active': None}}))
+            early = st.get('conv_early') or []   # 「更早的消息」那一页（带 before 来取）
+            runs, more = (early, False) if args.get('before') else (st['conv_hist'], bool(early))
+            return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': {'session': {'sid': CONV, 'agent': 'codex', 'title': '编译 blink'}, 'runs': runs, 'tasks': st['tasks'], 'more': more, 'active': None}}))
         await route.fallback()
     await pg.route('**/api/xin/call', overlay)
 
@@ -372,6 +382,38 @@ async def part2(browser):
       return [w.classList.contains('dock'), l.lastElementChild === w, (w.previousElementSibling.querySelector(':scope > .xc-bub') || {}).textContent, document.querySelectorAll('.xc-tb[data-tsid]').length,
         !document.querySelector('.xc-ai[data-run="rlive00001"] .xc-tb')]; })()""" % BOX)
     ui.check('刷新以后还在做的活：框在聊天最底下（在最新的「快了。」下面），只有一个框，不在派活那段话里', rl == [True, True, '快了。', 1, True], rl)
+
+    # 结果比任务状态先到（转达那一轮的话到了，任务摘要还说「在做」）：框先落到这时候的最后，结果紧跟在框后面；
+    # 框每秒刷新、这一轮说完又轮询任务（还是「在做」），框都不能跳回最底下——不能变成「结果在上、框在最底下」
+    st['res_at'] = now() - 400
+    st['send3'] = True
+    await pg.fill('.xc-row textarea', '好了吗')
+    await pg.keyboard.press('Enter')
+    await pg.wait_for_function("[...document.querySelectorAll('.xc-tres')].some(e => e.textContent.includes('编好了')) && !document.querySelector('.xc-typing')", timeout=10000)
+    await pg.wait_for_timeout(2500)   # 框每秒刷新一次、说完 0.8 秒后轮询一次任务：都过去了再看
+    RF = """(() => { const w = document.querySelector('%s').closest('.xc-tbw'), r = [...document.querySelectorAll('.xc-tres')].pop(), l = document.querySelector('.xc-msgs'), me = [...l.querySelectorAll('.xc-me')].pop();
+      return [w.classList.contains('dock'), w.nextElementSibling === r, l.lastElementChild === r, me.textContent, !!(me.compareDocumentPosition(w) & 4), document.querySelectorAll('.xc-tres').length]; })()""" % BOX
+    first = await pg.evaluate(RF)
+    ui.check('结果比任务状态先到：框落在「好了吗」下面、不在最底下了，结果紧跟在框后面、在聊天最后；之后框刷新、轮询到的还是「在做」，也不把框拉回最底下',
+             first == [False, True, True, '好了吗', True, 1], first)
+    st['tasks'] = [task(status='done', run='rtask00b01', startedAt=now() - 125000, endedAt=st['res_at'], result={'ok': True, 'text': '编好了：`/data/workspace/blink/build/app.hex`。', 'at': st['res_at']}, delivery={'state': 'delivered'})]
+    await pg.evaluate('LimingXinChat.tasks()')
+    await pg.wait_for_function("!document.querySelector('%s').classList.contains('live')" % BOX, timeout=5000)
+    late = await pg.evaluate(RF)
+    ui.check('随后轮询到做完：框收成一行、还在结果上面，结果只有一条', late == [False, True, True, '好了吗', True, 1], late)
+
+    # 「更早的消息」翻出派活那一轮（里面有这件活的派活事件）：不再画第二个框，在做的框还在最底下
+    st['tasks'] = [task(status='running', run='rtask00b02', startedAt=now() - 5000)]
+    st['conv_early'] = st['conv_hist'][:1]
+    st['conv_hist'] = [{'run': 'rlive00005', 'started': now() - 300, 'done': True, 'events': [{'t': 'user', 'text': '还在编吗'}, {'t': 'text', 'text': '在编，快了。'}, {'t': 'done', 'ok': True}]}]
+    await pg.reload()
+    await pg.wait_for_function("LimingXinChat.state.sid === '%s' && !!document.querySelector('.xc-earlier') && !!document.querySelector('%s')" % (CONV, BOX), timeout=15000)
+    await pg.click('.xc-earlier')
+    await pg.wait_for_function("[...document.querySelectorAll('.xc-ai .xc-bub')].some(e => e.textContent === '好，我去编一下。')", timeout=10000)
+    er = await pg.evaluate("""(() => { const w = document.querySelector('%s').closest('.xc-tbw'), l = document.querySelector('.xc-msgs');
+      return [document.querySelectorAll('.xc-tb[data-tsid]').length, w.classList.contains('dock'), l.lastElementChild === w, !document.querySelector('.xc-ai[data-run="rlive00001"] .xc-tb'),
+        (w.previousElementSibling.querySelector(':scope > .xc-bub') || {}).textContent]; })()""" % BOX)
+    ui.check('「更早的消息」翻出派活那一轮：不再画第二个框，在做的框还在聊天最底下（「在编，快了。」下面）', er == [1, True, True, True, '在编，快了。'], er)
     await pg.context.close()
 
 
