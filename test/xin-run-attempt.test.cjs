@@ -25,8 +25,8 @@ function fixture(t, mode) {
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };
   const report = (op, args, attempt = CURRENT, run = RUN) => cli(['locked', op], args, { XIN_LOCK: SID, XIN_RUN: run, XIN_ATTEMPT: attempt });
-  // 没起状态进程时（legacy 夹具），脚本扮演主人：先拿所有权再写（test/helpers/own-state.cjs）
-  const js = (source, attempt = CURRENT) => spawnSync(process.execPath, [...(owner ? [] : require('./helpers/own-state.cjs').OWN_IMPORT), '--input-type=module', '-e', source], {
+  // owner 夹具：不起状态进程，脚本扮演主人，先拿所有权再写（test/helpers/own-state.cjs）；legacy 夹具照旧走旧模式（删旧模式第 2 步改写）
+  const js = (source, attempt = CURRENT) => spawnSync(process.execPath, [...(mode === 'owner' ? require('./helpers/own-state.cjs').OWN_IMPORT : []), '--input-type=module', '-e', source], {
     env: { ...env, XIN_RUN: RUN, XIN_ATTEMPT: attempt }, encoding: 'utf8', timeout: 15000
   });
   return { dir, home, env, owner, cli, report, js, meta: () => JSON.parse(fs.readFileSync(home + '/runs/' + RUN + '.json')) };
@@ -103,7 +103,7 @@ test('接收端直接核对身份：过期报告绕过客户端也不能追加�
 });
 
 test('SQLite 已提交新编号但尚未投影时，旧编号也不能在提交锁内写入', t => {
-  const f=fixture(t,'legacy');
+  const f=fixture(t,'owner');
   const r=f.js(`import {BASE,journal,writeJ} from ${JSON.stringify(url('vm-base'))};
     journal.writing(()=>journal.db.prepare('INSERT INTO documents(name,body,dirty) VALUES(?,?,1)').run('runs/${RUN}.json',JSON.stringify({run:'${RUN}',sid:'${SID}',attempt:'${OLD}'})));
     let result;try{writeJ(BASE+'/forbidden.json',{bad:true});result='allowed';}catch(e){result=e.code;}
@@ -114,7 +114,7 @@ test('SQLite 已提交新编号但尚未投影时，旧编号也不能在提交�
 });
 
 for(const committed of [false,true])test('派发尝试在'+(committed?'提交后投影前':'提交前')+'崩溃：编号和派发计数一起恢复，不先启动执行器',t=>{
-  const f=fixture(t,'legacy'),run='rdispatch001',sentinel=path.join(f.dir,'executed'),self=path.join(f.dir,'executor.mjs');
+  const f=fixture(t,'owner'),run='rdispatch001',sentinel=path.join(f.dir,'executed'),self=path.join(f.dir,'executor.mjs');
   fs.writeFileSync(self,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(sentinel)},'unexpected');`);
   const code=`import {BASE,journal,writeJ,readJ} from ${JSON.stringify(url('vm-base'))};
     import {createDispatcher} from ${JSON.stringify(url('vm-dispatch'))};
@@ -136,7 +136,7 @@ for(const committed of [false,true])test('派发尝试在'+(committed?'提交后
 // 两个都读到同一条待派发。2026-11-17 #161 正式运行的单元测试：后一个写的新编号盖掉前一个，前一个执行进程对不上编号退出，
 // 后一个拿不到锁也退出，这一轮没人做，15 秒后被当成中途断了、多起一轮（本地加压 60 次里复现 2 次，日志里两次派发相隔 7 毫秒）
 test('两个进程同时读到同一条待派发：只有认领到的那个起执行进程，编号不被后来的覆盖',t=>{
-  const f=fixture(t,'legacy'),run='rdispatch002',sid='sdispatch002',record=path.join(f.dir,'executed.jsonl'),self=path.join(f.dir,'executor.mjs');
+  const f=fixture(t,'owner'),run='rdispatch002',sid='sdispatch002',record=path.join(f.dir,'executed.jsonl'),self=path.join(f.dir,'executor.mjs');
   fs.writeFileSync(self,`import fs from 'node:fs';fs.appendFileSync(${JSON.stringify(record)},JSON.stringify({run:process.argv[3],attempt:process.env.XIN_ATTEMPT})+'\\n');`);
   const code=`import fs from 'node:fs';
     import {BASE,journal,writeJ,readJ,alive} from ${JSON.stringify(url('vm-base'))};
@@ -162,7 +162,7 @@ test('两个进程同时读到同一条待派发：只有认领到的那个起�
 });
 
 test('损坏的权威元数据拒绝写入，解析错误不夹带 Cookie 或正文片段',t=>{
-  const f=fixture(t,'legacy');
+  const f=fixture(t,'owner');
   const r=f.js(`import {BASE,journal,writeJ} from ${JSON.stringify(url('vm-base'))};
     journal.writing(()=>journal.db.prepare('INSERT INTO documents(name,body,dirty) VALUES(?,?,1)').run('runs/${RUN}.json','SENSITIVE_COOKIE_TEST_VALUE'));
     try{writeJ(BASE+'/forbidden.json',{bad:true});console.log('allowed');}catch(e){console.log(JSON.stringify({code:e.code,message:e.message}));}`);
