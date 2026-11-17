@@ -311,3 +311,15 @@
 - 给下一位：
   - **页面类名是正式站联调的约定**：`scripts/test-xin-live.py` 取回答用最后一个 `.xc-ai:not(.xc-typing) .xc-bub`，打开网页成品等 `.xc-preview` 再点。`.xc-bub` 只能用在回答正文上；做完的网页总要有一个 `.xc-preview`（正文里的链接或下面那颗）。改聊天的结构前先 `grep -n "locator(\|wait_for_selector(" scripts/test-xin-live.py` 对一遍。
   - **给 Codex**：`test/xin.test.cjs` 第 1126 行「后台任务：同时最多两个……分身要确认就停在『等你确认』，回复了接着做」在 main 的正式运行上失败过一次（43904319051 第一次，第 1173 行：`front.jsonl` 里没有「任务 4『D』在等用户确认：要删掉旧的 build 目录吗」）。同一份代码在 PR 的 CI、本地都过，本地 6 个并行 × 2 轮也全过，CI 上那次用了 26 秒（本地并行时 30–34 秒），不是机器慢。照代码，D 变成 `waiting` 是在 `taskFinish`（那一轮退出以后），同时 `taskPush` 排一次转达；转达那一轮和「嗯」那一轮组装前台输入时都会带 `taskNotes` 里的「在等用户确认」——两次都没带说明那时 D 已经不是 `waiting`，或者两轮前台都没真的调用（`test/helpers/front-responses.cjs` 每次调用都会先记日志）。#158 改了这一带（`drainTaskReports`、`task_bridge`），请对着它再看一下有没有让 `waiting` 被改回去、或者让前台走了不调用模型的路。
+
+## Claude Code · 北京时间 2026-11-17 01:40 后（后台干活时插话、主动回来说一句）
+
+实现和自查：Claude Code（同一会话，没有另一位审核）。设计 `docs/superpowers/specs/2026-11-17-xin-steer-design.md`，改动清单见 `docs/CHANGES.md` 同日条目。先读这几条：
+
+- **补充怎么接**：`taskTell` 的回执带 `delivery`（now / next / start / reply / resumed / ended），`tellMode(t)` 算同一件事给前台看。能进当前轮的只有这一轮记录里 `transport` 是 `app-server` 或 `antigravity`、还没 `modelDone` 的（`steerable`）。Gemini 后台在 `antigravityWork` 每一步之前调 `options.steers()`（控制器 `steer_take`，在 tasks 锁里把 pending 标成 accepted 并在这一轮显示成兄弟的一句话），final / ask 之前再取一次，有就再走一步（`LATE_STEER_MAX`）。
+- **补充不丢**：`taskFinish` 里这一轮没送进去的（pending / next）带进 `t.inbox`；没正常做完时送进去了的也带上（`held: true`，不触发「接着做」，只跟着下一轮走）。`startTask` 把收件箱放进下一轮开头并清空；`taskTell` 的继续路径同样一次取完。同一轮换执行入口时 `steer_handover` 把这一轮的补充交给新模型。`taskStop` 不再清收件箱。去重靠任务里的 `t.tells`（最近 32 个编号和回执）。
+- **前台**：`handNotes` 只在 `mentionsWork(text)`（`vm-steer.mjs` 的说法表）为真时附 `<手上的事>`，**不要改成按词重合**——正式联调「只回复 陀螺 茶壶 贝壳……也不要等待后台」和派活原话共用很多词，#117 就是每轮带进行中被 DeepSeek 答成进度。`frontAction` 的 tell：`--continue` 才对已结束的任务开工；`ended` 回执不结束这一轮、不写 `.front.json` 回执（写了会挡住同一轮后面的调用）；`frontHandModes` 和实际 `delivery` 对不上时带 `reword`，`frontTurn` 不用预先写好的话、走 `ownWords`。
+- **主动说一句**：`taskNote` 记过程、合并（`journal.appendNote`）、限 3 条；交接队列里 `kind:'note'` 的记录由 `noteStart` 在原对话的锁里处理：任务版本变了就作废，对话忙就等，然后直接写一轮 `kind:'note'`、`ended` 的记录（没有 runner、不调模型、不推送）。网页靠 `tasks` 接口返回的 `notes` 画（`drawNotes`，按 run 去重）。
+- **正式站联调**多了 `scripts/xin_live_steer.py` 三段真模型（Gemini 补一句、停下再继续、点名 Kimi），这一步时限改成 45 分钟。夹具标题以「这是发布后的真实联调（插话），」开头，失败残留会在下次联调开头清掉（`SMOKE_TITLES`）。只打印布尔值和计数。
+- **真实断电没在线上模拟**：没有加「模拟断电」的线上接口；联调用「停下再继续」，runner 被杀、超时、Gemini 额度用完换模型都在 `test/xin-steer.test.cjs` 里用真进程验证。
+
