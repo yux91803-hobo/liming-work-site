@@ -61,8 +61,10 @@ async def part1(browser):
     pop = await pg.evaluate("(() => { const s = getComputedStyle(document.querySelector('.tm-win')); return [s.animationName, s.animationTimingFunction]; })()")
     # 站长 2026-11-16「终端弹出来会有卡顿，不够丝滑」：原来是 steps(5) 一格一格跳；改成连续缓动，从点的地方放大出来
     ui.check('电脑上终端弹出来是连续缓动（不是 steps 一格一格跳）', pop[0] == 'tmpop' and pop[1].startswith('cubic-bezier') and 'steps' not in pop[1], pop)
-    await pg.wait_for_timeout(560)
+    # 站长 2026-11-17「我每次点开这个，都是从头在加载一遍，不符合逻辑」：打开就停在最新一步，已经做过的不再从头敲一遍
     early = await pg.evaluate(WIN)
+    early_bottom = await pg.evaluate("(() => { const s = document.querySelector('.tm-win .tm-scr'); return s.scrollTop + s.clientHeight >= s.scrollHeight - 2; })()")
+    await pg.wait_for_timeout(560)
     await pg.wait_for_function("!document.querySelector('.tm-win .tm-tp') && !!document.querySelector('.tm-win .tm-cur')", timeout=8000)
     r = await pg.evaluate(WIN)
     ui.check('开头：「小芯」、模型、工作目录（~/workspace/blink）；标题栏写「小芯的电脑」；下面「> 要求」',
@@ -71,7 +73,8 @@ async def part1(browser):
       return [b.querySelectorAll('.tm-rule').length, !!sc.querySelector('.tm-sky .tm-moon'), !!sc.querySelector('.tm-sky .tm-cl1'), sc.querySelectorAll('.tm-sky .tm-star').length >= 6,
         getComputedStyle(sc.querySelector('.tm-sky .tm-cl1')).stroke === 'none', !!m.querySelector('svg'), Math.abs(r.bottom - g.top) <= 3]; }""")
     ui.check('照 Claude Code 的欢迎页：两条点线中间一幅像素夜景（点画的云、月牙、* 星星，不描粗边），小芯站在下面那条点线（地平线）上', sky == [2, True, True, True, True, True, True], sky)
-    ui.check('一个字一个字敲：打开半秒时只敲出了一部分，敲完才有结尾的光标', early and len(early['text']) < len(r['text']) * 0.8 and not early['cur'] and r['cur'], (len(early['text']) if early else None, len(r['text'])))
+    ui.check('打开就停在最新一步：已经做过的一次画好（不从头重放、没有在敲的字），结尾的光标已经在，滚在最下面',
+             early and early['text'] == r['text'] and early['cur'] and not early['typing'] and early_bottom, (len(early['text']) if early else None, len(r['text']), early and early['cur'], early and early['typing'], early_bottom))
     ui.check('一步一行：说的话、运行(make -j4)、打开网页(…)、修改(src/tim.c)；内部命令（派活）不画',
              r['rows'][0] == '我先看看工程。' and r['rows'][1] == '运行(make -j4)' and r['rows'][2] == '打开网页(example.com/a)' and r['rows'][3] == '修改(src/tim.c)' and len(r['rows']) == 4 and 'xin task' not in r['text'], r['rows'])
     det = await pg.evaluate("""() => { const w = document.querySelector('.tm-win'), c = w.querySelector('.tm-k-cmd'), web = w.querySelector('.tm-k-web'), ed = w.querySelector('.tm-k-edit');
@@ -91,6 +94,15 @@ async def part1(browser):
     await pg.wait_for_function("!!document.querySelector('.tm-win .tm-cur')", timeout=8000)
     th = await pg.evaluate("""() => { const r = document.querySelector('.tm-win .tm-k-think'), s = r && r.querySelector('.tm-say'); return [document.querySelectorAll('.tm-win .tm-k-think').length, s && s.textContent, s && getComputedStyle(s).fontStyle, !!(r && r.querySelector('.tm-b svg')), document.querySelector('.tm-win .tm-scr').textContent.includes('查看工作目录')]; }""")
     ui.check('模型的思考画成暗色斜体的一行、圆点是一颗星；前台概括那一句不画', th == [1, 'Checking what is in the build folder first.', 'italic', True, False], th)
+    # 在做的那一页：打开时已经有的几步一次画好；打开以后新来的一步才一个字一个字敲
+    await pg.evaluate("""() => { __w.open({ anchor: document.getElementById('anc'), tabs: [{ key: 'run:lv', label: '这一轮', prompt: '跑一下', live: true,
+      events: [{ t: 'text', text: '我先看看。' }, { t: 'tool', id: 'k1', name: 'Bash', detail: "/bin/bash -lc 'ls'" }, { t: 'tool_end', id: 'k1', name: 'Bash', detail: "/bin/bash -lc 'ls'", ok: true, out: 'Makefile' }],
+      status: () => ({ verb: '编译中', sec: 3 }) }] }); }""")
+    lv0 = await pg.evaluate("[document.querySelectorAll('.tm-win .tm-l').length, !!document.querySelector('.tm-win .tm-tp'), document.querySelector('.tm-win .tm-scr').textContent.includes('Makefile')]")
+    await pg.evaluate("""() => { __w.push('run:lv', { t: 'tool', id: 'k2', name: 'Bash', detail: "/bin/bash -lc 'make -j4 all'" }); }""")
+    await pg.wait_for_timeout(60)
+    lv1 = await pg.evaluate("[document.querySelectorAll('.tm-win .tm-l').length, !!document.querySelector('.tm-win .tm-tp')]")
+    ui.check('在做的那一页：打开时已经有的两步一次画好（没有在敲的字）；打开以后新来的一步一个字一个字敲出来', lv0 == [2, False, True] and lv1 == [3, True], (lv0, lv1))
     # 积压很多也不会落后太久：一下来了 25 条命令（一万多个字），还是一个字一个字敲，但 3 秒内敲完
     big = '\n'.join('line %03d ' % i + 'x' * 40 for i in range(12))
     await pg.evaluate("""(big) => { __w.open({ anchor: document.getElementById('anc'), tabs: [{ key: 'run:r2', label: '这一轮', prompt: '跑一下', live: true, events: [], status: () => ({ verb: '编译中', sec: 12 }) }] });
@@ -138,6 +150,8 @@ async def part1(browser):
     ui.check('手机：终端从底下滑上来是连续的（Vaul 那条曲线，不是 steps(4) 一格一格跳），遮罩一起淡入',
              up == ['tmup', 'cubic-bezier(0.32, 0.72, 0, 1)', '0.42s', 'tmfadein'], up)
     await pg.wait_for_function("!!document.querySelector('.tm-win .tm-cur')", timeout=8000)
+    # 内容一打开就画好（不再等打字），量位置要等滑上来的动画走完
+    await pg.wait_for_function("document.querySelector('.tm-win').getAnimations().every(a => a.playState === 'finished')", timeout=3000)
     m = await pg.evaluate("""() => { const w = document.querySelector('.tm-win'), r = w.getBoundingClientRect(); return [w.classList.contains('tm-sheet'), Math.round(r.bottom) === innerHeight, r.left === 0 && Math.round(r.right) === innerWidth,
       document.documentElement.scrollWidth <= innerWidth, w.querySelector('.tm-scr').scrollWidth <= w.querySelector('.tm-scr').clientWidth + 1, !document.querySelector('.tm-scrim').hidden]; }""")
     ui.check('390 宽深色：从底下升起来占满宽、有遮罩，很长的命令和报错不横向滚动', m == [True, True, True, True, True, True], m)

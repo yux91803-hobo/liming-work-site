@@ -146,8 +146,8 @@
     var view = null, Q = [], job = null, raf = 0, last = 0, tick = 0, frame = 0, stick = true, boot = 0, bootTm = 0, due = 0;
 
     /* 打字机：一步一步来；每一步可以先往屏幕上放东西，再交给打字机一个字一个字地敲。
-       速度：命令 22 毫秒一个字、代码 10、输出 3、说的话 9。来了新东西就定一个「最晚什么时候敲完」（刚打开重放 1.2 秒、
-       之后 1.5 秒），排着的字按剩下的时间匀速敲：积压多了打得快，但还是一个字一个字出来，不会越拖越慢 */
+       速度：命令 22 毫秒一个字、代码 10、输出 3、说的话 9。来了新东西就定一个「最晚什么时候敲完」（1.5 秒），
+       排着的字按剩下的时间匀速敲：积压多了打得快，但还是一个字一个字出来，不会越拖越慢。打开时已经有的不敲，一次画好（paint） */
     var BASE = { cmd: 22, code: 10, out: 3, say: 9 };
     function pending() { var n = job ? job.text.length - job.i : 0; Q.forEach(function (s) { n += s.len || 0; }); return n; }
     function pump(now) {
@@ -318,7 +318,9 @@
       if (tab.loading) log.appendChild(h('div', 'tm-mark', '正在读取…'));
       (tab.events || []).forEach(feed);
       ending();
-      go();
+      // 打开、换页、读完历史时已经发生的步骤一次画好，停在最下面；打开以后来的才一个字一个字敲
+      // （站长 2026-11-17：「我每次点开这个，都是从头在加载一遍，不符合逻辑」）
+      drain();
     }
     // 结尾：还在做——最底下那一行在转；做完了——一行「已完成 · …」，然后一个闪着的光标
     function ending() {
