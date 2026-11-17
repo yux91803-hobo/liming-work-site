@@ -19,14 +19,17 @@ function setup(t) {
   t.after(() => stopOwned(xin, dir));
   const old = path.join(agentDir, 'vm-agent.mjs');
   const run = (args, input = '{}', timeout = 20000) => spawnSync(process.execPath, [old, ...args], { env, input, encoding: 'utf8', timeout });
-  return { dir, agentDir, xin, env, old, run };
+  // 网站的调用交给真的常驻状态进程，它用的也是复制出来的这一份控制器（test/helpers/state-mode.cjs）
+  const ensureState = (extra = {}) => require('./helpers/state-mode.cjs').stateMode(t, { ...env, ...extra }, { agent: old });
+  return { dir, agentDir, xin, env, old, run, ensureState };
 }
 const current = xin => JSON.parse(fs.readFileSync(path.join(xin, 'controller-current.json'), 'utf8'));
 // 让 watchdog 有活可干（一条还没送出的推送），否则它第一轮就自己退出了
 const pending = xin => fs.writeFileSync(path.join(xin, 'outbox', 'a'.repeat(32) + '.json'), JSON.stringify({ id: 'a'.repeat(32), state: 'pending', nextAt: Date.now() + 3600e3, attempts: 0, delivered: [], created: Date.now(), msg: { sid: 'sx', title: 't', body: 'b' } }));
 
 test('网站直接调用控制器：记下这次用的是哪一份脚本；内部的加锁调用不记', t => {
-  const { xin, old, run } = setup(t);
+  const { xin, old, run, ensureState } = setup(t);
+  ensureState();
   assert.equal(run(['sessions']).status, 0);
   assert.equal(current(xin).self, old);
   fs.writeFileSync(path.join(xin, 'controller-current.json'), JSON.stringify({ self: '/somewhere/vm-agent-aaaaaaaaaaaa.mjs' }));
@@ -64,7 +67,7 @@ test('记录里的路径不像控制器入口（别的目录、别的名字）�
 
 // 审查问题 16：任务的项目副本和会话在系统临时目录里，电脑重启后可能没了。接着做时不再续接已经不存在的旧会话。
 test('接着做一个中途断了的任务、副本已经不在了：重新拷贝原项目，开新会话，并说明原要求和现状', t => {
-  const { dir, xin, env } = setup(t);
+  const { dir, xin, env, ensureState } = setup(t);
   const project = path.join(dir, 'work', 'blink'); fs.mkdirSync(project, { recursive: true }); fs.writeFileSync(path.join(project, 'main.c'), 'int main(){}');
   fs.mkdirSync(path.join(xin, 'sessions'), { recursive: true }); fs.mkdirSync(path.join(xin, 'runs'), { recursive: true });
   const old = 'roldturn0001', gone = path.join(dir, 'tmp-wiped', 'xin-task-staskreboot1');
@@ -74,6 +77,7 @@ test('接着做一个中途断了的任务、副本已经不在了：重新拷�
     goal: '把 PA0 的灯点亮', dir: project, status: 'queued', runs: [old], created: 1, model: 'glm-5.3', why: 'code', fallbacks: [], after: [],
     next: '刚才电脑暂停或重启，这一轮中途断了', agentSid: '019a0000-0000-7000-8000-000000000000', started: true,
     workspace: { work: path.join(gone, 'work'), io: path.join(gone, 'io'), home: path.join(gone, 'home'), tmp: path.join(gone, 'tmp'), manifest: path.join(xin, 'workspaces', 'staskreboot1.json') } }));
+  ensureState({ XIN_TASK_SANDBOX: '0' });   // 接着做的那一轮由状态进程派，沙盒开关跟着它的环境
   const r = spawnSync(process.execPath, [path.join(dir, 'agent', 'vm-agent.mjs'), 'tasks'], { env: { ...env, XIN_TASK_SANDBOX: '0' }, input: JSON.stringify({ all: true }), encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const task = JSON.parse(fs.readFileSync(path.join(xin, 'sessions', 'staskreboot1.json'), 'utf8'));

@@ -249,6 +249,7 @@ test('后台任务：这一轮没有浏览器（电脑上没装）时 xin browse
 
 test('后台任务的提示词：普通任务讲清楚 xin browser 怎么用、哪些会被拒；网页成品任务不让它找浏览器', async () => {
   process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-browser-prompt-'));
+  await require('./helpers/own-state.cjs').ownState();   // 测试进程里直接调提示词模块：测试进程自己当主人（正式环境里这段跑在常驻状态进程里）
   const { taskSystemPrompt } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-persona.mjs')).href);
   const ws = { work: '/w/work', home: '/w/home', tmp: '/w/tmp' };
   const p = taskSystemPrompt({ no: 1, title: '查手册', dir: '/data/workspace/x', workspace: ws, goal: '找 STM32F103 的参考手册' });

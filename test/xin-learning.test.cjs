@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process'),{pathToFileURL}=require('node:url');
 const url=n=>pathToFileURL(path.join(__dirname,'../site/xin/'+n+'.mjs')).href;
 function fixture(t){const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-learning-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
- return code=>{const r=spawnSync(process.execPath,['--input-type=module','-e',`import * as l from ${JSON.stringify(url('vm-learning'))};import * as m from ${JSON.stringify(url('vm-memory'))};import * as b from ${JSON.stringify(url('vm-base'))};
+ return code=>{const r=spawnSync(process.execPath,[...require('./helpers/own-state.cjs').OWN_IMPORT,'--input-type=module','-e',`import * as l from ${JSON.stringify(url('vm-learning'))};import * as m from ${JSON.stringify(url('vm-memory'))};import * as b from ${JSON.stringify(url('vm-base'))};
  const now=Date.UTC(2026,10,8),event=(id,extra={})=>({id:'learn00000'+id,topic:'gpio',exercise:'led-init',kind:'code',answer:'LED_PORT->BSRR = GPIO_BSRR_BS0;',correct:true,independent:true,at:now,...extra});
  const report=(events,extra={})=>l.reportLearning({agent:'codex',events,...extra},now);const defaultLearning=m.memoryPreferences().learning;m.setMemoryPreferences({learning:true});const out=await(async()=>{${code}})();process.stdout.write(JSON.stringify(out));`],{env:{...process.env,XIN_HOME:path.join(root,'xin'),XIN_WORK:path.join(root,'work')},encoding:'utf8'});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
 }

@@ -18,14 +18,15 @@ function fixture(t, mode) {
   fs.writeFileSync(home + '/runs/' + RUN + '.json', JSON.stringify(meta));
   fs.writeFileSync(home + '/runs/' + RUN + '.jsonl', JSON.stringify({ t: 'user', text: '先看波形，再看寄存器' }) + '\n');
   fs.writeFileSync(home + '/sessions/' + SID + '.json', JSON.stringify({ sid: SID, agent: 'codex', runs: [RUN], title: '尝试隔离', created: Date.now() }));
-  const owner = mode === 'kernel' ? stateMode(t, env, { force: true }) : null;
+  const owner = mode === 'kernel' ? stateMode(t, env) : null;
   t.after(() => stopOwned(home, dir));
   const cli = (op, args = {}, extra = {}) => {
     const r = spawnSync(process.execPath, [AGENT, ...op], { env: { ...env, ...extra }, input: JSON.stringify(args), encoding: 'utf8', timeout: 15000 });
     assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
   };
   const report = (op, args, attempt = CURRENT, run = RUN) => cli(['locked', op], args, { XIN_LOCK: SID, XIN_RUN: run, XIN_ATTEMPT: attempt });
-  const js = (source, attempt = CURRENT) => spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+  // owner 夹具：不起状态进程，脚本扮演主人，先拿所有权再写（test/helpers/own-state.cjs）；legacy 夹具照旧走旧模式（删旧模式第 2 步改写）
+  const js = (source, attempt = CURRENT) => spawnSync(process.execPath, [...(mode === 'owner' ? require('./helpers/own-state.cjs').OWN_IMPORT : []), '--input-type=module', '-e', source], {
     env: { ...env, XIN_RUN: RUN, XIN_ATTEMPT: attempt }, encoding: 'utf8', timeout: 15000
   });
   return { dir, home, env, owner, cli, report, js, meta: () => JSON.parse(fs.readFileSync(home + '/runs/' + RUN + '.json')) };
@@ -102,7 +103,7 @@ test('接收端直接核对身份：过期报告绕过客户端也不能追加�
 });
 
 test('SQLite 已提交新编号但尚未投影时，旧编号也不能在提交锁内写入', t => {
-  const f=fixture(t,'legacy');
+  const f=fixture(t,'owner');
   const r=f.js(`import {BASE,journal,writeJ} from ${JSON.stringify(url('vm-base'))};
     journal.writing(()=>journal.db.prepare('INSERT INTO documents(name,body,dirty) VALUES(?,?,1)').run('runs/${RUN}.json',JSON.stringify({run:'${RUN}',sid:'${SID}',attempt:'${OLD}'})));
     let result;try{writeJ(BASE+'/forbidden.json',{bad:true});result='allowed';}catch(e){result=e.code;}
@@ -113,7 +114,7 @@ test('SQLite 已提交新编号但尚未投影时，旧编号也不能在提交�
 });
 
 for(const committed of [false,true])test('派发尝试在'+(committed?'提交后投影前':'提交前')+'崩溃：编号和派发计数一起恢复，不先启动执行器',t=>{
-  const f=fixture(t,'legacy'),run='rdispatch001',sentinel=path.join(f.dir,'executed'),self=path.join(f.dir,'executor.mjs');
+  const f=fixture(t,'owner'),run='rdispatch001',sentinel=path.join(f.dir,'executed'),self=path.join(f.dir,'executor.mjs');
   fs.writeFileSync(self,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(sentinel)},'unexpected');`);
   const code=`import {BASE,journal,writeJ,readJ} from ${JSON.stringify(url('vm-base'))};
     import {createDispatcher} from ${JSON.stringify(url('vm-dispatch'))};
@@ -122,9 +123,9 @@ for(const committed of [false,true])test('派发尝试在'+(committed?'提交后
     ${committed?"journal.recover=()=>process.kill(process.pid,'SIGKILL');":"journal.checkWriter=transaction=>{if(transaction)process.kill(process.pid,'SIGKILL');};"}
     const dispatcher=createDispatcher({self:${JSON.stringify(self)},metaF,sessF:s=>BASE+'/sessions/'+s+'.json',runF:r=>BASE+'/runs/'+r+'.jsonl',lockedCall:()=>({}),emit:()=>{},patchRun:()=>{}});
     dispatcher.dispatchLaunches();`;
-  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:f.env,encoding:'utf8',timeout:10000});
+  const child=spawnSync(process.execPath,[...require('./helpers/own-state.cjs').OWN_IMPORT,'--input-type=module','-e',code],{env:f.env,encoding:'utf8',timeout:10000});
   assert.equal(child.signal,'SIGKILL',child.stderr);assert.equal(fs.existsSync(sentinel),false);
-  const recovered=spawnSync(process.execPath,['--input-type=module','-e',`import {BASE,journal,readJ} from ${JSON.stringify(url('vm-base'))};journal.recover();console.log(JSON.stringify({meta:readJ(BASE+'/runs/${run}.json'),launch:journal.launchRecord('${run}')}));`],{env:f.env,encoding:'utf8',timeout:10000});
+  const recovered=spawnSync(process.execPath,[...require('./helpers/own-state.cjs').OWN_IMPORT,'--input-type=module','-e',`import {BASE,journal,readJ} from ${JSON.stringify(url('vm-base'))};journal.recover();console.log(JSON.stringify({meta:readJ(BASE+'/runs/${run}.json'),launch:journal.launchRecord('${run}')}));`],{env:f.env,encoding:'utf8',timeout:10000});
   assert.equal(recovered.status,0,recovered.stderr);const data=JSON.parse(recovered.stdout);
   assert.equal(data.launch.state,committed?'dispatched':'pending');assert.equal(data.launch.attempts,committed?1:0);
   if(committed)assert.match(data.meta.attempt,/^[a-f0-9]{32}$/);else assert.equal(data.meta.attempt,undefined);
@@ -135,7 +136,7 @@ for(const committed of [false,true])test('派发尝试在'+(committed?'提交后
 // 两个都读到同一条待派发。2026-11-17 #161 正式运行的单元测试：后一个写的新编号盖掉前一个，前一个执行进程对不上编号退出，
 // 后一个拿不到锁也退出，这一轮没人做，15 秒后被当成中途断了、多起一轮（本地加压 60 次里复现 2 次，日志里两次派发相隔 7 毫秒）
 test('两个进程同时读到同一条待派发：只有认领到的那个起执行进程，编号不被后来的覆盖',t=>{
-  const f=fixture(t,'legacy'),run='rdispatch002',sid='sdispatch002',record=path.join(f.dir,'executed.jsonl'),self=path.join(f.dir,'executor.mjs');
+  const f=fixture(t,'owner'),run='rdispatch002',sid='sdispatch002',record=path.join(f.dir,'executed.jsonl'),self=path.join(f.dir,'executor.mjs');
   fs.writeFileSync(self,`import fs from 'node:fs';fs.appendFileSync(${JSON.stringify(record)},JSON.stringify({run:process.argv[3],attempt:process.env.XIN_ATTEMPT})+'\\n');`);
   const code=`import fs from 'node:fs';
     import {BASE,journal,writeJ,readJ,alive} from ${JSON.stringify(url('vm-base'))};
@@ -152,7 +153,7 @@ test('两个进程同时读到同一条待派发：只有认领到的那个起�
     dispatcher.dispatchLaunches();
     await new Promise(r=>setTimeout(r,800));
     console.log(JSON.stringify({meta:readJ(metaF('${run}')),launch:journal.launchRecord('${run}')}));`;
-  const child=spawnSync(process.execPath,['--input-type=module','-e',code],{env:f.env,encoding:'utf8',timeout:20000});
+  const child=spawnSync(process.execPath,[...require('./helpers/own-state.cjs').OWN_IMPORT,'--input-type=module','-e',code],{env:f.env,encoding:'utf8',timeout:20000});
   assert.equal(child.status,0,child.stderr);
   const data=JSON.parse(child.stdout.trim().split('\n').pop()),started=fs.readFileSync(record,'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(started.length,1,'同一条只起一个执行进程：'+JSON.stringify(started));
@@ -161,7 +162,7 @@ test('两个进程同时读到同一条待派发：只有认领到的那个起�
 });
 
 test('损坏的权威元数据拒绝写入，解析错误不夹带 Cookie 或正文片段',t=>{
-  const f=fixture(t,'legacy');
+  const f=fixture(t,'owner');
   const r=f.js(`import {BASE,journal,writeJ} from ${JSON.stringify(url('vm-base'))};
     journal.writing(()=>journal.db.prepare('INSERT INTO documents(name,body,dirty) VALUES(?,?,1)').run('runs/${RUN}.json','SENSITIVE_COOKIE_TEST_VALUE'));
     try{writeJ(BASE+'/forbidden.json',{bad:true});console.log('allowed');}catch(e){console.log(JSON.stringify({code:e.code,message:e.message}));}`);

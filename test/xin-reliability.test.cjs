@@ -70,7 +70,8 @@ emit(claude ? {type:'system',subtype:'init',session_id:id} : {type:'thread.start
 })();
 `;
 
-function fixture(t, extra = {}) {
+// legacy：不起状态进程，走旧模式的 flock 锁（只给测旧模式锁文件的那条用，删旧模式第 2 步一起改写）
+function fixture(t, extra = {}, { legacy = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-reliability-'));
   for (const p of ['xin/sessions', 'bin', 'profile', 'work', 'barrier', 'codex/sessions/2026/11/06', 'claude/projects/work'])
     fs.mkdirSync(path.join(dir, p), { recursive: true });
@@ -84,8 +85,10 @@ function fixture(t, extra = {}) {
     NODE_OPTIONS: [process.env.NODE_OPTIONS, '--require=' + preload].filter(Boolean).join(' ')
   }, extra);
   const session = path.join(env.XIN_HOME, 'sessions', SID + '.json');
+  // 控制器和执行进程都对着真的常驻状态进程（test/helpers/state-mode.cjs）
+  const ensureState = legacy ? () => {} : require('./helpers/state-mode.cjs').stateClient(t, env);
   const op = (name, args = {}) => {
-    const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8', timeout: 15000 });
+    ensureState(); const r = spawnSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args), encoding: 'utf8', timeout: 15000 });
     assert.equal(r.status, 0, r.stderr || String(r.error || ''));
     return JSON.parse(r.stdout);
   };
@@ -96,7 +99,7 @@ function fixture(t, extra = {}) {
     return op('send', { sid, text });
   };
   const asyncOp = (name, args) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [AGENT, name], { env });
+    ensureState(); const child = spawn(process.execPath, [AGENT, name], { env });
     let out = '', err = '';
     child.stdout.on('data', d => { out += d; }); child.stderr.on('data', d => { err += d; });
     child.on('error', reject); child.on('close', code => {
@@ -126,7 +129,7 @@ function fixture(t, extra = {}) {
     fs.writeFileSync(session,JSON.stringify({sid:SID,agent:'codex',title:'CLI executor',runs:[run],created:1,updated:1}));
     fs.writeFileSync(path.join(env.XIN_HOME,'runs',run+'.json'),JSON.stringify({run,sid:SID,agent:'codex',kind:'daily',text:'CLI test',started:Date.now(),model:'deepseek-v4.1-flash',fallbacks:[]}));
     fs.writeFileSync(path.join(env.XIN_HOME,'runs',run+'.jsonl'),JSON.stringify({t:'user',text:'CLI test'})+'\n');
-    spawn(process.execPath,[AGENT,'run',run],{env,detached:true,stdio:'ignore'}).unref();
+    ensureState(); spawn(process.execPath,[AGENT,'run',run],{env,detached:true,stdio:'ignore'}).unref();
     return {run,sid:SID};
   };
   return { dir, env, session, op, asyncOp, wait, seed, barrier, cliSend, claudeSend };
@@ -200,7 +203,7 @@ test('并发改名、归档和后台保存状态不相互覆盖，后台任务�
 });
 
 test('锁持有进程被杀后由系统释放，后续发送不用人工删除锁文件', async t => {
-  const f = fixture(t); f.seed(); const dir = path.join(f.env.XIN_HOME, 'locks'); fs.mkdirSync(dir);
+  const f = fixture(t, {}, { legacy: true }); f.seed(); const dir = path.join(f.env.XIN_HOME, 'locks'); fs.mkdirSync(dir);
   const holder = spawn('flock', ['--close', path.join(dir, SID + '.lock'), process.execPath, '-e', "console.log('ready');setInterval(()=>{},1000)"],
     { detached: true, env: f.env, stdio: ['ignore', 'pipe', 'pipe'] });
   try {

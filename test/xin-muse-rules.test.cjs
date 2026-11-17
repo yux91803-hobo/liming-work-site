@@ -13,6 +13,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { pathToFileURL } = require('node:url');
 process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-muse-rules-'));
+// 测试进程里直接调提示词模块：测试进程自己当主人（正式环境里这些代码跑在常驻状态进程里，test/helpers/own-state.cjs）
+test.before(() => require('./helpers/own-state.cjs').ownState());
 const imp = f => import(pathToFileURL(path.join(__dirname, '../site/xin', f)).href);
 const boxedTask = { no: 1, title: '查资料', tkind: 'research', dir: '/data/workspace/p', workspace: { work: '/w/work', home: '/w/home', tmp: '/w/tmp' }, goal: 'x' };
 

@@ -16,6 +16,9 @@ process.env.CLAUDE_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-claud
 // Harness（dsh）也一样：会话目录指到临时目录；命令指到一个不存在的路径（本机装了 dsh 也不会被测试用到）
 process.env.XIN_DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-dsh-'));
 process.env.XIN_DSH = path.join(process.env.XIN_DSH_HOME, 'no-dsh');
+// 这个文件在测试进程里直接调控制器模块（系统提示、记忆、好感度……），用的就是上面这个 XIN_HOME：测试进程自己当主人
+// （正式环境里这些代码跑在常驻状态进程里，test/helpers/own-state.cjs）。要起控制器子进程的测试各用 agentEnv(t) 自己的目录和状态进程。
+test.before(() => require('./helpers/own-state.cjs').ownState());
 const load = rel => import(pathToFileURL(path.join(__dirname, rel)).href);
 // A whole fresh module graph (vm-agent and every module it imports) that reads the current environment.
 // A query string on vm-agent alone no longer suffices: shared modules such as vm-base are cached by URL.
@@ -23,6 +26,13 @@ function freshAgentUrl(tag) {
   const src = path.join(__dirname, '../site/xin'), dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-mod-' + tag + '-'));
   for (const f of fs.readdirSync(src).filter(f => /^vm-.*\.mjs$/.test(f))) fs.copyFileSync(path.join(src, f), path.join(dir, f));
   return pathToFileURL(path.join(dir, 'vm-agent.mjs')).href;
+}
+// 换了 XIN_HOME 的整套新模块要写库时：先让这套模块拿那个目录的所有权（它在测试里扮演那个目录的状态进程）
+async function freshOwnedAgent(tag) {
+  const url = freshAgentUrl(tag);
+  const { ownership } = await import(url.replace(/vm-agent\.mjs$/, 'vm-base.mjs'));
+  if (!ownership.owning) ownership.take({ waitMs: 5000 });
+  return import(url);
 }
 const PW = 'correct horse battery';
 const AGENT_TEXT = '// fake vm-agent\n';
@@ -549,7 +559,7 @@ test('开场白：xin next 写一句，3 天内有效（主动跟进默认关，
   assert.ok(d.includes('<<<每日任务\n- 网关签到\n每日任务>>>') && !d.includes('xin next') && d.includes('别问问题'));
 });
 
-test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做完；记下今天做过，再叫就跳过；开场白默认不说，打开主动跟进才取得到', async () => {
+test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做完；记下今天做过，再叫就跳过；开场白默认不说，打开主动跟进才取得到', async t => {
   const { execFileSync } = require('node:child_process');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-daily-')), bin = path.join(home, 'fakebin');
@@ -567,7 +577,8 @@ test('真跑 vm-agent（假 codex）：第一次卡住 → 自动重来 → 做�
   // hasCmd 走登录 shell（sh -lc），会重写 PATH；把假 codex 写进 HOME/.profile，登录后还能找到
   fs.writeFileSync(path.join(home, '.profile'), 'PATH="' + bin + ':$PATH"\nexport PATH\n');
   const env = Object.assign({}, process.env, { HOME: home, XIN_HOME: home, XIN_WORK: path.join(home, 'work'), XIN_STALL_MS: '800', PATH: bin + ':' + process.env.PATH });
-  const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
+  const ensureState = require('./helpers/state-mode.cjs').stateClient(t, env);
+  const op = (name, args) => { ensureState(); return JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString()); };
   assert.deepStrictEqual(op('daily'), { skipped: 'empty' });
   op('daily_set', { text: '- 网关签到' });
   const r = op('daily');
@@ -716,19 +727,21 @@ test('下载：云电脑在睡觉时回 503 + waking（网页等它醒了再下�
   } finally { ib.restore(); }
 });
 
-function agentEnv(extraEnv = {}) {
+// 每个测试自己的目录；起控制器之前先起真的常驻状态进程（test/helpers/state-mode.cjs）。测试里自己起控制器、执行进程的，先调 ensureState()
+function agentEnv(t, extraEnv = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-files-')), work = path.join(home, 'work');
   const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: work }, extraEnv);
+  const ensureState = require('./helpers/state-mode.cjs').stateClient(t, env);
   env.NODE_OPTIONS = (env.NODE_OPTIONS || '') + ' --require=' + path.join(__dirname,'helpers/front-responses.cjs');
   const { execFileSync } = require('node:child_process');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
-  const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
-  return { home, work, xin: env.XIN_HOME, op };
+  const op = (name, args) => { ensureState(); return JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString()); };
+  return { home, work, xin: env.XIN_HOME, op, ensureState };
 }
 
-test('前台缓存：系统提示每轮一字不差（不带时间、记忆、每日记录）；这些资料放在本轮输入里，排在历史之后、原话之前', async () => {
+test('前台缓存：系统提示每轮一字不差（不带时间、记忆、每日记录）；这些资料放在本轮输入里，排在历史之后、原话之前', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-cache-')), log = path.join(tmp, 'front.log');
-  const { op } = agentEnv({ XIN_FRONT_TEST_LOG: log });
+  const { op } = agentEnv(t, { XIN_FRONT_TEST_LOG: log });
   const done = async run => { for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { if (op('poll', { run, off: 0 }).done) return; await new Promise(ok => setTimeout(ok, 120)); } assert.fail('这一轮没有结束'); };
   const a = op('send', { agent: 'codex', text: '第一句' }); await done(a.run);
   // 两轮之间记忆变了：以前会让系统提示跟着变，缓存失效
@@ -748,8 +761,8 @@ test('前台缓存：系统提示每轮一字不差（不带时间、记忆、�
   assert.ok(!input.slice(mat + 1).some(m => text(m).includes('<<<记忆')), '资料只有一份');
 });
 
-test('小芯的文件：列文件夹（文件夹在前、不列隐藏的）、预览文字文件、二进制只给下载，工作目录外面一律不行', () => {
-  const { home, work, op } = agentEnv();
+test('小芯的文件：列文件夹（文件夹在前、不列隐藏的）、预览文字文件、二进制只给下载，工作目录外面一律不行', t => {
+  const { home, work, op } = agentEnv(t);
   fs.mkdirSync(path.join(work, 'blink', 'build'), { recursive: true });
   fs.writeFileSync(path.join(work, 'blink', 'main.c'), 'int main(void) { return 0; }\n');
   fs.writeFileSync(path.join(work, 'blink', 'build', 'app.bin'), Buffer.from([0x00, 0x50, 0x00, 0x20, 0xff]));
@@ -781,8 +794,8 @@ test('小芯的文件：列文件夹（文件夹在前、不列隐藏的）、�
   assert.strictEqual(op('files', { path: work + '/nope.c' }).error, 'not_found');
 });
 
-test('对话改名、删除（连同每一轮的记录）；还在进行中的不让删', () => {
-  const { xin, op } = agentEnv();
+test('对话改名、删除（连同每一轮的记录）；还在进行中的不让删', t => {
+  const { xin, op } = agentEnv(t);
   const sess = path.join(xin, 'sessions'), runs = path.join(xin, 'runs');
   fs.mkdirSync(sess, { recursive: true }); fs.mkdirSync(runs, { recursive: true });
   const mkSess = (sid, run, done) => {
@@ -808,7 +821,7 @@ test('对话改名、删除（连同每一轮的记录）；还在进行中的�
   assert.strictEqual(op('forget', { sid: '../../etc' }).error, 'bad_sid');
 });
 
-test('插件：只列用户自己装的（电脑自带的不显示、不让关）和开没开；开关记下来，每轮起 codex 时加 -c（只给自己装的）；小芯挪走的 REA 并回配置、记成关着', async () => {
+test('插件：只列用户自己装的（电脑自带的不显示、不让关）和开没开；开关记下来，每轮起 codex 时加 -c（只给自己装的）；小芯挪走的 REA 并回配置、记成关着', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-plug-'));
   const codexHome = path.join(tmp, 'codex'), sys = path.join(tmp, 'etc.toml'), bin = path.join(tmp, 'bin'), home = path.join(tmp, 'home');
   fs.mkdirSync(codexHome); fs.mkdirSync(bin); fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
@@ -819,7 +832,7 @@ test('插件：只列用户自己装的（电脑自带的不显示、不让关�
   // 假的 codex mcp list --json：按两个配置文件里写了的服务器回
   fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\n[ "$1 $2 $3" = "mcp list --json" ] || exit 3\nprintf \'[\'; sep=""\n' +
     'for n in $(grep -ho "^\\[mcp_servers\\.[^].]*\\]" "$CODEX_HOME/config.toml" "$XIN_CODEX_SYS" | sed -e "s/^\\[mcp_servers\\.//" -e "s/\\]$//" -e "s/\\"//g"); do printf "%s{\\"name\\":\\"%s\\",\\"enabled\\":true,\\"transport\\":{\\"type\\":\\"stdio\\",\\"command\\":\\"/x/%s-bin\\"}}" "$sep" "$n" "$n"; sep=","; done\nprintf \']\'\n', { mode: 0o755 });
-  const { op, xin: xinDir } = agentEnv({ CODEX_HOME: codexHome, XIN_CODEX_SYS: sys, HOME: home, PATH: bin + ':' + process.env.PATH });
+  const { op, xin: xinDir } = agentEnv(t, { CODEX_HOME: codexHome, XIN_CODEX_SYS: sys, HOME: home, PATH: bin + ':' + process.env.PATH });
   const r = op('plugins');
   assert.deepStrictEqual(r.merged, ['rea']);
   assert.deepStrictEqual(r.plugins.map(p => [p.name, p.on, p.cmd]), [['rea', false, 'rea-bin']]);
@@ -866,7 +879,7 @@ test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3
   const saved = [process.env.XIN_HOME, process.env.CODEX_HOME];
   process.env.XIN_HOME = xinDir; process.env.CODEX_HOME = codexHome;
   try {
-    const { agentArgs, codexKeyEnv, CODEX_MODELS } = await import(freshAgentUrl('cxroute'));
+    const { agentArgs, codexKeyEnv, CODEX_MODELS } = await freshOwnedAgent('cxroute');
     const [, a] = agentArgs('codex', { started: false }, '你好', '');
     const cs = a.filter((x, i) => a[i - 1] === '-c');
     const cat = path.join(xinDir, 'codex-models.json');
@@ -899,14 +912,14 @@ test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3
   } finally { [process.env.XIN_HOME, process.env.CODEX_HOME] = saved; }
 });
 
-test('发文件：send 带 files（只认上传目录里的普通文件）；消息里列出路径；默认模式按能不能看图挑模型、思考强度一律最高；只发文件不说话也行', async () => {
+test('发文件：send 带 files（只认上传目录里的普通文件）；消息里列出路径；默认模式按能不能看图挑模型、思考强度一律最高；只发文件不说话也行', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-files-send-'));
   const bin = path.join(tmp, 'bin'), log = path.join(tmp, 'args.log');
   fs.mkdirSync(bin);
   // 假的 codex：把参数一行一个记下来，再回一句
   fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\ncase "$*" in *--ephemeral*) exit 0;; esac\nfor a in "$@"; do printf "%s\\n" "$a"; done > "' + log + '"\n' +
     'echo \'{"type":"thread.started","thread_id":"th-1"}\'\necho \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"看到了"}}\'\necho \'{"type":"turn.completed","usage":{}}\'\n', { mode: 0o755 });
-  const { work, op, xin } = agentEnv({ PATH: bin + ':' + process.env.PATH, XIN_FRONT_TEST_LOG:log });
+  const { work, op, xin } = agentEnv(t, { PATH: bin + ':' + process.env.PATH, XIN_FRONT_TEST_LOG:log });
   const up = path.join(work, 'uploads', '20261106');
   fs.mkdirSync(up, { recursive: true });
   fs.writeFileSync(path.join(up, '003005-ab12-板子.jpg'), 'jpg');
@@ -1003,7 +1016,7 @@ test('前台固定模型：网关失败时不换模型或悄悄执行工作', as
   assert.equal(hits,1);
 });
 
-test('每日任务用默认模式：Codex 按 daily 类别挑模型、思考强度最高；电脑里没有 codex 就报错，不偷偷换成 Harness', async () => {
+test('每日任务用默认模式：Codex 按 daily 类别挑模型、思考强度最高；电脑里没有 codex 就报错，不偷偷换成 Harness', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-daily-codex-'));
   const bin = path.join(tmp, 'bin'), log = path.join(tmp, 'args.log');
   fs.mkdirSync(bin);
@@ -1014,7 +1027,7 @@ test('每日任务用默认模式：Codex 按 daily 类别挑模型、思考强�
   fs.writeFileSync(dsh, '#!/bin/sh\necho should-not-run > "' + path.join(tmp, 'dsh-ran') + '"\n', { mode: 0o755 });
   const home = path.join(tmp, 'home'); fs.mkdirSync(home);
   fs.writeFileSync(path.join(home, '.profile'), 'PATH="' + bin + ':$PATH"\nexport PATH\n');
-  const { op } = agentEnv({ HOME: home, PATH: bin + ':' + process.env.PATH, XIN_DSH: dsh });
+  const { op } = agentEnv(t, { HOME: home, PATH: bin + ':' + process.env.PATH, XIN_DSH: dsh });
   op('daily_set', { text: '- 网关签到' });
   const r = op('daily');
   assert.deepStrictEqual([r.agent, r.model], ['codex', 'glm-5.3'], JSON.stringify(r));
@@ -1027,7 +1040,7 @@ test('每日任务用默认模式：Codex 按 daily 类别挑模型、思考强�
   const home2 = path.join(tmp, 'home2'); fs.mkdirSync(home2);
   const bin2 = path.join(tmp, 'bin2'); fs.mkdirSync(bin2); fs.copyFileSync(dsh, path.join(bin2, 'dsh')); fs.chmodSync(path.join(bin2, 'dsh'), 0o755);
   fs.writeFileSync(path.join(home2, '.profile'), 'PATH="' + bin2 + ':/usr/bin:/bin"\nexport PATH\n');
-  const e2 = agentEnv({ HOME: home2, PATH: bin2 + ':/usr/bin:/bin', XIN_DSH: path.join(bin2, 'dsh') });
+  const e2 = agentEnv(t, { HOME: home2, PATH: bin2 + ':/usr/bin:/bin', XIN_DSH: path.join(bin2, 'dsh') });
   e2.op('daily_set', { text: '- 网关签到' });
   const r2 = e2.op('daily');
   assert.deepStrictEqual([r2.error, r2.msg], ['no_agent', '电脑里没有 codex，每日任务做不了']);
@@ -1070,10 +1083,10 @@ async function until(fn, ms = 15000, what = '') {
   throw new Error('等不到：' + what + ' ' + JSON.stringify(v));
 }
 
-test('后台任务：前台派分身马上回话；分身在自己的目录、沙盒里按 code 类挑模型干完；结果先存再交回对话（卡片、history），前台下一句带上结果、只带一次；对话列表里没有任务', async () => {
+test('后台任务：前台派分身马上回话；分身在自己的目录、沙盒里按 code 类挑模型干完；结果先存再交回对话（卡片、history），前台下一句带上结果、只带一次；对话列表里没有任务', async tc => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task-'));
   const fc = fakeTaskCodex(tmp);
-  const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH, XIN_FRONT_TEST_LOG:path.join(tmp,'front.jsonl') });
+  const { op, work, xin } = agentEnv(tc, { PATH: fc.bin + ':' + process.env.PATH, XIN_FRONT_TEST_LOG:path.join(tmp,'front.jsonl') });
   const r = op('send', { agent: 'codex', text: '请 TEST_DISPATCH 一下' });
   const front = await until(() => { const p = op('poll', { run: r.run, off: 0 }); return p.done && p; }, 15000, '前台这一轮');
   const card = front.events.find(e => e.t === 'task');
@@ -1123,10 +1136,10 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   assert.strictEqual(fs.existsSync(path.join(xin, 'sessions', t.sid + '.json')), false);
 });
 
-test('后台任务：同时最多两个；同一个项目目录排队；补充要求等这一步做完接着做；停掉的不再做；分身要确认就停在「等你确认」，回复了接着做', async () => {
+test('后台任务：同时最多两个；同一个项目目录排队；补充要求等这一步做完接着做；停掉的不再做；分身要确认就停在「等你确认」，回复了接着做', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task2-'));
   const fc = fakeTaskCodex(tmp);
-  const { op, work, xin, home } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH, XIN_FRONT_TEST_LOG:path.join(tmp,'front.jsonl') });
+  const { op, work, xin, home } = agentEnv(t, { PATH: fc.bin + ':' + process.env.PATH, XIN_FRONT_TEST_LOG:path.join(tmp,'front.jsonl') });
   const r = op('send', { agent: 'codex', text: '你好' });
   const actor = captureRunContext(xin, r.run);
   await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
@@ -1188,18 +1201,25 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   assert.match(xinTask('show', '1'), /工作目录：.*blink[\s\S]*最近执行的命令：\n  ✓ make[\s\S]*结果：编好了/);
 });
 
-test('后台任务：到时间没做完停下（算没做成）；runner 中途被杀，下次有人来看时接着做一次（提醒它先查现状），再断就等用户', async () => {
+// 任务时限由常驻状态进程按它自己的环境算（XIN_TASK_TIMEOUT_MS），命令行进程的环境改不了它：
+// 「到时间停下」和「被杀后接着做」要不同的时限，各起一个状态进程（以前在同一条测试里靠改命令行进程的环境切换）
+async function taskTimeoutFixture(tc, timeoutMs) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task3-'));
   const fc = fakeTaskCodex(tmp);
   // 进程报到（写下 pid）前不会被当成断了：留够启动时间，CI 机器忙时也不误判
-  const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '3000' });
+  const { op, work, xin } = agentEnv(tc, { PATH: fc.bin + ':' + process.env.PATH, XIN_TASK_TIMEOUT_MS: timeoutMs, XIN_DEAD_MS: '3000' });
   const r = op('send', { agent: 'codex', text: '你好' });
   const actor = captureRunContext(xin, r.run);
   await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
   const { execFileSync } = require('node:child_process');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
-  const env = Object.assign({}, process.env, actor, { XIN_HOME: xin, XIN_WORK: work, XIN_TASK_TIMEOUT_MS: '1500', XIN_DEAD_MS: '3000', PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
+  const env = Object.assign({}, process.env, actor, { XIN_HOME: xin, XIN_WORK: work, XIN_TASK_TIMEOUT_MS: timeoutMs, XIN_DEAD_MS: '3000', PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
   const xinTask = (...a) => execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString();
+  return { fc, op, work, xin, r, agent, env, xinTask };
+}
+
+test('后台任务：到时间没做完停下（算没做成）', async tc => {
+  const { fc, op, r, xinTask } = await taskTimeoutFixture(tc, '1500');
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
   xinTask('new', '--title', '慢活', '--', '慢慢做');
   // #133 合并后 CI（新执行机）上这里偶尔 45 秒都等不到：失败时把任务状态、错误和每一轮的事件一起带出来，下次能看出卡在哪一步
@@ -1208,10 +1228,15 @@ test('后台任务：到时间没做完停下（算没做成）；runner 中途�
     throw new Error(e.message + ' DIAG ' + JSON.stringify({ status: x.status, err: x.result && x.result.err, runs: (h.runs || []).map(rr => (rr.events || []).map(ev => ev.t + (ev.text ? ':' + String(ev.text).slice(0, 60) : '')).slice(-8)) }));
   });
   assert.match(t.result.err, /^超时（60 分钟）$/);
-  // 被杀：把分身那一轮的 runner 和它起的 codex 一起杀掉（模拟电脑重启）
+});
+
+test('后台任务：runner 中途被杀，下次有人来看时接着做一次（提醒它先查现状），再断就等用户', async tc => {
   // 这个任务测的是被杀后接着做，不是超时：时限给足，别让忙的机器先把它判成超时
-  const longEnv = Object.assign({}, env, { XIN_TASK_TIMEOUT_MS: '120000' });
-  execFileSync(process.execPath, [agent, 'xin', 'task', 'new', '--title', '会断的', '--', '做'], { env: longEnv, input: '' });
+  const { fc, op, r, xin, xinTask } = await taskTimeoutFixture(tc, '120000');
+  const { execFileSync } = require('node:child_process');
+  fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
+  // 被杀：把分身那一轮的 runner 和它起的 codex 一起杀掉（模拟电脑重启）
+  xinTask('new', '--title', '会断的', '--', '做');
   const t2 = await until(() => { const x = op('tasks', { sid: r.sid }).tasks.find(y => y.title === '会断的'); return x && x.status === 'running' && x; }, 15000, '在做');
   const sess = JSON.parse(fs.readFileSync(path.join(xin, 'sessions', t2.sid + '.json'), 'utf8'));
   const meta = JSON.parse(fs.readFileSync(path.join(xin, 'runs', sess.runs[0] + '.json'), 'utf8'));
@@ -1229,10 +1254,11 @@ test('后台任务：到时间没做完停下（算没做成）；runner 中途�
   assert.ok(meta.sandbox === true && meta.deadline > meta.started);
 });
 
-test('分身配合：--review 做完再派一个分身换个模型、在同一个目录检查（拿到前一个的结果）；--after 等前一个做完；任务中心拿得到全部任务、各模型的统计、对话名字和每日任务', async () => {
+
+test('分身配合：--review 做完再派一个分身换个模型、在同一个目录检查（拿到前一个的结果）；--after 等前一个做完；任务中心拿得到全部任务、各模型的统计、对话名字和每日任务', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-task4-'));
   const fc = fakeTaskCodex(tmp);
-  const { op, work, xin } = agentEnv({ PATH: fc.bin + ':' + process.env.PATH });
+  const { op, work, xin } = agentEnv(t, { PATH: fc.bin + ':' + process.env.PATH });
   const r = op('send', { agent: 'codex', text: '你好' });
   const actor = captureRunContext(xin, r.run);
   await until(() => op('poll', { run: r.run, off: 0 }).done, 15000, '前台');
@@ -1298,7 +1324,7 @@ test('xin task 的参数：长短选项、--after 逗号分隔、-- 后面是要
   assert.strictEqual(parseTaskArgs(['--nope', 'x']).error, '不认识的选项：--nope');
 });
 
-test('Harness（天启）：dsh headless --json 起，带天启自己的设定（--patch）、满权限、网关 key 用环境变量；事件整理、会话号、接着聊（--session-id）、用量；删对话连它的会话一起删', async () => {
+test('Harness（天启）：dsh headless --json 起，带天启自己的设定（--patch）、满权限、网关 key 用环境变量；事件整理、会话号、接着聊（--session-id）、用量；删对话连它的会话一起删', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-harness-'));
   const dshHome = path.join(tmp, 'dsh'), log = path.join(tmp, 'calls.log'), dsh = path.join(tmp, 'dsh-bin');
   const SID = 'session-1de23629-51a4-47e9-8626-be15439b8b66';
@@ -1315,7 +1341,7 @@ test('Harness（天启）：dsh headless --json 起，带天启自己的设定�
     'echo \'{"type":"status","phase":"step_end","turn":1,"step":2,"usage":{"inputTokens":6000,"outputTokens":30,"totalTokens":6030}}\'\n' +
     'echo \'{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}\'\n' +
     'echo \'{"type":"final","text":"有 a 和 b"}\'\n', { mode: 0o755 });
-  const { xin, op } = agentEnv({ XIN_DSH: dsh, XIN_DSH_HOME: dshHome });
+  const { xin, op } = agentEnv(t, { XIN_DSH: dsh, XIN_DSH_HOME: dshHome });
   fs.mkdirSync(xin, { recursive: true });
   fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
   assert.ok(op('ping').agents.includes('harness'));
@@ -1381,7 +1407,7 @@ test('Harness（天启）：dsh headless --json 起，带天启自己的设定�
   assert.ok(!fs.existsSync(path.join(dshHome, 'storages', 'session_projcache', 'sessions', SID + '.json')));
 });
 
-test('Harness 事件整理：出错、没做完都说清楚；会话号格式不对不拿去拼路径', async () => {
+test('Harness 事件整理：出错、没做完都说清楚；会话号格式不对不拿去拼路径', async t => {
   const { fromHarness } = await load('../site/xin/vm-agent.mjs');
   const st = {};
   assert.deepStrictEqual(fromHarness({ type: 'error', message: 'MISSING_CREDENTIAL' }, st), [{ t: 'err', text: 'MISSING_CREDENTIAL' }]);
@@ -1390,7 +1416,7 @@ test('Harness 事件整理：出错、没做完都说清楚；会话号格式不
   assert.deepStrictEqual(fromHarness({ type: 'status', phase: 'turn_end', reason: { kind: 'aborted' } }, st2), [{ t: 'err', text: '这一轮没做完（aborted）' }]);
   assert.deepStrictEqual(fromHarness({ type: 'final', text: 'x' }, {}), []);
   assert.deepStrictEqual(fromHarness({ type: 'thinking', text: 'x' }, {}), []);
-  const { xin, op } = agentEnv();
+  const { xin, op } = agentEnv(t);
   fs.mkdirSync(path.join(xin, 'sessions'), { recursive: true });
   fs.writeFileSync(path.join(xin, 'sessions', 'sh00000001.json'), JSON.stringify({ sid: 'sh00000001', agent: 'harness', title: 'x', agentSid: '../../x', started: true, runs: [], created: 1, updated: 1 }));
   assert.strictEqual(op('prune').skipped, 'bad_session_file');
@@ -1411,8 +1437,8 @@ test('发文件提示：Codex / Harness / Claude 按能不能看图写清楚；H
   assert.ok(!filesPart([{ path: '/x', name: 'a.txt', size: 1, image: false }], 'harness', true).includes('看不了'));
 });
 
-test('归档：只是收起来（记录、AI 的会话记录都留着），能取消；对话列表带 archived，归档的排在后面', () => {
-  const { xin, op } = agentEnv();
+test('归档：只是收起来（记录、AI 的会话记录都留着），能取消；对话列表带 archived，归档的排在后面', t => {
+  const { xin, op } = agentEnv(t);
   const sess = path.join(xin, 'sessions'), runs = path.join(xin, 'runs');
   fs.mkdirSync(sess, { recursive: true }); fs.mkdirSync(runs, { recursive: true });
   const mk = (sid, updated) => {
@@ -1432,13 +1458,13 @@ test('归档：只是收起来（记录、AI 的会话记录都留着），能�
   assert.strictEqual(op('archive', { sid: 'snone00001' }).error, 'no_session');
 });
 
-test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对应对话的旧记录也清掉（只清网站开的、1 小时前的）', () => {
+test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对应对话的旧记录也清掉（只清网站开的、1 小时前的）', t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-logs-'));
   const codexHome = path.join(tmp, 'codex'), claudeHome = path.join(tmp, 'claude'), bin = path.join(tmp, 'bin'), log = path.join(tmp, 'codex.log');
   fs.mkdirSync(bin);
   // 假的 codex：记下参数，像真的 `codex delete --force <id>` 一样删掉记录文件
   fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\necho "$@" >> "' + log + '"\n[ "$1" = delete ] && [ "$2" = --force ] && find "$CODEX_HOME/sessions" -name "*-$3.jsonl" -delete\nexit 0\n', { mode: 0o755 });
-  const { xin, op } = agentEnv({ CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, PATH: bin + ':' + process.env.PATH });
+  const { xin, op } = agentEnv(t, { CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, PATH: bin + ':' + process.env.PATH });
   const id = n => '01a1a1f7-0000-7000-8000-' + String(n).padStart(12, '0');
   const old = (Date.now() - 2 * 3600e3) / 1000;
   const cxDir = path.join(codexHome, 'sessions', '2026', '11', '05');
@@ -1509,7 +1535,7 @@ test('删对话时连 Codex / Claude 自己的会话记录一起删；没有对�
   assert.ok(fs.existsSync(fB));
 });
 
-test('对话的用量：Codex 取记录里最后一条 token_count（累计、最近一次、上限），做完那一轮的 done 和 history 都带上；Claude 把每条回答的 usage 去重加起来', async () => {
+test('对话的用量：Codex 取记录里最后一条 token_count（累计、最近一次、上限），做完那一轮的 done 和 history 都带上；Claude 把每条回答的 usage 去重加起来', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-usage-'));
   const codexHome = path.join(tmp, 'codex'), claudeHome = path.join(tmp, 'claude'), bin = path.join(tmp, 'bin');
   fs.mkdirSync(bin);
@@ -1532,7 +1558,7 @@ test('对话的用量：Codex 取记录里最后一条 token_count（累计、�
     'echo \'{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"好了"}}\'',
     'echo \'{"type":"turn.completed","usage":{}}\''
   ].join('\n'), { mode: 0o755 });
-  const { xin, op } = agentEnv({ CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, PATH: bin + ':' + process.env.PATH });
+  const { xin, op } = agentEnv(t, { CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, PATH: bin + ':' + process.env.PATH });
   const want1 = { ctx: 120342, win: 258400, input: 3699260, cached: 3567104, output: 28753, total: 3728013 };
   const r = op('send', { agent: 'codex', text: '你好' });
   let p = null;
@@ -1626,8 +1652,8 @@ test('推送加密（RFC 8291 aes128gcm）：浏览器那端解得开；VAPID �
   assert.deepStrictEqual(claims, { aud: 'https://fcm.googleapis.com', exp: Date.UTC(2026, 10, 4) / 1000 + 12 * 3600, sub: 'https://liming-work.com' });
 });
 
-test('推送订阅：只收 https 和对的钥匙；同一个地址只记一次；最多 8 个；能去掉；VAPID 私钥文件只有自己能读', () => {
-  const { xin, op } = agentEnv();
+test('推送订阅：只收 https 和对的钥匙；同一个地址只记一次；最多 8 个；能去掉；VAPID 私钥文件只有自己能读', t => {
+  const { xin, op } = agentEnv(t);
   const k = op('push_key');
   assert.match(k.key, /^[A-Za-z0-9_-]{87}$/);
   assert.strictEqual(op('push_key').key, k.key);
@@ -1646,7 +1672,7 @@ test('推送订阅：只收 https 和对的钥匙；同一个地址只记一次�
   assert.strictEqual(op('push_key').subs, 7);
 });
 
-test('做完提醒：网页没在看时做完就推送（解得开、带标题和回答开头、点了打开那段对话），网页在看时不推；推送服务说订阅没了就删掉', async () => {
+test('做完提醒：网页没在看时做完就推送（解得开、带标题和回答开头、点了打开那段对话），网页在看时不推；推送服务说订阅没了就删掉', async tc => {
   const http = require('node:http');
   const { execFileSync } = require('node:child_process');
   const got = [];
@@ -1667,7 +1693,8 @@ test('做完提醒：网页没在看时做完就推送（解得开、带标题�
       'echo \'{"type":"turn.completed","usage":{}}\''
     ].join('\n'), { mode: 0o755 });
     const env = Object.assign({}, process.env, { XIN_HOME: path.join(home, 'xin'), XIN_WORK: path.join(home, 'work'), NODE_OPTIONS:(process.env.NODE_OPTIONS||'')+' --require='+path.join(__dirname,'helpers/front-responses.cjs'), XIN_FRONT_TEST_DELAY:'1000', XIN_FRONT_TEST_TEXT:'编好啦！\n\n```c\nint main(void){}\n```\n烧录文件在 /data/workspace/blink/build/app.hex', XIN_PUSH_INSECURE: '1', PATH: bin + ':' + process.env.PATH });
-    const op = (name, args) => JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString());
+    const ensureState = require('./helpers/state-mode.cjs').stateClient(tc, env);
+    const op = (name, args) => { ensureState(); return JSON.parse(execFileSync(process.execPath, [agent, name], { env, input: JSON.stringify(args || {}) }).toString()); };
     const br = fakeBrowser();
     assert.strictEqual(op('push_sub', { deviceId:'test-device-1', sub: { endpoint: `http://127.0.0.1:${port}/push/a`, keys: br.keys } }).ok, true);
     const wait = async (run, watch) => {
@@ -1784,14 +1811,14 @@ test('新动作：只认能画出来的字段和取值，数字截到范围里�
   assert.match(cleanMove('a', Array(11).fill({ t: 1500 })).error, /最长 15 秒/);
 });
 
-test('新动作：xin move add 学会（网页马上做一遍）、xin move 名字 让网页做、list、rm；坏 JSON 给出用法', () => {
+test('新动作：xin move add 学会（网页马上做一遍）、xin move 名字 让网页做、list、rm；坏 JSON 给出用法', t => {
   const { execFileSync, spawnSync } = require('node:child_process');
-  const { xin, op } = agentEnv();
+  const { xin, op, ensureState } = agentEnv(t);
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
   const runs = path.join(xin, 'runs'); fs.mkdirSync(runs, { recursive: true });
   const run = 'rmove000001'; fs.writeFileSync(path.join(runs, run + '.jsonl'), '');
   const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_RUN: run });
-  const xinCmd = (...a) => spawnSync(process.execPath, [agent, 'xin', 'move', ...a], { env, encoding: 'utf8' });
+  const xinCmd = (...a) => (ensureState(), spawnSync(process.execPath, [agent, 'xin', 'move', ...a], { env, encoding: 'utf8' }));
   const add = xinCmd('add', '打招呼', '[{"armR":"up","face":"hap","t":250},{"armR":"wave","t":250}]');
   assert.strictEqual(add.status, 0, add.stdout);
   assert.match(add.stdout, /学会了：打招呼（2 帧），网页上的小芯马上做一遍/);
@@ -1838,9 +1865,9 @@ test('好感度：聊天一天最多 +5、陪玩最多 +3、每天第一次见�
   assert.deepStrictEqual([bondLevel(14).level, bondLevel(15).level, bondLevel(79).next, bondLevel(200).next], [0, 1, 80, null]);
 });
 
-test('好感度、新动作进了设定；greet 顺便带回去；xin bond 在聊天里留一条', async () => {
+test('好感度、新动作进了设定；greet 顺便带回去；xin bond 在聊天里留一条', async t => {
   const { spawnSync } = require('node:child_process');
-  const { xin, op } = agentEnv();
+  const { xin, op } = agentEnv(t);
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
   const g = op('greet');
   assert.deepStrictEqual([g.bond.score, g.bond.name, g.moves], [1, '刚认识', []]);
@@ -1940,7 +1967,7 @@ test('小芯的屏幕：电脑在睡就叫醒（waking）；桌面在装回 waki
   } finally { ib.restore(); }
 });
 
-test('小芯的屏幕：screen.log 每一类事件写成好读的一行（命令去掉 /bin/bash -lc 外壳，输出太长只留前面）；电脑里没终端时 screen 说清楚', async () => {
+test('小芯的屏幕：screen.log 每一类事件写成好读的一行（命令去掉 /bin/bash -lc 外壳，输出太长只留前面）；电脑里没终端时 screen 说清楚', async t => {
   const { screenLine, bareCmd } = await load('../site/xin/vm-agent.mjs');
   const plain = ev => screenLine(ev, Date.UTC(2026, 10, 5, 2, 30)).replace(/\x1b\[[0-9;]*m/g, '');
   assert.strictEqual(plain({ t: 'user', text: '写个\n点灯程序' }), '\n── 你（10:30）：写个 点灯程序\n');
@@ -1955,19 +1982,21 @@ test('小芯的屏幕：screen.log 每一类事件写成好读的一行（命令
   // 这个用例验证「没装终端」；隔离 PATH，避免开发机装着桌面终端时误启动它。
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-no-terminal-'));
   fs.writeFileSync(path.join(bin, 'sh'), '#!/bin/sh\nif [ "$1" = "-lc" ]; then shift; exec /bin/sh -c "$@"; fi\nexec /bin/sh "$@"\n', { mode: 0o755 });
-  const { op, xin } = agentEnv({ PATH: bin });
+  const { op, xin } = agentEnv(t, { PATH: bin });
   const r = op('screen');
   assert.strictEqual(r.error, 'no_terminal');
   assert.ok(fs.readFileSync(path.join(xin, 'screen.log'), 'utf8').includes('小芯的屏幕'));
 });
 
-test('天启独立：天启里的 xin 命令不写小芯的记事本、好感度、开场白、动作，也不派后台任务', () => {
+test('天启独立：天启里的 xin 命令不写小芯的记事本、好感度、开场白、动作，也不派后台任务', t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-tianqi-')), xin = path.join(home, 'xin'), run = 'rtianqi0001';
   fs.mkdirSync(path.join(xin, 'runs'), { recursive: true });
   fs.writeFileSync(path.join(xin, 'runs', run + '.json'), JSON.stringify({ run, sid: 'stianqi0001', agent: 'harness', started: Date.now() }));
   fs.writeFileSync(path.join(xin, 'runs', run + '.jsonl'), '');
   const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
   const env = Object.assign({}, process.env, { XIN_HOME: xin, XIN_WORK: path.join(home, 'work'), XIN_RUN: run });
+  require('./helpers/state-mode.cjs').stateMode(t, env);
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));   // 状态进程停下以后再删
   for (const argv of [['remember', '天启记的'], ['bond', '+2', '理由'], ['next', '明天见'], ['move', 'add', '挥手', '[{"armR":"wave"}]'], ['dance'], ['task', 'new', '--', '做点事']]) {
     const r = require('node:child_process').spawnSync(process.execPath, [agent, 'xin', ...argv], { env, encoding: 'utf8' });
     assert.strictEqual(r.status, 1, argv.join(' '));
@@ -1975,7 +2004,6 @@ test('天启独立：天启里的 xin 命令不写小芯的记事本、好感度
   }
   for (const f of ['memory.md', 'bond.json', 'next.json', 'moves.json', 'tasks-index.json']) assert.ok(!fs.existsSync(path.join(xin, f)), f);
   assert.strictEqual(fs.readFileSync(path.join(xin, 'runs', run + '.jsonl'), 'utf8'), '');
-  fs.rmSync(home, { recursive: true, force: true });
 });
 
 test('记事本超过上限：保留开头和最新的记录，只省略中间', async () => {

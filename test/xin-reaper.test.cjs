@@ -131,7 +131,8 @@ function home(t) {
   const bus = path.join(dir, 'bus'); fs.writeFileSync(bus, '');
   const env = { ...process.env, TMPDIR: path.join(dir, 'tmp'), XIN_HOME: xin, XIN_WORK: work, XIN_CODEX_TRANSPORT: 'exec', XIN_FRONT_PROVIDER: 'deepseek', XIN_DSH: path.join(dir, 'no-dsh'),
     XIN_AGY_HOME: dir, XIN_ANTIGRAVITY_BIN: '', CODEX_HOME: path.join(dir, 'codex'), PATH: bin + ':' + process.env.PATH, XIN_SYSTEMD_BUS: bus, XIN_SYSTEMD_USER_DIR: path.join(dir, 'units') };
-  const run = (argv, args, extra = {}) => { const r = spawnSync(process.execPath, [AGENT, ...argv], { env: { ...env, ...extra }, input: JSON.stringify(args || {}), encoding: 'utf8', timeout: platformTimeout(30000) }); assert.equal(r.status, 0, r.stderr); return r.stdout ? JSON.parse(r.stdout) : null; };
+  const ensureState = require('./helpers/state-mode.cjs').stateClient(t, env);   // 起控制器之前先起真的常驻状态进程
+  const run = (argv, args, extra = {}) => { ensureState(); const r = spawnSync(process.execPath, [AGENT, ...argv], { env: { ...env, ...extra }, input: JSON.stringify(args || {}), encoding: 'utf8', timeout: platformTimeout(30000) }); assert.equal(r.status, 0, r.stderr); return r.stdout ? JSON.parse(r.stdout) : null; };
   const read = f => { try { return fs.readFileSync(path.join(log, f), 'utf8'); } catch { return ''; } };
   t.after(() => stopOwned(xin, dir));
   return { dir, xin, env, run, read };
@@ -178,6 +179,8 @@ test('控制器 reap：结束 2 小时以上那一轮的 scope 停掉、桌面�
   mkp(202, 'make', ['make'], 390000, app + 'xin-run-rlive0000001-a1.scope');
   mkp(300, 'chromium', ['/usr/lib/chromium/chromium', '--new-window', 'https://hark.com/login'], 400000 - 13 * 3600, app + 'app-org.chromium.Chromium-300.scope');
   mkp(400, 'python3', ['/usr/bin/python3', 'wb_proxy.py'], 1000, '/system.slice/workbuddy-gateway.service');
+  // reap 交给常驻状态进程做，它用的是自己的环境：起它之前把假的 /proc 放进夹具的环境（命令行进程的环境改不了它）
+  h.env.XIN_PROC_ROOT = root;
   const r = h.run(['reap'], {}, { XIN_PROC_ROOT: root });
   assert.deepEqual(r.actions.map(a => a.unit).sort(), ['app-org.chromium.Chromium-300.scope', 'xin-run-rold00000001-a1.scope']);
   const sc = h.read('systemctl');

@@ -65,11 +65,6 @@ jobs:
           node-version: 22
       - name: 语法、资源引用和单元测试
         run: npm run check
-      - name: 常驻状态内核复用控制器行为测试
-        env:
-          XIN_RUN_ATTEMPTS: "1"
-          XIN_TASK_BRIDGE: "1"
-        run: npm run test:kernel
       - name: 记录单元测试通过的代码树
         if: github.event_name == 'pull_request'
         run: node scripts/ci-proof.mjs write check

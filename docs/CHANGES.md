@@ -1,3 +1,39 @@
+# 修改清单 · 2026-11-18（删旧模式第 1 步：测试全部对着主人跑）
+
+实现和自查：Claude Code（同一会话，没有另一位审核）。只改测试，线上行为不变。
+
+- **为什么**：
+  - 站长确认删掉旧模式（设计 `docs/superpowers/specs/2026-11-17-xin-remove-legacy-design.md`，计划 `docs/superpowers/plans/2026-11-18-xin-remove-legacy.md`）。删了以后，不是主人的进程不能写状态库。
+  - 这一步先让所有测试都有主人，把暗中靠旧模式写库的地方翻出来。
+- **摸底**（临时改动，没提交）：
+  - 让旧路一律不许写（`vm-kernel-owner.mjs` 的 `enter()`），跑全部测试：33 个文件里 181 条失败。
+  - 失败的分两类：一类是测试缺主人（这一步接上）；一类是测旧模式机制本身的（留给第 2 步）。
+- **改了什么**：
+  - `npm run check` 里的小芯控制器测试都对着真的状态进程跑：`test/helpers/state-mode.cjs` 不再看 `XIN_TEST_STATE_MODE`，调了就起。删掉 `npm run test:kernel` 和 CI 那一步，原来那 14 组并进 `check`。
+  - 新帮手 `test/helpers/own-state.cjs`：
+    - 在测试进程里直接调控制器模块的测试，测试进程自己当主人（`ownState()`）。
+    - 起脚本子进程的，用 `node --import` 在加载模块之前先拿所有权（`OWN_IMPORT`）。
+    - 这些代码在正式环境里本来就跑在状态进程里。
+  - `stateHomes(t)`：一个测试用到几个状态目录（备份前、恢复后）时，各起各的状态进程。
+  - 28 个测试文件接上主人：
+    - 起控制器的，起真的状态进程：`xin`、`xin-memory`、`xin-reliability`、`xin-batch2`、`xin-cleanup`、`xin-backup`、`xin-usage`、`xin-steer-front`、`xin-web`、`xin-handoff`、`xin-system-task`、`xin-reaper`、`xin-runtime`、`xin-handover`、`xin-task-bridge-context`。
+    - 直接调模块的，自己当主人：`xin`、`xin-memory`、`xin-context`、`xin-memory-idle`、`xin-daily-context`、`xin-learning`、`xin-muse-rules`、`xin-batch2`、`xin-browser-login`、`xin-browser`、`xin-task-scope`、`xin-report-retry`（它起的假状态进程）、`xin-run-attempt`、`xin-state-controller`、`xin-task-bridge-context`（建库的脚本）。
+  - 两处测试的假设跟着改。任务时限、假 `/proc` 这类环境变量，以前在命令行进程的环境里改就生效（旧路每个进程自己算）。现在由状态进程按它自己的环境算，所以要在起它之前放进夹具的环境：
+    - 「到时间停下」和「被杀后接着做」原来在一条测试里靠改环境切换时限，拆成两条，断言一条不少。
+    - `reap` 的假 `/proc` 在起状态进程前放进环境。
+  - `xin-state-controller` 以前在测试进程里直接加载控制器、没设 `XIN_HOME`，会写进运行测试那台机器的 `~/.xin`（这台机器上就有 11-15 写进去的 `owner.sqlite`、`workflow.sqlite`）。改成临时目录。
+- **留给第 2 步的旧模式测试**（35 条，第 2 步里逐条改写或删，写明由哪条覆盖）：
+  - `xin-owner` 10 条；
+  - `xin-state-controller` 8 条（`legacy：` 那一遍、旧写者的可写句柄、socket 只是线索、legacy↔kernel 来回、旧控制器检查、`owner-legacy`、从 legacy 接手备份、切换窗口）；
+  - `xin-run-attempt`、`xin-task-reports` 的 `legacy：` 那一遍（2 条、4 条）；
+  - `xin-task-reports` 两条 kill 测试（用旧写者当载体）；
+  - `xin-kernel-owner` 3 条（和旧模式比结果、外壳停止回 legacy、兼容回滚）；
+  - `xin-state-bridge` 1 条（排空后回 legacy）；
+  - `xin-state` 1 条（建表过所有权检查）；
+  - `xin-handover` 2 条（旧看门狗接班）；
+  - `xin-reliability` 1 条（`flock` 锁文件）；
+  - `xin-kernel` 1 条（外壳每次请求起控制器去重）。
+
 # 修改清单 · 2026-11-17（两条偶发失败：「最终结果先到了」不再赌时间差；登录窗口等页面接好再打开网址）
 
 实现和自查：Claude Code（同一会话，没有另一位审核）。

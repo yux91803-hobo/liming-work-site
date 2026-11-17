@@ -48,7 +48,7 @@ function fixture(t) {
   save();
   fs.writeFileSync(path.join(env.XIN_HOME, 'runs/rruntime001.json'), JSON.stringify({ sid: task.sid, started: Date.now(), pid: process.pid }));
   fs.writeFileSync(path.join(env.XIN_HOME, 'runs/rruntime001.jsonl'), '');
-  return { root, control: env.XIN_HOME, env, task, save, read, call };
+  return { root, control: env.XIN_HOME, env, task, save, read, call, ensureState };
 }
 
 test('分身修改副本，检查原文件并发变更；删除和冲突不会自动写回', async t => {
@@ -403,6 +403,7 @@ test('并发补充任务与编译元数据更新共用任务锁，不覆盖已�
   fs.writeFileSync(mf,JSON.stringify({sid:f.task.sid,task:true,started:Date.now(),pid:process.pid,transport:'app-server',steers:[]}));
   const execFile=require('node:util').promisify(require('node:child_process').execFile);
   const jobs=[];fs.mkdirSync(path.join(f.control,'locks'),{recursive:true});
+  f.ensureState();   // 并发的这些命令都交给真的常驻状态进程
   for(let i=0;i<12;i++){
     const program=`const {spawn}=require('node:child_process');const c=spawn(process.execPath,${JSON.stringify([agent,'task_tell'])},{stdio:['pipe','inherit','inherit']});c.stdin.end(${JSON.stringify(JSON.stringify({sid:f.task.sid,text:'supplement-'+i}))});c.on('exit',n=>process.exit(n));`;
     jobs.push(execFile(process.execPath,['-e',program],{env:f.env}));
