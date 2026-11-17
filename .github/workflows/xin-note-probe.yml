@@ -1,0 +1,73 @@
+name: Diagnose original Gemini note CI failure
+
+on:
+  push:
+    branches: [codex/xin-note-ci-probe-20261117]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: note-ci-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    if: github.repository == 'yux91803-hobo/liming-work-site' && github.ref == 'refs/heads/codex/xin-note-ci-probe-20261117'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install passive observations
+        run: python3 scripts/note-ci-probe.py install
+      - name: Observe before tests
+        run: python3 scripts/note-ci-probe.py snapshot before-check
+      - name: Original complete check
+        run: |
+          set +e
+          npm run check 2>&1 | tee .ci-note-probe/check.log
+          result=${PIPESTATUS[0]}
+          set -e
+          python3 scripts/note-ci-probe.py snapshot after-check || true
+          exit "$result"
+      - name: Original kernel suite
+        env:
+          XIN_RUN_ATTEMPTS: "1"
+          XIN_TASK_BRIDGE: "1"
+        run: |
+          set +e
+          npm run test:kernel 2>&1 | tee .ci-note-probe/kernel.log
+          result=${PIPESTATUS[0]}
+          set -e
+          python3 scripts/note-ci-probe.py snapshot after-kernel || true
+          exit "$result"
+      - name: Bounded original note cases, stop at first failure
+        env:
+          XIN_TEST_STATE_MODE: kernel
+          XIN_RUN_ATTEMPTS: "1"
+          XIN_TASK_BRIDGE: "1"
+        run: |
+          for attempt in $(seq 1 20); do
+            python3 scripts/note-ci-probe.py snapshot "before-note-$attempt" || true
+            set +e
+            node --test --test-name-pattern='Gemini 后台主动说一句' test/xin-steer.test.cjs 2>&1 | tee ".ci-note-probe/note-$attempt.log"
+            result=${PIPESTATUS[0]}
+            set -e
+            python3 scripts/note-ci-probe.py snapshot "after-note-$attempt" || true
+            if [ "$result" -ne 0 ]; then exit "$result"; fi
+          done
+      - name: Final read-only observation
+        if: always()
+        run: python3 scripts/note-ci-probe.py snapshot final || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: note-ci-observations-${{ github.run_id }}
+          path: .ci-note-probe/
+          include-hidden-files: true
+          retention-days: 7
