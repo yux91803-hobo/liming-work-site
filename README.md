@@ -107,6 +107,8 @@ npm run test:kernel # 同一批小芯控制器测试，换成真的状态进程�
 npm run test:e2e   # 浏览器端到端测试（需要 Python playwright + Chromium，先 npm run dev）
 ```
 
+`npm run check` 和 `npm run test:kernel` 起的测试碰不到这台机器上的 systemd（`scripts/test-env.mjs` 把 `XIN_SYSTEMD_BUS` 指到不存在的路径）。在有用户会话的机器上（GitHub 托管机器就有）直接用 `node --test` 跑单个小芯测试时，自己带上 `XIN_SYSTEMD_BUS=/nonexistent/xin-tests-no-user-session/bus`。
+
 `/stm32` 使用与正式站一致的工具箱外壳；也可以直接打开 `/tools/stm32/`。
 
 ## 目录与资源
