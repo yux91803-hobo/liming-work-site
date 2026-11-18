@@ -1,3 +1,25 @@
+# 修改清单 · 2026-11-18（独立天启工具）
+
+- Claude Code 实现 Worker 的 `/api/tq` 范围、独立待送达、定时唤醒和控制器的天启身份（第 1–4 步）。Antigravity 实现工具箱入口、独立对话页和浏览器测试（第 5 步）。Codex 实现入口迁移、发布检查和集成修正（第 6–7 步），并复核各步的集成。实现者分别自查各自改动。设计审稿者见原设计记录。
+- 新天启使用 `li2`、Harness 和独立队列，沿用网站登录。`li` 的旧天启对话保留原会话、模型设置和 Purge 插件。直接打开 `/tianqi` 时小芯的启动延后，从天启返回后刷新共用登录并补做一次。工作台只移除设计指定的三个新建天启入口。
+- 复核 Claude Code 的电脑选择时发现单台电脑回退会跨过范围边界。天启按配置精确选择，小芯的旧回退排除 `li2`。复核同一个 Durable Object 类的回滚时，用 #174 实际代码复现旧闹钟会把天启的待送达交给 `li`。天启队列改用 `tq-inbox:` 存储键；重上新版后重新安排有效待送达。小芯旧队列和两台电脑的数据保留原格式。
+- 在 Node 22、系统 Chromium 和隔离状态目录下通过每日任务及浏览器的交接复测。 本地 1,051 项单测、14 组浏览器测试通过。首页落脚检查从固定两张工具卡改成逐张核对地图、STM32 和天启，保留标题栏与卡片内外的断言。发布新增天启浏览器测试、静态页和共用登录检查。正式联调读取 `/api/tq/me` 验证路由和登录，真实天启回话在 li2 配置后单独验收。 [设计与回滚](superpowers/specs/2026-11-18-tianqi-li2-design.md)
+- 参考 OpenCode 的实例上下文、Codex 的 `CODEX_HOME` 和 VS Code 的按视图激活。 [OpenCode Instance](https://github.com/anomalyco/opencode/blob/7d91d3b1ed3d5385d9f2e5a6976d6ac32f98cf18/packages/opencode/src/project/instance.ts) · [VS Code 激活事件](https://github.com/microsoft/vscode-docs/blob/main/api/references/activation-events.md#onview)
+
+# 修改清单 · 2026-11-18（第 3 批 B 默认启用持久收尾）
+
+- Codex 实现并自查。新轮次默认获得收尾协议，并独立校验关闭开关后的旧轮次及在途新版轮次。正式联调从已有测试对话中核对真实前台与后台各有一个成功的终态回执。
+- 升级使用已发布的读取方及原有状态库和文件。回退到兼容读取版可以继续完成已分配轮次，也可以显式设 `XIN_RUN_FINALIZATION=0` 暂停新分配。发布验证及回退证据见本批 PR。[实施计划](superpowers/plans/2026-11-16-xin-finalization.md)
+
+# 修改清单 · 2026-11-18（第 3 批 B 持久收尾读取方）
+
+- 实际实现和自查由 Codex 负责。以 #172 为基线。隔离演练在前一版复现后台模型已经返回、状态进程收不到 `run_complete` 时重新派发并调用两次模型。第三批 B 用原尝试的持久记录和 SQLite 回执恢复。[本批实现计划](superpowers/plans/2026-11-16-xin-finalization.md)
+- 已注册的新版执行器先保存终态与用量，再执行受控验收。状态进程依据同一尝试和摘要提交运行、任务、通知及统计，丢失回应后可取回原回执。只剩准备记录或临时文件时，保留现场并显示固定诊断。项目写回与预览有单独的发布身份及回执，原有审批按实际文件内容继续校验。
+- 启用验证发现回退诊断原先只由执行器写入统计。新版由状态进程提交统计，因此将现有回退报告里的 `fromErr` 留在对应运行元数据，写入原统计字段。四项原有回归继续区分 Gemini 无响应、服务状态、本地启动失败和网关错误。
+- 新格式基于 `commands` 与现有工作流库，即时投影由原状态进程维护，升级沿用原有数据。默认只启用兼容读取，正式站确认后独立启用新轮次。关闭 `XIN_RUN_FINALIZATION` 后已分配的新协议仍可完成。退回 #172 前先排空新协议执行和未确认收尾记录。
+- 故障回归在临时工作区模拟 SQLite 提交前后退出、结果待发布时双进程退出、回执丢失、停止竞争和文件写回中断。启用路径验证前后台各只应用一次，受控项目有冲突时保留用户修改。审查与发布证据见交接记录和 PR。[本批交接](AI-HANDOFF.md)
+- 实现参考 Temporal 用执行身份定位活动并提交完成的处理，以及 `write-file-atomic` 同目录临时文件和同步后发布的做法。小芯沿用已有 journal，把文件、推送和状态提交各自恢复。[Temporal 完成处理](https://github.com/temporalio/temporal/blob/main/service/history/api/respondactivitytaskcompleted/api.go) · [write-file-atomic](https://github.com/npm/write-file-atomic/blob/main/lib/index.js)
+
 # 修改清单 · 2026-11-18（状态进程失联时仍可发故障告警）
 
 - 实现与自查由 Codex 负责，本批基于已上线的 #171。外壳检测到持续失联会启动 `pushq`，原入口却等状态进程健康至超时。回归测试在旧代码上复现了等待超时。

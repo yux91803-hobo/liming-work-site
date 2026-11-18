@@ -501,71 +501,48 @@ async def part3(browser):
 
 
 async def part4(browser):
-    """天启：新对话空白页上「小芯 | 天启」；侧边栏、命令面板「新建天启对话」；天启对话里是星和「天启」。"""
+    """入口已经迁移，li 的历史天启对话仍可打开、继续，保留原来的标志与模型。"""
     pg = await ui.page(browser, 1280, 860)
-    st = await ui.xin_mock(pg, authed=True, live=[[{'t': 'text', 'text': '在呢。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 2000, 'model': 'deepseek-v4.1-flash'}]])
+    st = await ui.xin_mock(pg, authed=True, legacy_harness=True,
+                          live=[[{'t': 'text', 'text': '在呢。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 2000, 'model': 'deepseek-v4.1-flash'}]])
     await open_work(pg)
-    await pg.wait_for_selector('.xc-hello .xc-as')
-    HELLO = """() => { const p = document.querySelector('.xc-hello'), mk = p.querySelector('.xc-hello-mk'); return [[...p.querySelectorAll('.xc-as-b')].map(b => b.textContent + (b.getAttribute('aria-checked') === 'true' ? '*' : '')),
-      p.querySelector('.xc-as').getAttribute('role'), p.classList.contains('tq'), p.querySelector('.xc-hello-t').textContent, getComputedStyle(mk.querySelector('.xc-tq')).opacity === '1',
-      document.querySelector('.xc-mdl').hidden, document.querySelector('.xc-row textarea').placeholder]; }"""
-    h0 = await pg.evaluate(HELLO)
-    ui.check('新对话空白页上方「小芯 | 天启」（单选组，默认小芯），小芯的标志和大标题「小芯」，没有模型按钮，输入框写「给小芯发消息」', h0 == [['小芯*', '天启'], 'radiogroup', False, '小芯', False, True, '给小芯发消息'], h0)
-    await pg.click('.xc-as-b[data-a=harness]')
-    await pg.wait_for_timeout(700)
-    h1 = await pg.evaluate(HELLO)
-    ui.check('选天启：底滑过去，标志换成像素星、大标题「天启」，输入框底下出现模型按钮，写「给天启发消息」', h1 == [['小芯', '天启*'], 'radiogroup', True, '天启', True, False, '给天启发消息'], h1)
-    # 站长：从天启切回小芯时大标题闪一下（第二轮被挤成两行、和淡出的「天启」叠在一起）。逐帧看：一直是一行、不比单行高
-    await pg.evaluate("""() => { window.__hf = []; const w = document.querySelector('.xc-hello-tw'), t0 = performance.now();
-      const tick = () => { window.__hf.push([...w.children].map(e => Math.round(e.getBoundingClientRect().height))); if (performance.now() - t0 < 500) requestAnimationFrame(tick); }; requestAnimationFrame(tick); }""")
-    await pg.click('.xc-as-b[data-a=codex]')
-    await pg.wait_for_timeout(650)
-    hf = await pg.evaluate("[window.__hf, Math.round(document.querySelector('.xc-hello-t').getBoundingClientRect().height), document.querySelector('.xc-hello-t').textContent]")
-    ui.check('切回小芯：大标题换成「小芯」，换的过程中每一帧都是一行（不被挤成两行叠在一起）', hf[2] == '小芯' and all(h <= hf[1] + 2 for fr in hf[0] for h in fr), (hf[1], max((h for fr in hf[0] for h in fr), default=0), hf[2]))
-    await pg.click('.xc-as-b[data-a=harness]')
-    await pg.wait_for_timeout(500)
-    await pg.focus('.xc-as-b[data-a=harness]')
-    await pg.keyboard.press('ArrowLeft')
-    await pg.wait_for_timeout(200)
-    k = await pg.evaluate("[document.querySelector('.xc-as-b[aria-checked=true]').dataset.a, document.activeElement.dataset.a, localStorage.getItem('lm.xin.agent')]")
-    ui.check('方向键也能换（焦点跟着），选了记在这个浏览器里', k == ['codex', 'codex', 'codex'], k)
-    await pg.keyboard.press('ArrowRight')
-    await pg.wait_for_timeout(200)
-    await pg.fill('.xc-row textarea', '天启你好')
-    await pg.keyboard.press('Enter')
-    await pg.wait_for_function(ui.CHAT_DONE + " && !!document.querySelector('.xc-ai')", timeout=10000)
-    sent = st['sent']
-    conv = await pg.evaluate("(() => { const a = document.querySelector('.xc-ai'); return [a.querySelector(':scope > .xc-av').classList.contains('xc-tq'), a.querySelector('.xc-who').textContent, !document.querySelector('.xc-hello'), localStorage.getItem('lm.xin.agent')]; })()")
-    ui.check('用天启发出去：是天启的新对话（agent harness、不带 main），回答的头像是星、名字写「天启」', sent.get('agent') == 'harness' and 'main' not in sent and conv == [True, '天启', True, 'harness'], (sent, conv))
-    # 侧边栏「新建天启对话」、标题栏的「+」（新对话 = 小芯）
-    await pg.click('.xc-tqb')
     await pg.wait_for_selector('.xc-hello')
-    a1 = await pg.evaluate("[document.querySelector('.xc-hello').classList.contains('tq'), document.querySelector('.xc-tqb > span:last-child').textContent]")
-    await pg.click('.xc-new-b')
-    await pg.wait_for_timeout(300)
-    a2 = await pg.evaluate("[document.querySelector('.xc-hello').classList.contains('tq'), localStorage.getItem('lm.xin.agent')]")
-    ui.check('侧边栏键帽「新建天启对话」：空白页直接是天启；标题栏的「+」新对话还是小芯', a1 == [True, '新建天启对话'] and a2 == [False, 'codex'], (a1, a2))
-    # 命令面板：搜「天启」
+    default = await pg.evaluate('''() => [document.querySelector('.xc-hello-t').textContent,
+        !document.querySelector('.xc-as'), document.querySelector('.xc-mdl').hidden,
+        document.querySelector('.xc-row textarea').placeholder]''')
+    ui.check('小芯空白页没有切换入口，保留标题、模型按钮状态和输入提示', default == ['小芯', True, True, '给小芯发消息'], default)
+    drawer = await pg.evaluate("[...document.querySelectorAll('.xc-dr-keys .xc-key')].map(b => b.textContent.trim())")
+    ui.check('小芯侧边栏只有新建对话', drawer == ['新建对话'], drawer)
     await pg.keyboard.press('Control+k')
     await pg.wait_for_selector('.xc-pal:not([hidden]) input')
     await pg.keyboard.type('天启')
-    await pg.wait_for_timeout(200)
-    first = await pg.evaluate("(document.querySelector('.xc-pal [aria-selected=true]') || {}).textContent || ''")
+    actions = await pg.locator('.xc-pal').inner_text()
+    ui.check('命令面板保留旧天启对话搜索，去掉新建入口', '新建天启对话' not in actions and ui.LEGACY_HARNESS['title'] in actions, actions)
+    await pg.keyboard.press('Escape')
+    await ui.open_legacy_harness(pg)
+    await pg.fill('.xc-row textarea', '天启你好')
     await pg.keyboard.press('Enter')
-    await pg.wait_for_timeout(300)
-    a3 = await pg.evaluate("document.querySelector('.xc-hello').classList.contains('tq')")
-    ui.check('命令面板搜「天启」：第一个是「新建天启对话」，回车就是天启的空白页', '新建天启对话' in first and a3, (first, a3))
+    await pg.wait_for_function(ui.CHAT_DONE + " && [...document.querySelectorAll('.xc-ai .xc-bub')].some(e => e.textContent.includes('在呢。'))", timeout=10000)
+    sent = st['sent']
+    old = await pg.evaluate('''() => { const a = [...document.querySelectorAll('.xc-ai')].at(-1);
+        return [a.querySelector(':scope > .xc-av').classList.contains('xc-tq'), a.querySelector('.xc-who').textContent,
+                document.querySelector('.xc-mdl').hidden]; }''')
+    ui.check('旧天启在 li 上接着聊：沿用原编号和 Harness，回答保留星标与模型按钮',
+             sent.get('sid') == ui.LEGACY_HARNESS['sid'] and sent.get('model') == 'deepseek-v4.1-flash'
+             and 'main' not in sent and old == [True, '天启', False], (sent, old))
+    await pg.click('.xc-new-b')
+    await pg.wait_for_selector('.xc-hello')
+    fresh = await pg.evaluate("[LimingXinChat.state.agent, LimingXinChat.state.sessAgent, document.querySelector('.xc-hello-t').textContent]")
+    ui.check('从旧天启新建对话会回到小芯', fresh == ['codex', '', '小芯'], fresh)
     await pg.context.close()
 
 
 async def part5(browser):
     """模型和思考强度：按钮上的像素格、面板里滑过去的底、逐格亮、每档一句说明。"""
     pg = await ui.page(browser, 1280, 860)
-    await ui.xin_mock(pg, authed=True)
+    await ui.xin_mock(pg, authed=True, legacy_harness=True)
     await open_work(pg)
-    await pg.wait_for_selector('.xc-hello .xc-as')
-    await pg.click('.xc-as-b[data-a=harness]')
-    await pg.wait_for_timeout(300)
+    await ui.open_legacy_harness(pg)
     CHIP = "(() => { const m = document.querySelector('.xc-mdl'), e = m.querySelector('.xc-em'); return [m.classList.contains('tq'), e.querySelectorAll('b').length, e.querySelectorAll('b.on').length, e.textContent]; })()"
     c0 = await pg.evaluate(CHIP)
     ui.check('输入框底下：模型名后面一组像素强度格（关以外三格），默认「高」亮两格；天启的冷色', c0 == [True, 3, 2, '高'], c0)

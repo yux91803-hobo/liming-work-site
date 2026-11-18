@@ -29,6 +29,18 @@ window.TOOLS = [
       ['path', { d: 'M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3' }],
       ['circle', { cx: '9.6', cy: '9.6', r: '0.9', 'class': 'a' }]
     ]
+  },
+  {
+    id: 'tianqi',
+    name: '天启',
+    cat: 'tool',
+    keywords: '天启 tianqi harness 模型 聊天 ai',
+    path: '/tianqi',
+    src: '/tools/tianqi/',
+    icon: [
+      ['path', { d: 'M12 3l1.9 7.1L21 12l-7.1 1.9L12 21l-1.9-7.1L3 12l7.1-1.9Z' }],
+      ['circle', { cx: '18.5', cy: '5.5', r: '0.9', 'class': 'a' }]
+    ]
   }
 ];
 

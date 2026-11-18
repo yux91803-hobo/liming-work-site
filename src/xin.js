@@ -120,9 +120,9 @@ async function ibErr(r) {
   try { e = (await r.json()).error || {}; } catch { /* 不是 JSON */ }
   return { status: r.status, code: e.code || 'http_' + r.status, msg: e.message || '', retryAfter: e.retryAfterSeconds || Number(r.headers.get('retry-after')) || 0 };
 }
-// 电脑列表按 key 和电脑名分开缓存：小芯和天启的请求交替来时不互相冲掉
+// 按范围、key 和电脑名缓存。小芯旧版允许选账号里唯一的电脑，这份缓存不能被天启使用。
 const machineCache = new Map();
-const machineKey = env => env.INSTABOX_API_KEY + '\n' + (env.XIN_MACHINE || 'li');
+const machineKey = env => (isTq(env) ? 'tq' : 'xin') + '\n' + env.INSTABOX_API_KEY + '\n' + (env.XIN_MACHINE || 'li');
 async function machine(env, now) {
   const c = machineCache.get(machineKey(env));
   if (c && now - c.at < 600000) return c.m;
@@ -130,7 +130,11 @@ async function machine(env, now) {
   if (!r.ok) throw await ibErr(r);
   const list = (await r.json()).machines || [];
   const want = env.XIN_MACHINE || 'li';
-  const m = list.find(x => x.name === want || x.id === want) || (list.length === 1 ? list[0] : null);
+  let m = list.find(x => x.name === want || x.id === want);
+  if (!m && !isTq(env) && list.length === 1) {
+    const only = list[0], tianqi = env.XIN_TQ_MACHINE || 'li2';
+    if (only.name !== tianqi && only.id !== tianqi) m = only;
+  }
   if (!m) throw { status: 404, code: 'no_machine', msg: '找不到云电脑「' + want + '」' };
   const hit = { at: now, m: { id: m.id, name: m.name } };
   machineCache.set(machineKey(env), hit);
@@ -869,6 +873,8 @@ export class XinTaskSupervisor {
   // 待送达（实例 xin-inbox，src/xin-inbox.js）：送的时候和 Worker 一样调 call()，内核配置直接读本实例的存储
   inbox() {
     return this.inboxImpl || (this.inboxImpl = new Inbox(this.state.storage, {
+      // 旧版闹钟只认 inbox:meta。回滚期间，天启的待送达留在原处，恢复新版后再由 kick 重新安排。
+      namespace: this.scope === 'tq' ? 'tq-inbox' : undefined,
       deliver: row => call(this.scopedEnv(), CRON_ORIGIN, row.op, { ...row.args, clientId: row.id }, { waitUntil: p => this.state.waitUntil?.(p) }, Date.now(), { kernel: this.kernelAdapter() })
     }));
   }
@@ -887,9 +893,10 @@ export class XinTaskSupervisor {
   async fetch(req) {
     const path = new URL(req.url).pathname;
     if (!(await this.bindScope(req))) return json({ error: 'scope_mismatch' }, 409);
-    if (path.startsWith('/backup/')) return this.backup(path.slice('/backup/'.length), req);
     if (path.startsWith('/kernel/')) return this.kernelRoute(path.slice('/kernel/'.length), req);
     if (path.startsWith('/inbox/')) return this.inboxRoute(path.slice('/inbox/'.length), req);
+    if (this.scope === 'tq') return json(NOT_TQ, 404);
+    if (path.startsWith('/backup/')) return this.backup(path.slice('/backup/'.length), req);
     const incoming = await req.json(), current = await this.state.storage.get('tasks') || {};
     if (incoming.version != null && current.version != null && (incoming.version < current.version || incoming.version === current.version && incoming.bg !== current.bg)) return json({ ok: true, stale: true });
     // A browser's old read cannot cancel a newer controller callback.
@@ -904,7 +911,10 @@ export class XinTaskSupervisor {
   }
   async alarm() {
     this.scope = (await this.state.storage.get('scope')) || 'xin';   // 天启的 tq-inbox 醒来也用 li2 的 key
-    if (await this.state.storage.get('inbox:meta')) return this.inbox().alarm();   // 实例 xin-inbox / tq-inbox：待送达的闹钟
+    if (this.scope === 'tq' && !enabled(this.scopedEnv())) return;
+    const inbox = this.inbox();
+    if (await inbox.initialized()) return inbox.alarm();
+    if (this.scope === 'tq') return;
     const current = await this.state.storage.get('tasks');
     if (!current) return;
     if (current.bg <= 0) { if (current.leaseCleanup) await this.releaseLease(current); return; }

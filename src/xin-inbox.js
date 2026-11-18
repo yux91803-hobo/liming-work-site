@@ -4,7 +4,7 @@
 import { redact } from './xin-kernel.js';
 
 export const BACKOFF_S = [5, 15, 30, 60, 120, 300, 600];
-const ROW = 'inbox:row:', LEASE_MS = 120000, GUARD_MS = 120000, GIVE_UP_MS = 24 * 3600e3, KEEP_MS = 7 * 24 * 3600e3, LIST_DELIVERED_MS = 10 * 60e3, WAKE_MS = 5000;
+const LEASE_MS = 120000, GUARD_MS = 120000, GIVE_UP_MS = 24 * 3600e3, KEEP_MS = 7 * 24 * 3600e3, LIST_DELIVERED_MS = 10 * 60e3, WAKE_MS = 5000;
 const WAKE_FAST = 20;   // 叫醒中：前这么多次几秒一试，再叫不醒（InstaBox 那边出故障）就按退避放慢
 // 控制器的临时错误：过一会儿再送。只和这一句所在的对话有关。owner_unavailable：控制器把这一次交给状态进程没交过去（它正在重起或排空）
 const TRANSIENT = new Set(['busy', 'lock_failed', 'internal', 'owner_unavailable']);
@@ -30,10 +30,13 @@ const machineWait = w => !!w && (w.scope ? w.scope === 'machine' : w.state === '
 const machineDown = (r, now) => r.state === 'pending' && r.nextAt > now && machineWait(r.wait);
 
 export class Inbox {
-  constructor(storage, { deliver, now = Date.now, budgetMs = 6000 }) {
+  constructor(storage, { deliver, now = Date.now, budgetMs = 6000, namespace = 'inbox' }) {
     this.storage = storage; this.deliver = deliver; this.now = now; this.budgetMs = budgetMs;
+    this.prefix = namespace + ':';
+    this.rowPrefix = this.prefix + 'row:';
     this.mutations = Promise.resolve();
   }
+  initialized() { return this.storage.get(this.prefix + 'meta'); }
   // 只串行化存储变更，不在这里等待云电脑。新消息、闹钟、迟到的回应和确认共用同一条写入队列。
   serial(fn) { const p = this.mutations.then(fn); this.mutations = p.catch(() => {}); return p; }
   // 存好了才返回；新的一行（或到期的旧行）当场送一次，最多等 budgetMs，没等到就先回「在送」
@@ -42,12 +45,12 @@ export class Inbox {
     args = args && typeof args === 'object' ? args : {};
     const digest = await digestOf(args);
     const conflict = await this.serial(async () => {
-      const old = await this.storage.get(ROW + id);
+      const old = await this.storage.get(this.rowPrefix + id);
       if (old) return old.digest !== digest;
-      const now = this.now(), seq = ((await this.storage.get('inbox:seq')) || 0) + 1;
-      await this.storage.put('inbox:meta', { v: 1 });   // 有行就一定有标记，闹钟能认出这是待送达
-      await this.storage.put('inbox:seq', seq);
-      await this.storage.put(ROW + id, { id, op, args, digest, seq, state: 'pending', attempts: 0, backoff: 0, nextAt: now, leaseUntil: 0, createdAt: now,
+      const now = this.now(), seq = ((await this.storage.get(this.prefix + 'seq')) || 0) + 1;
+      await this.storage.put(this.prefix + 'meta', { v: 1 });   // 有行就一定有标记，闹钟能认出这是待送达
+      await this.storage.put(this.prefix + 'seq', seq);
+      await this.storage.put(this.rowPrefix + id, { id, op, args, digest, seq, state: 'pending', attempts: 0, backoff: 0, nextAt: now, leaseUntil: 0, createdAt: now,
         firstAttemptAt: 0, deliveredAt: 0, finishedAt: 0, result: null, wait: null, error: null, acked: false, woke: false });
       return false;
     });
@@ -63,7 +66,7 @@ export class Inbox {
       if (!row || !this.due(row, now) || this.blocker(row, rows, now)) return { view: row ? this.viewOf(row, rows, now) : null };
       row.leaseUntil = now + LEASE_MS; row.attempts++;
       if (!row.firstAttemptAt) row.firstAttemptAt = now;
-      await this.storage.put(ROW + id, row);
+      await this.storage.put(this.rowPrefix + id, row);
       await this.armBefore(row.leaseUntil);   // 尝试半路没了：租约到期时闹钟还会来
       return { row };
     });
@@ -74,7 +77,7 @@ export class Inbox {
       try { await Promise.race([p, new Promise(r => { timer = setTimeout(r, budgetMs); })]); }
       finally { clearTimeout(timer); }
     } else await p;
-    return this.serial(async () => this.viewOf(await this.storage.get(ROW + id), await this.rows(), this.now()));
+    return this.serial(async () => this.viewOf(await this.storage.get(this.rowPrefix + id), await this.rows(), this.now()));
   }
   // 谁挡着这一行：电脑整体不可用时是那一行（最早能再试的）；否则是同一道里排在它前面的那一句；没人挡就是 null
   blocker(row, rows, now) {
@@ -87,11 +90,11 @@ export class Inbox {
     let r;
     try { r = await this.deliver(row); } catch (e) { r = { ok: false, state: 'error', msg: String(e && (e.msg || e.message) || e) }; }
     await this.serial(async () => {
-      const latest = await this.storage.get(ROW + row.id);
+      const latest = await this.storage.get(this.rowPrefix + row.id);
       // 租约过期后可能已开始下一次尝试，旧回应不能覆盖新尝试的状态；重送仍沿用同一 clientId。
       if (!latest || latest.state !== 'pending' || latest.attempts !== row.attempts) return;
       this.settle(latest, r, this.now());
-      await this.storage.put(ROW + row.id, latest);
+      await this.storage.put(this.rowPrefix + row.id, latest);
       if (latest.state === 'delivered' && (latest.woke || latest.deliveredAt - latest.firstAttemptAt > WAKE_MS)) await this.recordWake(latest.deliveredAt - latest.firstAttemptAt, latest.deliveredAt);
     });
     await this.schedule();
@@ -126,7 +129,7 @@ export class Inbox {
     row.nextAt = nextAt; row.wait = { ...wait, until: wait.until ?? nextAt };
   }
   giveUp(row, now) { Object.assign(row, { state: 'failed', leaseUntil: 0, wait: null, error: { code: 'gave_up', msg: '24 小时都没送到' }, finishedAt: now }); }
-  async rows() { return [...(await this.storage.list({ prefix: ROW })).values()].sort((a, b) => a.seq - b.seq); }
+  async rows() { return [...(await this.storage.list({ prefix: this.rowPrefix })).values()].sort((a, b) => a.seq - b.seq); }
   // 闹钟定到最早该再送的那一道的队首；都送完了就不留闹钟
   async schedule() {
     return this.serial(async () => {
@@ -146,7 +149,7 @@ export class Inbox {
       await this.storage.setAlarm(now + GUARD_MS);   // 先续上：下面干到一半实例没了，闹钟还会再来
       for (const row of await this.rows()) {
         const fin = row.finishedAt || row.deliveredAt;
-        if (row.state !== 'pending' && fin && now - fin > KEEP_MS) await this.storage.delete(ROW + row.id);
+        if (row.state !== 'pending' && fin && now - fin > KEEP_MS) await this.storage.delete(this.rowPrefix + row.id);
       }
     });
     const all = await this.rows(), stuck = new Set();   // stuck：这一轮里队首还没送走的道，它后面的先不动
@@ -155,8 +158,8 @@ export class Inbox {
       if (row.state !== 'pending') continue;
       if (now - row.createdAt > GIVE_UP_MS && row.leaseUntil <= now) {
         await this.serial(async () => {
-          const latest = await this.storage.get(ROW + row.id);
-          if (latest?.state === 'pending' && latest.leaseUntil <= now) { this.giveUp(latest, now); await this.storage.put(ROW + row.id, latest); }
+          const latest = await this.storage.get(this.rowPrefix + row.id);
+          if (latest?.state === 'pending' && latest.leaseUntil <= now) { this.giveUp(latest, now); await this.storage.put(this.rowPrefix + row.id, latest); }
         });
         continue;
       }
@@ -164,7 +167,7 @@ export class Inbox {
       if (down || stuck.has(lane)) continue;   // 不 break：后面的行还要做上面的放弃检查
       if (!this.due(row, this.now())) { stuck.add(lane); continue; }
       await this.attempt(row.id, 0);
-      const after = await this.storage.get(ROW + row.id);
+      const after = await this.storage.get(this.rowPrefix + row.id);
       if (after && after.state === 'pending') { stuck.add(lane); if (machineDown(after, this.now())) down = true; }
     }
     await this.schedule();
@@ -174,20 +177,20 @@ export class Inbox {
     return this.serial(async () => {
       const now = this.now(), pending = (await this.rows()).filter(r => r.state === 'pending');
       if (!pending.length) return;
-      for (const r of pending) if (r.nextAt > now && r.leaseUntil <= now && !(r.wait && r.wait.state === 'cooldown')) { r.nextAt = now; await this.storage.put(ROW + r.id, r); }
+      for (const r of pending) if (r.nextAt > now && r.leaseUntil <= now && !(r.wait && r.wait.state === 'cooldown')) { r.nextAt = now; await this.storage.put(this.rowPrefix + r.id, r); }
       const t = now + 1000, cur = await this.storage.getAlarm();
       if (cur == null || cur > t) await this.storage.setAlarm(t);
     });
   }
   async view(id) {
     return this.serial(async () => {
-      const row = typeof id === 'string' && await this.storage.get(ROW + id);
+      const row = typeof id === 'string' && await this.storage.get(this.rowPrefix + id);
       if (!row) return null;
-      if (row.state !== 'pending' && !row.acked) { row.acked = true; await this.storage.put(ROW + id, row); }
+      if (row.state !== 'pending' && !row.acked) { row.acked = true; await this.storage.put(this.rowPrefix + id, row); }
       return this.viewOf(row, await this.rows(), this.now());
     });
   }
-  async ack(id) { return this.serial(async () => { const row = typeof id === 'string' && await this.storage.get(ROW + id); if (row) { row.acked = true; await this.storage.put(ROW + id, row); } }); }
+  async ack(id) { return this.serial(async () => { const row = typeof id === 'string' && await this.storage.get(this.rowPrefix + id); if (row) { row.acked = true; await this.storage.put(this.rowPrefix + id, row); } }); }
   async list() {
     const now = this.now();
     const all = await this.rows();
@@ -195,11 +198,11 @@ export class Inbox {
     return { rows: rows.map(r => this.viewOf(r, all, now)), wakes: await this.stats() };
   }
   async recordWake(ms, at) {
-    const w = ((await this.storage.get('inbox:wakes')) || []).concat([{ ms, at }]).slice(-50);
-    await this.storage.put('inbox:wakes', w);
+    const w = ((await this.storage.get(this.prefix + 'wakes')) || []).concat([{ ms, at }]).slice(-50);
+    await this.storage.put(this.prefix + 'wakes', w);
   }
   async stats() {
-    const ms = ((await this.storage.get('inbox:wakes')) || []).map(w => w.ms).sort((a, b) => a - b);
+    const ms = ((await this.storage.get(this.prefix + 'wakes')) || []).map(w => w.ms).sort((a, b) => a - b);
     if (!ms.length) return { count: 0, p50: 0, max: 0, over45: 0 };
     return { count: ms.length, p50: ms[Math.floor((ms.length - 1) / 2)], max: ms.at(-1), over45: ms.filter(x => x > 45000).length };
   }

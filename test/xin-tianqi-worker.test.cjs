@@ -111,6 +111,33 @@ test('天启范围里小芯专属的操作回「天启没有这个功能」，�
   } finally { ib.restore(); }
 });
 
+test('天启 key 下找不到 li2 时不访问账号里仅有的 li，也不借用小芯的电脑缓存', async () => {
+  const m = await fresh(), env = tqEnv({ TQ_INSTABOX_API_KEY: XIN_KEY, XIN_MACHINE: 'li2' }), ck = await login(m, env);
+  const ib = fakeIB(c => c.path === '/v1/machines/m_li'
+    ? json({ id: 'm_li', name: 'li', state: 'running' })
+    : json({ error: { code: 'unexpected' } }, 500));
+  try {
+    const call = async (scope, op) => (await m.handleXin(req(`/api/${scope}/call`, { body: { op }, headers: { cookie: ck } }), env, null)).json();
+    assert.equal((await call('xin', 'status')).data.name, 'li', '小芯保留单台电脑的旧行为');
+    ib.calls.length = 0;
+    for (const op of ['wake', 'sessions']) {
+      assert.deepEqual(await call('tq', op), { ok: false, state: 'error', msg: '找不到云电脑「li2」' });
+    }
+    assert.ok(ib.calls.length > 0);
+    assert.ok(ib.calls.every(c => c.path === '/v1/machines'), '只查列表，没读取、唤醒或执行其他电脑');
+  } finally { ib.restore(); }
+});
+
+test('小芯误配只看得到 li2 的 key 时也不访问 li2', async () => {
+  const m = await fresh(), env = tqEnv({ INSTABOX_API_KEY: TQ_KEY }), ck = await login(m, env);
+  const ib = fakeIB(() => { throw new Error('小芯不应访问 li2'); });
+  try {
+    const r = await m.handleXin(req('/api/xin/call', { body: { op: 'wake' }, headers: { cookie: ck } }), env, null);
+    assert.deepEqual(await r.json(), { ok: false, state: 'error', msg: '找不到云电脑「li」' });
+    assert.deepEqual(ib.calls.map(c => c.path), ['/v1/machines']);
+  } finally { ib.restore(); }
+});
+
 test('两边交替请求：电脑列表各查一次，不互相冲掉', async () => {
   const m = await fresh(), env = tqEnv(), ck = await login(m, env);
   const ib = fakeIB(() => json({ exitCode: 0, stdout: '{"sessions":[]}', stderr: '' }));
@@ -184,6 +211,32 @@ test('天启的待送达：存进 tq-inbox，送的时候用 li2 的 key；闹�
     assert.ok(ib.keys.length >= 2, '闹钟又送了一次：' + ib.keys.length);
     assert.deepEqual([...new Set(ib.keys)], [TQ_KEY]);
     assert.equal(storage.values.get('scope'), 'tq');
+  } finally { ib.restore(); }
+});
+
+test('天启的待送达不会被回滚到旧版的小芯闹钟接管，恢复新版后可以继续送', async () => {
+  const { XinTaskSupervisor } = await fresh(), storage = memStorage(), env = tqEnv(), ib = busyIB();
+  const supervisor = () => new XinTaskSupervisor({ storage, waitUntil() {} }, env);
+  const headers = { 'x-xin-scope': 'tq' }, id = 'cid-tq000003';
+  try {
+    const accepted = await accept(supervisor(), headers, id);
+    assert.equal((await accepted.json()).view.state, 'pending');
+    assert.equal(await storage.get('inbox:meta'), undefined, '旧版闹钟以此判断是否有队列');
+    assert.equal((await storage.list({ prefix: 'inbox:row:' })).size, 0);
+    assert.ok(await storage.getAlarm());
+    await storage.deleteAlarm(); // 回滚期间，旧版收到并结束了这次闹钟
+    const realNow = Date.now;
+    Date.now = () => realNow() + 600000;
+    try {
+      const sent = ib.keys.length;
+      await new XinTaskSupervisor({ storage, waitUntil() {} }, mkEnv()).alarm();
+      assert.equal(ib.keys.length, sent, '未配置天启 key 时，已有待送达也不会访问 InstaBox');
+      await supervisor().fetch(new Request('https://xin.internal/inbox/kick', { method: 'POST', headers }));
+      assert.ok(await storage.getAlarm(), '新版重新安排了已有待送达的闹钟');
+      await supervisor().alarm();
+    } finally { Date.now = realNow; }
+    assert.ok(ib.keys.length >= 2);
+    assert.deepEqual([...new Set(ib.keys)], [TQ_KEY]);
   } finally { ib.restore(); }
 });
 

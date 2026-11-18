@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import time
 import uuid
 from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, owner_brief
@@ -19,6 +20,13 @@ AGY_MODEL = 'gemini-4-hydrogen'
 AGY_EFFORT = {'research': 'medium', 'code': 'high'}
 # Public replies must not mention model, runner or task internals.
 LEAKS = ('kimi','deepseek','gemini','antigravity','分身','任务编号')
+
+def require_finalization(run, events, label):
+    done = [e for e in events if e.get('t') == 'done']
+    if len(done) != 1 or not done[0].get('ok') or not re.fullmatch(
+        re.escape('finish:' + run + ':') + r'[0-9a-f]{32}:\d+', str(done[0].get('_eventId', ''))
+    ):
+        raise RuntimeError('Missing exactly one successful durable completion for ' + label)
 
 async def main():
     if len(PASSWORD) < 12:
@@ -128,6 +136,13 @@ async def main():
             await page.locator('.xc-login input[name=pw]').fill(PASSWORD, timeout=30000)
             await page.locator('.xc-login button').click()
             await page.wait_for_function('LimingXinChat.state.authed', timeout=30000)
+            tq_response = await raw('Tianqi me', lambda: context.request.get(BASE + '/api/tq/me', timeout=30000), True)
+            if tq_response.status != 200:
+                raise RuntimeError('Tianqi login status returned HTTP ' + str(tq_response.status))
+            tq_me = await tq_response.json()
+            if tq_me.get('authed') is not True or not isinstance(tq_me.get('enabled'), bool):
+                raise RuntimeError('天启入口不认同一个登录或缺少启用状态')
+            print('PASS 天启入口认同一个登录（enabled=' + json.dumps(tq_me['enabled']) + '）', flush=True)
             # 第 2 批：状态切到内核模式。外壳拉起常驻的状态进程（换外壳、切换前备份都在这里头），最多等 120 秒；
             # 等不到就失败（会自动回滚）。这次部署改了外壳的，要等电脑上换成新外壳（kernelCurrent）以后才算。
             # 记下切换次数和外壳起控制器的次数，所有检查做完后再核对一次。
@@ -229,6 +244,7 @@ async def main():
             image_done = next((e for e in image_events if e.get('t') == 'done'), {})
             if visual_token not in image_text or not image_done.get('ok'):
                 raise RuntimeError('Foreground real-model image reading mismatch')
+            require_finalization(image['run'], image_events, 'foreground')
             await check_front(image_done)
             if (await call('tasks', {'sid':image_sid})).get('tasks'):
                 raise RuntimeError('Foreground image chat unexpectedly delegated work')
@@ -266,6 +282,9 @@ async def main():
             again = await call('history', {'sid': task['sid']})
             if again['task']['result']['at'] != h['task']['result']['at'] or len(again['runs']) != 1:
                 raise RuntimeError('Task completion was duplicated')
+            turn = again['runs'][0]
+            require_finalization(turn['run'], turn['events'], 'background')
+            print('PASS durable completion receipts for real foreground and background turns', flush=True)
             actual = again['task'].get('actualModel')
             if actual == AGY_MODEL:
                 finished = [e for r in again['runs'] for e in r['events'] if e.get('t') == 'done']
