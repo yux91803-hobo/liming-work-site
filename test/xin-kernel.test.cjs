@@ -752,6 +752,18 @@ test('一直起不来：请求回「主人不在」；超过期限推送一次�
   assert.strictEqual((await ownerOp(f, 'echo', {}, KERNEL(1))).body.data.via, 'state');
 });
 
+// 新部署多半就是来修它的：之前的失败和退避都不算了，不等原来的退避（正式环境最长 60 秒），马上照新的期望起
+test('起不来、正在退避时来了新部署（代号变大）：不等原来的退避，马上照新的期望起', async t => {
+  const f = await keeperFixture(t, { giveUpMs: 600000, backoffMs: [platformTimeout(8000)] }, { readyWaitMs: platformTimeout(3000) });
+  fs.writeFileSync(path.join(f.home, 'serve-fail'), '1');
+  assert.strictEqual((await ownerOp(f, 'echo', {}, KERNEL(1))).status, 503);
+  assert.ok(await until(async () => (await health(f)).owner.phase === 'waiting'), '在退避');
+  fs.unlinkSync(path.join(f.home, 'serve-fail'));
+  const r = await ownerOp(f, 'echo', {}, KERNEL(2));
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body)); assert.strictEqual(r.body.data.via, 'state');
+  assert.strictEqual((await health(f)).owner.failures, 0, '失败次数从头算');
+});
+
 test('启动中的同版本请求等它准备好；等不到回「主人不在」（没执行），不起控制器', async t => {
   const f = await keeperFixture(t, {}, { readyWaitMs: 2000 });
   fs.writeFileSync(path.join(f.home, 'serve-delay'), '300');

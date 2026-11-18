@@ -240,7 +240,11 @@ export function createStateKeeper({ home, env = process.env, clock = () => perfo
     want({ gen, agent }) {
       if (s.closed || !Number.isSafeInteger(gen) || gen < s.gen) return false;
       const changed = s.want !== 'kernel' || gen !== s.gen || agent !== s.agent;
-      if (gen > s.gen && s.gen >= 0) Object.assign(s, { failures: 0, failingSince: null, downNotified: false, phase: s.phase === 'down' ? 'off' : s.phase });
+      // 新部署（代号变大）多半就是来修它的：之前的失败和退避都不算了，正在退避或标成 down 的马上照新的期望起
+      if (gen > s.gen && s.gen >= 0) {
+        if (s.phase === 'waiting' || s.phase === 'down') { clearTimeout(s.timer); s.phase = 'off'; }
+        Object.assign(s, { failures: 0, failingSince: null, downNotified: false });
+      }
       Object.assign(s, { want: 'kernel', gen, agent });
       if (changed) persist();
       reconcile(); wake();
