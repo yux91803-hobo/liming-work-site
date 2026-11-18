@@ -1161,8 +1161,12 @@ body.xs-open{overflow:hidden}
 [data-theme=dark] .tm-win{--t-pb:#77726a;box-shadow:6px 6px 0 #000}
 /* 弹出、收起：连续缓动（站长 2026-11-16「终端从下面弹出来会有卡顿，不够丝滑」——原来是 steps(5) / steps(4) 一格一格跳）。
    电脑上从点的那一点放大出来（transform-origin 在 term.js 的 place 里设），关的时候缩一点淡出；出比进快 */
-.tm-win.tm-in{animation:tmpop .22s cubic-bezier(.2,.9,.25,1) both}
-.tm-win.tm-out{animation:tmpopx .14s cubic-bezier(.4,0,1,1) both}
+.tm-win.tm-in{animation:tmcrt .36s cubic-bezier(.2,.9,.25,1) both}   /* 站长 2026-11-19：像老显示器开机——先亮一条横线，再展开成整屏 */
+.tm-win.tm-out{animation:tmcrtoff .26s cubic-bezier(.4,0,1,1) both}   /* 关机：缩成一条线，再缩成一个点 */
+@keyframes tmcrt{0%{transform:scaleY(.008) scaleX(.55);filter:brightness(3);opacity:.85}35%{transform:scaleY(.008) scaleX(1);filter:brightness(2.4);opacity:1}100%{transform:none;filter:none;opacity:1}}
+@keyframes tmcrtoff{0%{transform:none;filter:none}55%{transform:scaleY(.008) scaleX(1);filter:brightness(2.6);opacity:1}100%{transform:scaleY(.008) scaleX(0);filter:brightness(3);opacity:0}}
+.tm-win.tm-in::after{content:"";position:absolute;inset:0;z-index:5;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(255,255,255,.07) 0 1px,transparent 1px 3px);animation:tmscanline .55s steps(5,end) both}   /* 开机时扫描线闪一下（手机上的底板也有） */
+@keyframes tmscanline{from{opacity:1}to{opacity:0}}
 @keyframes tmpopx{to{transform:scale(.96);opacity:0}}
 @keyframes tmpop{from{transform:scale(.92);opacity:0}}
 .tm-scrim{position:fixed;inset:0;z-index:59;background:rgba(18,15,10,.4)}
@@ -1287,7 +1291,7 @@ body.xs-open{overflow:hidden}
 .tm-sheet:has(.tm-tabs:not([hidden])) .tm-name{display:none}
 .tm-sheet .tm-scr{padding:14px 14px 10px;font-size:12.5px}
 @media (prefers-reduced-motion:reduce){
-  .tm-win.tm-in,.tm-win.tm-sheet.tm-in,.tm-win.tm-out,.tm-win.tm-sheet.tm-out,.tm-scrim.tm-in,.tm-scrim.tm-out,.tm-l.tm-run > .tm-b,.tm-tp::after,.tm-star,.tm-caret,.tm-tl,.tm-wait i,.tm-live .tm-cl1,.tm-live .tm-cl2,.tm-live .tm-meteor{animation:none}
+  .tm-win.tm-in,.tm-win.tm-sheet.tm-in,.tm-win.tm-out,.tm-win.tm-sheet.tm-out,.tm-scrim.tm-in,.tm-scrim.tm-out,.tm-l.tm-run > .tm-b,.tm-tp::after,.tm-star,.tm-caret,.tm-tl,.tm-wait i,.tm-win.tm-in::after,.tm-live .tm-cl1,.tm-live .tm-cl2,.tm-live .tm-meteor{animation:none}
   .tm-sv{animation:none;background:none;-webkit-text-fill-color:currentColor}
   .xc-typing[data-term],.xc-tb{transition:none}
 }

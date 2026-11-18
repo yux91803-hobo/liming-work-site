@@ -471,12 +471,12 @@
       document.removeEventListener('keydown', onKey, true); document.removeEventListener('pointerdown', onDown, true);
       removeEventListener('resize', place);
       clearInterval(tick); tick = 0;
-      // 手机那一张滑下去、遮罩淡出（0.28 秒），电脑上的缩一点淡出（0.14 秒）；减少动态时直接藏
+      // 手机那一张滑下去、遮罩淡出（0.28 秒），电脑上像老显示器关机（0.26 秒）；减少动态时直接藏
       if (reduce()) hideNow();
       else {
         el.classList.remove('tm-in'); el.classList.add('tm-out');
         if (!scrim.hidden) { scrim.classList.remove('tm-in'); scrim.classList.add('tm-out'); }
-        closing = setTimeout(hideNow, el.classList.contains('tm-sheet') ? 300 : 160);
+        closing = setTimeout(hideNow, el.classList.contains('tm-sheet') ? 300 : 280);   // 电脑上关机动画 0.26 秒
       }
       if (W.opts.onClose) W.opts.onClose();
       if (focusBack && W.anchor && W.anchor.isConnected) W.anchor.focus({ preventScroll: true });
