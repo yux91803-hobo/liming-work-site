@@ -116,7 +116,7 @@ test('天启的 Purge 和 REA 开关只影响后续的 Harness 执行，REA 初�
   assert.equal(patches.length, 2);
   assert.notEqual(patches[0], patches[1]);
   const applied = fs.readFileSync(patches[0], 'utf8'), off = fs.readFileSync(patches[1], 'utf8');
-  assert.match(applied, /id: mcp-rea\n  name: "@deepseek-ai\/dsh-mcp-client"/);
+  assert.match(applied, /- insert:\n    - id: mcp-rea\n      name: "@deepseek-ai\/dsh-mcp-client"/);
   assert.ok(applied.includes('command: ' + JSON.stringify(launcher)));
   assert.doesNotMatch(applied, /\/foreign\/command/);
   assert.match(off, /id: dsh-purge\n  config:\n    enabled: false/);

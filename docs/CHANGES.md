@@ -5,6 +5,7 @@
 - 天启标题栏增加插件入口。经登录校验后，Worker 只把操作送给 `li2`，内核只接受 Harness 的 Purge 和 REA。复用旧版 Purge 开关，新增 REA 的 MCP 补丁。开关由各轮分别读取，REA 默认关闭。插件命令固定在 `li2` 的本地启动器。将 Harness 补丁生成移到现有的 `vm-persona.mjs`，按实际位置更新写者清单并下调 `vm-agent.mjs` 行数基线。冷启动保持 40 个子请求。 [Harness MCP 配置](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md)
 - 本地复核了 1280、1024、768、390 四种宽度的两个主题偏好，以及返回键、历史对话、输入区和模型面板。定向测试覆盖未登录请求、`li2` 路由隔离、插件状态生效和键盘焦点。
 - `li2` 已加载来自 `li` 的 Purge 1.6.98。REA 使用同版 6.9.0，带 Ghidra 12.1.4 和 Java 21，MCP 握手后列出 255 个工具。 [云电脑验收](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44375942730)
+- Harness 补丁用 `insert` 注册新增的 MCP 插件。隔离的模型请求检查确认，REA 关闭时提供 0 个 REA 工具，开启时提供 255 个。 [Harness 请求验证](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44379926524)
 
 # 修改清单 · 2026-11-19（工作台动画：体检修了 6 个问题，新加 7 种动画）
 

@@ -361,9 +361,9 @@ export function writeHarnessPatch(effort, model, state) {
     '- id: agent-default-model', '  config:', '    provider: ' + R.provider, '    model: ' + q(M.id), '    reasoningEffort: ' + e,
     '- id: system-prompt', '  config:', '    personaPrefix: ' + q(TIANQI ? TIANQI_NAME : tianqiPrompt())
   ], purge == null ? [] : ['- id: dsh-purge', '  config:', '    enabled: ' + purge], rea ? [
-    '- id: mcp-rea', '  name: "@deepseek-ai/dsh-mcp-client"', '  config:',
-    '    serverName: rea', '    transport: stdio', '    command: ' + q(rea),
-    '    startupTimeoutMs: 30000', '    toolCallTimeoutMs: 450000'
+    '- insert:', '    - id: mcp-rea', '      name: "@deepseek-ai/dsh-mcp-client"', '      config:',
+    '        serverName: rea', '        transport: stdio', '        command: ' + q(rea),
+    '        startupTimeoutMs: 30000', '        toolCallTimeoutMs: 450000'
   ] : [], ['']).join('\n'));
   fs.renameSync(t, out);
   // Earlier patches embedded Xiaoxin's notebook. They are regenerated caches: drop any still carrying it.
