@@ -1,4 +1,4 @@
-name: Tianqi li2 read-only readiness
+name: Tianqi li program inventory
 on:
   push:
     branches: [codex/tianqi-li2-readiness-20261118]
@@ -10,71 +10,105 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Inspect li2 program metadata
+      - name: Inspect source program metadata
         env:
-          LI2_API_KEY: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
+          LI_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
         run: |
           python3 - <<'PY'
           import json
           import os
+          import re
+          import shlex
           from urllib.error import HTTPError, URLError
           from urllib.parse import quote, urlencode
           from urllib.request import HTTPRedirectHandler, Request, build_opener
+
 
           class NoRedirect(HTTPRedirectHandler):
               def redirect_request(self, request, fp, code, msg, headers, newurl):
                   return None
 
+
+          PROGRAM_PATH = re.compile(r'/data/(?:apps|home)/[A-Za-z0-9_.@/+\-]+$')
+          PRIVATE_COMPONENTS = re.compile(r'(^|/)(?:accounts?|secrets?|credentials?|usage|logs?|backups?|storage|data|state|cache|\.git|\.env)(?:[./_-]|$)', re.I)
+
+
+          def safe_program_path(value):
+              if not PROGRAM_PATH.fullmatch(value or ''):
+                  return None
+              return value if not PRIVATE_COMPONENTS.search(value[6:]) else None
+
+
+          def entries(node):
+              return node.get('entries', []) if node and node.get('type') == 'dir' else []
+
+
+          def inventory(node, program_filter=None):
+              return [{k: item[k] for k in ('name', 'type', 'size')} for item in entries(node)
+                      if re.fullmatch(r'[A-Za-z0-9_.@+\-]+', item['name']) and not PRIVATE_COMPONENTS.search(item['name'])
+                      and (program_filter is None or program_filter(item['name']))][:30]
+
+
           def inspect(get):
-              matches = [row for row in get('/v1/machines')['machines'] if row.get('name') == 'li2']
-              if len(matches) != 1 or not matches[0].get('id'):
-                  raise RuntimeError('The configured account does not identify exactly one li2')
-              machine = matches[0]
-              paths = {
-                  '/data/apps': {'harness_program': 'deepseek-harness'},
-                  '/data/home/.local/bin': {'harness_launcher': 'dsh'},
-                  '/data/home/.xin': {'harness_gateway_key_exists': 'harness.key', 'kernel_environment_exists': 'kernel.env.json'},
-                  '/data/home/.config/systemd/user': {'gateway_user_service': 'workbuddy-gateway.service'},
-                  '/etc/systemd/system': {'gateway_system_service': 'workbuddy-gateway.service'},
-              }
-              allowed = {'running', 'suspended', 'stopped', 'starting', 'resuming', 'stopping', 'pending'}
-              state = machine.get('state')
-              result = {'initial_machine_state': state if state in allowed else 'other'}
-              root = '/v1/machines/' + quote(machine['id'], safe='')
-              for directory, fields in paths.items():
+              rows = [row for row in get('/v1/machines')['machines'] if row.get('name') == 'li']
+              if len(rows) != 1 or not rows[0].get('id'):
+                  raise RuntimeError('The source account does not identify exactly one li')
+              base = '/v1/machines/' + quote(rows[0]['id'], safe='') + '/files?'
+
+              def source(path):
                   try:
-                      contents = get(root + '/files?' + urlencode({'path': directory, 'limit': 5000}))
-                  except HTTPError as error:
-                      if error.code == 404:
-                          result.update(dict.fromkeys(fields, False))
-                      elif error.code in {409, 429, 503}:
-                          result.update(dict.fromkeys(fields, None))
-                      else:
-                          raise
-                  else:
-                      names = {item['name'] for item in contents.get('entries', [])}
-                      result.update({tag: name in names if name in names or not contents.get('truncated') else None
-                                     for tag, name in fields.items()})
+                      return get(base + urlencode({'path': path}))
+                  except HTTPError as ex:
+                      if ex.code == 404:
+                          return None
+                      raise
+
+              app = '/data/apps/deepseek-harness'
+              wrapper = source('/data/home/.local/bin/dsh') or {}
+              paths = sorted(set(re.findall(r'/data/apps/deepseek-harness/[A-Za-z0-9_.@/+\-]+', wrapper.get('content', ''))))
+              paths = [path for path in paths if safe_program_path(path)]
+              result = {
+                  'harness_artifacts': inventory(source(app)),
+                  'launcher_paths': paths,
+                  'headless_artifacts': inventory(source('/data/home/.dsh/profiles/headless'), lambda n: n in {'package.json', 'config.yaml', 'config.yml', 'extensions.yaml', 'extensions.yml'}),
+                  'related_apps': inventory(source('/data/apps'), lambda name: bool(re.search('deepseek|workbuddy|gateway', name, re.I))),
+              }
+              for where, unit in [('system', '/etc/systemd/system/workbuddy-gateway.service'),
+                                  ('user', '/data/home/.config/systemd/user/workbuddy-gateway.service')]:
+                  unit_data = source(unit) or {}
+                  if 'content' not in unit_data:
+                      continue
+                  settings = dict(line.split('=',1) for line in unit_data['content'].splitlines()
+                                  if '=' in line and line.partition('=')[0] in {'WorkingDirectory', 'ExecStart', 'User'})
+                  directory = safe_program_path(settings.get('WorkingDirectory'))
+                  command = shlex.split(settings.get('ExecStart',''))
+                  executable_paths = [p for p in command if safe_program_path(p)]
+                  runtime = command[0].rsplit('/',1)[-1] if command and re.fullmatch(r'/usr/(?:local/)?bin/(?:node|python3|bash)', command[0]) else None
+                  result['gateway_unit'] = {'where': where, 'directory': directory, 'exec_paths': executable_paths, 'runtime': runtime}
+                  if directory:
+                      result['gateway_artifacts'] = inventory(source(directory))
+                  break
               return result
 
+
           def main():
-              key = os.environ.get('LI2_API_KEY')
+              key = os.environ.get('LI_API_KEY')
               if not key:
-                  raise SystemExit('The Tianqi InstaBox secret is unavailable to this job')
+                  raise SystemExit('The source InstaBox secret is unavailable to this job')
               opener = build_opener(NoRedirect())
               def get(path):
-                  request = Request('https://api.instabox.sh' + path, headers={'X-API-Key': key})
-                  with opener.open(request, timeout=25) as response:
+                  with opener.open(Request('https://api.instabox.sh' + path, headers={'X-API-Key': key}), timeout=25) as response:
                       return json.load(response)
               try:
                   result = inspect(get)
-              except HTTPError as error:
-                  raise SystemExit('InstaBox returned HTTP ' + str(error.code)) from None
+              except HTTPError as ex:
+                  raise SystemExit('InstaBox returned HTTP ' + str(ex.code)) from None
               except (URLError, TimeoutError):
                   raise SystemExit('InstaBox connection did not complete') from None
-              except (ValueError, KeyError, TypeError):
-                  raise SystemExit('Unexpected InstaBox response shape') from None
-              print('LI2_READINESS ' + json.dumps(result, sort_keys=True))
+              except (KeyError, TypeError, ValueError):
+                  raise SystemExit('Unexpected source program metadata') from None
+              print('LI_PROGRAMS ' + json.dumps(result, sort_keys=True))
+
 
           if __name__ == '__main__':
               main()
