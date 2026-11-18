@@ -103,7 +103,7 @@ def explain_background_fallback(quota, issue, dispatched_ms, now_ms):
 
 
 # 第 2 批（docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md）：正式站的状态由内核外壳拉起、看住的常驻进程管，
-# 网页的每次操作经本机套接字交给它，外壳不再起控制器进程。usage 的 owner 是外壳的 summary 加上 spawns（外壳起过几次控制器）。
+# 网页的每次操作经本机套接字交给它，外壳不再起控制器进程。用状态进程的 PID 和接管次数核对它是否持续服务。
 # kernelCurrent（Worker 加的）：电脑上的外壳是不是这次部署的版本。改了外壳的部署，Worker 在后台换外壳；换好之前不记，
 # 不然外壳中途换掉会把切换次数加一，被判成「状态进程中途重启」而回滚（删旧模式第 2 步上线前自查发现，
 # 参考 Kubernetes 滚动发布：新版本就绪了才开始检查）。
@@ -112,9 +112,9 @@ def resident_owner(usage):
     o = (usage or {}).get('owner') or {}
     if o.get('phase') != 'running' or o.get('mode') != 'kernel' or o.get('kernelCurrent') is not True:
         return None
-    if type(o.get('epoch')) is not int or type(o.get('spawns')) is not int:
+    if any(type(o.get(field)) is not int or o[field] < 1 for field in ('epoch', 'pid')):
         return None
-    return {'epoch': o['epoch'], 'spawns': o['spawns']}
+    return {'epoch': o['epoch'], 'pid': o['pid']}
 
 
 def owner_brief(usage):
@@ -128,8 +128,8 @@ def same_resident_owner(first, usage):
         raise RuntimeError('State owner is no longer the resident process: ' + owner_brief(usage))
     if now['epoch'] != first['epoch']:
         raise RuntimeError('State owner restarted during the run: epoch ' + str(first['epoch']) + ' -> ' + str(now['epoch']))
-    if now['spawns'] != first['spawns']:
-        raise RuntimeError('The kernel started controller processes in kernel mode: ' + str(now['spawns'] - first['spawns']))
+    if now['pid'] != first['pid']:
+        raise RuntimeError('State owner PID changed during the run: ' + str(first['pid']) + ' -> ' + str(now['pid']))
 
 
 # ---------- 后台干活时插话（docs/superpowers/specs/2026-11-17-xin-steer-design.md，scripts/xin_live_steer.py） ----------

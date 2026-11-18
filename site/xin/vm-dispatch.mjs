@@ -38,9 +38,7 @@ export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, p
     patchRun(run, { died: true, ended: Date.now() });
     return true;
   }
-  // job 是派发表里读到的那一行。先认领再起执行进程：认领和写新编号在同一个事务里，没认领到（别的进程已经派了）就什么也不做。
-  // 不然两个进程同时读到同一条待派发，后一个写的新编号盖掉前一个的，前一个执行进程对不上编号退出、后一个拿不到锁也退出，
-  // 这一轮没人做，15 秒后被当成中途断了（2026-11-17 #161 正式运行的单元测试）
+  // 派发认领和新执行编号在同一事务提交。执行进程启动前即可核对编号。
   function startRunner(job) {
     const run = job.run;
     let attempt = null, claimed = false;
@@ -70,31 +68,24 @@ export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, p
     return true;
   }
   function dispatch(scan) {
-    if (journal.active || ownership.draining) return;
-    let release;
-    try { release = ownership.enter(); } catch (e) { if (e.code === 'owner_unavailable') return; throw e; }
-    try {
-      for (const job of scan ? journal.launchedRuns() : []) {
-        const m = readJ(metaF(job.run));
-        if (!m || m.ended) { journal.finishLaunch(job.run); continue; }
-        if (Date.now() - Math.max(m.started, job.dispatchedAt || 0) < 15000 || runnerAlive(job.run, m)) continue;
-        if (m.childPid && processGroupMembers(m.childPid, m.childIdentity).length) { runDone(job.run); continue; }
-        if (!m.task && m.agent === 'codex' && !m.stopped && job.attempts < 2) startRunner(job);
-        else if (runDone(job.run)) journal.finishLaunch(job.run);
-      }
-      for (const job of journal.pendingLaunches()) {
-        const meta = readJ(metaF(job.run));
-        if (!meta || meta.ended) { journal.finishLaunch(job.run); continue; }
-        if (runnerAlive(job.run, meta)) { journal.claimLaunch(job); continue; }
-        const own = readJ(sessF(job.sid));
-        const earlier = (own?.runs || []).slice(-4).filter(r => r !== job.run).some(r => {
-          const m = readJ(metaF(r)); return m && !runDone(r) && runnerAlive(r, m);
-        });
-        if (!earlier) startRunner(job);
-      }
-    } finally {
-      if (!ownership.owning && ownership.depth === 1) journal.closeWriter();
-      release();
+    if (journal.active || !ownership.owning || ownership.draining) return;
+    for (const job of scan ? journal.launchedRuns() : []) {
+      const m = readJ(metaF(job.run));
+      if (!m || m.ended) { journal.finishLaunch(job.run); continue; }
+      if (Date.now() - Math.max(m.started, job.dispatchedAt || 0) < 15000 || runnerAlive(job.run, m)) continue;
+      if (m.childPid && processGroupMembers(m.childPid, m.childIdentity).length) { runDone(job.run); continue; }
+      if (!m.task && m.agent === 'codex' && !m.stopped && job.attempts < 2) startRunner(job);
+      else if (runDone(job.run)) journal.finishLaunch(job.run);
+    }
+    for (const job of journal.pendingLaunches()) {
+      const meta = readJ(metaF(job.run));
+      if (!meta || meta.ended) { journal.finishLaunch(job.run); continue; }
+      if (runnerAlive(job.run, meta)) { journal.claimLaunch(job); continue; }
+      const own = readJ(sessF(job.sid));
+      const earlier = (own?.runs || []).slice(-4).filter(r => r !== job.run).some(r => {
+        const m = readJ(metaF(r)); return m && !runDone(r) && runnerAlive(r, m);
+      });
+      if (!earlier) startRunner(job);
     }
   }
   function dispatchLaunches() {

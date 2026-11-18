@@ -6,13 +6,13 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { StateJournal } from './vm-state.mjs';
 import { Ownership } from './vm-kernel-owner.mjs';
-import { requestStateSync, stateSocket, retryUnsent } from './vm-kernel-client.mjs';
+import { requestStateSync } from './vm-kernel-client.mjs';
 import { callContext } from './vm-kernel-context.mjs';
 import { assertAttempt } from './vm-run-attempt.mjs';
 
 export const BASE = process.env.XIN_HOME || path.join(os.homedir(), '.xin');
 export const journal = new StateJournal(BASE);
-// 写权释放前关闭可写连接；正式部署仍默认 legacy，状态进程由后续的模式开关启用。
+// 先关可写连接，再释放独占锁。
 export const ownership = journal.owner = new Ownership(BASE,{beforeRelease:()=>journal.closeWriter()});
 journal.bridge = (kind,args) => requestStateSync(BASE,{kind,...args,run:callContext().run,attempt:callContext().attempt});
 journal.checkWriter = (transaction=false) => {
@@ -25,14 +25,6 @@ journal.checkWriter = (transaction=false) => {
   if(stored)try{meta=JSON.parse(stored.body);}catch{throw Object.assign(new Error('执行状态损坏，报告未应用'),{code:'invalid_run_state'});}
   assertAttempt(meta,context);
 };
-journal.retryUnsent = retryUnsent;
-// The socket is only a hint. A legacy record still goes through the shared-lock path, even with a stale socket.
-export function stateOwned(){
-  if(ownership.owning||!fs.existsSync(stateSocket(BASE)))return false;
-  const r=ownership.record({waitMs:0});return r.busy||r.mode==='kernel';
-}
-journal.bridge.available=stateOwned;
-
 export const WORK = process.env.XIN_WORK || '/data/workspace';
 export const TEMPLATE = () => path.join(WORK, 'stm32-template');   // STM32 空工程（scripts/vm/setup-stm32.sh 装的）
 

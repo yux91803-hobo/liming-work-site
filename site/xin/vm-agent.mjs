@@ -42,18 +42,16 @@ import { spawn, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import * as runtime from './vm-runtime.mjs';
-import { StateJournal } from './vm-state.mjs';
 import { createController } from './vm-kernel-controller.mjs';
 import { createStateServer, snapshotBeforeSwitch } from './vm-kernel-state.mjs';
-import { requestStateSync, retryLockedReport, waitForState, forwardCLI, inputArgs } from './vm-kernel-client.mjs';
+import { requestStateSync, retryLockedReport, waitForState, forwardCLI } from './vm-kernel-client.mjs';
 import { callContext, lockHeld } from './vm-kernel-context.mjs';
 import { initializeStateTables } from './vm-kernel-operations.mjs';
 import { checkControllers } from './vm-kernel-compat.mjs';
-import { ownerLegacy } from './vm-kernel-owner.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
 import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps } from './vm-steer.mjs';
-import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership, stateOwned } from './vm-base.mjs';
+import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
 import { loginStore, normalizeSite } from './vm-logins.mjs';
@@ -154,11 +152,7 @@ function warm() {
   child.on('close', code => end(code));
 }
 
-
-/* ---------- 做完提醒：Web Push ----------
-   网页上开了「做完提醒」，浏览器的推送订阅就存在这里（push/subs.json）；VAPID 钥匙也在这里生成、保存（push/vapid.json），不经过网站。
-   一轮做完时，网页最近 8 秒没来取过进度（关掉了、切到别的应用了），就给每个订阅发一条：「小芯做完了：……」。
-   加密按 RFC 8291（aes128gcm），签名按 RFC 8292（VAPID，ES256 JWT），只用 node:crypto。 */
+/* Web Push 订阅与 VAPID 密钥都保存在本机 push/ 中，加密和签名遵循 RFC 8291、8292。 */
 const PUSH_DIR = () => path.join(BASE, 'push');
 const VAPID_F = () => path.join(PUSH_DIR(), 'vapid.json'), SUBS_F = () => path.join(PUSH_DIR(), 'subs.json');
 const PUSH_CONTACT = 'https://liming-work.com', SUBS_MAX = 8, UNWATCHED_MS = 8000;
@@ -211,14 +205,16 @@ export function plainText(t, max) {
   const s = String(t || '').replace(/```[\s\S]*?(```|$)/g, ' ').replace(/^[ \t]*(#{1,6}|>+)[ \t]*/gm, '').replace(/\*\*|`/g, '').replace(/\s+/g, ' ').trim();
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
-// 发给每个订阅；推送服务说这个订阅没了（404 / 410）就删掉
+// 故障告警只读取推送资料。正常推送收到 404 / 410 时交给状态进程清理订阅。
 export async function pushAll(msg, delivery = {}) {
   const recipient = s => crypto.createHash('sha256').update(s.endpoint).digest('hex');
   const subs = readSubs().filter(s => !(delivery.skip || []).includes(recipient(s)));
   if (!subs.length) return [];
-  const keys = vapidKeys(), body = JSON.stringify(msg), gone = [], out = [];
+  const keys = delivery.readOnlyState ? readJ(VAPID_F()) : vapidKeys();
+  if (!keys?.publicKey || !keys.privateJwk) return [];
+  const body = JSON.stringify(msg), gone = [], out = [];
   await Promise.all(subs.map(async sub => {
-    if(delivery.respectWatching && deviceWatching(msg.sid,sub.deviceId)){out.push({endpoint:sub.endpoint.slice(0,60),status:null,viewed:true,...(delivery.ids?{recipient:recipient(sub)}:{})});return;}
+    if(!delivery.readOnlyState && delivery.respectWatching && deviceWatching(msg.sid,sub.deviceId)){out.push({endpoint:sub.endpoint.slice(0,60),status:null,viewed:true,...(delivery.ids?{recipient:recipient(sub)}:{})});return;}
     let status = 0;
     try {
       const r = await fetch(sub.endpoint, {
@@ -230,7 +226,7 @@ export async function pushAll(msg, delivery = {}) {
     if (status === 404 || status === 410) gone.push({endpoint:sub.endpoint,revision:sub.revision||String(sub.at||'')+JSON.stringify(sub.keys)});
     out.push({ endpoint: sub.endpoint.slice(0, 60), status, ...(delivery.ids ? { recipient: recipient(sub) } : {}) });
   }));
-  if(gone.length) lockedCall('tasks','push_gone',{endpoints:gone});
+  if (!delivery.readOnlyState && gone.length) lockedCall('tasks','push_gone',{endpoints:gone});
   return out;
 }
 const NOTICE_DIR = () => path.join(BASE, 'outbox');
@@ -262,28 +258,15 @@ const sessF = sid => path.join(SESS, sid + '.json');
 const runF = run => path.join(RUNS, run + '.jsonl');
 const metaF = run => path.join(RUNS, run + '.json');
 const seenF = run => path.join(RUNS, run + '.seen');   // 网页最近一次来取这一轮的进度（看修改时间）
-// flock 的锁随进程退出自动释放；--close 不让后台 runner 继承锁。锁文件不能删，避免等待者锁住旧 inode。
-// 同一会话的发送、改名、归档、删除和 runner 更新用同一把锁；已有对话按 sid 分别加锁。
-// 后台任务的记录（派、排队、收尾、补充、停）都用同一把锁 tasks，等得久一点
+// key 标记请求所属的会话或任务事务。外部执行进程把写操作发给状态进程。
 function lockedCall(key, op, args) {
   if (key !== 'new' && key !== 'daily' && key !== 'tasks' && !okId(key, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
-  return retryLockedReport(op,remainingMs=>{   // 每次重新判断所有权；已发送报告仅在有明确重放保证时重试。
-  const viaOwner=()=>requestStateSync(BASE,{kind:'op',op,args,locked:true,key,run:callContext().run,attempt:callContext().attempt},{timeoutMs:remainingMs});
-  if(ownership.owning)return controller.invoke({op,args,locked:true,key,run:callContext().run,attempt:callContext().attempt},{internal:true});
-  if(stateOwned())return viaOwner();
-  let release;try{release=ownership.enter();}catch(e){if(e.code!=='owner_unavailable')throw e;return viaOwner();}
-  try{
-  const dir = path.join(BASE, 'locks'); mk(dir);
-  const r = spawnSync('flock', ['--exclusive', '--timeout', key === 'tasks' ? '20' : '3', '--conflict-exit-code', '73', '--close',
-    path.join(dir, key + '.lock'), process.execPath, SELF, 'locked', op],
-  { env:{...process.env,XIN_LOCK:key}, encoding: 'utf8', input: JSON.stringify(args || {}), maxBuffer: 2 * 1024 * 1024 });
-  if (r.status === 73) return { error: 'busy', msg: '上一句还没做完，请稍后再试' };
-  if (r.error || r.status !== 0) return { error: 'lock_failed', msg: r.error && r.error.code === 'ENOENT'
-    ? '云电脑缺少 flock，暂时不能安全更新对话' : '暂时不能安全更新对话，请重试' };
-  try { return JSON.parse(r.stdout); } catch { return { error: 'lock_failed', msg: '保存对话的结果不完整，请重试' }; }
-  }finally{release();}});
+  const { run, attempt } = callContext();
+  const request = { op, args, locked: true, key, run, attempt };
+  if (ownership.owning) return controller.invoke(request, { internal: true });
+  return retryLockedReport(op, timeoutMs => requestStateSync(BASE, { kind: 'op', ...request }, { timeoutMs }));
 }
-// 后台任务的记录也是会话文件，但归 tasks 锁管（调度会整份改写它）
+// 后台任务的会话记录和调度共用 tasks 事务。
 function patchSession(sid, changes) { return lockedCall(isTask(readJ(sessF(sid))) ? 'tasks' : sid, 'session_patch', { sid, changes }); }
 function applyRunPatch(run,changes){
   const current=readJ(metaF(run));if(!current)return null;
@@ -1410,7 +1393,6 @@ function launch(s, m, userEv) {
   rememberAgentSession(s.agent, s.agentSid);
   journal.enqueueLaunch(run,s.sid,m.kind==='handoff'?1:m.kind==='daily'?2:0);
   journal.defer(dispatchLaunches);
-  journal.defer(ensureWatchdog);
   return run;
 }
 function lastRun(s) { return s && s.runs && s.runs.length ? s.runs[s.runs.length - 1] : null; }
@@ -1494,7 +1476,6 @@ function saveTask(t) {
       const id=handoffId(t);
       if(t.delivery?.id!==id){t.delivery={id,version:workVersion(t),state:'pending'};writeJ(sessF(t.sid),t);}
       journal.enqueueHandoff({id,parent:t.parent,task:t.sid,version:workVersion(t),payload:{status:t.status,no:t.no}});
-      journal.defer(ensureWatchdog);
     }
   }
   try {
@@ -1648,7 +1629,6 @@ function taskNew(a) {
   memoryActivity();
   if (a.daily) writeJ(DAILY_LAST(), { date: t.dailyDate, run: null, sid: t.sid, at: Date.now(), ok: null, status: 'queued' });
   scheduleNow();
-  ensureWatchdog();
   return { task: taskSummary(readJ(sessF(t.sid)) || t) };
 }
 // 第一轮给分身的话：任务要求、前置任务的结果、用户给的文件
@@ -1906,16 +1886,6 @@ function tickTasks() {
   const r = lockedCall('tasks', 'task_tick', {});
   for (const n of (r && r.notify) || []) deliverNotice(n).catch(() => {});
 }
-function ensureWatchdog() {
-  if(ownership.owning)return;
-  let release;try{release=ownership.enter();}catch(e){if(e.code==='owner_unavailable')return;throw e;}release();
-  if(journal.active){journal.defer(ensureWatchdog);return;}
-  // flock lives outside every task's writable roots and is released by the kernel on exit.
-  mk(path.join(BASE, 'locks'));
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !['XIN_RUN','XIN_ATTEMPT','XIN_LOCK'].includes(k) && !/^CODEX_(?!HOME$)/.test(k)));
-  spawn('flock', ['-n', '--close', path.join(BASE, 'locks/watchdog.lock'), process.execPath, SELF, 'watchdog'],
-    { detached: true, stdio: 'ignore', cwd: os.homedir(), env }).unref();
-}
 function ensureMemoryIdle() {
   if (journal.active) { journal.defer(ensureMemoryIdle); return; }
   if (!(readText(CODEX_KEY()) || readText(HARNESS_KEY())).trim()) return;
@@ -1926,10 +1896,6 @@ function ensureMemoryIdle() {
     {detached:true,stdio:'ignore',cwd:os.homedir(),env});
   child.on('error', () => {}); child.unref();
 }
-/* ---------- 新旧控制器交班（审查问题 20） ----------
-   云电脑上的脚本按内容摘要命名，部署一次路径就变一次。网站每次直接调用控制器时记下这次用的是哪一份（controller-current.json）；
-   长期运行的 watchdog 每轮看一眼：网站已经在用更新的那份，就起一个新版 watchdog 接班（等这把锁放开），自己退出，
-   不再用旧代码和新代码一起改状态库。正在跑的任务轮次照旧用旧代码跑完这一轮。 */
 const CURRENT_F = () => path.join(BASE, 'controller-current.json');
 /* 遗留进程（vm-reaper.mjs）：systemd 用户定时器每 10 分钟跑一次 reap。部署一次控制器路径就变，定时器调一个固定的小脚本，
    它照 controller-current.json 找到当前这份再跑。 */
@@ -1979,34 +1945,11 @@ function markCurrentController() {
     fs.writeFileSync(tmp, JSON.stringify({ self: SELF, at: Date.now() })); fs.renameSync(tmp, CURRENT_F());
   } catch { /* 记不下来就下次 */ }
 }
-function newerController() {
-  const cur = readJ(CURRENT_F());
-  // 只认同一个目录里、按摘要命名的控制器入口：这份记录被改成别的路径时不跟着去执行
-  const ok = typeof cur?.self === 'string' && cur.self !== SELF && path.dirname(cur.self) === path.dirname(SELF) && /^vm-agent-[a-f0-9]{12}\.mjs$/.test(path.basename(cur.self));
-  return ok && fs.existsSync(cur.self) ? cur.self : null;
-}
-function handOverWatchdog(next) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !['XIN_RUN','XIN_ATTEMPT','XIN_LOCK'].includes(k) && !/^CODEX_(?!HOME$)/.test(k)));
-  // -w：等这个旧 watchdog 退出、放开锁以后接上
-  mk(path.join(BASE, 'locks'));
-  spawn('flock', ['-w', '60', '--close', path.join(BASE, 'locks/watchdog.lock'), process.execPath, next, 'watchdog'], { detached: true, stdio: 'ignore', cwd: os.homedir(), env }).unref();
-}
-// 还有没有要接着盯的事：没有就让旧看门狗退出、让状态进程一分钟才检查一次（InstaBox 按 CPU 有没有负载判断空闲，不能把电脑撑着不暂停）
+// 无待处理的工作时一分钟检查一次，让 InstaBox 能按 CPU 空闲规则暂停。
 export function pendingWork(){const pending=readJ(path.join(BASE,'controller-event.json')),notices=fs.existsSync(NOTICE_DIR())&&fs.readdirSync(NOTICE_DIR()).some(n=>/^[a-f0-9]{32}\.json$/.test(n)&&readJ(path.join(NOTICE_DIR(),n))?.state==='pending');
   return listTasks().some(isBackground)||notices||journal.hasPendingHandoffs()||journal.hasOpenLaunches()||!!(pending&&!pending.acknowledged);}
 function reconcileState(){journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();}
 async function flushState(){await flushNotices();await flushControllerEvent();return pendingWork()?5000:60000;}
-async function maintainState(){reconcileState();return flushState();}
-async function watchdog() {
-  for (;;) {
-    let release;try{release=ownership.enter();}catch(e){if(e.code==='owner_unavailable')return;throw e;}release();
-    const next = newerController();
-    if (next) { handOverWatchdog(next); return; }
-    try { await maintainState(); } catch { /* transient errors are retried */ }
-    if (!pendingWork()) return;
-    await new Promise(resolve => setTimeout(resolve, 5000));
-  }
-}
 // 网页最近有没有在看这个对话（tasks 轮询会碰一下）：在看就不推送，卡片自己会更新
 const convSeenF = sid => path.join(RUNS, 'conv-' + sid + '.seen');
 const validDevice = id => typeof id==='string' && /^[A-Za-z0-9_-]{8,80}$/.test(id);
@@ -3047,8 +2990,7 @@ function restoreStops() {
   try { fs.unlinkSync(mine); } catch { /* 别处删了 */ }
 }
 
-// 一次性兼容客户端在 legacy 持共享锁；kernel 时只转发，不取得本地写权。
-const LONG_LIVED = ['run', 'agy-run', 'warm', 'memory-idle', 'callback', 'watchdog', 'login-window', 'pushq'];
+const LONG_LIVED = ['run', 'agy-run', 'warm', 'memory-idle', 'callback', 'login-window', 'pushq'];
 async function serveState(){
   checkControllers(BASE,SELF);
   let initialized=false;
@@ -3066,24 +3008,19 @@ async function serveState(){
   if(piped){process.stdin.removeListener('end',stop);process.stdin.destroy();}
 }
 async function main() {
-  if(process.argv[2]==='serve')return serveState();
-  if(process.argv[2]==='owner-legacy'){process.stdout.write(JSON.stringify(ownerLegacy(ownership)));return;}
-  if(!LONG_LIVED.includes(process.argv[2])){
-    const stale=callContext().run&&attemptError(readJ(metaF(callContext().run)),callContext());if(stale){if(process.argv[2]==='xin'){process.stderr.write(stale.msg+'\n');process.exitCode=1;}else process.stdout.write(JSON.stringify(stale));return;}
-    const forward=()=>forwardCLI(BASE,process.argv[2],{stdin:readStdin});
-    if(stateOwned())return forward();
-    try{ownership.hold();}catch(e){if(e.code!=='owner_unavailable')throw e;return forward();}
-    journal.recover();restoreStops();
-  }else{
-    let release;
-    try{release=ownership.enter();journal.recover();restoreStops();}
-    catch(e){
-      if(e.code!=='owner_unavailable')throw e;if(process.argv[2]==='watchdog')return;
-      try{await waitForState(BASE);}catch{throw e;}
+  const op = process.argv[2];
+  if (op === 'serve') return serveState();
+  if (!LONG_LIVED.includes(op)) {
+    const context = callContext();
+    const stale = context.run && attemptError(readJ(metaF(context.run)), context);
+    if (stale) {
+      if (op === 'xin') { process.stderr.write(stale.msg + '\n'); process.exitCode = 1; }
+      else process.stdout.write(JSON.stringify(stale));
+      return;
     }
-    finally{if(release){journal.closeWriter();release();}}
+    return forwardCLI(BASE, op, { stdin: readStdin });
   }
-  let op=process.argv[2];const locked=op==='locked';if(locked)op=process.argv[3];
+  if (op !== 'pushq') await waitForState(BASE);
   if (op === 'run') { runner(process.argv[3]); return; }
   if(op==='agy-run'){
     const run=process.argv[3],m=readJ(metaF(run));assertAttempt(m,callContext());
@@ -3100,14 +3037,11 @@ async function main() {
   if (op === 'warm') { warm(); return; }
   if (op === 'memory-idle') { idleMemoryReview().catch(() => {}); return; }
   if (op === 'callback') { flushControllerEvent().catch(() => {}); return; }
-  if (op === 'watchdog') { watchdog().catch(() => {}); return; }
   if (op === 'login-window') { runLoginWindow().catch(() => {}); return; }
-  // 清理定时器顺带把过期的等待停下：没人开网页、也没有任务在跑时，电脑醒着就照样按时停
-  if(op==='reap'){const res=reapNow();try{lockedCall('tasks','task_expire',{});}catch{}process.stdout.write(JSON.stringify(res));return;}
-  if(op==='xin'){process.exitCode=xinCmd(process.argv.slice(3));return;}
-  if(op==='pushq'){let m=null;try{m=JSON.parse(process.argv[3]||'');}catch{}if(m)pushAll(m).catch(()=>{});return;}
-  try{const res=await controller.invoke({op,args:inputArgs(),locked,key:process.env.XIN_LOCK||null,run:process.env.XIN_RUN||null,attempt:process.env.XIN_ATTEMPT||null});process.stdout.write(JSON.stringify(res??{}));}
-  catch(e){process.stdout.write(JSON.stringify({error:e.code==='stale_attempt'?e.code:'internal',msg:String(e?.message||e)}));}
+  if (op === 'pushq') {
+    let message; try { message = JSON.parse(process.argv[3]); } catch { return; }
+    if (message) await pushAll(message, { readOnlyState: true }).catch(() => {});
+  }
 }
 const {dispatchLaunches,runDone}=createDispatcher({self:SELF,metaF,sessF,runF,lockedCall,emit,patchRun});
 const controller=createController({ops,iops,isTask,saveTask,rememberAgentSession,mainSid,listTasks,lockedCall,dispatchLaunches,markCurrentController,xinCmd,reapNow});

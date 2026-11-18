@@ -378,6 +378,67 @@ test('一个设备正在看对话不会压掉另一台设备的推送，同设�
   const rows=JSON.parse(result.stdout);assert.equal(rows.filter(r=>r.viewed).length,1);assert.equal(rows.filter(r=>r.status===201).length,2);
 });
 
+test('状态进程失联时使用已有密钥发告警，恢复后由写者清理过期订阅', async t => {
+  const f = fixture(t);
+  const http = require('node:http'), crypto = require('node:crypto');
+  const execFile = require('node:util').promisify(require('node:child_process').execFile);
+  f.env.XIN_PUSH_INSECURE = '1';
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const privateJwk = privateKey.export({ format: 'jwk' });
+  const publicKey = Buffer.concat([Buffer.from([4]), Buffer.from(privateJwk.x, 'base64url'), Buffer.from(privateJwk.y, 'base64url')]).toString('base64url');
+  const fixtureKeys = JSON.stringify({ privateJwk, publicKey });
+  const received = [];
+  const server = http.createServer((req, res) => {
+    let bytes = 0;
+    req.on('data', chunk => { bytes += chunk.length; });
+    req.on('end', () => {
+      received.push({ endpoint: req.url, encrypted: req.headers['content-encoding'] === 'aes128gcm' && bytes > 86,
+        signed: req.headers.authorization?.startsWith('vapid t=') && req.headers.authorization.endsWith(', k=' + publicKey) });
+      res.writeHead(req.url === '/expired' ? 410 : 201).end();
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const profile = path.join(f.control, 'push');
+  fs.mkdirSync(profile);
+  const vapidFile = path.join(profile, 'vapid.json'), subsFile = path.join(profile, 'subs.json');
+  const browser = crypto.createECDH('prime256v1');
+  const keys = { p256dh: browser.generateKeys().toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') };
+  const subs = ['current', 'expired'].map(revision => ({ revision, endpoint: 'http://127.0.0.1:' + server.address().port + '/' + revision, keys }));
+  fs.writeFileSync(vapidFile, fixtureKeys, { mode: 0o600 });
+  fs.writeFileSync(subsFile, JSON.stringify(subs));
+  const cli = (op, ...args) => {
+    const execution = execFile(process.execPath, [agent, op, ...args], { env: f.env, timeout: platformTimeout(6000) });
+    execution.child.stdin.end();
+    return execution;
+  };
+  const alert = () => cli('pushq', JSON.stringify({ title: '故障演练', body: '状态进程失联', tag: 'xin-owner', url: '/#xin' }));
+
+  await alert();
+  assert.deepEqual(received.sort((a, b) => a.endpoint.localeCompare(b.endpoint)), [
+    { endpoint: '/current', signed: true, encrypted: true },
+    { endpoint: '/expired', signed: true, encrypted: true }
+  ]);
+  assert.equal(fs.readFileSync(vapidFile, 'utf8'), fixtureKeys);
+  assert.equal(fs.readFileSync(subsFile, 'utf8'), JSON.stringify(subs));
+
+  fs.unlinkSync(vapidFile);
+  await alert();
+  assert.equal(received.length, 2, '无现成密钥时不发送');
+  assert.equal(fs.existsSync(vapidFile), false);
+  assert.equal(fs.readFileSync(subsFile, 'utf8'), JSON.stringify(subs));
+  for (const name of ['owner.sqlite', 'workflow.sqlite', 'run']) assert.equal(fs.existsSync(path.join(f.control, name)), false, name);
+
+  fs.writeFileSync(vapidFile, fixtureKeys, { mode: 0o600 });
+  f.ensureState();
+  const response = JSON.parse((await cli('push_test')).stdout);
+  assert.equal(response.ok, true);
+  assert.deepEqual(response.results.map(x => x.status).sort(), [201, 410]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(subsFile, 'utf8')), [subs[0]]);
+  assert.equal(fs.readFileSync(vapidFile, 'utf8'), fixtureKeys);
+});
+
 test('任务预算跨代理重启和续接累计，不因换一轮重新变满',async t=>{
   const f=fixture(t),r=await load(),file=path.join(f.control,'budgets',f.task.sid+'.json');
   const first=r.requestBudget(file,2);assert.equal(first(),true);
@@ -402,17 +463,17 @@ test('点名只在明确换模型时生效，假设、问句、引用和否定�
   assert.equal(namedModel('这次用 Kimi 检查一下'),'kimi-k3.1-pro');
 });
 
-test('并发补充任务与编译元数据更新共用任务锁，不覆盖已收到的补充',async t=>{
+test('并发补充任务与编译元数据在状态进程更新，保留全部补充',async t=>{
   const f=fixture(t);const mf=path.join(f.control,'runs/rruntime001.json');
   fs.writeFileSync(mf,JSON.stringify({sid:f.task.sid,task:true,started:Date.now(),pid:process.pid,transport:'app-server',steers:[]}));
   const execFile=require('node:util').promisify(require('node:child_process').execFile);
-  const jobs=[];fs.mkdirSync(path.join(f.control,'locks'),{recursive:true});
+  const jobs=[];
   f.ensureState();   // 并发的这些命令都交给真的常驻状态进程
   for(let i=0;i<12;i++){
     const program=`const {spawn}=require('node:child_process');const c=spawn(process.execPath,${JSON.stringify([agent,'task_tell'])},{stdio:['pipe','inherit','inherit']});c.stdin.end(${JSON.stringify(JSON.stringify({sid:f.task.sid,text:'supplement-'+i}))});c.on('exit',n=>process.exit(n));`;
     jobs.push(execFile(process.execPath,['-e',program],{env:f.env}));
-    const patch=`const {spawn}=require('node:child_process');const c=spawn('flock',${JSON.stringify(['--exclusive','--close',path.join(f.control,'locks/tasks.lock'),process.execPath,agent,'locked','run_patch'])},{stdio:['pipe','inherit','inherit']});c.stdin.end(${JSON.stringify(JSON.stringify({run:'rruntime001',changes:{compileDigest:'digest-'+i}}))});c.on('exit',n=>process.exit(n));`;
-    fs.mkdirSync(path.join(f.control,'locks'),{recursive:true});jobs.push(execFile(process.execPath,['-e',patch],{env:{...f.env,XIN_LOCK:'tasks'}}));
+    const patch=`const {spawn}=require('node:child_process');const c=spawn(process.execPath,${JSON.stringify([agent,'locked','run_patch'])},{stdio:['pipe','inherit','inherit']});c.stdin.end(${JSON.stringify(JSON.stringify({run:'rruntime001',changes:{compileDigest:'digest-'+i}}))});c.on('exit',n=>process.exit(n));`;
+    jobs.push(execFile(process.execPath,['-e',patch],{env:f.env}));
   }
   await Promise.all(jobs);
   const m=JSON.parse(fs.readFileSync(mf));assert.equal(m.steers.length,12);assert.equal(new Set(m.steers.map(x=>x.text)).size,12);assert.match(m.compileDigest,/^digest-/);

@@ -51,7 +51,7 @@ async function fixture(t, { env: extra = {}, keeper = {} } = {}) {
     }
     assert.fail('这一轮没收尾：' + run);
   };
-  // 第 1 批的外壳：每个操作起一个控制器，请求不带期望
+  // 兼容 CLI 使用同一条状态桥。
   f.cli = (op, args = {}) => { const r = spawnSync(process.execPath, [agent, op], { env, input: JSON.stringify(args), encoding: 'utf8', timeout: platformTimeout(20000) }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
   return f;
 }
@@ -65,7 +65,7 @@ async function report(f, q) { const { requestState } = await import(url('vm-kern
 test('send、poll、sessions、tasks 都交给状态进程，不起控制器；这一轮正常做完', async t => {
   const f = await fixture(t), owner = KERNEL(1);
   await f.op('sessions', {}, owner); assert.ok(await f.running(), '状态进程起来了');
-  const before = (await f.health()).spawns;
+  const before = (await f.health()).owner;
   const sent = await f.op('send', { main: true, text: '第一句', clientId: 'owner-mode-00001' }, owner);
   assert.equal(sent.body.ok, true, JSON.stringify(sent.body)); assert.ok(sent.body.data.sid && sent.body.data.run);
   const done = await f.settle(sent.body.data.run, owner);
@@ -73,7 +73,12 @@ test('send、poll、sessions、tasks 都交给状态进程，不起控制器；�
   assert.ok(done.events.some(e => e.t === 'text' && /做好了/.test(e.text)), JSON.stringify(done.events));
   assert.equal((await f.op('sessions', {}, owner)).body.data.sessions.length, 1);
   assert.equal((await f.op('tasks', {}, owner)).body.ok, true);
-  assert.equal((await f.health()).spawns - before, 0, '一次都没起控制器');
+  const after = (await f.health()).owner;
+  assert.deepEqual([after.pid, after.epoch], [before.pid, before.epoch]);
+  const ops = fs.readFileSync(path.join(f.home, 'logs', 'kernel.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    .filter(entry => entry.route === '/xin/op' && entry.status === 200);
+  assert.deepEqual(new Set(ops.map(entry => entry.op)), new Set(['send', 'poll', 'sessions', 'tasks']));
+  assert.ok(ops.every(entry => entry.via === 'state'));
 });
 
 
@@ -181,7 +186,7 @@ test('反复调用 2000 次：状态进程的内存和打开的文件不一直�
   for (let i = 0; i < 1800; i++) await f.op('sessions', {}, owner);
   assert.ok(rss() - r0 < 30 * 1048576, 'rss 多了 ' + Math.round((rss() - r0) / 1048576) + ' MB');
   assert.ok(fds() <= f0 + 2, 'fd ' + f0 + ' → ' + fds());
-  const after = await f.health(); assert.equal(after.owner.pid, h.owner.pid); assert.equal(after.spawns, 0);
+  const after = await f.health(); assert.deepEqual([after.owner.pid, after.owner.epoch], [h.owner.pid, h.owner.epoch]);
 });
 
 test('尝试恢复：PID 报告和启动器记录都缺失时，活 runner 的生命周期锁仍阻止重复派发', async t => {

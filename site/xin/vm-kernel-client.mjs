@@ -48,9 +48,7 @@ export function requestState(home, request, { timeoutMs = 60000, id = crypto.ran
   });
 }
 export const syncSleep = ms => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
-// 设计 §6.2：交不过去（主人正在接手、还没开始听；或者刚被杀、记录还没改回旧模式）就稍等，再按判断规则从头判断一次。
-// 只重来「确定没执行」的失败（executed === false）；发出去以后断开、超时（不确定）的不自动重来，免得做两遍。
-// fn 每次都要重新判断所有权（是不是主人、记录是什么），不能只重发同一个套接字请求。
+// 状态进程接管或重启时，只重试明确未执行的请求。其余写请求要有单独的重放保证。
 const NEVER_RETRY = new Set(['state_request', 'state_too_large', 'state_protocol']);
 export function retryUnsent(fn, { deadlineMs = 30000, clock = () => performance.now(), sleep = syncSleep } = {}) {
   const start = clock();
@@ -117,8 +115,8 @@ const RECEIPTED_NAMES = new Set([
   'recall.sync', 'recall.drop', 'learning.report', 'memoryReview.apply', 'memoryReview.reserve',
   'memoryReview.settle', 'companion.claim', 'companion.bond'
 ]);
-// 一次性兼容客户端：记录归内核（或主人活着）时，把这一次命令行调用整个交给状态进程，不取得本地写权。
-export function inputArgs(read = () => fs.readFileSync(0, 'utf8')) {
+// 一次性兼容客户端把命令交给状态进程。
+function inputArgs(read = () => fs.readFileSync(0, 'utf8')) {
   try { const t = read().trim(), a = t ? JSON.parse(t) : {}; return a && typeof a === 'object' && !Array.isArray(a) ? a : {}; } catch { return {}; }
 }
 export async function forwardCLI(home, op, { argv = process.argv, env = process.env, stdin = () => '', out = process.stdout, err = process.stderr } = {}) {

@@ -475,9 +475,9 @@ async def main():
             await art.close()
             # 后台干活时插话（docs/superpowers/specs/2026-11-17-xin-steer-design.md）：Gemini 补一句、停下再继续、Codex（点名 Kimi）
             await steer_live(page, call, settle, errors, LEAKS, steer_sids, directory)
-            # 这一路（真对话、后台任务、流、备份、网页预览、插话）都做完了：常驻进程没重启，外壳一个控制器进程都没起
+            # 在联调结束时确认仍由同一个状态进程服务。
             same_resident_owner(owner, await call('usage', {}))
-            print('PASS state owner is the resident process (kernel mode, no controller process per request)', flush=True)
+            print('PASS state owner PID and epoch stayed constant throughout the run', flush=True)
         finally:
             # Forget only this run's own conversation. Leave its small result artifact for diagnosis.
             for owned_sid in [s for s in (sid,alternate_sid,image_sid) if s] + steer_sids:
