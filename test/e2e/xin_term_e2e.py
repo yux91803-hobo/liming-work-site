@@ -60,7 +60,7 @@ async def part1(browser):
       __w.open({ anchor: a, tabs: [{ key: 'run:r1', label: '这一轮', prompt: '编一下 blink', model: 'GLM-5.3', cwd: '/data/workspace/blink', live: false, endMs: 48000, events: evs }] }); }""", EVENTS)
     pop = await pg.evaluate("(() => { const s = getComputedStyle(document.querySelector('.tm-win')); return [s.animationName, s.animationTimingFunction]; })()")
     # 站长 2026-11-16「终端弹出来会有卡顿，不够丝滑」：原来是 steps(5) 一格一格跳；改成连续缓动，从点的地方放大出来
-    ui.check('电脑上终端弹出来是连续缓动（不是 steps 一格一格跳）', pop[0] == 'tmpop' and pop[1].startswith('cubic-bezier') and 'steps' not in pop[1], pop)
+    ui.check('电脑上终端打开像老显示器开机（tmcrt：先亮一条横线再展开，站长 11-19），是连续缓动（不是 steps 一格一格跳）', pop[0] == 'tmcrt' and pop[1].startswith('cubic-bezier') and 'steps' not in pop[1], pop)
     # 站长 2026-11-17「我每次点开这个，都是从头在加载一遍，不符合逻辑」：打开就停在最新一步，已经做过的不再从头敲一遍
     early = await pg.evaluate(WIN)
     early_bottom = await pg.evaluate("(() => { const s = document.querySelector('.tm-win .tm-scr'); return s.scrollTop + s.clientHeight >= s.scrollHeight - 2; })()")
@@ -117,7 +117,7 @@ async def part1(browser):
     ui.check('还在做时最底下一行：在干什么、多久、Esc 关闭', st['st'] and '编译中' in st['st'] and '12 秒' in st['st'] and 'Esc 关闭' in st['st'], st['st'])
     await pg.keyboard.press('Escape')
     out = await pg.evaluate("(() => { const w = document.querySelector('.tm-win'); return [w.hidden, w.classList.contains('tm-out'), getComputedStyle(w).animationName, document.activeElement && document.activeElement.id]; })()")
-    ui.check('Esc：终端缩小淡出（关的时候也有动画，不是一下没了），焦点马上回到原来的位置', out == [False, True, 'tmpopx', 'anc'], out)
+    ui.check('Esc：终端像老显示器关机（tmcrtoff：缩成一条线再缩成一个点，关的时候也有动画），焦点马上回到原来的位置', out == [False, True, 'tmcrtoff', 'anc'], out)
     await pg.wait_for_function("document.querySelector('.tm-win').hidden", timeout=2000)
     esc = await pg.evaluate("[document.querySelector('.tm-win').hidden, document.activeElement && document.activeElement.id, document.querySelector('.xc').classList.contains('show'), document.querySelector('.tm-win').classList.contains('tm-out')]")
     ui.check('Esc 只关终端：焦点回到头像，工作台还开着', esc == [True, 'anc', True, False], esc)

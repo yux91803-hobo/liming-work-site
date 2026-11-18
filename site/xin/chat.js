@@ -437,7 +437,8 @@
   function open() {
     if (!root) build();
     S.open = true; root.hidden = false; S.view = 'chat'; setDrawer(false);
-    requestAnimationFrame(function () { root.classList.add('show'); });
+    // 直接打开工作台链接时首页先藏着：等工作台淡入完（.22s 透明度、.32s 上移）再放开，不然淡入那一下首页会透出来
+    requestAnimationFrame(function () { root.classList.add('show'); setTimeout(function () { document.documentElement.classList.remove('xc-boot-work'); }, 400); });
     document.body.classList.add('xc-open');
     var x = xin(); if (x && x.home && window.innerWidth < 900) x.home();
     render(); grow(); refreshCtx();
@@ -1615,12 +1616,12 @@
   // 结果：做完 / 没做成 / 停了 / 在等你确认时，小芯在聊天里说一条（同一次结果只说一次）。
   // 站长 2026-11-16：问题的答案直接说在聊天里，不要卡片——和别的回答一样是一条消息（能复制），下面一行小操作
   function resKey(t) { return t.sid + '@' + (t.status === 'waiting' ? 'w' + (t.endedAt || '') : (t.result && t.result.at) || t.endedAt || ''); }
-  function drawTaskResult(t) {
+  function drawTaskResult(t, fresh) {
     if(t.delivery&&['pending','silent','continued'].includes(t.delivery.state))return null;
     var key = resKey(t);
     if (list.querySelector('[data-tres="' + key + '"]')) return null;
     var text = t.status === 'waiting' ? '我需要你确认一下：' + (t.question || '待处理') : (t.result && t.result.text) || (t.status === 'done' ? '我做好了：' + t.title + '。' : '这次还没有完成。');
-    var m = placeResult(t.sid, t, text, t.status === 'failed' || t.status === 'stopped' ? 'tbad' : '');
+    var m = placeResult(t.sid, t, text, t.status === 'failed' || t.status === 'stopped' ? 'tbad' : '', fresh);
     m.e.dataset.tres = key;
     if (t.status === 'failed' && t.result && t.result.err && text.indexOf(t.result.err) < 0) m.b.appendChild(h('p', 'xc-tres-err', t.result.err));
     return m.e;
@@ -1693,6 +1694,18 @@
      单独一条（.xc-tbw，不画头像，和结果那条同一种排法）：在做的（带 dock）一直在聊天最底下，新消息和「思考中」插在它上面；
      做完、没做成、停了、等你确认：落到这时候聊天的最后，结果接在它下面；又接着做就回到最底下。刷新以后在做的照样在最底下，
      做完的按结束时间排在各轮之间（openSession）。设计 docs/superpowers/specs/2026-11-17-xin-term-follow-design.md */
+  // 站长 2026-11-19：派出新活、活做完时小芯岛鼓一下、亮一圈往外扩的光（像灵动岛来通知）
+  function isleBump() {
+    var i = root && root.querySelector('.xc-isle'); if (!i || reduceMotion()) return;
+    i.classList.remove('bump'); void i.offsetWidth; i.classList.add('bump');
+    clearTimeout(i._bt); i._bt = setTimeout(function () { i.classList.remove('bump'); }, 900);
+  }
+  // 站长 2026-11-19：亲眼看着做完的那一下 ✓ 盖章、迸几颗像素火花（刷新、翻历史时不盖）
+  function stampBox(b) {
+    b.classList.add('stamp');
+    for (var i = 0; i < 6; i++) { var sp = h('i', 'xc-spark'); sp.style.setProperty('--a', (i * 60 + 15) + 'deg'); b.appendChild(sp); }
+    setTimeout(function () { [].forEach.call(b.querySelectorAll('.xc-spark'), function (x) { x.remove(); }); }, 800);
+  }
   function boxWrap(sid) { return list.querySelector('.xc-tbw[data-tsid="' + String(sid).replace(/["\\]/g, '') + '"]'); }
   function dockBox(w) { w.classList.add('dock'); list.appendChild(w); }
   function settleBox(w) { w.classList.remove('dock'); w.remove(); put(w); }
@@ -1733,6 +1746,7 @@
       var fold = b.classList.contains('live');
       b.className = 'xc-tb st-' + st + (fold ? ' fold' : ''); b.dataset.st = st + '|' + meta + '|' + title;
       b.innerHTML = tbIcon(st) + '<b class="xc-tb-t"></b><span class="xc-tb-m"></span>' + svgIcon('chev');
+      if (fold && st === 'done' && !reduceMotion()) stampBox(b);
       b.querySelector('.xc-tb-t').textContent = title; b.querySelector('.xc-tb-m').textContent = meta;
       if (w && w.classList && w.classList.contains('xc-tbw')) boxActs(w, t);
     }
@@ -1765,7 +1779,8 @@
     var p = w.previousElementSibling; while (p && p === typingEl) p = p.previousElementSibling;
     return { w: w, cont: !!p && p.classList.contains('xc-ai') && !p.classList.contains('bad') && grpOf(p) === tgrp(sid) };
   }
-  function placeResult(sid, t, text, cls) {
+  function placeResult(sid, t, text, cls, fresh) {
+    var w0 = fresh && boxWrap(sid), y0 = w0 ? w0.getBoundingClientRect().top : null;
     var s = resultSlot(sid), e = h('div', 'xc-m xc-ai xc-tres' + (s.cont ? ' cont' : '') + (cls ? ' ' + cls : '')), b = h('div', 'xc-bub'), body = md(text);
     e.dataset.run = 'task-' + sid; e.dataset.grp = tgrp(sid); e.dataset.tsid = sid;
     e.appendChild(avatar()); if (!s.cont) e.appendChild(h('span', 'xc-who', '小芯'));
@@ -1773,6 +1788,11 @@
     if (body.querySelector('.xc-code, .xc-tbl')) e.classList.add('wide');
     s.w.parentNode.insertBefore(e, s.w);
     boxActs(s.w, t); paintBoxes();
+    // 新来的结果淡入；任务框从原来的位置平滑滑到结果下面（FLIP），不再瞬间跳下去（站长 2026-11-19 体检第 2 条）
+    if (fresh) {
+      e.classList.add('enter');
+      if (y0 != null && !reduceMotion()) { var y1 = s.w.getBoundingClientRect().top; if (Math.abs(y1 - y0) > 2) s.w.animate([{ transform: 'translateY(' + Math.round(y0 - y1) + 'px)' }, { transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.2,.9,.25,1)' }); }
+    }
     return { e: e, b: b };
   }
   // 框前面紧挨着的是同一条消息就标 own：那一条不露操作行，整条的操作在框下面；框跟着最新消息走、前面是别的话时不标，那句话照常露复制键
@@ -1960,9 +1980,10 @@
     });
     termSync();
     paintCards(); renderWork(); renderHome();
+    if (changed.length) isleBump();
     changed.forEach(function (t) {
       var here = S.open && S.view === 'chat' && S.sid === t.parent;
-      if (here && list) { var re = drawTaskResult(t); if (re) seeResult(re, t); }
+      if (here && list) { var re = drawTaskResult(t, true); if (re) seeResult(re, t); }
       if (t.status !== 'stopped') announce(t, here);
     });
   }
@@ -2242,6 +2263,16 @@
   function phase(el) { var t = Date.now(); el.style.setProperty('--p16', -(t % 1600) + 'ms'); el.style.setProperty('--p12', -(t % 1200) + 'ms'); el.style.setProperty('--p10', -(t % 1000) + 'ms'); }
   function work(opt) {
     opt = opt || {};
+    // 站长 2026-11-19：从首页进工作台用像素点阵溶解过去（View Transitions）。直接打开链接、已经开着、减少动态、浏览器不支持时照旧
+    if (!opt.vt && !opt.keepHash && !(S.open && S.wb) && document.startViewTransition && !reduceMotion()) {
+      var de = document.documentElement, done = function () { de.classList.remove('vt-work'); };
+      de.classList.add('vt-work');
+      return new Promise(function (res) {
+        // 换页这一步里浏览器不出新帧：不能等 requestAnimationFrame（以前等两帧，干等到 4 秒超时，过渡被掐掉），直接把工作台摆成最后的样子
+        var vt = document.startViewTransition(function () { var p = work({ vt: true }); root.classList.add('show'); res(p); });
+        vt.finished.then(done, done);
+      });
+    }
     if (!root) build();
     S.wb = true; root.classList.add('wb'); document.body.classList.add('xc-wb');
     layout();
@@ -3113,7 +3144,7 @@
     if (given == null && !prep) { input.value = ''; ls(LS_DRAFT, null); grow(); }
     // 还没送到小芯的电脑：「正在输入」旁边写「接收中」（电脑在睡写「唤醒中」），送到了才「思考中」并开始计时
     S.lastText = ''; S.doing = 'think'; S.act = ''; S.thinkS = ''; S.thinkFixed = false; S.note = null; S.waitSend = '';
-    typing(true); renderHead(); toBottom(true);
+    typing(true); renderHead(); toBottom(true); flyFromComposer(pending);
     var x = xin(); if (x) x.ai('think');
     flight.payload=retry&&retry.payload||{ sid: flight.sid || undefined, main: !TQ && !flight.sid && mainDraft() || undefined, clientId: flight.id, agent: flight.sid ? undefined : (TQ ? 'harness' : S.agent), text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,files:files.length?files.map(function(f){return {path:f.path,name:f.name};}):undefined};
     call('send', flight.payload, 90000, function (w) { if(generation===S.convSeq){S.waitSend = w.state; progress();} },function(){return generation===S.convSeq;}).then(function (d) {
@@ -3638,8 +3669,8 @@
         // 转达的话到了：这件活算说完了（框收成一行，用时算到这时）；任务摘要随后也会这么说
         var ti=S.tinfo[tr.sid]||(S.tinfo[tr.sid]={sid:tr.sid,status:tr.status,endedAt:tr.endedAt});
         if(!ti.delivery||ti.delivery.state!=='delivered')ti.delivery={state:'delivered',at:tr.deliveredAt||Date.now()};
-        var rm=placeResult(tr.sid,ti,ev.text,'');rm.e.dataset.tres=key;
-        if(!old){rm.e.classList.add('enter');seeResult(rm.e,ti);}
+        var rm=placeResult(tr.sid,ti,ev.text,'',!old);rm.e.dataset.tres=key;
+        if(!old)seeResult(rm.e,ti);
         return rm.e;
       } else if ((hole = runLast(run)) && !hole.classList.contains('xc-tbh')) hole = null;
       var body = md(ev.text);
@@ -3667,7 +3698,7 @@
       // 刚派出去的记下来，好知道它什么时候做完
       if (!S.tinfo[ev.sid]) S.tinfo[ev.sid] = { sid: ev.sid, no: ev.no, parent: S.sid || '', title: ev.title, kind: ev.kind, model: ev.model, status: ev.status || 'queued', after: ev.after || [], created: ev.at || Date.now() };
       TDISP[ev.sid] = run;   // 这件活属于派它的这一条消息
-      if (!old) { taskBox(ev.sid, true); pollTasksSoon(1500); paintBoxes(); }
+      if (!old) { taskBox(ev.sid, true); pollTasksSoon(1500); paintBoxes(); isleBump(); }
     } else if (ev.t === 'move') e = sysChip('学会了新动作：' + ev.name, 'move');   // 记忆、好感度是小芯自己的事，不在聊天里报
     if (e) {
       var bd = root.querySelector('.xc-body'), near = !old && bd.scrollHeight - bd.scrollTop - bd.clientHeight < 160;
@@ -3676,6 +3707,20 @@
       if (!old) { if (near && ev.t !== 'user') followNew(e); else jumpNew(); }
     }
     return e;
+  }
+  // 站长 2026-11-19：你的话从输入框飞上去变成气泡（FLIP：从输入框的位置挪到气泡的位置）。只给这里发出去的（send 里滚到底以后再量）
+  function flyFromComposer(e) {
+    var src = root.querySelector('.xc-row'), bub = e.querySelector('.xc-bub'), body = root.querySelector('.xc-body');
+    if (!src || !bub || !body || reduceMotion()) return;
+    e.style.animation = bub.style.animation = 'none';   // 量的时候不算进场动画的位移
+    var a = src.getBoundingClientRect(), b = bub.getBoundingClientRect(), bd = body.getBoundingClientRect();
+    e.style.animation = bub.style.animation = '';
+    if (!a.width || !b.width) return;
+    // 起点最低到消息区最下面（紧挨着输入框）：再往下就探出消息区，消息区多出一截能滚，发完先往下滚、飞上去又弹回来，整屏跳一下
+    var fy = Math.min(a.top + a.height / 2 - b.top - b.height / 2, bd.bottom - b.bottom);
+    bub.style.setProperty('--fx', Math.round(a.left + a.width / 2 - b.left - b.width / 2) + 'px');
+    bub.style.setProperty('--fy', Math.floor(fy) + 'px');
+    e.classList.add('fly');
   }
   // 正看着最底下时来了新回答：短的直接滚到底；长的停在它开头，从头读（下面还有的话「回到底部」写「新消息」）
   function followNew(e) {
@@ -3912,11 +3957,24 @@
     x.push(S.wb ? { ic: 'full', t: '收起工作台', k: '小窗 面板', run: function () { unwork(); } } : { ic: 'full', t: '全屏工作台', k: '全屏 工作台', run: function () { work(); } });
     return x;
   }
+  // 站长 2026-11-19：深浅色从点的那个地方一圈圈扩散着换（View Transitions；不支持或减少动态时直接换）
+  // 圈从「刚才点的地方」扩散：只认 1.5 秒内的；命令面板里选的由 palRun 记下位置，都没有就从屏幕中间
+  var LASTPT = null; document.addEventListener('pointerdown', function (e) { LASTPT = [e.clientX, e.clientY, Date.now()]; }, true);
+  function freshPt() { return LASTPT && Date.now() - LASTPT[2] < 1500 ? LASTPT : null; }
+  function themeSwap(apply) {
+    var de = document.documentElement;
+    if (!document.startViewTransition || reduceMotion()) { apply(); return; }
+    var p = freshPt() || [innerWidth / 2, innerHeight / 2];
+    de.style.setProperty('--vt-x', p[0] + 'px'); de.style.setProperty('--vt-y', p[1] + 'px'); de.classList.add('vt-theme');
+    var done = function () { de.classList.remove('vt-theme'); }, vt = document.startViewTransition(apply); vt.finished.then(done, done);
+  }
   function flipTheme() {
     var dark = document.documentElement.dataset.theme === 'dark';
     try { localStorage.setItem('lm.theme', dark ? 'light' : 'dark'); } catch (e) { /* 存不了就只换这一次 */ }
-    var h_ = document.documentElement; h_.dataset.theme = dark ? 'light' : 'dark'; h_.dataset.pref = dark ? 'light' : 'dark';
-    var m = document.getElementById('themeColor'); if (m) m.setAttribute('content', TQ ? (dark ? '#f6f5f2' : '#121110') : (dark ? '#faf9f5' : '#1f1e1d'));
+    themeSwap(function () {
+      var h_ = document.documentElement; h_.dataset.theme = dark ? 'light' : 'dark'; h_.dataset.pref = dark ? 'light' : 'dark';
+      var m = document.getElementById('themeColor'); if (m) m.setAttribute('content', TQ ? (dark ? '#f6f5f2' : '#121110') : (dark ? '#faf9f5' : '#1f1e1d'));
+    });
     [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { f.contentWindow.postMessage({ type: 'theme' }, location.origin); } catch (er) { /* 别的源 */ } });
     toast(dark ? '换成浅色了' : '换成深色了');
   }
@@ -3975,7 +4033,7 @@
       b.appendChild(h('span', 'xc-pal-t', text)); if (meta) b.appendChild(h('span', 'xc-pal-m', meta));
       var o = { el: b, run: run }, i = palItems.length;
       b.addEventListener('mousemove', function () { if (palIdx !== i) { palIdx = i; palPaint(); } });
-      b.addEventListener('click', function () { palRun(i); });
+      b.addEventListener('click', function (ev) { palRun(i, ev); });
       return o;
     };
     if (q) group('对话', sess, function (s_) { return item('chat', s_.main ? '主对话' : s_.title || '（无标题）', s_.active ? '进行中' : s_.updated ? when(s_.updated) : '', function () { if (s_.main) goMain(); else openSession(s_.sid); }); });
@@ -3987,7 +4045,7 @@
       var b = h('button', 'xc-pal-i'); b.type = 'button'; b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + PICON.chat + '</svg>';
       b.appendChild(h('span', 'xc-pal-t', '直接问' + (TQ ? '天启' : '小芯') + '：' + inp.value.trim()));
       var said = inp.value.trim(), o = { el: b, run: function () { input.value = said; ls(LS_DRAFT, said); grow(); renderSendBtn(); input.focus(); } };
-      b.addEventListener('click', function () { palRun(0); }); palItems.push(o); e.appendChild(b); l.appendChild(e);
+      b.addEventListener('click', function (ev) { palRun(0, ev); }); palItems.push(o); e.appendChild(b); l.appendChild(e);
     }
     palIdx = Math.min(palIdx, Math.max(0, palItems.length - 1)); palPaint();
   }
@@ -3997,7 +4055,12 @@
     if (cur) { cur.el.scrollIntoView({ block: 'nearest' }); if (inp) inp.setAttribute('aria-activedescendant', cur.el.id); }
   }
   function palMove(d) { if (!palItems.length) return; palIdx = (palIdx + d + palItems.length) % palItems.length; palPaint(); }
-  function palRun(i) { var o = palItems[i]; if (!o) return; closePal(); setDrawer(false); setTimeout(o.run, 10); }
+  // 点的就从点的地方；用键盘选的（回车，或者键盘「点」按钮时 detail 是 0）从选中那一项的图标那儿
+  function palRun(i, ev) {
+    var o = palItems[i]; if (!o) return;
+    var r = o.el.getBoundingClientRect(); LASTPT = ev && ev.detail ? [ev.clientX, ev.clientY, Date.now()] : [r.left + 22, r.top + r.height / 2, Date.now()];
+    closePal(); setDrawer(false); setTimeout(o.run, 10);
+  }
 
   /* ---------- 轻提示：底部中间一颗小药丸，不抢焦点，3 秒后消失 ---------- */
   var toastTm = 0;
@@ -4144,6 +4207,11 @@
   window.addEventListener('pagehide',function(){
     if(!TQ&&S.authed&&S.sid&&(S.run||S.bg>0))fetch(API+'call',{method:'POST',credentials:'same-origin',keepalive:true,headers:{'Content-Type':'application/json','X-Xin':'1'},body:JSON.stringify({op:'tasks',args:{sid:S.sid,deviceId:S.deviceId,tabId:S.tabId,watching:false}})}).catch(function(){});
   });
+  // 站长 2026-11-19：在做的小方点改成呼吸，各自错开节拍——每个点进页面时随机给一个相位（--ph，CSS 里当负的延迟）
+  var PH = '.xc-st,.xc-dr-st,.xc-mainb i,.xc-si-m > *,.wk-ic,.xc-task-st,.xc-tk-cmd,.xw-st i,.xw-g';
+  function phase(n) { if (n.nodeType !== 1) return; (n.matches(PH) ? [n] : []).concat([].slice.call(n.querySelectorAll(PH))).forEach(function (e) { if (!e.style.getPropertyValue('--ph')) e.style.setProperty('--ph', (Math.random() * 1.8).toFixed(2) + 's'); }); }
+  new MutationObserver(function (ms) { ms.forEach(function (m) { [].forEach.call(m.addedNodes, phase); }); }).observe(document.body, { childList: true, subtree: true });
+  phase(document.body);
   window.LimingXinChat = { open: open, close: close, work: work, ask: quick, played: played, page: page, tasks: function () { pollTasks(); }, get state() { return S; } };
   boot();
 })();

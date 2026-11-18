@@ -1,3 +1,17 @@
+## 2026-11-19 · 工作台动画（Claude Code）
+
+- 见 CHANGES 最新一条。
+- **改动画的人注意**：
+  - 新动画都在 `chat.css` 末尾「动画」那一段，每条都有「减少动态」的关闭规则；
+  - 进场动画只给新来的元素加（`!old`、`fresh`），刷新和翻历史不重放；
+  - View Transitions 用 `<html>` 上的场景类区分（`vt-work`、`vt-theme`），做完一定要去掉；
+  - 小方点的相位由 `chat.js` 的 `phase()` 给（`--ph`）。
+- **体检工具**：用浏览器截屏流（CDP `Page.startScreencast`）存帧，再用 PIL 按时间拼图。Playwright 自带录像要它自己的 ffmpeg，这台机器上没有。
+- **View Transition 的坑**：`startViewTransition` 的回调里不能等 `requestAnimationFrame`。换页那一步浏览器不出新帧，会干等到 4 秒超时，过渡被掐掉（`vt.ready` 报 `TimeoutError`）。测试里 `__vterr` 专门查这个。
+- **FLIP 的坑**：飞进来的元素起点不能探出滚动区。`transform` 也算进能滚的范围，会让滚动区多出一截，滚到底以后又弹回来。
+- **还没做**：小芯岛的 `width` 伸缩会掉帧，要改岛的结构。
+- **偶尔不稳的单元测试**：`xin-report-retry` 的「提交后进程退出且一直未恢复」在 CI 负载高时超过 300ms 的期限（#178 的 check 失败过一次，重跑通过，本地 6/6 通过），和代码改动无关。再出现就照 H4 那样把等待改成按事件等，别加大超时。
+
 ## 2026-11-19 · 前台自己查简单的资料、查的时候能插话（Claude Code）
 
 - 见 CHANGES 最新一条。
