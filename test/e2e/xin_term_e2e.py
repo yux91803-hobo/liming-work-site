@@ -255,9 +255,9 @@ async def part2(browser):
       return [b.querySelector('.xc-tb-t').textContent, b.querySelector('.xc-tb-s').textContent, !!w && w.classList.contains('dock'), l.lastElementChild === w,
         prev && prev.dataset.run, prev && (prev.querySelector(':scope > .xc-bub') || {}).textContent, !b.closest('.xc-ai:not(.xc-tbw)'), !!w && !w.querySelector('.xc-bub'),
         b.dataset.term, b.getAttribute('role'), !!w && !w.querySelector('.xc-av, .xc-face, svg.xin-portrait, .xc-who'), !document.querySelector('.xc-bgrow'), b.classList.contains('live'),
-        document.querySelectorAll('.xc-msgs .xc-who').length, !!prev && getComputedStyle(prev.querySelector(':scope > .xc-acts')).display !== 'none']; })()""" % BOX)
+        document.querySelectorAll('.xc-msgs .xc-who').length, !!prev && getComputedStyle(prev.querySelector(':scope > .xc-acts')).display === 'none']; })()""" % BOX)
     chat = await pg.evaluate("document.querySelector('.xc-msgs').textContent")
-    ui.check('派出去的活：框不塞进那段话里，单独一条（不画头像）紧跟在「好，我去编一下。」下面、在聊天最底下；那段话下面的「复制」还在；上面任务名「编译 blink」、下面此刻那一步「准备中」，是按钮、点开看那件活',
+    ui.check('派出去的活：框不塞进那段话里，单独一条（不画头像）紧跟在「好，我去编一下。」下面、在聊天最底下；那段话下面不露「复制」（整条还没说完，站长 11-18）；上面任务名「编译 blink」、下面此刻那一步「准备中」，是按钮、点开看那件活',
              bx == ['编译 blink', '准备中', True, True, 'rlive00001', '好，我去编一下。', True, True, 'task:' + TASK, 'button', True, True, True, 1, True], bx)
     ui.check('前台派活的内部命令不出现在聊天里', 'xin task' not in chat and '帮我编译 blink 工程' not in chat, chat[-160:])
     # 正式站联调（scripts/test-xin-live.py）取小芯的回答用「最后一个 .xc-ai:not(.xc-typing) .xc-bub」：.xc-bub 只能是回答的正文。
@@ -318,9 +318,11 @@ async def part2(browser):
     await pg.fill('.xc-row textarea', '在吗')
     await pg.keyboard.press('Enter')
     await pg.wait_for_function("[...document.querySelectorAll('.xc-ai .xc-bub')].some(e => e.textContent === '在的，你说。') && !document.querySelector('.xc-typing')", timeout=10000)
-    fol = await pg.evaluate("""(() => { const w = document.querySelector('%s').closest('.xc-tbw'), l = document.querySelector('.xc-msgs'), prev = w.previousElementSibling, me = [...l.querySelectorAll('.xc-me')].pop();
-      return [w.classList.contains('dock'), l.lastElementChild === w, (prev.querySelector(':scope > .xc-bub') || {}).textContent, me.textContent, !!(me.compareDocumentPosition(w) & 4)]; })()""" % BOX)
-    ui.check('接着聊了一句：新的一问一答在框上面，框还在聊天最底下（不用翻上去找）', fol == [True, True, '在的，你说。', '在吗', True], fol)
+    fol = await pg.evaluate("""(() => { const w = document.querySelector('%s').closest('.xc-tbw'), l = document.querySelector('.xc-msgs'), prev = w.previousElementSibling, me = [...l.querySelectorAll('.xc-me')].pop(), vis = e => getComputedStyle(e.querySelector(':scope > .xc-acts')).display !== 'none';
+      return [w.classList.contains('dock'), l.lastElementChild === w, (prev.querySelector(':scope > .xc-bub') || {}).textContent, me.textContent, !!(me.compareDocumentPosition(w) & 4),
+        vis(document.querySelector('.xc-ai[data-run="rlive00001"]')), vis(prev), w.classList.contains('own')]; })()""" % BOX)
+    ui.check('接着聊了一句：新的一问一答在框上面，框还在聊天最底下（不用翻上去找）；派活那句后面有了别的话，单独算一条、露出复制键；新回答照常露复制键（框不是它这条的）',
+             fol == [True, True, '在的，你说。', '在吗', True, True, True, False], fol)
 
     # 再打开：接着上次取到的地方；做完了，那一页写「已完成 · 用时 2 分钟」
     # 从点开那一刻起记下有没有逐字敲过（.tm-tp 出现过，哪怕同一帧里又敲完）：关着时做的那一步也是打开前就有的
@@ -336,17 +338,25 @@ async def part2(browser):
     gap = await pg.evaluate('window.__tp')
     ui.check('关上以后再点开：关着时做的那一步（打开以后第一次取回来）也一次画好，一个字都不敲', gap == 0, gap)
     st['tp_done']['rtask00b01'] = True
-    st['tasks'] = [task(status='done', run='rtask00b01', startedAt=now() - 125000, endedAt=now(), result={'ok': True, 'text': '编好了：`/data/workspace/blink/build/app.hex`。', 'at': now()}, delivery={'state': 'delivered'})]
+    # 站长 2026-11-18「用时37先结束的，然后下面的话等了一会儿才出来……即使做完了，也要等下面的话发出来才结束」：做完了、前台还在写总结（delivery pending）时框照样在动
+    st['tasks'] = [task(status='done', run='rtask00b01', startedAt=now() - 185000, endedAt=now() - 60000, result={'ok': True, 'text': '编好了：`/data/workspace/blink/build/app.hex`。', 'at': now() - 60000}, delivery={'state': 'pending'})]
+    await pg.evaluate('LimingXinChat.tasks()')
+    await pg.wait_for_timeout(1500)
+    pend = await pg.evaluate("""(() => { const b = document.querySelector('%s'), w = b.closest('.xc-tbw'), l = document.querySelector('.xc-msgs');
+      return [b.classList.contains('live'), w.classList.contains('dock'), l.lastElementChild === w, b.querySelector('.xc-tb-s').textContent, /\\d+ 秒|分/.test(b.querySelector('.xc-tb-sec').textContent), !document.querySelector('.xc-tres')]; })()""" % BOX)
+    ui.check('后台做完了、前台还在写总结：框还在动、还在最底下，那一步写「整理结果」，秒数接着走，结果还没画', pend == [True, True, True, '整理结果', True, True], pend)
+    st['tasks'] = [task(status='done', run='rtask00b01', startedAt=now() - 185000, endedAt=now() - 60000, result={'ok': True, 'text': '编好了：`/data/workspace/blink/build/app.hex`。', 'at': now() - 60000}, delivery={'state': 'delivered', 'at': now()})]
     await pg.evaluate('LimingXinChat.tasks()')
     await pg.wait_for_function("!!document.querySelector('.tm-win .tm-sum')", timeout=10000)
     await pg.wait_for_function("[...document.querySelectorAll('.xc-tres')].some(e => e.textContent.includes('编好了'))", timeout=10000)
     d = await pg.evaluate(WIN)
-    res = await pg.evaluate("""(() => { const r = [...document.querySelectorAll('.xc-tres')].pop(), b = document.querySelector('%s'), w = b.closest('.xc-tbw'), l = document.querySelector('.xc-msgs');
-      return [r.classList.contains('cont'), w.nextElementSibling === r, l.lastElementChild === r, !w.classList.contains('dock'), (w.previousElementSibling.querySelector(':scope > .xc-bub') || {}).textContent,
-        !r.querySelector('.xc-who'), b.classList.contains('live'), b.querySelector('.xc-tb-t').textContent, (b.querySelector('.xc-tb-m') || {}).textContent, b.dataset.term,
-        document.querySelectorAll('.xc-msgs .xc-who').length, !document.querySelector('.xc-bgrow'), !!r.querySelector(':scope > .xc-acts .xc-mcopy')]; })()""" % BOX)
-    ui.check('做完：终端那一页写「已完成 · 用时 2 分钟 · 运行 2 条命令」、不再转圈；框收成一行「编译 blink · 用时 2 分钟」停在这时候的最后（「在的，你说。」下面），结果接在框下面（不画头像、不写「小芯」），还能点开',
-             d['sum'] == '已完成 · 用时 2 分钟 · 运行 2 条命令' and d['st'] is None and res == [True, True, True, True, '在的，你说。', True, False, '编译 blink', '用时 2 分钟', 'task:' + TASK, 2, True, True], (d['sum'], d['st'], res))
+    res = await pg.evaluate("""(() => { const r = [...document.querySelectorAll('.xc-tres')].pop(), b = document.querySelector('%s'), w = b.closest('.xc-tbw'), l = document.querySelector('.xc-msgs'), vis = e => getComputedStyle(e.querySelector(':scope > .xc-acts')).display !== 'none';
+      return [r.classList.contains('cont'), r.nextElementSibling === w, l.lastElementChild === w, !w.classList.contains('dock'), (r.previousElementSibling.querySelector(':scope > .xc-bub') || {}).textContent,
+        !!r.querySelector('.xc-who'), b.classList.contains('live'), b.querySelector('.xc-tb-t').textContent, (b.querySelector('.xc-tb-m') || {}).textContent, b.dataset.term,
+        document.querySelectorAll('.xc-msgs .xc-who').length, !document.querySelector('.xc-bgrow'), vis(r), vis(w), [...w.querySelectorAll(':scope > .xc-acts button')].map(x => x.textContent.trim()),
+        [...document.querySelectorAll('.xc-msgs .xc-acts button')].some(x => x.textContent.trim() === '详情')]; })()""" % BOX)
+    ui.check('做完、话也说出来了：终端那一页写「已完成 · 用时 2 分钟 · 运行 2 条命令」；中间插过话，结果在「在的，你说。」下面另起一条（带头像），框收成一行「编译 blink · 用时 3 分钟」（算到话说出来）接在结果下面、在聊天最后，还能点开；整条只在框下面露一行操作「复制」，没有「详情」',
+             d['sum'] == '已完成 · 用时 2 分钟 · 运行 2 条命令' and d['st'] is None and res == [False, True, True, True, '在的，你说。', True, False, '编译 blink', '用时 3 分钟', 'task:' + TASK, 3, True, False, True, ['复制'], False], (d['sum'], d['st'], res))
     await pg.keyboard.press('Escape')
     chip = await pg.evaluate("(() => { const c = document.querySelector('.xc-upchip'); return c && !c.hidden ? c.textContent : null; })()")
     ui.check('结果就在最下面：不用往上翻，顶上不冒提示', chip is None, chip)
@@ -376,12 +386,16 @@ async def part2(browser):
     await pg.evaluate("localStorage.setItem('lm.xin.sid', '%s')" % CONV)
     await pg.reload()
     await pg.wait_for_function("LimingXinChat.state.sid === '%s' && !!document.querySelector('.xc-tres') && !!document.querySelector('%s')" % (CONV, BOX), timeout=15000)
-    hm = await pg.evaluate("""(() => { const r = document.querySelector('.xc-tres'), b = document.querySelector('%s'), w = b.closest('.xc-tbw');
-      return [w.nextElementSibling === r, r.classList.contains('cont'), !w.classList.contains('dock'), !document.querySelector('.xc-ai[data-run="rlive00001"] .xc-tb'),
-        (w.previousElementSibling.querySelector(':scope > .xc-bub') || {}).textContent, document.querySelectorAll('.xc-msgs .xc-who').length, b.classList.contains('live'), (b.querySelector('.xc-tb-m') || {}).textContent,
-        document.querySelectorAll('.xc-tb[data-tsid]').length]; })()""" % BOX)
-    ui.check('刷新以后：派活那段话里没有框；框（收成一行「用时 2 分钟」）和结果按做完的时间排在它后面，只有一个「小芯」、一个框',
-             hm == [True, True, True, True, '好，我去编一下。', 1, False, '用时 2 分钟', 1], hm)
+    hm = await pg.evaluate("""(() => { const r = document.querySelector('.xc-tres'), b = document.querySelector('%s'), w = b.closest('.xc-tbw'), l = document.querySelector('.xc-msgs'), vis = e => getComputedStyle(e.querySelector(':scope > .xc-acts')).display !== 'none';
+      return [r.nextElementSibling === w, r.classList.contains('cont'), !w.classList.contains('dock'), !document.querySelector('.xc-ai[data-run="rlive00001"] .xc-tb'),
+        (r.previousElementSibling.querySelector(':scope > .xc-bub') || {}).textContent, document.querySelectorAll('.xc-msgs .xc-who').length, b.classList.contains('live'), (b.querySelector('.xc-tb-m') || {}).textContent,
+        document.querySelectorAll('.xc-tb[data-tsid]').length, vis(document.querySelector('.xc-ai[data-run="rlive00001"]')), vis(r), vis(w), l.lastElementChild === w]; })()""" % BOX)
+    ui.check('刷新以后：派活那段话、结果、框按顺序排成一条（只有一个「小芯」、一个框），框收成一行「用时 2 分钟」在最下面，只有框下面露操作行',
+             hm == [True, True, True, True, '好，我去编一下。', 1, False, '用时 2 分钟', 1, False, False, True, True], hm)
+    await pg.evaluate("navigator.clipboard.writeText = t => { window.__copied = t; return Promise.resolve(); }")
+    await pg.click('.xc-tbw .xc-mcopy')
+    cp = await pg.evaluate("window.__copied || ''")
+    ui.check('点复制：复制整条（派活那句和结果），不带上面你说的话', '好，我去编一下。' in cp and '编好了' in cp and '帮我编一下 blink' not in cp, cp)
     c0 = st['task_hist_calls']
     await pg.click(BOX)
     await pg.wait_for_function("!!document.querySelector('.tm-win:not([hidden]) .tm-cur')", timeout=10000)
@@ -408,15 +422,15 @@ async def part2(browser):
     await pg.wait_for_function("[...document.querySelectorAll('.xc-tres')].some(e => e.textContent.includes('编好了')) && !document.querySelector('.xc-typing')", timeout=10000)
     await pg.wait_for_timeout(2500)   # 框每秒刷新一次、说完 0.8 秒后轮询一次任务：都过去了再看
     RF = """(() => { const w = document.querySelector('%s').closest('.xc-tbw'), r = [...document.querySelectorAll('.xc-tres')].pop(), l = document.querySelector('.xc-msgs'), me = [...l.querySelectorAll('.xc-me')].pop();
-      return [w.classList.contains('dock'), w.nextElementSibling === r, l.lastElementChild === r, me.textContent, !!(me.compareDocumentPosition(w) & 4), document.querySelectorAll('.xc-tres').length]; })()""" % BOX
+      return [w.classList.contains('dock'), r.nextElementSibling === w, l.lastElementChild === w, me.textContent, !!(me.compareDocumentPosition(w) & 4), document.querySelectorAll('.xc-tres').length]; })()""" % BOX
     first = await pg.evaluate(RF)
-    ui.check('结果比任务状态先到：框落在「好了吗」下面、不在最底下了，结果紧跟在框后面、在聊天最后；之后框刷新、轮询到的还是「在做」，也不把框拉回最底下',
+    ui.check('结果比任务状态先到：结果和框落在「好了吗」下面，结果在前、框紧跟在结果后面、在聊天最后（框不再停在最底下转）；之后框刷新、轮询到的还是「在做」，也不把框拉回最底下',
              first == [False, True, True, '好了吗', True, 1], first)
     st['tasks'] = [task(status='done', run='rtask00b01', startedAt=now() - 125000, endedAt=st['res_at'], result={'ok': True, 'text': '编好了：`/data/workspace/blink/build/app.hex`。', 'at': st['res_at']}, delivery={'state': 'delivered'})]
     await pg.evaluate('LimingXinChat.tasks()')
     await pg.wait_for_function("!document.querySelector('%s').classList.contains('live')" % BOX, timeout=5000)
     late = await pg.evaluate(RF)
-    ui.check('随后轮询到做完：框收成一行、还在结果上面，结果只有一条', late == [False, True, True, '好了吗', True, 1], late)
+    ui.check('随后轮询到做完：框收成一行、还在结果下面，结果只有一条', late == [False, True, True, '好了吗', True, 1], late)
 
     # 「更早的消息」翻出派活那一轮（里面有这件活的派活事件）：不再画第二个框，在做的框还在最底下
     st['tasks'] = [task(status='running', run='rtask00b02', startedAt=now() - 5000)]

@@ -188,7 +188,9 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-ai > .xc-bub{grid-column:2;min-width:0;font-size:15px;line-height:1.78;color:var(--ink);overflow-wrap:anywhere}
 .xc-ai.bad > .xc-bub{--rad:12px;justify-self:start;padding:9px 14px;background:color-mix(in srgb,var(--bad) 9%,transparent);color:var(--bad-ink);white-space:pre-wrap;font-size:14px;line-height:1.6}
 .xc-acts{grid-column:2;display:flex;gap:4px;margin:2px 0 0 -9px}
-.xc-ai:has(+ .xc-ai.cont:not(.xc-typing):not(.bad):not(.xc-tbw)) > .xc-acts{display:none}   /* 后台的活那个框单独一条（.xc-tbw），不算同一轮的下一条：派活那段话的复制照旧在 */
+.xc-ai:has(+ .xc-ai.cont:not(.xc-typing):not(.bad):not(.xc-tbw)) > .xc-acts{display:none}   /* 同一轮后面还有话：这一条不露操作行 */
+/* 站长 2026-11-18「这个整体只能算一段话」：派活那句、先说完的结果后面紧跟着这条消息自己的框（.own），整条只在最后那个框下面露一行操作；框还在转（没说完）时不露 */
+.xc-ai:has(+ .xc-tbw.own) > .xc-acts,.xc-tbw:not(.own) > .xc-acts,.xc-tbw:has(> .xc-tb.live) > .xc-acts{display:none}
 @media (hover:none){.xc-mcopy span{display:none}.xc-mcopy{width:32px;justify-content:center;padding:0}}
 /* 手机：头像和「小芯」一行，正文占满整行，不让出头像那一栏 */
 @media (max-width:599px){

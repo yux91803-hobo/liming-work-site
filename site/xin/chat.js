@@ -208,7 +208,7 @@
       '<div class="xc-pal" role="dialog" aria-label="搜索和命令" hidden></div>' +
       '<div class="xc-toast" role="status" aria-live="polite"></div>';
     document.body.appendChild(root);
-    list = root.querySelector('.xc-msgs'); statusEl = root.querySelector('.xc-st'); input = root.querySelector('textarea');
+    list = root.querySelector('.xc-msgs'); new MutationObserver(syncGrp).observe(list, { childList: true }); statusEl = root.querySelector('.xc-st'); input = root.querySelector('textarea');
     sendBtn = root.querySelector('.xc-send'); titleEl = root.querySelector('.xc-sub');
     isleEl = root.querySelector('.xc-isle'); workEl = root.querySelector('.xc-work'); jumpEl = root.querySelector('.xc-jump');
     palEl = root.querySelector('.xc-pal'); toastEl = root.querySelector('.xc-toast'); gwWarnEl = root.querySelector('.xc-gw-warn');
@@ -288,8 +288,10 @@
       var mc = e.target.closest('.xc-mcopy');
       // 「复制」在这一轮最后一条下面，复制这一轮小芯说的全部原文（Markdown）
       if (mc) {
-        var parts = [];
+        var parts = [], g0 = grpOf(mc.closest('.xc-m'));
         for (var m = mc.closest('.xc-m'); m; m = m.previousElementSibling) {
+          if (m === typingEl) continue;
+          if (m.classList.contains('xc-ai') && grpOf(m) !== g0) break;   // 只复制这一条（同一分组：派活那句、结果）
           if (m.classList.contains('xc-ai') && !m.classList.contains('bad')) parts.unshift(m._md || (m.querySelector('.xc-bub') || {}).innerText || '');
           if (!m.classList.contains('cont')) break;
         }
@@ -1555,6 +1557,15 @@
   var TICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>';
   S.tinfo = {}; S.tactive = []; S.bg = 0; S.queue = [];
   function tLive(t) { return t.status === 'queued' || t.status === 'running' || t.status === 'stopping'; }
+  // 后台做完、前台还在写总结（delivery 还是 pending）也算在做：框到话说出来才停（站长 2026-11-18「即使做完了，也要等下面的话发出来才结束」）。
+  // 转达卡住的：结束 10 分钟后不再算在做，免得框一直转
+  function tBusy(t) { return tLive(t) || !!(t.delivery && t.delivery.state === 'pending' && Date.now() - (t.endedAt || 0) < 600000); }
+  // 用时算到话说出来（delivery.at）；没有转达的算到任务结束
+  function endAt(t) { var d = t.delivery; return d && (d.state === 'delivered' || d.state === 'silent') && d.at ? d.at : t.endedAt; }
+  // 一条消息的分组：派活那一轮，和它派出去的活的框、结果（站长 2026-11-18「这个整体只能算一段话」）。找不到派活那一轮的自成一组
+  var TDISP = {};
+  function tgrp(sid) { return TDISP[sid] || 'task-' + sid; }
+  function grpOf(e) { return e.dataset.grp || e.dataset.run || ''; }
   // 待处理最多等 30 分钟（控制器给 waitUntil），过了任务自己停下；这里显示还剩多久
   function waitLeft(t) { return t.status === 'waiting' && t.waitUntil ? '剩 ' + Math.max(1, Math.ceil((t.waitUntil - Date.now()) / 60000)) + ' 分钟' : ''; }
   // 待处理的三种：登录、审批（要批准的操作、写回）、回复（问题）
@@ -1609,25 +1620,21 @@
     var key = resKey(t);
     if (list.querySelector('[data-tres="' + key + '"]')) return null;
     var text = t.status === 'waiting' ? '我需要你确认一下：' + (t.question || '待处理') : (t.result && t.result.text) || (t.status === 'done' ? '我做好了：' + t.title + '。' : '这次还没有完成。');
-    var after = resultAfter(t.sid), cls = t.status === 'failed' || t.status === 'stopped' ? 'tbad' : '';
-    var m = after ? contMsg(after.dataset.run, cls) : aiMsg('task-' + t.sid, cls), body = md(text);
-    m.e.classList.add('xc-tres'); m.e.dataset.tres = key; m.e.dataset.tsid = t.sid;
-    m.b.appendChild(body);
+    var m = placeResult(t.sid, t, text, t.status === 'failed' || t.status === 'stopped' ? 'tbad' : '');
+    m.e.dataset.tres = key;
     if (t.status === 'failed' && t.result && t.result.err && text.indexOf(t.result.err) < 0) m.b.appendChild(h('p', 'xc-tres-err', t.result.err));
-    msgActs(m.e, text); taskActs(m.e, t);
-    if (body.querySelector('.xc-code, .xc-tbl')) m.e.classList.add('wide');
-    if (after) putAfter(m.e, after); else put(m.e);
-    paintBoxes();
     return m.e;
   }
-  // 任务结果下面那行小操作：要你处理时一个主按钮（审批 / 回复 / 登录），网页成品「打开网页」，「详情」打开这件活的详情页（站长 2026-11-16 定的叫法，原来叫「看过程」）
-  function taskActs(e, t) {
-    var a = e.querySelector('.xc-acts'); if (!a) { a = h('div', 'xc-acts'); e.appendChild(a); }
-    if (t.status === 'waiting') { var w = h('button', 'xc-tact on', waitAction(t)); w.type = 'button'; w.addEventListener('click', function () { openTask(t.sid); }); a.insertBefore(w, a.firstChild); }
+  // 整条消息最后一行操作，挂在这件活的框那一条下面：要你处理时一个主按钮（审批 / 回复 / 登录），复制整条，网页成品「打开网页」。
+  // 没有「详情」：站长 2026-11-18「那个详情我觉得没必要兄弟，我点终端就已经可以看到了」
+  function boxActs(w, t) {
+    var old = w.querySelector(':scope > .xc-acts'); if (old) old.remove();
+    msgActs(w, ''); w._md = '';
+    var a = w.querySelector(':scope > .xc-acts');
+    if (t.status === 'waiting') { var wb = h('button', 'xc-tact on', waitAction(t)); wb.type = 'button'; wb.addEventListener('click', function () { openTask(t.sid); }); a.insertBefore(wb, a.firstChild); }
     // 正文里已经链到同一个网页（控制器写的「我画好了。打开网页」）就不再放一颗：站长 2026-11-16「打开网页和打开预览其实重复了」
-    var pv = previewLink(t), same = pv && [].some.call(e.querySelectorAll('.xc-bub a[href]'), function (x) { return x.getAttribute('href') === t.preview.url; });
+    var pv = previewLink(t), same = pv && [].some.call(list.querySelectorAll('.xc-tres[data-tsid="' + String(t.sid).replace(/["\\]/g, '') + '"] .xc-bub a[href]'), function (x) { return x.getAttribute('href') === t.preview.url; });
     if (pv && !same) { pv.className = 'xc-tact pv xc-preview'; a.appendChild(pv); }
-    var v = h('button', 'xc-tact', '详情'); v.type = 'button'; v.addEventListener('click', function () { openTask(t.sid); }); a.appendChild(v);
   }
   /* ---------- 小芯的电脑（终端窗口，画法在 term.js）----------
      站长 2026-11-16：「终端是我点击小芯聊天里的头像弹出来的」。点开看它那一次在电脑上做了什么：
@@ -1692,8 +1699,8 @@
   function taskBox(sid, fresh) {
     if (boxWrap(sid)) return null;
     var w = h('div', 'xc-m xc-ai cont xc-tbw'), b = h('div', 'xc-tb'), t = S.tinfo[sid];
-    w.dataset.tsid = sid; w.dataset.run = 'tb-' + sid; b.dataset.tsid = sid; w.appendChild(b);
-    if (!t || tLive(t)) dockBox(w); else put(w);
+    w.dataset.tsid = sid; w.dataset.run = 'tb-' + sid; w.dataset.grp = tgrp(sid); b.dataset.tsid = sid; w.appendChild(b);
+    if (!t || tBusy(t)) dockBox(w); else put(w);
     paintBox(b);
     if (fresh) b.classList.add('enter');
     return w;
@@ -1702,10 +1709,11 @@
     var sid = b.dataset.tsid, t = S.tinfo[sid] || { status: 'queued' }, title = t.title || '后台的活', w = b.parentNode;
     // 在做 → 最底下；不在做 → 落下。结果先到落下的（held 记着那时的一轮）：任务摘要还说在做这一轮就不拉回去，换了新的一轮才回最底下
     if (w && w.classList && w.classList.contains('xc-tbw')) {
-      if (!tLive(t)) { delete w.dataset.held; if (w.classList.contains('dock')) settleBox(w); }
+      if (!tBusy(t)) { delete w.dataset.held; if (w.classList.contains('dock')) settleBox(w); }
       else if (!w.classList.contains('dock') && w.dataset.held !== String(t.run || '')) { delete w.dataset.held; dockBox(w); }
     }
-    if (tLive(t)) {
+    if (tBusy(t)) {
+      var oa = w && w.querySelector && w.querySelector(':scope > .xc-acts'); if (oa) oa.remove();   // 还没说完：不露操作行
       if (!b.classList.contains('live')) {
         b.className = 'xc-tb live'; b.removeAttribute('data-st');
         b.innerHTML = '<div class="xc-tb-tx"><b class="xc-tb-t"></b><span class="xc-tb-ln"><span class="xc-sw-w xc-tb-sw"><span class="xc-tb-s"></span></span><i class="xc-tb-sec"></i></span></div>' +
@@ -1719,13 +1727,14 @@
       return;
     }
     // 做完、没做成、停了、等你确认：收成一行（和终端结尾那行同一套词）
-    var st = endState(t), ms = t.startedAt && t.endedAt ? t.endedAt - t.startedAt : null;
+    var st = endState(t), ms = t.startedAt && endAt(t) ? endAt(t) - t.startedAt : null;
     var meta = st === 'done' ? (ms != null ? '用时 ' + durText(ms) : TB_LEAD.done) : TB_LEAD[st] + (st === 'failed' && ms != null ? ' · 用时 ' + durText(ms) : '');
     if (b.dataset.st !== st + '|' + meta + '|' + title) {
       var fold = b.classList.contains('live');
       b.className = 'xc-tb st-' + st + (fold ? ' fold' : ''); b.dataset.st = st + '|' + meta + '|' + title;
       b.innerHTML = tbIcon(st) + '<b class="xc-tb-t"></b><span class="xc-tb-m"></span>' + svgIcon('chev');
       b.querySelector('.xc-tb-t').textContent = title; b.querySelector('.xc-tb-m').textContent = meta;
+      if (w && w.classList && w.classList.contains('xc-tbw')) boxActs(w, t);
     }
     termBtn(b, 'task:' + sid, title + '，' + TB_LEAD[st] + '，查看执行过程');
   }
@@ -1747,28 +1756,44 @@
     termBtn(p, 'run:' + run, text + '，查看执行过程');
     inHost(host, p);
   }
-  // 后台做完的结果：接在框（和它后面已经有的这件活的结果）后面，不另起一条、不画头像、不写「小芯」。
-  // 框还在最底下（结果比任务状态先到）就先把它落到这时候的最后；找不到框（太早的、别处派的）就照旧单独一条
-  function resultAfter(sid) {
-    var w = boxWrap(sid); if (!w) return null;
+  // 后台做完的结果放进那条消息：结果在框前面，框收成一行留在整条最下面，操作行在框下面（站长 2026-11-18「那个打开终端的…放在任务完成话的最下面」）。
+  // 框还在最底下（结果比任务状态先到）就先落到这时候的最后；找不到框（太早的、别处派的）就补一个落下的框。
+  // 前面紧挨着的是同一条消息（派活那句、这条里先说完的结果和框）就接着写、不画头像；中间插了别的话就另起一条，带头像
+  function resultSlot(sid) {
+    var w = boxWrap(sid) || taskBox(sid, false);
     if (w.classList.contains('dock')) { w.dataset.held = String((S.tinfo[sid] || {}).run || ''); settleBox(w); }
-    var e = w; while (e.nextElementSibling && e.nextElementSibling.classList.contains('xc-tres') && e.nextElementSibling.dataset.tsid === String(sid)) e = e.nextElementSibling;
-    return e;
+    var p = w.previousElementSibling; while (p && p === typingEl) p = p.previousElementSibling;
+    return { w: w, cont: !!p && p.classList.contains('xc-ai') && !p.classList.contains('bad') && grpOf(p) === tgrp(sid) };
+  }
+  function placeResult(sid, t, text, cls) {
+    var s = resultSlot(sid), e = h('div', 'xc-m xc-ai xc-tres' + (s.cont ? ' cont' : '') + (cls ? ' ' + cls : '')), b = h('div', 'xc-bub'), body = md(text);
+    e.dataset.run = 'task-' + sid; e.dataset.grp = tgrp(sid); e.dataset.tsid = sid;
+    e.appendChild(avatar()); if (!s.cont) e.appendChild(h('span', 'xc-who', '小芯'));
+    e.appendChild(b); b.appendChild(body); msgActs(e, text);
+    if (body.querySelector('.xc-code, .xc-tbl')) e.classList.add('wide');
+    s.w.parentNode.insertBefore(e, s.w);
+    boxActs(s.w, t); paintBoxes();
+    return { e: e, b: b };
+  }
+  // 框前面紧挨着的是同一条消息就标 own：那一条不露操作行，整条的操作在框下面；框跟着最新消息走、前面是别的话时不标，那句话照常露复制键
+  function syncGrp() {
+    if (!list) return;
+    [].forEach.call(list.querySelectorAll(':scope > .xc-tbw[data-tsid], :scope > .xc-tres[data-tsid]'), function (e) { var g = tgrp(e.dataset.tsid); if (e.dataset.grp !== g) e.dataset.grp = g; });
+    [].forEach.call(list.querySelectorAll(':scope > .xc-tbw'), function (w) {
+      var p = w.previousElementSibling; while (p && p === typingEl) p = p.previousElementSibling;
+      w.classList.toggle('own', !!p && p.classList.contains('xc-ai') && !p.classList.contains('bad') && grpOf(p) === grpOf(w));
+    });
   }
   // 历史里做完的活：结束的时候框落在那里，结果接在下面
   function placeEnded(t) { if (!boxWrap(t.sid)) taskBox(t.sid, false); return drawTaskResult(t); }
-  function contMsg(run, cls) {
-    var e = h('div', 'xc-m xc-ai cont' + (cls ? ' ' + cls : '')), b = h('div', 'xc-bub');
-    e.dataset.run = run || ''; e.appendChild(avatar()); e.appendChild(b);
-    return { e: e, b: b };
-  }
-  function putAfter(e, ref) { ref.parentNode.insertBefore(e, ref.nextSibling); }
   // 结果接回来以后让人看到：就在最下面——照旧跟到底；在眼前——轻轻闪一下；接回了上面那一轮、眼下看不到——聊天顶上冒一个小提示，点了滚过去
   var upEl = null;
   function nextMsg(e) { for (var n = e.nextElementSibling; n; n = n.nextElementSibling) if (n !== typingEl && n.classList.contains('xc-m') && !n.classList.contains('dock')) return n; return null; }
   function inView(e) { var b = root.querySelector('.xc-body').getBoundingClientRect(), r = e.getBoundingClientRect(); return r.bottom > b.top + 24 && r.top < b.bottom - 24; }
   function seeResult(e, t) {
-    if (!nextMsg(e)) { toBottom(); return; }
+    // 结果后面紧跟着的是这条消息自己的框：按整条的最后一个算
+    var z = e; while (z.nextElementSibling && z.nextElementSibling.classList.contains('xc-tbw') && grpOf(z.nextElementSibling) === grpOf(e)) z = z.nextElementSibling;
+    if (!nextMsg(z)) { toBottom(); return; }
     if (inView(e)) { glint(e); return; }
     if (!upEl) return;
     var above = e.getBoundingClientRect().top < root.querySelector('.xc-body').getBoundingClientRect().top, st = t && t.status;
@@ -1789,6 +1814,7 @@
   // 后台的活在干什么：正跟着它就用它最近的命令；没跟着就从任务摘要的 activity 认（内部命令当没有），再不行就是「在想」那几句
   function taskVerb(sid) {
     var t = S.tinfo[sid] || {}, f = S.tf[sid];
+    if (!tLive(t) && tBusy(t)) return '整理结果';   // 后台做完了，前台在写总结
     if (t.status === 'queued') return t.after && t.after.length ? '排队中' : '准备中';
     if (t.status === 'stopping') return '正在停止';
     if (f && f.done) return '整理结果';
@@ -3605,11 +3631,16 @@
       if (ev.text) e.appendChild(h('div', 'xc-bub', ev.text));
       if (ev.ctx) e.appendChild(h('div', 'xc-ctxm', '附带：' + ev.ctx));
     } else if (ev.t === 'text') {
-      var after = null, hole = null;
+      var hole = null;
       if(ev.taskResult){
         var tr=ev.taskResult,key=tr.sid+'@'+(tr.status==='waiting'?'w'+(tr.endedAt||''):tr.at||'');
         if(list.querySelector('[data-tres="'+key+'"]'))return null;
-        after = resultAfter(tr.sid);
+        // 转达的话到了：这件活算说完了（框收成一行，用时算到这时）；任务摘要随后也会这么说
+        var ti=S.tinfo[tr.sid]||(S.tinfo[tr.sid]={sid:tr.sid,status:tr.status,endedAt:tr.endedAt});
+        if(!ti.delivery||ti.delivery.state!=='delivered')ti.delivery={state:'delivered',at:tr.deliveredAt||Date.now()};
+        var rm=placeResult(tr.sid,ti,ev.text,'');rm.e.dataset.tres=key;
+        if(!old){rm.e.classList.add('enter');seeResult(rm.e,ti);}
+        return rm.e;
       } else if ((hole = runLast(run)) && !hole.classList.contains('xc-tbh')) hole = null;
       var body = md(ev.text);
       // 先派活、后说话：框先占的那一条，话填进它的正文（话还在框上面）
@@ -3618,11 +3649,8 @@
         if (body.querySelector('.xc-code, .xc-tbl')) hole.classList.add('wide');
         return hole;
       }
-      m = after ? contMsg(after.dataset.run) : aiMsg(run); m.b.appendChild(body); msgActs(m.e, ev.text);
-      // 后台做完、小芯转达的那一句：和普通回答一样，下面多「详情」（不再换成卡片）；派活那一轮还在，就接在那一轮后面（框下面）
-      if(ev.taskResult){m.e.dataset.tres=key;m.e.dataset.tsid=tr.sid;m.e.classList.add('xc-tres');taskActs(m.e,S.tinfo[tr.sid]||{sid:tr.sid,status:tr.status});}
+      m = aiMsg(run); m.b.appendChild(body); msgActs(m.e, ev.text);
       if (body.querySelector('.xc-code, .xc-tbl')) m.e.classList.add('wide');
-      if (after) { putAfter(m.e, after); paintBoxes(); if (!old) { m.e.classList.add('enter'); seeResult(m.e, S.tinfo[tr.sid] || { status: tr.status }); } return m.e; }
       e = m.e;
     } else if (ev.t === 'err') {
       S.errRuns[run] = true;
@@ -3638,6 +3666,7 @@
       // 前台派出去的后台任务：那段话下面一个框（站长 2026-11-16）。不是卡片（2026-11-11 定的「聊天里不放卡片」还算数：没有按钮，点开是终端，操作在工作台和「详情」）。
       // 刚派出去的记下来，好知道它什么时候做完
       if (!S.tinfo[ev.sid]) S.tinfo[ev.sid] = { sid: ev.sid, no: ev.no, parent: S.sid || '', title: ev.title, kind: ev.kind, model: ev.model, status: ev.status || 'queued', after: ev.after || [], created: ev.at || Date.now() };
+      TDISP[ev.sid] = run;   // 这件活属于派它的这一条消息
       if (!old) { taskBox(ev.sid, true); pollTasksSoon(1500); paintBoxes(); }
     } else if (ev.t === 'move') e = sysChip('学会了新动作：' + ev.name, 'move');   // 记忆、好感度是小芯自己的事，不在聊天里报
     if (e) {
