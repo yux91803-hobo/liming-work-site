@@ -1,3 +1,32 @@
+# 修改清单 · 2026-11-19（工作台动画：体检修了 2 个问题，新加 7 种动画）
+
+- **谁做的**：Claude Code 实现并自查（同一会话，没有另一位审核）。站长 11-18：「检查一下当前工作台还有哪些动画逻辑不合理的地方……动画尽量要创新，新颖，好看特效多一点」；11-19：「做吧，兄弟支持你」。见 [设计](superpowers/specs/2026-11-19-xin-motion-design.md)、[计划](superpowers/plans/2026-11-19-xin-motion.md)。
+- **怎么体检的**：用浏览器的截屏流把手机和电脑上的整套操作逐帧截下来，按时间拼图来看。
+- **修掉的问题**：
+  - 直接打开工作台（`#xin-work`）先闪约 0.3 秒首页。现在首页先藏起来，工作台出来再放开，最多等 3 秒。
+  - 结果从任务轮询那条路来时硬冒出来，任务框瞬间跳下去。现在结果淡入，任务框用 FLIP 平滑滑下去。
+- **新动画**（像素风，系统开了「减少动态」时都关掉）：
+  1. 从首页进工作台：像素点阵溶解（View Transitions，`xcdots`）。
+  2. 发消息：你的话从输入框飞上去变成气泡（`xcfly`）；小芯的回答一段段淡入（`xcline`），一道微光扫过（`xcshine`）。
+  3. 任务框：
+     - 一格格搭起来（`xcbuild`）；
+     - 在做时像素彗星绕着框边跑（`@property` 的 `conic-gradient` 边框，`xcorbit`）；
+     - 亲眼看着做完时 ✓ 盖章（`xcstamp`），迸 6 颗像素火花（`xcspark`）。
+  4. 小芯的电脑：电脑上像老显示器开机（`tmcrt`）、关机（`tmcrtoff`），开机时扫描线闪一下。
+  5. 小芯岛：派出新活、活做完时鼓一下（`xcbump`），亮一圈光（`xcring2`）。
+  6. 在做的小方点：硬闪改成呼吸（`xcbreathe`），每个点随机相位，不再同一节拍。
+  7. 深浅色切换：从点的地方一圈圈扩散着换（`xcreveal`），首页按钮和工作台命令面板都是。
+- **没改**：小芯岛的 `width` 伸缩会掉帧，要改岛的结构，这次没动，记在交接记录里。
+- **参考**：
+  - Paul Lewis「FLIP Your Animations」、Framer Motion 的 layout 动画；
+  - Telegram 的主题切换、`document.startViewTransition` 示例；
+  - 苹果灵动岛的弹性和发光；
+  - `@property` 加 `conic-gradient` 的边框光。
+- **测试**：
+  - 新的 `test/e2e/xin_motion_e2e.py`（16 项），已接进 `npm run test:e2e`；
+  - `xin_term_e2e` 里断言 `tmpop` / `tmpopx` 的两条改成新的动画名；
+  - `npm run check` 1,060/1,060。
+
 # 修改清单 · 2026-11-19（小芯前台自己查简单的资料，查的时候能插话）
 
 - **谁做的**：Claude Code 实现并自查（同一会话，没有另一位审核）。站长 11-18：「简单的上网查资料它可以自己去做，但是我可以继续说话改变任务」「反正就是耗时间的任务交给后台，你可以参考Muse」。见 [设计](superpowers/specs/2026-11-18-xin-front-lookup-design.md)、[计划](superpowers/plans/2026-11-18-xin-front-lookup.md)。

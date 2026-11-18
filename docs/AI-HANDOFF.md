@@ -1,3 +1,14 @@
+## 2026-11-19 · 工作台动画（Claude Code）
+
+- 见 CHANGES 最新一条。
+- **改动画的人注意**：
+  - 新动画都在 `chat.css` 末尾「动画」那一段，每条都有「减少动态」的关闭规则；
+  - 进场动画只给新来的元素加（`!old`、`fresh`），刷新和翻历史不重放；
+  - View Transitions 用 `<html>` 上的场景类区分（`vt-work`、`vt-theme`），做完一定要去掉；
+  - 小方点的相位由 `chat.js` 的 `phase()` 给（`--ph`）。
+- **体检工具**：用浏览器截屏流（CDP `Page.startScreencast`）存帧，再用 PIL 按时间拼图。Playwright 自带录像要它自己的 ffmpeg，这台机器上没有。
+- **还没做**：小芯岛的 `width` 伸缩会掉帧，要改岛的结构。
+
 ## 2026-11-19 · 前台自己查简单的资料、查的时候能插话（Claude Code）
 
 - 见 CHANGES 最新一条。
