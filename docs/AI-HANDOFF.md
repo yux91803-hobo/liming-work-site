@@ -7,6 +7,7 @@
   - 代码里 `lockedCall` 的 `flock` 路、看门狗、`owner-legacy`、`Ownership` 的 `hold/leave/set`、`release(mode)`、外壳的 `runAgent` 现在都走不到，第 3 步（PR C）删。
 - 上线后要核对：云电脑上内核记录 `kernel.jsonl` 里换版本那一下等了多久（`ready` 事件的 `ms` 是状态进程起来用的时间；那段时间的请求记录看 `via` 和 `ms`，`via: none` 是等不到回了「主人不在」），以及有没有 `down`。读 InstaBox 之前先看 https://instabox.sh/llms.txt ，只做只读调用。
 - 回滚：Actions 自动回滚 Worker 时，旧版外壳拿到的期望是 kernel，接得上新版留下的记录；不要再用「改成 legacy 发版」那个办法（开关已经没了）。
+- **本机跑全量之前，先确认没有 `~/.xin`**：这台机器上原来留着 11-15 测试写下的旧库，会把「不是主人建不了库」盖住，#170 第一次 CI 因此挂了 4 条（本机全过）。那份旧库已经挪走。新写的测试在测试进程里直接调控制器模块时，文件开头就用自己的临时状态目录。
 
 ## 2026-11-18 凌晨 · 删旧模式第 1 步（PR A：测试全部对着主人跑）（Claude Code）
 

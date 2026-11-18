@@ -2336,7 +2336,7 @@ test('内核模式：每次操作把期望放进请求体；usage 的结果带�
   try {
     assert.deepStrictEqual(await callOp(m, env, ck, 'sessions'), { ok: true, data: { sessions: [] } });
     const u = await callOp(m, env, ck, 'usage');
-    assert.strictEqual(u.ok, true); assert.deepStrictEqual(u.data.owner, { ...owner, ops });
+    assert.strictEqual(u.ok, true); assert.deepStrictEqual(u.data.owner, { ...owner, ops, kernelCurrent: true });
     const bodies = ib.calls.filter(c => c.key === 'POST /xin/op').map(c => JSON.parse(c.body));
     assert.deepStrictEqual(bodies.map(b => b.owner), [{ mode: 'kernel', gen: 1 }, { mode: 'kernel', gen: 1 }]);
   } finally { ib.restore(); }
@@ -2596,6 +2596,24 @@ test('stream：没登录 401；内核不在、没开内核通道都回 503 让�
     assert.strictEqual(off.status, 503);
     assert.strictEqual((await m.handleXin(streamReq('run=../x', { cookie: ck }), env, null)).status, 400);
   } finally { ib.restore(); }
+});
+
+// 删旧模式第 2 步上线前自查发现：改了外壳的部署，Worker 在后台换外壳；正式站联调要是先记下旧外壳的切换次数，
+// 外壳中途换掉会把次数加一、判成「状态进程中途重启」而回滚。usage 带上外壳是不是这次部署的版本，联调等它换好了再记
+// （参考 Kubernetes 滚动发布：新版本就绪了才算上线，才开始检查）
+test('usage 的主人状态带上电脑上的外壳是不是这次部署的版本（kernelCurrent）', async () => {
+  for (const [version, current] of [['oldoldoldold', false], [KERNEL_HASH, true]]) {
+    const m = await fresh(), env = kernelEnv(m), ck = await login(m, env), w = waiter();
+    const owner = { want: 'kernel', mode: 'kernel', epoch: 2, phase: 'running' };
+    const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+      'POST /xin/op': [() => kres(200, { ok: true, data: { days: [] }, owner }, { 'x-xin-kernel': version })],
+      'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true,"started":true}', stderr: '', exitCode: 0 } }] });
+    try {
+      const u = await callOp(m, env, ck, 'usage', {}, w.ctx);
+      assert.strictEqual(u.data.owner.kernelCurrent, current, version);
+      await w.settle();
+    } finally { ib.restore(); }
+  }
 });
 
 test('内核版本和这次部署的不一样：后台起 ensure 升级；一样就不起', async () => {

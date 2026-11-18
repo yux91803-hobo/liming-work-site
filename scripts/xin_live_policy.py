@@ -104,10 +104,13 @@ def explain_background_fallback(quota, issue, dispatched_ms, now_ms):
 
 # 第 2 批（docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md）：正式站的状态由内核外壳拉起、看住的常驻进程管，
 # 网页的每次操作经本机套接字交给它，外壳不再起控制器进程。usage 的 owner 是外壳的 summary 加上 spawns（外壳起过几次控制器）。
+# kernelCurrent（Worker 加的）：电脑上的外壳是不是这次部署的版本。改了外壳的部署，Worker 在后台换外壳；换好之前不记，
+# 不然外壳中途换掉会把切换次数加一，被判成「状态进程中途重启」而回滚（删旧模式第 2 步上线前自查发现，
+# 参考 Kubernetes 滚动发布：新版本就绪了才开始检查）。
 # 公开仓库的日志只打印阶段、代号和计数。
 def resident_owner(usage):
     o = (usage or {}).get('owner') or {}
-    if o.get('phase') != 'running' or o.get('mode') != 'kernel':
+    if o.get('phase') != 'running' or o.get('mode') != 'kernel' or o.get('kernelCurrent') is not True:
         return None
     if type(o.get('epoch')) is not int or type(o.get('spawns')) is not int:
         return None
@@ -116,7 +119,7 @@ def resident_owner(usage):
 
 def owner_brief(usage):
     o = (usage or {}).get('owner') or {}
-    return 'phase=' + str(o.get('phase')) + ' mode=' + str(o.get('mode')) + ' lastError=' + str(o.get('lastError'))
+    return 'phase=' + str(o.get('phase')) + ' mode=' + str(o.get('mode')) + ' kernelCurrent=' + str(o.get('kernelCurrent')) + ' lastError=' + str(o.get('lastError'))
 
 
 def same_resident_owner(first, usage):

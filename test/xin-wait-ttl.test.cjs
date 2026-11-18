@@ -11,6 +11,9 @@ const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { platformTimeout } = require('./helpers/timeout.cjs');
 const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
+// 测试进程里直接调控制器模块：用自己的临时状态目录，不读写机器上的 ~/.xin。CI 上那里是空的；本机要是留着旧库，
+// 会把「不是主人建不了库」盖住（#170 第一次 CI 就是这么挂的：本机全过，CI 上提示词读记忆要建库）。
+process.env.XIN_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-wait-ttl-proc-'));
 
 // 同 xin-runtime.test.cjs 的 fixture：直接写任务记录，再调 locked 操作
 function fixture(t) {
@@ -122,8 +125,8 @@ test('中途断了两次：直接算没做成，不停在待确认；回一句�
 });
 
 test('提示词：xin task ask 只用于要批准的事，问了 30 分钟没回就停下；做不了直接结束说原因', async () => {
-  process.env.XIN_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'xin-wait-ttl-p-'));
   const { taskSystemPrompt } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-persona.mjs')).href);
+  await require('./helpers/own-state.cjs').ownState();   // 提示词要读记忆、头一次要建库：测试进程自己当主人（正式环境里状态进程一起来就建好了）
   const boxed = taskSystemPrompt({ no: 1, title: 'x', tkind: 'code', dir: '/d/p', workspace: { work: '/w/work', home: '/w/home', tmp: '/w/tmp' }, goal: 'g' });
   assert.match(boxed, /ask 只用于/); assert.match(boxed, /30 分钟/); assert.match(boxed, /不要用它问/);
   const host = taskSystemPrompt({ no: 2, title: 'y', tkind: 'system', dir: '/d/system', goal: 'g' });

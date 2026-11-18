@@ -10,6 +10,9 @@ const { performance } = require('node:perf_hooks');
 const { pathToFileURL } = require('node:url');
 const agent = path.join(__dirname, '../site/xin/vm-agent.mjs');
 const load = () => import(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href);
+// 测试进程里直接调控制器模块：用自己的临时状态目录，不读写机器上的 ~/.xin。CI 上那里是空的；本机要是留着旧库，
+// 会把「不是主人建不了库」盖住（#170 第一次 CI 就是这么挂的：本机全过，CI 上提示词读记忆要建库）。
+process.env.XIN_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-runtime-proc-'));
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-runtime-test-'));
@@ -146,6 +149,7 @@ test('STM32 检查要求针对最终源码编译，并写齐四项手册依据',
 test('所有 Codex 角色关闭原生分身，配置在容器转换后仍生效', async t => {
   const f=fixture(t),r=await load();f.task.workspace=r.prepareWorkspace(f.task,f.control);
   const {agentArgs}=await import(pathToFileURL(agent).href);
+  await require('./helpers/own-state.cjs').ownState();   // 提示词要读记忆、头一次要建库：测试进程自己当主人（正式环境里状态进程一起来就建好了）
   for(const role of ['front','daily','task']){
     const [,args]=agentArgs('codex',f.task,'test','max',{role,sandbox:role==='task'});
     const config=[];for(let i=0;i<args.length;i++)if(args[i]==='-c')config.push('-c',args[++i]);

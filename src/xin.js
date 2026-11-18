@@ -330,7 +330,8 @@ async function runOp(env, origin, id, op, args, ctx, opts = {}) {
     // 内核文件换了（这次部署带了新版本）而电脑上跑的还是旧的：后台 ensure 一次，换成新版本（每个 isolate 60 秒最多一次）
     if (r.version && r.version !== agent.kernel.sha256.slice(0, 12)) ensureKernel(env, origin, id, ctx);
     if (r.kind === 'ok') {
-      if (op === 'usage' && r.owner && r.data && typeof r.data === 'object') r.data.owner = { ...r.owner, ...(r.ops ? { ops: r.ops } : {}) };
+      // kernelCurrent：电脑上的外壳是不是这次部署的版本。正式站联调等它换好了再记状态进程的切换次数（外壳中途换掉会把次数加一）
+      if (op === 'usage' && r.owner && r.data && typeof r.data === 'object') r.data.owner = { ...r.owner, ...(r.ops ? { ops: r.ops } : {}), kernelCurrent: r.version === agent.kernel.sha256.slice(0, 12) };
       return r.data;
     }
     if (r.kind === 'executed_error') throw { status: 500, code: r.error || 'agent_failed', msg: redact(r.msg || r.error || '控制器出错了') };
