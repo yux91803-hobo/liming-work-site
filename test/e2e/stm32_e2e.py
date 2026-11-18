@@ -1191,8 +1191,12 @@ async def main():
         check('松手打开世界地图', await pg.evaluate("location.pathname") == '/map' and await pg.evaluate("!!document.querySelector('#stage .panel.show')"))
         await pg.evaluate("document.querySelector('.panel.show .back').click()"); await pg.wait_for_timeout(1400)
         check('回到首页，小芯掉回标题栏', await pg.evaluate("[location.pathname, LimingXin.mode]") == ['/', 'idle'])
-        kinds = await pg.evaluate("LimingXin.plats().map(p => p.kind)")
-        check('首页能站的地方：标题栏 + 每张卡片的上沿和里面', kinds.count('ground') == 1 and kinds.count('top') == 2 and kinds.count('in') == 2, kinds)
+        platforms = await pg.evaluate("LimingXin.plats().map(p => [p.kind, p.el.dataset.id || null])")
+        kinds = [kind for kind, _ in platforms]
+        tools = ('map', 'stm32', 'tianqi')
+        check('首页能站的地方：标题栏 + 三张工具卡片各自的上沿和里面',
+              kinds.count('ground') == 1 and len(platforms) == 1 + 2 * len(tools)
+              and all([kind, tool] in platforms for tool in tools for kind in ('top', 'in')), platforms)
         i_in = kinds.index('in')
         await pg.evaluate("LimingXin.hop(%d)" % i_in); await pg.wait_for_timeout(1500)
         check('小芯能跳进卡片里，落地后站在里面', await pg.evaluate("[LimingXin.mode, LimingXin.plat && LimingXin.plat.kind]") == ['idle', 'in'])
@@ -1595,7 +1599,7 @@ async def main():
         await pg.wait_for_selector('.xc-hello'); await pg.wait_for_timeout(200)
         check('没登录不叫醒云电脑，登录以后马上叫醒', 'wake' not in ops_before and 'wake' in xs['ops'], (ops_before, xs['ops']))
         st = await pg.evaluate("[!!document.querySelector('.xc-hello .xc-av'), [...document.querySelectorAll('.xc-hello .xc-chip')].map(b => b.textContent), document.querySelector('.xc-row .xc-mdl').hidden, document.querySelector('.xc-sub').textContent]")
-        check('登录以后：欢迎页（小芯头像和一句话，没有建议按钮；上面只有「小芯 | 天启」切换），默认模式输入框底下没有模型按钮（没有可选的），标题下面写着在线',
+        check('登录以后：欢迎页有小芯头像和一句话，输入框底下无模型按钮，标题下面写着在线',
               await pg.is_visible('.xc-row textarea') and st == [True, [], True, '在线'] and not await pg.evaluate("!!document.querySelector('.xc-hello button, .xc-hello .xc-as')"), st)
         PK = """(() => { const p = document.querySelector('.xc-pick'), t = p.querySelector('.xc-pk-t'), m = p.querySelector('.xc-pk-g[data-g=model]'), on = b => b.getAttribute('aria-checked') === 'true' ? '*' : '';
           return [document.querySelector('.xc-mdl span').firstChild.textContent, t ? t.querySelector('i').textContent : null, !!m,
@@ -1652,7 +1656,7 @@ async def main():
         check('在旧天启对话中新建小芯对话：默认 Codex，模型按钮收起', st == [True, 'codex', False], st)
         # 以前的 Claude 对话照样能打开：按钮写 Claude 和它的档位（五档），能改；回到新对话又是默认模式
         await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-si')
-        await pg.click('.xc-si:has-text("旧对话")'); await pg.wait_for_selector('.xc-code')
+        await pg.locator('.xc-si').get_by_text('旧对话', exact=True).click(); await pg.wait_for_selector('.xc-code')
         await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
         st = await pg.evaluate(PK)
         await pg.click('.xc-eff-d[data-v=xhigh]'); await pg.wait_for_timeout(100)

@@ -3,6 +3,7 @@
 - 基线为 #174 的 `9c022c0`。分支 `codex/xin-tianqi-li2-20261118` 保留 Claude Code 第 1–4 步与 Antigravity 第 5 步的原始提交。Codex 实现第 6–7 步和集成修正，并自查整条分支。各步原作者、修正原因及证据见变更记录。 [变更记录](CHANGES.md) · [实施计划](superpowers/plans/2026-11-18-tianqi-li2.md)
 - 已移除小芯工作台欢迎页、侧边栏及命令面板的新建天启入口。旧天启沿用 `li` 的会话编号、Harness、模型和插件。直接打开 `/tianqi` 会延后小芯的启动，返回后更新同一个登录再继续。正式站联调只用已登录的浏览器读取 `/api/tq/me` 就能验证天启入口。
 - 台账与测试证据包括状态隔离、误配 key 拒绝跑错电脑、`tq-inbox` 闹钟重启、缺省 key、#174 回滚和恢复、入口与多尺寸深浅色。第 5 步的每日任务和 Chromium 异常在正确的 Node 22 和 Chromium 环境复测通过。 [第 5 步交接](https://github.com/yux91803-hobo/liming-work-site/commit/34888f6193e532441a5bdd588f20564b02ea3778)
+- 全量 `npm run check` 1,051/1,051，`npm run test:e2e` 14 组通过，其中 STM32 372/372、旧会话与终端 69/69、独立天启 12/12。核对了 4 个屏宽的深浅色、Wrangler 试打包、可选密钥空值和非空值，以及 #174 实际代码的回滚和恢复。
 - 第 8 步发布检查跟随合入 PR。开启天启还需第 9 步的 `XIN_TQ_INSTABOX_API_KEY`、`li2` 的 Harness、网关程序与站长新增的网关账号，再用天启发一条验收消息。准备阶段通过只读接口从 `li` 取已核准的程序文件，`li2` 使用独立程序配置。 [上线与准备顺序](superpowers/specs/2026-11-18-tianqi-li2-design.md#6-上线顺序)
 
 ## 2026-11-18 17:34（北京时间）· 天启搬到 li2：完成第 5 步并交接第 6–9 步（Antigravity）
