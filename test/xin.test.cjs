@@ -2018,11 +2018,11 @@ test('记事本超过上限：保留开头和最新的记录，只省略中间',
 
 // 2026-11-12 站长：「按 Muse 的来……能抄他的就抄他的」。前台加回 Muse 式的人设和说话方式（你是谁、看重什么、怎么说话），
 // 推翻 11-10「前台少限定」的做法（那时前台是 Claude Opus，现在是 DeepSeek）；Muse 没有亲密度，所以仍不带关系等级和好感度
-test('默认模式前台：Muse 式人设和说话方式，不带会变的分数（保持缓存），表情仍是可用工具；好感度、开场白不出现，记忆自己打理', async () => {
+test('默认模式前台：人设只留身份和干活规矩、说实话不讨好（站长 11-18 改掉了 Muse 式性格描写），不带会变的分数（保持缓存），表情仍是可用工具；好感度、开场白不出现，记忆自己打理', async () => {
   const { systemPrompt } = await load('../site/xin/vm-agent.mjs');
   const p = systemPrompt('', { tasks: true });
   assert.ok(p.includes('兄弟') && p.includes('北京时间') && p.includes('原话照传') && p.includes('明确同意') && p.includes('我查了') && p.includes('密钥'));
-  assert.ok(p.includes('## 你是谁') && p.includes('## 你看重的') && p.includes('## 怎么说话') && p.includes('像朋友在聊天软件里发消息'));
+  assert.ok(p.includes('## 你是谁') && p.includes('## 说实话，不讨好') && p.includes('## 怎么说话') && p.includes('简短直接') && !p.includes('## 你看重的'));
   assert.ok(!p.includes('你和用户现在的关系') && !p.includes('亲近程度'));
   assert.ok(!/好感度 \d/.test(p));
   assert.ok(!p.includes('"bond"') && !p.includes('["xin","next"') && p.includes('["xin","dance"]'));

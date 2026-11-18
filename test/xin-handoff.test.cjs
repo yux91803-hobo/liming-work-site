@@ -21,6 +21,7 @@ test('后台完成自动唤回 DeepSeek，持久交付一次，网页关闭也�
  const f=fixture(t);f.internal('task_finish',{sid:f.task.sid,run:'rhandoffwork01',ok:true});
  await f.wait(()=>f.read().delivery?.state==='delivered');const h=f.call('history',{sid:f.parent.sid});
  const visible=h.runs.flatMap(r=>r.events).filter(e=>e.t==='text');assert.equal(visible.length,1);assert.match(visible[0].text,/我整理好了/);assert.equal(visible[0].taskResult.sid,f.task.sid);
+ assert.equal(visible[0].taskResult.deliveredAt,f.read().delivery.at,'转达那句带上说出来的时间：页面的框用时算到这时（站长 11-18）');
  const calls=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls.length,1);assert.equal(calls[0].model,'deepseek-v4.1-flash');
  f.internal('task_finish',{sid:f.task.sid,run:'rhandoffwork01',ok:true});f.call('tasks',{sid:f.parent.sid});assert.equal(f.call('history',{sid:f.parent.sid}).runs.flatMap(r=>r.events).filter(e=>e.t==='text').length,1);
 });

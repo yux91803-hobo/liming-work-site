@@ -1,4 +1,4 @@
-// Antigravity front (Gemini 4 Hydrogen, medium thinking): ACP carries images directly; only controller-validated xin actions can run.
+// Antigravity front (Gemini 4 Hydrogen, high thinking; medium when the account has no high): ACP carries images directly; only controller-validated xin actions can run.
 // 站长 2026-11-13：前台换成 Hydrogen、思考强度默认中，Gemini 额度用完再切 DeepSeek；Claude 不再用。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,9 +9,9 @@ import {BASE,processIdentity,signalProcessGroup} from './vm-base.mjs';
 import {antigravityBinary,antigravityQuota,FRONT_MODEL,AGY_MODEL} from './vm-runtime.mjs';
 import {thoughtLine} from './vm-events.mjs';
 
-// 记录里用模型名 gemini-4-hydrogen（和后台同一个，用量页并成一条）；实际在 Antigravity 里选的是带思考强度的 gemini-4-hydrogen-medium
+// 记录里用模型名 gemini-4-hydrogen（和后台同一个，用量页并成一条）；实际在 Antigravity 里选的是带思考强度的 gemini-4-hydrogen-high（站长 11-18：前台思考强度默认高；账号里没有高档才用中档）
 export const AGY_FRONT_MODEL=AGY_MODEL;
-export const AGY_FRONT_PROVIDER=AGY_MODEL+'-medium';
+export const AGY_FRONT_PROVIDER=AGY_MODEL+'-high';
 export const preferredFrontModel=()=>process.env.XIN_FRONT_PROVIDER==='deepseek'?FRONT_MODEL:AGY_FRONT_MODEL;
 export const frontModelInfo=id=>{id=id||preferredFrontModel();return {id,name:id===FRONT_MODEL?'DeepSeek V4.1 Flash':'Gemini 4 Hydrogen',image:true};};
 const AGENT='xin-front-controller';
@@ -164,7 +164,7 @@ export async function openFrontProvider(o={}){
   const init=await acp.request('initialize',{protocolVersion:1,clientInfo:{name:'xin-front',version:'1'},clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},terminal:false}},o.signal);
   images=init.agentCapabilities?.promptCapabilities?.image===true;
   const session=await acp.request('session/new',{cwd,mcpServers:[]},o.signal);sid=session.sessionId;if(!sid)throw Error('Antigravity 没有创建可用的前台会话');
-  const models=session.models?.availableModels||[],target=models.find(m=>m.modelId===AGY_FRONT_PROVIDER)||models.find(m=>/gemini\W*4\W*hydrogen\W*\(?\s*medium/i.test(m.name||''));
+  const models=session.models?.availableModels||[],pick=lv=>models.find(m=>m.modelId===AGY_MODEL+'-'+lv)||models.find(m=>new RegExp('gemini\\W*4\\W*hydrogen\\W*\\(?\\s*'+lv,'i').test(m.name||'')),target=pick('high')||pick('medium');
   if(!target){
    // 账号里没有 Hydrogen：本轮改用 DeepSeek 回复并记下原因，不整轮报错；不改用别的模型（Claude 不再用）。还没发任何提示，不会重复执行。
    acp.close();acp=null;o.protocol?.({kind:'front_model_missing'});chosen(FRONT_MODEL,'unavailable');return {request:fallback,image:true,close(){}};

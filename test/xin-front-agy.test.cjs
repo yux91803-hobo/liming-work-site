@@ -28,7 +28,7 @@ function fixture(t,mode='ok'){
  let prompts=0;require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);record(q);if(!q.method)return;
  if(q.method==='initialize')send({id:q.id,result:{protocolVersion:1,agentCapabilities:{promptCapabilities:{image:mode!=='noimage'}}}});
- else if(q.method==='session/new')send({id:q.id,result:{sessionId:'native-synthetic-session',models:{currentModelId:'another',availableModels:[...(mode==='missing'?[]:[{modelId:mode==='alias'?'MODEL_GEMINI_4_HYDROGEN_MEDIUM':'gemini-4-hydrogen-medium',name:'Gemini 4 Hydrogen (Medium)'},{modelId:'gemini-4-hydrogen-high',name:'Gemini 4 Hydrogen (High)'}]),{modelId:'claude-opus-5-5-high',name:'Claude Opus 5.5 (High)'}]}}});
+ else if(q.method==='session/new')send({id:q.id,result:{sessionId:'native-synthetic-session',models:{currentModelId:'another',availableModels:[...(mode==='missing'?[]:[{modelId:mode==='alias'?'MODEL_GEMINI_4_HYDROGEN_MEDIUM':'gemini-4-hydrogen-medium',name:'Gemini 4 Hydrogen (Medium)'},...(mode==='nohigh'?[]:[{modelId:mode==='alias'?'MODEL_GEMINI_4_HYDROGEN_HIGH':'gemini-4-hydrogen-high',name:'Gemini 4 Hydrogen (High)'}])]),{modelId:'claude-opus-5-5-high',name:'Claude Opus 5.5 (High)'}]}}});
  else if(q.method==='session/set_model')send({id:q.id,result:{}});
  else if(q.method==='session/prompt'){
  prompts++;
@@ -62,14 +62,14 @@ function fixture(t,mode='ok'){
  t.after(()=>stopOwned(control,root));
  return {root,control,home,work,env,log,gateway,call,wait,rows};
 }
-test('前台默认用 Gemini 4 Hydrogen（思考强度中），Claude、Argon 的额度用完不影响它；原生端没有网关密钥或执行权限',async t=>{
+test('前台默认用 Gemini 4 Hydrogen（思考强度高），Claude、Argon 的额度用完不影响它；原生端没有网关密钥或执行权限',async t=>{
  const f=fixture(t,'deny'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run);
  const end=done.events.find(e=>e.t==='done');assert.equal(end.ok,true);assert.equal(end.model,'gemini-4-hydrogen');assert.equal(f.rows(f.gateway).length,0);
  assert.equal(done.events.find(e=>e.t==='text').text,'native-front-answer');
  const records=f.rows(f.log);assert.ok(records.filter(r=>r.argv).every(r=>!r.key&&r.cwd===f.control+'/front-antigravity'));
  const init=records.find(r=>r.method==='initialize');assert.equal(init.params.clientCapabilities.terminal,false);assert.equal(init.params.clientCapabilities.fs.writeTextFile,false);
  assert.deepEqual(records.find(r=>r.method==='session/new').params.mcpServers,[]);
- assert.equal(records.find(r=>r.method==='session/set_model').params.modelId,'gemini-4-hydrogen-medium','思考强度默认中');
+ assert.equal(records.find(r=>r.method==='session/set_model').params.modelId,'gemini-4-hydrogen-high','思考强度默认高（站长 11-18）');
  assert.equal(records.find(r=>r.id===900&&!r.method).result.outcome.outcome,'cancelled');assert.equal(records.find(r=>r.id===901&&!r.method).error.code,-32601);
  assert.equal(fs.existsSync(f.root+'/must-not-exist'),false);
  const session=f.call('history',{sid:sent.sid}).session;assert.equal(session.model,'gemini-4-hydrogen');
@@ -106,10 +106,15 @@ test('Hydrogen 的图片提示与直接视觉块一致，读图聊天不派活',
  assert.match(prompt.find(b=>b.type==='text').text,/图片已经直接给你看了/);assert.doesNotMatch(prompt.find(b=>b.type==='text').text,/你现在用的模型看不了图片内容/);
  assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
 });
-test('接口用提供方枚举标识 Hydrogen（Medium）时仍可运行，保留实际 ID，不误当成未知前台模型',async t=>{
+test('接口用提供方枚举标识 Hydrogen（High）时仍可运行，保留实际 ID，不误当成未知前台模型',async t=>{
  const f=fixture(t,'alias'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run),end=done.events.find(e=>e.t==='done');
- assert.equal(end.ok,true);assert.equal(end.model,'gemini-4-hydrogen');assert.equal(end.providerModel,'MODEL_GEMINI_4_HYDROGEN_MEDIUM');
- assert.equal(f.rows(f.log).find(r=>r.method==='session/set_model').params.modelId,'MODEL_GEMINI_4_HYDROGEN_MEDIUM');
+ assert.equal(end.ok,true);assert.equal(end.model,'gemini-4-hydrogen');assert.equal(end.providerModel,'MODEL_GEMINI_4_HYDROGEN_HIGH');
+ assert.equal(f.rows(f.log).find(r=>r.method==='session/set_model').params.modelId,'MODEL_GEMINI_4_HYDROGEN_HIGH');
+});
+test('账号里没有高档的 Hydrogen 就用中档，不改用 DeepSeek',async t=>{
+ const f=fixture(t,'nohigh'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run),end=done.events.find(e=>e.t==='done');
+ assert.equal(end.ok,true);assert.equal(end.model,'gemini-4-hydrogen');assert.equal(end.providerModel,'gemini-4-hydrogen-medium');
+ assert.equal(f.rows(f.log).find(r=>r.method==='session/set_model').params.modelId,'gemini-4-hydrogen-medium');
 });
 test('Hydrogen 用纯文字聊天时直接当作回复交付，不再报格式错误，也不切模型',async t=>{
  const f=fixture(t,'plain'),sent=f.call('send',{agent:'codex',text:'你觉得人生有什么意义？'}),done=await f.wait(sent.run);

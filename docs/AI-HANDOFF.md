@@ -1,3 +1,14 @@
+## 2026-11-18 晚上 · 派活算一条消息、人设不讨好、前台思考强度高、终端等待动画（Claude Code）
+
+- 站长确认方案后由 Claude Code 实现并自查。见 [设计](superpowers/specs/2026-11-18-xin-one-message-design.md)、[计划](superpowers/plans/2026-11-18-xin-one-message.md)、[CHANGES](CHANGES.md) 最新一条。分支 `claude/friendly-hopper-d7392n`，从 #175 的 `7d9de0f` 接着做。
+- **改聊天排法之前先看这条**：
+  - 一条消息是一组元素：派活那一轮，加上它派出去的活的结果和框（`data-grp`，见 `chat.js` 的 `tgrp`、`syncGrp`）。
+  - 只有整组最后那个元素露操作行，靠的是 CSS 的 `.own` 和「同一轮的下一条」两条规则。
+  - 框的「在做」用 `tBusy`：任务在做，或者结束 10 分钟内 `delivery` 还是 `pending`。
+- **提示词**：站长明确不要讨好的性格描写，以后别再加回「温暖、俏皮、陪伴、跟着情绪走」这类话。「说实话，不讨好」由 `test/xin-persona-honest.test.cjs` 守着。
+- **前台**：前台用 Hydrogen 高档，账号里没有高档才用中档。
+- **还没做**：天启第 9 步（准备 li2）仍在等站长加 `XIN_TQ_INSTABOX_API_KEY` 和网关账号。
+
 ## 2026-11-18 · 天启独立工具集成（Codex）
 
 - 基线为 #174 的 `9c022c0`。分支 `codex/xin-tianqi-li2-20261118` 保留 Claude Code 第 1–4 步与 Antigravity 第 5 步的原始提交。Codex 实现第 6–7 步和集成修正，并自查整条分支。各步原作者、修正原因及证据见变更记录。 [变更记录](CHANGES.md) · [实施计划](superpowers/plans/2026-11-18-tianqi-li2.md)

@@ -1927,7 +1927,7 @@ function handoffFinish(a){
   t.delivery={id:h.id,state:action,version:h.version,run:a.run,at:Date.now()};t.frontSeen=true;
   if(action==='delivered'){
     const text=publicCompletion(t,a.text);t.result={...t.result,text};
-    emit(a.run,{t:'text',text,taskResult:{sid:t.sid,at:t.result.at,status:t.status,endedAt:t.endedAt}});
+    emit(a.run,{t:'text',text,taskResult:{sid:t.sid,at:t.result.at,status:t.status,endedAt:t.endedAt,deliveredAt:t.delivery.at}});
     enqueueNotice(t,taskPush(t,t.status==='done'?'我弄好了：'+t.title:'我这边有个进展：'+t.title,text));
   }
   saveTask(t);return {terminal:true,text:''};
