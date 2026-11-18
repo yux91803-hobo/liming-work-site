@@ -1,4 +1,4 @@
-name: Tianqi gateway route binding verification
+name: Tianqi plugin inventory and private upload cleanup
 on:
   push:
     branches: [codex/tianqi-li2-account-20261118]
@@ -10,54 +10,111 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check gateway import route and authentication shape
+      - name: Check the existing plugins and Tianqi role
         env:
           LI2_API_KEY: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
+          LI_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
         run: |
           python3 - <<'PY'
           import json
           import os
-          import secrets
-          import subprocess
+          import re
+          import tomllib
           from urllib.error import HTTPError, URLError
-          from urllib.parse import quote, urlsplit
+          from urllib.parse import quote, urlencode, urlsplit
           from urllib.request import HTTPRedirectHandler, Request, build_opener
 
           API='https://api.instabox.sh'
-          BRANCH='codex/tianqi-li2-account-20261118'
-          PROBE='import ast\nimport json\nimport re\nfrom pathlib import Path\n\nsource=Path(\'/data/workbuddy-gateway/current/wb_proxy.py\').read_text()\nhtml=Path(\'/data/workbuddy-gateway/current/dashboard.html\').read_text()\ntree=ast.parse(source)\nrows=source.splitlines()\nhandlers={}\nattributes={getattr(c.func,\'attr\',\'\') for c in ast.walk(tree) if isinstance(c,ast.Call)}\ninteresting={\'_route_accounts_import\'}\nfor stage in range(2):\n    upstream=set()\n    for f in ast.walk(tree):\n        if not isinstance(f,ast.FunctionDef) or f.name in interesting:\n            continue\n        for node in ast.walk(f):\n            if isinstance(node,ast.Call) and getattr(node.func,\'attr\',\'\') in interesting:\n                lo=max(f.lineno-1,node.lineno-8); hi=min(f.end_lineno,node.lineno+5)\n                fragment=\'\\n\'.join(rows[lo:hi])\n                if re.search(r\'eyJ[A-Za-z0-9_-]{15,}\\.|\\b(?:sk-|ibk_)[A-Za-z0-9_-]{15,}\',fragment):\n                    continue\n                handlers[f.name]=fragment\n                upstream.add(f.name)\n    interesting|=upstream\nprefixes=sorted({value.value for value in ast.walk(tree) if isinstance(value,ast.Constant) and isinstance(value.value,str) and re.fullmatch(r\'/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\',value.value) and re.search(r\'panel|accounts/import|dashboard\',value.value)})\njs=sorted(set(re.findall(r\'\'\'["\'`](/[A-Za-z0-9_.-/]*(?:panel|account|dashboard)[A-Za-z0-9_.-/]*)["\'`]\'\'\',html)))\nprint(json.dumps({\'dispatch\':handlers,\'prefixes\':prefixes[:45],\'js_paths\':js[:45]},sort_keys=True))\n'
+          REMOTE="SLOT='/data/tmp/liming-tq-account/44309545694-86a9fd9e342dd51a556c04cf/accounts.json'\nimport http.client\nimport json\nimport os\nimport re\nimport stat\nfrom pathlib import Path\n\nslot=Path(SLOT)\nroot=Path('/data/home')\nrole=json.loads((root/'.xin/kernel.env.json').read_text()).get('XIN_ROLE')\nif role!='tianqi':\n    raise SystemExit('Unexpected target controller role')\nremoved=False\nif re.fullmatch(r'/data/tmp/liming-tq-account/\\d+-[a-f0-9]{24}/accounts\\.json',str(slot)):\n    try: info=slot.lstat()\n    except FileNotFoundError: pass\n    else:\n        if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode & 0o077:\n            raise SystemExit('Unexpected temporary file metadata')\n        slot.unlink()\n        removed=True\n        try: slot.parent.rmdir()\n        except OSError: pass\nconnection=http.client.HTTPConnection('127.0.0.1',8788,timeout=8)\ntry:\n    connection.request('GET','/health')\n    res=connection.getresponse()\n    doc=json.loads(res.read(256*1024))\nfinally:\n    connection.close()\nprofile=root/'.dsh/profiles/headless/package.json'\nconf=json.loads(profile.read_text())\nprint(json.dumps({'role':role,'health':res.status,'accounts':doc.get('accounts') if type(doc.get('accounts')) is int else None,\n                  'harness_gateway_key_present':(root/'.xin/harness.key').is_file(),\n                  'bundles':[n for n in conf.get('dsh',{}).get('profile',{}).get('bundles',[]) if re.fullmatch(r'[@A-Za-z0-9_/-]{2,90}',n)],\n                  'prior_temp_removed':removed,'prior_temp_absent':not slot.exists()}))\n"
+
 
           class NoRedirect(HTTPRedirectHandler):
               def redirect_request(self, request, fp, code, msg, headers, newurl):
                   return None
 
-          def open_client():
-              key = os.environ.get('LI2_API_KEY')
-              if not key:
-                  raise RuntimeError('Tianqi InstaBox authorization missing')
-              opener = build_opener(NoRedirect())
-              def api(path, payload=None):
-                  body = None if payload is None else json.dumps(payload).encode('utf-8')
-                  request = Request(API+path,data=body,headers={'X-API-Key':key,'Content-Type':'application/json'})
-                  with opener.open(request,timeout=65) as response:
-                      return json.load(response)
-              return api
 
-          def machine(api):
-              rows=[r for r in api('/v1/machines')['machines'] if r.get('name')=='li2']
-              if len(rows)!=1 or not rows[0].get('id'):
-                  raise RuntimeError('Tianqi key did not resolve to a unique li2')
-              return '/v1/machines/'+quote(rows[0]['id'],safe='')
+          def client(env):
+              key=os.environ.get(env)
+              if not key:
+                  raise RuntimeError('Required InstaBox secret unavailable')
+              opener=build_opener(NoRedirect())
+              def request(path,payload=None):
+                  body=None if payload is None else json.dumps(payload).encode('utf-8')
+                  req=Request(API+path,data=body,headers={'X-API-Key':key,'Content-Type':'application/json'})
+                  with opener.open(req,timeout=60) as response:
+                      return json.load(response)
+              return request
+
+
+          def select(api,name):
+              ids=[m['id'] for m in api('/v1/machines')['machines'] if m.get('name')==name]
+              if len(ids)!=1:
+                  raise RuntimeError('Unexpected target machine name')
+              return '/v1/machines/'+quote(ids[0],safe='')
+
+
+          def file(api,machine,path):
+              try: return api(machine+'/files?'+urlencode({'path':path}))
+              except HTTPError as error:
+                  if error.code==404: return {}
+                  raise
+
+
+          def path_of(value):
+              if not isinstance(value,str) or not re.fullmatch(r'/(?:data|usr|opt|home)/[A-Za-z0-9_.@/+\-]{1,220}',value): return None
+              if re.search(r'(^|/)(?:accounts?|secrets?|credentials?|usage|logs?|backups?|\.env|token|\.\.)[._/-]',value,re.I): return None
+              return value
+
+
+          def names(values):
+              return sorted(str(v) for v in values if re.fullmatch(r'[A-Za-z0-9_-]{1,64}',str(v)))
+
+
+          def li_inventory(api,li):
+              profile=json.loads(file(api,li,'/data/home/.dsh/profiles/headless/package.json').get('content') or '{}')
+              bundles=[n for n in profile.get('dsh',{}).get('profile',{}).get('bundles',[]) if re.fullmatch(r'[@A-Za-z0-9_/-]{2,90}',n)]
+              raw=profile.get('dependencies',{}).get('dsh-purge-community','')
+              pkgpath=path_of(raw.removeprefix('file:')) if isinstance(raw,str) else None
+              archived=file(api,li,pkgpath) if pkgpath else {}
+              result={'source_bundles':bundles,'purge_archive':pkgpath,'purge_size':archived.get('size')}
+              for path in ('/data/home/.codex/config.toml','/data/home/.codex/rea.mcp.toml','/etc/codex/config.toml'):
+                  config=file(api,li,path)
+                  if not config.get('content'): continue
+                  data=tomllib.loads(config['content'])
+                  rea=data.get('mcp_servers',{}).get('rea')
+                  if not isinstance(rea,dict): continue
+                  cmd=rea.get('command')
+                  args=rea.get('args',[])
+                  url=urlsplit(rea.get('url',''))
+                  result['rea']={'config':path,'fields':names(rea.keys()),'command':path_of(cmd) or (cmd if cmd in {'python3','python','node','npx','uvx','uv','bash','sh','docker'} else None),
+                                 'args_paths':[p for v in args if (p:=path_of(v)) is not None],
+                                 'option_names':[v for v in args if isinstance(v,str) and re.fullmatch(r'--?[A-Za-z0-9_-]{1,50}',v)],
+                                 'has_args':len(args),'env_keys':names(rea.get('env',{})),
+                                 'env_vars':names(rea.get('env_vars',[])),'header_names':names(rea.get('http_headers',{})),
+                                 'endpoint':{'scheme':url.scheme,'loopback':url.hostname in {'127.0.0.1','localhost','::1'},'port':url.port,
+                                             'path':url.path if url.path in {'/','/mcp','/sse','/api/mcp'} else None} if url.scheme else None}
+                  break
+              result['related_app_dirs']=[x['name'] for x in file(api,li,'/data/apps').get('entries',[])
+                                          if x.get('type')=='dir' and re.fullmatch(r'[A-Za-z0-9_-]+',x.get('name','')) and re.search(r'(rea|revers|ghidra|ida)',x['name'],re.I)]
+              return result
+
+
+          def main():
+              source=client('LI_API_KEY')
+              target=client('LI2_API_KEY')
+              li,li2=select(source,'li'),select(target,'li2')
+              if li==li2:
+                  raise RuntimeError('Source and target must be distinct')
+              report=target(li2+'/exec',{'argv':['/usr/bin/python3','-c',REMOTE],'timeoutSeconds':30})
+              if report.get('exitCode')!=0:
+                  raise RuntimeError('Tianqi state check did not finish')
+              data=json.loads(report['stdout'])
+              print('TIANQI_TARGET '+json.dumps(data,sort_keys=True),flush=True)
+              print('TIANQI_PLUGIN_SOURCE '+json.dumps(li_inventory(source,li),sort_keys=True),flush=True)
 
 
           if __name__=='__main__':
-              try:
-                  api=open_client()
-                  result=api(machine(api)+'/exec',{'argv':['/usr/bin/python3','-c',PROBE],'timeoutSeconds':32})
-                  if result.get('exitCode')!=0: raise SystemExit('Gateway route probe did not finish')
-                  print('TIANQI_IMPORT_DISPATCH '+json.dumps(json.loads(result['stdout']),sort_keys=True))
-              except HTTPError as error:
-                  raise SystemExit('InstaBox response HTTP '+str(error.code)) from None
-              except (URLError,TimeoutError,ValueError,KeyError,TypeError):
-                  raise SystemExit('Gateway route probe did not return a usable report') from None
+              try: main()
+              except HTTPError as error: raise SystemExit('InstaBox returned HTTP '+str(error.code)) from None
+              except (URLError, TimeoutError, TypeError, KeyError, ValueError): raise SystemExit('Plugin inventory could not be read') from None
           PY
