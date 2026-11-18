@@ -72,6 +72,19 @@ test('预览快照绑定已检查 HTML，临时目录清理和修改原稿不影
  assert.equal(f.r.cleanupTaskTemporary({...f.task,status:'done'},f.control),true);assert.equal(fs.readFileSync(a.real,'utf8'),html);assert.match(preview.url,/^\/xin\/preview.html\?id=[a-f0-9]{32}$/);
  assert.ok(f.r.previewAsset(f.control,{id:'../escape'}).error);assert.ok(f.r.previewAsset(f.control,{id:preview.id,file:'manifest.json'}).error);
 });
+test('持久收尾复用同一份网页预览，已保存的图片和 HTML 可以独立核对',async t=>{
+ const f=await web(t),m=f.r.webManifest(f.task),shot=path.join(f.task.workspace.tmp,'xin-web-preview.png');
+ fs.writeFileSync(shot,Buffer.from([137,80,78,71,13,10,26,10]));
+ const id='a'.repeat(32),check={ok:true,digest:m.digest,screenshot:shot,viewports:[{width:390,checks:1}]};
+ const first=f.r.publishWebPreview(f.task,f.control,check,id);
+ fs.unlinkSync(shot);
+ assert.deepEqual(f.r.publishWebPreview(f.task,f.control,check,id),first);
+ assert.deepEqual(fs.readdirSync(path.join(f.control,'previews')),[id]);
+ fs.writeFileSync(path.join(f.task.workspace.work,'index.html'),html.replace('</body>','<p>改过</p></body>'));
+ assert.throws(()=>f.r.publishWebPreview(f.task,f.control,{...check,digest:f.r.webManifest(f.task).digest},id),/无法核对/);
+ assert.equal(fs.readFileSync(f.r.previewAsset(f.control,{id}).real,'utf8'),html);
+});
+
 test('待写回网页收到允许或拒绝后都清理 tmp；允许后的快照继续可读',async t=>{
  for(const decision of ['approve','deny']){
   const f=await web(t),m=f.r.webManifest(f.task),shot=f.task.workspace.tmp+'/shot.png';fs.writeFileSync(shot,Buffer.from('89504e470d0a1a0a00000000','hex'));
