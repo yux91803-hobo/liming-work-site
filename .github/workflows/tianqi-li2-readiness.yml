@@ -1,4 +1,4 @@
-name: Tianqi li2 commissioning checks
+name: Tianqi li2 program installation
 on:
   push:
     branches: [codex/tianqi-li2-readiness-20261118]
@@ -8,20 +8,40 @@ jobs:
   inspect:
     if: github.repository == 'yux91803-hobo/liming-work-site' && github.ref_name == 'codex/tianqi-li2-readiness-20261118'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 18
     steps:
-      - name: Verify li2 before program installation
+      - name: Publish verified program files to li2
         env:
           LI_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
           LI2_API_KEY: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
         run: |
           python3 - <<'PY'
+          import ast
+          import hashlib
           import json
           import os
           import re
+          import shlex
+          import subprocess
+          import tarfile
+          import tempfile
+          from pathlib import Path, PurePosixPath
           from urllib.error import HTTPError, URLError
-          from urllib.parse import quote, urlencode
+          from urllib.parse import quote, urlencode, urlsplit
           from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+          API = 'https://api.instabox.sh'
+          NODE_TAR = 'node-v24.22.2-linux-x64.tar.xz'
+          NODE_SHA = '48cc0e21e048790e54c0cf5749c2725005313d652651c40b7a21feb9697aaf75'
+          HARNESS_VERSION = '0.2.2-rc.3'
+          HARNESS = '/data/apps/deepseek-harness'
+          GATEWAY = '/data/workbuddy-gateway/current'
+          PRIVATE = re.compile(r'^(accounts?|secrets?|credentials?|usage|logs?|backups?|storage|state|cache|__pycache__|\.git|\.env)(?:[._-]|$)', re.I)
+          CREDENTIAL = re.compile(rb'\bibk_[a-zA-Z0-9]{30,}|-----BEGIN (?:OPENSSH |RSA |EC )?PRIVATE KEY-----|\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\b')
+
+
+          class SetupCheckError(Exception):
+              pass
 
 
           class NoRedirect(HTTPRedirectHandler):
@@ -29,73 +49,294 @@ jobs:
                   return None
 
 
-          def client(env):
-              key = os.environ.get(env)
-              if not key:
-                  raise RuntimeError('Required InstaBox secret unavailable')
-              opener = build_opener(NoRedirect())
-              def send(path, data=None):
-                  req = Request('https://api.instabox.sh' + path, data=data, headers={'X-API-Key': key, 'Content-Type': 'application/json'})
-                  with opener.open(req, timeout=50) as res:
-                      return json.load(res)
-              return send
+          class InstaBox:
+              def __init__(self, key):
+                  if not key:
+                      raise SetupCheckError('A required InstaBox secret is unavailable to this job')
+                  self.key = key
+                  self.http = build_opener(NoRedirect())
+
+              def get(self, endpoint, max_bytes=2 * 1024 * 1024):
+                  request = Request(API + endpoint, headers={'X-API-Key': self.key})
+                  with self.http.open(request, timeout=60) as response:
+                      data = response.read(max_bytes + 1)
+                  if len(data) > max_bytes:
+                      raise SetupCheckError('Program file exceeded its expected size limit')
+                  return data
+
+              def select(self, name):
+                  rows = [r for r in json.loads(self.get('/v1/machines'))['machines'] if r.get('name') == name]
+                  if len(rows) != 1 or not rows[0].get('id'):
+                      raise SetupCheckError('The credential does not select exactly one ' + name)
+                  return '/v1/machines/' + quote(rows[0]['id'], safe='')
+
+              def list_files(self, machine, path):
+                  listing = json.loads(self.get(machine + '/files?' + urlencode({'path': path})))
+                  if listing.get('type') != 'dir' or listing.get('truncated'):
+                      raise SetupCheckError('Program directory could not be completely inventoried')
+                  return listing['entries']
+
+              def read_file(self, machine, path, limit):
+                  return self.get(machine + '/files/content?' + urlencode({'path': path}), limit)
 
 
-          def select(send, name):
-              matches = [m['id'] for m in send('/v1/machines')['machines'] if m.get('name') == name]
-              if len(matches) != 1:
-                  raise RuntimeError('Expected exactly one ' + name)
-              return '/v1/machines/' + quote(matches[0], safe='')
+          def child_env(work):
+              user_config = work / 'npm-user.ini'
+              global_config = work / 'npm-global.ini'
+              user_config.touch()
+              global_config.touch()
+              return {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'CI': '1', 'PYTHONDONTWRITEBYTECODE': '1',
+                      'npm_config_cache': str(work / 'npm-cache'), 'npm_config_userconfig': str(user_config),
+                      'npm_config_globalconfig': str(global_config)}
 
 
-          def profile_structure(entry, depth=0):
+          def checked(command, *, work, env, timeout, failure):
+              r = subprocess.run(command, cwd=work, env=env, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+              if r.returncode:
+                  codes = sorted(set(re.findall(rb'\b(?:ERR_[A-Z_]+|E[A-Z0-9]{3,12})\b', r.stderr)))[:8]
+                  names = sorted(set(re.findall(rb'(?:ModuleNotFoundError|ImportError): No module named [\'\"]([A-Za-z0-9_.]+)[\'\"]', r.stderr)))[:8]
+                  raise SetupCheckError(failure + ' (exit ' + str(r.returncode) + ', codes ' + repr(codes) + ', modules ' + repr(names) + ')')
+              return r.stdout.decode('utf-8', errors='replace')
+
+
+          def validate_lock(package, lock):
+              required = {'@deepseek-ai/dsh': HARNESS_VERSION}
+              if package.get('dependencies') != required or lock.get('packages', {}).get('', {}).get('dependencies') != required:
+                  raise SetupCheckError('The li package lock does not pin the agreed Harness version')
+              if any(CREDENTIAL.search(json.dumps(x).encode()) for x in (package, lock)):
+                  raise SetupCheckError('Program package metadata contains an unexpected private value')
+              for entry in lock['packages'].values():
+                  src = entry.get('resolved')
+                  if src:
+                      url = urlsplit(src)
+                      if (url.scheme != 'https' or url.hostname not in {'registry.npmjs.org', 'registry.npmmirror.com'}
+                              or url.username or url.password or not entry.get('integrity')):
+                          raise SetupCheckError('The installed Harness lock refers to an unverified package source')
+
+
+          def prepare_harness(source, machine, directory):
+              dest = directory / 'harness'
+              dest.mkdir()
+              tarball = source.read_file(machine, HARNESS + '/downloads/' + NODE_TAR, 33_000_000)
+              if hashlib.sha256(tarball).hexdigest() != NODE_SHA:
+                  raise SetupCheckError('Node runtime did not match the official v24.22.2 checksum')
+              archive = directory / NODE_TAR
+              archive.write_bytes(tarball)
+              with tarfile.open(archive, 'r:xz') as stream:
+                  stream.extractall(dest, filter='data')
+              (dest / NODE_TAR.removesuffix('.tar.xz')).rename(dest / 'runtime')
+              app = dest / 'tui-host'
+              app.mkdir()
+              package = json.loads(source.read_file(machine, HARNESS + '/tui-host/package.json', 4096))
+              lock_bytes = source.read_file(machine, HARNESS + '/tui-host/package-lock.json', 1_000_000)
+              lock = json.loads(lock_bytes)
+              validate_lock(package, lock)
+              (app / 'package.json').write_text(json.dumps({'private': True, 'dependencies': package['dependencies']}) + '\n')
+              (app / 'package-lock.json').write_bytes(lock_bytes)
+              node = dest / 'runtime/bin/node'
+              npm = dest / 'runtime/lib/node_modules/npm/bin/npm-cli.js'
+              env = child_env(directory)
+              env['PATH'] = str(node.parent) + os.pathsep + os.defpath
+              checked([node, npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-fund', '--no-audit'], work=app, env=env,
+                      timeout=480, failure='Pinned Harness install failed')
+              dsh = app / 'node_modules/@deepseek-ai/dsh/lib/bin.js'
+              version = checked([node, dsh, '--version'], work=directory, env=env, timeout=40, failure='Harness version check failed')
+              if HARNESS_VERSION not in version:
+                  raise SetupCheckError('Harness reported a version different from the spec')
+              profile_source = json.loads(source.read_file(machine, '/data/home/.dsh/profiles/headless/package.json', 4096))
+              profile = profile_source.get('dsh', {})
+              provided = sorted(k for k in profile if re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]+', k)) if isinstance(profile, dict) else []
+              declared = {k: v for k, v in profile.items() if k in {'preset', 'extends', 'type'} and isinstance(v, str)
+                          and v in {'headless', 'default', 'minimal'}} if isinstance(profile, dict) else {}
+              return {'version': HARNESS_VERSION, 'runtime_version': '24.22.2', 'lock_sha256': hashlib.sha256(lock_bytes).hexdigest(),
+                      'profile_dsh_fields': provided, 'profile_standard_modes': declared}
+
+
+          def optional_program_tree(source, machine, name, destination, copied, depth=0):
               if depth > 3:
-                  return type(entry).__name__
-              if isinstance(entry, dict):
-                  return {k: profile_structure(v, depth+1) for k,v in entry.items() if re.fullmatch(r'[a-zA-Z][a-zA-Z0-9_-]{0,60}',k)}
-              if isinstance(entry, list):
-                  return [profile_structure(v, depth+1) for v in entry[:12]]
-              if isinstance(entry, str) and (entry in {'headless','default','cli','standard','minimal','builtin','chat','codex','global','local'} or re.fullmatch(r'(?:builtin:|@deepseek-ai/dsh[/\w.-]*)(?:headless)?',entry)):
-                  return entry
-              return type(entry).__name__
+                  raise SetupCheckError('Gateway static program data unexpectedly deep')
+              try:
+                  items = source.list_files(machine, GATEWAY + '/' + name)
+              except HTTPError as error:
+                  if error.code == 404:
+                      return
+                  raise
+              for item in items:
+                  child = item['name']
+                  if not re.fullmatch(r'[A-Za-z0-9_.-]+', child) or child in {'.', '..'} or PRIVATE.match(child):
+                      continue
+                  rel = name + '/' + child
+                  if item['type'] == 'dir':
+                      optional_program_tree(source, machine, rel, destination, copied, depth + 1)
+                  elif item['type'] == 'file' and child.endswith(('.json', '.yaml', '.yml', '.md', '.csv')):
+                      copy_program_file(source, machine, rel, item, destination, copied)
 
 
-          TARGET = '''import json, os, shutil, socket, subprocess
-          from pathlib import Path
-          home=Path('/data/home')
-          role=json.loads((home/'.xin/kernel.env.json').read_text()).get('XIN_ROLE')
-          with socket.socket() as sock:
-           sock.settimeout(0.5)
-           port_open=sock.connect_ex(('127.0.0.1',8788))==0
-          paths={'harness':Path('/data/apps/deepseek-harness'),'launcher':home/'.local/bin/dsh','headless':home/'.dsh/profiles/headless','gateway':Path('/data/workbuddy-gateway'),'service':Path('/etc/systemd/system/workbuddy-gateway.service')}
-          sudo=bool(shutil.which('sudo')) and subprocess.run(['sudo','-n','true'],timeout=5,capture_output=True).returncode==0
-          print(json.dumps({'role_is_tianqi':role=='tianqi','expected_home':Path.home()==home,'x86_64':os.uname().machine=='x86_64','free_mib':shutil.disk_usage('/data').free//(1024*1024),'port_in_use':port_open,'sudo_available':sudo or os.geteuid()==0,'existing':{k:p.exists() or p.is_symlink() for k,p in paths.items()}}))
-          '''
+          def copy_program_file(source, machine, name, item, destination, copied):
+              if item['size'] > 8 * 1024 * 1024 or len(copied) >= 140:
+                  raise SetupCheckError('Gateway program bundle exceeded the scoped transfer limit')
+              data = source.read_file(machine, GATEWAY + '/' + name, item['size'] + 1)
+              if len(data) != item['size'] or CREDENTIAL.search(data):
+                  raise SetupCheckError('A gateway program file changed during the read or matched a private pattern')
+              filename = destination / PurePosixPath(name)
+              filename.parent.mkdir(parents=True, exist_ok=True)
+              filename.write_bytes(data)
+              copied.append(name)
+
+
+          def prepare_gateway(source, machine, directory):
+              destination = directory / 'gateway'
+              destination.mkdir()
+              copied = []
+              for item in source.list_files(machine, GATEWAY):
+                  name = item['name']
+                  want = re.fullmatch(r'wb_[a-z0-9_]+\.py', name) or name in {'dashboard.html', 'README.md', 'LICENSE'}
+                  if want and item['type'] == 'file':
+                      copy_program_file(source, machine, name, item, destination, copied)
+              for folder in ('catalog', 'pricing'):
+                  optional_program_tree(source, machine, folder, destination, copied)
+              program = destination / 'wb_proxy.py'
+              if not program.is_file() or not (destination / 'dashboard.html').is_file():
+                  raise SetupCheckError('The gateway application and dashboard were not both present on li')
+              required = set()
+              for source_file in destination.glob('wb_*.py'):
+                  tree = ast.parse(source_file.read_bytes(), filename=source_file.name)
+                  compile(tree, source_file.name, 'exec')
+                  for n in ast.walk(tree):
+                      if isinstance(n, ast.Import):
+                          required.update(x.name for x in n.names if x.name.startswith('wb_'))
+                      if isinstance(n, ast.ImportFrom) and n.module and n.module.startswith('wb_'):
+                          required.add(n.module)
+              if any(not (destination / (m.split('.')[0] + '.py')).is_file() for m in required):
+                  raise SetupCheckError('A local gateway program dependency was not in the scoped transfer')
+              env = child_env(directory)
+              help_text = checked(['/usr/bin/python3', program, '--help'], work=destination, env=env, timeout=30, failure='Gateway help check failed')
+              arguments = sorted(set(re.findall(r'--[a-z][a-z0-9-]+', help_text)))
+              unit = source.read_file(machine, '/etc/systemd/system/workbuddy-gateway.service', 32_768).decode('utf-8')
+              start = [line.partition('=')[2] for line in unit.splitlines() if line.startswith('ExecStart=')]
+              argv = shlex.split(start[0]) if len(start) == 1 else []
+              flag_names = sorted({token.split('=',1)[0] for token in argv[1:] if re.fullmatch(r'--[a-z][a-z0-9-]+(?:=.*)?', token)})
+              expected_version = any('2.0.8' in f.read_text(errors='replace') for f in (destination / 'README.md', program) if f.is_file())
+              if not expected_version:
+                  raise SetupCheckError('The source gateway did not contain its expected v2.0.8 marker')
+              return {'version_marker': '2.0.8', 'program_count': len(copied), 'gateway_cli_flags': arguments,
+                      'source_unit_flags': flag_names}
+
+
+          REMOTE_SCRIPT = 'import fcntl\nimport hashlib\nimport http.client\nimport json\nimport os\nimport pwd\nimport re\nimport signal\nimport socket\nimport subprocess\nimport sys\nimport tarfile\nimport time\nfrom pathlib import Path\n\nHOME_DIR = Path(\'/data/home\')\nHARNESS = Path(\'/data/apps/deepseek-harness\')\nLAUNCHER = HOME_DIR / \'.local/bin/dsh\'\nPROFILE = HOME_DIR / \'.dsh/profiles/headless\'\nGATEWAY = Path(\'/data/workbuddy-gateway\')\nUNIT = Path(\'/etc/systemd/system/workbuddy-gateway.service\')\nSETUP_DIR = Path(\'/data/tmp/liming-tq-setup\')\nVERSION = \'0.2.2-rc.3\'\n\n\ndef sha256(filename):\n    with filename.open(\'rb\') as f:\n        return hashlib.file_digest(f, \'sha256\').hexdigest()\n\n\ndef run(argv, timeout=30):\n    return subprocess.run(argv, check=True, stdout=subprocess.PIPE,\n                          stderr=subprocess.PIPE, timeout=timeout, text=True).stdout\n\n\ndef root(argv, timeout=30):\n    return run(([\'sudo\',\'-n\'] if os.geteuid() else []) + list(argv), timeout)\n\n\ndef gateway_ready():\n    end = time.monotonic() + 30\n    while time.monotonic() < end:\n        try:\n            http = http.client.HTTPConnection(\'127.0.0.1\',8788,timeout=1)\n            try:\n                http.request(\'GET\',\'/\')\n                status = http.getresponse().status\n                if 200 <= status < 400:\n                    return status\n            finally:\n                http.close()\n        except OSError:\n            pass\n        time.sleep(0.4)\n    raise RuntimeError(\'Gateway has no successful local response\')\n\n\ndef check_loopback():\n    addresses = [line.split()[3] for line in run([\'ss\',\'-H\',\'-ltn\',\'sport = :8788\']).splitlines() if len(line.split()) >= 5]\n    if addresses != [\'127.0.0.1:8788\']:\n        raise RuntimeError(\'Gateway did not bind exactly to the approved loopback endpoint\')\n\n\ndef roll_back_files(published):\n    for target, original in reversed(published):\n        target.rename(original)\n\n\ndef install(archive, digest, work):\n    if sha256(archive) != digest:\n        raise RuntimeError(\'Transferred program bundle hash mismatch\')\n    role = json.loads((HOME_DIR/\'.xin/kernel.env.json\').read_text()).get(\'XIN_ROLE\')\n    if role != \'tianqi\' or Path.home() != HOME_DIR or os.uname().machine != \'x86_64\':\n        raise RuntimeError(\'The target does not have the expected Tianqi runtime\')\n    if any(p.exists() or p.is_symlink() for p in (HARNESS, LAUNCHER, PROFILE, GATEWAY, UNIT)):\n        raise RuntimeError(\'An installation target already exists\')\n    with socket.socket() as sock:\n        sock.settimeout(0.5)\n        if sock.connect_ex((\'127.0.0.1\',8788)) == 0:\n            raise RuntimeError(\'The local gateway port is already occupied\')\n    root([\'true\'])\n    extracted = work / \'new\'\n    extracted.mkdir()\n    with tarfile.open(archive,\'r:gz\') as stream:\n        stream.extractall(extracted,filter=\'data\')\n    app = extracted/\'harness\'\n    if VERSION not in run([app/\'runtime/bin/node\', app/\'tui-host/node_modules/@deepseek-ai/dsh/lib/bin.js\',\'--version\']):\n        raise RuntimeError(\'Staged Harness version failed verification\')\n    gateway_source = extracted/\'gateway/current/wb_proxy.py\'\n    help_text = run([\'/usr/bin/python3\',gateway_source,\'--help\'])\n    if not all(flag in help_text for flag in (\'--host\',\'--port\',\'--accounts-dir\',\'--usage-dir\')):\n        raise RuntimeError(\'Staged gateway CLI failed verification\')\n    manifest = extracted/\'headless\'\n    manifest.mkdir()\n    profile = {\'name\':\'dsh-profile-headless\',\'private\':True,\n               \'dsh\':{\'profile\':{\'bundles\':[\'@deepseek-ai/dsh-base\',\'@deepseek-ai/dsh-headless\']}}}\n    (manifest/\'package.json\').write_text(json.dumps(profile,indent=2)+\'\\n\')\n    (manifest/\'node_modules\').symlink_to(HARNESS/\'tui-host/node_modules\',target_is_directory=True)\n    launcher = extracted/\'launcher\'\n    launcher.write_text(\'#!/bin/sh\\nset -eu\\nprefix=/data/apps/deepseek-harness\\nPATH="$prefix/runtime/bin:$PATH"\\nexport PATH\\nexec "$prefix/runtime/bin/node" "$prefix/tui-host/node_modules/@deepseek-ai/dsh/lib/bin.js" "$@"\\n\')\n    launcher.chmod(0o755)\n    account = pwd.getpwuid(os.getuid()).pw_name\n    if not re.fullmatch(r\'[a-z_][a-z0-9_-]*\',account) or account == \'root\':\n        raise RuntimeError(\'The gateway must run as the existing sandbox user\')\n    (extracted/\'gateway/accounts\').mkdir(mode=0o700)\n    (extracted/\'gateway/usage\').mkdir(mode=0o700)\n    unit_file = work/UNIT.name\n    unit_file.write_text(f\'\'\'[Unit]\nDescription=Tianqi WorkBuddy gateway\nAfter=network-online.target\n\n[Service]\nType=simple\nUser={account}\nWorkingDirectory=/data/workbuddy-gateway/current\nExecStart=/usr/bin/python3 /data/workbuddy-gateway/current/wb_proxy.py --host 127.0.0.1 --port 8788 --accounts-dir /data/workbuddy-gateway/accounts --usage-dir /data/workbuddy-gateway/usage\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=multi-user.target\n\'\'\')\n    unit_stage = UNIT.parent / (\'.liming-tq-\' + work.name + \'.new\')\n    published = []\n    unit_published = False\n    root([\'install\',\'-m\',\'0644\',\'--\',str(unit_file),str(unit_stage)])\n    try:\n        for origin,target in ((app,HARNESS),(manifest,PROFILE),(launcher,LAUNCHER),(extracted/\'gateway\',GATEWAY)):\n            target.parent.mkdir(parents=True,exist_ok=True)\n            if target.exists() or target.is_symlink():\n                raise RuntimeError(\'An installation target appeared during publication\')\n            origin.rename(target)\n            published.append((target,origin))\n        if VERSION not in run([LAUNCHER,\'--version\']):\n            raise RuntimeError(\'Installed launcher version failed verification\')\n        run([LAUNCHER,\'--profile\',\'headless\',\'--help\'])\n        if not all((PROFILE/\'node_modules/@deepseek-ai\'/name/\'package.json\').is_file() for name in (\'dsh-base\',\'dsh-headless\')):\n            raise RuntimeError(\'Installed headless profile dependencies are unavailable\')\n        root([\'ln\',\'-T\',\'--\',str(unit_stage),str(UNIT)])\n        unit_published = True\n        root([\'systemctl\',\'daemon-reload\'])\n        root([\'systemctl\',\'enable\',\'--now\',UNIT.name],timeout=45)\n        status = gateway_ready()\n        check_loopback()\n        root([\'systemctl\',\'is-active\',UNIT.name])\n        root([\'systemctl\',\'is-enabled\',UNIT.name])\n    except (Exception, KeyboardInterrupt):\n        if unit_published:\n            root([\'systemctl\',\'disable\',\'--now\',UNIT.name],timeout=45)\n            root([\'mv\',\'--\',str(UNIT),str(work/\'rolled-back.service\')])\n            root([\'systemctl\',\'daemon-reload\'])\n        roll_back_files(published)\n        print(\'LI2_INSTALL_ROLLBACK completed\',flush=True)\n        raise\n    finally:\n        root([\'rm\',\'-f\',\'--\',str(unit_stage)])\n    account_files = sum(1 for p in (GATEWAY/\'accounts\').glob(\'**/*\') if p.is_file())\n    return {\'harness\':VERSION,\'role_is_tianqi\':True,\'gateway_loopback\':True,\'gateway_http\':status,\n            \'gateway_service\':\'active_enabled\',\'existing_account_files_after_start\':account_files,\n            \'harness_gateway_key_present\':(HOME_DIR/\'.xin/harness.key\').is_file()}\n\n\ndef main():\n    archive = Path(sys.argv[1])\n    digest = sys.argv[2]\n    work = archive.parent\n    if work.parent != SETUP_DIR or not re.fullmatch(r\'[0-9]+-[0-9]+\',work.name) or archive.name != \'programs.tar.gz\':\n        raise RuntimeError(\'Invalid installation staging path\')\n    if not re.fullmatch(r\'[a-f0-9]{64}\',digest):\n        raise RuntimeError(\'Invalid program bundle digest\')\n    with (SETUP_DIR/\'install.lock\').open(\'a\') as lock:\n        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)\n        result = install(archive,digest,work)\n        archive.unlink()\n        print(\'LI2_INSTALL \' + json.dumps(result,sort_keys=True),flush=True)\n\n\nif __name__ == \'__main__\':\n    def interrupted(_sig, _frame):\n        raise KeyboardInterrupt()\n    signal.signal(signal.SIGTERM, interrupted)\n    try:\n        main()\n    except (RuntimeError,ValueError) as error:\n        if type(error) is RuntimeError:\n            print(\'LI2_INSTALL_ERROR \' + str(error),flush=True)\n        else:\n            print(\'LI2_INSTALL_ERROR invalid installation data\',flush=True)\n        sys.exit(1)\n    except (OSError,subprocess.SubprocessError,KeyboardInterrupt,tarfile.TarError) as error:\n        print(\'LI2_INSTALL_ERROR \' + type(error).__name__,flush=True)\n        sys.exit(1)\n'
+
+          def apply_to_li2(li, directory):
+              target = InstaBox(os.environ.get('LI2_API_KEY'))
+              li2 = target.select('li2')
+              if li == li2:
+                  raise SetupCheckError('The destination resolved to the source machine')
+              operation = os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']
+              if not re.fullmatch(r'[0-9]+-[0-9]+', operation):
+                  raise SetupCheckError('Invalid deployment operation identifier')
+              archive = directory/'programs.tar.gz'
+              with tarfile.open(archive,'w:gz',compresslevel=4) as bundle:
+                  bundle.add(directory/'harness',arcname='harness')
+                  bundle.add(directory/'gateway',arcname='gateway/current')
+              size = archive.stat().st_size
+              if size > 5 * 1024 * 1024 * 1024:
+                  raise SetupCheckError('The bundle exceeds the InstaBox upload limit')
+              with archive.open('rb') as bundle:
+                  digest = hashlib.file_digest(bundle, 'sha256').hexdigest()
+                  bundle.seek(0)
+                  remote_path = '/data/tmp/liming-tq-setup/' + operation + '/programs.tar.gz'
+                  upload = Request(API+li2+'/files?'+urlencode({'path':remote_path,'parents':'true','mode':'0600'}),data=bundle,method='PUT',
+                                   headers={'X-API-Key': target.key, 'Content-Type':'application/octet-stream', 'Content-Length':str(size)})
+                  with target.http.open(upload, timeout=185) as out:
+                      out.read(1024)
+              payload = json.dumps({'argv':['/usr/bin/python3','-',remote_path,digest],'stdin':REMOTE_SCRIPT,'timeoutSeconds':180}).encode()
+              exec_request = Request(API+li2+'/exec',data=payload,
+                                     headers={'X-API-Key':target.key, 'Content-Type':'application/json'})
+              with target.http.open(exec_request,timeout=195) as out:
+                  check = json.load(out)
+              lines = check.get('stdout','').splitlines()
+              if check.get('exitCode') != 0:
+                  for line in lines:
+                      if re.fullmatch(r'LI2_INSTALL_(?:ROLLBACK completed|ERROR [A-Za-z0-9 .-]{1,100})',line):
+                          print(line,flush=True)
+                  raise SetupCheckError('li2 installation transaction did not complete')
+              reports = [line.removeprefix('LI2_INSTALL ') for line in lines if line.startswith('LI2_INSTALL ')]
+              if len(reports) != 1:
+                  raise SetupCheckError('li2 installer did not provide its final state')
+              installed = json.loads(reports[0])
+              if (installed.get('harness') != HARNESS_VERSION or not installed.get('role_is_tianqi')
+                      or not installed.get('gateway_loopback') or installed.get('gateway_service') != 'active_enabled'):
+                  raise SetupCheckError('li2 installer did not satisfy the role, version and service checks')
+              print('LI2_SETUP_RESULT ' + json.dumps(installed,sort_keys=True),flush=True)
 
 
           def main():
-              src = client('LI_API_KEY')
-              target = client('LI2_API_KEY')
-              li = select(src, 'li')
-              li2 = select(target, 'li2')
-              if li == li2:
-                  raise RuntimeError('Source and destination must be distinct')
-              profile = src(li + '/files?' + urlencode({'path':'/data/home/.dsh/profiles/headless/package.json'}))
-              structure = profile_structure(json.loads(profile['content']).get('dsh', {}).get('profile'))
-              report = target(li2 + '/exec', json.dumps({'argv':['/usr/bin/python3','-c',TARGET],'timeoutSeconds':30}).encode())
-              if report.get('exitCode') != 0:
-                  raise RuntimeError('li2 commission checks failed')
-              result = json.loads(report['stdout'])
-              print('LI2_COMMISSION ' + json.dumps({'headless_profile_structure':structure,'target':result}, sort_keys=True))
+              try:
+                  source = InstaBox(os.environ.get('LI_API_KEY'))
+                  machine = source.select('li')
+                  with tempfile.TemporaryDirectory(prefix='tianqi-program-preflight-') as tmp:
+                      directory = Path(tmp)
+                      gateway = prepare_gateway(source, machine, directory)
+                      print('GATEWAY_BUILD ' + json.dumps(gateway, sort_keys=True), flush=True)
+                      harness = prepare_harness(source, machine, directory)
+                      print('HARNESS_BUILD ' + json.dumps(harness, sort_keys=True), flush=True)
+                      if harness['lock_sha256'] != '0b74b862980b4aef12e50aed9677fad15a451334d70ed09d1519b08160585718':
+                          raise SetupCheckError('The verified Harness lock changed after the preflight')
+                      if not {'--host','--port','--accounts-dir','--usage-dir'} <= set(gateway['gateway_cli_flags']):
+                          raise SetupCheckError('Gateway no longer supports the verified local configuration')
+                      apply_to_li2(machine, directory)
+              except HTTPError as error:
+                  raise SystemExit('InstaBox returned HTTP ' + str(error.code)) from None
+              except (URLError, TimeoutError, subprocess.TimeoutExpired):
+                  raise SystemExit('Program preparation timed out') from None
+              except SetupCheckError as error:
+                  raise SystemExit(str(error)) from None
+              except (ValueError, KeyError, TypeError, SyntaxError, OSError, tarfile.TarError):
+                  raise SystemExit('Unexpected program data or local build failure') from None
 
 
           if __name__ == '__main__':
-              try:
-                  main()
-              except HTTPError as error:
-                  raise SystemExit('InstaBox returned HTTP ' + str(error.code)) from None
-              except (URLError, TimeoutError):
-                  raise SystemExit('InstaBox connection did not complete') from None
-              except (ValueError, KeyError, TypeError, OSError):
-                  raise SystemExit('Unexpected commission data') from None
+              main()
+          PY
+      - name: Check the Tianqi controller through the production endpoint
+        env:
+          SITE_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          from urllib.error import HTTPError, URLError
+          from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self, request, fp, code, msg, headers, newurl):
+                  return None
+
+          http = build_opener(NoRedirect())
+          base = 'https://liming-work.com'
+          headers = {'Origin':base,'X-Xin':'1','Content-Type':'application/json'}
+          def post(path, payload, cookie=''):
+              request = Request(base+path,data=json.dumps(payload).encode(),headers=({**headers,'Cookie':cookie} if cookie else headers))
+              return http.open(request,timeout=30)
+          try:
+              with post('/api/tq/login', {'password':os.environ['SITE_OWNER_PASSWORD']}) as response:
+                  cookie = response.headers['Set-Cookie'].split(';',1)[0]
+              end = time.monotonic()+95
+              while True:
+                  with post('/api/tq/call', {'op':'ping','args':{}}, cookie) as response:
+                      reply = json.load(response)
+                  if reply.get('ok'):
+                      status = reply['data']
+                      if status.get('role') != 'tianqi' or not isinstance(status.get('ready'),bool):
+                          raise SystemExit('Tianqi controller returned an unexpected role or status')
+                      print('LI2_CONTROLLER ' + json.dumps({'role':'tianqi','ready':status['ready']},sort_keys=True))
+                      break
+                  if reply.get('state') not in {'waking','busy'} or time.monotonic() >= end:
+                      raise SystemExit('Tianqi controller did not complete its readiness check')
+                  time.sleep(3)
+          except HTTPError as error:
+              raise SystemExit('Tianqi controller HTTP ' + str(error.code)) from None
+          except (URLError, TimeoutError, KeyError, ValueError, TypeError):
+              raise SystemExit('Tianqi controller did not return a valid status') from None
           PY
