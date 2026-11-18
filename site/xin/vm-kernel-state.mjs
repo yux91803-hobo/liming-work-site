@@ -48,8 +48,10 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
       if ((tick || reconcile) && (q.kind !== 'control' || q.op === 'health') && (lastSweep === null || wall - lastSweep > recoveryGapMs || wall < lastSweep)) cycle();
       if (q.kind === 'control') {
         if (q.op === 'health') reply(q, { ok: true, result: { pid: process.pid, epoch: lease.epoch, protocol: BRIDGE_PROTOCOL, up: Date.now()-started, active, draining, nextTickMs: nextTick, rss: process.memoryUsage().rss } });
-        else if (q.op === 'release' && q.mode === 'legacy') {
-          try { reply(q, { ok: true, result: await stop({ legacy: true }) }); }
+        // 交回：排空、放锁退出，记录留在 kernel，等下一个状态进程接手（删旧模式第 2 步：不再改回 legacy）。
+        // 旧外壳发的 mode:'legacy' 也一样处理。
+        else if (q.op === 'release') {
+          try { reply(q, { ok: true, result: await stop() }); }
           catch { reply(q, { ok: false, error: 'state_drain', executed: 'unknown' }); }
         } else reply(q, { ok: false, error: 'state_request', executed: false });
         return;
@@ -72,7 +74,7 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
     try { const now = fs.lstatSync(file); if (stamp && now.isSocket() && now.ino === stamp.ino && now.dev === stamp.dev) fs.unlinkSync(file); }
     catch (e) { if (e.code !== 'ENOENT') throw e; }
   };
-  function stop({ legacy = false } = {}) {
+  function stop() {
     if (stopPromise) return stopPromise;
     draining = true; owner.draining = true; clearTimeout(timer);
     stopPromise = (async () => {
@@ -80,8 +82,8 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
       // No await between the final flush, closing writable handles and handing ownership back.
       beforeRelease(); stopped = true; server.close();
       for (const s of sockets) if (!s.handling) s.destroy();
-      lease.release(legacy ? 'legacy' : undefined); unlink();
-      return { mode: legacy ? 'legacy' : 'kernel', epoch: lease.epoch + (legacy ? 1 : 0) };
+      lease.release(); unlink();
+      return { mode: 'kernel', epoch: lease.epoch };
     })();
     return stopPromise;
   }

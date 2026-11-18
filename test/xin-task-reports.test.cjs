@@ -53,7 +53,8 @@ function fixture(t, mode, { parent = false } = {}) {
   return { dir, home, env, ownerEnv, owner, call, rows };
 }
 
-for (const mode of ['legacy', 'kernel']) {
+// 删旧模式第 2 步：只剩常驻状态进程这一种（legacy 那一遍随旧模式删掉，断言和这一遍一样）
+for (const mode of ['kernel']) {
   test(mode + '：note 文件桥丢回执重送及重启不重复事件、计数或合并内容；过期与结束后的新请求拒绝', async t => {
     const f = fixture(t, mode, { parent: true });
     const firstRequest = { op: 'note', text: '两个配置里的引脚定义不同，正在核对实际接线' };
@@ -168,6 +169,7 @@ test('真实文件队列：提交后丢回应并重启 owner，原请求保留�
   assert.equal(f.rows('SELECT * FROM memory_evidence').length, 1);
 });
 
+// 删旧模式第 2 步：以前用旧模式的写者当载体；现在是主人（常驻状态进程）在提交前后被杀，下一个主人接手恢复
 for (const committed of [false, true]) test('提交' + (committed ? '后' : '前') + ' kill：副作用和回执一起恢复', t => {
   const f = fixture(t, 'legacy');
   const code = `import {journal,readJ,BASE,ownership} from ${JSON.stringify(url('vm-base'))};
@@ -176,13 +178,14 @@ for (const committed of [false, true]) test('提交' + (committed ? '后' : '前
     import {createTaskBridgeHandler} from ${JSON.stringify(url('vm-task-reports'))};
     const fn=createTaskBridgeHandler({loadRun:r=>readJ(BASE+'/runs/'+r+'.json'),loadTask:s=>readJ(BASE+'/sessions/'+s+'.json'),isTask:t=>t?.kind==='task',lastRun:t=>t.runs.at(-1),remember:addMemory,ask:()=>{throw Error('unexpected ask')}});
     const c=createController({ops:{},iops:{task_bridge:fn},dispatchLaunches:()=>{}});
-    ownership.hold();const db=journal.db,exec=db.exec.bind(db);
+    ownership.take();const db=journal.db,exec=db.exec.bind(db);
     ${committed ? "journal.recover=()=>process.kill(process.pid,'SIGKILL');" : "db.exec=sql=>{if(sql==='COMMIT')process.kill(process.pid,'SIGKILL');return exec(sql);};"}
     console.log(JSON.stringify(c.invoke({op:'task_bridge',locked:true,key:'tasks',run:'${RUN}',attempt:'${ATTEMPT}',args:{run:'${RUN}',sid:'${SID}',id:'${ID}',op:'remember',text:'板子的串口接在 USART2'}})));`;
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env: f.env, encoding: 'utf8', timeout: 15000 });
   assert.equal(r.signal, 'SIGKILL', r.stderr + r.stdout);
   const before = f.rows("SELECT * FROM commands WHERE id LIKE 'task-bridge:%'");
   assert.equal(before.length, committed ? 1 : 0);
+  stateMode(t, f.ownerEnv);   // 下一个主人：起来先恢复，再处理重送
   const reply = f.call(); assert.match(reply.text, /待确认/);
   assert.equal(f.rows('SELECT * FROM memory_evidence').length, 1);
   assert.equal(f.rows("SELECT * FROM commands WHERE id LIKE 'task-bridge:%'").length, 1);

@@ -2750,9 +2750,10 @@
       var p50 = all && all.n > 0 && typeof all.p50 === 'number' && isFinite(all.p50) ? '，操作一般 ' + Math.max(1, Math.round(all.p50)) + ' 毫秒' : '';
       return '状态：常驻进程在管（已切换 ' + (Number(o.epoch) || 0) + ' 次，这次运行了 ' + dur + p50 + '）';
     }
-    if (o.phase === 'fallback') return '状态：常驻进程起不来，已改回旧方式（' + (o.lastError || '原因不明') + '）。下次上线会再试';
-    if (o.phase === 'starting' || o.phase === 'waiting') return '状态：正在换到常驻进程';
-    return '状态：旧方式（每次操作起一个进程）';
+    // 删旧模式第 2 步：没有旧方式了。起不来就先停一下、看护接着重试
+    if (o.phase === 'down') return '状态：常驻进程起不来（' + (o.lastError || '原因不明') + '），小芯先停一下，正在重试';
+    if (o.phase === 'starting' || o.phase === 'waiting' || o.phase === 'stopping') return '状态：正在换常驻进程';
+    return '状态：常驻进程没在运行';
   }
   function usageBody(body, u) {
     body.innerHTML = '';

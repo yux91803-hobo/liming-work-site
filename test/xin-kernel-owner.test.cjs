@@ -40,7 +40,7 @@ async function fixture(t, { env: extra = {}, keeper = {} } = {}) {
     if (text) headers['content-type'] = 'application/json';
     return fetch('http://127.0.0.1:' + f.k.port + target, { method, headers, body: text || undefined });
   };
-  f.op = async (op, args = {}, owner) => { const r = await request('POST', '/xin/op', { agent, op, args, ...(owner ? { owner } : {}) }); return { status: r.status, body: await r.json() }; };
+  f.op = async (op, args = {}, owner, a = agent) => { const r = await request('POST', '/xin/op', { agent: a, op, args, ...(owner ? { owner } : {}) }); return { status: r.status, body: await r.json() }; };
   f.health = async () => (await request('GET', '/xin/health')).json();
   f.running = (not = null) => until(async () => { const h = await f.health(); return h.owner.phase === 'running' && h.owner.pid !== not && h; });
   f.record = async () => { const { Ownership } = await import(url('vm-kernel-owner')); const o = new Ownership(home); try { return o.record({ waitMs: 0 }); } finally { o.close(); } };
@@ -61,23 +61,21 @@ const metaOf = (f, run) => JSON.parse(fs.readFileSync(path.join(f.home, 'runs', 
 const callsOf = f => fs.existsSync(path.join(f.dir, 'front.jsonl')) ? fs.readFileSync(path.join(f.dir, 'front.jsonl'), 'utf8').trim().split('\n').filter(Boolean).length : 0;
 async function report(f, q) { const { requestState } = await import(url('vm-kernel-client')); return requestState(f.home, q); }
 
-test('内核模式：send、poll、sessions、tasks 都不起控制器；结果和旧模式一样', async t => {
-  const seen = {};
-  for (const mode of ['legacy', 'kernel']) {
-    const f = await fixture(t), owner = mode === 'kernel' ? KERNEL(1) : undefined;
-    if (owner) { await f.op('sessions', {}, owner); assert.ok(await f.running(), '状态进程起来了'); }
-    const before = (await f.health()).spawns;
-    const sent = await f.op('send', { main: true, text: '第一句', clientId: 'owner-mode-00001' }, owner);
-    assert.equal(sent.body.ok, true, JSON.stringify(sent.body));
-    const done = await f.settle(sent.body.data.run, owner);
-    const sessions = await f.op('sessions', {}, owner), tasks = await f.op('tasks', {}, owner);
-    seen[mode] = { send: Object.keys(sent.body.data).sort(), done: done.events.filter(e => e.t === 'done').length, sessions: sessions.body.data.sessions.length,
-      tasks: Object.keys(tasks.body.data).sort(), texts: done.events.filter(e => e.t === 'text').map(e => e.text) };
-    const spawned = (await f.health()).spawns - before;
-    if (owner) assert.equal(spawned, 0, '内核模式：一次都没起控制器'); else assert.ok(spawned > 3, '旧模式：每次操作起一个控制器');
-  }
-  assert.deepEqual(seen.kernel, seen.legacy);
+// 删旧模式第 2 步：只剩常驻状态进程这一种，不再和旧模式比结果
+test('send、poll、sessions、tasks 都交给状态进程，不起控制器；这一轮正常做完', async t => {
+  const f = await fixture(t), owner = KERNEL(1);
+  await f.op('sessions', {}, owner); assert.ok(await f.running(), '状态进程起来了');
+  const before = (await f.health()).spawns;
+  const sent = await f.op('send', { main: true, text: '第一句', clientId: 'owner-mode-00001' }, owner);
+  assert.equal(sent.body.ok, true, JSON.stringify(sent.body)); assert.ok(sent.body.data.sid && sent.body.data.run);
+  const done = await f.settle(sent.body.data.run, owner);
+  assert.equal(done.events.filter(e => e.t === 'done').length, 1);
+  assert.ok(done.events.some(e => e.t === 'text' && /做好了/.test(e.text)), JSON.stringify(done.events));
+  assert.equal((await f.op('sessions', {}, owner)).body.data.sessions.length, 1);
+  assert.equal((await f.op('tasks', {}, owner)).body.ok, true);
+  assert.equal((await f.health()).spawns - before, 0, '一次都没起控制器');
 });
+
 
 test('带编号的 send：执行前被杀重送只成一轮；执行后被杀重送拿到同一回执；同编号不同内容报冲突', async t => {
   const f = await fixture(t), owner = KERNEL(1), args = { main: true, text: '第一句', clientId: 'owner-kill-00001' };
@@ -122,18 +120,21 @@ test('状态进程被 kill -9：外壳重起它，空档里来报告的执行进
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.home,'runs',sent.body.data.run+'.json'),'utf8')).attempt,attempt,'活 runner 不换编号');
 });
 
-test('外壳正常停止：状态进程排空、记录回 legacy；不发期望的旧外壳照常起控制器写（模拟回滚到第 1 批）', async t => {
+test('外壳正常停止：状态进程排空、放锁退出，记录留在 kernel；没有主人时入口不写；新外壳照存下的期望接手，接着用', async t => {
   const f = await fixture(t), owner = KERNEL(1);
-  await f.op('sessions', {}, owner); assert.ok(await f.running());
+  await f.op('sessions', {}, owner); const h1 = await f.running(); assert.ok(h1);
   assert.equal((await f.record()).busy, true);
   await f.k.close({ release: true });
-  assert.equal((await f.record()).mode, 'legacy');
-  const sent = f.cli('send', { main: true, text: '回滚以后', clientId: 'owner-rollback-01' });
-  assert.ok(sent.run, JSON.stringify(sent));
-  let done = null;
-  for (const end = performance.now() + platformTimeout(20000); !done && performance.now() < end; await sleep(50)) { const p = f.cli('poll', { run: sent.run }); if (p.done) done = p; }
-  assert.ok(done, '旧路径做完了这一轮'); assert.ok(!broke(done));
+  const r = await f.record(); assert.equal(r.mode, 'kernel'); assert.equal(r.busy, undefined);
+  const direct = f.cli('send', { main: true, text: '没有主人', clientId: 'owner-none-0001' });
+  assert.deepEqual([direct.error, direct.executed], ['owner_unavailable', false], '没有主人：入口不写');
+  f.k = await f.start();
+  assert.ok(await f.running(h1.owner.pid), '新外壳不等请求就拉起状态进程');
+  const sent = await f.op('send', { main: true, text: '换外壳以后', clientId: 'owner-rollback-01' }, owner);
+  assert.equal(sent.body.ok, true, JSON.stringify(sent.body));
+  const done = await f.settle(sent.body.data.run, owner); assert.ok(!broke(done));
 });
+
 
 test('墙上时钟在状态进程里往前跳 2 小时：之后的请求照常回答，状态进程不退出', async t => {
   const f = await fixture(t, { env: { preload: ['--require=' + JUMP] } }), owner = KERNEL(1);
@@ -149,22 +150,26 @@ test('墙上时钟在状态进程里往前跳 2 小时：之后的请求照常�
   const after = await f.health(); assert.equal(after.owner.pid, h.owner.pid); assert.equal(after.owner.phase, 'running');
 });
 
-test('控制器不停起退时拉起状态进程：20 轮都能起来，没有 state_compat', async t => {
-  const f = await fixture(t);
+// 删旧模式第 2 步：以前靠「要 legacy」让状态进程停下再拉起；现在在两个版本之间来回换版本，每次都是旧的排空、新的起来
+test('控制器不停起退时反复换版本拉起状态进程：20 轮都能起来，没有 state_compat', async t => {
+  const f = await fixture(t), other = path.join(path.dirname(f.agent), 'vm-agent-ba9876543210.mjs');
+  fs.copyFileSync(f.agent, other);
   let stop = false;
   const churn = (async () => {
     while (!stop) await new Promise(resolve => { const c = spawn(process.execPath, [f.agent, 'sessions'], { env: f.env, stdio: ['pipe', 'ignore', 'ignore'] }); c.stdin.end('{}'); c.on('exit', resolve); });
   })();
   t.after(async () => { stop = true; await churn; });
-  for (let gen = 1; gen < 40; gen += 2) {
-    await f.op('sessions', {}, KERNEL(gen));
-    const h = await f.running(); assert.ok(h, '第 ' + ((gen + 1) / 2) + ' 轮没起来：' + JSON.stringify((await f.health()).owner));
-    await f.op('sessions', {}, { mode: 'legacy', gen: gen + 1 });
-    assert.ok(await until(async () => (await f.health()).owner.phase === 'off'), '第 ' + ((gen + 1) / 2) + ' 轮没停下');
+  let previous = null;
+  for (let gen = 1; gen <= 20; gen++) {
+    const r = await f.op('sessions', {}, KERNEL(gen), gen % 2 ? f.agent : other);
+    assert.equal(r.status, 200, '第 ' + gen + ' 轮：' + JSON.stringify(r.body));
+    const h = await f.running(previous); assert.ok(h, '第 ' + gen + ' 轮没起来：' + JSON.stringify((await f.health()).owner));
+    previous = h.owner.pid;
   }
   stop = true; await churn;
   assert.notEqual((await f.health()).owner.lastError, 'state_compat');
 });
+
 
 test('反复调用 2000 次：状态进程的内存和打开的文件不一直涨', async t => {
   const f = await fixture(t), owner = KERNEL(1);
@@ -221,16 +226,18 @@ test('尝试恢复：runner 真正死亡后换编号；旧子进程先收净，�
   const done=await f.settle(sent.run,owner);assert.equal(callsOf(f),2);assert.equal(done.events.filter(e=>e.t==='done').length,1);
 });
 
-test('兼容回滚：关闭新编号分配并切 legacy，已有尝试仍能完成；后续新轮次保持旧协议', async t => {
+test('兼容回滚：关闭新编号分配（XIN_RUN_ATTEMPTS=0）以后换一个状态进程，已有尝试仍能完成；后续新轮次保持旧协议', async t => {
   const f=await fixture(t,{env:{XIN_RUN_ATTEMPTS:'1',XIN_FRONT_TEST_DELAY:'1500'}}),owner=KERNEL(1);
   await f.op('sessions',{},owner);await f.running();
   const sent=(await f.op('send',{main:true,text:'切换中继续',clientId:'attempt-rollback1'},owner)).body.data;
   assert.ok(await until(()=>callsOf(f)===1));const first=metaOf(f,sent.run);assert.match(first.attempt,/^[a-f0-9]{32}$/);
   await f.k.close({release:true});f.env.XIN_RUN_ATTEMPTS='0';
-  assert.equal((await f.record()).mode,'legacy');
-  let done;assert.ok(await until(()=>{const p=f.cli('poll',{run:sent.run});if(p.done){done=p;return true;}}));
+  assert.equal((await f.record()).mode,'kernel');
+  f.k=await f.start();
+  const done=await f.settle(sent.run,owner);
   assert.equal(metaOf(f,sent.run).attempt,first.attempt);assert.equal(done.events.filter(e=>e.t==='done').length,1);assert.equal(callsOf(f),1);
-  const next=f.cli('send',{sid:sent.sid,text:'兼容版的新一句',clientId:'attempt-rollback2'});assert.ok(next.run);
+  const next=(await f.op('send',{sid:sent.sid,text:'兼容版的新一句',clientId:'attempt-rollback2'},owner)).body.data;assert.ok(next.run);
   assert.equal(metaOf(f,next.run).attempt,undefined);assert.equal(metaOf(f,next.run).attemptProtocol,undefined);
-  assert.ok(await until(()=>f.cli('poll',{run:next.run}).done));assert.equal(callsOf(f),2);
+  await f.settle(next.run,owner);assert.equal(callsOf(f),2);
 });
+

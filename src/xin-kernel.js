@@ -24,14 +24,14 @@ export function redact(text) {
    端口令牌：发布私有端口时带 rotateToken 拿到（InstaBox 只在那一刻给一次）；30 天换一次，被 InstaBox 拒了就作废重换。
    钥匙：随机 32 字节，和端口令牌、站长密码都无关；30 天换一把，最多留两把（文件里新旧都在，换的时候不断线）。
    installedKid：已经写进电脑上 kernel-keys.json 的那把；和当前 kid 不一样时 Worker 先装钥匙再签名。
-   期望 owner {mode, gen}（第 2 批，docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.4）：mode 跟 XIN_STATE_OWNER；
+   期望 owner {mode, gen}（第 2 批，docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.4）：mode 固定 kernel（删旧模式第 2 步去掉了 XIN_STATE_OWNER）；
    gen 是部署代号，存在 kernel-owner 里，这次的部署编号（CF_VERSION_METADATA.id）和存的不一样就加一（回滚也是一次新部署）。
    外壳只认不比见过的小的代号：刚部署时新旧两版的 isolate 同时在发请求，模式只跟新的走，不来回切。 */
 const CONFIG_KEY = 'kernel:config', OWNER_KEY = 'kernel-owner', ROTATE_MS = 30 * 86400e3;
 export class KernelConfigStore {
-  constructor(storage, { ib, ibErr = async r => ({ status: r.status, code: 'http_' + r.status, msg: '' }), now = Date.now, random = n => crypto.getRandomValues(new Uint8Array(n)), deploy = 'dev', mode = 'legacy' }) {
+  constructor(storage, { ib, ibErr = async r => ({ status: r.status, code: 'http_' + r.status, msg: '' }), now = Date.now, random = n => crypto.getRandomValues(new Uint8Array(n)), deploy = 'dev' }) {
     this.storage = storage; this.ib = ib; this.ibErr = ibErr; this.now = now; this.random = random; this.inflight = null;
-    this.deploy = typeof deploy === 'string' && deploy ? deploy : 'dev'; this.mode = mode === 'kernel' ? 'kernel' : 'legacy'; this.gen = null;
+    this.deploy = typeof deploy === 'string' && deploy ? deploy : 'dev'; this.mode = 'kernel'; this.gen = null;
   }
   // 一个 Durable Object 实例只属于一次部署：代号算一次就记住
   async ownerGen() {

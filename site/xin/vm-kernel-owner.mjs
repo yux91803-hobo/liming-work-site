@@ -73,18 +73,17 @@ export class Ownership {
     catch (e) { if (busy(e)) return { busy: true }; throw e; }
     finally { try { d.exec('COMMIT'); } catch { /* 没开成 */ } d.exec('PRAGMA busy_timeout='+Math.max(0,this.waitMs|0)); }
   }
-  // 旧模式的写入口：拿共享锁并确认归旧模式，返回放锁函数。每次都重新判断，不缓存（执行进程会活过一次切换）。
-  // 可重入：本进程已经拿着（或本进程就是主人）时返回空操作。
+  // 写入口：只有主人（常驻状态进程）写；本进程就是主人时返回空操作。
+  // 不是主人一律不写（删旧模式第 2 步，docs/superpowers/specs/2026-11-17-xin-remove-legacy-design.md §4.1）：
+  // 主人活着回 alive（调用方转交给它），主人不在回 missing（调用方在原有的等待预算里重试，用完回「主人不在」）。
+  // 记录是空的、旧版本写的 legacy 还是 kernel 都一样；记录坏了照样报 owner_invalid。
   enter() {
     if (this.owning) return () => {};
-    if (this.depth > 0) { this.depth++; return () => { this.leave(); }; }
     const d = this.db;
-    let r;
-    try { d.exec('BEGIN'); r = this.rows(); }   // 读这一下才真的拿到共享锁
+    try { d.exec('BEGIN'); this.rows(); }   // 读这一下拿共享锁：主人活着时拿不到
     catch (e) { try { d.exec('ROLLBACK'); } catch { /* 没开成 */ } if (busy(e)) throw new OwnerUnavailable('alive'); throw e; }
-    if (r.mode !== 'legacy') { d.exec('COMMIT'); throw new OwnerUnavailable('missing'); }
-    this.depth = 1;
-    return () => { this.leave(); };
+    d.exec('COMMIT');
+    throw new OwnerUnavailable('missing');
   }
   leave() {
     if(this.depth===1){this.beforeRelease();this.db.exec('COMMIT');this.depth=0;}

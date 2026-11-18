@@ -86,10 +86,11 @@ export function redact(text) {
    内核模式下唯一写状态库的是常驻状态进程（node vm-agent-<hash>.mjs serve --parent-pipe），由外壳拉起、看住。
    - 期望（模式 + 代号）随 /xin/op 来，代号由 Durable Object 在看到新部署时加一；只认不比已见代号小的期望，
      刷新部署时新旧两版 isolate 同时在线也不会来回切。期望存在 kernel-owner.json，外壳自己重启后不等请求就拉起。
-   - 同版本的请求经本机套接字交给它；别的照旧起控制器，那一版控制器自己经桥交给主人。
-   - 状态进程意外退出：记录留在 kernel（停着不写，#140），按退避重起；连续 giveUpMs 起不来才改回旧模式、推送一次，
-     这一代号不再试，代号变大（新部署）才重新开始。
-   - 要旧模式、换版本、外壳正常停止：先发控制命令 release 让它排空交回 legacy。
+   - 同版本的请求经本机套接字交给它；它还没好（换版本、被杀后重起）就等它，等不到回「主人不在」（没执行，Worker 待送达重试）。
+     删旧模式第 2 步（docs/superpowers/specs/2026-11-17-xin-remove-legacy-design.md §4.3）：不再每个请求起一个控制器，参考 grpc wait-for-ready。
+   - 状态进程意外退出：记录留在 kernel（停着不写，#140），按退避重起；连续 giveUpMs 起不来推送一次、阶段标成 down，
+     之后照最长退避一直重试（没有旧方式可退了）。
+   - 换版本、外壳正常停止：先发控制命令 release 让它排空、放锁退出，记录留在 kernel，下一个状态进程接手。
    只用内置模块：套接字协议和 vm-kernel-client.mjs 的一样（测试核对协议号）。 */
 export const BRIDGE_PROTOCOL = 1;
 const STATE_FRAME_MAX = 4 * 1024 * 1024;
@@ -134,10 +135,15 @@ export function createStateKeeper({ home, env = process.env, clock = () => perfo
   giveUpMs = 180000, readyMs = 60000, hardMs = 60000, log = () => {}, spawnImpl = spawn } = {}) {
   const desireFile = path.join(home, 'kernel-owner.json');
   const s = { want: null, gen: -1, agent: null, phase: 'off', child: null, epoch: null, pid: null, readyAt: 0, restarts: 0, failures: 0,
-    failingSince: null, lastError: null, fallbackGen: null, timer: null, closed: false };
+    failingSince: null, lastError: null, downNotified: false, timer: null, closed: false };
   let waiters = [];
-  const wake = () => { const ws = waiters; waiters = []; for (const w of ws) w.done(route(w.agent) === 'socket'); };
-  // 一次性跑控制器的一个命令（owner-legacy、pushq）：不经过 runAgent，不算进 spawns
+  // 状态进程起来、退出、换版本时叫醒等着的请求：走得了套接字的放行；要的版本已经不是这一版（或看护关了）的马上回；其余接着等到各自的时限
+  const wake = () => {
+    const keep = [];
+    for (const w of waiters) { if (route(w.agent) === 'socket') w.done(true); else if (s.closed || w.agent !== s.agent) w.done(false); else keep.push(w); }
+    waiters = keep;
+  };
+  // 一次性跑控制器的一个命令（pushq）：不经过 runAgent，不算进 spawns
   function runOnce(agent, args, timeoutMs, { detached = false } = {}) {
     return new Promise(resolve => {
       let c, out = '';
@@ -161,10 +167,10 @@ export function createStateKeeper({ home, env = process.env, clock = () => perfo
   }
   function reconcile() {
     if (s.closed) return;
-    const wanted = s.want === 'kernel' && !!s.agent && !(s.fallbackGen !== null && s.gen <= s.fallbackGen);
+    const wanted = s.want === 'kernel' && !!s.agent;
     if (s.child) { if (s.phase !== 'stopping' && (!wanted || s.child.agent !== s.agent)) stop(); return; }
-    if (!wanted) { clearTimeout(s.timer); if (s.phase !== 'fallback') s.phase = 'off'; return; }
-    if (s.phase !== 'waiting') start();
+    if (!wanted) { clearTimeout(s.timer); s.phase = 'off'; return; }
+    if (s.phase !== 'waiting' && s.phase !== 'down') start();
   }
   function start() {
     const agent = s.agent, t0 = clock();
@@ -197,54 +203,55 @@ export function createStateKeeper({ home, env = process.env, clock = () => perfo
       log({ event: 'exit', agent: agentHash(agent), code, signal });
       const stopping = s.phase === 'stopping';
       if (stopping || s.closed) { s.phase = 'off'; child.stopped?.(); reconcile(); wake(); return; }
-      if (ready && clock() - child.readyAt >= 60000) { s.failures = 0; s.failingSince = null; }
+      if (ready && clock() - child.readyAt >= 60000) { s.failures = 0; s.failingSince = null; s.downNotified = false; }
       if (ready) s.restarts++;
       const reason = (/\b((?:state|owner)_[a-z_]+)/.exec(err) || [])[1] || (readyTimedOut ? 'state_ready_timeout' : 'exit ' + (signal || code));
       failed(reason);
       wake();
     });
   }
+  // 起不来：按退避重起。连续 giveUpMs 都起不来，推送一次、阶段标成 down，之后照最长退避一直重试
   function failed(reason) {
     s.failures++; s.lastError = reason;
     if (s.failingSince === null) s.failingSince = clock();
-    if (s.want === 'kernel' && clock() - s.failingSince >= giveUpMs) { giveUp(); return; }
-    s.phase = 'waiting'; clearTimeout(s.timer);
-    s.timer = setTimeout(() => { if (s.phase === 'waiting') { s.phase = 'off'; reconcile(); } }, backoffMs[Math.min(s.failures - 1, backoffMs.length - 1)]);
+    if (s.want === 'kernel' && clock() - s.failingSince >= giveUpMs && !s.downNotified) notifyDown();
+    s.phase = s.downNotified ? 'down' : 'waiting'; clearTimeout(s.timer);
+    s.timer = setTimeout(() => { if (s.phase === 'waiting' || s.phase === 'down') { s.phase = 'off'; reconcile(); } }, backoffMs[Math.min(s.failures - 1, backoffMs.length - 1)]);
   }
-  async function giveUp() {
-    const agent = s.agent;
-    s.phase = 'fallback'; s.fallbackGen = s.gen; clearTimeout(s.timer);
-    log({ event: 'giveup', agent: agentHash(agent), reason: s.lastError });
-    const r = await runOnce(agent, ['owner-legacy'], 10000);
-    log({ event: 'reset', agent: agentHash(agent), ok: !!(r && r.ok) });
-    runOnce(agent, ['pushq', JSON.stringify({ title: '小芯', body: '常驻状态进程起不来，已自动改回旧方式：' + s.lastError, tag: 'xin-owner', url: '/#xin' })], 0, { detached: true });
+  function notifyDown() {
+    s.downNotified = true;
+    log({ event: 'down', agent: agentHash(s.agent), reason: s.lastError });
+    runOnce(s.agent, ['pushq', JSON.stringify({ title: '小芯', body: '常驻状态进程起不来：' + s.lastError + '。小芯先停一下，会接着重试', tag: 'xin-owner', url: '/#xin' })], 0, { detached: true });
   }
-  // 让它排空交回 legacy；没在听（还在启动）就关标准输入，退出以后用 owner-legacy 补上（主人已经换人就不会改）
+  // 让它排空、放锁退出（记录留在 kernel）；没在听（还在启动，或旧版本不认不带模式的 release）就关标准输入，它照样排空退出
   function stop(waitMs = 60000) {
     const child = s.child;
     if (!child || s.phase === 'stopping') return child?.stopping || Promise.resolve();
     s.phase = 'stopping';
     log({ event: 'stop', agent: agentHash(child.agent) });
     child.stopping = new Promise(resolve => { child.stopped = resolve; });
-    stateCall(home, { kind: 'control', op: 'release', mode: 'legacy' }, { timeoutMs: waitMs })
+    stateCall(home, { kind: 'control', op: 'release' }, { timeoutMs: waitMs })
       .catch(() => { try { child.stdin.end(); } catch { /* 已经关了 */ } });
     const kill = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* 已经退出 */ } }, waitMs);
-    return child.stopping.then(async () => { clearTimeout(kill); if (s.want !== 'kernel' || s.closed) await runOnce(child.agent, ['owner-legacy'], 10000); });
+    return child.stopping.then(() => { clearTimeout(kill); });
   }
   return {
-    want({ mode, gen, agent }) {
+    // 只有常驻进程模式了：mode 一律当 kernel（旧 Worker 发来的 legacy 也一样）
+    want({ gen, agent }) {
       if (s.closed || !Number.isSafeInteger(gen) || gen < s.gen) return false;
-      const changed = mode !== s.want || gen !== s.gen || agent !== s.agent;
-      if (s.fallbackGen !== null && gen > s.fallbackGen) Object.assign(s, { fallbackGen: null, failures: 0, failingSince: null, phase: s.phase === 'fallback' ? 'off' : s.phase });
-      Object.assign(s, { want: mode, gen, agent });
+      const changed = s.want !== 'kernel' || gen !== s.gen || agent !== s.agent;
+      if (gen > s.gen && s.gen >= 0) Object.assign(s, { failures: 0, failingSince: null, downNotified: false, phase: s.phase === 'down' ? 'off' : s.phase });
+      Object.assign(s, { want: 'kernel', gen, agent });
       if (changed) persist();
-      reconcile();
+      reconcile(); wake();
       return true;
     },
     route,
+    // 等这一版的状态进程能走套接字：换版本（旧的排空退出、新的起来）、被杀后重起都一直等，到 ms 为止；
+    // 请求要的不是现在要的版本（部署那一刻旧 Worker 的请求），或者看护已关，马上回 false，不白等
     ready(agent, ms) {
-      const r = route(agent);
-      if (r !== 'wait') return Promise.resolve(r === 'socket');
+      if (route(agent) === 'socket') return Promise.resolve(true);
+      if (s.closed || agent !== s.agent || s.want !== 'kernel') return Promise.resolve(false);
       return new Promise(resolve => {
         const w = { agent, done: v => { clearTimeout(timer); resolve(v); } };
         const timer = setTimeout(() => { waiters = waiters.filter(x => x !== w); resolve(route(agent) === 'socket'); }, ms);
@@ -258,9 +265,9 @@ export function createStateKeeper({ home, env = process.env, clock = () => perfo
       finally { clearTimeout(hard); }
     },
     summary() {
-      return { want: s.want, mode: s.phase === 'running' ? 'kernel' : 'legacy', epoch: s.epoch, phase: s.phase, gen: s.gen < 0 ? null : s.gen,
+      return { want: s.want, mode: 'kernel', epoch: s.epoch, phase: s.phase, gen: s.gen < 0 ? null : s.gen,
         agent: agentHash(s.child?.agent || s.agent), pid: s.pid, up: s.phase === 'running' ? Date.now() - s.readyAt : null,
-        restarts: s.restarts, failures: s.failures, lastError: s.lastError, fallback: s.phase === 'fallback' };
+        restarts: s.restarts, failures: s.failures, lastError: s.lastError, down: s.phase === 'down' };
     },
     seen: () => s.gen >= 0,
     async close({ release = false } = {}) {
@@ -272,7 +279,7 @@ export function createStateKeeper({ home, env = process.env, clock = () => perfo
     // 外壳启动时：上次存下的期望是 kernel、控制器文件还在，就不等请求马上拉起
     resume(agentOk = () => true) {
       let d = null; try { d = JSON.parse(fs.readFileSync(desireFile, 'utf8')); } catch { return; }
-      if (d && d.mode === 'kernel' && Number.isSafeInteger(d.gen) && d.gen >= 0 && agentOk(d.agent) && fs.existsSync(d.agent)) this.want(d);
+      if (d && Number.isSafeInteger(d.gen) && d.gen >= 0 && agentOk(d.agent) && fs.existsSync(d.agent)) this.want(d);
     }
   };
 }
@@ -350,19 +357,14 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
     rec.op = d.op;
     if (d.args && typeof d.args.clientId === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(d.args.clientId)) rec.id = d.args.clientId;
     if (!fs.existsSync(d.agent)) return [409, { ok: false, executed: false, error: 'agent_missing' }];
-    // 期望（模式 + 代号）先交给看护；同版本的状态进程在跑就走套接字，还在启动就等一会儿
-    if (d.owner) keeper.want({ mode: d.owner.mode, gen: d.owner.gen, agent: d.agent });
-    let route = keeper.route(d.agent);
-    if (route === 'wait') { await keeper.ready(d.agent, readyWaitMs); route = keeper.route(d.agent); }
-    if (route === 'socket') return viaState(d.op, d.args || {}, rec);
-    if (running >= maxConcurrent) return [503, { ok: false, executed: false, error: 'kernel_busy' }];
-    const r = await runAgent(d.agent, d.op, d.args || {});
-    if (r.spawnError) return [500, { ok: false, executed: false, error: 'spawn_failed', msg: redact(r.spawnError) }];
-    if (r.timedOut) return [200, { ok: false, executed: true, error: 'agent_timeout', msg: '控制器超过 ' + Math.round(opTimeoutMs / 1000) + ' 秒没做完，已停止' }];
-    const tail = redact(r.stderr.trim().split('\n').slice(-3).join(' '));
-    if (r.code !== 0) return [200, { ok: false, executed: true, error: 'agent_failed', msg: 'vm-agent 出错（退出码 ' + r.code + '）：' + tail }];
-    try { return [200, { ok: true, data: JSON.parse(r.stdout) }]; }
-    catch { return [200, { ok: false, executed: true, error: 'agent_output', msg: 'vm-agent 的输出看不懂' }]; }
+    // 期望（代号 + 版本）先交给看护；同版本的状态进程在跑就走套接字。还没好（换版本、被杀后重起）就等它，
+    // 等到 readyWaitMs 还没好就回「主人不在」：确定没执行，Worker 待送达稍后重试。
+    // 删旧模式第 2 步：不再每个请求起一个控制器（docs/superpowers/specs/2026-11-17-xin-remove-legacy-design.md §4.3，参考 grpc wait-for-ready）
+    if (d.owner) keeper.want({ gen: d.owner.gen, agent: d.agent });
+    if (keeper.route(d.agent) !== 'socket') await keeper.ready(d.agent, readyWaitMs);
+    if (keeper.route(d.agent) === 'socket') return viaState(d.op, d.args || {}, rec);
+    rec.via = 'none';
+    return [503, { ok: false, executed: false, error: 'owner_unavailable', retryAfter: 3 }];
   }
   /* 流（§14.3）：只是传输方式变了——运行记录一变就调一次控制器的 poll，把结果原样推出去，不拆、不攒。
      没变化也每 keepWatchMs 调一次，保住控制器那边「有人在看」的标记（它 8 秒没人看就改发通知）。 */
@@ -387,14 +389,11 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
       if ((cur !== stamp || now() - lastPoll >= keepWatchMs) && running < maxConcurrent) {
         stamp = cur; lastPoll = now();
         const args = { ...base, off, ...(pos != null ? { pos } : {}) };
+        // 轮询交给状态进程；它不在（换版本、重起）就告诉网页，网页照旧退回 /xin/op 轮询（那边会等它好）
+        if (keeper.route(agent) !== 'socket') { res.write('event: error\ndata: ' + JSON.stringify({ error: 'owner_unavailable' }) + '\n\n'); why = 'error'; break; }
         let d = null;
-        if (keeper.route(agent) === 'socket') {   // 内核模式：轮询也交给状态进程，不起控制器
-          const t1 = performance.now();
-          try { d = await keeper.call({ kind: 'op', op: 'poll', args, locked: false }, { timeoutMs: opTimeoutMs }); stats.add('poll', performance.now() - t1); } catch { d = null; }
-        } else {
-          const r = await runAgent(agent, 'poll', args);
-          try { d = r.code === 0 && !r.timedOut ? JSON.parse(r.stdout) : null; } catch { d = null; }
-        }
+        const t1 = performance.now();
+        try { d = await keeper.call({ kind: 'op', op: 'poll', args, locked: false }, { timeoutMs: opTimeoutMs }); stats.add('poll', performance.now() - t1); } catch { d = null; }
         if (closed) break;
         if (!d || d.error) { res.write('event: error\ndata: ' + JSON.stringify(d && d.error ? d : { error: 'poll_failed' }) + '\n\n'); why = 'error'; break; }
         const evs = Array.isArray(d.events) ? d.events : [];
@@ -439,7 +438,7 @@ export async function createKernel({ home, port = 0, env = process.env, now = Da
   keeper.resume(agentOk);   // 上次存下的期望是内核模式：不等请求就拉起状态进程
   return {
     port: server.address().port,
-    // release：外壳正常停止（换版本、回滚时 systemctl stop）先让状态进程排空交回 legacy；只关管道时状态进程保留 kernel 记录（#140）
+    // release：外壳正常停止（换版本、回滚时 systemctl stop）先让状态进程排空、放锁退出，记录留在 kernel，等下一个状态进程接手
     close: async ({ release = false } = {}) => {
       await keeper.close({ release });
       await new Promise(ok => { server.close(() => { try { nonces.db.close(); } catch { /* 已关 */ } ok(); }); server.closeAllConnections(); });

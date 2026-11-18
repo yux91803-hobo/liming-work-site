@@ -62,7 +62,7 @@ def usage():
 OWNER_RUNNING = {'want': 'kernel', 'mode': 'kernel', 'epoch': 3, 'phase': 'running', 'gen': 2, 'agent': '0123456789ab', 'pid': 4242, 'up': 2 * H + 5 * 60000,
                  'restarts': 0, 'failures': 0, 'lastError': None, 'fallback': False, 'spawns': 0,
                  'ops': {'all': {'n': 40, 'p50': 2.4, 'p95': 9, 'max': 30}, 'byOp': {'usage': {'n': 1, 'p50': 2, 'p95': 2, 'max': 2}}}}
-OWNER_FALLBACK = dict(OWNER_RUNNING, mode='legacy', phase='fallback', pid=None, up=0, failures=7, lastError='state_compat', fallback=True)
+OWNER_DOWN = dict(OWNER_RUNNING, phase='down', pid=None, up=0, failures=7, lastError='state_compat', down=True)
 
 
 async def open_usage(pg):
@@ -211,15 +211,16 @@ async def main():
         ui.check('用量页每分钟刷新，滚到的位置不跳回顶部', top > 0 and st.get('usage_calls') > calls and abs(after - top) <= 1, (top, after, calls, st.get('usage_calls')))
         await pg.context.close()
 
-        # 5c. 用量页：状态由谁在管（第 2 批计划 Task 5）。常驻进程在管 / 起不来改回旧方式；正在换；旧方式
+        # 5c. 用量页：状态由谁在管（第 2 批计划 Task 5；删旧模式第 2 步没有旧方式了）。常驻进程在管 / 起不来正在重试；正在换；没在运行
         for w, h, mobile in ((390, 844, True), (1280, 860, False)):
             cases = [(OWNER_RUNNING, '状态：常驻进程在管（已切换 3 次，这次运行了 2 小时，操作一般 2 毫秒）'),
-                     (OWNER_FALLBACK, '状态：常驻进程起不来，已改回旧方式（state_compat）。下次上线会再试')]
+                     (OWNER_DOWN, '状态：常驻进程起不来（state_compat），小芯先停一下，正在重试')]
             if w == 1280:
                 cases += [(dict(OWNER_RUNNING, up=25 * 60000, ops=None), '状态：常驻进程在管（已切换 3 次，这次运行了 25 分钟）'),
-                          (dict(OWNER_RUNNING, phase='starting', mode='legacy'), '状态：正在换到常驻进程'),
-                          (dict(OWNER_RUNNING, phase='waiting', mode='legacy'), '状态：正在换到常驻进程'),
-                          (dict(OWNER_RUNNING, phase='off', want='legacy', mode='legacy'), '状态：旧方式（每次操作起一个进程）')]
+                          (dict(OWNER_RUNNING, phase='starting'), '状态：正在换常驻进程'),
+                          (dict(OWNER_RUNNING, phase='waiting'), '状态：正在换常驻进程'),
+                          (dict(OWNER_RUNNING, phase='stopping'), '状态：正在换常驻进程'),
+                          (dict(OWNER_RUNNING, phase='off'), '状态：常驻进程没在运行')]
             for owner, want in cases:
                 pg, st = await setup(browser, w, h, mobile=mobile)
                 st['usage']['owner'] = {k: v for k, v in owner.items() if v is not None}
