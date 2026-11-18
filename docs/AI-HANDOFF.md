@@ -1,3 +1,8 @@
+## 2026-11-18 · 第 3 批 B 持久收尾启用（Codex）
+
+- Codex 实现并自查，尚无独立复核。分支 `codex/xin-finalization-enable-20261118` 用单独提交启用新轮次写入和正式回执验证。现有协议与状态文件保持可读。[实施与回滚计划](superpowers/plans/2026-11-16-xin-finalization.md)
+- 本地验证及发布证据见本批 PR。后续独立工作包括 AGY 原生 note 的 ACK、插话取件消费和额度报告。真实暂停恢复验证与宿主授权继续各自验收。
+
 ## 2026-11-18 · 第 3 批 B 持久收尾读取方（Codex）
 
 - 负责实现与自查的是 Codex，尚无独立复核。分支 `codex/xin-finalization-reader-20261118` 基于 `main` `88bec32`（#172），原分支保留。Claude Code 的同时期变更是天启 li2 的设计与计划，各自按自己的 PR 发布。[#172 正式验证](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44235290061)

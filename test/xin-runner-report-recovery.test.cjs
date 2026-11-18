@@ -21,12 +21,14 @@ async function fixture(t, fault, { gateRunner = false, startupFault = false, bac
   for (const name of ['claude', 'agy', 'dsh']) fs.writeFileSync(path.join(bin, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const codexLog = path.join(dir, 'codex.jsonl'), codexGo = path.join(dir, 'codex-go'), runnerGo = path.join(dir, 'runner-go');
   const disableWriter = path.join(dir, 'disable-writer'), phaseMarker = path.join(dir, 'finalization-phase.json');
+  const blockOwner = path.join(dir, 'block-test-owner');
   const project = path.join(work, 'project');
   fs.writeFileSync(path.join(bin, 'codex'), '#!' + process.execPath + '\n' + `
 const fs=require('node:fs');fs.appendFileSync(${JSON.stringify(codexLog)},JSON.stringify(process.argv.slice(2))+'\\n');
 const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(codexGo)})){
   clearInterval(timer);
   if(${writeProject}){fs.writeFileSync('a.txt','new A');fs.writeFileSync('b.txt','new B');}
+  if(${finalization === 'default'})console.log(JSON.stringify({type:'thread.started',thread_id:'10000000-0000-0000-0000-000000000001'}));
   console.log(JSON.stringify({type:'turn.started'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'任务测试完成'}}));
 }},20);
 `, { mode: 0o755 });
@@ -45,6 +47,7 @@ if(${JSON.stringify(startupFault)}&&process.argv[2]==='run'){
 }
 if(${JSON.stringify(gateRunner)}&&process.argv[2]==='run')while(!fs.existsSync(${JSON.stringify(runnerGo)}))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);
 if(fs.existsSync(${JSON.stringify(disableWriter)}))process.env.XIN_RUN_FINALIZATION='0';
+if(process.argv[2]==='serve')while(fs.existsSync(${JSON.stringify(blockOwner)}))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);
 if(['ready','prepared'].includes(${JSON.stringify(finalizationFault)})&&process.argv[2]==='run'){
   const link=fs.linkSync;
   fs.linkSync=(from,to)=>{
@@ -76,6 +79,7 @@ require(${JSON.stringify(FRONT)});
     XIN_STATE_TEST_FAULT: fault, XIN_RUN_ATTEMPTS: '1', XIN_RUN_FINALIZATION: finalization ? '1' : '0',
     ...(finalization ? {XIN_DEAD_MS:'3500'} : {}), XIN_CODEX_TRANSPORT: 'exec', XIN_TASK_SANDBOX: '0', XIN_CODEX_KEY: 'synthetic-test-key',
     CODEX_HOME: path.join(dir, 'codex'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), NODE_OPTIONS: '--require=' + preload, PATH: bin + ':' + process.env.PATH };
+  if (finalization === 'default') delete env.XIN_RUN_FINALIZATION;
   for (const name of fs.readdirSync(SOURCE).filter(n => /^vm-.*\.mjs$/.test(n))) fs.copyFileSync(path.join(SOURCE, name), path.join(home, 'agent', name));
   installStateSocketFault(path.join(home, 'agent'));
   if (['beforeCommit','afterCommit'].includes(finalizationFault)) {
@@ -93,7 +97,7 @@ require(${JSON.stringify(FRONT)});
   fs.writeFileSync(path.join(home, 'kernel-keys.json'), JSON.stringify({ v: 1, keys: { ka: KEY } }), { mode: 0o600 });
   const K = await import(pathToFileURL(path.join(SOURCE, 'vm-kernel.mjs')).href), W = await import(pathToFileURL(path.join(__dirname, '../src/xin-kernel.js')).href);
   const k = await K.createKernel({ home, env, keeper: { backoffMs } });
-  t.after(async () => { await k.close().catch(() => {}); await stopOwned(home, dir, platformTimeout(10000)); });
+  t.after(async () => { fs.rmSync(blockOwner,{force:true}); await k.close().catch(() => {}); await stopOwned(home, dir, platformTimeout(10000)); });
   const request = async (method, target, body) => {
     const text = body === undefined ? '' : JSON.stringify(body), headers = { 'x-xin-auth': await W.signKernelRequest({ key: KEY, kid: 'ka', method, target, body: text }) };
     if (text) headers['content-type'] = 'application/json';
@@ -112,7 +116,7 @@ require(${JSON.stringify(FRONT)});
     assert.fail('这一轮没收尾：' + await inspect(run));
   };
   await op('sessions'); assert.ok(await running());
-  return { dir, home, work, project, env, op, health, running, meta, inspect, settle, codexLog, codexGo, runnerGo, disableWriter, phaseMarker,
+  return { dir, home, work, project, env, op, health, running, meta, inspect, settle, codexLog, codexGo, runnerGo, disableWriter, phaseMarker, blockOwner,
     modelCalls: () => rows(path.join(dir, 'front.jsonl')) };
 }
 
@@ -195,6 +199,31 @@ async function startBackground(f, options) {
   assert.ok(launched, '后台任务没有启动');
   return {sid:result.task.sid, run:launched};
 }
+
+test('默认启用的后台执行在主人持续失联时仍能结束，重起后只按保存的结果记账', async t => {
+  const f = await fixture(t,'',{finalization:'default',backoffMs:[50]});
+  const {sid, run} = await startBackground(f);
+  assert.ok(await until(()=>rows(f.codexLog).length===1&&f.meta(run).childPid));
+  const first=f.meta(run), owner=(await f.health()).owner;
+  assert.equal(first.finalProtocol,1);
+  fs.writeFileSync(f.blockOwner,'');
+  process.kill(owner.pid,'SIGKILL');
+  fs.writeFileSync(f.codexGo,'');
+  const store = (await storeReader()).createFinalizationStore(f.home);
+  assert.ok(await until(()=>store.read(first,'ready').state==='valid'), '失联期间应已保存完整结果包');
+  const lock = () => spawnSync('flock',['-n',path.join(f.home,'locks',run+'.lock'),'true'],{timeout:1000}).status===0;
+  assert.ok(await until(lock), '执行器应在状态进程恢复前释放执行锁');
+  assert.equal(f.meta(run).ended,undefined);
+  assert.equal(store.read(first,'prepared').data.changes.agentSid,'10000000-0000-0000-0000-000000000001');
+  fs.unlinkSync(f.blockOwner);
+  const done=await f.settle(run);
+  assert.ok(done.events.some(e=>e.t==='done'&&e.ok));
+  assert.equal(loadSession(f,sid).agentSid,'10000000-0000-0000-0000-000000000001');
+  assert.equal(loadSession(f,sid).status,'done');
+  assert.deepEqual(loadSession(f,sid).runs,[run]);
+  assert.equal(rows(f.codexLog).length,1);assert.equal(modelStats(f,run).length,1);
+  assert.equal(f.meta(run).attempt,first.attempt);
+});
 
 for (const phase of ['beforeCommit', 'afterCommit']) test('收尾 SQLite ' + phase + ' 被杀：按同一尝试提交后台结果、状态、统计各一次', async t => {
   const f = await fixture(t, '', {finalization:true, finalizationFault:phase, backoffMs:[2600]});

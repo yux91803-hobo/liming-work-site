@@ -17,7 +17,7 @@ export function assertAttempt(meta, context) {
   if (error) throw Object.assign(new Error(error.msg), { code: error.error });
 }
 
-export const FINALIZATION_DEFAULT = false;
+export const FINALIZATION_DEFAULT = true;
 export const finalizationEnabled = (env = process.env) => env.XIN_RUN_FINALIZATION === '1' || env.XIN_RUN_FINALIZATION !== '0' && FINALIZATION_DEFAULT;
 export const hasFinalization = m => m?.finalProtocol === 1 && /^r[0-9a-z]{6,24}$/.test(m.run) && /^[a-f0-9]{32}$/.test(m.attempt);
 const MAX_BYTES = 1024 * 1024;
