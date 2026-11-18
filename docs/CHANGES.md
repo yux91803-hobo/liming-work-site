@@ -1,3 +1,10 @@
+# 修改清单 · 2026-11-18（状态进程失联时仍可发故障告警）
+
+- 实现与自查由 Codex 负责，本批基于已上线的 #171。外壳检测到持续失联会启动 `pushq`，原入口却等状态进程健康至超时。回归测试在旧代码上复现了等待超时。
+- 告警进程独立发送，使用已有的 Web Push 订阅和 VAPID 密钥。密钥缺失时直接退出。过期订阅留给状态进程恢复后的正常推送处理。内核的每段失联一次告警和退避重启沿用现有外壳逻辑。
+- 回归使用真实告警 CLI 和本地推送服务，验证签名加密的请求、过期订阅、无密钥时跳过、告警期间的状态文件，以及恢复后清理。使用原有推送文件和数据格式，可通过 Actions 回滚到已验证的 #171。[#171 正式验证](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44224543796/attempts/2)
+- 故障钩子独立于失效服务的做法参考 systemd 的 `OnFailure=`。推送传输使用已配置的 VAPID 密钥并返回推送服务状态的做法参考 web-push。具体代码复用小芯已有的外壳和加密传输。[systemd.unit.xml](https://github.com/systemd/systemd/blob/main/man/systemd.unit.xml) · [web-push-lib.js](https://github.com/web-push-libs/web-push/blob/master/src/web-push-lib.js)
+
 # 修改清单 · 2026-11-18（删旧模式第 3 步）
 
 - 实现与自查由 Codex 负责。本批以 Claude Code 实现的 #170（`9482ef1`）为基线。Claude Code 的远端分支仍在 #170 的 PR 提交，本批实现从共享的 `main` 接续。
