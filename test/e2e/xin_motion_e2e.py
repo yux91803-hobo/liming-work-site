@@ -7,14 +7,14 @@ import json
 import xin_term_e2e as T
 from playwright.async_api import async_playwright
 
-# 首页露没露出来：从页面一开始每一帧都看，工作台出来就停
+# 首页露没露出来：从页面一开始每一帧都看，直到工作台完全不透明（淡入的那 0.2 秒里首页也会透出来）
 SEEN = """document.addEventListener('DOMContentLoaded', () => { window.__homeSeen = 0; const tick = () => {
-  const h = document.getElementById('home'), w = document.querySelector('.xc.wb.show');
-  if (h && !w && getComputedStyle(h).visibility !== 'hidden' && h.getBoundingClientRect().height > 0) window.__homeSeen++;
-  if (!w) requestAnimationFrame(tick); }; requestAnimationFrame(tick); });"""
-# 数 View Transition 用了几次、当时 <html> 上挂的是哪个场景
-VT = """window.__vt = []; if (document.startViewTransition) { const o = document.startViewTransition.bind(document);
-  document.startViewTransition = cb => { const t = o(cb); requestAnimationFrame(() => window.__vt.push([...document.documentElement.classList].filter(c => c.startsWith('vt-')).join(' '))); return t; }; }"""
+  const h = document.getElementById('home'), w = document.querySelector('.xc.wb.show'), solid = !!w && getComputedStyle(w).opacity === '1';
+  if (h && !solid && getComputedStyle(h).visibility !== 'hidden' && h.getBoundingClientRect().height > 0) window.__homeSeen++;
+  if (!solid) requestAnimationFrame(tick); }; requestAnimationFrame(tick); });"""
+# 数 View Transition 用了几次、当时 <html> 上挂的是哪个场景；过渡没走成（比如换页那一步超时被浏览器掐掉）记进 __vterr
+VT = """window.__vt = []; window.__vterr = []; if (document.startViewTransition) { const o = document.startViewTransition.bind(document);
+  document.startViewTransition = cb => { const t = o(cb); t.ready.catch(e => window.__vterr.push(e.name)); requestAnimationFrame(() => window.__vt.push([...document.documentElement.classList].filter(c => c.startsWith('vt-')).join(' '))); return t; }; }"""
 
 
 async def deep_link(browser):
@@ -23,9 +23,9 @@ async def deep_link(browser):
     await pg.add_init_script(SEEN)
     await pg.goto(ui.BASE + '/#xin-work')
     await pg.wait_for_selector('.xc.wb.show .xc-msgs')
-    await pg.wait_for_timeout(300)
+    await pg.wait_for_timeout(800)
     r = await pg.evaluate("[window.__homeSeen, document.documentElement.classList.contains('xc-boot-work')]")
-    ui.check('直接打开工作台：首页一帧都不露（以前先闪约 0.3 秒首页），工作台出来就放开', r == [0, False], r)
+    ui.check('直接打开工作台：首页一帧都不露（以前先闪约 0.3 秒首页；工作台淡入时也不透出来），淡入完了才放开', r == [0, False], r)
     await pg.context.close()
 
 
@@ -37,14 +37,18 @@ async def home_to_work(browser, reduce):
         await pg.emulate_media(reduced_motion='reduce')
     await pg.goto(ui.BASE + '/')
     await pg.wait_for_selector('.xw-head')
+    t0 = asyncio.get_running_loop().time()
     await pg.click('.xw-head')
     await pg.wait_for_selector('.xc.wb.show .xc-msgs')
+    took = round(asyncio.get_running_loop().time() - t0, 2)
     await pg.wait_for_timeout(800)
-    r = await pg.evaluate("[window.__vt, document.documentElement.classList.contains('vt-work')]")
+    r = await pg.evaluate("[window.__vt, document.documentElement.classList.contains('vt-work'), window.__vterr]")
     if reduce:
-        ui.check('减少动态：从首页进工作台不做过渡，直接打开', r == [[], False], r)
+        ui.check('减少动态：从首页进工作台不做过渡，直接打开', r == [[], False, []], r)
     else:
-        ui.check('从首页点进工作台：用 View Transition（像素点阵溶解），做完把场景类去掉', r == [['vt-work'], False], r)
+        ui.check('从首页点进工作台：用 View Transition（像素点阵溶解），做完把场景类去掉', r == [['vt-work'], False, []], r)
+    # 以前换页那一步里等两帧，可过渡期间浏览器不出新帧，干等到 4 秒超时才打开（首页定住 4 秒多）
+    ui.check('从首页点进工作台：马上开始（1.5 秒内工作台就出来，过渡没有超时被掐掉）', took < 1.5 and r[2] == [], (took, r[2]))
     await pg.context.close()
 
 
@@ -69,6 +73,35 @@ async def send_and_reply(browser, reduce):
         ui.check('发消息：你的话从输入框飞上去变成气泡（xcfly，带位移）', me == ['xcfly', True, True], me)
         ui.check('小芯的回答一段段淡入（xcline，延迟依次变大），整条有一道微光扫过（xcshine）',
                  len(ai[0]) >= 3 and set(ai[0]) == {'xcline'} and ai[1] == sorted(ai[1]) and ai[1][0] < ai[1][-1] and ai[2] == 'xcshine', ai)
+    await pg.context.close()
+
+
+# 发出去那一下逐帧记：消息区滚到哪、你那条在哪、气泡从哪起飞
+STEADY = """window.__st = []; const B = document.querySelector('.xc-body'); const t0 = performance.now(); const tick = () => {
+  const me = [...document.querySelectorAll('.xc-me')].pop();
+  window.__st.push([B.scrollTop, B.scrollHeight - B.clientHeight, me ? Math.round(me.getBoundingClientRect().top) : null]);
+  if (performance.now() - t0 < 700) requestAnimationFrame(tick); }; requestAnimationFrame(tick);"""
+
+
+async def send_steady(browser, phone):
+    # 以前飞的气泡起点在输入框里，探出消息区底下：消息区多出一截能滚，发完先往下滚、气泡飞上去以后又弹回来，整屏跳一下（手机上约 60px）
+    pg = await (ui.page(browser, 390, 844, True) if phone else ui.page(browser, 1280, 860))
+    where = '手机上' if phone else '电脑上'
+    await ui.xin_mock(pg, authed=True, live=[[{'t': 'text', 'text': '好。'}], [{'t': 'done', 'ok': True, 'code': 0, 'ms': 900}]])
+    await pg.goto(ui.BASE + '/#xin-work')
+    await pg.wait_for_selector('.xc.wb.show .xc-msgs')
+    await pg.click('.xc-new-b')
+    await pg.fill('.xc-row textarea', '帮我看看')
+    await pg.evaluate(STEADY)
+    await (pg.click('.xc-send') if phone else pg.keyboard.press('Enter'))
+    await pg.wait_for_timeout(900)
+    st = await pg.evaluate('window.__st')
+    tops = [r[2] for r in st if r[2] is not None]
+    ui.check(where + '发消息：整屏不跳（消息区不多出能滚的一截，你那条一出来就停在原位）',
+             max(r[0] for r in st) == 0 and max(r[1] for r in st) <= 0 and len(tops) > 5 and max(tops) - min(tops) <= 1, (st[:6], len(st)))
+    fly = await pg.evaluate("""(() => { const m = [...document.querySelectorAll('.xc-me')].pop(), b = m.querySelector('.xc-bub'), r = b.getBoundingClientRect(),
+      body = document.querySelector('.xc-body').getBoundingClientRect(); return [Math.round(r.bottom + parseFloat(b.style.getPropertyValue('--fy'))), Math.round(body.bottom)]; })()""")
+    ui.check(where + '发消息：气泡从消息区最下面（紧挨着输入框）起飞', fly[1] - 80 <= fly[0] <= fly[1], fly)
     await pg.context.close()
 
 
@@ -151,10 +184,26 @@ async def dots_and_theme(browser):
     await pg.keyboard.press('Control+k')
     await pg.wait_for_selector('.xc-pal.in .xc-pal-i')
     await pg.keyboard.type('深色' if (await pg.evaluate("document.documentElement.dataset.theme")) == 'light' else '浅色')
+    await pg.wait_for_timeout(200)
+    box = await pg.evaluate("(r => [r.left, r.top, r.right, r.bottom])(document.querySelector('.xc-pal.in .xc-pal-i.on').getBoundingClientRect())")
     await pg.keyboard.press('Enter')
     await pg.wait_for_timeout(900)
-    wb = await pg.evaluate("window.__vt.slice(%d)" % n)
-    ui.check('工作台命令面板换深浅色：同样一圈圈扩散着换', wb == ['vt-theme'], wb)
+    wb = await pg.evaluate("[window.__vt.slice(%d), window.__vterr]" % n)
+    ui.check('工作台命令面板换深浅色：同样一圈圈扩散着换（几次过渡都没被掐掉）', wb == [['vt-theme'], []], wb)
+    # 用键盘选的：没有点的位置，圈从选中的那一项扩散开（以前用的是很久以前最后点过的地方，这里是小芯岛）
+    at = await pg.evaluate("['--vt-x', '--vt-y'].map(k => parseFloat(document.documentElement.style.getPropertyValue(k)))")
+    ui.check('键盘选「换成深色/浅色」：圈从选中的那一项扩散开，不从很久以前点过的地方', box[0] <= at[0] <= box[2] and box[1] <= at[1] <= box[3], (at, box))
+    await pg.wait_for_timeout(300)
+    await pg.keyboard.press('Control+k')
+    await pg.wait_for_selector('.xc-pal.in .xc-pal-i')
+    await pg.keyboard.type('深色' if (await pg.evaluate("document.documentElement.dataset.theme")) == 'light' else '浅色')
+    await pg.wait_for_timeout(200)
+    box = await pg.evaluate("(r => [r.left, r.top, r.right, r.bottom])(document.querySelector('.xc-pal.in .xc-pal-i.on').getBoundingClientRect())")
+    x, y = box[0] + 300, (box[1] + box[3]) / 2
+    await pg.mouse.click(x, y)
+    await pg.wait_for_timeout(900)
+    at = await pg.evaluate("['--vt-x', '--vt-y'].map(k => parseFloat(document.documentElement.style.getPropertyValue(k)))")
+    ui.check('用鼠标点「换成深色/浅色」：圈从点的那个位置扩散开', abs(at[0] - x) < 2 and abs(at[1] - y) < 2, (at, (x, y)))
     await pg.context.close()
 
 
@@ -166,6 +215,8 @@ async def main():
         await home_to_work(browser, True)
         await send_and_reply(browser, False)
         await send_and_reply(browser, True)
+        await send_steady(browser, True)
+        await send_steady(browser, False)
         await history_still(browser)
         await task_box(browser, False)
         await task_box(browser, True)

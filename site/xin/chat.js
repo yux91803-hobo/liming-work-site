@@ -437,7 +437,8 @@
   function open() {
     if (!root) build();
     S.open = true; root.hidden = false; S.view = 'chat'; setDrawer(false);
-    requestAnimationFrame(function () { root.classList.add('show'); document.documentElement.classList.remove('xc-boot-work'); });
+    // 直接打开工作台链接时首页先藏着：等工作台淡入完（.22s 透明度、.32s 上移）再放开，不然淡入那一下首页会透出来
+    requestAnimationFrame(function () { root.classList.add('show'); setTimeout(function () { document.documentElement.classList.remove('xc-boot-work'); }, 400); });
     document.body.classList.add('xc-open');
     var x = xin(); if (x && x.home && window.innerWidth < 900) x.home();
     render(); grow(); refreshCtx();
@@ -2267,7 +2268,8 @@
       var de = document.documentElement, done = function () { de.classList.remove('vt-work'); };
       de.classList.add('vt-work');
       return new Promise(function (res) {
-        var vt = document.startViewTransition(function () { res(work({ vt: true })); return new Promise(function (ok) { requestAnimationFrame(function () { requestAnimationFrame(ok); }); }); });
+        // 换页这一步里浏览器不出新帧：不能等 requestAnimationFrame（以前等两帧，干等到 4 秒超时，过渡被掐掉），直接把工作台摆成最后的样子
+        var vt = document.startViewTransition(function () { var p = work({ vt: true }); root.classList.add('show'); res(p); });
         vt.finished.then(done, done);
       });
     }
@@ -3142,7 +3144,7 @@
     if (given == null && !prep) { input.value = ''; ls(LS_DRAFT, null); grow(); }
     // 还没送到小芯的电脑：「正在输入」旁边写「接收中」（电脑在睡写「唤醒中」），送到了才「思考中」并开始计时
     S.lastText = ''; S.doing = 'think'; S.act = ''; S.thinkS = ''; S.thinkFixed = false; S.note = null; S.waitSend = '';
-    typing(true); renderHead(); toBottom(true);
+    typing(true); renderHead(); toBottom(true); flyFromComposer(pending);
     var x = xin(); if (x) x.ai('think');
     flight.payload=retry&&retry.payload||{ sid: flight.sid || undefined, main: !TQ && !flight.sid && mainDraft() || undefined, clientId: flight.id, agent: flight.sid ? undefined : (TQ ? 'harness' : S.agent), text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,files:files.length?files.map(function(f){return {path:f.path,name:f.name};}):undefined};
     call('send', flight.payload, 90000, function (w) { if(generation===S.convSeq){S.waitSend = w.state; progress();} },function(){return generation===S.convSeq;}).then(function (d) {
@@ -3702,19 +3704,22 @@
       var bd = root.querySelector('.xc-body'), near = !old && bd.scrollHeight - bd.scrollTop - bd.clientHeight < 160;
       if (!old) e.classList.add('enter');
       put(e);
-      if (!old && ev.t === 'user') flyFromComposer(e);
       if (!old) { if (near && ev.t !== 'user') followNew(e); else jumpNew(); }
     }
     return e;
   }
-  // 站长 2026-11-19：你的话从输入框飞上去变成气泡（FLIP：从输入框的位置挪到气泡的位置）
+  // 站长 2026-11-19：你的话从输入框飞上去变成气泡（FLIP：从输入框的位置挪到气泡的位置）。只给这里发出去的（send 里滚到底以后再量）
   function flyFromComposer(e) {
-    var src = root.querySelector('.xc-row'), bub = e.querySelector('.xc-bub');
-    if (!src || !bub || reduceMotion()) return;
-    var a = src.getBoundingClientRect(), b = bub.getBoundingClientRect();
+    var src = root.querySelector('.xc-row'), bub = e.querySelector('.xc-bub'), body = root.querySelector('.xc-body');
+    if (!src || !bub || !body || reduceMotion()) return;
+    e.style.animation = bub.style.animation = 'none';   // 量的时候不算进场动画的位移
+    var a = src.getBoundingClientRect(), b = bub.getBoundingClientRect(), bd = body.getBoundingClientRect();
+    e.style.animation = bub.style.animation = '';
     if (!a.width || !b.width) return;
+    // 起点最低到消息区最下面（紧挨着输入框）：再往下就探出消息区，消息区多出一截能滚，发完先往下滚、飞上去又弹回来，整屏跳一下
+    var fy = Math.min(a.top + a.height / 2 - b.top - b.height / 2, bd.bottom - b.bottom);
     bub.style.setProperty('--fx', Math.round(a.left + a.width / 2 - b.left - b.width / 2) + 'px');
-    bub.style.setProperty('--fy', Math.round(a.top + a.height / 2 - b.top - b.height / 2) + 'px');
+    bub.style.setProperty('--fy', Math.floor(fy) + 'px');
     e.classList.add('fly');
   }
   // 正看着最底下时来了新回答：短的直接滚到底；长的停在它开头，从头读（下面还有的话「回到底部」写「新消息」）
@@ -3953,11 +3958,13 @@
     return x;
   }
   // 站长 2026-11-19：深浅色从点的那个地方一圈圈扩散着换（View Transitions；不支持或减少动态时直接换）
-  var LASTPT = null; document.addEventListener('pointerdown', function (e) { LASTPT = [e.clientX, e.clientY]; }, true);
+  // 圈从「刚才点的地方」扩散：只认 1.5 秒内的；命令面板里选的由 palRun 记下位置，都没有就从屏幕中间
+  var LASTPT = null; document.addEventListener('pointerdown', function (e) { LASTPT = [e.clientX, e.clientY, Date.now()]; }, true);
+  function freshPt() { return LASTPT && Date.now() - LASTPT[2] < 1500 ? LASTPT : null; }
   function themeSwap(apply) {
     var de = document.documentElement;
     if (!document.startViewTransition || reduceMotion()) { apply(); return; }
-    var p = LASTPT || [innerWidth / 2, innerHeight / 2];
+    var p = freshPt() || [innerWidth / 2, innerHeight / 2];
     de.style.setProperty('--vt-x', p[0] + 'px'); de.style.setProperty('--vt-y', p[1] + 'px'); de.classList.add('vt-theme');
     var done = function () { de.classList.remove('vt-theme'); }, vt = document.startViewTransition(apply); vt.finished.then(done, done);
   }
@@ -4026,7 +4033,7 @@
       b.appendChild(h('span', 'xc-pal-t', text)); if (meta) b.appendChild(h('span', 'xc-pal-m', meta));
       var o = { el: b, run: run }, i = palItems.length;
       b.addEventListener('mousemove', function () { if (palIdx !== i) { palIdx = i; palPaint(); } });
-      b.addEventListener('click', function () { palRun(i); });
+      b.addEventListener('click', function (ev) { palRun(i, ev); });
       return o;
     };
     if (q) group('对话', sess, function (s_) { return item('chat', s_.main ? '主对话' : s_.title || '（无标题）', s_.active ? '进行中' : s_.updated ? when(s_.updated) : '', function () { if (s_.main) goMain(); else openSession(s_.sid); }); });
@@ -4038,7 +4045,7 @@
       var b = h('button', 'xc-pal-i'); b.type = 'button'; b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + PICON.chat + '</svg>';
       b.appendChild(h('span', 'xc-pal-t', '直接问' + (TQ ? '天启' : '小芯') + '：' + inp.value.trim()));
       var said = inp.value.trim(), o = { el: b, run: function () { input.value = said; ls(LS_DRAFT, said); grow(); renderSendBtn(); input.focus(); } };
-      b.addEventListener('click', function () { palRun(0); }); palItems.push(o); e.appendChild(b); l.appendChild(e);
+      b.addEventListener('click', function (ev) { palRun(0, ev); }); palItems.push(o); e.appendChild(b); l.appendChild(e);
     }
     palIdx = Math.min(palIdx, Math.max(0, palItems.length - 1)); palPaint();
   }
@@ -4048,7 +4055,12 @@
     if (cur) { cur.el.scrollIntoView({ block: 'nearest' }); if (inp) inp.setAttribute('aria-activedescendant', cur.el.id); }
   }
   function palMove(d) { if (!palItems.length) return; palIdx = (palIdx + d + palItems.length) % palItems.length; palPaint(); }
-  function palRun(i) { var o = palItems[i]; if (!o) return; closePal(); setDrawer(false); setTimeout(o.run, 10); }
+  // 点的就从点的地方；用键盘选的（回车，或者键盘「点」按钮时 detail 是 0）从选中那一项的图标那儿
+  function palRun(i, ev) {
+    var o = palItems[i]; if (!o) return;
+    var r = o.el.getBoundingClientRect(); LASTPT = ev && ev.detail ? [ev.clientX, ev.clientY, Date.now()] : [r.left + 22, r.top + r.height / 2, Date.now()];
+    closePal(); setDrawer(false); setTimeout(o.run, 10);
+  }
 
   /* ---------- 轻提示：底部中间一颗小药丸，不抢焦点，3 秒后消失 ---------- */
   var toastTm = 0;
