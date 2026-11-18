@@ -6,7 +6,7 @@
   "扫不到的：通过 cp、tar、sqlite3 这类子进程写的文件。状态库里的写不在这里管，靠只读连接和写入口（vm-state.mjs 的 writing）。",
   "agentLines 是 vm-agent.mjs 的行数基线（只减不增）；rmw 是「读了再写」的条数；atomic 是各文件里直接开事务（journal.atomic）的次数。"
  ],
- "agentLines": 2989,
+ "agentLines": 2949,
  "rmw": 5,
  "atomic": {
   "vm-agent.mjs": 2,
@@ -19,7 +19,7 @@
   "vm-agent.mjs::vapidKeys": { "calls": { "writeFileSync": 1 }, "kind": "rmw", "what": "推送密钥：没有才生成。推送进程和 push_key 操作都会走到，两个进程同时第一次用会各生成一把，后写的盖掉先写的" },
   "vm-agent.mjs::emit": { "calls": { "appendFileSync": 1 }, "kind": "run", "what": "这一轮的事件文件 runs/<轮>.jsonl：事务里走 journal.append，事务外直接追加一行（主要是执行进程）" },
   "vm-agent.mjs::installXin": { "calls": { "writeFileSync": 2, "chmodSync": 1 }, "kind": "safe", "what": "xin 命令的壳和 shell-env.sh：内容固定，每次重写都一样" },
-  "vm-agent.mjs::writePersona": { "calls": { "writeFileSync": 1, "renameSync": 1, "unlinkSync": 1 }, "kind": "safe", "what": "天启的人设补丁 harness-persona.*.yml：每轮开始前按当前内容整份重新生成（先写临时文件再改名），顺手删掉旧版本留下的" },
+  "vm-persona.mjs::writeHarnessPatch": { "calls": { "writeFileSync": 1, "renameSync": 1, "unlinkSync": 1 }, "kind": "safe", "what": "天启的人设补丁 harness-persona.*.yml：每轮开始前按当前内容整份重新生成（先写临时文件再改名），顺手删掉旧版本留下的" },
   "vm-agent.mjs::statAdd": { "calls": { "appendFileSync": 1, "writeFileSync": 1, "renameSync": 1 }, "kind": "op", "what": "用量记录：追加，行数太多时整份重写只留最近的。只在内部操作 run_stat 里调用" },
   "vm-agent.mjs::codexCatalog": { "calls": { "writeFileSync": 1, "renameSync": 1 }, "kind": "safe", "what": "给 Codex 用的模型目录：由 Codex 自带的目录加上小芯的模型推出来，整份替换" },
   "vm-agent.mjs::frontLog": { "calls": { "writeFileSync": 1 }, "kind": "rmw", "what": "前台诊断日志 logs/front.jsonl：读出来、加一行、整份写回。前台执行进程在写；忘掉对话时也会整份改写它，两边撞上会把刚删掉的条目写回去" },

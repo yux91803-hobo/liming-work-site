@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """「天启」独立入口（/tianqi 和 /tools/tianqi/）：
 - 没配好：显示「天启还没配好」，只发一次 GET /api/tq/me，不碰 /api/xin/
-- 已配好已登录（1280）：全屏工作台，星标志 +「天启」，无小芯元素/入口/文字；发话带 agent='harness'、model、effort，不带 context/ctxLabel/main；只调 TQ_OPS
+- 已配好已登录（1280）：独立探索区、对话区和历史弹层，无小芯入口；发话带 agent='harness'、model、effort，不带 context/ctxLabel/main；只调 TQ_OPS
+- 星空控件和天启插件面板，Purge / REA 开关走 li2 的接口
 - 没登录：登录框是天启的星，登录走 POST /api/tq/login
 - 网关没配好：ping 回 ready=false，显示「天启的网关还没配好」，输入框和发送键禁用
 - 唤醒中：send 回 accepted/waking，状态行显示「已收到 · 唤醒中」，随后送达并回话
-- 首页：「工具」分类有「天启」卡片，点开地址变 /tianqi，iframe 地址为 /tools/tianqi/?embed=1，返回键不挡标题栏和侧边栏
+- 首页：「工具」分类有「天启」卡片，点开地址变 /tianqi，iframe 地址为 /tools/tianqi/?embed=1，返回键不挡标题栏和操作入口
 
 运行：先 npm run dev，再 python3 test/e2e/xin_tianqi_e2e.py
 """
@@ -46,6 +47,8 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
         'tq_ops': [],
         'sends': [],
         'xin_reqs': [],
+        'plugins': {'purge': True, 'rea': False},
+        'plugin_updates': [],
         'sessions': [
             {'sid': 'stq000001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1762214400000},
         ],
@@ -98,6 +101,14 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             return await ok({'ok': True, 'data': {'rows': []}})
         if op == 'sessions':
             return await ok({'ok': True, 'data': {'sessions': st['sessions']}})
+        if op == 'plugins':
+            return await ok({'ok': True, 'data': {'plugins': [
+                {'name': name, 'on': on, 'agent': 'harness'} for name, on in st['plugins'].items()
+            ]}})
+        if op == 'plugin_set':
+            st['plugin_updates'].append(args)
+            st['plugins'][args['name']] = args['on']
+            return await ok({'ok': True, 'data': {'on': args['on']}})
         if op == 'history':
             return await ok({'ok': True, 'data': {'session': {'sid': args.get('sid'), 'agent': 'harness', 'title': '天启旧对话', 'model': 'deepseek-v4.1-flash'}, 'runs': [{'run': 'rhist0001', 'events': [{'t': 'user', 'text': '老问题'}, {'t': 'text', 'text': '老回答'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 800, 'model': 'deepseek-v4.1-flash'}], 'done': True}], 'active': None}})
         if op == 'usage':
@@ -165,33 +176,52 @@ async def main():
         st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
         await pg.goto(ui.BASE + '/tools/tianqi/')
         await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
-        await pg.wait_for_function("document.querySelectorAll('.xc-si').length >= 1")
-        info = await pg.evaluate("""(() => ({
-          wb: document.querySelector('.xc').classList.contains('wb'),
-          side: document.querySelector('.xc').classList.contains('wb-side'),
-          hasWbBtn: !!document.querySelector('.xc-wb-b'),
-          isleText: document.querySelector('.xc-isle .xc-ttl b')?.textContent,
-          isleStar: !!document.querySelector('.xc-isle .xc-tq'),
-          helloTitle: document.querySelector('.xc-hello-t')?.textContent,
-          hasSwitcher: !!document.querySelector('.xc-as'),
-          placeholder: document.querySelector('.xc-row textarea')?.placeholder,
-          keys: [...document.querySelectorAll('.xc-dr-keys .xc-key')].map(e => e.textContent.trim()),
-          hasMain: !!document.querySelector('.xc-mainb'),
-          hasDaily: !!document.querySelector('.xc-dailyb'),
-          hasSet: !!document.querySelector('.xc-set-b'),
-          bodyText: document.body.innerText,
-        }))()""")
-        await pg.click('.xc-isle')
-        await pg.wait_for_timeout(150)
-        tray_open = await pg.evaluate("document.querySelector('.xc').classList.contains('tray-open') || document.querySelector('.xc-work').classList.contains('pop')")
-        ui.check(
-            '配好、登录了（1280）：全屏星标题栏/欢迎页、无工作台按钮/无切换/无主对话日常设置、侧边栏单键「新建对话」、点击天启岛不展开、页面零「小芯」',
-            info['wb'] and info['side'] and not info['hasWbBtn'] and info['isleText'] == '天启' and info['isleStar']
-            and info['helloTitle'] == '天启' and not info['hasSwitcher'] and info['placeholder'] == '给天启发消息'
-            and info['keys'] == ['新建对话'] and not info['hasMain'] and not info['hasDaily'] and not info['hasSet']
-            and not tray_open and '小芯' not in info['bodyText'],
-            (info, tray_open),
-        )
+        info = await pg.evaluate("""(() => {
+          const control = document.querySelector('.tq-console').getBoundingClientRect();
+          const log = document.querySelector('.tq-log').getBoundingClientRect();
+          return {
+            fullScreen: document.querySelector('.xc.wb.tq-mode')?.clientWidth === innerWidth,
+            split: control.right < log.left && Math.abs(control.top - log.top) < 2,
+            brand: document.querySelector('.tq-brand h1')?.textContent,
+            star: !!document.querySelector('.tq-brand .xc-tq'),
+            controls: [...document.querySelectorAll('.tq-nav .tq-nav-key')].map(e => e.textContent.trim()),
+            noXiaoxinControls: !document.querySelector('.xc-as,.xc-mainb,.xc-dailyb,.xc-set-b,.xc-wb-b'),
+            placeholder: document.querySelector('.xc-row textarea')?.placeholder,
+            bodyText: document.body.innerText,
+          };
+        })()""")
+        ui.check('全屏天启工作台带入口、探索区和对话区，页面无小芯功能', info['fullScreen'] and info['split']
+                 and info['brand'] == '天启' and info['star'] and info['noXiaoxinControls']
+                 and info['controls'] == ['新对话', '对话记录', '插件']
+                 and info['placeholder'] == '给天启发消息' and '小芯' not in info['bodyText'], info)
+        history = pg.get_by_role('dialog', name='对话记录', exact=True)
+        hidden_before = not await history.is_visible()
+        await pg.get_by_role('button', name='对话记录', exact=True).click()
+        await history.get_by_text('天启旧对话', exact=True).click()
+        await pg.get_by_text('老回答', exact=True).wait_for()
+        ui.check('对话记录按需打开，选择历史后返回当前对话并更新标题', hidden_before and not await history.is_visible()
+                 and await pg.locator('.tq-log-head h2').text_content() == '天启旧对话'
+                 and st['tq_ops'].count('history') == 1, st['tq_ops'])
+        await pg.get_by_role('button', name='新对话', exact=True).click()
+        await pg.get_by_text('从一个问题开始探索').wait_for()
+        trigger = pg.get_by_role('button', name='插件', exact=True)
+        await trigger.click()
+        panel = pg.get_by_role('region', name='天启插件')
+        purge = panel.get_by_role('switch', name='Purge')
+        rea = panel.get_by_role('switch', name='REA 逆向')
+        await rea.wait_for()
+        initial = (await purge.get_attribute('aria-checked'), await rea.get_attribute('aria-checked'))
+        await rea.click()
+        await pg.wait_for_function("document.querySelector('.xc-plug-rea [role=switch]').getAttribute('aria-checked') === 'true'")
+        await pg.keyboard.press('Escape')
+        focus_restored = await trigger.evaluate('e => document.activeElement === e')
+        await trigger.click()
+        await rea.wait_for()
+        ui.check('天启插件面板向 li2 保存开关，关闭后恢复键盘焦点', initial == ('true', 'false') and focus_restored
+                 and await rea.get_attribute('aria-checked') == 'true'
+                 and st['plugin_updates'] == [{'agent': 'harness', 'name': 'rea', 'on': True}]
+                 and not st['xin_reqs'], (initial, focus_restored, st['plugin_updates']))
+        await panel.get_by_role('button', name='关掉').click()
         await pg.fill('.xc-row textarea', '帮我查个问题')
         await pg.press('.xc-row textarea', 'Enter')
         await pg.wait_for_function(ui.CHAT_DONE + " && [...document.querySelectorAll('.xc-ai .xc-bub')].some(e => e.textContent.includes('你好，我是天启'))", timeout=10000)
@@ -293,6 +323,22 @@ async def main():
             cat_name == '工具' and pg.url.endswith('/tianqi') and iframe_src == '/tools/tianqi/?embed=1' and embed_ui['embed'] and embed_ui['xHidden'],
             (cat_name, pg.url, iframe_src, embed_ui),
         )
+        await pg.context.close()
+
+        # 手机双区上下排列，返回键与天启品牌、操作键分开。
+        pg = await ui.page(browser, 390, 844, mobile=True)
+        st = await tianqi_mock(pg)
+        await pg.goto(ui.BASE + '/tianqi')
+        frame = pg.frame_locator('.panel[data-id=tianqi] iframe')
+        await frame.locator('.tq-empty').wait_for()
+        back = await pg.locator('.panel[data-id=tianqi] .back').bounding_box()
+        brand = await frame.locator('.tq-brand').bounding_box()
+        controls = await frame.locator('.tq-console').bounding_box()
+        log = await frame.locator('.tq-log').bounding_box()
+        ui.check('手机天启工作台上下排列，返回键、星标和操作入口互不遮挡', back['x'] + back['width'] < brand['x']
+                 and controls['y'] + controls['height'] < log['y']
+                 and await frame.get_by_role('button', name='插件', exact=True).is_visible(),
+                 (back, brand, controls, log))
         await pg.context.close()
 
         # 7. 深链：只启动天启；返回首页后再启动小芯。

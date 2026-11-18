@@ -97,7 +97,7 @@ test('天启范围里小芯专属的操作回「天启没有这个功能」，�
   const m = await fresh(), env = tqEnv(), ck = await login(m, env);
   const ib = fakeIB(() => { throw new Error('不该调 InstaBox'); });
   try {
-    for (const op of ['greet', 'daily', 'tasks', 'task_tell', 'memory_list', 'push_key', 'bond', 'moves', 'screen', 'logins', 'plugins', 'learning_report']) {
+    for (const op of ['greet', 'daily', 'tasks', 'task_tell', 'memory_list', 'push_key', 'bond', 'moves', 'screen', 'logins', 'learning_report']) {
       const r = await m.handleXin(req('/api/tq/call', { body: { op }, headers: { cookie: ck } }), env, null);
       assert.equal(r.status, 400, op);
       assert.deepEqual(await r.json(), NOT_TQ, op);
@@ -108,6 +108,27 @@ test('天启范围里小芯专属的操作回「天启没有这个功能」，�
       assert.deepEqual(await r.json(), NOT_TQ, p);
     }
     assert.equal(ib.calls.length, 0);
+  } finally { ib.restore(); }
+});
+
+test('天启插件接口仅向已登录的用户开放，执行转给 li2', async () => {
+  const m = await fresh(), env = tqEnv(), ck = await login(m, env);
+  const ib = fakeIB(c => c.path.endsWith('/exec') ? json({ exitCode: 0, stdout: '{"ok":true}' }) : json({}, 404));
+  try {
+    for (const op of ['plugins', 'plugin_set']) {
+      const body = { op, args: { agent: 'harness', name: 'rea', on: true } };
+      const denied = await m.handleXin(req('/api/tq/call', { body }), env, null);
+      assert.equal(denied.status, 401);
+      assert.equal(ib.calls.length, 0);
+      const allowed = await m.handleXin(req('/api/tq/call', { body, headers: { cookie: ck } }), env, null);
+      assert.deepEqual(await allowed.json(), { ok: true, data: { ok: true } });
+      const execution = execs(ib.calls).find(c => c.json.argv.includes(op));
+      assert.ok(execution);
+      assert.equal(execution.path, '/v1/machines/m_li2/exec');
+      assert.equal(execution.key, TQ_KEY);
+      assert.deepEqual(execution.json.envs, { XIN_ROLE: 'tianqi' });
+      ib.calls.length = 0;
+    }
   } finally { ib.restore(); }
 });
 

@@ -16,7 +16,7 @@ function agentEnv(t, extra = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-tq-'));
   const env = Object.assign({}, process.env, {
     XIN_HOME: path.join(home, 'xin'), XIN_WORK: path.join(home, 'work'), XIN_DSH: path.join(home, 'no-dsh'), XIN_DSH_HOME: path.join(home, 'dsh'),
-    CODEX_HOME: path.join(home, 'codex'), CLAUDE_CONFIG_DIR: path.join(home, 'claude'), XIN_FRONT_PROVIDER: 'deepseek'
+    HOME: home, CODEX_HOME: path.join(home, 'codex'), CLAUDE_CONFIG_DIR: path.join(home, 'claude'), XIN_FRONT_PROVIDER: 'deepseek'
   }, extra);
   delete env.XIN_ROLE; if (extra.XIN_ROLE) env.XIN_ROLE = extra.XIN_ROLE;
   fs.mkdirSync(path.join(env.XIN_HOME, 'sessions'), { recursive: true });
@@ -76,12 +76,51 @@ test('天启身份：小芯专属的操作回「天启没有这个功能」；pi
   const { dsh } = fakeDsh(fs.mkdtempSync(path.join(os.tmpdir(), 'xin-tq-dsh-')));
   const { xin, op } = agentEnv(t, { XIN_ROLE: 'tianqi', XIN_DSH: dsh });
   fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
-  for (const name of ['greet', 'daily', 'daily_get', 'memory_list', 'tasks', 'push_key', 'push_sub', 'bond', 'moves', 'screen', 'logins', 'plugins', 'backup_export'])
+  for (const name of ['greet', 'daily', 'daily_get', 'memory_list', 'tasks', 'push_key', 'push_sub', 'bond', 'moves', 'screen', 'logins', 'backup_export'])
     assert.deepEqual(op(name, {}), NOT_TQ, name);
   const p = op('ping');
   assert.deepEqual([p.role, p.ready], ['tianqi', true], JSON.stringify(p));
   fs.unlinkSync(path.join(xin, 'harness.key'));
   assert.equal(op('ping').ready, false);
+});
+
+test('天启的 Purge 和 REA 开关只影响后续的 Harness 执行，REA 初始关闭', async t => {
+  const { dsh, log } = fakeDsh(fs.mkdtempSync(path.join(os.tmpdir(), 'xin-tq-dsh-')));
+  const { home, xin, op } = agentEnv(t, { XIN_ROLE: 'tianqi', XIN_DSH: dsh });
+  assert.deepEqual(op('plugins').plugins, []);
+  assert.equal(op('plugin_set', { name: 'rea', on: true }).error, 'no_plugin');
+
+  const profile = path.join(home, 'dsh', 'profiles', 'headless');
+  const launcher = path.join(home, '.local', 'bin', 'tianqi-rea-mcp');
+  fs.mkdirSync(profile, { recursive: true });
+  fs.writeFileSync(path.join(profile, 'package.json'), JSON.stringify({ dependencies: { 'dsh-purge-community': '1.6.98' } }));
+  fs.mkdirSync(path.dirname(launcher), { recursive: true });
+  fs.writeFileSync(launcher, '#!/bin/sh\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
+  assert.deepEqual(op('plugins').plugins.map(({ name, on }) => [name, on]), [['purge', true], ['rea', false]]);
+  assert.deepEqual(op('plugins', { agent: 'codex' }), ONLY);
+  assert.deepEqual(op('plugin_set', { agent: 'codex', name: 'rea', on: true }), ONLY);
+  assert.equal(op('plugin_set', { name: 'instabox', on: true }).error, 'no_plugin');
+  assert.equal(op('plugin_set', { name: 'rea', on: 'false' }).error, 'bad_value');
+
+  assert.equal(op('plugin_set', { name: 'purge', on: false }).on, false);
+  assert.equal(op('plugin_set', { name: 'rea', on: true, command: '/foreign/command' }).on, true);
+  const enabled = op('send', { text: '插件已打开' });
+  assert.ok((await poll(op, enabled.run))?.done);
+  assert.equal(op('plugin_set', { name: 'rea', on: false }).on, false);
+  const disabled = op('send', { text: '插件已关闭' });
+  assert.ok((await poll(op, disabled.run))?.done);
+
+  const invocations = fs.readFileSync(log, 'utf8').split('\n').filter(line => line.startsWith('ARGS'));
+  const patches = invocations.map(line => line.match(/\[--patch\] \[([^\]]+)\]/)[1]);
+  assert.equal(patches.length, 2);
+  assert.notEqual(patches[0], patches[1]);
+  const applied = fs.readFileSync(patches[0], 'utf8'), off = fs.readFileSync(patches[1], 'utf8');
+  assert.match(applied, /- insert:\n    - id: mcp-rea\n      name: "@deepseek-ai\/dsh-mcp-client"/);
+  assert.ok(applied.includes('command: ' + JSON.stringify(launcher)));
+  assert.doesNotMatch(applied, /\/foreign\/command/);
+  assert.match(off, /id: dsh-purge\n  config:\n    enabled: false/);
+  assert.doesNotMatch(off, /id: mcp-rea/);
 });
 
 test('小芯身份：ping 说自己是小芯，greet 照常', t => {
