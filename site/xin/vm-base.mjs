@@ -26,6 +26,25 @@ journal.checkWriter = (transaction=false) => {
   assertAttempt(meta,context);
 };
 export const WORK = process.env.XIN_WORK || '/data/workspace';
+// 天启（docs/superpowers/specs/2026-11-18-tianqi-li2-design.md §4.2）：第二台电脑 li2 上的控制器。Worker 发给 li2 的 exec 都带
+// XIN_ROLE=tianqi，外壳 ensure 时存进 kernel.env.json，再传给状态进程和每一轮的进程。只用 Harness，小芯的功能都不开
+export const TIANQI = process.env.XIN_ROLE === 'tianqi';
+// Harness（DeepSeek Harness，命令 dsh）在这台电脑上的位置：命令（测试用 XIN_DSH 指到假的）、网关给本机客户端的 key（只有自己能读）
+export const HARNESS_KEY = () => path.join(BASE, 'harness.key');
+export function dshCmd() {
+  if (process.env.XIN_DSH) return process.env.XIN_DSH;
+  const p = path.join(os.homedir(), '.local', 'bin', 'dsh');
+  return fs.existsSync(p) ? p : 'dsh';
+}
+export function harnessInstalled() { const c = dshCmd(); return c !== 'dsh' ? fs.existsSync(c) : hasCmd('dsh'); }
+// 天启准备好没有：Harness 装了、网关给本机的 key 放好了
+export function tianqiReady() { return harnessInstalled() && !!readText(HARNESS_KEY()).trim(); }
+// 天启发消息之前查：只用 Harness（a 是 send 的参数，s 是要接着聊的对话），没准备好就说网关还没配好，不起一轮注定失败的
+export function tianqiRefuse(a, s) {
+  if (!TIANQI) return null;
+  if ((a.agent && a.agent !== 'harness') || (s && s.agent !== 'harness')) return { error: 'tianqi_only', msg: '天启只用 Harness' };
+  return tianqiReady() ? null : { error: 'not_ready', msg: '天启的网关还没配好' };
+}
 export const TEMPLATE = () => path.join(WORK, 'stm32-template');   // STM32 空工程（scripts/vm/setup-stm32.sh 装的）
 
 export function today() { const d = new Date(Date.now() + 8 * 3600e3); return d.toISOString().slice(0, 10); }   // 北京时间的日期

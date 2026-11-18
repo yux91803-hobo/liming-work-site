@@ -51,7 +51,7 @@ import { checkControllers } from './vm-kernel-compat.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
 import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps } from './vm-steer.mjs';
-import { BASE, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
+import { BASE, TIANQI, HARNESS_KEY, dshCmd, harnessInstalled, tianqiReady, tianqiRefuse, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
 import { loginStore, normalizeSite } from './vm-logins.mjs';
@@ -59,7 +59,7 @@ import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
 import { fromClaude, fromCodex, fromHarness, stepActivity } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
 import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
-import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
+import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, TIANQI_NAME, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
 export * from './vm-screen.mjs';
@@ -106,7 +106,7 @@ function lastActivity() {
   try { for (const f of fs.readdirSync(RUNS)) { const st = fs.statSync(path.join(RUNS, f)); if (st.mtimeMs > t) t = st.mtimeMs; } } catch { /* 还没有记录 */ }
   return t;
 }
-function maybeWarm() {
+function maybeWarm() { if (TIANQI) return false;   // 天启没有开场白，也不替小芯预热
   const quota=readJ(path.join(BASE,'front-antigravity-quota.json'));
   if(preferredFrontModel()!==runtime.FRONT_MODEL&&!(quota?.blocked&&quota.retryAt>Date.now()))return false;
   if (Date.now() - lastActivity() < WARM_IDLE || !(hasAgent('harness') || hasCmd('codex'))) return false;
@@ -206,7 +206,7 @@ export function plainText(t, max) {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 // 故障告警只读取推送资料。正常推送收到 404 / 410 时交给状态进程清理订阅。
-export async function pushAll(msg, delivery = {}) {
+export async function pushAll(msg, delivery = {}) { if (TIANQI) return [];   // li2 上不发小芯的推送
   const recipient = s => crypto.createHash('sha256').update(s.endpoint).digest('hex');
   const subs = readSubs().filter(s => !(delivery.skip || []).includes(recipient(s)));
   if (!subs.length) return [];
@@ -327,15 +327,9 @@ function installXin() {
    网关的 key 在 ~/.xin/harness.key（只有自己能读），起的时候用环境变量 XIN_HARNESS_KEY 交给它（线路里写的是 apiKeyEnv）。
    接着聊用 --session-id。
    权限：DSH_PERMISSION_MODE=danger-full-access（和 Codex 的 --dangerously-bypass-approvals-and-sandbox 一样，用户确认过）。 */
-const HARNESS_KEY = () => path.join(BASE, 'harness.key');
 // 模型、强度和插件状态共同决定文件名，几个对话同时发送时互不覆盖。
 const HARNESS_PERSONA = (model, effort, purge) => path.join(BASE, 'harness-persona.' + model + '.' + effort + (purge == null ? '' : '.purge-' + (purge ? 'on' : 'off')) + '.yml');
-function dshCmd() {
-  if (process.env.XIN_DSH) return process.env.XIN_DSH;
-  const p = path.join(os.homedir(), '.local', 'bin', 'dsh');
-  return fs.existsSync(p) ? p : 'dsh';
-}
-function hasAgent(agent) { if (agent !== 'harness') return hasCmd(agent); const c = dshCmd(); return c !== 'dsh' ? fs.existsSync(c) : hasCmd('dsh'); }
+function hasAgent(agent) { return agent === 'harness' ? harnessInstalled() : hasCmd(agent); }
 function writePersona(effort, model) {
   mk(BASE);
   const R = HARNESS_ROUTE, M = harnessModel(model), q = JSON.stringify, e = resolveEffort('harness', M.id, effort);
@@ -350,7 +344,7 @@ function writePersona(effort, model) {
     '          - id: ' + q(m.id), '            name: ' + q(m.name), '            contextWindow: ' + m.win,
     '            reasoningEfforts:'].concat(m.efforts.map(x => '              ' + x + ': ' + (x === 'off' ? 'none' : x)))), [
     '- id: agent-default-model', '  config:', '    provider: ' + R.provider, '    model: ' + q(M.id), '    reasoningEffort: ' + e,
-    '- id: system-prompt', '  config:', '    personaPrefix: ' + q(tianqiPrompt())
+    '- id: system-prompt', '  config:', '    personaPrefix: ' + q(TIANQI ? TIANQI_NAME : tianqiPrompt())
   ], purge == null ? [] : ['- id: dsh-purge', '  config:', '    enabled: ' + purge], ['']).join('\n'));
   fs.renameSync(t, out);
   // Earlier patches embedded Xiaoxin's notebook. They are regenerated caches: drop any still carrying it.
@@ -1886,7 +1880,7 @@ function tickTasks() {
   const r = lockedCall('tasks', 'task_tick', {});
   for (const n of (r && r.notify) || []) deliverNotice(n).catch(() => {});
 }
-function ensureMemoryIdle() {
+function ensureMemoryIdle() { if (TIANQI) return;   // 天启没有小芯的记忆
   if (journal.active) { journal.defer(ensureMemoryIdle); return; }
   if (!(readText(CODEX_KEY()) || readText(HARNESS_KEY())).trim()) return;
   mk(path.join(BASE, 'locks'));
@@ -2253,7 +2247,7 @@ const ops = {
     return { ok: true, size: Buffer.byteLength(text) };
   },
   ping() {
-    return { ok: true, agents: AGENTS.filter(hasAgent), work: WORK };
+    return { ok: true, agents: AGENTS.filter(hasAgent), work: WORK, role: TIANQI ? 'tianqi' : 'xin', ...(TIANQI ? { ready: tianqiReady() } : {}) };
   },
   send(a) {
     rememberCallback(a._callback);
@@ -2269,6 +2263,7 @@ const ops = {
     const text = String(a.text || '').trim();
     if (!text && !files.length) return { error: 'empty', msg: '消息是空的' };
     if (text.length > TEXT_MAX) return { error: 'too_long', msg: '消息太长了（最多 ' + TEXT_MAX + ' 字）' };
+    const refused = tianqiRefuse(a, okId(a.sid, 's') ? readJ(sessF(a.sid)) : null); if (refused) return refused;   // 天启（li2）只用 Harness、网关要配好
     mk(SESS); mk(RUNS);
     let s;
     if (a.sid) {
@@ -2284,14 +2279,14 @@ const ops = {
     } else {
       // No mode named: the default mode, never the fully privileged one. The retired Claude mode only continues old conversations.
       if (a.agent === 'claude') return { error: 'retired', msg: 'Claude 旧模式不再新建对话，以前的对话可以接着聊' };
-      const agent = AGENTS.includes(a.agent) ? a.agent : 'codex';
+      const agent = TIANQI ? 'harness' : AGENTS.includes(a.agent) ? a.agent : 'codex';
       // 两台设备同时发出主对话的第一句：后到的这一句不再另开一个，让网页打开已有的那个再发
       const main = a.main && agent === 'codex', existing = main ? mainSid() : null;
       if (existing) return { error: 'busy', msg: '请再发一次', sid: existing };
       s = { ...(main ? { main: true } : {}), sid: rid('s'), agent, title: (text || files.map(f => f.name).join('、')).replace(/\s+/g, ' ').slice(0, 40), agentSid: agent === 'claude' ? crypto.randomUUID() : null, started: false, runs: [], created: Date.now(), updated: Date.now() };
     }
     if (s.main && !a.sid) writeJ(MAIN_F(), { sid: s.sid });
-    const ctxLabel = String(a.ctxLabel || '').slice(0, 160);
+    const ctxLabel = TIANQI ? '' : String(a.ctxLabel || '').slice(0, 160);   // 天启不带附带的页面
     if (s.agent !== 'harness') try { bondAdd('chat', 1, '陪我聊天'); } catch { /* 好感度记不下来不影响聊天 */ }   // 天启聊天不算小芯的好感
     // 只发了文件没说话：给 AI 的话里补一句
     const said = text || (files.every(f => f.image) ? '看看我发的图片。' : '看看我发的文件。');
@@ -2313,7 +2308,7 @@ const ops = {
     const all = s.agent === 'codex' ? listTasks() : [];
     const tn = s.agent === 'codex' ? taskNotes(s.sid, all, { active: false }) : { text: '', seen: [] };
     const hands = s.agent === 'codex' && s.runs.length ? handNotes(s.sid, text, all) : null;
-    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? withContext(said, a.context) + '\n\n' + TIANQI_REMIND : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, frontTaskNotes: tn.text, ...(hands ? { frontHands: hands.text, frontHandModes: hands.modes } : {}), effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
+    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:TIANQI?'':String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? (TIANQI ? said : withContext(said, a.context) + '\n\n' + TIANQI_REMIND) : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, frontTaskNotes: tn.text, ...(hands ? { frontHands: hands.text, frontHandModes: hands.modes } : {}), effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
       cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
     const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, s.main ? { main: true, turns: s.runs.length } : {}, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
     if (receipt) { mk(path.dirname(receipt)); writeJ(receipt, result); }
