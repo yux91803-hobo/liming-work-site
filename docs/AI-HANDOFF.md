@@ -1,3 +1,8 @@
+## 2026-11-18 晚上 · #176 正式联调回滚的原因和修复（Claude Code）
+
+- #176 的正式联调在「点名做网页的回执要是第一人称」一步失败，自动回滚到 #175 的版本（运行 44322833944）。原因是联调规则把「后台」「交给」当成第三人称，而站长 11-18 新定的规矩要求派活照实说派后台。已改 `scripts/xin_live_policy.py` 并补了测试，详见 CHANGES 最新一条。
+- **以后改提示词的说法时**，先 `grep` 一下 `scripts/xin_live_policy.py`、`scripts/test-xin-live.py` 里对回答原话的检查：本地和测试站都不跑正式联调，只有正式部署时才会撞上。
+
 ## 2026-11-18 晚上 · 派活算一条消息、人设不讨好、前台思考强度高、终端等待动画（Claude Code）
 
 - 站长确认方案后由 Claude Code 实现并自查。见 [设计](superpowers/specs/2026-11-18-xin-one-message-design.md)、[计划](superpowers/plans/2026-11-18-xin-one-message.md)、[CHANGES](CHANGES.md) 最新一条。分支 `claude/friendly-hopper-d7392n`，从 #175 的 `7d9de0f` 接着做。

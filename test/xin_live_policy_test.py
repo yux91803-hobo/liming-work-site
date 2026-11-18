@@ -134,10 +134,11 @@ class FrontPolicy(unittest.TestCase):
 
     def test_first_person_receipt_allows_dropped_subject_but_not_third_person(self):
         # 2026-11-12 #125 上线联调：DeepSeek 回执省略了主语「我」，是自然的第一人称，被只查「我」字的检查判失败
-        for ok in ('好，我来。', '好嘞，这就去画这只黄乎乎的小奶龙，跳个舞、挥个手，手机上点开就能玩。', '收到，马上开始画。'):
+        # 2026-11-18 #176 正式联调回滚：站长要求派活照实说派后台（「我派给他，他就如实说要去派个后台去查」），「我派后台去……」「交给后台」是照实说的第一人称，不算第三人称
+        for ok in ('好，我来。', '好嘞，这就去画这只黄乎乎的小奶龙，跳个舞、挥个手，手机上点开就能玩。', '收到，马上开始画。', '我派后台去画这只奶龙。', '已经交给后台去画了。'):
             with self.subTest(reply=ok):
                 self.assertTrue(first_person_receipt(ok))
-        for bad in ('', '   ', '小芯会帮你画一只奶龙。', '已经交给后台去画了。', '我让分身去画了。', '交给同事处理。', '助手正在制作。'):
+        for bad in ('', '   ', '小芯会帮你画一只奶龙。', '我让分身去画了。', '交给同事处理。', '助手正在制作。'):
             with self.subTest(reply=bad):
                 self.assertFalse(first_person_receipt(bad))
 
