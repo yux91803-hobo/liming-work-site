@@ -34,6 +34,16 @@ function fixture(t,mode='ok'){
  prompts++;
  if(mode==='hang')return;
  if(mode==='transient'||mode==='midquota'&&prompts===2){send({id:q.id,error:{code:429,message:mode==='transient'?'rate limit, retry shortly':'quota exhausted'}});return;}
+ if(mode==='web'&&prompts===1){
+ const opts=[{optionId:'allow-1',kind:'allow_once',name:'Allow'},{optionId:'reject-1',kind:'reject_once',name:'Reject'}],S='native-synthetic-session';
+ send({id:910,method:'session/request_permission',params:{sessionId:S,options:opts,toolCall:{toolCallId:'call_s1',title:'"Gemini 4 Hydrogen score" on Web',kind:'search',rawInput:{query:'Gemini 4 Hydrogen score'}}}});
+ send({id:911,method:'session/request_permission',params:{sessionId:S,options:opts,toolCall:{toolCallId:'call_t1',title:'Run rm -rf /tmp/x',kind:'execute',rawInput:{command:'rm -rf /tmp/x'}}}});
+ send({id:912,method:'session/request_permission',params:{sessionId:S,options:opts,toolCall:{toolCallId:'call_f9',title:'Read notes.txt',kind:'search',rawInput:{path:'/data/home/notes.txt'}}}});
+ send({method:'session/update',params:{sessionId:S,update:{sessionUpdate:'tool_call',toolCallId:'call_s1',title:'"Gemini 4 Hydrogen score" on Web',kind:'search',status:'in_progress',rawInput:{query:'Gemini 4 Hydrogen score'}}}});
+ send({method:'session/update',params:{sessionId:S,update:{sessionUpdate:'tool_call_update',toolCallId:'call_s1',title:'"Gemini 4 Hydrogen score" on Web',kind:'search',status:'completed',rawInput:{query:'Gemini 4 Hydrogen score'}}}});
+ send({method:'session/update',params:{sessionId:S,update:{sessionUpdate:'tool_call',toolCallId:'call_u1',title:'artificialanalysis.ai/models',kind:'fetch',status:'in_progress',rawInput:{url:'https://artificialanalysis.ai/models'}}}});
+ send({method:'session/update',params:{sessionId:S,update:{sessionUpdate:'tool_call_update',toolCallId:'call_u1',kind:'fetch',status:'completed'}}});
+ }
  if(mode==='deny'){
  send({id:900,method:'session/request_permission',params:{sessionId:'native-synthetic-session',options:[]}});
  send({id:901,method:'fs/write_text_file',params:{path:${JSON.stringify(root+'/must-not-exist')},content:'denied'}});
@@ -110,6 +120,19 @@ test('接口用提供方枚举标识 Hydrogen（High）时仍可运行，保留�
  const f=fixture(t,'alias'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run),end=done.events.find(e=>e.t==='done');
  assert.equal(end.ok,true);assert.equal(end.model,'gemini-4-hydrogen');assert.equal(end.providerModel,'MODEL_GEMINI_4_HYDROGEN_HIGH');
  assert.equal(f.rows(f.log).find(r=>r.method==='session/set_model').params.modelId,'MODEL_GEMINI_4_HYDROGEN_HIGH');
+});
+test('前台自己查（站长 11-18）：代理只多搜索和读网页两样；权限只批这两样，跑命令、读文件的照样拒；网页步骤记进这一轮',async t=>{
+ const f=fixture(t,'web'),sent=f.call('send',{agent:'codex',text:'Gemini 4 Hydrogen 中档多少分'}),done=await f.wait(sent.run);
+ assert.equal(done.events.find(e=>e.t==='done').ok,true);assert.equal(done.events.find(e=>e.t==='text').text,'native-front-answer');
+ const agent=fs.readFileSync(f.home+'/.gemini/config/agents/xin-front-controller.md','utf8');
+ assert.match(agent,/tools:\n  - finish\n  - search_web\n  - read_url_content\n/);
+ const reply=id=>f.rows(f.log).find(r=>r.id===id&&!r.method)?.result?.outcome;
+ assert.deepEqual(reply(910),{outcome:'selected',optionId:'allow-1'},'搜索公开网页：批');
+ assert.deepEqual(reply(911),{outcome:'cancelled'},'跑命令：拒');
+ assert.deepEqual(reply(912),{outcome:'cancelled'},'读文件（不是网页搜索）：拒');
+ const steps=done.events.filter(e=>e.t==='tool'||e.t==='tool_end').map(e=>[e.t,e.name,e.detail||'',e.ok]);
+ assert.deepEqual(steps,[['tool','WebSearch','Gemini 4 Hydrogen score',undefined],['tool_end','WebSearch','Gemini 4 Hydrogen score',true],
+  ['tool','WebFetch','https://artificialanalysis.ai/models',undefined],['tool_end','WebFetch','https://artificialanalysis.ai/models',true]]);
 });
 test('账号里没有高档的 Hydrogen 就用中档，不改用 DeepSeek',async t=>{
  const f=fixture(t,'nohigh'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run),end=done.events.find(e=>e.t==='done');

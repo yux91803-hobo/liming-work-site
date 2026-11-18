@@ -958,7 +958,7 @@ function runner(run) {
     let provider;const protocol={};
     const infer=async()=>{
       provider=await openFrontProvider({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,signal:controller.signal,
-        protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},thought:t=>{if(!finished)emit(run,{t:'think',text:t,src:'model'});},
+        protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},thought:t=>{if(!finished)emit(run,{t:'think',text:t,src:'model'});},tool:e=>{if(!finished)emit(run,{...e,at:Date.now()});},
         quotaState:readJ(path.join(BASE,'front-antigravity-quota.json')),
         quota:quota=>lockedCall('tasks','front_quota',{quota}),
         model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;meta.providerModel=chosen.providerModel;if(['quota','format','front_model','unavailable'].includes(chosen.reason))meta.from=AGY_FRONT_MODEL;}
