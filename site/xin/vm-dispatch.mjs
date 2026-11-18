@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { BASE, journal, ownership, readJ, writeJ, mk, alive, processIdentity, processGroupMembers, readTail, signalProcessGroup } from './vm-base.mjs';
 import { callContext, withCallContext, lockHeld } from './vm-kernel-context.mjs';
-import { nextAttempt } from './vm-run-attempt.mjs';
+import { finalizationEvidence, nextAttempt } from './vm-run-attempt.mjs';
 
 export function runnerAlive(run, meta) {
   if (alive(meta?.pid, meta?.identity) || meta?.launcher?.identity && alive(meta.launcher.pid, meta.launcher.identity)) return true;
@@ -17,18 +17,34 @@ export function runnerAlive(run, meta) {
   return probe.status !== 0;
 }
 
-export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, patchRun }) {
-  function runDone(run) {
-    const m = readJ(metaF(run));
-    if (m?.ended || readTail(runF(run), 8192).includes('"t":"done"')) return true;
-    if (!m || Date.now() - m.started <= (Number(process.env.XIN_DEAD_MS) || 15000) || runnerAlive(run, m)) return false;
-    const key = m.task ? 'tasks' : m.sid;
-    if (!lockHeld(key)) return !!lockedCall(key, 'run_recover', { run }).done;
+export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, patchRun, finalizations, finalizeRun }) {
+  const dead = (run, m, started = m.started) => Date.now() - started > (Number(process.env.XIN_DEAD_MS) || 15000) && !runnerAlive(run, m);
+  function stopOrphan(run, m) {
     if (m.childPid && processGroupMembers(m.childPid, m.childIdentity).length) {
       signalProcessGroup(m.childPid, m.childIdentity, m.orphanStopping && Date.now() - m.orphanStopping > 2000 ? 'SIGKILL' : 'SIGTERM');
       if (!m.orphanStopping) patchRun(run, { orphanStopping: Date.now() });
-      if (processGroupMembers(m.childPid, m.childIdentity).length) return false;
+      return processGroupMembers(m.childPid, m.childIdentity).length > 0;
     }
+    return false;
+  }
+  function recoverFinalization(run, m, evidence) {
+    if (journal.active || !ownership.owning || ownership.draining) return false;
+    try {
+      const exited = dead(run, m);
+      if (exited && stopOrphan(run, m) || !exited && !evidence.ready) return false;
+      return !!finalizeRun(m, {evidence, abandon:!evidence.ready}).ok;
+    } catch { return false; } // Isolate an unavailable projection or workspace from unrelated runs.
+  }
+  function runDone(run) {
+    const m = readJ(metaF(run));
+    if (m?.ended) return true;
+    const evidence = finalizationEvidence(finalizations, m);
+    if (evidence) return recoverFinalization(run, m, evidence);
+    if (readTail(runF(run), 8192).includes('"t":"done"')) return true;
+    if (!m || !dead(run, m)) return false;
+    const key = m.task ? 'tasks' : m.sid;
+    if (!lockHeld(key)) return !!lockedCall(key, 'run_recover', { run }).done;
+    if (stopOrphan(run, m)) return false;
     if (!m.task && m.agent === 'codex' && !m.stopped) {
       const job = journal.launchRecord(run);
       if (job && job.state !== 'finished' && (job.attempts < 2 || Date.now() - job.dispatchedAt < 15000)) return false;
@@ -72,6 +88,8 @@ export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, p
     for (const job of scan ? journal.launchedRuns() : []) {
       const m = readJ(metaF(job.run));
       if (!m || m.ended) { journal.finishLaunch(job.run); continue; }
+      const evidence = finalizationEvidence(finalizations, m);
+      if (evidence) { recoverFinalization(job.run, m, evidence); continue; }
       if (Date.now() - Math.max(m.started, job.dispatchedAt || 0) < 15000 || runnerAlive(job.run, m)) continue;
       if (m.childPid && processGroupMembers(m.childPid, m.childIdentity).length) { runDone(job.run); continue; }
       if (!m.task && m.agent === 'codex' && !m.stopped && job.attempts < 2) startRunner(job);
@@ -80,10 +98,13 @@ export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, p
     for (const job of journal.pendingLaunches()) {
       const meta = readJ(metaF(job.run));
       if (!meta || meta.ended) { journal.finishLaunch(job.run); continue; }
+      const evidence = finalizationEvidence(finalizations, meta);
+      if (evidence) { recoverFinalization(job.run, meta, evidence); continue; }
       if (runnerAlive(job.run, meta)) { journal.claimLaunch(job); continue; }
       const own = readJ(sessF(job.sid));
       const earlier = (own?.runs || []).slice(-4).filter(r => r !== job.run).some(r => {
-        const m = readJ(metaF(r)); return m && !runDone(r) && runnerAlive(r, m);
+        const m = readJ(metaF(r));
+        return m && !runDone(r) && (finalizationEvidence(finalizations, m) || runnerAlive(r, m));
       });
       if (!earlier) startRunner(job);
     }

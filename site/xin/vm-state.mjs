@@ -78,6 +78,10 @@ export class StateJournal {
   name(file){const n=path.relative(this.root,path.resolve(file));if(!n||n.startsWith('..')||path.isAbsolute(n))throw Error('状态投影越界');return n;}
   staged(file){if(!this.active)return;try{return this.overlay.get(this.name(file));}catch{return;}}
   stagedNames(prefix){return [...this.overlay.keys()].filter(n=>n.startsWith(prefix));}
+  commandReceipt(id){
+    const row=this.db.prepare('SELECT digest,result FROM commands WHERE id=?').get(id);
+    return row?{digest:row.digest,result:JSON.parse(row.result)}:null;
+  }
   atomic(fn,command,report){
     if(this.active)return fn();
     return this.writing(()=>this.commit(fn,command),report);
