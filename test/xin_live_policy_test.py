@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, after_steer, steer_count, canned_reply
+from xin_live_policy import front_lookup_verdict, HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, after_steer, steer_count, canned_reply
 
 
 class SpokenMarker(unittest.TestCase):
@@ -141,6 +141,18 @@ class FrontPolicy(unittest.TestCase):
         for bad in ('', '   ', '小芯会帮你画一只奶龙。', '我让分身去画了。', '交给同事处理。', '助手正在制作。'):
             with self.subTest(reply=bad):
                 self.assertFalse(first_person_receipt(bad))
+
+
+class FrontLookup(unittest.TestCase):
+    # 2026-11-18 站长：「简单的上网查资料它可以自己去做」——正式联调核对前台自己查、不派后台
+    def test_front_lookup_needs_a_web_step_a_reply_and_no_dispatch(self):
+        ok = [{'t': 'user', 'text': 'q'}, {'t': 'tool', 'name': 'WebSearch', 'detail': 'x'}, {'t': 'tool_end', 'name': 'WebSearch', 'ok': True},
+              {'t': 'text', 'text': 'https://developers.cloudflare.com/workers/'}, {'t': 'done', 'ok': True}]
+        self.assertEqual(front_lookup_verdict(ok), '')
+        self.assertEqual(front_lookup_verdict(ok[:1] + [{'t': 'task', 'sid': 's1'}] + ok[1:]), 'dispatched a background task')
+        self.assertEqual(front_lookup_verdict([e for e in ok if e['t'] != 'tool']), 'no web step recorded')
+        self.assertEqual(front_lookup_verdict([e for e in ok if e['t'] != 'text']), 'empty reply')
+        self.assertEqual(front_lookup_verdict(ok[:-1] + [{'t': 'done', 'ok': False}]), 'turn did not finish ok')
 
 
 class BackgroundFallback(unittest.TestCase):
