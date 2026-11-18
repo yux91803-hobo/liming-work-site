@@ -152,11 +152,7 @@ function warm() {
   child.on('close', code => end(code));
 }
 
-
-/* ---------- 做完提醒：Web Push ----------
-   网页上开了「做完提醒」，浏览器的推送订阅就存在这里（push/subs.json）；VAPID 钥匙也在这里生成、保存（push/vapid.json），不经过网站。
-   一轮做完时，网页最近 8 秒没来取过进度（关掉了、切到别的应用了），就给每个订阅发一条：「小芯做完了：……」。
-   加密按 RFC 8291（aes128gcm），签名按 RFC 8292（VAPID，ES256 JWT），只用 node:crypto。 */
+/* Web Push 订阅与 VAPID 密钥都保存在本机 push/ 中，加密和签名遵循 RFC 8291、8292。 */
 const PUSH_DIR = () => path.join(BASE, 'push');
 const VAPID_F = () => path.join(PUSH_DIR(), 'vapid.json'), SUBS_F = () => path.join(PUSH_DIR(), 'subs.json');
 const PUSH_CONTACT = 'https://liming-work.com', SUBS_MAX = 8, UNWATCHED_MS = 8000;
@@ -209,14 +205,16 @@ export function plainText(t, max) {
   const s = String(t || '').replace(/```[\s\S]*?(```|$)/g, ' ').replace(/^[ \t]*(#{1,6}|>+)[ \t]*/gm, '').replace(/\*\*|`/g, '').replace(/\s+/g, ' ').trim();
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
-// 发给每个订阅；推送服务说这个订阅没了（404 / 410）就删掉
+// 故障告警只读取推送资料。正常推送收到 404 / 410 时交给状态进程清理订阅。
 export async function pushAll(msg, delivery = {}) {
   const recipient = s => crypto.createHash('sha256').update(s.endpoint).digest('hex');
   const subs = readSubs().filter(s => !(delivery.skip || []).includes(recipient(s)));
   if (!subs.length) return [];
-  const keys = vapidKeys(), body = JSON.stringify(msg), gone = [], out = [];
+  const keys = delivery.readOnlyState ? readJ(VAPID_F()) : vapidKeys();
+  if (!keys?.publicKey || !keys.privateJwk) return [];
+  const body = JSON.stringify(msg), gone = [], out = [];
   await Promise.all(subs.map(async sub => {
-    if(delivery.respectWatching && deviceWatching(msg.sid,sub.deviceId)){out.push({endpoint:sub.endpoint.slice(0,60),status:null,viewed:true,...(delivery.ids?{recipient:recipient(sub)}:{})});return;}
+    if(!delivery.readOnlyState && delivery.respectWatching && deviceWatching(msg.sid,sub.deviceId)){out.push({endpoint:sub.endpoint.slice(0,60),status:null,viewed:true,...(delivery.ids?{recipient:recipient(sub)}:{})});return;}
     let status = 0;
     try {
       const r = await fetch(sub.endpoint, {
@@ -228,7 +226,7 @@ export async function pushAll(msg, delivery = {}) {
     if (status === 404 || status === 410) gone.push({endpoint:sub.endpoint,revision:sub.revision||String(sub.at||'')+JSON.stringify(sub.keys)});
     out.push({ endpoint: sub.endpoint.slice(0, 60), status, ...(delivery.ids ? { recipient: recipient(sub) } : {}) });
   }));
-  if(gone.length) lockedCall('tasks','push_gone',{endpoints:gone});
+  if (!delivery.readOnlyState && gone.length) lockedCall('tasks','push_gone',{endpoints:gone});
   return out;
 }
 const NOTICE_DIR = () => path.join(BASE, 'outbox');
@@ -2992,7 +2990,6 @@ function restoreStops() {
   try { fs.unlinkSync(mine); } catch { /* 别处删了 */ }
 }
 
-// 一次性兼容客户端在 legacy 持共享锁；kernel 时只转发，不取得本地写权。
 const LONG_LIVED = ['run', 'agy-run', 'warm', 'memory-idle', 'callback', 'login-window', 'pushq'];
 async function serveState(){
   checkControllers(BASE,SELF);
@@ -3023,7 +3020,7 @@ async function main() {
     }
     return forwardCLI(BASE, op, { stdin: readStdin });
   }
-  await waitForState(BASE);
+  if (op !== 'pushq') await waitForState(BASE);
   if (op === 'run') { runner(process.argv[3]); return; }
   if(op==='agy-run'){
     const run=process.argv[3],m=readJ(metaF(run));assertAttempt(m,callContext());
@@ -3041,7 +3038,10 @@ async function main() {
   if (op === 'memory-idle') { idleMemoryReview().catch(() => {}); return; }
   if (op === 'callback') { flushControllerEvent().catch(() => {}); return; }
   if (op === 'login-window') { runLoginWindow().catch(() => {}); return; }
-  if(op==='pushq'){let m=null;try{m=JSON.parse(process.argv[3]||'');}catch{}if(m)pushAll(m).catch(()=>{});return;}
+  if (op === 'pushq') {
+    let message; try { message = JSON.parse(process.argv[3]); } catch { return; }
+    if (message) await pushAll(message, { readOnlyState: true }).catch(() => {});
+  }
 }
 const {dispatchLaunches,runDone}=createDispatcher({self:SELF,metaF,sessF,runF,lockedCall,emit,patchRun});
 const controller=createController({ops,iops,isTask,saveTask,rememberAgentSession,mainSid,listTasks,lockedCall,dispatchLaunches,markCurrentController,xinCmd,reapNow});
