@@ -78,12 +78,9 @@ async def main():
         st = await backend(pg)
         await pg.goto(ui.BASE + '/#xin')
         await pg.wait_for_selector('.xc.show .xc-hello')
-        # 上面那一排「小芯 | 天启」是选和谁聊（第二轮之二加的），不算说明小字：拿掉它再看剩下的字
-        hello = await pg.evaluate("""(() => { const c = document.querySelector('.xc-hello').cloneNode(true), s = c.querySelector('.xc-as');
-            const who = s ? [...s.querySelectorAll('.xc-as-b')].map(b => b.textContent + (b.getAttribute('aria-checked') === 'true' ? '✓' : '')) : null;
-            if (s) s.remove();
-            return [c.textContent, who, !!document.querySelector('.xc-login:not([hidden])'), LimingXinChat.state.toMain]; })()""")
-        ui.check('第一次打开：空白页只有小芯和大标题「小芯」，没有说明小字（上面一排选和谁聊，默认小芯）；停在主对话上', hello == ['小芯', ['小芯✓', '天启'], False, True], hello)
+        hello = await pg.evaluate('''(() => { const c = document.querySelector('.xc-hello');
+            return [c.textContent, !!c.querySelector('.xc-as'), !!document.querySelector('.xc-login:not([hidden])'), LimingXinChat.state.toMain]; })()''')
+        ui.check('第一次打开：空白页只有小芯和大标题，停在主对话上', hello == ['小芯', False, False, True], hello)
         await pg.fill('.xc-row textarea', '你好')
         await pg.click('.xc-send')
         await pg.wait_for_function(ui.CHAT_DONE + ' && !!LimingXinChat.state.sid', timeout=10000)
@@ -102,14 +99,14 @@ async def main():
         dr = await pg.evaluate("""[document.querySelector('.xc-mainb span').textContent, document.querySelector('.xc-mainb').classList.contains('cur'),
           [...document.querySelectorAll('.xc-sl-main .xc-si-t')].map(e => e.textContent), document.querySelector('.xc-dr-h').textContent, !document.querySelector('.xc-main-more').hidden]""")
         ui.check('侧边栏：第一行「主对话」（正在看，标出来），普通对话列表里没有它', dr == ['主对话', True, ['编译 main.c'], '对话', True], dr)
-        # 侧边栏的样子（第三轮重做）：两颗键帽、下面搜索；对话一行一个（标题和时间在同一行）；底下「每日任务」「设置」并排；触屏上能点的都不小于 44px
+        # 侧边栏：新建对话键帽、下面搜索；对话一行一个（标题和时间在同一行）；底下「每日任务」「设置」并排；触屏上能点的都不小于 44px
         side = await pg.evaluate("""(() => { const q = s => document.querySelector(s), hgt = s => Math.round(q(s).getBoundingClientRect().height);
           const row = q('.xc-sl-main .xc-si'), t = row.querySelector('.xc-si-t').getBoundingClientRect(), m = row.querySelector('.xc-si-m').getBoundingClientRect();
           return [[...document.querySelectorAll('.xc-dr-keys .xc-key')].map(b => b.textContent), !!q('.xc-dr-keys + .xc-dr-q'),
             [...document.querySelectorAll('.xc-dr-tools button')].map(b => b.textContent), Math.abs(t.top + t.bottom - m.top - m.bottom) < 4, matchMedia('(pointer: coarse)').matches,
-            Math.min(...['.xc-dr-new', '.xc-tqb', '.xc-dr-q', '.xc-sl-main .xc-si', '.xc-sl-main .xc-si-more', '.xc-dailyb', '.xc-set-b'].map(hgt)), Math.round(q('.xc-sl-main .xc-si-more').getBoundingClientRect().width)]; })()""")
-        ui.check('侧边栏：上面两颗键帽「新建对话」「新建天启对话」，下面搜索；对话一行一个（标题和时间同一行）；底下「每日任务」「设置」并排；触屏上能点的都不小于 44px',
-                 side[:5] == [['新建对话', '新建天启对话'], True, ['每日任务', '设置'], True, True] and side[5] >= 44 and side[6] >= 44, side)
+            Math.min(...['.xc-dr-new', '.xc-dr-q', '.xc-sl-main .xc-si', '.xc-sl-main .xc-si-more', '.xc-dailyb', '.xc-set-b'].map(hgt)), Math.round(q('.xc-sl-main .xc-si-more').getBoundingClientRect().width)]; })()""")
+        ui.check('侧边栏：只有「新建对话」键帽，下面搜索；对话一行一个（标题和时间同一行）；底下「每日任务」「设置」并排；触屏上能点的都不小于 44px',
+                 side[:5] == [['新建对话'], True, ['每日任务', '设置'], True, True] and side[5] >= 44 and side[6] >= 44, side)
         # 这台设备上有没发出去的消息时，上面多一组「未发送的消息」：重画对话列表只改「对话」那一行的标题，不改到它
         await pg.click('.xc-dr-x')
         await pg.evaluate("localStorage.setItem('lm.xin.unsent.e2e', JSON.stringify({text: '没发出去的那句，后面还有很长很长的一段话，用来看会不会把侧边栏撑出横向滚动条'}))")
@@ -203,18 +200,18 @@ async def main():
         gate.set()
         await pg.context.close()
 
-        # 6. 天启模式开着：空白页是天启的新对话，不发进主对话
+        # 6. 从旧版本存下的天启偏好不会把小芯的新对话路由到 Harness
         pg = await ui.page(browser)
         st = await backend(pg)
         await pg.add_init_script("localStorage.setItem('lm.xin.agent.v','3');localStorage.setItem('lm.xin.agent','harness')")
         await pg.goto(ui.BASE + '/#xin')
         await pg.wait_for_selector('.xc.show .xc-hello')
-        await pg.fill('.xc-row textarea', '天启你好')
+        await pg.fill('.xc-row textarea', '小芯你好')
         await pg.keyboard.press('Enter')
         await pg.wait_for_function(ui.CHAT_DONE + ' && !!LimingXinChat.state.sid', timeout=10000)
         tq = st['sends'][-1]
         kept = await pg.evaluate("localStorage.getItem('lm.xin.main')")
-        ui.check('天启模式开着时的空白页：发出去的是天启的新对话，不带 main', tq.get('agent') == 'harness' and 'main' not in tq and not kept, (tq, kept))
+        ui.check('旧设备的 Harness 偏好不会改变小芯主对话', tq.get('agent') == 'codex' and tq.get('main') is True and kept == MAIN, (tq, kept))
         await pg.context.close()
 
         # 7. 几种宽度下侧边栏不横向溢出

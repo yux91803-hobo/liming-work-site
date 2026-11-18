@@ -136,6 +136,13 @@ async def main():
             await page.locator('.xc-login input[name=pw]').fill(PASSWORD, timeout=30000)
             await page.locator('.xc-login button').click()
             await page.wait_for_function('LimingXinChat.state.authed', timeout=30000)
+            tq_response = await raw('Tianqi me', lambda: context.request.get(BASE + '/api/tq/me', timeout=30000), True)
+            if tq_response.status != 200:
+                raise RuntimeError('Tianqi login status returned HTTP ' + str(tq_response.status))
+            tq_me = await tq_response.json()
+            if tq_me.get('authed') is not True or not isinstance(tq_me.get('enabled'), bool):
+                raise RuntimeError('天启入口不认同一个登录或缺少启用状态')
+            print('PASS 天启入口认同一个登录（enabled=' + json.dumps(tq_me['enabled']) + '）', flush=True)
             # 第 2 批：状态切到内核模式。外壳拉起常驻的状态进程（换外壳、切换前备份都在这里头），最多等 120 秒；
             # 等不到就失败（会自动回滚）。这次部署改了外壳的，要等电脑上换成新外壳（kernelCurrent）以后才算。
             # 记下切换次数和外壳起控制器的次数，所有检查做完后再核对一次。

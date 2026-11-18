@@ -138,7 +138,17 @@ FAKE_PUSH = """
 # 面板里这一轮做完了：「正在输入」收起、没在发也没在跑
 CHAT_DONE = "!document.querySelector('.xc-typing') && !LimingXinChat.state.run && !LimingXinChat.state.sending"
 
-async def xin_mock(pg, authed=False, live=None):
+LEGACY_HARNESS = {'sid': 'sharness01', 'agent': 'harness', 'title': '天启旧对话',
+                  'model': 'deepseek-v4.1-flash', 'turns': 1, 'updated': 0}
+
+async def open_legacy_harness(pg):
+    entry = pg.locator('.xc-si').filter(has_text=LEGACY_HARNESS['title'])
+    if not await pg.evaluate("document.querySelector('.xc').classList.contains('wb-side')") and not await entry.is_visible():
+        await pg.click('.xc-list-b')
+    await entry.click()
+    await pg.wait_for_function("LimingXinChat.state.sessAgent === 'harness' && !LimingXinChat.state.loadingConversation")
+
+async def xin_mock(pg, authed=False, live=None, legacy_harness=False):
     live = live or XIN_LIVE
     st = {'authed': authed, 'polls': 0, 'sent': None, 'ops': [], 'mem_added': None, 'mem_forgot': None,
           'memitems': [{'id': 'mlegacy0001', 'type': 'unsorted', 'content': '用户在学定时器', 'basis': 'legacy', 'status': 'pending', 'source': 'legacy', 'created': 1762200000000, 'updated': 1762200000000, 'confirmed': None,
@@ -232,12 +242,19 @@ async def xin_mock(pg, authed=False, live=None):
         if op == 'history' and str(args.get('sid', '')).startswith('stask'):
             t = next((x for x in st.get('tasks') or [] if x['sid'] == args['sid']), {})
             return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'codex'}, 'task': dict(t, goal='编译 blink 工程'), 'runs': [{'run': 'rtask00001', 'started': 1, 'done': True, 'events': XIN_TASK_RUN}], 'active': None}})
-        if op == 'history': st['history_sid'] = args.get('sid')
-        if op == 'history': return await ok({'ok': True, 'data': {'session': {'sid': args['sid'], 'agent': 'claude' if args['sid'] == 'sold000001' else 'codex'}, 'usage': XIN_USE_HIST if args['sid'] == 'shist00001' else None, 'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': st.get('active')}})
+        if op == 'history':
+            sid = st['history_sid'] = args['sid']
+            session = LEGACY_HARNESS if legacy_harness and sid == LEGACY_HARNESS['sid'] else {
+                'sid': sid, 'agent': 'claude' if sid == 'sold000001' else 'codex'}
+            return await ok({'ok': True, 'data': {'session': session, 'usage': XIN_USE_HIST if sid == 'shist00001' else None,
+                'runs': [{'run': 'rhist00001', 'events': XIN_HIST, 'done': True}], 'active': st.get('active')}})
         if op == 'sessions' and st.get('many'):   # 对话很多：当前的 shist00001 排在第 7 个
             return await ok({'ok': True, 'data': {'sessions': [{'sid': 's%09d' % i if i != 6 else 'shist00001', 'agent': 'codex', 'title': '对话 %d' % (i + 1), 'turns': 1, 'updated': 0} for i in range(st['many'])]}})
-        if op == 'sessions': return await ok({'ok': True, 'data': {'sessions': [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0},
-                                                                         {'sid': 'sold000001', 'agent': 'claude', 'title': '旧对话', 'turns': 2, 'updated': 0}]}})
+        if op == 'sessions':
+            sessions = [{'sid': 'shist00001', 'agent': 'codex', 'title': '编译 main.c', 'turns': 1, 'updated': 0},
+                        {'sid': 'sold000001', 'agent': 'claude', 'title': '旧对话', 'turns': 2, 'updated': 0}]
+            if legacy_harness: sessions.append(LEGACY_HARNESS)
+            return await ok({'ok': True, 'data': {'sessions': sessions}})
         if op == 'files': return await ok({'ok': True, 'data': XIN_FILES.get(args.get('path') or W, {'error': 'not_found', 'msg': '没有这个文件'})})
         if op == 'push_key': return await ok({'ok': True, 'data': {'key': PUSH_KEY, 'subs': 0}})
         if op == 'screen':
@@ -292,7 +309,11 @@ async def xin_mock(pg, authed=False, live=None):
                 await st['send_gate'].wait()
             if st.get('send_delay'): await asyncio.sleep(st['send_delay'])
             st['sent'] = args
-            return await ok({'ok': True, 'data': {'sid': 'snew000001', 'run': 'rlive00001', 'agent': args.get('agent') or 'codex'}})
+            old_harness = legacy_harness and args.get('sid') == LEGACY_HARNESS['sid']
+            return await ok({'ok': True, 'data': {
+                'sid': LEGACY_HARNESS['sid'] if old_harness else 'snew000001',
+                'run': 'rlive00001', 'agent': 'harness' if old_harness else args.get('agent') or 'codex',
+            }})
         if op == 'poll':
             if st.get('poll_gate'):
                 st['poll_entered'].set()
@@ -1562,7 +1583,7 @@ async def main():
         await pg.context.close()
 
         pg = await page(b)
-        xs = await xin_mock(pg)
+        xs = await xin_mock(pg, legacy_harness=True)
         await pg.goto(BASE + '/#xin'); await pg.wait_for_selector('.xc.show .xc-login')
         check('没登录：#xin 先要密码', await pg.is_visible('.xc-login input[type=password]') and not await pg.is_visible('.xc-ft'))
         await pg.click('.xc-x'); await pg.wait_for_timeout(400)
@@ -1575,7 +1596,7 @@ async def main():
         check('没登录不叫醒云电脑，登录以后马上叫醒', 'wake' not in ops_before and 'wake' in xs['ops'], (ops_before, xs['ops']))
         st = await pg.evaluate("[!!document.querySelector('.xc-hello .xc-av'), [...document.querySelectorAll('.xc-hello .xc-chip')].map(b => b.textContent), document.querySelector('.xc-row .xc-mdl').hidden, document.querySelector('.xc-sub').textContent]")
         check('登录以后：欢迎页（小芯头像和一句话，没有建议按钮；上面只有「小芯 | 天启」切换），默认模式输入框底下没有模型按钮（没有可选的），标题下面写着在线',
-              await pg.is_visible('.xc-row textarea') and st == [True, [], True, '在线'] and not await pg.evaluate("!!document.querySelector('.xc-hello button:not(.xc-as-b)')"), st)
+              await pg.is_visible('.xc-row textarea') and st == [True, [], True, '在线'] and not await pg.evaluate("!!document.querySelector('.xc-hello button, .xc-hello .xc-as')"), st)
         PK = """(() => { const p = document.querySelector('.xc-pick'), t = p.querySelector('.xc-pk-t'), m = p.querySelector('.xc-pk-g[data-g=model]'), on = b => b.getAttribute('aria-checked') === 'true' ? '*' : '';
           return [document.querySelector('.xc-mdl span').firstChild.textContent, t ? t.querySelector('i').textContent : null, !!m,
             [...p.querySelectorAll('.xc-eff-d')].map(b => b.getAttribute('aria-label') + on(b)), document.querySelector('.xc-mdl span').firstChild.textContent,
@@ -1588,15 +1609,10 @@ async def main():
             await pg.wait_for_selector('.xc-set')
         async def close_dr():
             await pg.click('.xc-dr-x'); await pg.wait_for_function("!document.querySelector('.xc').classList.contains('dr-open')")
-        async def set_tianqi(on):
-            # 天启不在设置里了（站长 2026-11-16「属于另一种 agent 形式」）：新对话空白页上的「小芯 | 天启」切换
-            if not await pg.evaluate("!!document.querySelector('.xc-hello .xc-as')"):
-                await pg.click('.xc-new-b'); await pg.wait_for_selector('.xc-hello .xc-as')
-            await pg.click('.xc-as-b[data-a=%s]' % ('harness' if on else 'codex')); await pg.wait_for_timeout(150)
-        await set_tianqi(True)
+        await open_legacy_harness(pg)
         await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
         st = await pg.evaluate(PK)
-        check('空白页切到天启：Harness 模型面板直接显示三个模型，当前 DeepSeek V4.1 Flash；分段按钮写出四档名称，默认高',
+        check('打开旧天启对话：Harness 模型面板直接显示三个模型，当前 DeepSeek V4.1 Flash；分段按钮写出四档名称，默认高',
               st == ['DeepSeek V4.1 Flash', '高', True, ['关', '低', '高*', '最高'], 'DeepSeek V4.1 Flash', '高', ['DeepSeek V4.1 Flash*', 'GLM-5.3', 'GLM-5.3 Flash'], False], st)
         await pg.click('.xc-eff-d[data-v=off]'); await pg.wait_for_timeout(100)
         st = await pg.evaluate(PK)
@@ -1627,13 +1643,13 @@ async def main():
         await pg.click('.xc-sh-x')
         await open_set()
         st = await pg.evaluate("""[!!document.querySelector('.xc-tianqi'), document.querySelector('.xc-set').textContent.includes('天启'),
-          !!document.querySelector('.xc-set [data-agent]'), document.querySelector('.xc-set').textContent.includes('Claude'), !!document.querySelector('.xc-set .xc-effort, .xc-set .xc-cxmodel'), localStorage.getItem('lm.xin.agent')]""")
-        check('设置里没有天启（它是新对话的入口），没有三选一、没有 Claude；思考强度、模型不在设置里；面板按 Esc 关、聊天不关',
+          !!document.querySelector('.xc-set [data-agent]'), document.querySelector('.xc-set').textContent.includes('Claude'), !!document.querySelector('.xc-set .xc-effort, .xc-set .xc-cxmodel'), LimingXinChat.state.sessAgent]""")
+        check('设置里没有创建天启的选项，没有三选一、没有 Claude；思考强度、模型不在设置里；面板按 Esc 关、聊天不关',
               st == [False, False, False, False, False, 'harness'] and st0 == [True, True], (st, st0))
         await close_dr()
-        await set_tianqi(False)
-        st = await pg.evaluate("[document.querySelector('.xc-mdl').hidden, localStorage.getItem('lm.xin.agent'), localStorage.getItem('lm.xin.agent.v')]")
-        check('空白页切回小芯：回到默认模式，模型按钮收起，记在这个浏览器里', st == [True, 'codex', '3'], st)
+        await pg.click('.xc-new-b'); await pg.wait_for_selector('.xc-hello')
+        st = await pg.evaluate("[document.querySelector('.xc-mdl').hidden, LimingXinChat.state.agent, !!document.querySelector('.xc-as')]")
+        check('在旧天启对话中新建小芯对话：默认 Codex，模型按钮收起', st == [True, 'codex', False], st)
         # 以前的 Claude 对话照样能打开：按钮写 Claude 和它的档位（五档），能改；回到新对话又是默认模式
         await pg.click('.xc-list-b'); await pg.wait_for_selector('.xc-si')
         await pg.click('.xc-si:has-text("旧对话")'); await pg.wait_for_selector('.xc-code')
@@ -1644,7 +1660,7 @@ async def main():
         hid = await pg.evaluate("document.querySelector('.xc-pick').hidden")
         st2 = await pg.evaluate("document.querySelector('.xc-mdl').textContent")
         await pg.click('.xc-new-b'); await pg.wait_for_selector('.xc-hello')
-        st3 = await pg.evaluate("[localStorage.getItem('lm.xin.agent'), localStorage.getItem('lm.xin.effort'), document.querySelector('.xc-mdl').hidden]")
+        st3 = await pg.evaluate("[LimingXinChat.state.agent, localStorage.getItem('lm.xin.effort'), document.querySelector('.xc-mdl').hidden]")
         check('以前的 Claude 对话：打开还是 Claude，五档 低 / 中 / 高 / 超高 / 最高，能选超高；点外面面板就关；新对话回到默认模式（模型按钮收起），Claude 的档位记着',
               st[:4] == ['Claude', '高', False, ['低', '中', '高*', '超高', '最高']] and hid and st2 == 'Claude超高' and st3 == ['codex', 'xhigh', True], (st, hid, st2, st3))
         check('新对话还没有用量：输入框底下那一行不显示', not await pg.is_visible('.xc-use'))

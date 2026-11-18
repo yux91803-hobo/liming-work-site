@@ -1,3 +1,69 @@
+## 2026-11-18 · 天启独立工具集成（Codex）
+
+- 基线为 #174 的 `9c022c0`。分支 `codex/xin-tianqi-li2-20261118` 保留 Claude Code 第 1–4 步与 Antigravity 第 5 步的原始提交。Codex 实现第 6–7 步和集成修正，并自查整条分支。各步原作者、修正原因及证据见变更记录。 [变更记录](CHANGES.md) · [实施计划](superpowers/plans/2026-11-18-tianqi-li2.md)
+- 已移除小芯工作台欢迎页、侧边栏及命令面板的新建天启入口。旧天启沿用 `li` 的会话编号、Harness、模型和插件。直接打开 `/tianqi` 会延后小芯的启动，返回后更新同一个登录再继续。正式站联调只用已登录的浏览器读取 `/api/tq/me` 就能验证天启入口。
+- 台账与测试证据包括状态隔离、误配 key 拒绝跑错电脑、`tq-inbox` 闹钟重启、缺省 key、#174 回滚和恢复、入口与多尺寸深浅色。第 5 步的每日任务和 Chromium 异常在正确的 Node 22 和 Chromium 环境复测通过。 [第 5 步交接](https://github.com/yux91803-hobo/liming-work-site/commit/34888f6193e532441a5bdd588f20564b02ea3778)
+- 第 8 步发布检查跟随合入 PR。开启天启还需第 9 步的 `XIN_TQ_INSTABOX_API_KEY`、`li2` 的 Harness、网关程序与站长新增的网关账号，再用天启发一条验收消息。准备阶段通过只读接口从 `li` 取已核准的程序文件，`li2` 使用独立程序配置。 [上线与准备顺序](superpowers/specs/2026-11-18-tianqi-li2-design.md#6-上线顺序)
+
+## 2026-11-18 17:34（北京时间）· 天启搬到 li2：完成第 5 步并交接第 6–9 步（Antigravity）
+
+- **分工与复核**：第 1–4 步由 Claude Code 实现并自查（见下方上一条）；第 5 步及本交接记录由 **Antigravity** 实现并自查，**尚无独立复核**。未把任何审核者列为作者或共同作者。
+- **分支与远端核对**：
+  - 开发分支 `antigravity/tianqi-li2-20261118`（已推送远端）：基于 Claude Code 原分支 `claude/friendly-hopper-d7392n`（`dfddaba`，原分支及提交完整保留未动），并在 `0a0b883` 合入了当时 `main`（#173，`969d162`）；第 5 步提交为 `f2b63ef`。
+  - **最新 `main` 与 PR**：`git fetch origin main` 与 `gh pr list --state all` 核对显示，#174（Codex 第 3 批 B 默认启用持久收尾）已合入 `origin/main`（`9c022c0`，2026-11-18 07:43 UTC）。#174 与 Codex 工作未碰，也尚未重并进当前开发分支；天启尚未开 PR，线上无变动，li/li2 均未操作。
+- **第 5 步已完成内容（`f2b63ef`）**：
+  - `site/tools.js` & `site/tools/tianqi/index.html`：首页「工具」类新增 `/tianqi` 入口与独立页（按 `embed` / `lm.theme` 初始化，写 `window.LIMING_CHAT = { role: 'tianqi' }`，版本参数与首页保持一致：`px3`、`xc-r2b-20261116`，不加载 `mascot.js`）。
+  - `site/xin/chat.js`、`site/xin/chat.css`、`site/xin/term.js`：天启模式（`TQ`）接入 `/api/tq/`（含 `upload`、`fileUrl`、`backups`、`preview`、`pagehide` 等）；本地存储改 `lm.tq.*`（保留共享 `lm.xin.device`）；禁用主对话/每日任务/设置/额度切换/`greet`/推送/页面上下文（`.xc-ctx`）；启动开全屏工作台并 `ping`，网关未就绪时提示「天启的网关还没配好，暂时发不了消息。」并禁用输入与发送；标题栏、侧边栏、欢迎页、命令面板与终端弹窗（「天启的电脑」）改用星徽；嵌在首页时左上方让出返回键空间并处理 `ready`/`close`/`reset` 消息。
+  - `scripts/preview.mjs`：`/api/tq/me` 返回 `{enabled:false, authed:false}`；`/tianqi` 路由回退到 `/index.html`。
+  - `test/e2e/xin_tianqi_e2e.py` & `package.json`：新增 6 场景 8 项端到端测试并接入 `npm run test:e2e`。
+- **已验证结果与未验证/风险项（实事求是）**：
+  - 全站静态脚本与本地资源引用检查（同 `scripts/check.mjs` 前半段）：`301 files, 231 asset references` 通过。
+  - 天启后端单元测试（`node --test test/xin-tianqi.test.cjs test/xin-tianqi-worker.test.cjs`）：**14/14** 通过。
+  - 本地预览与定向 Playwright E2E（`node scripts/preview.mjs --port 5173`，实测 `/tianqi` 与 `/api/tq/me` 均 `200`；`source ~/env.sh`）：
+    - `test/e2e/xin_tianqi_e2e.py`：**8/8** 通过
+    - `test/e2e/xin_work_e2e.py`：**42/42** 通过
+    - `test/e2e/xin_term_e2e.py`：**71/71** 通过
+    - `test/e2e/xin_main_e2e.py`：**19/19** 通过
+    - `test/e2e/xin_web_e2e.py`：**7/7** 通过
+  - **未完成与异常观察**：
+    - `npm run test:e2e` 其余 9 组 E2E 尚未运行；第 8 步要求的 `1280/1024/768/390` 深浅色视觉截图尚未截取。
+    - `npm run check` 全量单测中途取消且未全过，本容器内观察到两处失败（均未改后端代码）：`test/xin-batch1.test.cjs` 单独复测 **15/17** 通过，2 条 `daily` 用例（L75、L291）报 `{"error":"no_agent","msg":"电脑里没有 codex，每日任务做不了"}`；`test/xin-browser.test.cjs` 实机浏览器用例多项失败（容器 Chromium / 沙盒环境问题；上述未用 `source ~/env.sh` 切换至 Node v22 亦可能有关，下一步应先排查或对照 CI）。
+- **下一步（按 [实现计划](superpowers/plans/2026-11-18-tianqi-li2.md) 第 6–9 步）**：
+  1. 核对并合入最新 `origin/main`（`9c022c0` 含 PR #174），同时确认本机跑全量 `npm run check` 时 Node 版本（`~/env.sh`）与上述 `xin-batch1`/`xin-browser` 环境表现。
+  2. **第 6 步（TDD）**：先修改 `xin_tianqi_e2e.py`（加深链 `/tianqi`、`visibilitychange`、点 `.panel .back` 后补发 `wake`/`greet`）、`stm32_e2e.py`、`xin_main_e2e.py`、`xin_term_e2e.py`、`xin_learning_e2e.py` 看新断言失败；再改 `site/xin/chat.js` 去掉首页工作台「新建天启对话」入口与 `.xc-as`（保留打开旧 `harness` 对话），加 `tianqiOpen()` + `MutationObserver` 在 `/tianqi` 打开时延后首页 `wakeVm()`/`greet()`。
+  3. **第 7 步**：各 HTML 同步新 `?v=` 版本参数；改 `.github/workflows/deploy.yml`（说明 + 条件 `jq` 写 `TQ_INSTABOX_API_KEY` 并在本地测空/非空 `$c`、冒烟加 `/tools/tianqi/` 和 `/api/tq/me`）、`scripts/test-xin-live.py`（校验 `/api/tq/me` 同登录）、`README.md`、`docs/CHANGES.md`、`docs/AI-HANDOFF.md` 及 spec 状态。
+  4. **第 8–9 步**：全量 `npm run check` + 全量 `npm run test:e2e`、`1280/1024/768/390` 深浅色截图自查、整条分支复核、开 PR 等 CI/测试站绿、squash 合并带 `expectedHeadSha`、确认正式站绿；随后请站长加 `XIN_TQ_INSTABOX_API_KEY`（用新方式另给，不打印进日志）与网关账号，最后按规矩只写 li2（li 只读、li2 不装 STM32 环境）完成部署与联调。
+
+## 2026-11-18 下午 · 天启搬到 li2：做完第 1–4 步，额度用完交接（Claude Code）
+
+- 站长已确认设计（北京 11-18 13:39「不用装stm32编译环境，开始吧」）：[设计](superpowers/specs/2026-11-18-tianqi-li2-design.md)、[实现计划（9 步）](superpowers/plans/2026-11-18-tianqi-li2.md)。天启改成首页的一个新工具 `/tianqi`，连第二台云电脑 li2；数据和网关账号都不搬，提示词只有「你叫天启。」，只用 Harness。
+- 分支 `claude/friendly-hopper-d7392n`，从 `main` 的 `88bec32`（#172）开出，`main` 之后没再动。**还没开 PR，线上没变。**
+- 已完成（每步都跑了全量 `npm test`，第 4 步时 1036/1036）：
+  - 第 1 步 `1773fe7`：Worker 的天启范围（`/api/tq/*`、`scopeEnv`、li2 的 key、缓存按电脑分开、exec 带 `XIN_ROLE=tianqi`）。
+  - 第 2 步 `20fa095`：Durable Object 实例 `tq-inbox` 记住范围（请求头 `x-xin-scope: tq`，闹钟里也用 li2 的 key）。同一个类，**没有迁移**。
+  - 第 3 步 `1ecb776`：每天 8:55 也叫醒 li2。
+  - 第 4 步 `9474ace`：li2 上的天启身份（控制器）。测试是 `test/xin-tianqi-worker.test.cjs`、`test/xin-tianqi.test.cjs`。
+- 我做的决定（原来记在会话的工作区里，不进 Git，抄在这里）：
+  - 第 2 步：闹钟测试把 `Date.now` 往后拨 10 分钟再调 `alarm()`。原因是待送达第一次失败后有 5 秒退避。错了只影响测试写法。
+  - 第 4 步：计划写的 `createController({allowOp})` 改了放法。`TIANQI_OPS` 放在 `vm-kernel-controller.mjs`，在分派处直接看 `TIANQI`。`tianqiReady`/`tianqiRefuse` 和挪过去的 `dshCmd`/`HARNESS_KEY`/`harnessInstalled` 放在 `vm-base.mjs`。原因有两条：`test/xin-writers.json` 规定 `vm-agent.mjs` 行数只减不增（基线 3049，现在 3044）；冷启动子请求已经是 40，正好是测试上限，**不能再加新的 `vm-*.mjs` 模块**。
+  - 第 4 步收尾那次全量，`xin-web.test.cjs`「网页验收用真浏览器点击」挂过一次：并行时 Chromium 冷启动超过 `vm-runtime.mjs:876` 的 15 秒。这一步没改那里，单独跑 22/22，重跑一次全绿。
+- 接着做第 5 步（天启页面），再做第 6–9 步，按计划原文来。第 5 步我摸到的坑：
+  - `scripts/preview.mjs` 的单页回退只有 `['/map','/stm32']`，要加 `/tianqi`，不然深链接测试 404。本地预览对 `/api/xin/me` 回 `{enabled:false}`、其余 `/api/*` 一律 404，要让 `/api/tq/me` 也回没配好。
+  - `site/xin/chat.js` 有几处把 `/api/xin/` 写死了，天启模式要改用 `API`：`upload()`（约 2997 行）、`fileUrl`（约 3042）、备份（约 969/977）、`preview.png`（约 2449）。
+  - 本地存储的键都是 `lm.xin.*`，天启用 `lm.tq.*`；`lm.xin.device` 两边共用。
+  - 首页外壳的返回键在左上角（left 10px、top 8px、40×40），嵌进去的页面头部要让开约 56px（STM32 页是 `.embed .bar{padding-left:calc(56px + …)}`）。
+- 第 9 步（准备 li2）要站长先做两件事：
+  1. 在 GitHub Secrets 加 `XIN_TQ_INSTABOX_API_KEY`（li2 那个 InstaBox 账号的 key）。
+  2. 网关账号站长自己加（「账号数据不要搬过去，我到时候会新加」）。
+
+  站长传给我的 li2 key 文件只在这个 Claude 会话的容器里，下一位要的话请站长另外给，不打印、不提交。
+- 规矩：
+  - li 只读，不往 li 写。
+  - li2 不装 STM32 编译环境。
+  - 不替小芯或天启登录网关面板。
+  - 删机器、删快照、删数据先问站长。
+- 第 3 批 B 收尾站长交给了 Codex，这条线不碰。
+
 ## 2026-11-18 · 第 3 批 B 持久收尾启用（Codex）
 
 - Codex 实现并自查，尚无独立复核。分支 `codex/xin-finalization-enable-20261118` 用单独提交启用新轮次写入和正式回执验证。现有协议与状态文件保持可读。[实施与回滚计划](superpowers/plans/2026-11-16-xin-finalization.md)

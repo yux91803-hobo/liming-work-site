@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f6f5f2" id="themeColor">
+<title>天启 · Liming 工具箱</title>
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<script>
+  (function () {
+    var h = document.documentElement;
+    try { if (window.self !== window.top) h.classList.add('embed'); } catch (e) { h.classList.add('embed'); }
+    if (/(?:^|[?&])embed=1(?:&|$)/.test(location.search)) h.classList.add('embed');
+    var mq = window.matchMedia && matchMedia('(prefers-color-scheme: dark)');
+    function apply() {
+      var t = 'light';
+      try { t = localStorage.getItem('lm.theme') || 'light'; } catch (e) {}
+      var d = t === 'dark' || (t === 'auto' && mq && mq.matches);
+      h.dataset.theme = d ? 'dark' : 'light';
+      h.dataset.pref = t;
+      var m = document.getElementById('themeColor');
+      if (m) m.setAttribute('content', d ? '#121110' : '#f6f5f2');
+    }
+    apply();
+    if (mq && mq.addEventListener) mq.addEventListener('change', apply);
+    window.addEventListener('storage', function (e) { if (e.key === 'lm.theme') apply(); });
+    window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data && e.data.type === 'theme') apply(); });
+  })();
+</script>
+<link rel="stylesheet" href="/pixel.css?v=px3">
+<link rel="stylesheet" href="/xin/chat.css?v=tq-li2-20261118">
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  [hidden]{display:none!important}
+  html,body{margin:0;height:100%;overflow:hidden;background:#f6f5f2;color:#1c1b19}
+  [data-theme=dark],[data-theme=dark] body{background:#121110;color:#f2efe9}
+  button,input,textarea{font:inherit;color:inherit}
+  button{border:0;background:none;padding:0;cursor:pointer}
+</style>
+</head>
+<body>
+<script>window.LIMING_CHAT = { role: 'tianqi' };</script>
+<script src="/xin/term.js?v=tq-li2-20261118"></script>
+<script src="/xin/chat.js?v=tq-li2-20261118"></script>
+</body>
+</html>

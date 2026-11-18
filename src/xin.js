@@ -15,6 +15,7 @@
 //                                       | logins | login_remove {site} | login_open {sid?|url?} | login_done（站长的网站登录，docs/xin-browser-v2-design.md）
 //                                       | usage（用量看板：额度、预计用完、每天的 token）
 //   GET  /api/xin/file?path=/data/workspace/…   下载小芯电脑里的一个文件（先让 vm-agent 核对在工作目录里，再从 InstaBox 原样转过来）
+//   /api/tq/*  天启（第二台电脑 li2）：同样这些接口，只开 TQ_OPS 里的操作；没有备份、后台任务回调（见下面的 scopeEnv）
 // status、wake 直接调 InstaBox 的机器接口（wake：打开网页时把睡着的云电脑叫醒，已经醒着就什么都不做）；其余都转成 InstaBox exec：node <vm-agent.mjs> <op>，参数从 stdin 传进去（见 site/xin/vm-agent.mjs）。
 // 返回 {ok:true, data} 或 {ok:false, state, msg, retryAfter}：state = waking（云电脑在睡，唤醒中）、cooldown（跑满 8 小时后的冷却）、busy、error。
 import { KERNEL_PORT, KernelConfigStore, kernelRequest, kernelFetch, retrySafe, redact } from './xin-kernel.js';
@@ -51,6 +52,22 @@ export function enabled(env) {
   return typeof env.OWNER_PASSWORD === 'string' && env.OWNER_PASSWORD.length >= 12 && typeof env.INSTABOX_API_KEY === 'string' && env.INSTABOX_API_KEY.length > 8;
 }
 
+/* ---------- 天启（docs/superpowers/specs/2026-11-18-tianqi-li2-design.md §4.1） ----------
+   同一套处理开成两个「范围」：/api/xin/* 是小芯（电脑 li），/api/tq/* 是天启（第二台电脑 li2）。天启换一把 InstaBox key
+   （Worker 密钥 TQ_INSTABOX_API_KEY）、换一台电脑（XIN_TQ_MACHINE），待送达和内核配置存在另一个实例 tq-inbox；
+   后台任务监督、备份、每日任务、推送这些小芯的东西在天启里都没有。登录还是同一个。
+   参考 opencode 的 Instance（packages/opencode/src/project/instance.ts）：一个服务进程，状态按项目目录各存一份。 */
+export const TQ_OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'rename', 'archive', 'forget', 'files', 'usage', 'delivery', 'deliveries']);
+const NOT_TQ = { error: 'not_in_tianqi', msg: '天启没有这个功能' };
+export function scopeEnv(env, scope) {
+  if (scope !== 'tq') return env;
+  return { ...env, INSTABOX_API_KEY: env.TQ_INSTABOX_API_KEY || '', XIN_MACHINE: env.XIN_TQ_MACHINE || 'li2', XIN_SCOPE: 'tq' };
+}
+export const isTq = env => env.XIN_SCOPE === 'tq';
+// 发给 li2 的 exec 都带天启身份：外壳 ensure 时把环境存进 kernel.env.json，状态进程和每一轮的进程跟着用
+// （参考 Codex 的 CODEX_HOME：设在最外层进程上，子进程都跟着用）。小芯的请求体一个字段都不加
+const roleEnvs = env => isTq(env) ? { envs: { XIN_ROLE: 'tianqi' } } : {};
+
 /* ---------- 登录 ---------- */
 let keyCache = null;
 async function signKey(env) {
@@ -70,7 +87,7 @@ async function makeCookie(env, now) {
 async function callbackToken(env) {
   return b64url(await crypto.subtle.sign('HMAC', await signKey(env), enc.encode('xin-task-callback-v1')));
 }
-function supervisor(env) { return env.XIN_TASK_SUPERVISOR?.get(env.XIN_TASK_SUPERVISOR.idFromName('xin-tasks')); }
+function supervisor(env) { return isTq(env) ? null : env.XIN_TASK_SUPERVISOR?.get(env.XIN_TASK_SUPERVISOR.idFromName('xin-tasks')); }
 async function recordTasks(env, state) {
   const stub = supervisor(env); if (!stub) return;
   const r = await stub.fetch('https://xin.internal/state', { method: 'POST', body: JSON.stringify(state) });
@@ -103,17 +120,25 @@ async function ibErr(r) {
   try { e = (await r.json()).error || {}; } catch { /* 不是 JSON */ }
   return { status: r.status, code: e.code || 'http_' + r.status, msg: e.message || '', retryAfter: e.retryAfterSeconds || Number(r.headers.get('retry-after')) || 0 };
 }
-let machineCache = null;
+// 按范围、key 和电脑名缓存。小芯旧版允许选账号里唯一的电脑，这份缓存不能被天启使用。
+const machineCache = new Map();
+const machineKey = env => (isTq(env) ? 'tq' : 'xin') + '\n' + env.INSTABOX_API_KEY + '\n' + (env.XIN_MACHINE || 'li');
 async function machine(env, now) {
-  if (machineCache && machineCache.key === env.INSTABOX_API_KEY && now - machineCache.at < 600000) return machineCache.m;
+  const c = machineCache.get(machineKey(env));
+  if (c && now - c.at < 600000) return c.m;
   const r = await ib(env, '/v1/machines');
   if (!r.ok) throw await ibErr(r);
   const list = (await r.json()).machines || [];
   const want = env.XIN_MACHINE || 'li';
-  const m = list.find(x => x.name === want || x.id === want) || (list.length === 1 ? list[0] : null);
+  let m = list.find(x => x.name === want || x.id === want);
+  if (!m && !isTq(env) && list.length === 1) {
+    const only = list[0], tianqi = env.XIN_TQ_MACHINE || 'li2';
+    if (only.name !== tianqi && only.id !== tianqi) m = only;
+  }
   if (!m) throw { status: 404, code: 'no_machine', msg: '找不到云电脑「' + want + '」' };
-  machineCache = { key: env.INSTABOX_API_KEY, at: now, m: { id: m.id, name: m.name } };
-  return machineCache.m;
+  const hit = { at: now, m: { id: m.id, name: m.name } };
+  machineCache.set(machineKey(env), hit);
+  return hit.m;
 }
 let agentCache = null;
 // vm-agent.mjs and every local module it imports (recursively) go to the VM under content-hashed names.
@@ -202,19 +227,19 @@ function uploadAgent(env, id, agent) { return installFiles(env, id, agentFiles(a
 // The controller's scripts live on a machine where fully privileged agents also run. A script is found by the hash in
 // its name, so a file edited in place would keep being executed. Every ten minutes (per isolate) compare what is on
 // the machine with what this deployment ships; anything different is replaced and the incident is written down.
-let verifiedAt = 0;
+const verifiedAt = new Map();   // 按电脑号：li 和 li2 各自十分钟核对一次
 export async function verifyAgent(env, origin, id, now = Date.now()) {
-  if (now - verifiedAt < 600000) return { skipped: true };
-  verifiedAt = now;
+  if (now - (verifiedAt.get(id) || 0) < 600000) return { skipped: true };
+  verifiedAt.set(id, now);
   const agent = await agentScript(env, origin), files = [...agent.dependencies, ...(agent.kernel ? [agent.kernel] : []), agent];
   const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['sha256sum', '--', ...files.map(f => f.path)], timeoutSeconds: 20 }) });
-  if (!r.ok) { verifiedAt = 0; return { skipped: true }; }   // asleep or busy: the request that follows reports it; check again next time
+  if (!r.ok) { verifiedAt.delete(id); return { skipped: true }; }   // asleep or busy: the request that follows reports it; check again next time
   const found = new Map();
   for (const line of String((await r.json()).stdout || '').split('\n')) { const m = /^([a-f0-9]{64})\s+\*?(\S.*)$/.exec(line); if (m) found.set(m[2], m[1]); }
   // A missing file is uploaded by exec() when it is first needed; only a present file with other content is an incident.
   const changed = files.filter(f => found.has(f.path) && found.get(f.path) !== f.sha256);
   if (!changed.length) return { ok: true };
-  try { await uploadAgent(env, id, agent); } catch (e) { verifiedAt = 0; throw e; }
+  try { await uploadAgent(env, id, agent); } catch (e) { verifiedAt.delete(id); throw e; }
   await exec(env, origin, id, 'integrity_event', { files: changed.map(f => f.path.split('/').pop()) }).catch(() => null);
   return { ok: false, repaired: changed.length };
 }
@@ -244,7 +269,7 @@ function explain(e) {
 
 async function exec(env, origin, id, op, args, retried) {
   const agent = await agentScript(env, origin);
-  const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['node', agent.path, op], stdin: JSON.stringify(args || {}), timeoutSeconds: 40 }) });
+  const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['node', agent.path, op], stdin: JSON.stringify(args || {}), timeoutSeconds: 40, ...roleEnvs(env) }) });
   if (!r.ok) throw await ibErr(r);
   const res = await r.json();
   if (res.exitCode !== 0) {
@@ -266,8 +291,16 @@ async function exec(env, origin, id, op, args, retried) {
    不知道执行没有的（超时、断线、没有内核头的 502/504）只给能安全重来的操作（只读的、带 clientId 由控制器去重的）走 exec，
    别的报「不确定」——宁可让用户刷新看一眼，也不让同一件事做两遍。 */
 const KERNEL_KEYS_FILE = '/data/home/.xin/kernel-keys.json';
-function inboxStub(env) { return env.XIN_TASK_SUPERVISOR?.get(env.XIN_TASK_SUPERVISOR.idFromName('xin-inbox')); }
-let kernelCache = null;
+// 天启的待送达和内核配置在另一个实例 tq-inbox（同一个类，不用迁移）。天启的每个请求都带 x-xin-scope: tq，
+// 实例据此记住自己是天启的（XinTaskSupervisor.bindScope）；小芯的请求原样不动
+function inboxStub(env) {
+  const ns = env.XIN_TASK_SUPERVISOR;
+  if (!ns) return null;
+  const stub = ns.get(ns.idFromName(isTq(env) ? 'tq-inbox' : 'xin-inbox'));
+  if (!isTq(env)) return stub;
+  return { fetch: (url, init = {}) => stub.fetch(url, { ...init, headers: { ...(init.headers || {}), 'x-xin-scope': 'tq' } }) };
+}
+const kernelCache = new Map();   // 按电脑号：li 和 li2 的端口令牌、钥匙各存各的
 function workerKernel(env) {
   const stub = inboxStub(env);
   if (!stub) return null;
@@ -277,16 +310,18 @@ function workerKernel(env) {
     if (!r.ok || d.error) throw { status: d.status || r.status, code: d.error || 'kernel_config', msg: d.msg || '', retryAfter: d.retryAfter || 0 };
     return d;
   };
+  let mid = null;   // 这次用的是哪台电脑：换钥匙、作废令牌只动它
   return {
     async get(machineId) {
-      const c = kernelCache;
-      if (c && c.key === env.INSTABOX_API_KEY && c.machineId === machineId && Date.now() - c.at < 300000) return c.config;
+      mid = machineId;
+      const c = kernelCache.get(machineId);
+      if (c && c.key === env.INSTABOX_API_KEY && Date.now() - c.at < 300000) return c.config;
       const config = await post('config', { machineId });
-      kernelCache = { key: env.INSTABOX_API_KEY, machineId, at: Date.now(), config };
+      kernelCache.set(machineId, { key: env.INSTABOX_API_KEY, at: Date.now(), config });
       return config;
     },
-    async markInstalled(kid) { await post('installed', { kid }); if (kernelCache) kernelCache.config = { ...kernelCache.config, installedKid: kid }; },
-    async invalidateToken(token) { kernelCache = null; await post('invalid', { token }); }
+    async markInstalled(kid) { await post('installed', { kid }); const c = mid && kernelCache.get(mid); if (c) c.config = { ...c.config, installedKid: kid }; },
+    async invalidateToken(token) { if (mid) kernelCache.delete(mid); await post('invalid', { token }); }
   };
 }
 // 钥匙写成电脑上的 kernel-keys.json（0600），新旧两把都在：换钥匙时还没切过去的请求照样认得
@@ -294,22 +329,22 @@ async function installKernelKeys(env, id, cfg) {
   const r = await putAgentFile(env, id, { path: KERNEL_KEYS_FILE, text: JSON.stringify({ v: 1, keys: cfg.keys }) }, '0600');
   if (!r.ok) throw await ibErr(r);
 }
-// 内核不在（502）：后台经 exec 跑一次 ensure（每个 isolate 60 秒内最多一次）；缺内核文件就先传上去
-let ensuringAt = 0;
+// 内核不在（502）：后台经 exec 跑一次 ensure（每台电脑在每个 isolate 里 60 秒内最多一次）；缺内核文件就先传上去
+const ensuringAt = new Map();
 function ensureKernel(env, origin, id, ctx) {
-  if (Date.now() - ensuringAt < 60000) return;
-  ensuringAt = Date.now();
+  if (Date.now() - (ensuringAt.get(id) || 0) < 60000) return;
+  ensuringAt.set(id, Date.now());
   const p = (async () => {
     const agent = await agentScript(env, origin);
     if (!agent.kernel) return;
-    const run = async () => { const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['node', agent.kernel.path, 'ensure', '--port', String(KERNEL_PORT)], timeoutSeconds: 40 }) }); if (!r.ok) throw await ibErr(r); return r.json(); };
+    const run = async () => { const r = await ib(env, `/v1/machines/${id}/exec`, { method: 'POST', body: JSON.stringify({ argv: ['node', agent.kernel.path, 'ensure', '--port', String(KERNEL_PORT)], timeoutSeconds: 40, ...roleEnvs(env) }) }); if (!r.ok) throw await ibErr(r); return r.json(); };
     const res = await run();
     if (res.exitCode !== 0 && /Cannot find module|ERR_MODULE_NOT_FOUND/.test(res.stderr || '')) {
       const u = await putAgentFile(env, id, agent.kernel, '0644');
       if (!u.ok) throw await ibErr(u);
       await run();
     }
-  })().catch(() => { ensuringAt = 0; });
+  })().catch(() => { ensuringAt.delete(id); });
   if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
 }
 async function runOp(env, origin, id, op, args, ctx, opts = {}) {
@@ -414,7 +449,8 @@ async function call(env, origin, op, args, ctx, now, opts = {}) {
     // 能安全重来的（retrySafe：只读、本身重做无害、带去重标识，和换通道重来同一条规则）也回「稍等」，别的照旧交出去
     if (data && data.error === 'owner_unavailable' && (data.executed === false || (data.executed === 'unknown' && retrySafe(op, args)))) return explain({ code: 'owner_unavailable', retryAfter: 3 });
     // 打开网页（greet）时顺手核对云电脑上的控制器脚本有没有被改过；不挡这次请求
-    if (op === 'greet' && ctx) ctx.waitUntil(verifyAgent(env, origin, m.id, now).catch(() => null));
+    // 天启没有 greet：打开对话列表（sessions）时核对 li2 上的脚本
+    if ((op === 'greet' || (isTq(env) && op === 'sessions')) && ctx) ctx.waitUntil(verifyAgent(env, origin, m.id, now).catch(() => null));
     // AI 在等模型回话时云电脑看起来是闲着的：挂一个「有活在干」的租约，别让它半路自己暂停
     const lease = (method, id, ttl) => ib(env, `/v1/machines/${m.id}/activity-leases/xin-${id}`, method === 'PUT' ? { method, body: JSON.stringify({ ttlSeconds: ttl || 1800 }) } : { method }).catch(() => null);
     if ((op === 'send' || op === 'daily') && data && data.run && ctx) ctx.waitUntil(lease('PUT', data.run));
@@ -435,7 +471,7 @@ async function call(env, origin, op, args, ctx, now, opts = {}) {
       const w = await wakeUp(env, m.id);
       if (w && w.code !== 'operation_conflict') return explain(w);
     }
-    if (e && e.status === 404) machineCache = null;
+    if (e && e.status === 404) machineCache.delete(machineKey(env));
     return explain(e || {});
   }
 }
@@ -581,7 +617,15 @@ async function streamRoute(req, env, ctx, url, now) {
 /* ---------- 路由 ---------- */
 export async function handleXin(req, env, ctx, now = Date.now()) {
   const url = new URL(req.url);
-  const p = url.pathname.replace(/^\/api\/xin\/?/, '');
+  const p = url.pathname.replace(/^\/api\/(?:xin|tq)\/?/, '');
+  // /api/tq/*：天启。登录和小芯是同一个（authed 用原来的 env 算）；没配好时只有 me 回话，别的一律「天启还没配好」，不碰 InstaBox
+  if (/^\/api\/tq(?:\/|$)/.test(url.pathname)) {
+    const base = env;
+    env = scopeEnv(env, 'tq');
+    if (p === 'me' && req.method === 'GET') return json({ enabled: enabled(env), authed: await authed(req, base, now), ...(env.XIN_TRANSPORT === 'kernel' && enabled(env) ? { stream: true } : {}), ...(env.XIN_INBOX === '1' && enabled(env) ? { inbox: true } : {}) });
+    if (!enabled(env)) return json({ error: 'disabled', msg: '天启还没配好' }, 404);
+    if (p === 'backup' || p === 'backups' || p === 'task-event') return json(NOT_TQ, 404);
+  }
   if(p.startsWith('preview/')){
     if(req.method!=='GET')return json({error:'method'},405);
     if(!(await authed(req,env,now)))return json({error:'unauthorized',msg:'请先登录小芯聊天，再打开预览'},401);
@@ -642,6 +686,7 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
   if (p === 'backup') return json(await backupNow(env, ctx, now));
   const op = String(body.op || '');
   if (!OPS.has(op)) return json({ error: 'bad_op' }, 400);
+  if (isTq(env) && !TQ_OPS.has(op)) return json(NOT_TQ, 400);
   const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? body.args : {};
   if (op === 'send' && env.XIN_INBOX === '1' && inboxStub(env)) return json(await sendViaInbox(env, args, now));
   if (op === 'delivery' || op === 'deliveries') return json(await deliveryOp(env, op, args));
@@ -661,7 +706,7 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
    Worker 里只做 sha256、HKDF、AES-GCM 这几样原生运算（合计几 ms）。 */
 // 一份最大 5 MB（Durable Object 一个值连键最多 8 MB）。现在一份约 0.6 MB
 const BACKUP_KEEP_DAYS = 30, BACKUP_MAX = 5 * 1024 * 1024, BACKUP_INFO = 'liming-xin-backup-v1';
-function backupStore(env) { return env.XIN_TASK_SUPERVISOR?.get(env.XIN_TASK_SUPERVISOR.idFromName('xin-backups')); }
+function backupStore(env) { return isTq(env) ? null : env.XIN_TASK_SUPERVISOR?.get(env.XIN_TASK_SUPERVISOR.idFromName('xin-backups')); }
 const bjDay = t => new Date(t + 8 * 3600e3).toISOString().slice(0, 10);
 const okDay = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
 // 只给 16 字节的盐、12 字节的 IV 用（很短）；密文不经过它
@@ -724,7 +769,7 @@ async function backupDownload(req, env, url, now) {
 }
 
 /* ---------- 定时任务（Cloudflare Cron，只在正式站配了） ----------
-   北京时间 8:55 叫醒电脑：网关 9:00 自己签到要电脑醒着；
+   北京时间 8:55 叫醒电脑：网关 9:00 自己签到要电脑醒着。天启的 li2 上也有网关，配好了就跟着叫醒一次（只叫醒，不做别的）；
    北京时间 9:10、21:10 让小芯按每日任务清单做一遍（今天做成了 21:10 那次会跳过）。 */
 export const CRON_WAKE = '55 0 * * *', CRON_DAILY = '10 1,13 * * *';
 const CRON_ORIGIN = 'https://liming-work.com';   // 取 vm-agent.mjs 用（静态资源，和域名无关）
@@ -741,6 +786,11 @@ export async function runCron(cron, env, ctx, opt = {}) {
     if (r.ok || (r.state !== 'waking' && r.state !== 'busy')) break;
     await wait(Math.min(30, Math.max(5, r.retryAfter || 5)) * 1000);
   }
+  // 天启（li2）：小芯那台叫完再叫一次，叫不醒、在冷却都只是这一次没叫成，不影响小芯这次的结果
+  if (op === 'wake') {
+    const tq = scopeEnv(env, 'tq');
+    if (enabled(tq)) { kickInbox(tq, ctx); try { await call(tq, CRON_ORIGIN, 'wake', {}, ctx, opt.now || Date.now()); } catch { /* 明天再叫 */ } }
+  }
   // 每日任务那两次顺手做机外备份（今天已有就跳过）；备份没成不影响每日任务的结果，下一次再来
   // （结果不挂在返回值上：每日任务的返回格式不变；做没做成看设置里「机外备份」那一行）
   if (op === 'daily' && r && r.ok) { try { await backupNow(env, ctx, opt.now || Date.now()); } catch { /* 下一次再来 */ } }
@@ -748,7 +798,10 @@ export async function runCron(cron, env, ctx, opt = {}) {
 }
 
 // 测试用：清掉缓存
-export function _reset() { keyCache = null; machineCache = null; agentCache = null; verifiedAt = 0; kernelCache = null; ensuringAt = 0; }
+export function _reset() { keyCache = null; machineCache.clear(); agentCache = null; verifiedAt.clear(); kernelCache.clear(); ensuringAt.clear(); }
+// 测试用：ensure 的节流、内核配置的缓存都按电脑分开
+export const _ensureKernel = (env, origin, id, ctx) => ensureKernel(env, origin, id, ctx);
+export const _workerKernel = env => workerKernel(env);
 export const _callbackToken = env => callbackToken(env);   // 测试用：任务回调的令牌
 
 // Durable alarms keep running after a browser closes or the VM restarts. No alarms remain when idle.
@@ -787,9 +840,24 @@ export class XinTaskSupervisor {
     }
     return json({ error: 'bad_action' }, 400);
   }
-  // 小芯内核的配置（端口令牌、钥匙）放在实例 xin-inbox 里；Durable Object 自己调 call() 时直接用 kernelAdapter()，不经 stub 请求自己
+  /* 这个实例是小芯的还是天启的（tq-inbox）：天启的请求带 x-xin-scope: tq，第一次来时在存储里记下 scope:'tq'；
+     闹钟醒来时没有请求，读记下的。小芯的老实例什么都不记。对不上就拒（把小芯没送完的消息用 li2 的 key 送出去比不送还糟）：
+     存储里已经有东西却没记范围的，是小芯的老实例 */
+  async bindScope(req) {
+    const s = this.state.storage, want = req && req.headers.get('x-xin-scope') === 'tq' ? 'tq' : 'xin';
+    let have = await s.get('scope');
+    if (!have && want === 'tq') {
+      if ((await s.list({ limit: 1 })).size) return false;
+      await s.put('scope', 'tq'); have = 'tq';
+    }
+    if ((have || 'xin') !== want) return false;
+    this.scope = want;
+    return true;
+  }
+  scopedEnv() { return scopeEnv(this.env, this.scope === 'tq' ? 'tq' : 'xin'); }
+  // 小芯内核的配置（端口令牌、钥匙）放在实例 xin-inbox 里（天启的在 tq-inbox）；Durable Object 自己调 call() 时直接用 kernelAdapter()，不经 stub 请求自己
   kernelStore() {
-    return this.kernelConfig || (this.kernelConfig = new KernelConfigStore(this.state.storage, { ib: (p, init) => ib(this.env, p, init), ibErr,
+    return this.kernelConfig || (this.kernelConfig = new KernelConfigStore(this.state.storage, { ib: (p, init) => ib(this.scopedEnv(), p, init), ibErr,
       deploy: this.env.CF_VERSION_METADATA?.id }));
   }
   kernelAdapter() { const s = this.kernelStore(); return { get: id => s.get({ machineId: id }), markInstalled: kid => s.markInstalled(kid), invalidateToken: t => s.invalidateToken(t) }; }
@@ -805,7 +873,9 @@ export class XinTaskSupervisor {
   // 待送达（实例 xin-inbox，src/xin-inbox.js）：送的时候和 Worker 一样调 call()，内核配置直接读本实例的存储
   inbox() {
     return this.inboxImpl || (this.inboxImpl = new Inbox(this.state.storage, {
-      deliver: row => call(this.env, CRON_ORIGIN, row.op, { ...row.args, clientId: row.id }, { waitUntil: p => this.state.waitUntil?.(p) }, Date.now(), { kernel: this.kernelAdapter() })
+      // 旧版闹钟只认 inbox:meta。回滚期间，天启的待送达留在原处，恢复新版后再由 kick 重新安排。
+      namespace: this.scope === 'tq' ? 'tq-inbox' : undefined,
+      deliver: row => call(this.scopedEnv(), CRON_ORIGIN, row.op, { ...row.args, clientId: row.id }, { waitUntil: p => this.state.waitUntil?.(p) }, Date.now(), { kernel: this.kernelAdapter() })
     }));
   }
   async inboxRoute(action, req) {
@@ -822,9 +892,11 @@ export class XinTaskSupervisor {
   }
   async fetch(req) {
     const path = new URL(req.url).pathname;
-    if (path.startsWith('/backup/')) return this.backup(path.slice('/backup/'.length), req);
+    if (!(await this.bindScope(req))) return json({ error: 'scope_mismatch' }, 409);
     if (path.startsWith('/kernel/')) return this.kernelRoute(path.slice('/kernel/'.length), req);
     if (path.startsWith('/inbox/')) return this.inboxRoute(path.slice('/inbox/'.length), req);
+    if (this.scope === 'tq') return json(NOT_TQ, 404);
+    if (path.startsWith('/backup/')) return this.backup(path.slice('/backup/'.length), req);
     const incoming = await req.json(), current = await this.state.storage.get('tasks') || {};
     if (incoming.version != null && current.version != null && (incoming.version < current.version || incoming.version === current.version && incoming.bg !== current.bg)) return json({ ok: true, stale: true });
     // A browser's old read cannot cancel a newer controller callback.
@@ -838,7 +910,11 @@ export class XinTaskSupervisor {
     return json({ ok: true });
   }
   async alarm() {
-    if (await this.state.storage.get('inbox:meta')) return this.inbox().alarm();   // 实例 xin-inbox：待送达的闹钟
+    this.scope = (await this.state.storage.get('scope')) || 'xin';   // 天启的 tq-inbox 醒来也用 li2 的 key
+    if (this.scope === 'tq' && !enabled(this.scopedEnv())) return;
+    const inbox = this.inbox();
+    if (await inbox.initialized()) return inbox.alarm();
+    if (this.scope === 'tq') return;
     const current = await this.state.storage.get('tasks');
     if (!current) return;
     if (current.bg <= 0) { if (current.leaseCleanup) await this.releaseLease(current); return; }
