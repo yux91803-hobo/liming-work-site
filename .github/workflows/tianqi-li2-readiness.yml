@@ -1,0 +1,81 @@
+name: Tianqi li2 read-only readiness
+on:
+  push:
+    branches: [codex/tianqi-li2-readiness-20261118]
+    paths: [.github/workflows/tianqi-li2-readiness.yml]
+permissions: {}
+jobs:
+  inspect:
+    if: github.repository == 'yux91803-hobo/liming-work-site' && github.ref_name == 'codex/tianqi-li2-readiness-20261118'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect li2 program metadata
+        env:
+          LI2_API_KEY: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import quote, urlencode
+          from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self, request, fp, code, msg, headers, newurl):
+                  return None
+
+          def inspect(get):
+              matches = [row for row in get('/v1/machines')['machines'] if row.get('name') == 'li2']
+              if len(matches) != 1 or not matches[0].get('id'):
+                  raise RuntimeError('The configured account does not identify exactly one li2')
+              machine = matches[0]
+              paths = {
+                  '/data/apps': {'harness_program': 'deepseek-harness'},
+                  '/data/home/.local/bin': {'harness_launcher': 'dsh'},
+                  '/data/home/.xin': {'harness_gateway_key_exists': 'harness.key', 'kernel_environment_exists': 'kernel.env.json'},
+                  '/data/home/.config/systemd/user': {'gateway_user_service': 'workbuddy-gateway.service'},
+                  '/etc/systemd/system': {'gateway_system_service': 'workbuddy-gateway.service'},
+              }
+              allowed = {'running', 'suspended', 'stopped', 'starting', 'resuming', 'stopping', 'pending'}
+              state = machine.get('state')
+              result = {'initial_machine_state': state if state in allowed else 'other'}
+              root = '/v1/machines/' + quote(machine['id'], safe='')
+              for directory, fields in paths.items():
+                  try:
+                      contents = get(root + '/files?' + urlencode({'path': directory, 'limit': 5000}))
+                  except HTTPError as error:
+                      if error.code == 404:
+                          result.update(dict.fromkeys(fields, False))
+                      elif error.code in {409, 429, 503}:
+                          result.update(dict.fromkeys(fields, None))
+                      else:
+                          raise
+                  else:
+                      names = {item['name'] for item in contents.get('entries', [])}
+                      result.update({tag: name in names if name in names or not contents.get('truncated') else None
+                                     for tag, name in fields.items()})
+              return result
+
+          def main():
+              key = os.environ.get('LI2_API_KEY')
+              if not key:
+                  raise SystemExit('The Tianqi InstaBox secret is unavailable to this job')
+              opener = build_opener(NoRedirect())
+              def get(path):
+                  request = Request('https://api.instabox.sh' + path, headers={'X-API-Key': key})
+                  with opener.open(request, timeout=25) as response:
+                      return json.load(response)
+              try:
+                  result = inspect(get)
+              except HTTPError as error:
+                  raise SystemExit('InstaBox returned HTTP ' + str(error.code)) from None
+              except (URLError, TimeoutError):
+                  raise SystemExit('InstaBox connection did not complete') from None
+              except (ValueError, KeyError, TypeError):
+                  raise SystemExit('Unexpected InstaBox response shape') from None
+              print('LI2_READINESS ' + json.dumps(result, sort_keys=True))
+
+          if __name__ == '__main__':
+              main()
+          PY
