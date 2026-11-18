@@ -32,7 +32,8 @@ function fixture(t, mode) {
   return { dir, home, env, owner, cli, report, js, meta: () => JSON.parse(fs.readFileSync(home + '/runs/' + RUN + '.json')) };
 }
 
-for (const mode of ['legacy', 'kernel']) {
+// 删旧模式第 2 步：只剩常驻状态进程这一种（legacy 那一遍随旧模式删掉，断言和这一遍一样）
+for (const mode of ['kernel']) {
   test(mode + '：旧尝试、漏带编号、冒用另一轮的报告不能更新 run；当前尝试可用', t => {
     const f = fixture(t, mode);
     for (const [token, run] of [[OLD, RUN], ['', RUN], [CURRENT, 'rattempt002'], [CURRENT, '']]) {

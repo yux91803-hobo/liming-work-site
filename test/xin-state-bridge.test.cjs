@@ -90,15 +90,16 @@ test('公开请求占满并发额度后仍能接收回报，避免等待登录/�
   assert.deepEqual(await Promise.all([a,b]),['done','done']);
 });
 
-test('排空拒绝新前台请求，但允许报告完成已有等待，随后安全回 legacy',async t=>{
+test('排空拒绝新前台请求，但允许报告完成已有等待，随后放锁退出：记录留在 kernel，等下一个主人（删旧模式第 2 步：不再回 legacy）',async t=>{
   let finish;const f=await local(t,q=>q.op==='wait'?new Promise(resolve=>{finish=resolve;}):finish('done'));
   const waiting=f.requestState(f.home,{kind:'op',op:'wait'});while(!finish)await pause(5);
-  const release=f.requestState(f.home,{kind:'control',op:'release',mode:'legacy'});
+  const release=f.requestState(f.home,{kind:'control',op:'release'});
   await pause(10);
   await assert.rejects(f.requestState(f.home,{kind:'op',op:'new'}),e=>e.code==='state_draining'&&e.executed===false);
   await f.requestState(f.home,{kind:'named',op:'report'});assert.equal(await waiting,'done');
-  assert.equal((await release).mode,'legacy');
-  const o=new f.Ownership(f.home);t.after(()=>o.close());o.enter()();assert.equal(o.record().epoch,2);
+  assert.equal((await release).mode,'kernel');
+  const o=new f.Ownership(f.home);t.after(()=>o.close());assert.throws(()=>o.enter(),e=>e.status==='missing');
+  const r=o.record();assert.deepEqual([r.mode,r.epoch],['kernel',1]);
 });
 
 test('kill -9 后内核记录保留；新主人恢复提交，旧写者不能趁空写',async t=>{

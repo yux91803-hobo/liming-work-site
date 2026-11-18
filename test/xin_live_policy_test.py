@@ -167,14 +167,16 @@ class BackgroundFallback(unittest.TestCase):
 
 class ResidentStateOwner(unittest.TestCase):
     # 第 2 批：正式站的状态由外壳拉起的常驻进程管，操作经本机套接字交给它，不再起控制器进程（usage 里的 owner 是外壳的 summary）
-    RUNNING = {'want': 'kernel', 'mode': 'kernel', 'phase': 'running', 'epoch': 4, 'spawns': 2, 'pid': 900, 'lastError': None}
+    RUNNING = {'want': 'kernel', 'mode': 'kernel', 'phase': 'running', 'epoch': 4, 'spawns': 2, 'pid': 900, 'lastError': None, 'kernelCurrent': True}
 
     def test_running_kernel_owner_is_resident(self):
         self.assertEqual(resident_owner({'owner': self.RUNNING}), {'epoch': 4, 'spawns': 2})
 
     def test_anything_else_is_not_resident_yet(self):
         for owner in (None, {}, dict(self.RUNNING, phase='starting'), dict(self.RUNNING, phase='fallback', mode='legacy'),
-                      dict(self.RUNNING, mode='legacy'), dict(self.RUNNING, epoch=None), dict(self.RUNNING, spawns='2')):
+                      dict(self.RUNNING, mode='legacy'), dict(self.RUNNING, epoch=None), dict(self.RUNNING, spawns='2'),
+                      # 电脑上的外壳还不是这次部署的版本（Worker 正在后台换）：先不记，换好了再记，免得中途换外壳把切换次数加一判成重启
+                      dict(self.RUNNING, kernelCurrent=False), {k: v for k, v in self.RUNNING.items() if k != 'kernelCurrent'}):
             with self.subTest(owner=owner):
                 self.assertIsNone(resident_owner({'owner': owner} if owner is not None else {}))
         self.assertIsNone(resident_owner(None))

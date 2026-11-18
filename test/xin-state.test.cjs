@@ -135,12 +135,13 @@ test('一次最外层事务只过一次所有权检查；提交、回滚、抛�
 test('记忆表已经建好之后，读记忆不需要写权限；表缺了要建时才过所有权检查', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-state-mem-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const base = pathToFileURL(path.join(__dirname, '../site/xin/vm-base.mjs')).href, mem = pathToFileURL(path.join(__dirname, '../site/xin/vm-memory.mjs')).href;
-  const run = body => spawnSync(process.execPath, ['--input-type=module', '-e',
+  // own：这个脚本扮演主人（删旧模式第 2 步以后只有主人能建表，test/helpers/own-state.cjs）
+  const run = (body, own = false) => spawnSync(process.execPath, [...(own ? require('./helpers/own-state.cjs').OWN_IMPORT : []), '--input-type=module', '-e',
     `import { journal } from ${JSON.stringify(base)}; import * as m from ${JSON.stringify(mem)};
      const refuse = { enter() { throw Object.assign(new Error('owner_alive'), { code: 'owner_unavailable' }); } }; ${body}`], { env: { ...process.env, XIN_HOME: root }, encoding: 'utf8' });
   const fresh = run("journal.owner = refuse; try { m.listMemory(); console.log('read'); } catch (e) { console.log(e.code); }");
   assert.equal(fresh.stdout.trim(), 'owner_unavailable', fresh.stderr);
-  assert.equal(run("m.listMemory(); console.log('ready');").stdout.trim(), 'ready');
+  assert.equal(run("m.listMemory(); console.log('ready');", true).stdout.trim(), 'ready');
   const later = run("journal.owner = refuse; m.listMemory(); console.log('read');");
   assert.equal(later.stdout.trim(), 'read', later.stderr);
 });

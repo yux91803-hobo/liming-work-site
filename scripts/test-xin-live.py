@@ -129,7 +129,8 @@ async def main():
             await page.locator('.xc-login button').click()
             await page.wait_for_function('LimingXinChat.state.authed', timeout=30000)
             # 第 2 批：状态切到内核模式。外壳拉起常驻的状态进程（换外壳、切换前备份都在这里头），最多等 120 秒；
-            # 等不到就失败（会自动回滚）。记下切换次数和外壳起控制器的次数，所有检查做完后再核对一次。
+            # 等不到就失败（会自动回滚）。这次部署改了外壳的，要等电脑上换成新外壳（kernelCurrent）以后才算。
+            # 记下切换次数和外壳起控制器的次数，所有检查做完后再核对一次。
             limit = time.monotonic() + 120
             while True:
                 usage = await call('usage', {})

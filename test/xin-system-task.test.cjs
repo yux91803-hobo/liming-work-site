@@ -14,6 +14,9 @@ const { stopOwned } = require('./helpers/stop-owned.cjs');
 const SITE = path.join(__dirname, '../site/xin');
 const AGENT = path.join(SITE, 'vm-agent.mjs');
 const imp = f => import(pathToFileURL(path.join(SITE, f)).href);
+// 测试进程里直接调控制器模块：用自己的临时状态目录，不读写机器上的 ~/.xin。CI 上那里是空的；本机要是留着旧库，
+// 会把「不是主人建不了库」盖住（#170 第一次 CI 就是这么挂的：本机全过，CI 上提示词读记忆要建库）。
+process.env.XIN_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-system-task-proc-'));
 
 // 假 codex（同 xin-batch1.test.cjs）：后台任务在 $L/hold-bg 存在时一直等，然后回「做好了」；每次调用的参数和工作目录记下来
 function fakeCodex(dir) {
@@ -94,6 +97,7 @@ test('电脑维护任务同一时间只做一个；它在做的时候普通任�
 
 test('提示词：电脑维护直接查直接修、能 sudo、别停两个关键服务；前台知道派 --kind system；容器任务做不了时说要电脑维护', async () => {
   const p = await imp('vm-persona.mjs');
+  await require('./helpers/own-state.cjs').ownState();   // 提示词要读记忆、头一次要建库：测试进程自己当主人（正式环境里状态进程一起来就建好了）
   const sys = p.taskSystemPrompt({ no: 3, title: '看看磁盘', tkind: 'system', dir: '/data/workspace/system', goal: '磁盘' });
   assert.match(sys, /【电脑维护】/);
   assert.match(sys, /免密 sudo/);

@@ -1,5 +1,6 @@
 // 所有权锁和记录（site/xin/vm-kernel-owner.mjs）：谁能写状态库。
-// 设计见 docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.2：以后的状态进程拿独占锁一直不放，旧模式的写者每次写之前拿共享锁。
+// 设计见 docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.2：状态进程拿独占锁一直不放。
+// 删旧模式第 2 步（docs/superpowers/specs/2026-11-17-xin-remove-legacy-design.md §4.1）：不是主人的进程一律不写，旧模式的共享锁写者没有了。
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process'); const { pathToFileURL } = require('node:url');
 const url = pathToFileURL(path.join(__dirname, '../site/xin/vm-kernel-owner.mjs')).href;
@@ -16,15 +17,15 @@ function proc(t, dir, body, opts = {}) {
   t.after(() => { try { child.kill('SIGKILL'); } catch { /* 已经退出 */ } });
   return { child, line: () => lines.length ? Promise.resolve(lines.shift()) : new Promise((resolve, reject) => waiters.push({ resolve, reject })), exit: () => done };
 }
-const OWNER = "const h = o.take(); console.log('held ' + h.epoch); process.stdin.on('end', () => { h.release('legacy'); process.exit(0); }); process.stdin.resume();";
+const OWNER = "const h = o.take(); console.log('held ' + h.epoch); process.stdin.on('end', () => { h.release(); process.exit(0); }); process.stdin.resume();";
 const TRY_TAKE = "try { o.take({ waitMs: 200 }); console.log('took'); } catch (e) { console.log(e.code); }";
 const pause = ms => new Promise(r => setTimeout(r, ms));
 
-test('新目录：没有记录就是旧模式；写入口放行；库文件权限 0600', async t => {
+test('新目录：没有记录、没有主人：写入口拒（missing），不当成旧模式放行；库文件权限 0600', async t => {
   const dir = home(t), { Ownership } = await import(url), o = new Ownership(dir);
   t.after(() => o.close());
   assert.deepEqual(o.record(), { mode: 'legacy', epoch: 0, protocol: 0, since: 0 });
-  const release = o.enter(); release();
+  assert.throws(() => o.enter(), e => e.code === 'owner_unavailable' && e.status === 'missing');
   assert.equal(fs.statSync(path.join(dir, 'owner.sqlite')).mode & 0o777, 0o600);
 });
 
@@ -36,40 +37,22 @@ test('主人活着：写入口被拒（alive），记录读出来是 busy', asyn
   assert.deepEqual(o.record(), { busy: true });
 });
 
-test('主人被 kill -9：锁放掉，记录仍归内核，写入口照样拒（missing）；set(legacy) 之后放行', async t => {
+test('主人被 kill -9：锁放掉，记录仍归内核，写入口照样拒（missing）；记录改回 legacy 也一样拒', async t => {
   const dir = home(t), { Ownership } = await import(url), o = new Ownership(dir, { waitMs: 50 });
   t.after(() => o.close());
   const p = proc(t, dir, OWNER); await p.line(); p.child.kill('SIGKILL'); await p.exit();
   assert.throws(() => o.enter(), e => e.code === 'owner_unavailable' && e.status === 'missing');
   const r = o.record(); assert.deepEqual([r.mode, r.epoch, r.protocol], ['kernel', 1, 1]);
   assert.deepEqual(o.set('legacy'), { epoch: 2 });
-  o.enter()();
+  assert.throws(() => o.enter(), e => e.code === 'owner_unavailable' && e.status === 'missing');
 });
 
-test('主人正常交回：release(legacy) 之后写入口放行，切换次数再加一', async t => {
+test('主人正常交回：不改回 legacy，记录仍归内核、切换次数不变；写入口拒（missing），等下一个主人接手', async t => {
   const dir = home(t), { Ownership } = await import(url), o = new Ownership(dir, { waitMs: 50 });
   t.after(() => o.close());
   const p = proc(t, dir, OWNER); await p.line(); p.child.stdin.end(); assert.equal(await p.exit(), 0);
-  const r = o.record(); assert.deepEqual([r.mode, r.epoch], ['legacy', 2]);
-  o.enter()();
-});
-
-test('旧模式的写者还在写：主人等它写完才拿到', async t => {
-  const dir = home(t), { Ownership } = await import(url), o = new Ownership(dir);
-  t.after(() => o.close());
-  const release = o.enter();
-  const p = proc(t, dir, OWNER); let held = false; p.line().then(() => { held = true; }, () => {});
-  await pause(400); assert.equal(held, false);
-  release();
-  await pause(400); assert.equal(held, true);
-});
-
-test('可重入：外层还拿着时里层放了不算放', async t => {
-  const dir = home(t), { Ownership } = await import(url), o = new Ownership(dir);
-  t.after(() => o.close());
-  const outer = o.enter(), inner = o.enter(); inner();
-  assert.equal(await proc(t, dir, TRY_TAKE).line(), 'owner_busy');
-  outer();
+  const r = o.record(); assert.deepEqual([r.mode, r.epoch], ['kernel', 1]);
+  assert.throws(() => o.enter(), e => e.code === 'owner_unavailable' && e.status === 'missing');
   assert.equal(await proc(t, dir, TRY_TAKE + ' setInterval(() => {}, 1000);').line(), 'took');
 });
 
@@ -79,10 +62,12 @@ test('两个进程同时想当主人：只有一个拿到', async t => {
   assert.equal(await proc(t, dir, TRY_TAKE).line(), 'owner_busy');
 });
 
-test('八个进程同时第一次用：都拿得到共享锁', async t => {
+// 原「八个进程同时第一次用：都拿得到共享锁」换载体：共享锁写入口没了，要保住的是同时第一次打开不报库忙、不弄坏库
+test('八个非主人进程同时第一次打开：都回「主人不在」（missing），不报库忙；之后主人拿得到', async t => {
   const dir = home(t);
-  const codes = await Promise.all(Array.from({ length: 8 }, () => proc(t, dir, 'o.enter()(); process.exit(0);').exit()));
-  assert.deepEqual(codes, Array(8).fill(0));
+  const said = await Promise.all(Array.from({ length: 8 }, () => proc(t, dir, "try { o.enter(); console.log('wrote'); } catch (e) { console.log(e.status || [e.code, e.message].filter(Boolean).join('：')); } process.exit(0);").line()));
+  assert.deepEqual(said, Array(8).fill('missing'));
+  assert.equal(await proc(t, dir, TRY_TAKE + ' setInterval(() => {}, 1000);').line(), 'took');
 });
 
 test('owner.sqlite 是软链接：拒绝', async t => {
@@ -119,28 +104,27 @@ test('所有权记录损坏或协议不认识时拒绝，不把它猜成旧模�
   }
 });
 
-test('改记录改到一半被 kill -9：读到的还是上一次提交的，写入口照常', async t => {
+test('改记录改到一半被 kill -9：读到的还是上一次提交的', async t => {
   const dir = home(t), { Ownership } = await import(url), o = new Ownership(dir, { waitMs: 2000 });
   t.after(() => o.close());
-  o.enter()();
+  o.record();   // 先把库建好
   const p = proc(t, dir, "o.db.exec('BEGIN EXCLUSIVE'); o.db.prepare(\"INSERT OR REPLACE INTO owner VALUES('mode','kernel')\").run(); console.log('dirty'); setInterval(() => {}, 1000);");
   await p.line(); p.child.kill('SIGKILL'); await p.exit();
   assert.equal(o.record().mode, 'legacy');
-  o.enter()();
 });
 
-test('拿着共享锁时起了脱离的子进程然后自己退出：锁不被子进程带走', async t => {
+test('主人起了脱离的子进程（执行进程）然后自己退出：独占锁不被子进程带走，下一个主人拿得到', async t => {
   const dir = home(t);
-  const p = proc(t, dir, "import('node:child_process').then(c => { o.hold(); const k = c.spawn('sleep', ['20'], { detached: true, stdio: 'ignore' }); console.log(k.pid); k.unref(); setTimeout(() => process.exit(0), 50); });");
+  const p = proc(t, dir, "import('node:child_process').then(c => { o.take(); const k = c.spawn('sleep', ['20'], { detached: true, stdio: 'ignore' }); console.log(k.pid); k.unref(); setTimeout(() => process.exit(0), 50); });");
   const pid = Number(await p.line()); t.after(() => { try { process.kill(pid, 'SIGKILL'); } catch { /* 已经没了 */ } });
   await p.exit();
   assert.equal(await proc(t, dir, TRY_TAKE + ' setInterval(() => {}, 1000);').line(), 'took');
 });
 
-test('源源不断的旧写者：等独占锁的主人不会被饿死', async t => {
+test('不停来问的非主人进程：等独占锁的主人不会被饿死', async t => {
   const dir = home(t), { Ownership } = await import(url);
-  new Ownership(dir).enter()();   // 先把库建好
-  const writers = Array.from({ length: 4 }, () => proc(t, dir, 'setInterval(() => { try { const r = o.enter(); const end = performance.now() + 15; while (performance.now() < end); r(); } catch { /* 主人来了 */ } }, 20);'));
+  new Ownership(dir).record();   // 先把库建好
+  const writers = Array.from({ length: 4 }, () => proc(t, dir, 'setInterval(() => { try { o.enter(); } catch { /* 不是主人 */ } try { o.record(); } catch { /* 主人来了 */ } }, 5);'));
   await pause(400);
   const t0 = performance.now();
   assert.equal(await proc(t, dir, "o.take({ waitMs: 3000 }); console.log('took'); setInterval(() => {}, 1000);").line(), 'took');
@@ -152,10 +136,22 @@ test('源源不断的旧写者：等独占锁的主人不会被饿死', async t 
 const AGENT = path.join(__dirname, '../site/xin/vm-agent.mjs');
 const cli = (dir, op, args = {}) => spawnSync(process.execPath, [AGENT, op], { env: { ...process.env, XIN_HOME: dir }, input: JSON.stringify(args), encoding: 'utf8' });
 
-test('旧模式：控制器照常工作，并建好 owner.sqlite', async t => {
-  const dir = home(t), r = cli(dir, 'sessions');
-  assert.deepEqual(JSON.parse(r.stdout), { sessions: [] });
+// 设计 §5「只有一个写者」：状态进程不在时，别的进程不写库、回「主人不在」；状态进程回来以后同一个请求重试成功、只执行一次
+test('没有主人：控制器回 owner_unavailable（没执行），状态库没被建出来；状态进程起来以后同一句重试成功，只成一轮', async t => {
+  const dir = home(t), bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
+  for (const cmd of ['claude', 'codex', 'agy']) fs.writeFileSync(path.join(bin, cmd), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const env = { ...process.env, XIN_HOME: dir, XIN_WORK: path.join(dir, 'work'), XIN_DSH: path.join(dir, 'no-dsh'), XIN_FRONT_PROVIDER: 'deepseek',
+    XIN_AGY_HOME: dir, XIN_ANTIGRAVITY_BIN: '', CODEX_HOME: path.join(dir, 'codex'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), PATH: bin + ':' + process.env.PATH };
+  const send = () => JSON.parse(spawnSync(process.execPath, [AGENT, 'send'], { env, input: JSON.stringify({ main: true, text: '你好', clientId: 'owner-retry-0001' }), encoding: 'utf8' }).stdout);
+  const first = send();
+  assert.equal(first.error, 'owner_unavailable', JSON.stringify(first)); assert.equal(first.executed, false);
+  assert.equal(fs.existsSync(path.join(dir, 'workflow.sqlite')), false, '没有主人：一个字节都不写');
   assert.equal(fs.statSync(path.join(dir, 'owner.sqlite')).mode & 0o777, 0o600);
+  require('./helpers/state-mode.cjs').stateMode(t, env);
+  const ok = send(); assert.ok(ok.sid && ok.run, JSON.stringify(ok));
+  assert.deepEqual(send(), ok, '同一句再送一次拿到同一个回执');
+  assert.equal(JSON.parse(spawnSync(process.execPath, [AGENT, 'sessions'], { env, input: '{}', encoding: 'utf8' }).stdout).sessions.length, 1, '只开了一个对话');
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'runs')).filter(n => /^r[0-9a-z]+\.json$/.test(n)), [ok.run + '.json'], '只成一轮');
 });
 
 test('主人活着：控制器回 owner_unavailable，状态库没有被建出来', async t => {

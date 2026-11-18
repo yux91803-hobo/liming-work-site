@@ -528,11 +528,10 @@ test('Worker 有 scheduled 入口，交给 runCron', async () => {
   assert.deepStrictEqual(await waits[0], { ok: false, state: 'disabled' });
 });
 
-test('wrangler：正式站 XIN_STATE_OWNER=kernel，正式站和测试站都有 version_metadata 绑定', () => {
+test('wrangler：没有 XIN_STATE_OWNER 开关了（删旧模式第 2 步），正式站和测试站都有 version_metadata 绑定', () => {
   const src = fs.readFileSync(path.join(__dirname, '../wrangler.jsonc'), 'utf8');
   const top = src.slice(0, src.indexOf('"env"')), stg = src.slice(src.indexOf('"env"'));
-  assert.match(top, /"vars":\s*\{[^}]*"XIN_STATE_OWNER":\s*"kernel"[^}]*\}/);
-  assert.doesNotMatch(stg, /XIN_STATE_OWNER/, '测试站没配小芯，不设');
+  assert.doesNotMatch(src.replace(/\/\/.*$/gm, ''), /"XIN_STATE_OWNER"/, '正式站、测试站都不再设');
   for (const part of [top, stg]) assert.match(part, /"version_metadata":\s*\{\s*"binding":\s*"CF_VERSION_METADATA"\s*\}/);
 });
 
@@ -2329,7 +2328,7 @@ const sendArgs = { agent: 'codex', text: '你好', clientId: 'cid-inbox-0001' };
 
 /* ---------- 状态由谁管：期望和部署代号（第 2 批计划 Task 4） ---------- */
 test('内核模式：每次操作把期望放进请求体；usage 的结果带上主人状态和耗时，别的操作不带', async () => {
-  const m = await fresh(), env = kernelEnv(m, { XIN_STATE_OWNER: 'kernel', CF_VERSION_METADATA: { id: 'ver-a' } }), ck = await login(m, env);
+  const m = await fresh(), env = kernelEnv(m, { CF_VERSION_METADATA: { id: 'ver-a' } }), ck = await login(m, env);
   const owner = { want: 'kernel', mode: 'kernel', epoch: 2, phase: 'running', up: 5000, restarts: 0, lastError: null, spawns: 0 };
   const ops = { all: { n: 3, p50: 4, p95: 9, max: 9 }, byOp: { usage: { n: 1, p50: 4, p95: 4, max: 4 } } };
   const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
@@ -2337,14 +2336,14 @@ test('内核模式：每次操作把期望放进请求体；usage 的结果带�
   try {
     assert.deepStrictEqual(await callOp(m, env, ck, 'sessions'), { ok: true, data: { sessions: [] } });
     const u = await callOp(m, env, ck, 'usage');
-    assert.strictEqual(u.ok, true); assert.deepStrictEqual(u.data.owner, { ...owner, ops });
+    assert.strictEqual(u.ok, true); assert.deepStrictEqual(u.data.owner, { ...owner, ops, kernelCurrent: true });
     const bodies = ib.calls.filter(c => c.key === 'POST /xin/op').map(c => JSON.parse(c.body));
     assert.deepStrictEqual(bodies.map(b => b.owner), [{ mode: 'kernel', gen: 1 }, { mode: 'kernel', gen: 1 }]);
   } finally { ib.restore(); }
 });
 
 test('主人暂时不在：不退 exec，回可重试的「稍等」；待送达当作临时错误重送', async () => {
-  const m = await fresh(), env = kernelEnv(m, { XIN_STATE_OWNER: 'kernel', XIN_INBOX: '1' }), ck = await login(m, env);
+  const m = await fresh(), env = kernelEnv(m, { XIN_INBOX: '1' }), ck = await login(m, env);
   const busy = () => kres(503, { ok: false, executed: false, error: 'owner_unavailable', retryAfter: 3 });
   const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
     'POST /xin/op': [busy, busy, () => kres(200, { ok: true, data: { sid: 's1', run: 'r5' } })],
@@ -2366,7 +2365,7 @@ test('主人暂时不在：不退 exec，回可重试的「稍等」；待送达
 test('状态进程正在换：控制器把「没执行」当结果回来，也回可重试的「稍等」（内核和 exec 两条路）；别的出错照旧', async () => {
   const unavailable = { error: 'owner_unavailable', msg: '小芯的状态进程暂时不可用，请稍后重试', executed: false };
   {
-    const m = await fresh(), env = kernelEnv(m, { XIN_STATE_OWNER: 'kernel' }), ck = await login(m, env);
+    const m = await fresh(), env = kernelEnv(m), ck = await login(m, env);
     const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
       'POST /xin/op': [() => kres(200, { ok: true, data: unavailable }), () => kres(200, { ok: true, data: { usage: { today: 1 } } }), () => kres(200, { ok: true, data: { error: 'not_found', msg: '没有这个对话' } })] });
     try {
@@ -2393,7 +2392,7 @@ test('状态进程正在换、请求发出去后连接断了（executed:unknown�
   const lost = { error: 'owner_unavailable', msg: '小芯的状态进程暂时不可用，请稍后重试', executed: 'unknown' };
   const busy = { ok: false, state: 'busy', msg: '小芯正在换状态进程，稍等', retryAfter: 3 };
   {
-    const m = await fresh(), env = kernelEnv(m, { XIN_STATE_OWNER: 'kernel' }), ck = await login(m, env);
+    const m = await fresh(), env = kernelEnv(m), ck = await login(m, env);
     const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
       'POST /xin/op': [() => kres(200, { ok: true, data: lost }), () => kres(200, { ok: true, data: lost }), () => kres(200, { ok: true, data: lost })] });
     try {
@@ -2597,6 +2596,24 @@ test('stream：没登录 401；内核不在、没开内核通道都回 503 让�
     assert.strictEqual(off.status, 503);
     assert.strictEqual((await m.handleXin(streamReq('run=../x', { cookie: ck }), env, null)).status, 400);
   } finally { ib.restore(); }
+});
+
+// 删旧模式第 2 步上线前自查发现：改了外壳的部署，Worker 在后台换外壳；正式站联调要是先记下旧外壳的切换次数，
+// 外壳中途换掉会把次数加一、判成「状态进程中途重启」而回滚。usage 带上外壳是不是这次部署的版本，联调等它换好了再记
+// （参考 Kubernetes 滚动发布：新版本就绪了才算上线，才开始检查）
+test('usage 的主人状态带上电脑上的外壳是不是这次部署的版本（kernelCurrent）', async () => {
+  for (const [version, current] of [['oldoldoldold', false], [KERNEL_HASH, true]]) {
+    const m = await fresh(), env = kernelEnv(m), ck = await login(m, env), w = waiter();
+    const owner = { want: 'kernel', mode: 'kernel', epoch: 2, phase: 'running' };
+    const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
+      'POST /xin/op': [() => kres(200, { ok: true, data: { days: [] }, owner }, { 'x-xin-kernel': version })],
+      'POST /v1/machines/m_abc/exec': [{ body: { stdout: '{"ok":true,"started":true}', stderr: '', exitCode: 0 } }] });
+    try {
+      const u = await callOp(m, env, ck, 'usage', {}, w.ctx);
+      assert.strictEqual(u.data.owner.kernelCurrent, current, version);
+      await w.settle();
+    } finally { ib.restore(); }
+  }
 });
 
 test('内核版本和这次部署的不一样：后台起 ensure 升级；一样就不起', async () => {

@@ -42,19 +42,19 @@ test('第一次 get：发布私有端口（换新令牌）、生成钥匙，还�
   assert.strictEqual(c.installedKid, null);
 });
 
-test('部署代号：同一部署不变；换了部署（包括回滚到旧版本号）加一；期望跟 XIN_STATE_OWNER', async () => {
+test('部署代号：同一部署不变；换了部署（包括回滚到旧版本号）加一；期望固定是常驻进程模式（删旧模式第 2 步去掉了 XIN_STATE_OWNER）', async () => {
   const storage = memStorage();
   const a = await store({ storage, deploy: 'v1' });
-  assert.deepStrictEqual((await a.s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 1 }, '没说要 kernel 就是 legacy');
-  assert.deepStrictEqual((await a.s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 1 }, '同一部署不变');
-  const b = await store({ storage, deploy: 'v2', mode: 'kernel' });
+  assert.deepStrictEqual((await a.s.get({ machineId: 'm1' })).owner, { mode: 'kernel', gen: 1 }, '不用再配开关');
+  assert.deepStrictEqual((await a.s.get({ machineId: 'm1' })).owner, { mode: 'kernel', gen: 1 }, '同一部署不变');
+  const b = await store({ storage, deploy: 'v2' });
   assert.deepStrictEqual((await b.s.get({ machineId: 'm1' })).owner, { mode: 'kernel', gen: 2 });
-  const c = await store({ storage, deploy: 'v1', mode: 'kernel' });
-  assert.deepStrictEqual((await c.s.get({ machineId: 'm1' })).owner, { mode: 'kernel', gen: 3 }, '回滚到旧版本号也是一次新部署');
+  const c = await store({ storage, deploy: 'v1', mode: 'legacy' });
+  assert.deepStrictEqual((await c.s.get({ machineId: 'm1' })).owner, { mode: 'kernel', gen: 3 }, '回滚到旧版本号也是一次新部署；传进来的旧模式不认');
   assert.deepStrictEqual(storage.m.get('kernel-owner'), { deploy: 'v1', gen: 3 });
-  assert.deepStrictEqual((await (await store({ storage, deploy: 'v1', mode: 'bogus' })).s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 3 }, '认不得的模式按 legacy');
-  assert.deepStrictEqual((await (await store()).s.get({ machineId: 'm1' })).owner, { mode: 'legacy', gen: 1 }, '默认部署 dev、模式 legacy');
+  assert.deepStrictEqual((await (await store()).s.get({ machineId: 'm1' })).owner, { mode: 'kernel', gen: 1 }, '默认部署 dev');
 });
+
 
 test('第二次 get 不再调 InstaBox；同时来的两个 get 也只发布一次', async () => {
   const { s, ports } = await store();

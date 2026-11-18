@@ -325,12 +325,13 @@ async function runOp(env, origin, id, op, args, ctx, opts = {}) {
       try { await installKernelKeys(env, id, cfg); await kernel.markInstalled(cfg.kid); cfg = { ...cfg, installedKid: cfg.kid }; }
       catch (e) { if (e && e.code === 'machine_cooldown') throw e; return exec(env, origin, id, op, args); }
     }
-    // 期望（第 2 批）：XIN_STATE_OWNER 和部署代号，由 Durable Object 发；外壳按它拉起或停下状态进程
+    // 期望（第 2 批）：部署代号（模式固定 kernel），由 Durable Object 发；外壳按它拉起、换版本
     const r = await kernelRequest({ config: cfg, agentPath: agent.path, op, args, owner: cfg.owner });
     // 内核文件换了（这次部署带了新版本）而电脑上跑的还是旧的：后台 ensure 一次，换成新版本（每个 isolate 60 秒最多一次）
     if (r.version && r.version !== agent.kernel.sha256.slice(0, 12)) ensureKernel(env, origin, id, ctx);
     if (r.kind === 'ok') {
-      if (op === 'usage' && r.owner && r.data && typeof r.data === 'object') r.data.owner = { ...r.owner, ...(r.ops ? { ops: r.ops } : {}) };
+      // kernelCurrent：电脑上的外壳是不是这次部署的版本。正式站联调等它换好了再记状态进程的切换次数（外壳中途换掉会把次数加一）
+      if (op === 'usage' && r.owner && r.data && typeof r.data === 'object') r.data.owner = { ...r.owner, ...(r.ops ? { ops: r.ops } : {}), kernelCurrent: r.version === agent.kernel.sha256.slice(0, 12) };
       return r.data;
     }
     if (r.kind === 'executed_error') throw { status: 500, code: r.error || 'agent_failed', msg: redact(r.msg || r.error || '控制器出错了') };
@@ -789,7 +790,7 @@ export class XinTaskSupervisor {
   // 小芯内核的配置（端口令牌、钥匙）放在实例 xin-inbox 里；Durable Object 自己调 call() 时直接用 kernelAdapter()，不经 stub 请求自己
   kernelStore() {
     return this.kernelConfig || (this.kernelConfig = new KernelConfigStore(this.state.storage, { ib: (p, init) => ib(this.env, p, init), ibErr,
-      deploy: this.env.CF_VERSION_METADATA?.id, mode: this.env.XIN_STATE_OWNER }));
+      deploy: this.env.CF_VERSION_METADATA?.id }));
   }
   kernelAdapter() { const s = this.kernelStore(); return { get: id => s.get({ machineId: id }), markInstalled: kid => s.markInstalled(kid), invalidateToken: t => s.invalidateToken(t) }; }
   async kernelRoute(action, req) {

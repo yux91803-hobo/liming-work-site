@@ -23,7 +23,8 @@ function fixture(t,mode='kernel'){
 async function rpc(f,q,options){const {requestState}=await import(url('vm-kernel-client'));return requestState(f.home,q,options);}
 async function settle(f,run){for(let i=0;i<100;i++){if(f.cli('poll',{run}).done)return;await sleep(30);}assert.fail('fake executor did not settle');}
 
-for(const mode of ['legacy','kernel'])test(mode+'：主对话回执、重送冲突、结束后续聊及天启独立保持一致',async t=>{
+// 删旧模式第 2 步：只剩常驻状态进程这一种（legacy 那一遍随旧模式删掉，断言和这一遍一样）
+for(const mode of ['kernel'])test(mode+'：主对话回执、重送冲突、结束后续聊及天启独立保持一致',async t=>{
   const f=fixture(t,mode),a=f.cli('send',{main:true,text:'第一句',clientId:'same-receipt-0001'});
   assert.ok(a.sid&&a.run,JSON.stringify(a));
   assert.deepEqual(f.cli('send',{main:true,text:'第一句',clientId:'same-receipt-0001'}),a);
@@ -43,23 +44,12 @@ test('内核接管后，原生数据库句柄只读；关 query_only 也不能�
   assert.deepEqual(r,{denied:[true,true],local:'owner_unavailable',value:7});
 });
 
-test('旧模式的可写句柄不能活过写权作用域；后续读是原生只读',async t=>{
-  const f=fixture(t,'legacy'),r=f.js(`let old;b.journal.writing(()=>{old=b.journal.db;});
-    let closed=false;try{old.prepare('SELECT 1').get();}catch{closed=true;}
-    const release=b.ownership.enter(),scoped=b.journal.db;release();
-    let scopedClosed=false;try{scoped.prepare('SELECT 1').get();}catch{scopedClosed=true;}
-    let readonly=false;try{b.journal.db.exec('CREATE TABLE forbidden(x)');}catch(e){readonly=e.errcode===8;}
-    return {closed,scopedClosed,readonly};`);
-  assert.deepEqual(r,{closed:true,scopedClosed:true,readonly:true});
-});
+// 删旧模式第 2 步删掉的两条（docs/superpowers/plans/2026-11-18-xin-remove-legacy.md Task B1）：
+// - 「旧模式的可写句柄不能活过写权作用域」：不是主人的进程拿不到写权了（xin-owner「没有主人：控制器回 owner_unavailable…」）。
+// - 「socket 路径只是线索：记录归 legacy 时走旧路径」：旧路径没了。没有主人时请求照样交给套接字，连不上就在报告预算里重试，
+//   主人重启的空档靠的就是这个（xin-runner-report-recovery）；正式环境里只有拿到所有权的状态进程会在这个路径上听
+//   （vm-kernel-state.mjs 先拿锁再 listen、先 close 再放锁）。
 
-test('socket 路径只是线索：记录仍归 legacy 时继续受控旧路径，不盲信遗留监听器',async t=>{
-  const f=fixture(t,'legacy'),net=require('node:net');let requests=0;
-  fs.mkdirSync(path.join(f.home,'run'));const server=net.createServer(s=>{requests++;s.destroy();});
-  await new Promise(resolve=>server.listen(path.join(f.home,'run','state.sock'),resolve));
-  t.after(()=>new Promise(resolve=>server.close(resolve)));
-  assert.equal(f.cli('daily_set',{text:'照常保存清单'}).ok,true);assert.equal(requests,0);
-});
 
 test('记忆、检索和学习在所有者进程提交，忘掉清除衍生证据；凭据不入库',async t=>{
   const f=fixture(t),r=f.js(`const a=m.addMemory({content:'回答先给结论',source:'user'}).item;
@@ -130,17 +120,17 @@ test('杀死状态进程后旧入口拒绝写；重启恢复同一业务回执�
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.home,'sessions',a.sid+'.json'))).runs.length,1);
 });
 
-test('同一个长进程活过 legacy→kernel→legacy，单次写每次重新判断所有权',async t=>{
-  const f=fixture(t,'legacy'),script=`import {setMemoryMeta,memoryMeta} from ${JSON.stringify(url('vm-memory'))};import readline from 'node:readline';
+test('同一个长进程活过换主人（旧主人交回、新主人接手），单次写每次重新判断所有权',async t=>{
+  const f=fixture(t,'legacy'),first=f.start(),script=`import {setMemoryMeta,memoryMeta} from ${JSON.stringify(url('vm-memory'))};import readline from 'node:readline';
     setMemoryMeta('phase',0);console.log('ready');for await(const line of readline.createInterface({input:process.stdin})){setMemoryMeta('phase',Number(line));console.log(memoryMeta('phase'));}`;
   const c=spawn(process.execPath,['--input-type=module','-e',script],{env:f.env,stdio:['pipe','pipe','pipe']});
   let buffer='',notify;const lines=[];c.stdout.on('data',b=>{buffer+=b;while(buffer.includes('\n')){const i=buffer.indexOf('\n');lines.push(buffer.slice(0,i));buffer=buffer.slice(i+1);}notify?.();});
   const next=()=>new Promise((resolve,reject)=>{const tm=setTimeout(()=>reject(Error('reporter timeout')),5000);const take=()=>{if(lines.length){clearTimeout(tm);notify=null;resolve(lines.shift());}};notify=take;take();});
   t.after(()=>c.kill('SIGKILL'));assert.equal(await next(),'ready');
-  c.stdin.write('1\n');assert.equal(await next(),'1');const owner=f.start();
-  c.stdin.write('2\n');assert.equal(await next(),'2');
-  assert.equal((await rpc(f,{kind:'control',op:'release',mode:'legacy'})).mode,'legacy');await owner.exited;
-  c.stdin.write('3\n');assert.equal(await next(),'3');assert.equal(f.js(`return m.memoryMeta('phase');`),3);
+  c.stdin.write('1\n');assert.equal(await next(),'1');
+  assert.equal((await rpc(f,{kind:'control',op:'release'})).mode,'kernel');await first.exited;
+  f.start();
+  c.stdin.write('2\n');assert.equal(await next(),'2');assert.equal(f.js(`return m.memoryMeta('phase');`),2);
 });
 
 test('父管道断开会排空退出并保留 kernel 记录，不能默默改回 legacy',async t=>{
@@ -171,8 +161,10 @@ test('取得独占锁后再次检查旧控制器；等待期间出现未兼容�
   const f=fixture(t,'legacy'),dir=path.join(f.dir,'agent'),release=path.join(f.dir,'release');fs.mkdirSync(dir);
   for(const name of fs.readdirSync(path.dirname(AGENT)).filter(n=>/^vm-.*\.mjs$/.test(n)))fs.copyFileSync(path.join(path.dirname(AGENT),name),path.join(dir,name));
   const old=path.join(dir,'vm-agent-000000000001.mjs');fs.writeFileSync(old,"console.log('old');setInterval(()=>{},1000);");
+  // 用一个读事务拿住 owner.sqlite 的共享锁，拖住新状态进程取独占锁（删旧模式第 2 步以后没有旧写者入口了，读者一样挡得住）
   const locker=spawn(process.execPath,['--input-type=module','-e',`import {Ownership} from ${JSON.stringify(url('vm-kernel-owner'))};import fs from 'node:fs';
-    const o=new Ownership(process.env.XIN_HOME);o.hold();console.log('held');const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){o.close();clearInterval(t);}},10);`],{env:f.env,stdio:['ignore','pipe','pipe']});
+    const o=new Ownership(process.env.XIN_HOME);o.record();o.db.exec('BEGIN');o.db.prepare('SELECT k FROM owner').all();console.log('held');
+    const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){o.db.exec('COMMIT');o.close();clearInterval(t);}},10);`],{env:f.env,stdio:['ignore','pipe','pipe']});
   await new Promise(resolve=>locker.stdout.once('data',resolve));
   const next=spawn(process.execPath,[path.join(dir,'vm-agent.mjs'),'serve'],{env:f.env,stdio:['ignore','pipe','pipe']});
   const exited=new Promise(resolve=>next.once('exit',(code,signal)=>resolve({code,signal})));let err='';next.stderr.on('data',b=>err+=b);
@@ -202,14 +194,14 @@ test('异步调用交错等待时 locked/key/run 都留在各自上下文，不�
 
 // 第 2 批（docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md Task 1）
 const ownerRecord=async home=>{const {Ownership}=await import(url('vm-kernel-owner'));const o=new Ownership(home);try{return o.record({waitMs:0});}finally{o.close();}};
-test('owner-legacy：主人活着不改；被 kill -9 后把 kernel 改回 legacy；本来就是 legacy 不动',async t=>{
+test('owner-legacy（外壳已经不调它了，第 3 步删）：主人活着不改；被 kill -9 后改回 legacy 也只改记录，没有主人照样不写',async t=>{
   const f=fixture(t,'legacy'),owner=f.start();
   assert.deepEqual(f.cli('owner-legacy'),{error:'owner_busy'});
   owner.child.kill('SIGKILL');await owner.exited;
   assert.equal((await ownerRecord(f.home)).mode,'kernel');
   assert.deepEqual(f.cli('owner-legacy'),{ok:true,mode:'legacy',epoch:2});
   assert.deepEqual(f.cli('owner-legacy'),{ok:true,unchanged:true,mode:'legacy',epoch:2});
-  assert.equal(f.cli('sessions').error,undefined);
+  assert.equal(f.cli('sessions').error,'owner_unavailable','改回 legacy 也没有旧路可走');
 });
 test('空闲时一分钟一检，有活时五秒：pendingWork 看待派发、后台任务、通知、交接和控制器回调',async t=>{
   const f=fixture(t,'legacy');

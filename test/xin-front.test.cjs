@@ -2,6 +2,10 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
+const os=require('node:os');
+// 测试进程里直接调控制器模块：用自己的临时状态目录，不读写机器上的 ~/.xin。CI 上那里是空的；本机要是留着旧库，
+// 会把「不是主人建不了库」盖住（#170 第一次 CI 就是这么挂的：本机全过，CI 上提示词读记忆要建库）。
+process.env.XIN_HOME=fs.mkdtempSync(path.join(os.tmpdir(),'xin-front-'));
 const load=()=>import('../site/xin/vm-runtime.mjs');
 test('前台失败诊断只给结构、字节数和错误类别，不带原话、回答或网关正文',async()=>{
   const {frontDiagnostics}=await import('../site/xin/vm-agent.mjs');
@@ -141,6 +145,7 @@ test('表情动作不占派活步数；同一次回复里有文字就直接答�
 test('后台任务快照像 opencode / Codex 的通知：单独一条带标签、只放状态；前台每轮不带进行中的；怎么对待写在系统提示里一次',async()=>{
   const {taskNotes}=await import('../site/xin/vm-agent.mjs');
   const {systemPrompt}=await import('../site/xin/vm-persona.mjs');
+  await require('./helpers/own-state.cjs').ownState();   // 提示词要读记忆、头一次要建库：测试进程自己当主人（正式环境里状态进程一起来就建好了）
   const now=Date.now(),sid='snotes000001';
   const running={sid:'snotes000002',no:3,parent:sid,title:'画奶龙',status:'running',created:now-120e3,startedAt:now-120e3};
   const done={sid:'snotes000003',no:4,parent:sid,title:'查资料',status:'done',created:now-300e3,endedAt:now-10e3,result:{text:'查到了三条'}};
