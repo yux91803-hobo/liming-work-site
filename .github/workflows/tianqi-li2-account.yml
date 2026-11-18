@@ -1,31 +1,39 @@
-name: Tianqi plugin inventory and private upload cleanup
+name: Tianqi plugin migration
 on:
   push:
     branches: [codex/tianqi-li2-account-20261118]
     paths: [.github/workflows/tianqi-li2-account.yml]
 permissions: {}
 jobs:
-  inspect:
+  tianqi:
     if: github.repository == 'yux91803-hobo/liming-work-site' && github.ref_name == 'codex/tianqi-li2-account-20261118'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 18
     steps:
-      - name: Check the existing plugins and Tianqi role
+      - name: Verify the exact versions and stage the Purge program
         env:
           LI2_API_KEY: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
           LI_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
         run: |
           python3 - <<'PY'
+          import hashlib
+          import http.client
+          import io
           import json
           import os
           import re
+          import tarfile
           import tomllib
-          from urllib.error import HTTPError, URLError
-          from urllib.parse import quote, urlencode, urlsplit
+          from pathlib import PurePosixPath
+          from urllib.error import HTTPError
+          from urllib.parse import quote, urlencode
           from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-          API='https://api.instabox.sh'
-          REMOTE="SLOT='/data/tmp/liming-tq-account/44309545694-86a9fd9e342dd51a556c04cf/accounts.json'\nimport http.client\nimport json\nimport os\nimport re\nimport stat\nfrom pathlib import Path\n\nslot=Path(SLOT)\nroot=Path('/data/home')\nrole=json.loads((root/'.xin/kernel.env.json').read_text()).get('XIN_ROLE')\nif role!='tianqi':\n    raise SystemExit('Unexpected target controller role')\nremoved=False\nif re.fullmatch(r'/data/tmp/liming-tq-account/\\d+-[a-f0-9]{24}/accounts\\.json',str(slot)):\n    try: info=slot.lstat()\n    except FileNotFoundError: pass\n    else:\n        if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode & 0o077:\n            raise SystemExit('Unexpected temporary file metadata')\n        slot.unlink()\n        removed=True\n        try: slot.parent.rmdir()\n        except OSError: pass\nconnection=http.client.HTTPConnection('127.0.0.1',8788,timeout=8)\ntry:\n    connection.request('GET','/health')\n    res=connection.getresponse()\n    doc=json.loads(res.read(256*1024))\nfinally:\n    connection.close()\nprofile=root/'.dsh/profiles/headless/package.json'\nconf=json.loads(profile.read_text())\nprint(json.dumps({'role':role,'health':res.status,'accounts':doc.get('accounts') if type(doc.get('accounts')) is int else None,\n                  'harness_gateway_key_present':(root/'.xin/harness.key').is_file(),\n                  'bundles':[n for n in conf.get('dsh',{}).get('profile',{}).get('bundles',[]) if re.fullmatch(r'[@A-Za-z0-9_/-]{2,90}',n)],\n                  'prior_temp_removed':removed,'prior_temp_absent':not slot.exists()}))\n"
+
+          API = 'https://api.instabox.sh'
+          ARCHIVE = '/data/home/.dsh/dsh-purge-community/pkgs/c26291aca10290fbf62d4e03dbf111cbfeb1e19976dac4e8c97501c765d90b46/dsh-purge-community-1.6.98.tgz'
+          REA = '/data/home/.local/lib/node_modules/rea-agents'
+          TARGET = '/data/tmp/tianqi-plugin-stage/purge-1.6.98.tgz'
 
 
           class NoRedirect(HTTPRedirectHandler):
@@ -33,88 +41,82 @@ jobs:
                   return None
 
 
-          def client(env):
-              key=os.environ.get(env)
-              if not key:
-                  raise RuntimeError('Required InstaBox secret unavailable')
-              opener=build_opener(NoRedirect())
-              def request(path,payload=None):
-                  body=None if payload is None else json.dumps(payload).encode('utf-8')
-                  req=Request(API+path,data=body,headers={'X-API-Key':key,'Content-Type':'application/json'})
-                  with opener.open(req,timeout=60) as response:
-                      return json.load(response)
-              return request
+          class InstaBox:
+              def __init__(self, secret):
+                  self.key = os.environ[secret]
+                  self.opener = build_opener(NoRedirect())
+
+              def request(self, endpoint, *, data=None, method=None, limit=1024*1024):
+                  request = Request(API+endpoint, data=data, method=method, headers={
+                      'X-API-Key': self.key, 'Content-Type': 'application/octet-stream' if method=='PUT' else 'application/json'
+                  })
+                  with self.opener.open(request,timeout=75) as response:
+                      raw = response.read(limit+1)
+                  if len(raw)>limit:
+                      raise ValueError('Unexpected file size')
+                  return raw
+
+              def select(self, name):
+                  ids=[r['id'] for r in json.loads(self.request('/v1/machines'))['machines'] if r.get('name')==name]
+                  if len(ids)!=1: raise ValueError('Unexpected machine selection')
+                  return '/v1/machines/'+quote(ids[0],safe='')
+
+              def read(self, machine, path, limit):
+                  return self.request(machine+'/files/content?'+urlencode({'path':path}),limit=limit)
+
+              def list(self,machine,path):
+                  return json.loads(self.request(machine+'/files?'+urlencode({'path':path})))
 
 
-          def select(api,name):
-              ids=[m['id'] for m in api('/v1/machines')['machines'] if m.get('name')==name]
-              if len(ids)!=1:
-                  raise RuntimeError('Unexpected target machine name')
-              return '/v1/machines/'+quote(ids[0],safe='')
-
-
-          def file(api,machine,path):
-              try: return api(machine+'/files?'+urlencode({'path':path}))
-              except HTTPError as error:
-                  if error.code==404: return {}
-                  raise
-
-
-          def path_of(value):
-              if not isinstance(value,str) or not re.fullmatch(r'/(?:data|usr|opt|home)/[A-Za-z0-9_.@/+\-]{1,220}',value): return None
-              if re.search(r'(^|/)(?:accounts?|secrets?|credentials?|usage|logs?|backups?|\.env|token|\.\.)[._/-]',value,re.I): return None
-              return value
-
-
-          def names(values):
-              return sorted(str(v) for v in values if re.fullmatch(r'[A-Za-z0-9_-]{1,64}',str(v)))
-
-
-          def li_inventory(api,li):
-              profile=json.loads(file(api,li,'/data/home/.dsh/profiles/headless/package.json').get('content') or '{}')
-              bundles=[n for n in profile.get('dsh',{}).get('profile',{}).get('bundles',[]) if re.fullmatch(r'[@A-Za-z0-9_/-]{2,90}',n)]
-              raw=profile.get('dependencies',{}).get('dsh-purge-community','')
-              pkgpath=path_of(raw.removeprefix('file:')) if isinstance(raw,str) else None
-              archived=file(api,li,pkgpath) if pkgpath else {}
-              result={'source_bundles':bundles,'purge_archive':pkgpath,'purge_size':archived.get('size')}
-              for path in ('/data/home/.codex/config.toml','/data/home/.codex/rea.mcp.toml','/etc/codex/config.toml'):
-                  config=file(api,li,path)
-                  if not config.get('content'): continue
-                  data=tomllib.loads(config['content'])
-                  rea=data.get('mcp_servers',{}).get('rea')
-                  if not isinstance(rea,dict): continue
-                  cmd=rea.get('command')
-                  args=rea.get('args',[])
-                  url=urlsplit(rea.get('url',''))
-                  result['rea']={'config':path,'fields':names(rea.keys()),'command':path_of(cmd) or (cmd if cmd in {'python3','python','node','npx','uvx','uv','bash','sh','docker'} else None),
-                                 'args_paths':[p for v in args if (p:=path_of(v)) is not None],
-                                 'option_names':[v for v in args if isinstance(v,str) and re.fullmatch(r'--?[A-Za-z0-9_-]{1,50}',v)],
-                                 'has_args':len(args),'env_keys':names(rea.get('env',{})),
-                                 'env_vars':names(rea.get('env_vars',[])),'header_names':names(rea.get('http_headers',{})),
-                                 'endpoint':{'scheme':url.scheme,'loopback':url.hostname in {'127.0.0.1','localhost','::1'},'port':url.port,
-                                             'path':url.path if url.path in {'/','/mcp','/sse','/api/mcp'} else None} if url.scheme else None}
-                  break
-              result['related_app_dirs']=[x['name'] for x in file(api,li,'/data/apps').get('entries',[])
-                                          if x.get('type')=='dir' and re.fullmatch(r'[A-Za-z0-9_-]+',x.get('name','')) and re.search(r'(rea|revers|ghidra|ida)',x['name'],re.I)]
-              return result
+          def toolchain_path(raw, label):
+              if not re.fullmatch(r'/(?:data|opt|usr|home)/[A-Za-z0-9_.@/+\-]+',raw or '') or '..' in raw.split('/'):
+                  raise ValueError('Unexpected '+label+' program location')
+              return raw
 
 
           def main():
-              source=client('LI_API_KEY')
-              target=client('LI2_API_KEY')
-              li,li2=select(source,'li'),select(target,'li2')
-              if li==li2:
-                  raise RuntimeError('Source and target must be distinct')
-              report=target(li2+'/exec',{'argv':['/usr/bin/python3','-c',REMOTE],'timeoutSeconds':30})
-              if report.get('exitCode')!=0:
-                  raise RuntimeError('Tianqi state check did not finish')
-              data=json.loads(report['stdout'])
-              print('TIANQI_TARGET '+json.dumps(data,sort_keys=True),flush=True)
-              print('TIANQI_PLUGIN_SOURCE '+json.dumps(li_inventory(source,li),sort_keys=True),flush=True)
+              source,target=InstaBox('LI_API_KEY'),InstaBox('LI2_API_KEY')
+              li,li2=source.select('li'),target.select('li2')
+              if li==li2: raise ValueError('Source and target must be distinct')
+              role=json.loads(target.read(li2,'/data/home/.xin/kernel.env.json',32768)).get('XIN_ROLE')
+              if role!='tianqi': raise ValueError('Unexpected target role')
+              raw=source.read(li,ARCHIVE,3*1024*1024)
+              digest=hashlib.sha256(raw).hexdigest()
+              if digest!=ARCHIVE.split('/')[-2]: raise ValueError('Purge archive checksum mismatch')
+              with tarfile.open(fileobj=io.BytesIO(raw),mode='r:gz') as tf:
+                  for member in tf:
+                      p=PurePosixPath(member.name)
+                      if not p.parts or p.parts[0]!='package' or '..' in p.parts or not (member.isfile() or member.isdir()):
+                          raise ValueError('Unexpected Purge package contents')
+                  package=json.load(tf.extractfile('package/package.json'))
+              if package.get('name')!='dsh-purge-community' or package.get('version')!='1.6.98':
+                  raise ValueError('Purge package does not match the selected version')
+              target.request(li2+'/files?'+urlencode({'path':TARGET,'mode':'0600','parents':'true'}),data=raw,method='PUT')
+              if hashlib.sha256(target.read(li2,TARGET,len(raw))).hexdigest()!=digest:
+                  raise ValueError('Target archive checksum mismatch')
+              print('PURGE_STAGED '+json.dumps({'version':package['version'],'dependencies':sorted(package.get('dependencies',{})),
+                   'peer_dependencies':sorted(package.get('peerDependencies',{})),'sha256':digest}),flush=True)
+              metadata=json.loads(source.read(li,REA+'/package.json',64*1024))
+              if metadata.get('name')!='rea-agents' or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[a-z0-9.-]+)?',metadata.get('version','')):
+                  raise ValueError('Unexpected REA program metadata')
+              config=tomllib.loads(source.read(li,'/data/home/.codex/config.toml',128*1024).decode())
+              entry=config['mcp_servers']['rea']
+              env=entry.get('env',{})
+              ghidra=toolchain_path(env.get('GHIDRA_INSTALL_DIR'),'Ghidra')
+              java=toolchain_path(env.get('JAVA_HOME'),'Java')
+              disabled_scripts=metadata.get('scripts',{})
+              print('REA_SOURCE '+json.dumps({'version':metadata['version'],'mcp_subcommand':entry.get('args')==['mcp'],
+                    'mcp_serve_subcommand':entry.get('args')==['serve'],
+                    'ghidra':ghidra,'java':java,'startup':entry.get('startup_timeout_sec'),
+                    'tool':entry.get('tool_timeout_sec'),'has_postinstall':bool(disabled_scripts.get('postinstall')),
+                    'ghidra_files':[r['name'] for r in source.list(li,ghidra).get('entries',[])
+                                   if r.get('name') in {'Ghidra','JDK','support','Extensions','ghidraRun'}]}),flush=True)
+              print('TARGET_PROGRAMS '+json.dumps({p:target.list(li2,p).get('type') for p in ['/data/apps','/usr/lib/jvm']}),flush=True)
 
 
           if __name__=='__main__':
               try: main()
               except HTTPError as error: raise SystemExit('InstaBox returned HTTP '+str(error.code)) from None
-              except (URLError, TimeoutError, TypeError, KeyError, ValueError): raise SystemExit('Plugin inventory could not be read') from None
+              except (ValueError,KeyError,TypeError,OSError) as error:
+                  raise SystemExit('Plugin preflight failed: '+type(error).__name__) from None
           PY
