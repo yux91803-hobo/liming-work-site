@@ -1,3 +1,32 @@
+## 2026-11-18 17:34（北京时间）· 天启搬到 li2：完成第 5 步并交接第 6–9 步（Antigravity）
+
+- **分工与复核**：第 1–4 步由 Claude Code 实现并自查（见下方上一条）；第 5 步及本交接记录由 **Antigravity** 实现并自查，**尚无独立复核**。未把任何审核者列为作者或共同作者。
+- **分支与远端核对**：
+  - 开发分支 `antigravity/tianqi-li2-20261118`（已推送远端）：基于 Claude Code 原分支 `claude/friendly-hopper-d7392n`（`dfddaba`，原分支及提交完整保留未动），并在 `0a0b883` 合入了当时 `main`（#173，`969d162`）；第 5 步提交为 `f2b63ef`。
+  - **最新 `main` 与 PR**：`git fetch origin main` 与 `gh pr list --state all` 核对显示，#174（Codex 第 3 批 B 默认启用持久收尾）已合入 `origin/main`（`9c022c0`，2026-11-18 07:43 UTC）。#174 与 Codex 工作未碰，也尚未重并进当前开发分支；天启尚未开 PR，线上无变动，li/li2 均未操作。
+- **第 5 步已完成内容（`f2b63ef`）**：
+  - `site/tools.js` & `site/tools/tianqi/index.html`：首页「工具」类新增 `/tianqi` 入口与独立页（按 `embed` / `lm.theme` 初始化，写 `window.LIMING_CHAT = { role: 'tianqi' }`，版本参数与首页保持一致：`px3`、`xc-r2b-20261116`，不加载 `mascot.js`）。
+  - `site/xin/chat.js`、`site/xin/chat.css`、`site/xin/term.js`：天启模式（`TQ`）接入 `/api/tq/`（含 `upload`、`fileUrl`、`backups`、`preview`、`pagehide` 等）；本地存储改 `lm.tq.*`（保留共享 `lm.xin.device`）；禁用主对话/每日任务/设置/额度切换/`greet`/推送/页面上下文（`.xc-ctx`）；启动开全屏工作台并 `ping`，网关未就绪时提示「天启的网关还没配好，暂时发不了消息。」并禁用输入与发送；标题栏、侧边栏、欢迎页、命令面板与终端弹窗（「天启的电脑」）改用星徽；嵌在首页时左上方让出返回键空间并处理 `ready`/`close`/`reset` 消息。
+  - `scripts/preview.mjs`：`/api/tq/me` 返回 `{enabled:false, authed:false}`；`/tianqi` 路由回退到 `/index.html`。
+  - `test/e2e/xin_tianqi_e2e.py` & `package.json`：新增 6 场景 8 项端到端测试并接入 `npm run test:e2e`。
+- **已验证结果与未验证/风险项（实事求是）**：
+  - 全站静态脚本与本地资源引用检查（同 `scripts/check.mjs` 前半段）：`301 files, 231 asset references` 通过。
+  - 天启后端单元测试（`node --test test/xin-tianqi.test.cjs test/xin-tianqi-worker.test.cjs`）：**14/14** 通过。
+  - 本地预览与定向 Playwright E2E（`node scripts/preview.mjs --port 5173`，实测 `/tianqi` 与 `/api/tq/me` 均 `200`；`source ~/env.sh`）：
+    - `test/e2e/xin_tianqi_e2e.py`：**8/8** 通过
+    - `test/e2e/xin_work_e2e.py`：**42/42** 通过
+    - `test/e2e/xin_term_e2e.py`：**71/71** 通过
+    - `test/e2e/xin_main_e2e.py`：**19/19** 通过
+    - `test/e2e/xin_web_e2e.py`：**7/7** 通过
+  - **未完成与异常观察**：
+    - `npm run test:e2e` 其余 9 组 E2E 尚未运行；第 8 步要求的 `1280/1024/768/390` 深浅色视觉截图尚未截取。
+    - `npm run check` 全量单测中途取消且未全过，本容器内观察到两处失败（均未改后端代码）：`test/xin-batch1.test.cjs` 单独复测 **15/17** 通过，2 条 `daily` 用例（L75、L291）报 `{"error":"no_agent","msg":"电脑里没有 codex，每日任务做不了"}`；`test/xin-browser.test.cjs` 实机浏览器用例多项失败（容器 Chromium / 沙盒环境问题；上述未用 `source ~/env.sh` 切换至 Node v22 亦可能有关，下一步应先排查或对照 CI）。
+- **下一步（按 [实现计划](superpowers/plans/2026-11-18-tianqi-li2.md) 第 6–9 步）**：
+  1. 核对并合入最新 `origin/main`（`9c022c0` 含 PR #174），同时确认本机跑全量 `npm run check` 时 Node 版本（`~/env.sh`）与上述 `xin-batch1`/`xin-browser` 环境表现。
+  2. **第 6 步（TDD）**：先修改 `xin_tianqi_e2e.py`（加深链 `/tianqi`、`visibilitychange`、点 `.panel .back` 后补发 `wake`/`greet`）、`stm32_e2e.py`、`xin_main_e2e.py`、`xin_term_e2e.py`、`xin_learning_e2e.py` 看新断言失败；再改 `site/xin/chat.js` 去掉首页工作台「新建天启对话」入口与 `.xc-as`（保留打开旧 `harness` 对话），加 `tianqiOpen()` + `MutationObserver` 在 `/tianqi` 打开时延后首页 `wakeVm()`/`greet()`。
+  3. **第 7 步**：各 HTML 同步新 `?v=` 版本参数；改 `.github/workflows/deploy.yml`（说明 + 条件 `jq` 写 `TQ_INSTABOX_API_KEY` 并在本地测空/非空 `$c`、冒烟加 `/tools/tianqi/` 和 `/api/tq/me`）、`scripts/test-xin-live.py`（校验 `/api/tq/me` 同登录）、`README.md`、`docs/CHANGES.md`、`docs/AI-HANDOFF.md` 及 spec 状态。
+  4. **第 8–9 步**：全量 `npm run check` + 全量 `npm run test:e2e`、`1280/1024/768/390` 深浅色截图自查、整条分支复核、开 PR 等 CI/测试站绿、squash 合并带 `expectedHeadSha`、确认正式站绿；随后请站长加 `XIN_TQ_INSTABOX_API_KEY`（用新方式另给，不打印进日志）与网关账号，最后按规矩只写 li2（li 只读、li2 不装 STM32 环境）完成部署与联调。
+
 ## 2026-11-18 下午 · 天启搬到 li2：做完第 1–4 步，额度用完交接（Claude Code）
 
 - 站长已确认设计（北京 11-18 13:39「不用装stm32编译环境，开始吧」）：[设计](superpowers/specs/2026-11-18-tianqi-li2-design.md)、[实现计划（9 步）](superpowers/plans/2026-11-18-tianqi-li2.md)。天启改成首页的一个新工具 `/tianqi`，连第二台云电脑 li2；数据和网关账号都不搬，提示词只有「你叫天启。」，只用 Harness。
