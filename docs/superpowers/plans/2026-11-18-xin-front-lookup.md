@@ -11,6 +11,12 @@
 - 插话：前台这一轮里出现过网页工具时，每秒取一次补充（`steer_take`）。手上没有在跑的工具调用时，`session/cancel` 当前这次 prompt，接着在同一个会话里发「兄弟中途补充：……」，会话里已经查到的东西还在。
 - 时限：查资料的一轮最多 3 分钟。到了就取消，再要一句「按已经查到的回答，查不完的派后台」。
 
+**li 上实测（11-18 晚，站长同意做试验，试验代理和临时目录都已删）：**
+- `search_web` 的工具调用：`kind: "search"`，`title` 是「"搜索词" on Web」，`rawInput` 是 `{query}`。按全局设置不来要权限，直接跑；一次搜索约 30 秒。
+- 取消后接着问：等这次工具调用完成，`session/cancel`，这次 prompt 返回 `stopReason: cancelled`。等 3 秒，在同一个会话里发补充，约 13 秒答完，而且直接用了刚才的搜索结果，没有重搜（实测 A）。
+- 不要在上一次 prompt 还没结束时发新的 prompt，会一直卡住（实测 B，以及第一次试验取消后马上发的那次也卡住了）。所以插话一律是「等工具完成，取消，等返回，隔 3 秒，同一个会话里接着发」。
+- 这个版本的 Antigravity（1.5.11）没有 `--settings` 参数，ACP 方法里也没有插话接口。
+
 **Spec：** `docs/superpowers/specs/2026-11-18-xin-front-lookup-design.md`
 
 ## Global Constraints
