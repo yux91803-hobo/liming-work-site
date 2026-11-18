@@ -29,7 +29,7 @@ jobs:
                   return None
 
 
-          PROGRAM_PATH = re.compile(r'/(?:data/(?:apps|home|workspace)|opt|srv|home/(?:box|dev)|usr/local/(?:lib|bin)|root)/[A-Za-z0-9_.@/+\-]+$')
+          PROGRAM_PATH = re.compile(r'/(?:data/[A-Za-z0-9_.-]+|opt|srv|home/(?:box|dev)|usr/(?:local/)?(?:lib|libexec|bin|sbin|share)|root)/[A-Za-z0-9_.@/+\-]+$')
           PRIVATE_COMPONENTS = re.compile(r'(^|/)(?:accounts?|secrets?|credentials?|usage|logs?|backups?|storage|data|state|cache|\.git|\.env)(?:[./_-]|$)', re.I)
 
 
@@ -81,6 +81,12 @@ jobs:
                   version = json.loads(package['content']).get('version', '')
                   if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', version):
                       result['harness_version'] = version
+              profile = source('/data/home/.dsh/profiles/headless/package.json') or {}
+              if 'content' in profile:
+                  cfg = json.loads(profile['content'])
+                  result['headless_manifest_fields'] = sorted(set(cfg) & {'name','version','type','private','dependencies','dsh'})
+                  result['headless_dependencies'] = {k:v for k,v in cfg.get('dependencies', {}).items()
+                                                     if k.startswith('@deepseek-ai/') and re.fullmatch(r'[~^]?[0-9][0-9.A-Za-z-]+', v)}
               for where, unit in [('system', '/etc/systemd/system/workbuddy-gateway.service'),
                                   ('user', '/data/home/.config/systemd/user/workbuddy-gateway.service')]:
                   unit_data = source(unit) or {}
@@ -90,10 +96,17 @@ jobs:
                                   if '=' in line and line.partition('=')[0] in {'WorkingDirectory', 'ExecStart', 'User', 'Environment', 'EnvironmentFile', 'Type'})
                   directory = safe_program_path(settings.get('WorkingDirectory'))
                   command = shlex.split(settings.get('ExecStart',''))
-                  executable_paths = [p for p in command if safe_program_path(p)]
+                  executable_paths = [p for p in command[1:] if safe_program_path(p)]
+                  script_mentions = re.findall(r'/[A-Za-z0-9_.@/+\-]+', settings.get('ExecStart', ''))
+                  executable_paths = sorted(set(executable_paths + [p for p in script_mentions if safe_program_path(p) and p.endswith('.py')]))
+                  module = (command[command.index('-m')+1] if '-m' in command and command.index('-m')+1 < len(command) else '')
+                  if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.]{0,80}', module): module = None
+                  environment_names = sorted({t.partition('=')[0] for t in shlex.split(settings.get('Environment',''))
+                                              if re.fullmatch(r'[A-Z_][A-Z0-9_]+', t.partition('=')[0])})
                   runtime = command[0].rsplit('/',1)[-1] if command and re.fullmatch(r'/usr/(?:local/)?bin/(?:node|python3|bash)', command[0]) else None
                   result['gateway_unit'] = {'where': where, 'directory': directory, 'exec_paths': executable_paths, 'runtime': runtime,
-                                            'config_directives': sorted({'Environment','EnvironmentFile'} & settings.keys())}
+                                            'config_directives': sorted({'Environment','EnvironmentFile'} & settings.keys()),
+                                            'module': module, 'inline_script': '-c' in command, 'environment_names': environment_names}
                   if not directory and executable_paths:
                       directory = safe_program_path(executable_paths[0].rsplit('/',1)[0])
                   if directory:
