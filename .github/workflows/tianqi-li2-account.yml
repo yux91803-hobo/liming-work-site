@@ -1,4 +1,4 @@
-name: Tianqi private account delivery preparation
+name: Tianqi gateway native import verification
 on:
   push:
     branches: [codex/tianqi-li2-account-20261118]
@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Prepare a private one-file upload on li2
+      - name: Check gateway import route and authentication shape
         env:
           LI2_API_KEY: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
         run: |
@@ -25,8 +25,7 @@ jobs:
 
           API='https://api.instabox.sh'
           BRANCH='codex/tianqi-li2-account-20261118'
-          PROBE="import ast\nimport http.client\nimport json\nimport re\nfrom pathlib import Path\n\nbase=Path('/data/workbuddy-gateway/current')\nroot=Path('/data/workbuddy-gateway/accounts')\nrole=json.loads(Path('/data/home/.xin/kernel.env.json').read_text()).get('XIN_ROLE')\nif role!='tianqi':\n    raise SystemExit('Selected machine has an unexpected controller role')\nconnection=http.client.HTTPConnection('127.0.0.1',8788,timeout=6)\nconnection.request('GET','/health')\nresponse=connection.getresponse()\nif response.status!=200:\n    raise SystemExit('The gateway health endpoint is unavailable')\nhealth=json.loads(response.read(256*1024))\nconnection.close()\nsettings=json.loads((root/'settings.json').read_text())\nprograms={name:ast.parse((base/name).read_bytes()) for name in ('wb_proxy.py','wb_accounts.py')}\n\ndef routes(node):\n    return sorted({n.value for n in ast.walk(node) if isinstance(n,ast.Constant) and isinstance(n.value,str)\n                   and re.fullmatch(r'/(?:api|admin|v1)(?:/[A-Za-z0-9_.-]+)+',n.value)\n                   and re.search(r'account|import|setting|login|key|token',n.value)})\n\ndef call_name(c):\n    if isinstance(c.func,ast.Attribute): return c.func.attr\n    if isinstance(c.func,ast.Name): return c.func.id\n\ndef calls(node):\n    return sorted({v for c in ast.walk(node) if isinstance(c,ast.Call) and (v:=call_name(c)) is not None})\n\ndef get_fields(node):\n    allowed={'api_key','panel_password','auth','account','accounts','tokens','access_token','refresh_token','domain','uid','nickname','expires_at','data','json','realm','token','replace','overwrite','mode','dry_run','items','content','payload','filename','imported','success'}\n    return sorted({c.args[0].value for c in ast.walk(node) if isinstance(c,ast.Call) and call_name(c) in {'get','pop','setdefault'}\n                   and c.args and isinstance(c.args[0],ast.Constant) and isinstance(c.args[0].value,str) and c.args[0].value in allowed})\n\nhandlers={}\nfor n in ast.walk(programs['wb_proxy.py']):\n    if isinstance(n,ast.If):\n        for route in routes(n.test):\n            if 'import' in route or route.endswith('/login') or route.endswith('/settings'):\n                body=ast.Module(body=n.body,type_ignores=[])\n                handlers.setdefault(route,[]).append({'calls':calls(body)[:26],'fields':get_fields(body)})\nrefs={x for entries in handlers.values() for e in entries for x in e['calls']}\ninterfaces={}\nfor file,tree in programs.items():\n    for n in ast.walk(tree):\n        if isinstance(n,ast.FunctionDef) and (n.name in refs or re.search(r'import|panel_password|api_key|require_admin|verify_panel',n.name)):\n            if len(interfaces)>=90: break\n            interfaces[n.name]={'file':file,'args':[a.arg for a in n.args.args], 'fields':get_fields(n),'related_calls':[c for c in calls(n) if re.search(r'import|password|auth|realm|account|key|refresh|json|login',c)][:24]}\nprint(json.dumps({'role':role,'accounts':health.get('accounts') if type(health.get('accounts')) is int else None,\n                  'settings_fields':sorted(k for k in settings if re.fullmatch(r'[a-zA-Z_][a-zA-Z_0-9]+',k)),\n                  'panel_password_enabled':bool(settings.get('panel_password')),\n                  'api_routes':routes(programs['wb_proxy.py'])[:60],'handlers':handlers,'interfaces':interfaces},sort_keys=True))\n"
-          PUBLIC_KEY='-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAt7UE3qy7WvB4R0/W2IDC\nJrWYC1YRPHJPO4gaPyzR4VuG6oDSNFr3/Y8vxXsbn54O0m5GF3dwnqMMcH1HSs3v\nWFbhul+rqhNaNGPjpf7YsIOMTkcERYgH1reIctYA2MFlY28NTgAdl8UxXblipgoi\nY8SFw4tRKGMrDu7YqRayJo+/8spl2XtcNVBvPw90zGh9zE037HkFkdl3yVpYZXFH\ngcfpsjRpvHmh7RJClFYqHG6W97kwohck48z0GksX4uPHeAWgNIuQ2tkNdxgmFwKn\nKjaypKQuPaJ9tdJIM+Tye14r4//32Ja2CFRC1ybzCPjdCMz4HiOhOSqzrFJhI7H6\nP+dKi3Dh+pLHf418IEgv8KbwVwEWfvJPGi8JdvP9eInf8Z2f8JOvx7e5OsLSgtR+\nzRmVCvuCwN+eH+ixQsEUr5wgk9GU46YMiCvloSd6B0MWqL6Cs6gjTvPUxowfI57P\n4YGbj/Sakx+9749Lkj60Va5mta4L1FBfvl233SkZ7FL3AgMBAAE=\n-----END PUBLIC KEY-----\n'
+          PROBE='import ast\nimport http.client\nimport json\nimport re\nfrom pathlib import Path\n\nbase=Path(\'/data/workbuddy-gateway/current\')\nproxy=(base/\'wb_proxy.py\').read_text()\naccounts=(base/\'wb_accounts.py\').read_text()\nhtml=(base/\'dashboard.html\').read_text()\nroot=ast.parse(proxy)\n\nhandlers={}\nfor f in ast.walk(root):\n    if isinstance(f,ast.FunctionDef) and f.name in {\'_route_accounts_import\',\'_coerce_account_rows\'}:\n        handlers[f.name]=ast.get_source_segment(proxy,f)\nfor f in ast.walk(ast.parse(accounts)):\n    if isinstance(f,ast.FunctionDef) and f.name==\'normalise_import_row\':\n        handlers[f.name]=ast.get_source_segment(accounts,f)\n\nrefs=[]\nfor n,line in enumerate(proxy.splitlines(),1):\n    if re.search(r\'_route_accounts_import\\b|PANEL_(?:API|ALIAS|ROUTES|PREFIX)|\\bWB_PROXY_API_KEY\\b\',line):\n        if len(line)<220 and not re.search(r\'eyJ[A-Za-z0-9_\\-]{15,}\\.|\\bsk-[A-Za-z0-9_\\-]{15,}\',line):\n            refs.append([n,line.strip()])\npaths=sorted(set(re.findall(r"[\\"\'](/[A-Za-z0-9_.-/]*(?:accounts|account)/import(?:-preview)?)[\\"\']",html+proxy)))\n\nctx=http.client.HTTPConnection(\'127.0.0.1\',8788,timeout=8)\ndef status(path,headers=None):\n    ctx.request(\'GET\',path,headers=headers or {})\n    r=ctx.getresponse()\n    r.read(1024*1024)\n    return r.status\ntry:\n    models_without_auth=status(\'/v1/models\')\n    models_with_placeholder=status(\'/v1/models\',{\'Authorization\':\'Bearer tianqi-local-probe-only\'})\nfinally:\n    ctx.close()\n\nsafe=[]\nfor f in ast.walk(root):\n    if isinstance(f,ast.Call) and f.args and getattr(f.func,\'attr\',\'\')==\'add_argument\' and isinstance(f.args[0],ast.Constant) and f.args[0].value in {\'--api-key\',\'--panel-password\'}:\n        names={n.value for n in ast.walk(f) if isinstance(n,ast.Constant) and isinstance(n.value,str) and re.fullmatch(r\'[A-Z][A-Z0-9_]{3,50}\',n.value)}\n        safe.append({\'argument\':f.args[0].value,\'environment_names\':sorted(names)})\n# These program handlers describe the JSON schema. Refuse any long token-like literal before returning snippets.\nif any(re.search(r\'eyJ[A-Za-z0-9_\\-]{15,}\\.|\\b(?:sk-|ibk_)[A-Za-z0-9_\\-]{15,}|PRIVATE KEY-----\',src) for src in handlers.values()):\n    raise SystemExit(\'Unexpected credential-like literal in gateway program\')\nprint(json.dumps({\'refs\':refs[:26],\'paths\':paths,\'handlers\':handlers,\'model_statuses\':[models_without_auth,models_with_placeholder],\'launch_args\':safe},sort_keys=True))\n'
 
           class NoRedirect(HTTPRedirectHandler):
               def redirect_request(self, request, fp, code, msg, headers, newurl):
@@ -50,40 +49,15 @@ jobs:
                   raise RuntimeError('Tianqi key did not resolve to a unique li2')
               return '/v1/machines/'+quote(rows[0]['id'],safe='')
 
-          ENVELOPE=r"""const c=require('node:crypto'),fs=require('node:fs');
-          const i=JSON.parse(fs.readFileSync(0,'utf8'));
-          const key=c.randomBytes(32),iv=c.randomBytes(12),cipher=c.createCipheriv('aes-256-gcm',key,iv);
-          cipher.setAAD(Buffer.from('liming-tianqi-account-upload-v1'));
-          const data=Buffer.concat([cipher.update(JSON.stringify(i.metadata),'utf8'),cipher.final()]);
-          const encode=x=>x.toString('base64');
-          const wrapped=c.publicEncrypt({key:i.publicKey,padding:c.constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},key);
-          console.log(JSON.stringify({wrapped:encode(wrapped),nonce:encode(iv),tag:encode(cipher.getAuthTag()),data:encode(data)}));"""
-
-          def main():
-              api=open_client()
-              target=machine(api)
-              probe=api(target+'/exec',{'argv':['/usr/bin/python3','-c',PROBE],'timeoutSeconds':35})
-              if probe.get('exitCode')!=0:
-                  raise RuntimeError('The li2 gateway metadata check failed')
-              report=json.loads(probe['stdout'])
-              if report.get('role')!='tianqi':
-                  raise RuntimeError('Unexpected target role')
-              print('TIANQI_GATEWAY_INTERFACE '+json.dumps(report),flush=True)
-              run_id=str(int(os.environ['GITHUB_RUN_ID']))
-              slot='/data/tmp/liming-tq-account/'+run_id+'-'+secrets.token_hex(12)+'/accounts.json'
-              grant=api(target+'/files/upload-url',{'path':slot,'mode':'0600','parents':True,'expiresInSeconds':900})
-              url=urlsplit(grant['url'])
-              if url.scheme!='https' or url.netloc!='api.instabox.sh' or grant['method']!='PUT' or grant['path']!=slot:
-                  raise RuntimeError('Provider returned an unexpected upload destination')
-              envelope=subprocess.run(['node','-e',ENVELOPE], input=json.dumps({'publicKey':PUBLIC_KEY,'metadata':grant}),
-                                      text=True,capture_output=True,check=True,env={'PATH':os.environ['PATH']},timeout=12)
-              print('TIANQI_UPLOAD_ENVELOPE '+envelope.stdout.strip(),flush=True)
 
           if __name__=='__main__':
               try:
-                  main()
+                  api=open_client()
+                  result=api(machine(api)+'/exec',{'argv':['/usr/bin/python3','-c',PROBE],'timeoutSeconds':32})
+                  if result.get('exitCode')!=0: raise SystemExit('Gateway route probe did not finish')
+                  print('TIANQI_IMPORT_ROUTE '+json.dumps(json.loads(result['stdout']),sort_keys=True))
               except HTTPError as error:
                   raise SystemExit('InstaBox response HTTP '+str(error.code)) from None
-              except (URLError,TimeoutError,ValueError,KeyError,TypeError,subprocess.SubprocessError):
-                  raise SystemExit('Private delivery setup did not finish') from None
+              except (URLError,TimeoutError,ValueError,KeyError,TypeError):
+                  raise SystemExit('Gateway route probe did not return a usable report') from None
           PY
