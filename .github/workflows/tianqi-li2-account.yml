@@ -10,40 +10,122 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
-      - name: Match Tianqi to its existing gateway account region
+      - name: Check the published layout, both plugins and a disposable Tianqi reply
         env:
-          LI2_API_KEY: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
+          XIN_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
         run: |
           python3 - <<'PY'
+          import http.cookiejar
           import json
           import os
-          from urllib.parse import quote
-          from urllib.request import HTTPRedirectHandler, Request, build_opener
+          import re
+          import sys
+          import time
+          import uuid
+          from urllib.error import HTTPError
+          from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, Request, build_opener
 
-          API='https://api.instabox.sh'
-          REMOTE='import http.client\nimport json\nimport os\nimport re\nimport subprocess\nimport tempfile\nimport time\nfrom pathlib import Path\n\nHOME=Path(\'/data/home\')\nXIN=HOME/\'.xin\'\nSERVICE=\'workbuddy-gateway.service\'\nCONF=Path(\'/etc/systemd/system\')/(SERVICE+\'.d\')/\'61-liming-tianqi-realm.conf\'\nif json.loads((XIN/\'kernel.env.json\').read_text()).get(\'XIN_ROLE\')!=\'tianqi\':\n    raise SystemExit(\'Unexpected target role\')\nKEY=(XIN/\'harness.key\').read_text().strip()\n\ndef read(route,payload=None,realm=None):\n    con=http.client.HTTPConnection(\'127.0.0.1\',8788,timeout=45)\n    try:\n        raw=None if payload is None else json.dumps(payload).encode()\n        headers={\'Authorization\':\'Bearer \'+KEY,\'Content-Type\':\'application/json\'}\n        if realm: headers[\'X-Realm\']=realm\n        con.request(\'GET\' if raw is None else \'POST\',route,body=raw,headers=headers)\n        result=con.getresponse()\n        return result.status,json.loads(result.read(512*1024))\n    finally: con.close()\n\ndef summary():\n    code,health=read(\'/health\')\n    doc={k:health.get(k) for k in (\'realm\',\'accounts\',\'accounts_ready\',\'accounts_ready_current_realm\')}\n    doc[\'http\']=code\n    for k in (\'accounts_by_realm\',\'accounts_ready_by_realm\'):\n        doc[k]={realm:n for realm,n in (health.get(k) or {}).items() if realm in {\'cn\',\'intl\'} and type(n) is int}\n    expiry=health.get(\'expires_at\')\n    if isinstance(expiry,(int,float)):\n        if expiry>1e11: expiry/=1000\n        doc[\'presented_account_expired\']=expiry<time.time()\n    return doc\n\ndef root(*argv, optional=False):\n    prefix=[\'/usr/bin/sudo\',\'-n\'] if os.geteuid() else []\n    got=subprocess.run(prefix+list(map(str,argv)),stdin=subprocess.DEVNULL,capture_output=True,timeout=35)\n    if got.returncode and not optional: raise RuntimeError(\'Could not apply the loopback gateway realm\')\n\ndef completion(realm=None):\n    status,doc=read(\'/v1/responses\',{\'model\':\'deepseek-v4.1-flash\',\'input\':\'只回复一个字：好\',\n                                   \'stream\':False,\'max_output_tokens\':32},realm)\n    error=doc.get(\'error\',{})\n    msg=error.get(\'message\',\'\') if isinstance(error,dict) else \'\'\n    match=re.search(r"no usable account for realm \'(intl|cn)\'",str(msg))\n    return {\'status\':status,\'replied\':status==200 and bool(doc.get(\'output\')),\n            \'missing_realm\':match[1] if match else None,\n            \'region_has_no_account\':\'该区域没有任何账号\' in str(msg)}\n\ndef main():\n    first=summary()\n    proof={\'before\':first,\'changed_realm\':False}\n    available=[r for r,n in first[\'accounts_ready_by_realm\'].items() if n==1]\n    if first[\'accounts\']==1 and first[\'realm\'] in {\'cn\',\'intl\'} and len(available)==1 and available[0]!=first[\'realm\']:\n        realm=available[0]\n        proof[\'explicit_realm\']=completion(realm)\n        if proof[\'explicit_realm\'][\'replied\'] and not CONF.exists() and not CONF.is_symlink():\n            with tempfile.TemporaryDirectory(prefix=\'tianqi-gateway-realm-\',dir=\'/data/tmp\') as tmp:\n                f=Path(tmp)/\'realm.conf\'\n                f.write_text(\'[Service]\\nEnvironment=WB_PROXY_DEFAULT_REALM=\'+realm+\'\\n\')\n                written=False\n                try:\n                    root(\'/usr/bin/install\',\'-m\',\'0644\',f,CONF)\n                    written=True\n                    root(\'systemctl\',\'daemon-reload\')\n                    root(\'systemctl\',\'restart\',SERVICE)\n                    for _ in range(20):\n                        try:\n                            proof[\'after\']=summary()\n                            if proof[\'after\'][\'realm\']==realm: break\n                        except (OSError,ValueError,http.client.HTTPException): pass\n                        time.sleep(.5)\n                    else: raise RuntimeError(\'Explicit live realm remained in place\')\n                    proof[\'default_realm_reply\']=completion()\n                    if not proof[\'default_realm_reply\'][\'replied\']: raise RuntimeError(\'The matched default realm did not answer\')\n                    proof[\'changed_realm\']=True\n                except (RuntimeError,OSError,ValueError,http.client.HTTPException,subprocess.TimeoutExpired) as error:\n                    proof[\'recovered\']=type(error).__name__\n                    if written:\n                        root(\'/usr/bin/rm\',\'-f\',\'--\',CONF,optional=True)\n                        root(\'systemctl\',\'daemon-reload\',optional=True)\n                        root(\'systemctl\',\'restart\',SERVICE,optional=True)\n    elif first.get(\'accounts_ready_current_realm\'):\n        proof[\'default_realm_reply\']=completion()\n    print(json.dumps(proof,sort_keys=True))\n\nif __name__==\'__main__\':\n    try: main()\n    except (OSError,ValueError,http.client.HTTPException,subprocess.TimeoutExpired) as error:\n        raise SystemExit(\'Gateway route check controlled failure: \'+type(error).__name__) from None\n'
-          key=os.environ['LI2_API_KEY']
+          BASE='https://liming-work.com'
+          PASSWORD=os.environ['XIN_OWNER_PASSWORD']
 
           class NoRedirect(HTTPRedirectHandler):
-              def redirect_request(self, request, fp, code, msg, headers, newurl):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
                   return None
 
+          OPENER=build_opener(NoRedirect(),HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+          def request(path, payload=None):
+              if not path.startswith('/') or path.startswith('//'): raise ValueError('Unexpected site path')
+              data=None if payload is None else json.dumps(payload).encode('utf-8')
+              req=Request(BASE+path,data=data,headers={'Content-Type':'application/json','X-Xin':'1',
+                                                      'Origin':BASE,'User-Agent':'Tianqi-release-check'})
+              try:
+                  with OPENER.open(req,timeout=55) as response:
+                      return response.status,response.read(2*1024*1024)
+              except HTTPError as failure:
+                  return failure.code,failure.read(512*1024)
+
+          def get(path, body=None):
+              status,response=request(path,body)
+              try: content=json.loads(response)
+              except ValueError: content={}
+              return status,content
+
+          def call(op,args=None):
+              status,body=get('/api/tq/call',{'op':op,'args':args or {}})
+              return status,body,body.get('data') or {}
+
+          def wait_read(op,args=None,until=None,timeout=120):
+              limit=time.monotonic()+timeout
+              while time.monotonic()<limit:
+                  status,r,d=call(op,args)
+                  if status==200 and r.get('ok') and (until is None or until(d)): return d
+                  if op=='plugins' and d.get('error') in {'not_in_tianqi','bad_op'}:
+                      time.sleep(3)
+                      continue
+                  if status in (400,401,403,404) or d.get('error'):
+                      raise RuntimeError(f'{op} rejected with HTTP {status}')
+                  time.sleep(2)
+              raise RuntimeError(f'{op} did not finish')
+
           def main():
-              opener=build_opener(NoRedirect())
-              def req(path,body=None):
-                  q=Request(API+path,data=json.dumps(body).encode() if body is not None else None,
-                            headers={'X-API-Key':key,'Content-Type':'application/json'})
-                  with opener.open(q,timeout=185) as r:
-                      return json.load(r)
-              ids=[r['id'] for r in req('/v1/machines')['machines'] if r.get('name')=='li2']
-              if len(ids)!=1: raise RuntimeError('Unexpected target selection')
-              run=req('/v1/machines/'+quote(ids[0],safe='')+'/exec',
-                      {'argv':['/usr/bin/python3','-c',REMOTE],'timeoutSeconds':170})
-              if run.get('exitCode')!=0: raise RuntimeError('Isolated Tianqi verification did not complete')
-              proof=json.loads(run['stdout'])
-              print('TIANQI_GATEWAY_REALM '+json.dumps(proof,sort_keys=True),flush=True)
+              status,body=request('/tools/tianqi/')
+              marker=b'<template id="tianqi-workbench">'
+              if status!=200 or marker not in body:
+                  raise RuntimeError('The new Tianqi template is not deployed')
+              status,css=request('/tools/tianqi/workbench.css')
+              if status!=200 or b'.tq-desk' not in css or b'.tq-star-key' not in css:
+                  raise RuntimeError('The new Tianqi workbench styles are missing')
+              status,_=get('/api/tq/login',{'password':PASSWORD})
+              if status!=200: raise RuntimeError('Tianqi login did not complete')
+              _,me=get('/api/tq/me')
+              if not (me.get('enabled') and me.get('authed')): raise RuntimeError('Tianqi login state not confirmed')
+              ready=wait_read('ping',until=lambda d:d.get('role')=='tianqi' and d.get('ready'))
+              plugins=wait_read('plugins',{'agent':'harness'})
+              instances={p.get('name'):p.get('on') for p in plugins.get('plugins',[])}
+              if set(instances)!={'purge','rea'}: raise RuntimeError('The Tianqi plugin list differs')
+              print('TIANQI_SITE '+json.dumps({'layout':True,'li2_ready':bool(ready),'plugins':instances},sort_keys=True),flush=True)
+
+              sid=run=''
+              fixture={'agent':'harness','model':'deepseek-v4.1-flash','effort':'off','clientId':uuid.uuid4().hex,
+                       'text':'只回复一个字：好'}
+              result={'real_reply':False,'cleaned_fixture':False}
+              try:
+                  status,accept,d=call('send',fixture)
+                  if status!=200: raise RuntimeError('The Tianqi fixture was not accepted')
+                  if accept.get('accepted') and accept.get('delivery',{}).get('id'):
+                      job=wait_read('delivery',{'id':accept['delivery']['id']},until=lambda d:d.get('state') in {'delivered','failed'},timeout=100)
+                      d=job.get('result') or {}
+                  sid,run=d.get('sid',''),d.get('run','')
+                  if not re.fullmatch(r's[a-z0-9]{6,24}',sid) or not re.fullmatch(r'r[a-z0-9]{6,24}',run):
+                      raise RuntimeError('The Tianqi fixture session or run was not created')
+                  deadline=time.monotonic()+110
+                  off=0
+                  while time.monotonic()<deadline:
+                      _,accept,poll=call('poll',{'run':run,'off':off})
+                      if accept.get('ok'):
+                          off=poll.get('off',off)
+                          for event in poll.get('events',[]):
+                              if event.get('t')=='text' and event.get('text','').strip(): result['real_reply']=True
+                              if event.get('t')=='done': result['run_completed']=bool(event.get('ok'))
+                          if poll.get('done'): break
+                      time.sleep(2)
+                  if not result.get('real_reply') or not result.get('run_completed'):
+                      raise RuntimeError('The Tianqi fixture did not complete a real reply')
+              finally:
+                  if sid and run:
+                      if not result.get('run_completed'): call('stop',{'run':run,'sid':sid})
+                      for _ in range(12):
+                          _,r,d=call('forget',{'sid':sid})
+                          if r.get('ok') and not d.get('error'):
+                              result['cleaned_fixture']=True
+                              break
+                          time.sleep(2)
+                  print('TIANQI_SITE_REPLY '+json.dumps(result,sort_keys=True),flush=True)
+                  if sid and not result['cleaned_fixture']: raise RuntimeError('The local reference to the fixture needs cleanup')
 
           if __name__=='__main__':
               try: main()
-              except (ValueError,KeyError,RuntimeError) as error: raise SystemExit(str(error)) from None
+              except (RuntimeError,ValueError,TimeoutError,OSError) as error:
+                  raise SystemExit(str(error) if isinstance(error,RuntimeError) else 'Tianqi live check could not finish') from None
           PY
