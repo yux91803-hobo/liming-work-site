@@ -1615,12 +1615,12 @@
   // 结果：做完 / 没做成 / 停了 / 在等你确认时，小芯在聊天里说一条（同一次结果只说一次）。
   // 站长 2026-11-16：问题的答案直接说在聊天里，不要卡片——和别的回答一样是一条消息（能复制），下面一行小操作
   function resKey(t) { return t.sid + '@' + (t.status === 'waiting' ? 'w' + (t.endedAt || '') : (t.result && t.result.at) || t.endedAt || ''); }
-  function drawTaskResult(t) {
+  function drawTaskResult(t, fresh) {
     if(t.delivery&&['pending','silent','continued'].includes(t.delivery.state))return null;
     var key = resKey(t);
     if (list.querySelector('[data-tres="' + key + '"]')) return null;
     var text = t.status === 'waiting' ? '我需要你确认一下：' + (t.question || '待处理') : (t.result && t.result.text) || (t.status === 'done' ? '我做好了：' + t.title + '。' : '这次还没有完成。');
-    var m = placeResult(t.sid, t, text, t.status === 'failed' || t.status === 'stopped' ? 'tbad' : '');
+    var m = placeResult(t.sid, t, text, t.status === 'failed' || t.status === 'stopped' ? 'tbad' : '', fresh);
     m.e.dataset.tres = key;
     if (t.status === 'failed' && t.result && t.result.err && text.indexOf(t.result.err) < 0) m.b.appendChild(h('p', 'xc-tres-err', t.result.err));
     return m.e;
@@ -1693,6 +1693,12 @@
      单独一条（.xc-tbw，不画头像，和结果那条同一种排法）：在做的（带 dock）一直在聊天最底下，新消息和「思考中」插在它上面；
      做完、没做成、停了、等你确认：落到这时候聊天的最后，结果接在它下面；又接着做就回到最底下。刷新以后在做的照样在最底下，
      做完的按结束时间排在各轮之间（openSession）。设计 docs/superpowers/specs/2026-11-17-xin-term-follow-design.md */
+  // 站长 2026-11-19：亲眼看着做完的那一下 ✓ 盖章、迸几颗像素火花（刷新、翻历史时不盖）
+  function stampBox(b) {
+    b.classList.add('stamp');
+    for (var i = 0; i < 6; i++) { var sp = h('i', 'xc-spark'); sp.style.setProperty('--a', (i * 60 + 15) + 'deg'); b.appendChild(sp); }
+    setTimeout(function () { [].forEach.call(b.querySelectorAll('.xc-spark'), function (x) { x.remove(); }); }, 800);
+  }
   function boxWrap(sid) { return list.querySelector('.xc-tbw[data-tsid="' + String(sid).replace(/["\\]/g, '') + '"]'); }
   function dockBox(w) { w.classList.add('dock'); list.appendChild(w); }
   function settleBox(w) { w.classList.remove('dock'); w.remove(); put(w); }
@@ -1733,6 +1739,7 @@
       var fold = b.classList.contains('live');
       b.className = 'xc-tb st-' + st + (fold ? ' fold' : ''); b.dataset.st = st + '|' + meta + '|' + title;
       b.innerHTML = tbIcon(st) + '<b class="xc-tb-t"></b><span class="xc-tb-m"></span>' + svgIcon('chev');
+      if (fold && st === 'done' && !reduceMotion()) stampBox(b);
       b.querySelector('.xc-tb-t').textContent = title; b.querySelector('.xc-tb-m').textContent = meta;
       if (w && w.classList && w.classList.contains('xc-tbw')) boxActs(w, t);
     }
@@ -1765,7 +1772,8 @@
     var p = w.previousElementSibling; while (p && p === typingEl) p = p.previousElementSibling;
     return { w: w, cont: !!p && p.classList.contains('xc-ai') && !p.classList.contains('bad') && grpOf(p) === tgrp(sid) };
   }
-  function placeResult(sid, t, text, cls) {
+  function placeResult(sid, t, text, cls, fresh) {
+    var w0 = fresh && boxWrap(sid), y0 = w0 ? w0.getBoundingClientRect().top : null;
     var s = resultSlot(sid), e = h('div', 'xc-m xc-ai xc-tres' + (s.cont ? ' cont' : '') + (cls ? ' ' + cls : '')), b = h('div', 'xc-bub'), body = md(text);
     e.dataset.run = 'task-' + sid; e.dataset.grp = tgrp(sid); e.dataset.tsid = sid;
     e.appendChild(avatar()); if (!s.cont) e.appendChild(h('span', 'xc-who', '小芯'));
@@ -1773,6 +1781,11 @@
     if (body.querySelector('.xc-code, .xc-tbl')) e.classList.add('wide');
     s.w.parentNode.insertBefore(e, s.w);
     boxActs(s.w, t); paintBoxes();
+    // 新来的结果淡入；任务框从原来的位置平滑滑到结果下面（FLIP），不再瞬间跳下去（站长 2026-11-19 体检第 2 条）
+    if (fresh) {
+      e.classList.add('enter');
+      if (y0 != null && !reduceMotion()) { var y1 = s.w.getBoundingClientRect().top; if (Math.abs(y1 - y0) > 2) s.w.animate([{ transform: 'translateY(' + Math.round(y0 - y1) + 'px)' }, { transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.2,.9,.25,1)' }); }
+    }
     return { e: e, b: b };
   }
   // 框前面紧挨着的是同一条消息就标 own：那一条不露操作行，整条的操作在框下面；框跟着最新消息走、前面是别的话时不标，那句话照常露复制键
@@ -1962,7 +1975,7 @@
     paintCards(); renderWork(); renderHome();
     changed.forEach(function (t) {
       var here = S.open && S.view === 'chat' && S.sid === t.parent;
-      if (here && list) { var re = drawTaskResult(t); if (re) seeResult(re, t); }
+      if (here && list) { var re = drawTaskResult(t, true); if (re) seeResult(re, t); }
       if (t.status !== 'stopped') announce(t, here);
     });
   }
@@ -3647,8 +3660,8 @@
         // 转达的话到了：这件活算说完了（框收成一行，用时算到这时）；任务摘要随后也会这么说
         var ti=S.tinfo[tr.sid]||(S.tinfo[tr.sid]={sid:tr.sid,status:tr.status,endedAt:tr.endedAt});
         if(!ti.delivery||ti.delivery.state!=='delivered')ti.delivery={state:'delivered',at:tr.deliveredAt||Date.now()};
-        var rm=placeResult(tr.sid,ti,ev.text,'');rm.e.dataset.tres=key;
-        if(!old){rm.e.classList.add('enter');seeResult(rm.e,ti);}
+        var rm=placeResult(tr.sid,ti,ev.text,'',!old);rm.e.dataset.tres=key;
+        if(!old)seeResult(rm.e,ti);
         return rm.e;
       } else if ((hole = runLast(run)) && !hole.classList.contains('xc-tbh')) hole = null;
       var body = md(ev.text);

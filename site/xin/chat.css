@@ -1347,3 +1347,20 @@ html.vt-work::view-transition-new(root){animation:xcdots .48s steps(7,end) both;
 @media (prefers-reduced-motion:reduce){
   .xc-me.fly > .xc-bub,.xc-ai.enter > .xc-bub > .xc-md > *,.xc-ai.enter > .xc-bub::after{animation:none}
 }
+/* 派活：任务框从左到右一格格搭起来 */
+.xc-tb{position:relative}
+.xc-tb.enter{animation:xcbuild .4s steps(8,end) both}
+@keyframes xcbuild{from{clip-path:inset(0 100% 0 0);opacity:.6}to{clip-path:inset(0 0 0 0);opacity:1}}
+/* 在做：一颗像素小彗星绕着框边跑（只留边框那一圈） */
+@property --xc-ang{syntax:'<angle>';inherits:false;initial-value:0deg}
+.xc-tb.live::before{content:"";position:absolute;inset:0;padding:1.5px;pointer-events:none;background:conic-gradient(from var(--xc-ang),transparent 0 76%,color-mix(in srgb,var(--glow) 35%,transparent) 88%,var(--glow) 97%,transparent 100%);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);animation:xcorbit 2.6s steps(40,end) infinite}
+@keyframes xcorbit{to{--xc-ang:360deg}}
+/* 做完：✓ 盖章，迸几颗像素火花 */
+.xc-tb.stamp .xc-tb-i{animation:xcstamp .44s cubic-bezier(.2,1.6,.4,1) both}
+@keyframes xcstamp{from{transform:scale(1.9) rotate(-20deg);opacity:0}60%{opacity:1}}
+.xc-spark{position:absolute;left:22px;top:50%;width:3px;height:3px;margin-top:-1.5px;background:var(--ok);pointer-events:none;animation:xcspark .62s cubic-bezier(.15,.8,.3,1) .1s both}
+@keyframes xcspark{from{transform:rotate(var(--a)) translateX(3px);opacity:1}to{transform:rotate(var(--a)) translateX(20px);opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .xc-tb.enter,.xc-tb.stamp .xc-tb-i,.xc-spark{animation:none}
+  .xc-tb.live::before{animation:none;display:none}
+}

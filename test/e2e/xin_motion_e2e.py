@@ -3,6 +3,8 @@
 import asyncio, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import stm32_e2e as ui
+import json
+import xin_term_e2e as T
 from playwright.async_api import async_playwright
 
 # 首页露没露出来：从页面一开始每一帧都看，工作台出来就停
@@ -81,6 +83,46 @@ async def history_still(browser):
     await pg.context.close()
 
 
+async def task_box(browser, reduce):
+    pg = await ui.page(browser, 1280, 860)
+    front = [[{'t': 'text', 'text': '我派后台去编一下 blink。'}, {'t': 'task', 'sid': T.TASK, 'no': 1, 'title': '编译 blink', 'kind': 'code', 'status': 'queued', 'after': [], 'at': T.now()}],
+             [{'t': 'done', 'ok': True, 'code': 0, 'ms': 900}]]
+    st = await ui.xin_mock(pg, authed=True, live=front)
+    st['tasks'] = []
+    if reduce:
+        await pg.emulate_media(reduced_motion='reduce')
+    await pg.goto(ui.BASE + '/#xin-work')
+    await pg.wait_for_selector('.xc.wb.show .xc-msgs')
+    await pg.click('.xc-new-b')
+    await pg.fill('.xc-row textarea', '帮我编一下 blink')
+    await pg.keyboard.press('Enter')
+    BOX = '.xc-tb[data-tsid="%s"]' % T.TASK
+    await pg.wait_for_selector(BOX)
+    build = await pg.evaluate("getComputedStyle(document.querySelector('%s')).animationName" % BOX)
+    st['tasks'] = [T.task(status='running', run='rtask00b01', startedAt=T.now() - 3000)]
+    await pg.evaluate('LimingXinChat.tasks()')
+    await pg.wait_for_function("document.querySelector('%s').classList.contains('live')" % BOX, timeout=5000)
+    orbit = await pg.evaluate("getComputedStyle(document.querySelector('%s'), '::before').animationName" % BOX)
+    await pg.wait_for_function("!document.querySelector('.xc-typing')", timeout=10000)
+    y0 = await pg.evaluate("document.querySelector('%s').getBoundingClientRect().top" % BOX)
+    st['tasks'] = [T.task(status='done', run='rtask00b01', startedAt=T.now() - 9000, endedAt=T.now(), result={'ok': True, 'text': '编好了：`/data/workspace/blink/build/app.hex`。', 'at': T.now()}, delivery={'state': 'delivered', 'at': T.now()})]
+    await pg.evaluate('LimingXinChat.tasks()')
+    await pg.wait_for_selector('.xc-tres')
+    done = await pg.evaluate("""(() => { const b = document.querySelector('%s'), r = document.querySelector('.xc-tres'), w = b.closest('.xc-tbw');
+      return [b.classList.contains('stamp'), b.querySelectorAll('.xc-spark').length, getComputedStyle(b.querySelector('.xc-tb-i')).animationName, getComputedStyle(r).animationName,
+        w.getAnimations().some(a => a.effect && a.effect.getKeyframes().some(k => String(k.transform || '').includes('translateY')))]; })()""" % BOX)
+    await pg.wait_for_timeout(1000)
+    after = await pg.evaluate("document.querySelectorAll('.xc-spark').length")
+    if reduce:
+        ui.check('减少动态：任务框不搭、不绕光、做完不盖章不迸火花、不滑', build == 'none' and orbit in ('none', '') and done[:3] == [False, 0, 'none'] and not done[4], (build, orbit, done))
+    else:
+        ui.check('派活：任务框从左到右一格格搭起来（xcbuild）', build == 'xcbuild', build)
+        ui.check('在做：一颗像素小彗星绕着框边跑（::before 的 xcorbit）', orbit == 'xcorbit', orbit)
+        ui.check('做完：✓ 盖章（xcstamp），迸出 6 颗像素火花，结果淡入（xcin），任务框平滑滑下去（FLIP）', done == [True, 6, 'xcstamp', 'xcin', True], done)
+        ui.check('火花放完就拿掉', after == 0, after)
+    await pg.context.close()
+
+
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
@@ -90,6 +132,8 @@ async def main():
         await send_and_reply(browser, False)
         await send_and_reply(browser, True)
         await history_still(browser)
+        await task_box(browser, False)
+        await task_box(browser, True)
         await browser.close()
     n = len(ui.results); ok = sum(1 for r in ui.results if r[1])
     print('==== %d/%d 通过 ====' % (ok, n))
