@@ -14,6 +14,8 @@
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <script>
+  // 站长 2026-11-19：直接打开工作台（#xin-work）时首页先藏起来，工作台出来再放开（最多 3 秒），不再先闪一下首页
+  (function(){if(location.hash==='#xin-work'){var h=document.documentElement;h.classList.add('xc-boot-work');setTimeout(function(){h.classList.remove('xc-boot-work');},3000);}})();
   (function(){try{var t=localStorage.getItem('lm.theme')||'light';var d=t==='dark'||(t==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);var h=document.documentElement;h.dataset.theme=d?'dark':'light';h.dataset.pref=t;var m=document.getElementById('themeColor');if(m)m.setAttribute('content',d?'#1f1e1d':'#faf9f5');}catch(e){}})();
 </script>
 <link rel="stylesheet" href="/shell.css?v=hb2">

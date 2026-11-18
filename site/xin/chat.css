@@ -1318,3 +1318,12 @@ html.embed .xc.tq-mode:is(:not(.wb-side),.locked) .xc-hd{padding-left:calc(58px 
 html.embed .xc.tq-mode:is(:not(.wb-side),.locked) .xc-isle{max-width:min(330px,calc(100vw - 172px))}
 html.embed .xc.tq-mode .xc-dr-hd{padding-left:calc(58px + var(--sl))}
 html.embed .xc.tq-mode .xc-x{display:none}
+
+/* ---------- 动画（站长 2026-11-19「做吧，兄弟支持你」，设计 docs/superpowers/specs/2026-11-19-xin-motion-design.md） ---------- */
+/* 直接打开工作台：首页先藏起来，工作台出来再放开 */
+.xc-boot-work #home{visibility:hidden}
+/* 从首页进工作台：新画面按 14px 的像素点阵一圈圈长出来（点阵溶解），旧画面不动 */
+@property --xc-dot{syntax:'<length>';inherits:false;initial-value:0px}
+html.vt-work::view-transition-old(root){animation:none}
+html.vt-work::view-transition-new(root){animation:xcdots .48s steps(7,end) both;-webkit-mask:radial-gradient(circle,#000 var(--xc-dot),transparent calc(var(--xc-dot) + .5px)) 0 0/14px 14px;mask:radial-gradient(circle,#000 var(--xc-dot),transparent calc(var(--xc-dot) + .5px)) 0 0/14px 14px}
+@keyframes xcdots{from{--xc-dot:0px}to{--xc-dot:11px}}

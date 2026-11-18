@@ -437,7 +437,7 @@
   function open() {
     if (!root) build();
     S.open = true; root.hidden = false; S.view = 'chat'; setDrawer(false);
-    requestAnimationFrame(function () { root.classList.add('show'); });
+    requestAnimationFrame(function () { root.classList.add('show'); document.documentElement.classList.remove('xc-boot-work'); });
     document.body.classList.add('xc-open');
     var x = xin(); if (x && x.home && window.innerWidth < 900) x.home();
     render(); grow(); refreshCtx();
@@ -2242,6 +2242,15 @@
   function phase(el) { var t = Date.now(); el.style.setProperty('--p16', -(t % 1600) + 'ms'); el.style.setProperty('--p12', -(t % 1200) + 'ms'); el.style.setProperty('--p10', -(t % 1000) + 'ms'); }
   function work(opt) {
     opt = opt || {};
+    // 站长 2026-11-19：从首页进工作台用像素点阵溶解过去（View Transitions）。直接打开链接、已经开着、减少动态、浏览器不支持时照旧
+    if (!opt.vt && !opt.keepHash && !(S.open && S.wb) && document.startViewTransition && !reduceMotion()) {
+      var de = document.documentElement, done = function () { de.classList.remove('vt-work'); };
+      de.classList.add('vt-work');
+      return new Promise(function (res) {
+        var vt = document.startViewTransition(function () { res(work({ vt: true })); return new Promise(function (ok) { requestAnimationFrame(function () { requestAnimationFrame(ok); }); }); });
+        vt.finished.then(done, done);
+      });
+    }
     if (!root) build();
     S.wb = true; root.classList.add('wb'); document.body.classList.add('xc-wb');
     layout();
