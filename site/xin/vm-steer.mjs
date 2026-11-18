@@ -243,13 +243,14 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
   }
   // Gemini 后台下一步之前取走还没送的补充：标成送达、在这一轮的过程里显示成兄弟的一句话；在 tasks 锁里，不会送两次
   function steerTake(a) {
-    const m = okId(a.run, 'r') && readJ(metaF(a.run)), t = m && readJ(sessF(m.sid));
-    if (!m || !isTask(t) || lastRun(t) !== a.run || m.stopped || m.ended) return { steers: [] };
+    // 前台这一轮（小芯的对话，前台自己在查资料）也能取：站长 2026-11-18「我可以继续说话改变任务」
+    const m = okId(a.run, 'r') && readJ(metaF(a.run)), t = m && readJ(sessF(m.sid)), front = !!t && !isTask(t) && t.agent === 'codex';
+    if (!m || !(isTask(t) || front) || lastRun(t) !== a.run || m.stopped || m.ended) return { steers: [] };
     const take = (m.steers || []).filter(x => x.state === 'pending');
     if (!take.length) return { steers: [] };
     const at = Date.now(); for (const q of take) Object.assign(q, { state: 'accepted', acceptedAt: at });
     writeJ(metaF(a.run), m);
-    for (const q of take) emit(a.run, { t: 'user', text: q.text, at, steer: true, clientId: q.id });
+    if (!front) for (const q of take) emit(a.run, { t: 'user', text: q.text, at, steer: true, clientId: q.id });   // 前台这一轮：补充到的时候已经画过了（steer）
     return { steers: take.map(q => ({ id: q.id, text: q.text, at: q.at })) };
   }
   // 同一轮里换执行入口（Gemini 额度用完、卡住）：接手的模型从头开始，这一轮收到的补充全部交给它，还没送的也算送达

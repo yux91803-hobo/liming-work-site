@@ -41,3 +41,9 @@ test('每轮附的提醒不再让它说「我来做」、不再瞒着派活', as
   for (const w of ['我来做', '只需说好', '委派细节']) assert.ok(!p.REMIND.includes(w), '提醒还有「' + w + '」');
   assert.ok(p.REMIND.includes('不编造'));
 });
+
+test('前台自己查（站长 11-18「耗时间的任务交给后台」）：几下就能查到的自己用 search_web / read_url_content 查；耗时间的才派后台', async () => {
+  const { front } = await prompts();
+  for (const w of ['几下就能查到', 'search_web', 'read_url_content', '耗时间的']) assert.ok(front.includes(w), '缺「' + w + '」');
+  assert.ok(!front.includes('你自己不碰电脑：要真动手的事交给后台去做——它在你的电脑上干活'), '旧说法：前台什么都不自己做');
+});

@@ -76,7 +76,7 @@ class ACP {
     if(u?.sessionUpdate==='usage_update')this.update=u;
     // 网页步骤记进这一轮（「思考中」那一条和终端里能看到在搜什么、读哪个网页）
     if(u?.sessionUpdate==='tool_call'||u?.sessionUpdate==='tool_call_update'){const id=String(u.toolCallId||'');let w=this.tools.get(id);
-     if(!w){const k=webTool(u);if(k){w={...k,done:false};this.tools.set(id,w);this.web=true;try{this.onTool?.({t:'tool',id,name:w.name,detail:w.detail});}catch{}}}
+     if(!w){const k=webTool(u);if(k){w={...k,done:false};this.tools.set(id,w);if(!this.web){this.web=true;try{this.onWebStart?.();}catch{}}try{this.onTool?.({t:'tool',id,name:w.name,detail:w.detail});}catch{}}}
      if(w&&!w.done&&(u.status==='completed'||u.status==='failed')){w.done=true;try{this.onTool?.({t:'tool_end',id,name:w.name,detail:w.detail,ok:u.status==='completed'});}catch{}}}
     if(u?.sessionUpdate==='agent_thought_chunk'&&u.content?.type==='text'){const t=thoughtLine(u.content.text);if(t&&t!==this.lastThought){this.lastThought=t;try{this.onThought?.(t);}catch{}}}
    }
@@ -87,7 +87,10 @@ class ACP {
  }
  request(method,params,signal,ms=20000){
   if(signal?.aborted||this.signal?.aborted||this.closed)return Promise.reject(Error('前台已停止或连接已经结束'));
-  return new Promise((resolve,reject)=>{const id=++this.seq,timer=setTimeout(()=>{this.pending.delete(id);reject(Error('前台请求超时'));},ms);timer.unref();this.pending.set(id,{resolve,reject,timer});this.send({id,method,params});});
+  return new Promise((resolve,reject)=>{const id=++this.seq,timer=setTimeout(()=>{this.pending.delete(id);reject(Error('前台请求超时'));},ms);timer.unref();this.pending.set(id,{resolve,reject,timer,prompt:method==='session/prompt'});this.send({id,method,params});});
+ }
+ // 前台自己查资料时放宽这次 prompt 的时限
+ extend(ms){for(const [id,p] of this.pending)if(p.prompt){clearTimeout(p.timer);p.timer=setTimeout(()=>{this.pending.delete(id);p.reject(Error('前台请求超时'));},ms);p.timer.unref();}
  }
  fail(e){for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(e);}this.pending.clear();}
  close(){this.signal?.removeEventListener('abort',this.cancel);this.fail(Error('前台已停止'));stopChild(this.child);}
@@ -192,11 +195,33 @@ export async function openFrontProvider(o={}){
  }
  return {image:images,close(){acp?.close();},async request(payload,signal){
   if(actual===FRONT_MODEL)return fallback(payload,signal);
+  // 前台自己查（站长 2026-11-18）：用了网页工具这一轮放宽到 3 分钟。查的时候兄弟插话、或者时间到了：等手上的网页步骤做完，
+  // 取消这一次，隔 3 秒在同一个会话里接着发（li 上实测：取消后马上发会卡住，隔几秒能接上，而且直接用刚才查到的）
+  const LOOKUP=Number(process.env.XIN_FRONT_LOOKUP_MS)||180000,GAP=Number(process.env.XIN_FRONT_STEER_GAP_MS)||3000;
+  async function lookupPrompt(first,signal){
+   const t0=Date.now();let next=first,limited=false;
+   for(;;){
+    acp.text='';acp.update=null;acp.lastThought='';let action=null;const widen=()=>{if(!limited)acp.extend(Math.max(LOOKUP-(Date.now()-t0),5000));};
+    acp.onWebStart=widen;
+    const watch=setInterval(()=>{
+     if(action||!acp.web)return;
+     if(!limited&&Date.now()-t0>=LOOKUP)action='limit';
+     else if(![...acp.tools.values()].some(w=>!w.done)){const st=o.steers?.()||[];if(st.length)action=st;}
+     if(action)acp.send({method:'session/cancel',params:{sessionId:sid}});
+    },250);
+    const pr=acp.request('session/prompt',{sessionId:sid,prompt:next},signal,limited?45000:65000);if(acp.web)widen();
+    try{await pr;}finally{clearInterval(watch);acp.onWebStart=null;}
+    if(!action)return;
+    await new Promise(r=>setTimeout(r,GAP));
+    if(action==='limit'){limited=true;next=[{type:'text',text:'时间到了：按已经查到的回答；查不完的照实说，需要的话派后台去查。回复格式照旧：只输出一个 JSON。'}];}
+    else next=[{type:'text',text:'兄弟中途补充（按顺序）：\n'+action.map((x,i)=>(i+1)+'. '+String(x.text||'').slice(0,2000)).join('\n')+'\n按补充接着刚才的查；刚才查到的能用就别重查。回复格式照旧：只输出一个 JSON。'}];
+   }
+  }
   const offset=previous.length&&JSON.stringify(payload.input.slice(sent,sent+previous.length))===JSON.stringify(previous)?sent+previous.length:sent;
   const blocks=promptBlocks(payload,offset);if(!images&&blocks.some(b=>b.type==='image'))throw Error('当前前台接口没有接收到图片能力，未发送不一致的看图提示');
   const cancel=()=>acp.close(),prose=!(payload.tools||[]).some(t=>t?.name==='finish_event');signal?.addEventListener('abort',cancel,{once:true});
   try{
-   acp.text='';acp.update=null;acp.lastThought='';await acp.request('session/prompt',{sessionId:sid,prompt:blocks},signal,65000);
+   await lookupPrompt(blocks,signal);
    let out;
    try{out=frontOutput(acp.text,{prose});}catch{
     o.protocol?.({kind:'format_repair',bytes:Buffer.byteLength(acp.text)});
