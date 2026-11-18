@@ -9,9 +9,9 @@ const KINDS = new Set(['op','named','write','append','xin','reap','control']);
 const ID = /^[A-Za-z0-9_-]{8,100}$/;
 export async function createStateServer({ home, owner = new Ownership(home), initialize = () => {}, handle,
   tick, reconcile, hasWork = () => false, tickMs = 5000, wallClock = Date.now, recoveryGapMs = 30000, beforeRelease = () => {}, maxActive = 32, headerMs = 10000, log = () => {} }) {
-  const file = stateSocket(home), directory = path.dirname(file), before = owner.record();
-  if (before.busy) throw Object.assign(new Error('状态主人仍在运行'), { code: 'owner_busy' });
-  const lease = owner.take();
+  const file = stateSocket(home), directory = path.dirname(file);
+  if (owner.record().busy) throw Object.assign(new Error('状态主人仍在运行'), { code: 'owner_busy' });
+  let lease;
   let timer, active = 0, draining = false, stopped = false, stopPromise, stamp, nextTick = tickMs;
   let cycling = null, lastSweep = null, timerDue = 0;
   const waiters = [], sockets = new Set(), started = Date.now();
@@ -114,12 +114,14 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
     return cycling;
   }
   try {
-    const init = initialize(before); if (init?.then) throw Error('状态初始化必须同步完成');   // before：拿锁前的记录（从 legacy 接手时要先备份）
-    let st; try { st = fs.lstatSync(directory); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-    if (st && (!st.isDirectory() || st.isSymbolicLink())) throw Error('状态套接字目录不安全');
-    fs.mkdirSync(directory, { recursive: true, mode: 0o700 }); fs.chmodSync(directory,0o700);
-    let stale; try { stale = fs.lstatSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-    if (stale) { if (!stale.isSocket()) throw Error('状态套接字路径不是套接字'); fs.unlinkSync(file); }
+    lease = owner.take({ initialize: before => {
+      let st; try { st = fs.lstatSync(directory); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      if (st && (!st.isDirectory() || st.isSymbolicLink())) throw Error('状态套接字目录不安全');
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 }); fs.chmodSync(directory,0o700);
+      let stale; try { stale = fs.lstatSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      if (stale) { if (!stale.isSocket()) throw Error('状态套接字路径不是套接字'); fs.unlinkSync(file); }
+      return initialize(before);
+    } });
     await new Promise((resolve,reject) => { server.once('error',reject); server.listen(file,resolve); });
     fs.chmodSync(file,0o600); stamp = fs.lstatSync(file);
     if (tick || reconcile) scheduleTick(0);
@@ -127,8 +129,8 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
   } catch (e) {
     clearTimeout(timer); for (const s of sockets) s.destroy();
     try { server.close(); unlink(); } catch { /* Not listening yet. */ }
-    try { beforeRelease(); } catch (flushError) { lease.release(); throw flushError; }
-    lease.release(before.mode); throw e;
+    try { beforeRelease(); } finally { lease?.release(); }
+    throw e;
   }
 }
 // 设计 §6.9 第 2 步：从旧模式切到内核之前留一份一致的备份（VACUUM INTO 是一致的快照）。

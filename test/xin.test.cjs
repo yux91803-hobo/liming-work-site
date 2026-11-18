@@ -2329,7 +2329,7 @@ const sendArgs = { agent: 'codex', text: '你好', clientId: 'cid-inbox-0001' };
 /* ---------- 状态由谁管：期望和部署代号（第 2 批计划 Task 4） ---------- */
 test('内核模式：每次操作把期望放进请求体；usage 的结果带上主人状态和耗时，别的操作不带', async () => {
   const m = await fresh(), env = kernelEnv(m, { CF_VERSION_METADATA: { id: 'ver-a' } }), ck = await login(m, env);
-  const owner = { want: 'kernel', mode: 'kernel', epoch: 2, phase: 'running', up: 5000, restarts: 0, lastError: null, spawns: 0 };
+  const owner = { want: 'kernel', mode: 'kernel', epoch: 2, phase: 'running', up: 5000, restarts: 0, lastError: null, pid: 1234 };
   const ops = { all: { n: 3, p50: 4, p95: 9, max: 9 }, byOp: { usage: { n: 1, p50: 4, p95: 4, max: 4 } } };
   const ib = fakeIB({ 'GET /v1/machines': [MACHINES], 'POST /v1/machines/m_abc/ports': [PORT_TOKEN(1)], 'PUT /v1/machines/m_abc/files': [{ status: 201, body: {} }],
     'POST /xin/op': [() => kres(200, { ok: true, data: { sessions: [] }, owner }), () => kres(200, { ok: true, data: { days: [] }, owner, ops })] });

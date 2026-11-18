@@ -59,8 +59,7 @@ test('有提交了但没投影的行时 recover 照样补写',async t=>{
 
 // ── 所有权检查（site/xin/vm-kernel-owner.mjs，设计 docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.2）──
 // 状态库的每个写入口先问「现在归不归我写」；主人活着、或者该内核当主人但它不在，都不写。
-const refuse = { enter() { throw Object.assign(new Error('owner_alive'), { code: 'owner_unavailable', status: 'alive' }); } };
-const counting = () => { const c = { entered: 0, released: 0, enter() { c.entered++; return () => { c.released++; }; } }; return c; };
+const refuse = { owning: false };
 
 test('没有写权时冷启动不能创建空状态库，已有空文件也不被初始化', async t => {
   const { StateJournal } = await import(moduleUrl);
@@ -122,14 +121,19 @@ test('主人活着时状态库的写入口都不执行、不落任何行；读�
   assert.equal(j.pendingLaunches().length, 1);
 });
 
-test('一次最外层事务只过一次所有权检查；提交、回滚、抛错之后都放掉；没有要投影的就不去检查', async t => {
-  const { root, j } = await fixture(t), c = counting(); j.recover(); j.owner = c;
-  j.recover(); assert.deepEqual([c.entered, c.released], [0, 0]);
+test('一次事务包含嵌套修改，回滚后状态完整；交接释放写连接', async t => {
+  const { root, j } = await fixture(t), { Ownership } = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-kernel-owner.mjs')).href);
+  j.owner = new Ownership(root, { beforeRelease: () => j.closeWriter() });
+  const lease = j.owner.take(); t.after(() => lease.release());
   j.atomic(() => { j.write(root + '/a.json', '{}'); j.atomic(() => j.enqueueLaunch('r1', 's1')); });
-  assert.equal(c.entered, 1); assert.equal(c.released, 1);
-  assert.deepEqual(j.atomic(() => ({ error: 'no' })), { error: 'no' });
-  assert.throws(() => j.atomic(() => { throw new Error('boom'); }), /boom/);
-  assert.deepEqual([c.entered, c.released], [3, 3]);
+  assert.deepEqual(j.atomic(() => { j.enqueueLaunch('r2', 's1'); return { error: 'no' }; }), { error: 'no' });
+  assert.throws(() => j.atomic(() => { j.enqueueLaunch('r3', 's1'); throw new Error('boom'); }), /boom/);
+  const d = j.db;
+  lease.release();
+  assert.equal(j.connection, null);
+  assert.throws(() => d.prepare('SELECT 1'), /not open/);
+  assert.throws(() => j.atomic(() => j.enqueueLaunch('r4', 's1')), e => e.code === 'owner_unavailable');
+  assert.deepEqual(j.pendingLaunches().map(r => r.run), ['r1']);
 });
 
 test('记忆表已经建好之后，读记忆不需要写权限；表缺了要建时才过所有权检查', async t => {
@@ -138,7 +142,7 @@ test('记忆表已经建好之后，读记忆不需要写权限；表缺了要�
   // own：这个脚本扮演主人（删旧模式第 2 步以后只有主人能建表，test/helpers/own-state.cjs）
   const run = (body, own = false) => spawnSync(process.execPath, [...(own ? require('./helpers/own-state.cjs').OWN_IMPORT : []), '--input-type=module', '-e',
     `import { journal } from ${JSON.stringify(base)}; import * as m from ${JSON.stringify(mem)};
-     const refuse = { enter() { throw Object.assign(new Error('owner_alive'), { code: 'owner_unavailable' }); } }; ${body}`], { env: { ...process.env, XIN_HOME: root }, encoding: 'utf8' });
+     const refuse = { owning: false }; ${body}`], { env: { ...process.env, XIN_HOME: root }, encoding: 'utf8' });
   const fresh = run("journal.owner = refuse; try { m.listMemory(); console.log('read'); } catch (e) { console.log(e.code); }");
   assert.equal(fresh.stdout.trim(), 'owner_unavailable', fresh.stderr);
   assert.equal(run("m.listMemory(); console.log('ready');", true).stdout.trim(), 'ready');

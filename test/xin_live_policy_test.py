@@ -167,14 +167,14 @@ class BackgroundFallback(unittest.TestCase):
 
 class ResidentStateOwner(unittest.TestCase):
     # 第 2 批：正式站的状态由外壳拉起的常驻进程管，操作经本机套接字交给它，不再起控制器进程（usage 里的 owner 是外壳的 summary）
-    RUNNING = {'want': 'kernel', 'mode': 'kernel', 'phase': 'running', 'epoch': 4, 'spawns': 2, 'pid': 900, 'lastError': None, 'kernelCurrent': True}
+    RUNNING = {'want': 'kernel', 'mode': 'kernel', 'phase': 'running', 'epoch': 4, 'pid': 900, 'lastError': None, 'kernelCurrent': True}
 
     def test_running_kernel_owner_is_resident(self):
-        self.assertEqual(resident_owner({'owner': self.RUNNING}), {'epoch': 4, 'spawns': 2})
+        self.assertEqual(resident_owner({'owner': self.RUNNING}), {'epoch': 4, 'pid': 900})
 
     def test_anything_else_is_not_resident_yet(self):
         for owner in (None, {}, dict(self.RUNNING, phase='starting'), dict(self.RUNNING, phase='fallback', mode='legacy'),
-                      dict(self.RUNNING, mode='legacy'), dict(self.RUNNING, epoch=None), dict(self.RUNNING, spawns='2'),
+                      dict(self.RUNNING, mode='legacy'), dict(self.RUNNING, epoch=None), dict(self.RUNNING, pid='900'), dict(self.RUNNING, pid=0),
                       # 电脑上的外壳还不是这次部署的版本（Worker 正在后台换）：先不记，换好了再记，免得中途换外壳把切换次数加一判成重启
                       dict(self.RUNNING, kernelCurrent=False), {k: v for k, v in self.RUNNING.items() if k != 'kernelCurrent'}):
             with self.subTest(owner=owner):
@@ -184,7 +184,7 @@ class ResidentStateOwner(unittest.TestCase):
     def test_same_owner_passes_and_any_change_fails_with_counts_only(self):
         first = resident_owner({'owner': self.RUNNING})
         same_resident_owner(first, {'owner': dict(self.RUNNING, up=99)})
-        for owner, says_ in ((dict(self.RUNNING, epoch=5), 'restarted'), (dict(self.RUNNING, spawns=3), 'controller'),
+        for owner, says_ in ((dict(self.RUNNING, epoch=5), 'restarted'), (dict(self.RUNNING, pid=901), 'PID changed'),
                              (dict(self.RUNNING, phase='fallback', mode='legacy', lastError='state_compat'), 'no longer'), (None, 'no longer')):
             with self.subTest(owner=owner), self.assertRaises(RuntimeError) as e:
                 same_resident_owner(first, {'owner': owner} if owner else {})
@@ -204,7 +204,7 @@ class LiveScriptUsesOnePolicy(unittest.TestCase):
         src = (Path(__file__).resolve().parents[1] / 'scripts' / 'test-xin-live.py').read_text(encoding='utf-8')
         wait, check = src.index('owner = resident_owner(usage)'), src.index("same_resident_owner(owner, await call('usage', {}))")
         self.assertIn("usage = await call('usage', {})", src)
-        self.assertIn('PASS state owner is the resident process (kernel mode, no controller process per request)', src)
+        self.assertIn('PASS state owner PID and epoch stayed constant throughout the run', src)
         self.assertLess(wait, src.index('PASS off-machine encrypted backup'), '第一个检查之前先等到常驻进程')
         self.assertGreater(check, src.index('PASS real Gemini animated web preview'), '所有检查做完以后再核对一次')
 

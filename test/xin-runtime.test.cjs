@@ -402,17 +402,17 @@ test('点名只在明确换模型时生效，假设、问句、引用和否定�
   assert.equal(namedModel('这次用 Kimi 检查一下'),'kimi-k3.1-pro');
 });
 
-test('并发补充任务与编译元数据更新共用任务锁，不覆盖已收到的补充',async t=>{
+test('并发补充任务与编译元数据在状态进程更新，保留全部补充',async t=>{
   const f=fixture(t);const mf=path.join(f.control,'runs/rruntime001.json');
   fs.writeFileSync(mf,JSON.stringify({sid:f.task.sid,task:true,started:Date.now(),pid:process.pid,transport:'app-server',steers:[]}));
   const execFile=require('node:util').promisify(require('node:child_process').execFile);
-  const jobs=[];fs.mkdirSync(path.join(f.control,'locks'),{recursive:true});
+  const jobs=[];
   f.ensureState();   // 并发的这些命令都交给真的常驻状态进程
   for(let i=0;i<12;i++){
     const program=`const {spawn}=require('node:child_process');const c=spawn(process.execPath,${JSON.stringify([agent,'task_tell'])},{stdio:['pipe','inherit','inherit']});c.stdin.end(${JSON.stringify(JSON.stringify({sid:f.task.sid,text:'supplement-'+i}))});c.on('exit',n=>process.exit(n));`;
     jobs.push(execFile(process.execPath,['-e',program],{env:f.env}));
-    const patch=`const {spawn}=require('node:child_process');const c=spawn('flock',${JSON.stringify(['--exclusive','--close',path.join(f.control,'locks/tasks.lock'),process.execPath,agent,'locked','run_patch'])},{stdio:['pipe','inherit','inherit']});c.stdin.end(${JSON.stringify(JSON.stringify({run:'rruntime001',changes:{compileDigest:'digest-'+i}}))});c.on('exit',n=>process.exit(n));`;
-    fs.mkdirSync(path.join(f.control,'locks'),{recursive:true});jobs.push(execFile(process.execPath,['-e',patch],{env:{...f.env,XIN_LOCK:'tasks'}}));
+    const patch=`const {spawn}=require('node:child_process');const c=spawn(process.execPath,${JSON.stringify([agent,'locked','run_patch'])},{stdio:['pipe','inherit','inherit']});c.stdin.end(${JSON.stringify(JSON.stringify({run:'rruntime001',changes:{compileDigest:'digest-'+i}}))});c.on('exit',n=>process.exit(n));`;
+    jobs.push(execFile(process.execPath,['-e',patch],{env:f.env}));
   }
   await Promise.all(jobs);
   const m=JSON.parse(fs.readFileSync(mf));assert.equal(m.steers.length,12);assert.equal(new Set(m.steers.map(x=>x.text)).size,12);assert.match(m.compileDigest,/^digest-/);

@@ -2,8 +2,7 @@
 // 设计见 docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.2。
 //
 // 一个单独的小库 owner.sqlite，用 SQLite 自己的文件锁：
-//   - 状态进程（以后的唯一写者）拿独占锁，一直不放；
-//   - 旧模式的写者每次写之前开一个读事务（共享锁），写完才放。
+//   - 常驻状态进程拿独占锁，是 workflow.sqlite 的唯一写者。
 // 锁跟着进程走：进程死了（包括 kill -9）系统立刻放掉，子进程不会把它带走。所以不用 flock：flock 是包在外面的一层进程，
 // 包装进程被杀而里面的还活着，锁就丢了；不让它丢，锁的句柄又会被子进程继承走。
 // 「一把锁保证只有一个常驻进程」的做法参考 tmux client.c 的 client_get_lock（在套接字旁边的 .lock 上拿独占锁）。
@@ -14,17 +13,13 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 export const BRIDGE_PROTOCOL = 1;
-// status：'alive' 主人活着；'missing' 该内核当主人但它不在。两种都不能写。
-export class OwnerUnavailable extends Error {
-  constructor(status) { super('owner_' + status); this.code = 'owner_unavailable'; this.status = status; }
-}
 const busy = e => e && (e.errcode === 5 || e.errcode === 6 || /database is locked|database table is locked/.test(String(e.message)));
 const KEYS = ['mode', 'epoch', 'protocol', 'since'];
 
 export class Ownership {
   constructor(home, { waitMs = 250, beforeRelease = () => {} } = {}) {
     this.file = path.join(path.resolve(home), 'owner.sqlite'); this.waitMs = waitMs;
-    this.connection = null; this.depth = 0; this.owning = false; this.beforeRelease = beforeRelease;
+    this.connection = null; this.owning = false; this.beforeRelease = beforeRelease;
   }
   // 内部用的连接，第一次用到才打开
   get db() {
@@ -51,50 +46,32 @@ export class Ownership {
     const r = Object.fromEntries(this.db.prepare('SELECT k, v FROM owner').all().map(x => [x.k, x.v]));
     if (!Object.keys(r).length) return { mode: 'legacy', epoch: 0, protocol: 0, since: 0 };
     const epoch = Number(r.epoch), protocol = Number(r.protocol), since = Number(r.since);
-    // 只有真正的新库才能默认旧模式。损坏/不认识的记录不能放行旧写者，也不自动覆盖修复。
+    // 保留历史记录格式。损坏或协议不兼容的记录必须拒绝接管。
     if (!KEYS.every(k => Object.hasOwn(r, k)) || !['legacy', 'kernel'].includes(r.mode) ||
         !Number.isSafeInteger(epoch) || epoch < 1 || !Number.isSafeInteger(protocol) || protocol < 1 || protocol > BRIDGE_PROTOCOL ||
         !Number.isSafeInteger(since) || since < 0)
       throw Object.assign(new Error('所有权记录损坏或桥协议不兼容'), { code: 'owner_invalid' });
     return { mode: r.mode, epoch, protocol, since };
   }
-  save(mode) {
-    const now = this.rows(), next = { mode, epoch: now.epoch + 1, protocol: BRIDGE_PROTOCOL, since: Date.now() };
+  #saveKernel(previous) {
+    const next = { mode: 'kernel', epoch: previous.epoch + 1, protocol: BRIDGE_PROTOCOL, since: Date.now() };
     const put = this.db.prepare('INSERT INTO owner(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v');
     for (const k of KEYS) put.run(k, String(next[k]));
     return next.epoch;
   }
   // 现在的记录。不留锁。主人活着时读不了，返回 { busy: true }
   record({waitMs=this.waitMs}={}) {
-    if (this.owning || this.depth > 0) return this.rows();
+    if (this.owning) return this.rows();
     const d=this.db;d.exec('PRAGMA busy_timeout='+Math.max(0,waitMs|0));
     try { d.exec('BEGIN'); } catch (e) { d.exec('PRAGMA busy_timeout='+Math.max(0,this.waitMs|0));if (busy(e)) return { busy: true }; throw e; }
     try { return this.rows(); }
     catch (e) { if (busy(e)) return { busy: true }; throw e; }
     finally { try { d.exec('COMMIT'); } catch { /* 没开成 */ } d.exec('PRAGMA busy_timeout='+Math.max(0,this.waitMs|0)); }
   }
-  // 写入口：只有主人（常驻状态进程）写；本进程就是主人时返回空操作。
-  // 不是主人一律不写（删旧模式第 2 步，docs/superpowers/specs/2026-11-17-xin-remove-legacy-design.md §4.1）：
-  // 主人活着回 alive（调用方转交给它），主人不在回 missing（调用方在原有的等待预算里重试，用完回「主人不在」）。
-  // 记录是空的、旧版本写的 legacy 还是 kernel 都一样；记录坏了照样报 owner_invalid。
-  enter() {
-    if (this.owning) return () => {};
-    const d = this.db;
-    try { d.exec('BEGIN'); this.rows(); }   // 读这一下拿共享锁：主人活着时拿不到
-    catch (e) { try { d.exec('ROLLBACK'); } catch { /* 没开成 */ } if (busy(e)) throw new OwnerUnavailable('alive'); throw e; }
-    d.exec('COMMIT');
-    throw new OwnerUnavailable('missing');
-  }
-  leave() {
-    if(this.depth===1){this.beforeRelease();this.db.exec('COMMIT');this.depth=0;}
-    else if(this.depth>1)this.depth--;
-  }
-  // 同 enter，但一直拿到进程结束：一次性进程用（每个请求起的那个、flock 里面的那个），本来就只活几十毫秒
-  hold() { this.enter(); }
-  // 当主人：拿独占锁（等正在写的旧写者写完，最多 waitMs），写「归内核」、切换次数加一，一直不放。
+  // 在独占锁下先完成启动校验和备份，再提交接管记录。若失败或被杀，SQLite 保留上次记录。
   // locking_mode=EXCLUSIVE 让提交之后锁仍然在手里。
-  take({ waitMs = 30000 } = {}) {
-    if (this.depth > 0) throw Object.assign(new Error('本进程还拿着共享锁，不能当主人'), { code: 'owner_busy' });
+  take({ waitMs = 30000, initialize = () => {} } = {}) {
+    if (this.owning) throw Object.assign(new Error('本连接已经持有所有权锁'), { code: 'owner_busy' });
     const d = this.db;
     d.exec('PRAGMA busy_timeout=' + Math.max(0, waitMs | 0));
     try { d.exec('PRAGMA locking_mode=EXCLUSIVE'); d.exec('BEGIN EXCLUSIVE'); }
@@ -103,27 +80,19 @@ export class Ownership {
       if (busy(e)) throw Object.assign(new Error('所有权锁被别人拿着'), { code: 'owner_busy' });
       throw e;
     }
-    let epoch;
-    try { epoch = this.save('kernel'); d.exec('COMMIT'); } catch (e) { try { d.exec('ROLLBACK'); } catch { /* 没开成 */ } this.close(); throw e; }
     this.owning = true;
-    return { epoch, release: mode => { if (this.owning && mode) { this.db.exec('BEGIN'); this.save(mode); this.db.exec('COMMIT'); } this.close(); } };
+    let epoch;
+    try {
+      const before = this.rows();
+      const init = initialize(before);
+      if (init?.then) throw Error('状态初始化必须同步完成');
+      epoch = this.#saveKernel(before);
+      d.exec('COMMIT');
+    } catch (e) {
+      try { d.exec('ROLLBACK'); } catch { /* 未开始或已回滚 */ }
+      this.close(); throw e;
+    }
+    return { epoch, release: () => this.close() };
   }
-  // 没有主人时改记录（内核起不来以后切回旧模式用）。有主人活着就改不了。
-  set(mode) {
-    if (mode !== 'legacy' && mode !== 'kernel') throw Error('不认识的模式');
-    const d = this.db;
-    try { d.exec('BEGIN EXCLUSIVE'); } catch (e) { if (busy(e)) throw Object.assign(new Error('所有权锁被别人拿着'), { code: 'owner_busy' }); throw e; }
-    try { const epoch = this.save(mode); d.exec('COMMIT'); return { epoch }; }
-    catch (e) { try { d.exec('ROLLBACK'); } catch { /* 没开成 */ } throw e; }
-  }
-  close() { this.beforeRelease();try { this.connection?.close(); } catch { /* 已经关了 */ } this.connection = null; this.depth = 0; this.owning = false; }
-}
-// 状态进程被 kill -9 以后记录留在 kernel、又没有主人：外壳用这个把记录改回 legacy，空档里旧路径照常写（第 2 批计划「我定的」第 2 条）。
-// 主人活着（锁拿不到）就不改。
-export function ownerLegacy(owner) {
-  const r = owner.record({ waitMs: 0 });
-  if (r.busy) return { error: 'owner_busy' };
-  if (r.mode === 'legacy') return { ok: true, unchanged: true, mode: 'legacy', epoch: r.epoch };
-  try { return { ok: true, mode: 'legacy', epoch: owner.set('legacy').epoch }; }
-  catch (e) { if (e.code === 'owner_busy') return { error: 'owner_busy' }; throw e; }
+  close() { this.beforeRelease();try { this.connection?.close(); } catch { /* 已经关了 */ } this.connection = null; this.owning = false; }
 }

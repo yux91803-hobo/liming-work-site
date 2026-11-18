@@ -60,7 +60,7 @@ def usage():
 
 # 内核外壳给的主人状态（site/xin/vm-kernel.mjs 的 summary，Worker 在 usage 里挂上 ops）
 OWNER_RUNNING = {'want': 'kernel', 'mode': 'kernel', 'epoch': 3, 'phase': 'running', 'gen': 2, 'agent': '0123456789ab', 'pid': 4242, 'up': 2 * H + 5 * 60000,
-                 'restarts': 0, 'failures': 0, 'lastError': None, 'fallback': False, 'spawns': 0,
+                 'restarts': 0, 'failures': 0, 'lastError': None, 'fallback': False,
                  'ops': {'all': {'n': 40, 'p50': 2.4, 'p95': 9, 'max': 30}, 'byOp': {'usage': {'n': 1, 'p50': 2, 'p95': 2, 'max': 2}}}}
 OWNER_DOWN = dict(OWNER_RUNNING, phase='down', pid=None, up=0, failures=7, lastError='state_compat', down=True)
 

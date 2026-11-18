@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { StateUnavailable, retryUnsent } from './vm-kernel-client.mjs';
 
 export const inputDigest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const SCHEMA = `CREATE TABLE IF NOT EXISTS documents (name TEXT PRIMARY KEY, body TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, dirty INTEGER NOT NULL DEFAULT 1);
@@ -18,53 +19,31 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS documents (name TEXT PRIMARY KEY, bod
       CREATE INDEX IF NOT EXISTS pending_handoffs ON handoffs(state,nextAt,parent);`;
 const SCHEMA_NAMES = [...SCHEMA.matchAll(/CREATE (?:TABLE|INDEX) IF NOT EXISTS (\w+)/g)].map(m => m[1]);
 export class StateJournal {
-  constructor(root) { this.root=path.resolve(root);this.active=false;this.overlay=new Map();this.after=[];this.owner=null;this.writers=0;this.bridge=null; }
-  // 所有写入口都从这里过（docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.2）：旧模式下拿着共享的所有权锁写，
-  // 主人活着、或者该内核当主人但它不在，owner.enter() 会抛 owner_unavailable，这里就不写。一次最外层调用只问一次。
-  // owner 为空（单独用 StateJournal 的测试）时不检查。
-  // 交给主人时没送出去（主人正在接手、还没开始听），稍等后从头再判断一次（this.retryUnsent 由 vm-base 装上，§6.2）。
-  writing(fn,unavailable){
-    if(!this.active&&!this.writers)this.checkWriter?.();
-    if(!this.owner||this.writers>0)return fn();
-    return (this.retryUnsent||(f=>f()))(()=>this.writingOnce(fn,unavailable));
+  constructor(root) { this.root=path.resolve(root);this.active=false;this.overlay=new Map();this.after=[];this.owner=null;this.bridge=null; }
+  // Only the state owner writes locally. Standalone journals in tests have no owner.
+  writing(fn,report){
+    if(!this.active)this.checkWriter?.();
+    if(this.writable)return fn();
+    if(!report||!this.bridge)throw new StateUnavailable('owner_unavailable',false);
+    return retryUnsent(report);
   }
-  writingOnce(fn,unavailable){
-    if(!this.owner.owning&&!this.owner.depth&&unavailable&&this.bridge?.available?.())
-      return unavailable(Object.assign(Error('owner_alive'),{code:'owner_unavailable'}));
-    const held=this.owner.depth>0;let release;
-    try{release=this.owner.enter();}catch(e){if(e.code==='owner_unavailable'&&unavailable)return unavailable(e);throw e;}
-    this.writers++;
-    try{return fn();}finally{
-      this.writers--;
-      // A writable handle must not survive the shared authority that allowed it to open.
-      if(!this.writers&&!held&&!this.owner.owning)this.closeWriter();
-      release();
-    }
-  }
-  named(name,args,fn){return this.writing(()=>this.atomic(fn),e=>{if(!this.bridge)throw e;return this.bridge('named',{name,args});});}
-  get writable(){return !this.owner||this.writers>0||this.owner.owning||this.owner.depth>0;}
+  named(name,args,fn){return this.atomic(fn,undefined,()=>this.bridge('named',{name,args}));}
+  get writable(){return !this.owner||this.owner.owning;}
   get db(){
     if(!this.writable){
       this.closeWriter();if(this.reader)return this.reader;
       const file=path.join(this.root,'workflow.sqlite');let stat;
       try{stat=fs.lstatSync(file);}catch(e){if(e.code!=='ENOENT')throw e;}
       if(stat?.isSymbolicLink())throw Error('状态库不能是软链接');
-      if(!stat||!stat.size)this.writing(()=>this.db);
-      let d=new DatabaseSync(file,{readOnly:true});
+      if(!stat||!stat.size)throw new StateUnavailable('owner_unavailable',false);
+      const d=new DatabaseSync(file,{readOnly:true});
       try{
         d.exec('PRAGMA busy_timeout=15000');
-        if(!this.schemaReady(d)){
-          d.close();d=null;this.writing(()=>this.db);d=new DatabaseSync(file,{readOnly:true});d.exec('PRAGMA busy_timeout=15000');
-        }
+        if(!this.schemaReady(d))throw new StateUnavailable('owner_unavailable',false);
         return this.reader=d;
-      }catch(e){d?.close();throw e;}
+      }catch(e){d.close();throw e;}
     }
-    if(this.connection)return this.connection;
-    const file=path.join(this.root,'workflow.sqlite');
-    let stat;try{stat=fs.lstatSync(file);}catch(e){if(e.code!=='ENOENT')throw e;}
-    if(stat?.isSymbolicLink())throw Error('状态库不能是软链接');
-    // 打开缺失/空库本身就会写文件。先拿所有权，不能先创建了再在 recover 里拒绝。
-    return !stat||stat.size===0?this.writing(()=>this.#open()):this.#open();
+    return this.connection||this.#open();
   }
   schemaReady(d){
     const names=new Set(d.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','index')").all().map(r=>r.name));
@@ -74,7 +53,8 @@ export class StateJournal {
   #open(){
     fs.mkdirSync(this.root,{recursive:true,mode:0o700});
     const file=path.join(this.root,'workflow.sqlite');
-    if(fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw Error('状态库不能是软链接');
+    let stat;try{stat=fs.lstatSync(file);}catch(e){if(e.code!=='ENOENT')throw e;}
+    if(stat?.isSymbolicLink())throw Error('状态库不能是软链接');
     const d=new DatabaseSync(file);
     try{
     fs.chmodSync(file,0o600);d.exec('PRAGMA busy_timeout=15000; PRAGMA synchronous=FULL');
@@ -98,9 +78,9 @@ export class StateJournal {
   name(file){const n=path.relative(this.root,path.resolve(file));if(!n||n.startsWith('..')||path.isAbsolute(n))throw Error('状态投影越界');return n;}
   staged(file){if(!this.active)return;try{return this.overlay.get(this.name(file));}catch{return;}}
   stagedNames(prefix){return [...this.overlay.keys()].filter(n=>n.startsWith(prefix));}
-  atomic(fn,command){
+  atomic(fn,command,report){
     if(this.active)return fn();
-    return this.writing(()=>this.commit(fn,command));
+    return this.writing(()=>this.commit(fn,command),report);
   }
   commit(fn,command){
     const d=this.db;d.exec('BEGIN IMMEDIATE');this.active=true;this.overlay.clear();this.after=[];this.eventSequence=0;this.operation=command?.id||crypto.randomUUID();
@@ -120,12 +100,12 @@ export class StateJournal {
     const after=this.after;this.after=[];this.recover();for(const f of after)f();return result;
   }
   write(file,body){
-    if(!this.active)return this.writing(()=>this.atomic(()=>this.write(file,body)),e=>{if(!this.bridge)throw e;return this.bridge('write',{name:this.name(file),body});});
+    if(!this.active)return this.atomic(()=>this.write(file,body),undefined,()=>this.bridge('write',{name:this.name(file),body}));
     const n=this.name(file);this.overlay.set(n,body);
     this.db.prepare('INSERT INTO documents(name,body) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=revision+1,dirty=1').run(n,body);
   }
   append(file,event){
-    if(!this.active)return this.writing(()=>this.atomic(()=>this.append(file,event)),e=>{if(!this.bridge)throw e;return this.bridge('append',{name:this.name(file),event});});
+    if(!this.active)return this.atomic(()=>this.append(file,event),undefined,()=>this.bridge('append',{name:this.name(file),event}));
     const id=this.operation+':'+this.eventSequence++,body=JSON.stringify({...event,_eventId:id});
     this.db.prepare('INSERT OR IGNORE INTO appends(id,name,body) VALUES(?,?,?)').run(id,this.name(file),body);
   }
@@ -133,8 +113,7 @@ export class StateJournal {
   recover(){
     if(this.active)return;
     const d=this.db;
-    // Every controller call starts here. With nothing committed-but-unprojected there is nothing to repair, so
-    // a plain WAL read is enough and a reader never waits behind another process's write transaction.
+    // Skip the projection transaction when every committed change is already on disk.
     if(!d.prepare('SELECT 1 FROM documents WHERE dirty=1 LIMIT 1').get()&&!d.prepare('SELECT 1 FROM appends WHERE projected=0 LIMIT 1').get())return;
     return this.writing(()=>this.project());
   }
@@ -161,9 +140,7 @@ export class StateJournal {
   enqueueLaunch(run,sid,lane=0){this.writing(()=>this.db.prepare('INSERT OR IGNORE INTO launches(run,sid,lane,at) VALUES(?,?,?,?)').run(run,sid,lane,Date.now()));}
   pendingLaunches(){return this.db.prepare("SELECT * FROM launches WHERE state='pending' ORDER BY lane,at LIMIT 32").all();}
   dispatched(run){this.writing(()=>this.db.prepare("UPDATE launches SET state='dispatched',attempts=attempts+1,dispatchedAt=? WHERE run=?").run(Date.now(),run));}
-  // 认领一条派发：只有把它从读到的样子（待派发，或者读到的那一次派发）改成「已派发」的那个进程去起执行进程。
-  // 旧模式每个请求一个进程，两个进程可能同时读到同一条待派发；条件更新只有一个能成（照 maragudk/goqite 的 goqite.go Receive：
-  // SQLite 里取消息就是一条带条件的 UPDATE … RETURNING，改到了才算拿到，PostgreSQL 那边用 FOR UPDATE SKIP LOCKED）
+  // 仅在记录仍是读到的状态和轮次时认领。恢复期间已被处理的派发不会重复启动。
   claimLaunch(job){return this.writing(()=>this.db.prepare("UPDATE launches SET state='dispatched',attempts=attempts+1,dispatchedAt=? WHERE run=? AND state=? AND attempts=?").run(Date.now(),job.run,job.state,job.attempts).changes===1);}
   launchRecord(run){return this.db.prepare('SELECT * FROM launches WHERE run=?').get(run);}
   launchedRuns(){return this.db.prepare("SELECT * FROM launches WHERE state='dispatched' ORDER BY at LIMIT 128").all();}
