@@ -1,3 +1,33 @@
+## 2026-11-18 下午 · 天启搬到 li2：做完第 1–4 步，额度用完交接（Claude Code）
+
+- 站长已确认设计（北京 11-18 13:39「不用装stm32编译环境，开始吧」）：[设计](superpowers/specs/2026-11-18-tianqi-li2-design.md)、[实现计划（9 步）](superpowers/plans/2026-11-18-tianqi-li2.md)。天启改成首页的一个新工具 `/tianqi`，连第二台云电脑 li2；数据和网关账号都不搬，提示词只有「你叫天启。」，只用 Harness。
+- 分支 `claude/friendly-hopper-d7392n`，从 `main` 的 `88bec32`（#172）开出，`main` 之后没再动。**还没开 PR，线上没变。**
+- 已完成（每步都跑了全量 `npm test`，第 4 步时 1036/1036）：
+  - 第 1 步 `1773fe7`：Worker 的天启范围（`/api/tq/*`、`scopeEnv`、li2 的 key、缓存按电脑分开、exec 带 `XIN_ROLE=tianqi`）。
+  - 第 2 步 `20fa095`：Durable Object 实例 `tq-inbox` 记住范围（请求头 `x-xin-scope: tq`，闹钟里也用 li2 的 key）。同一个类，**没有迁移**。
+  - 第 3 步 `1ecb776`：每天 8:55 也叫醒 li2。
+  - 第 4 步 `9474ace`：li2 上的天启身份（控制器）。测试是 `test/xin-tianqi-worker.test.cjs`、`test/xin-tianqi.test.cjs`。
+- 我做的决定（原来记在会话的工作区里，不进 Git，抄在这里）：
+  - 第 2 步：闹钟测试把 `Date.now` 往后拨 10 分钟再调 `alarm()`。原因是待送达第一次失败后有 5 秒退避。错了只影响测试写法。
+  - 第 4 步：计划写的 `createController({allowOp})` 改了放法。`TIANQI_OPS` 放在 `vm-kernel-controller.mjs`，在分派处直接看 `TIANQI`。`tianqiReady`/`tianqiRefuse` 和挪过去的 `dshCmd`/`HARNESS_KEY`/`harnessInstalled` 放在 `vm-base.mjs`。原因有两条：`test/xin-writers.json` 规定 `vm-agent.mjs` 行数只减不增（基线 3049，现在 3044）；冷启动子请求已经是 40，正好是测试上限，**不能再加新的 `vm-*.mjs` 模块**。
+  - 第 4 步收尾那次全量，`xin-web.test.cjs`「网页验收用真浏览器点击」挂过一次：并行时 Chromium 冷启动超过 `vm-runtime.mjs:876` 的 15 秒。这一步没改那里，单独跑 22/22，重跑一次全绿。
+- 接着做第 5 步（天启页面），再做第 6–9 步，按计划原文来。第 5 步我摸到的坑：
+  - `scripts/preview.mjs` 的单页回退只有 `['/map','/stm32']`，要加 `/tianqi`，不然深链接测试 404。本地预览对 `/api/xin/me` 回 `{enabled:false}`、其余 `/api/*` 一律 404，要让 `/api/tq/me` 也回没配好。
+  - `site/xin/chat.js` 有几处把 `/api/xin/` 写死了，天启模式要改用 `API`：`upload()`（约 2997 行）、`fileUrl`（约 3042）、备份（约 969/977）、`preview.png`（约 2449）。
+  - 本地存储的键都是 `lm.xin.*`，天启用 `lm.tq.*`；`lm.xin.device` 两边共用。
+  - 首页外壳的返回键在左上角（left 10px、top 8px、40×40），嵌进去的页面头部要让开约 56px（STM32 页是 `.embed .bar{padding-left:calc(56px + …)}`）。
+- 第 9 步（准备 li2）要站长先做两件事：
+  1. 在 GitHub Secrets 加 `XIN_TQ_INSTABOX_API_KEY`（li2 那个 InstaBox 账号的 key）。
+  2. 网关账号站长自己加（「账号数据不要搬过去，我到时候会新加」）。
+
+  站长传给我的 li2 key 文件只在这个 Claude 会话的容器里，下一位要的话请站长另外给，不打印、不提交。
+- 规矩：
+  - li 只读，不往 li 写。
+  - li2 不装 STM32 编译环境。
+  - 不替小芯或天启登录网关面板。
+  - 删机器、删快照、删数据先问站长。
+- 第 3 批 B 收尾站长交给了 Codex，这条线不碰。
+
 ## 2026-11-18 · 状态进程失联告警（Codex）
 
 - 实际实现与自查由 Codex 负责。接手时 `main` 为 #171 的 `0b54ba1`，Claude 分支在 #170 的 `997a2ad`。独立分支 `codex/xin-outage-push-20261118` 从已验证的 #171 提取。[#171 发布与回滚记录](https://github.com/yux91803-hobo/liming-work-site/pull/171)
