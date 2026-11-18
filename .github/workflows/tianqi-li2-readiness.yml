@@ -80,9 +80,13 @@ jobs:
 
 
           def child_env(work):
+              user_config = work / 'npm-user.ini'
+              global_config = work / 'npm-global.ini'
+              user_config.touch()
+              global_config.touch()
               return {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'CI': '1', 'PYTHONDONTWRITEBYTECODE': '1',
-                      'npm_config_cache': str(work / 'npm-cache'), 'npm_config_userconfig': '/dev/null',
-                      'npm_config_globalconfig': '/dev/null'}
+                      'npm_config_cache': str(work / 'npm-cache'), 'npm_config_userconfig': str(user_config),
+                      'npm_config_globalconfig': str(global_config)}
 
 
           def checked(command, *, work, env, timeout, failure):
@@ -225,10 +229,10 @@ jobs:
                   machine = source.select('li')
                   with tempfile.TemporaryDirectory(prefix='tianqi-program-preflight-') as tmp:
                       directory = Path(tmp)
-                      harness = prepare_harness(source, machine, directory)
-                      print('HARNESS_BUILD ' + json.dumps(harness, sort_keys=True), flush=True)
                       gateway = prepare_gateway(source, machine, directory)
                       print('GATEWAY_BUILD ' + json.dumps(gateway, sort_keys=True), flush=True)
+                      harness = prepare_harness(source, machine, directory)
+                      print('HARNESS_BUILD ' + json.dumps(harness, sort_keys=True), flush=True)
               except HTTPError as error:
                   raise SystemExit('InstaBox returned HTTP ' + str(error.code)) from None
               except (URLError, TimeoutError, subprocess.TimeoutExpired):
