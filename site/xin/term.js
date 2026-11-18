@@ -423,7 +423,11 @@
     W.show = function (key) {
       var tab = W.tab(key); if (!tab || W.cur === key && view && view.tab === tab) return;
       W.cur = key; tabsPaint(); paint(tab);
-      var x0 = window.LimingXin; face.innerHTML = x0 && x0.portrait ? x0.portrait({ face: tab.live ? 'focus' : 'eyes' }) : '';
+      var isTq = !!(tab.who === '天启' && tab.smallMark);
+      el.setAttribute('aria-label', isTq ? '天启的电脑' : '小芯的电脑');
+      name.textContent = isTq ? '天启的电脑' : '小芯的电脑';
+      var x0 = window.LimingXin;
+      face.innerHTML = isTq ? tab.smallMark : (x0 && x0.portrait ? x0.portrait({ face: tab.live ? 'focus' : 'eyes' }) : '');
       if (W.opts.onTab) W.opts.onTab(key);
     };
     W.tab = function (key) { return W.tabs.filter(function (t) { return t.key === key; })[0] || null; };

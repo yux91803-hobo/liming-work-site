@@ -1,7 +1,7 @@
 // Controller dispatch shared by the compatibility CLI and the resident state owner.
 import path from 'node:path';
 import { format } from 'node:util';
-import { BASE, journal, readJ, writeJ, mk, okId } from './vm-base.mjs';
+import { BASE, TIANQI, journal, readJ, writeJ, mk, okId } from './vm-base.mjs';
 import { inputDigest } from './vm-state.mjs';
 import { ACTS } from './vm-companion.mjs';
 import { callContext, withCallContext } from './vm-kernel-context.mjs';
@@ -10,6 +10,8 @@ import { attemptError, hasFinalization, staleAttempt } from './vm-run-attempt.mj
 
 const object = a => a && typeof a === 'object' && !Array.isArray(a);
 const bad = () => ({ error: 'bad_op', msg: '不认识的操作' });
+// 天启身份（li2）下网页和 Worker 能用的操作：聊天、看对话、文件、用量；Worker 内部要的预览、脚本核对、清旧记录。别的回「天启没有这个功能」
+export const TIANQI_OPS = new Set(['ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'rename', 'archive', 'forget', 'files', 'usage', 'prune', 'preview_asset', 'integrity_event']);
 const RUN_REPORTS = new Set(['session_patch','run_patch','run_complete','task_finish','task_stage','task_model','agy_conversation','front_reply','front_model','front_immediate','front_action','front_fallback','handoff_start','handoff_finish','continue_steers','run_stat','task_bridge','steer_take','steer_handover']);
 export function createController({ ops, iops, isTask, saveTask, rememberAgentSession, mainSid, listTasks,
   lockedCall, dispatchLaunches, markCurrentController, xinCmd, reapNow, finalizeRun }) {
@@ -77,6 +79,8 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
         const res=transaction(op,args,()=>iops[op](args));dispatchLaunches();return res||{};
       }
       if(!Object.hasOwn(ops,op))return bad();
+      // 天启（li2）：网页和 Worker 来的公开操作只认天启用得到的；内部报告、加了锁的转交不受影响
+      if(!locked&&TIANQI&&!TIANQI_OPS.has(op))return {error:'not_in_tianqi',msg:'天启没有这个功能'};
       if(!locked)markCurrentController();
       if(op==='send'&&!args.sid&&args.main&&!['harness','claude'].includes(args.agent)&&!args.mainSid){const m=mainSid();if(m){args.sid=m;args.mainSid=m;}}
       const publicKey=op==='stop'?inferKey('run_complete',args):['push_key','push_sub','push_unsub'].includes(op)?'tasks':op==='daily'?'daily':['send','steer','rename','archive','forget'].includes(op)

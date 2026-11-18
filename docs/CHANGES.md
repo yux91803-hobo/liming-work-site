@@ -1,3 +1,11 @@
+# 修改清单 · 2026-11-18（独立天启工具）
+
+- Claude Code 实现 Worker 的 `/api/tq` 范围、独立待送达、定时唤醒和控制器的天启身份（第 1–4 步）。Antigravity 实现工具箱入口、独立对话页和浏览器测试（第 5 步）。Codex 实现入口迁移、发布检查和集成修正（第 6–7 步），并复核各步的集成。实现者分别自查各自改动。设计审稿者见原设计记录。
+- 新天启使用 `li2`、Harness 和独立队列，沿用网站登录。`li` 的旧天启对话保留原会话、模型设置和 Purge 插件。直接打开 `/tianqi` 时小芯的启动延后，从天启返回后刷新共用登录并补做一次。工作台只移除设计指定的三个新建天启入口。
+- 复核 Claude Code 的电脑选择时发现单台电脑回退会跨过范围边界。天启按配置精确选择，小芯的旧回退排除 `li2`。复核同一个 Durable Object 类的回滚时，用 #174 实际代码复现旧闹钟会把天启的待送达交给 `li`。天启队列改用 `tq-inbox:` 存储键；重上新版后重新安排有效待送达。小芯旧队列和两台电脑的数据保留原格式。
+- 在 Node 22、系统 Chromium 和隔离状态目录下通过每日任务及浏览器的交接复测。 本地 1,051 项单测、14 组浏览器测试通过。首页落脚检查从固定两张工具卡改成逐张核对地图、STM32 和天启，保留标题栏与卡片内外的断言。发布新增天启浏览器测试、静态页和共用登录检查。正式联调读取 `/api/tq/me` 验证路由和登录，真实天启回话在 li2 配置后单独验收。 [设计与回滚](superpowers/specs/2026-11-18-tianqi-li2-design.md)
+- 参考 OpenCode 的实例上下文、Codex 的 `CODEX_HOME` 和 VS Code 的按视图激活。 [OpenCode Instance](https://github.com/anomalyco/opencode/blob/7d91d3b1ed3d5385d9f2e5a6976d6ac32f98cf18/packages/opencode/src/project/instance.ts) · [VS Code 激活事件](https://github.com/microsoft/vscode-docs/blob/main/api/references/activation-events.md#onview)
+
 # 修改清单 · 2026-11-18（第 3 批 B 默认启用持久收尾）
 
 - Codex 实现并自查。新轮次默认获得收尾协议，并独立校验关闭开关后的旧轮次及在途新版轮次。正式联调从已有测试对话中核对真实前台与后台各有一个成功的终态回执。

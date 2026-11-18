@@ -3,7 +3,7 @@
  'use strict';
  var STM=window.STM=window.STM||{},queue=[],timer=0,auth=null,pending=false;
  function owner(){try{var c=(window.parent.LimingXinChat||window.LimingXinChat);return c&&c.state;}catch(e){return null;}}
- function enabled(){var s=owner();try{return (!s||s.authed)&&(!s||(s.sessAgent||s.agent)==='codex')&&localStorage.getItem('lm.xin.learning')!=='0'&&localStorage.getItem('lm.xin.agent')!=='harness';}catch(e){return false;}}
+ function enabled(){var s=owner();try{return (!s||s.authed)&&(!s||(s.sessAgent||s.agent)==='codex')&&localStorage.getItem('lm.xin.learning')!=='0';}catch(e){return false;}}
  function post(op,args){return fetch('/api/xin/call',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Xin':'1'},body:JSON.stringify({op:op,args:args})}).then(function(r){if(!r.ok)throw Error('unavailable');return r.json();}).then(function(d){if(!d.ok||d.data&&d.data.error)throw Error('unavailable');return d.data;});}
  function flush(){
   timer=0;if(pending||!queue.length)return;if(!enabled()){queue=[];return;}

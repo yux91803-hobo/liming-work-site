@@ -5,6 +5,7 @@
 #
 # 需要仓库 Secrets：CLOUDFLARE_API_TOKEN、CLOUDFLARE_ACCOUNT_ID
 # 可选（小芯聊天，只写进正式站）：XIN_OWNER_PASSWORD（登录密码，至少 12 位）、XIN_INSTABOX_API_KEY（InstaBox 的 API key）
+# 可选（独立天启，只写进正式站）：XIN_TQ_INSTABOX_API_KEY（li2 所在账号的 InstaBox API key）
 
 name: Deploy
 
@@ -122,7 +123,9 @@ jobs:
           python test/e2e/xin_term_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-term.log
           python test/e2e/xin_usage_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-usage.log
           python test/e2e/xin_backup_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-backup.log
+          python test/e2e/xin_logins_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-logins.log
           python test/e2e/xin_kernel_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-kernel.log
+          python test/e2e/xin_tianqi_e2e.py http://localhost:5173 2>&1 | tee test-results/e2e/xin-tianqi.log
       - name: 准备浏览器检查报告快照（失败也保留）
         if: always()
         id: e2e_report
@@ -283,12 +286,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           XIN_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
           XIN_INSTABOX_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
+          XIN_TQ_INSTABOX_API_KEY: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
         run: |
           if [ -z "$XIN_OWNER_PASSWORD" ] || [ -z "$XIN_INSTABOX_API_KEY" ]; then
             echo "没配 XIN_OWNER_PASSWORD / XIN_INSTABOX_API_KEY：小芯聊天保持关闭"; exit 0
           fi
           if [ ${#XIN_OWNER_PASSWORD} -lt 12 ]; then echo "::warning::XIN_OWNER_PASSWORD 少于 12 位，Worker 不会打开小芯聊天"; fi
-          jq -n --arg a "$XIN_OWNER_PASSWORD" --arg b "$XIN_INSTABOX_API_KEY" '{OWNER_PASSWORD: $a, INSTABOX_API_KEY: $b}' \
+          jq -n '{OWNER_PASSWORD: env.XIN_OWNER_PASSWORD, INSTABOX_API_KEY: env.XIN_INSTABOX_API_KEY}
+            + (if (env.XIN_TQ_INSTABOX_API_KEY // "") == "" then {} else {TQ_INSTABOX_API_KEY: env.XIN_TQ_INSTABOX_API_KEY} end)' \
             | npx -y "$WRANGLER" secret bulk $ENV_FLAG --name liming-worldmap
 
       - name: 冒烟检查
@@ -300,7 +305,7 @@ jobs:
           # 连接中途被断开（curl 56）也重试、每次最多 20 秒；最后还拿不到就记成 000 接着查下一个，最后照样判失败。
           # 2026-11-16 #159 的测试站冒烟两次都是 CI 机器连 Cloudflare 时连接卡几十秒后被断开（地址不同、静态页面也有），
           # 原来的 --retry 不管这种，set -e 让整步直接退出、连哪个地址都没打印
-          for p in / /tools/stm32/ /tools/map/ /tools/map/map.js /tools/map/geo.mjs /xin/chat.js /api/xin/me; do
+          for p in / /tools/stm32/ /tools/map/ /tools/map/map.js /tools/map/geo.mjs /xin/chat.js /api/xin/me /tools/tianqi/ /api/tq/me; do
             code=$(curl -s -o /dev/null -w '%{http_code}' --retry 3 --retry-all-errors --retry-delay 5 --max-time 20 "$BASE$p" || true)
             echo "$code $BASE$p"
             [ "$code" = 200 ] || fail=1

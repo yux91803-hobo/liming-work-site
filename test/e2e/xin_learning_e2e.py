@@ -6,10 +6,10 @@ import stm32_e2e as ui
 async def main():
     async with async_playwright() as p:
         b=await p.chromium.launch(headless=True,**({'executable_path':os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
-        for mode in ('default','harness','off'):
+        for mode in ('default','legacy-preference','off'):
             pg=await ui.page(b,390,860,mobile=True)
             st=await ui.xin_mock(pg,authed=True)
-            if mode=='harness': await pg.add_init_script("localStorage.setItem('lm.xin.agent','harness')")
+            if mode=='legacy-preference': await pg.add_init_script("localStorage.setItem('lm.xin.agent','harness')")
             if mode=='off': await pg.add_init_script("localStorage.setItem('lm.xin.learning','0')")
             await pg.goto(ui.TOOL+'?v=lab&t=gpio&st=check')
             await pg.wait_for_selector('.lab-ta')
@@ -19,7 +19,7 @@ async def main():
             await pg.locator('.lab-acts .lab-p').click()
             await pg.clock.fast_forward(16000)
             await pg.wait_for_timeout(100)
-            if mode=='default':
+            if mode in ('default','legacy-preference'):
                 await pg.wait_for_function("true")
                 for _ in range(20):
                     if st.get('learning_events'): break
