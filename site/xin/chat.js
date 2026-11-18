@@ -3952,11 +3952,22 @@
     x.push(S.wb ? { ic: 'full', t: '收起工作台', k: '小窗 面板', run: function () { unwork(); } } : { ic: 'full', t: '全屏工作台', k: '全屏 工作台', run: function () { work(); } });
     return x;
   }
+  // 站长 2026-11-19：深浅色从点的那个地方一圈圈扩散着换（View Transitions；不支持或减少动态时直接换）
+  var LASTPT = null; document.addEventListener('pointerdown', function (e) { LASTPT = [e.clientX, e.clientY]; }, true);
+  function themeSwap(apply) {
+    var de = document.documentElement;
+    if (!document.startViewTransition || reduceMotion()) { apply(); return; }
+    var p = LASTPT || [innerWidth / 2, innerHeight / 2];
+    de.style.setProperty('--vt-x', p[0] + 'px'); de.style.setProperty('--vt-y', p[1] + 'px'); de.classList.add('vt-theme');
+    var done = function () { de.classList.remove('vt-theme'); }, vt = document.startViewTransition(apply); vt.finished.then(done, done);
+  }
   function flipTheme() {
     var dark = document.documentElement.dataset.theme === 'dark';
     try { localStorage.setItem('lm.theme', dark ? 'light' : 'dark'); } catch (e) { /* 存不了就只换这一次 */ }
-    var h_ = document.documentElement; h_.dataset.theme = dark ? 'light' : 'dark'; h_.dataset.pref = dark ? 'light' : 'dark';
-    var m = document.getElementById('themeColor'); if (m) m.setAttribute('content', TQ ? (dark ? '#f6f5f2' : '#121110') : (dark ? '#faf9f5' : '#1f1e1d'));
+    themeSwap(function () {
+      var h_ = document.documentElement; h_.dataset.theme = dark ? 'light' : 'dark'; h_.dataset.pref = dark ? 'light' : 'dark';
+      var m = document.getElementById('themeColor'); if (m) m.setAttribute('content', TQ ? (dark ? '#f6f5f2' : '#121110') : (dark ? '#faf9f5' : '#1f1e1d'));
+    });
     [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { f.contentWindow.postMessage({ type: 'theme' }, location.origin); } catch (er) { /* 别的源 */ } });
     toast(dark ? '换成浅色了' : '换成深色了');
   }
@@ -4184,6 +4195,11 @@
   window.addEventListener('pagehide',function(){
     if(!TQ&&S.authed&&S.sid&&(S.run||S.bg>0))fetch(API+'call',{method:'POST',credentials:'same-origin',keepalive:true,headers:{'Content-Type':'application/json','X-Xin':'1'},body:JSON.stringify({op:'tasks',args:{sid:S.sid,deviceId:S.deviceId,tabId:S.tabId,watching:false}})}).catch(function(){});
   });
+  // 站长 2026-11-19：在做的小方点改成呼吸，各自错开节拍——每个点进页面时随机给一个相位（--ph，CSS 里当负的延迟）
+  var PH = '.xc-st,.xc-dr-st,.xc-mainb i,.xc-si-m > *,.wk-ic,.xc-task-st,.xc-tk-cmd,.xw-st i,.xw-g';
+  function phase(n) { if (n.nodeType !== 1) return; (n.matches(PH) ? [n] : []).concat([].slice.call(n.querySelectorAll(PH))).forEach(function (e) { if (!e.style.getPropertyValue('--ph')) e.style.setProperty('--ph', (Math.random() * 1.8).toFixed(2) + 's'); }); }
+  new MutationObserver(function (ms) { ms.forEach(function (m) { [].forEach.call(m.addedNodes, phase); }); }).observe(document.body, { childList: true, subtree: true });
+  phase(document.body);
   window.LimingXinChat = { open: open, close: close, work: work, ask: quick, played: played, page: page, tasks: function () { pollTasks(); }, get state() { return S; } };
   boot();
 })();

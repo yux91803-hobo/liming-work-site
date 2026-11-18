@@ -75,9 +75,16 @@
   if (mq.addEventListener) mq.addEventListener('change', applyTheme);
   var themeBtn = $('#themeBtn');
   pressable(themeBtn);
-  themeBtn.addEventListener('click', function () {
+  themeBtn.addEventListener('click', function (ev) {
     var order = ['light', 'dark', 'auto'], cur = ls('lm.theme') || 'light';
-    var next = order[(order.indexOf(cur) + 1) % 3]; ls('lm.theme', next); applyTheme();
+    var next = order[(order.indexOf(cur) + 1) % 3]; ls('lm.theme', next);
+    // 站长 2026-11-19：从点的地方一圈圈扩散着换颜色（View Transitions；不支持或减少动态时直接换）
+    var de = document.documentElement, still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (document.startViewTransition && !still) {
+      var r = themeBtn.getBoundingClientRect(), done = function () { de.classList.remove('vt-theme'); };
+      de.style.setProperty('--vt-x', (ev && ev.clientX || r.left + r.width / 2) + 'px'); de.style.setProperty('--vt-y', (ev && ev.clientY || r.top + r.height / 2) + 'px'); de.classList.add('vt-theme');
+      document.startViewTransition(applyTheme).finished.then(done, done);
+    } else applyTheme();
     toast({ light: '浅色', dark: '深色', auto: '跟随系统' }[next]);
     stage.querySelectorAll('iframe').forEach(function (f) { try { f.contentWindow.postMessage({ type: 'theme' }, location.origin); } catch (e) {} });
   });

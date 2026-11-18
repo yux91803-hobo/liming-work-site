@@ -152,7 +152,7 @@ body.xc-open.xc-wb #home{margin-right:0}
 
 /* ---------- 状态条（唤醒中、连不上、出错） ---------- */
 .xc-st{position:relative;z-index:6;flex:none;margin:8px auto 0;max-width:min(760px,calc(100% - 24px));padding:7px 14px;--rad:12px;background:var(--surface);box-shadow:var(--sh-1);font-size:13px;line-height:1.5;color:var(--ink-2)}
-.xc-st.wait::before{content:"";display:inline-block;width:7px;height:7px;margin-right:8px;vertical-align:1px;background:var(--glow);animation:xcpix 1s steps(2,end) infinite}
+.xc-st.wait::before{content:"";display:inline-block;width:7px;height:7px;margin-right:8px;vertical-align:1px;background:var(--glow);animation:xcbreathe 1.8s ease-in-out calc(-1 * var(--ph,0s)) infinite}
 .xc-st.bad{color:var(--bad-ink)}
 @keyframes xcpix{50%{opacity:.25}}
 
@@ -511,7 +511,7 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-dr-name{font-size:15px;font-weight:650;letter-spacing:.02em}
 .xc-dr-st{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .xc-dr-st.on::before,.xc-dr-st.busy::before{content:"";display:inline-block;width:6px;height:6px;margin-right:6px;vertical-align:1px;background:var(--ok)}
-.xc-dr-st.busy::before{background:var(--glow);animation:xcpix 1s steps(2,end) infinite}
+.xc-dr-st.busy::before{background:var(--glow);animation:xcbreathe 1.8s ease-in-out calc(-1 * var(--ph,0s)) infinite}
 .xc-dr-sc{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:4px 12px calc(14px + var(--sb))}
 /* ---------- 侧边栏（第三轮重做。站长 2026-11-16：「侧边这个感觉还是之前的模版，不好看」）----------
    「芯片与纸」：上面两颗键帽（1px 边、底下 2px 硬阴影，按下去沉 2px，像键盘）；主对话是一块带琥珀色竖条的卡；
@@ -541,7 +541,7 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-mainb{flex:1;min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:9px;min-height:46px;padding:0 4px 0 14px;--rad:12px;text-align:left;font-size:14px;font-weight:600}
 .xc-mainb svg{width:16px;height:16px;color:var(--glow-ink)}
 .xc-mainb i{font:normal 12px var(--mono);color:var(--ink-3);font-variant-numeric:tabular-nums}
-.xc-mainb.live i::before{content:"";display:inline-block;width:6px;height:6px;margin-right:6px;vertical-align:1px;background:var(--glow);animation:xcpix 1s steps(2,end) infinite}
+.xc-mainb.live i::before{content:"";display:inline-block;width:6px;height:6px;margin-right:6px;vertical-align:1px;background:var(--glow);animation:xcbreathe 1.8s ease-in-out calc(-1 * var(--ph,0s)) infinite}
 @media (hover:hover){.xc-mainrow:not(:has(.xc-mainb.cur)):hover{box-shadow:inset 0 0 0 1px var(--hair-2)}}
 /* 小标题：点阵字 */
 .xc-dr-h{display:flex;align-items:baseline;gap:6px;margin:18px 10px 6px;font:13px/1 var(--px);letter-spacing:.06em;color:var(--ink-3)}
@@ -557,7 +557,7 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-si-t{font-size:14px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .xc-si.cur .xc-si-t{font-weight:600}
 .xc-si-m{display:flex;align-items:center;gap:6px;font:12px var(--mono);color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
-.xc-si-m > .on{width:6px;height:6px;background:var(--glow);animation:xcpix 1s steps(2,end) infinite}
+.xc-si-m > .on{width:6px;height:6px;background:var(--glow);animation:xcbreathe 1.8s ease-in-out calc(-1 * var(--ph,0s)) infinite}
 .xc-si-who{font-family:var(--sans)}
 .xc-si-more{--rad:9px;flex:none;display:grid;place-items:center;width:34px;color:var(--ink-3);opacity:0;transition:opacity .15s,background-color .15s}
 .xc-si-more svg{width:17px;height:17px}
@@ -734,7 +734,7 @@ body.xc-open.xc-wb #home{margin-right:0}
 .wk-ic{display:grid;place-items:center;width:18px;height:20px;color:var(--wk)}
 .wk-ic svg{width:17px;height:17px}
 .wk-c.live .wk-ic svg{display:none}
-.wk-c.live .wk-ic::after{content:"";width:8px;height:8px;background:var(--wk);box-shadow:0 0 10px var(--wk);animation:xcpix 1s steps(2,end) var(--p10,0s) infinite}
+.wk-c.live .wk-ic::after{content:"";width:8px;height:8px;background:var(--wk);box-shadow:0 0 10px var(--wk);animation:xcbreathe 1.8s ease-in-out calc(var(--p10,0s) - var(--ph,0s)) infinite}
 .wk-c.live.st-queued .wk-ic::after{animation:none;opacity:.5;box-shadow:none}
 .wk-c.wait .wk-ic svg{display:none}
 .wk-c.wait .wk-ic::after{content:"";width:8px;height:8px;background:var(--wk)}
@@ -803,7 +803,7 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-tk-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0 0 10px;font-size:12.5px;color:var(--ink-3)}
 .xc-task-st{--rad:999px;display:inline-flex;align-items:center;gap:6px;padding:2px 10px;background:var(--sunk);font-size:12px;color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
 .xc-task-st::before{content:"";width:6px;height:6px;background:var(--ink-3)}
-.xc-task-st.st-running::before,.st-running .xc-task-st::before{background:var(--glow);animation:xcpix 1s steps(2,end) infinite}
+.xc-task-st.st-running::before,.st-running .xc-task-st::before{background:var(--glow);animation:xcbreathe 1.8s ease-in-out calc(-1 * var(--ph,0s)) infinite}
 .xc-task-st.st-waiting::before,.st-waiting .xc-task-st::before{background:var(--wait)}
 .xc-task-st.st-done::before,.st-done .xc-task-st::before{background:var(--ok)}
 .xc-task-st.st-failed::before,.st-failed .xc-task-st::before{background:var(--bad)}
@@ -826,7 +826,7 @@ body.xc-open.xc-wb #home{margin-right:0}
 .xc-tk-cmd::before{background:var(--code) !important;box-shadow:none !important}
 .xc-tk-cmd.bad::before{background:var(--bad) !important}
 .xc-tk-cmd.now{color:var(--glow)}
-.xc-tk-cmd.now::before{background:var(--glow) !important;animation:xcpix 1s steps(2,end) infinite}
+.xc-tk-cmd.now::before{background:var(--glow) !important;animation:xcbreathe 1.8s ease-in-out calc(-1 * var(--ph,0s)) infinite}
 .xc-tk-cmd pre{max-height:240px;margin:0;padding:8px 12px 10px;overflow:auto;box-shadow:inset 0 1px 0 rgba(255,255,255,.06);font:12px/1.5 var(--mono);color:var(--code-mute);white-space:pre-wrap;overflow-wrap:anywhere}
 .xc-tk-err{font-size:13px;color:var(--bad-ink)}
 .xc-tk-done{font-size:12px;color:var(--ink-3)}
@@ -1108,7 +1108,7 @@ body.xs-open{overflow:hidden}
 .xw-st i{width:8px;height:8px;background:var(--line-2)}
 .xw-st em{font-style:normal}
 .xw-st.on i{background:#3f9b5f}
-.xw-st.busy i{background:#e8a634;animation:xwblink 1s steps(2,end) infinite}
+.xw-st.busy i{background:#e8a634;animation:xcbreathe 1.8s ease-in-out calc(-1 * var(--ph,0s)) infinite}
 .xw-st.sleep i{background:var(--ink-3)}
 .xw-go{flex:none;display:grid;place-items:center;width:34px;height:34px;border:2px solid var(--pb);background:var(--panel);box-shadow:2px 2px 0 var(--ps);color:var(--ink);
   transition:transform .05s steps(1,end),box-shadow .05s steps(1,end)}
@@ -1128,7 +1128,7 @@ body.xs-open{overflow:hidden}
 .xw-tt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .xw-tm{font-size:12px;color:var(--chip-sub);opacity:.75;font-variant-numeric:tabular-nums;white-space:nowrap}
 .xw-g{width:8px;height:8px;background:var(--chip-sub)}
-.xw-t.run .xw-g{background:#ffc965;box-shadow:0 0 8px rgba(255,201,101,.7);animation:xwblink 1s steps(2,end) var(--p10,0s) infinite}
+.xw-t.run .xw-g{background:#ffc965;box-shadow:0 0 8px rgba(255,201,101,.7);animation:xcbreathe 1.8s ease-in-out calc(var(--p10,0s) - var(--ph,0s)) infinite}
 .xw-t.ok .xw-g{background:#7bd88f}
 .xw-t.wait .xw-g{background:#ff9a70}
 .xw-t.bad .xw-g{background:#f08b70}
@@ -1374,3 +1374,9 @@ html.vt-work::view-transition-new(root){animation:xcdots .48s steps(7,end) both;
 .xc-isle.bump::after{content:"";position:absolute;inset:-2px;pointer-events:none;box-shadow:0 0 0 2px var(--glow),0 0 14px var(--glow);opacity:0;animation:xcring2 .8s ease-out both}
 @keyframes xcring2{0%{opacity:.9;transform:scale(1)}100%{opacity:0;transform:scale(1.32)}}
 @media (prefers-reduced-motion:reduce){.xc-isle.bump,.xc-isle.bump::after{animation:none}}
+/* 在做的小方点：呼吸式明暗，各自错开节拍（--ph 由 chat.js 随机给） */
+@keyframes xcbreathe{0%,100%{opacity:1}50%{opacity:.3}}
+/* 深浅色切换：从点的那个地方一圈圈扩散着换（分 14 步，带像素感） */
+html.vt-theme::view-transition-old(root){animation:none}
+html.vt-theme::view-transition-new(root){animation:xcreveal .62s steps(14,end) both}
+@keyframes xcreveal{from{clip-path:circle(0 at var(--vt-x,50%) var(--vt-y,50%))}to{clip-path:circle(150vmax at var(--vt-x,50%) var(--vt-y,50%))}}

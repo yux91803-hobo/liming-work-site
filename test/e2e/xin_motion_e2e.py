@@ -125,6 +125,39 @@ async def task_box(browser, reduce):
     await pg.context.close()
 
 
+async def dots_and_theme(browser):
+    pg = await ui.page(browser, 1280, 860)
+    st = await ui.xin_mock(pg, authed=True)
+    st['tasks'] = [T.task(status='running', run='rtask00b01', startedAt=T.now() - 3000), dict(T.task(status='running', run='rtask00b02', startedAt=T.now() - 5000), sid='stask00bl2', no=2, title='查资料')]
+    await pg.add_init_script(VT)
+    await pg.goto(ui.BASE + '/')
+    await pg.wait_for_selector('#themeBtn')
+    before = await pg.evaluate("document.documentElement.dataset.theme")
+    await pg.click('#themeBtn')
+    await pg.wait_for_timeout(900)
+    home = await pg.evaluate("[window.__vt.slice(), document.documentElement.dataset.theme, document.documentElement.classList.contains('vt-theme')]")
+    ui.check('首页的主题按钮：深浅色从点的地方一圈圈扩散着换（View Transition，场景 vt-theme），做完把场景类去掉', home[0] == ['vt-theme'] and home[1] != before and not home[2], (before, home))
+    await pg.click('.xw-head')
+    await pg.wait_for_selector('.xc.wb.show .xc-msgs')
+    await pg.wait_for_timeout(700)
+    await pg.evaluate('LimingXinChat.tasks()')
+    await pg.click('.xc-isle')
+    await pg.wait_for_selector('.xc-work.in .wk-c.live')
+    await pg.wait_for_timeout(300)
+    dots = await pg.evaluate("[...document.querySelectorAll('.xc-work.in .wk-c.live .wk-ic')].map(e => [getComputedStyle(e, '::after').animationName, getComputedStyle(e, '::after').animationDelay])")
+    ui.check('在做的小方点：呼吸式明暗（xcbreathe），各自错开节拍（延迟不一样）', len(dots) >= 2 and all(d[0] == 'xcbreathe' for d in dots) and len(set(d[1] for d in dots)) == len(dots), dots)
+    await pg.keyboard.press('Escape')
+    n = len(await pg.evaluate('window.__vt'))
+    await pg.keyboard.press('Control+k')
+    await pg.wait_for_selector('.xc-pal.in .xc-pal-i')
+    await pg.keyboard.type('深色' if (await pg.evaluate("document.documentElement.dataset.theme")) == 'light' else '浅色')
+    await pg.keyboard.press('Enter')
+    await pg.wait_for_timeout(900)
+    wb = await pg.evaluate("window.__vt.slice(%d)" % n)
+    ui.check('工作台命令面板换深浅色：同样一圈圈扩散着换', wb == ['vt-theme'], wb)
+    await pg.context.close()
+
+
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
@@ -136,6 +169,7 @@ async def main():
         await history_still(browser)
         await task_box(browser, False)
         await task_box(browser, True)
+        await dots_and_theme(browser)
         await browser.close()
     n = len(ui.results); ok = sum(1 for r in ui.results if r[1])
     print('==== %d/%d 通过 ====' % (ok, n))
