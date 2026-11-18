@@ -1,4 +1,4 @@
-name: Tianqi li program inventory
+name: Tianqi li2 build preflight
 on:
   push:
     branches: [codex/tianqi-li2-readiness-20261118]
@@ -8,20 +8,39 @@ jobs:
   inspect:
     if: github.repository == 'yux91803-hobo/liming-work-site' && github.ref_name == 'codex/tianqi-li2-readiness-20261118'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 18
     steps:
-      - name: Inspect source program metadata
+      - name: Build the scoped program bundle for li2
         env:
           LI_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
         run: |
           python3 - <<'PY'
+          import ast
+          import hashlib
           import json
           import os
           import re
           import shlex
+          import subprocess
+          import tarfile
+          import tempfile
+          from pathlib import Path, PurePosixPath
           from urllib.error import HTTPError, URLError
-          from urllib.parse import quote, urlencode
+          from urllib.parse import quote, urlencode, urlsplit
           from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+          API = 'https://api.instabox.sh'
+          NODE_TAR = 'node-v24.22.2-linux-x64.tar.xz'
+          NODE_SHA = '48cc0e21e048790e54c0cf5749c2725005313d652651c40b7a21feb9697aaf75'
+          HARNESS_VERSION = '0.2.2-rc.3'
+          HARNESS = '/data/apps/deepseek-harness'
+          GATEWAY = '/data/workbuddy-gateway/current'
+          PRIVATE = re.compile(r'^(accounts?|secrets?|credentials?|usage|logs?|backups?|storage|state|cache|__pycache__|\.git|\.env)(?:[._-]|$)', re.I)
+          CREDENTIAL = re.compile(rb'\bibk_[a-zA-Z0-9]{30,}|-----BEGIN (?:OPENSSH |RSA |EC )?PRIVATE KEY-----|\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\b')
+
+
+          class SetupCheckError(Exception):
+              pass
 
 
           class NoRedirect(HTTPRedirectHandler):
@@ -29,109 +48,195 @@ jobs:
                   return None
 
 
-          PROGRAM_PATH = re.compile(r'/(?:data/[A-Za-z0-9_.-]+|opt|srv|home/(?:box|dev)|usr/(?:local/)?(?:lib|libexec|bin|sbin|share)|root)/[A-Za-z0-9_.@/+\-]+$')
-          PRIVATE_COMPONENTS = re.compile(r'(^|/)(?:accounts?|secrets?|credentials?|usage|logs?|backups?|storage|data|state|cache|\.git|\.env)(?:[./_-]|$)', re.I)
+          class InstaBox:
+              def __init__(self, key):
+                  if not key:
+                      raise SetupCheckError('A required InstaBox secret is unavailable to this job')
+                  self.key = key
+                  self.http = build_opener(NoRedirect())
+
+              def get(self, endpoint, max_bytes=2 * 1024 * 1024):
+                  request = Request(API + endpoint, headers={'X-API-Key': self.key})
+                  with self.http.open(request, timeout=60) as response:
+                      data = response.read(max_bytes + 1)
+                  if len(data) > max_bytes:
+                      raise SetupCheckError('Program file exceeded its expected size limit')
+                  return data
+
+              def select(self, name):
+                  rows = [r for r in json.loads(self.get('/v1/machines'))['machines'] if r.get('name') == name]
+                  if len(rows) != 1 or not rows[0].get('id'):
+                      raise SetupCheckError('The credential does not select exactly one ' + name)
+                  return '/v1/machines/' + quote(rows[0]['id'], safe='')
+
+              def list_files(self, machine, path):
+                  listing = json.loads(self.get(machine + '/files?' + urlencode({'path': path})))
+                  if listing.get('type') != 'dir' or listing.get('truncated'):
+                      raise SetupCheckError('Program directory could not be completely inventoried')
+                  return listing['entries']
+
+              def read_file(self, machine, path, limit):
+                  return self.get(machine + '/files/content?' + urlencode({'path': path}), limit)
 
 
-          def safe_program_path(value):
-              if not PROGRAM_PATH.fullmatch(value or ''):
-                  return None
-              return value if '..' not in value.split('/') and not PRIVATE_COMPONENTS.search(value.split('/', 2)[2]) else None
+          def child_env(work):
+              return {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'CI': '1', 'PYTHONDONTWRITEBYTECODE': '1',
+                      'npm_config_cache': str(work / 'npm-cache'), 'npm_config_userconfig': '/dev/null',
+                      'npm_config_globalconfig': '/dev/null'}
 
 
-          def entries(node):
-              return node.get('entries', []) if node and node.get('type') == 'dir' else []
+          def checked(command, *, work, env, timeout, failure):
+              r = subprocess.run(command, cwd=work, env=env, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+              if r.returncode:
+                  codes = sorted(set(re.findall(rb'\b(?:ERR_[A-Z_]+|E[A-Z0-9]{3,12})\b', r.stderr)))[:8]
+                  names = sorted(set(re.findall(rb'(?:ModuleNotFoundError|ImportError): No module named [\'\"]([A-Za-z0-9_.]+)[\'\"]', r.stderr)))[:8]
+                  raise SetupCheckError(failure + ' (exit ' + str(r.returncode) + ', codes ' + repr(codes) + ', modules ' + repr(names) + ')')
+              return r.stdout.decode('utf-8', errors='replace')
 
 
-          def inventory(node, program_filter=None):
-              return [{k: item[k] for k in ('name', 'type', 'size')} for item in entries(node)
-                      if re.fullmatch(r'[A-Za-z0-9_.@+\-]+', item['name']) and not PRIVATE_COMPONENTS.search(item['name'])
-                      and (program_filter is None or program_filter(item['name']))][:30]
+          def validate_lock(package, lock):
+              required = {'@deepseek-ai/dsh': HARNESS_VERSION}
+              if package.get('dependencies') != required or lock.get('packages', {}).get('', {}).get('dependencies') != required:
+                  raise SetupCheckError('The li package lock does not pin the agreed Harness version')
+              if any(CREDENTIAL.search(json.dumps(x).encode()) for x in (package, lock)):
+                  raise SetupCheckError('Program package metadata contains an unexpected private value')
+              for entry in lock['packages'].values():
+                  src = entry.get('resolved')
+                  if src:
+                      url = urlsplit(src)
+                      if (url.scheme != 'https' or url.hostname not in {'registry.npmjs.org', 'registry.npmmirror.com'}
+                              or url.username or url.password or not entry.get('integrity')):
+                          raise SetupCheckError('The installed Harness lock refers to an unverified package source')
 
 
-          def inspect(get):
-              rows = [row for row in get('/v1/machines')['machines'] if row.get('name') == 'li']
-              if len(rows) != 1 or not rows[0].get('id'):
-                  raise RuntimeError('The source account does not identify exactly one li')
-              base = '/v1/machines/' + quote(rows[0]['id'], safe='') + '/files?'
+          def prepare_harness(source, machine, directory):
+              dest = directory / 'harness'
+              dest.mkdir()
+              tarball = source.read_file(machine, HARNESS + '/downloads/' + NODE_TAR, 33_000_000)
+              if hashlib.sha256(tarball).hexdigest() != NODE_SHA:
+                  raise SetupCheckError('Node runtime did not match the official v24.22.2 checksum')
+              archive = directory / NODE_TAR
+              archive.write_bytes(tarball)
+              with tarfile.open(archive, 'r:xz') as stream:
+                  stream.extractall(dest, filter='data')
+              (dest / NODE_TAR.removesuffix('.tar.xz')).rename(dest / 'runtime')
+              app = dest / 'tui-host'
+              app.mkdir()
+              package = json.loads(source.read_file(machine, HARNESS + '/tui-host/package.json', 4096))
+              lock_bytes = source.read_file(machine, HARNESS + '/tui-host/package-lock.json', 1_000_000)
+              lock = json.loads(lock_bytes)
+              validate_lock(package, lock)
+              (app / 'package.json').write_text(json.dumps({'private': True, 'dependencies': package['dependencies']}) + '\n')
+              (app / 'package-lock.json').write_bytes(lock_bytes)
+              node = dest / 'runtime/bin/node'
+              npm = dest / 'runtime/lib/node_modules/npm/bin/npm-cli.js'
+              env = child_env(directory)
+              env['PATH'] = str(node.parent) + os.pathsep + os.defpath
+              checked([node, npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-fund', '--no-audit'], work=app, env=env,
+                      timeout=480, failure='Pinned Harness install failed')
+              dsh = app / 'node_modules/@deepseek-ai/dsh/lib/bin.js'
+              version = checked([node, dsh, '--version'], work=directory, env=env, timeout=40, failure='Harness version check failed')
+              if HARNESS_VERSION not in version:
+                  raise SetupCheckError('Harness reported a version different from the spec')
+              profile_source = json.loads(source.read_file(machine, '/data/home/.dsh/profiles/headless/package.json', 4096))
+              profile = profile_source.get('dsh', {})
+              provided = sorted(k for k in profile if re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]+', k)) if isinstance(profile, dict) else []
+              declared = {k: v for k, v in profile.items() if k in {'preset', 'extends', 'type'} and isinstance(v, str)
+                          and v in {'headless', 'default', 'minimal'}} if isinstance(profile, dict) else {}
+              return {'version': HARNESS_VERSION, 'runtime_version': '24.22.2', 'lock_sha256': hashlib.sha256(lock_bytes).hexdigest(),
+                      'profile_dsh_fields': provided, 'profile_standard_modes': declared}
 
-              def source(path):
-                  try:
-                      return get(base + urlencode({'path': path}))
-                  except HTTPError as ex:
-                      if ex.code == 404:
-                          return None
-                      raise
 
-              app = '/data/apps/deepseek-harness'
-              wrapper = source('/data/home/.local/bin/dsh') or {}
-              paths = sorted(set(re.findall(r'/data/apps/deepseek-harness/[A-Za-z0-9_.@/+\-]+', wrapper.get('content', ''))))
-              paths = [path for path in paths if safe_program_path(path)]
-              result = {
-                  'harness_artifacts': inventory(source(app)),
-                  'launcher_paths': paths,
-                  'harness_runtime': inventory(source(app + '/runtime'), lambda n: n in {'bin', 'include', 'lib', 'README.md', 'VERSION'}),
-                  'harness_downloads': inventory(source(app + '/downloads'), lambda n: bool(re.match(r'(node[-.]|dsh[-.])',n))),
-                  'harness_tui': inventory(source(app + '/tui-host'), lambda n: n in {'package.json','package-lock.json','node_modules'}),
-                  'headless_artifacts': inventory(source('/data/home/.dsh/profiles/headless'), lambda n: n in {'package.json', 'config.yaml', 'config.yml', 'extensions.yaml', 'extensions.yml'}),
-                  'related_apps': inventory(source('/data/apps'), lambda name: bool(re.search('deepseek|workbuddy|gateway', name, re.I))),
-              }
-              package = source(app + '/tui-host/node_modules/@deepseek-ai/dsh/package.json') or {}
-              if 'content' in package:
-                  version = json.loads(package['content']).get('version', '')
-                  if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', version):
-                      result['harness_version'] = version
-              profile = source('/data/home/.dsh/profiles/headless/package.json') or {}
-              if 'content' in profile:
-                  cfg = json.loads(profile['content'])
-                  result['headless_manifest_fields'] = sorted(set(cfg) & {'name','version','type','private','dependencies','dsh'})
-                  result['headless_dependencies'] = {k:v for k,v in cfg.get('dependencies', {}).items()
-                                                     if k.startswith('@deepseek-ai/') and re.fullmatch(r'[~^]?[0-9][0-9.A-Za-z-]+', v)}
-              for where, unit in [('system', '/etc/systemd/system/workbuddy-gateway.service'),
-                                  ('user', '/data/home/.config/systemd/user/workbuddy-gateway.service')]:
-                  unit_data = source(unit) or {}
-                  if 'content' not in unit_data:
+          def optional_program_tree(source, machine, name, destination, copied, depth=0):
+              if depth > 3:
+                  raise SetupCheckError('Gateway static program data unexpectedly deep')
+              try:
+                  items = source.list_files(machine, GATEWAY + '/' + name)
+              except HTTPError as error:
+                  if error.code == 404:
+                      return
+                  raise
+              for item in items:
+                  child = item['name']
+                  if not re.fullmatch(r'[A-Za-z0-9_.-]+', child) or child in {'.', '..'} or PRIVATE.match(child):
                       continue
-                  settings = dict(line.split('=',1) for line in unit_data['content'].splitlines()
-                                  if '=' in line and line.partition('=')[0] in {'WorkingDirectory', 'ExecStart', 'User', 'Environment', 'EnvironmentFile', 'Type'})
-                  directory = safe_program_path(settings.get('WorkingDirectory'))
-                  command = shlex.split(settings.get('ExecStart',''))
-                  executable_paths = [p for p in command[1:] if safe_program_path(p)]
-                  script_mentions = re.findall(r'/[A-Za-z0-9_.@/+\-]+', settings.get('ExecStart', ''))
-                  executable_paths = sorted(set(executable_paths + [p for p in script_mentions if safe_program_path(p) and p.endswith('.py')]))
-                  module = (command[command.index('-m')+1] if '-m' in command and command.index('-m')+1 < len(command) else '')
-                  if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.]{0,80}', module): module = None
-                  environment_names = sorted({t.partition('=')[0] for t in shlex.split(settings.get('Environment',''))
-                                              if re.fullmatch(r'[A-Z_][A-Z0-9_]+', t.partition('=')[0])})
-                  runtime = command[0].rsplit('/',1)[-1] if command and re.fullmatch(r'/usr/(?:local/)?bin/(?:node|python3|bash)', command[0]) else None
-                  result['gateway_unit'] = {'where': where, 'directory': directory, 'exec_paths': executable_paths, 'runtime': runtime,
-                                            'config_directives': sorted({'Environment','EnvironmentFile'} & settings.keys()),
-                                            'module': module, 'inline_script': '-c' in command, 'environment_names': environment_names}
-                  if not directory and executable_paths:
-                      directory = safe_program_path(executable_paths[0].rsplit('/',1)[0])
-                  if directory:
-                      result['gateway_artifacts'] = inventory(source(directory))
-                  break
-              return result
+                  rel = name + '/' + child
+                  if item['type'] == 'dir':
+                      optional_program_tree(source, machine, rel, destination, copied, depth + 1)
+                  elif item['type'] == 'file' and child.endswith(('.json', '.yaml', '.yml', '.md', '.csv')):
+                      copy_program_file(source, machine, rel, item, destination, copied)
+
+
+          def copy_program_file(source, machine, name, item, destination, copied):
+              if item['size'] > 8 * 1024 * 1024 or len(copied) >= 140:
+                  raise SetupCheckError('Gateway program bundle exceeded the scoped transfer limit')
+              data = source.read_file(machine, GATEWAY + '/' + name, item['size'] + 1)
+              if len(data) != item['size'] or CREDENTIAL.search(data):
+                  raise SetupCheckError('A gateway program file changed during the read or matched a private pattern')
+              filename = destination / PurePosixPath(name)
+              filename.parent.mkdir(parents=True, exist_ok=True)
+              filename.write_bytes(data)
+              copied.append(name)
+
+
+          def prepare_gateway(source, machine, directory):
+              destination = directory / 'gateway'
+              destination.mkdir()
+              copied = []
+              for item in source.list_files(machine, GATEWAY):
+                  name = item['name']
+                  want = re.fullmatch(r'wb_[a-z0-9_]+\.py', name) or name in {'dashboard.html', 'README.md', 'LICENSE'}
+                  if want and item['type'] == 'file':
+                      copy_program_file(source, machine, name, item, destination, copied)
+              for folder in ('catalog', 'pricing'):
+                  optional_program_tree(source, machine, folder, destination, copied)
+              program = destination / 'wb_proxy.py'
+              if not program.is_file() or not (destination / 'dashboard.html').is_file():
+                  raise SetupCheckError('The gateway application and dashboard were not both present on li')
+              required = set()
+              for source_file in destination.glob('wb_*.py'):
+                  tree = ast.parse(source_file.read_bytes(), filename=source_file.name)
+                  compile(tree, source_file.name, 'exec')
+                  for n in ast.walk(tree):
+                      if isinstance(n, ast.Import):
+                          required.update(x.name for x in n.names if x.name.startswith('wb_'))
+                      if isinstance(n, ast.ImportFrom) and n.module and n.module.startswith('wb_'):
+                          required.add(n.module)
+              if any(not (destination / (m.split('.')[0] + '.py')).is_file() for m in required):
+                  raise SetupCheckError('A local gateway program dependency was not in the scoped transfer')
+              env = child_env(directory)
+              help_text = checked(['/usr/bin/python3', program, '--help'], work=destination, env=env, timeout=30, failure='Gateway help check failed')
+              arguments = sorted(set(re.findall(r'--[a-z][a-z0-9-]+', help_text)))
+              unit = source.read_file(machine, '/etc/systemd/system/workbuddy-gateway.service', 32_768).decode('utf-8')
+              start = [line.partition('=')[2] for line in unit.splitlines() if line.startswith('ExecStart=')]
+              argv = shlex.split(start[0]) if len(start) == 1 else []
+              flag_names = sorted({token.split('=',1)[0] for token in argv[1:] if re.fullmatch(r'--[a-z][a-z0-9-]+(?:=.*)?', token)})
+              expected_version = any('2.0.8' in f.read_text(errors='replace') for f in (destination / 'README.md', program) if f.is_file())
+              if not expected_version:
+                  raise SetupCheckError('The source gateway did not contain its expected v2.0.8 marker')
+              return {'version_marker': '2.0.8', 'program_count': len(copied), 'gateway_cli_flags': arguments,
+                      'source_unit_flags': flag_names}
 
 
           def main():
-              key = os.environ.get('LI_API_KEY')
-              if not key:
-                  raise SystemExit('The source InstaBox secret is unavailable to this job')
-              opener = build_opener(NoRedirect())
-              def get(path):
-                  with opener.open(Request('https://api.instabox.sh' + path, headers={'X-API-Key': key}), timeout=25) as response:
-                      return json.load(response)
               try:
-                  result = inspect(get)
-              except HTTPError as ex:
-                  raise SystemExit('InstaBox returned HTTP ' + str(ex.code)) from None
-              except (URLError, TimeoutError):
-                  raise SystemExit('InstaBox connection did not complete') from None
-              except (KeyError, TypeError, ValueError):
-                  raise SystemExit('Unexpected source program metadata') from None
-              print('LI_PROGRAMS ' + json.dumps(result, sort_keys=True))
+                  source = InstaBox(os.environ.get('LI_API_KEY'))
+                  machine = source.select('li')
+                  with tempfile.TemporaryDirectory(prefix='tianqi-program-preflight-') as tmp:
+                      directory = Path(tmp)
+                      harness = prepare_harness(source, machine, directory)
+                      print('HARNESS_BUILD ' + json.dumps(harness, sort_keys=True), flush=True)
+                      gateway = prepare_gateway(source, machine, directory)
+                      print('GATEWAY_BUILD ' + json.dumps(gateway, sort_keys=True), flush=True)
+              except HTTPError as error:
+                  raise SystemExit('InstaBox returned HTTP ' + str(error.code)) from None
+              except (URLError, TimeoutError, subprocess.TimeoutExpired):
+                  raise SystemExit('Program preparation timed out') from None
+              except SetupCheckError as error:
+                  raise SystemExit(str(error)) from None
+              except (ValueError, KeyError, TypeError, SyntaxError, OSError, tarfile.TarError):
+                  raise SystemExit('Unexpected program data or local build failure') from None
 
 
           if __name__ == '__main__':
