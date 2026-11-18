@@ -46,12 +46,50 @@ async def home_to_work(browser, reduce):
     await pg.context.close()
 
 
+async def send_and_reply(browser, reduce):
+    pg = await ui.page(browser, 1280, 860)
+    await ui.xin_mock(pg, authed=True, live=[[{'t': 'text', 'text': '第一段。\n\n第二段。\n\n- 第三条\n- 第四条'}], [{'t': 'done', 'ok': True, 'code': 0, 'ms': 900}]])
+    if reduce:
+        await pg.emulate_media(reduced_motion='reduce')
+    await pg.goto(ui.BASE + '/#xin-work')
+    await pg.wait_for_selector('.xc.wb.show .xc-msgs')
+    await pg.click('.xc-new-b')
+    await pg.fill('.xc-row textarea', '帮我看看')
+    await pg.keyboard.press('Enter')
+    await pg.wait_for_selector('.xc-me .xc-bub')
+    me = await pg.evaluate("(() => { const b = [...document.querySelectorAll('.xc-me')].pop(); const s = getComputedStyle(b.querySelector('.xc-bub')); return [s.animationName, b.classList.contains('fly'), (b.querySelector('.xc-bub').style.getPropertyValue('--fy') || '').trim() !== '']; })()")
+    await pg.wait_for_function("[...document.querySelectorAll('.xc-ai .xc-md')].some(e => e.textContent.includes('第二段'))", timeout=10000)
+    ai = await pg.evaluate("""(() => { const m = [...document.querySelectorAll('.xc-ai')].filter(e => e.textContent.includes('第二段')).pop(), kids = [...m.querySelectorAll(':scope > .xc-bub > .xc-md > *')];
+      return [kids.map(k => getComputedStyle(k).animationName), kids.map(k => parseFloat(getComputedStyle(k).animationDelay)), getComputedStyle(m.querySelector(':scope > .xc-bub'), '::after').animationName]; })()""")
+    if reduce:
+        ui.check('减少动态：发出去的话和回答都不飞、不逐段淡入、不扫光', me[0] == 'none' and set(ai[0]) <= {'none'} and ai[2] in ('none', ''), (me, ai))
+    else:
+        ui.check('发消息：你的话从输入框飞上去变成气泡（xcfly，带位移）', me == ['xcfly', True, True], me)
+        ui.check('小芯的回答一段段淡入（xcline，延迟依次变大），整条有一道微光扫过（xcshine）',
+                 len(ai[0]) >= 3 and set(ai[0]) == {'xcline'} and ai[1] == sorted(ai[1]) and ai[1][0] < ai[1][-1] and ai[2] == 'xcshine', ai)
+    await pg.context.close()
+
+
+async def history_still(browser):
+    pg = await ui.page(browser, 1280, 860)
+    await ui.xin_mock(pg, authed=True)
+    await pg.add_init_script("if (!sessionStorage.getItem('__h')) { sessionStorage.setItem('__h', '1'); localStorage.setItem('lm.xin.sid','shist00001'); }")
+    await pg.goto(ui.BASE + '/#xin-work')
+    await pg.wait_for_function("LimingXinChat.state.sid === 'shist00001' && !!document.querySelector('.xc-ai .xc-md')", timeout=10000)
+    old = await pg.evaluate("[...document.querySelectorAll('.xc-msgs .xc-md > *, .xc-msgs .xc-me > .xc-bub')].map(k => getComputedStyle(k).animationName)")
+    ui.check('历史里的消息打开时不飞、不逐段淡入', len(old) > 0 and set(old) <= {'none'}, old)
+    await pg.context.close()
+
+
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
         await deep_link(browser)
         await home_to_work(browser, False)
         await home_to_work(browser, True)
+        await send_and_reply(browser, False)
+        await send_and_reply(browser, True)
+        await history_still(browser)
         await browser.close()
     n = len(ui.results); ok = sum(1 for r in ui.results if r[1])
     print('==== %d/%d 通过 ====' % (ok, n))

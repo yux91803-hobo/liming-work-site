@@ -1327,3 +1327,23 @@ html.embed .xc.tq-mode .xc-x{display:none}
 html.vt-work::view-transition-old(root){animation:none}
 html.vt-work::view-transition-new(root){animation:xcdots .48s steps(7,end) both;-webkit-mask:radial-gradient(circle,#000 var(--xc-dot),transparent calc(var(--xc-dot) + .5px)) 0 0/14px 14px;mask:radial-gradient(circle,#000 var(--xc-dot),transparent calc(var(--xc-dot) + .5px)) 0 0/14px 14px}
 @keyframes xcdots{from{--xc-dot:0px}to{--xc-dot:11px}}
+/* 发消息：你的话从输入框飞上去变成气泡 */
+.xc-me.enter.fly{animation:none}
+.xc-me.fly > .xc-bub{animation:xcfly .34s cubic-bezier(.2,.9,.25,1) both}
+@keyframes xcfly{from{transform:translate(var(--fx,0),var(--fy,0)) scale(.92);opacity:.3}55%{opacity:1}to{transform:none}}
+/* 小芯的回答：一段段淡入，整条有一道微光扫过 */
+.xc-ai.enter > .xc-bub{position:relative}
+.xc-ai.enter > .xc-bub > .xc-md > *{animation:xcline .38s var(--e-out) both}
+.xc-ai.enter > .xc-bub > .xc-md > :nth-child(2){animation-delay:50ms}
+.xc-ai.enter > .xc-bub > .xc-md > :nth-child(3){animation-delay:100ms}
+.xc-ai.enter > .xc-bub > .xc-md > :nth-child(4){animation-delay:150ms}
+.xc-ai.enter > .xc-bub > .xc-md > :nth-child(5){animation-delay:200ms}
+.xc-ai.enter > .xc-bub > .xc-md > :nth-child(6){animation-delay:250ms}
+.xc-ai.enter > .xc-bub > .xc-md > :nth-child(7){animation-delay:300ms}
+.xc-ai.enter > .xc-bub > .xc-md > :nth-child(n+8){animation-delay:350ms}
+@keyframes xcline{from{opacity:0;transform:translateY(6px)}}
+.xc-ai.enter > .xc-bub::after{content:"";position:absolute;inset:-2px -8px;pointer-events:none;border-radius:6px;background:linear-gradient(100deg,transparent 38%,color-mix(in srgb,var(--glow) 26%,transparent) 50%,transparent 62%) no-repeat;background-size:260% 100%;animation:xcshine .95s var(--e-out) .12s both}
+@keyframes xcshine{from{background-position:130% 0}to{background-position:-30% 0;opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .xc-me.fly > .xc-bub,.xc-ai.enter > .xc-bub > .xc-md > *,.xc-ai.enter > .xc-bub::after{animation:none}
+}

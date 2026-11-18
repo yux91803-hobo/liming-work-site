@@ -3682,9 +3682,20 @@
       var bd = root.querySelector('.xc-body'), near = !old && bd.scrollHeight - bd.scrollTop - bd.clientHeight < 160;
       if (!old) e.classList.add('enter');
       put(e);
+      if (!old && ev.t === 'user') flyFromComposer(e);
       if (!old) { if (near && ev.t !== 'user') followNew(e); else jumpNew(); }
     }
     return e;
+  }
+  // 站长 2026-11-19：你的话从输入框飞上去变成气泡（FLIP：从输入框的位置挪到气泡的位置）
+  function flyFromComposer(e) {
+    var src = root.querySelector('.xc-row'), bub = e.querySelector('.xc-bub');
+    if (!src || !bub || reduceMotion()) return;
+    var a = src.getBoundingClientRect(), b = bub.getBoundingClientRect();
+    if (!a.width || !b.width) return;
+    bub.style.setProperty('--fx', Math.round(a.left + a.width / 2 - b.left - b.width / 2) + 'px');
+    bub.style.setProperty('--fy', Math.round(a.top + a.height / 2 - b.top - b.height / 2) + 'px');
+    e.classList.add('fly');
   }
   // 正看着最底下时来了新回答：短的直接滚到底；长的停在它开头，从头读（下面还有的话「回到底部」写「新消息」）
   function followNew(e) {
