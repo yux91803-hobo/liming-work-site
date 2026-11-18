@@ -148,3 +148,70 @@ test('内核配置按电脑分开缓存：小芯的在 xin-inbox，天启的在 
   await m._workerKernel(env).get('m_li');   // 5 分钟内同一台：用缓存
   assert.deepEqual(seen, [['xin-inbox', '/kernel/config'], ['tq-inbox', '/kernel/config']]);
 });
+
+// Durable Object 的存储（照 test/xin-inbox.test.cjs 的 memStorage，只留用得到的）
+function memStorage() {
+  const values = new Map(), s = { values, alarm: null };
+  Object.assign(s, {
+    get: async k => structuredClone(values.get(k)),
+    put: async (k, v) => { values.set(k, structuredClone(v)); },
+    delete: async k => { for (const x of [].concat(k)) values.delete(x); },
+    list: async ({ prefix } = {}) => new Map([...values].filter(([k]) => !prefix || k.startsWith(prefix)).map(([k, v]) => [k, structuredClone(v)])),
+    setAlarm: async t => { s.alarm = t; },
+    getAlarm: async () => s.alarm,
+    deleteAlarm: async () => { s.alarm = null; }
+  });
+  return s;
+}
+// InstaBox 一直忙：只记下每次用的是哪把 key
+function busyIB() {
+  const keys = [], real = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => { keys.push((init.headers || {})['X-API-Key']); return json({ error: { code: 'busy' } }, 503); };
+  return { keys, restore() { globalThis.fetch = real; } };
+}
+const accept = (o, headers, id) => o.fetch(new Request('https://xin.internal/inbox/accept', { method: 'POST', headers, body: JSON.stringify({ id, op: 'send', args: { text: '你好' } }) }));
+
+test('天启的待送达：存进 tq-inbox，送的时候用 li2 的 key；闹钟在新实例里醒来也一样', async () => {
+  const { XinTaskSupervisor } = await fresh(), ib = busyIB();
+  try {
+    const storage = memStorage(), env = tqEnv();
+    const r = await accept(new XinTaskSupervisor({ storage, waitUntil() {} }, env), { 'x-xin-scope': 'tq' }, 'cid-tq000001');
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).view.state, 'pending');
+    const realNow = Date.now;   // 十分钟以后（退避早过了），新的 isolate 里闹钟醒来：没有请求告诉它是谁
+    Date.now = () => realNow() + 600000;
+    try { await new XinTaskSupervisor({ storage, waitUntil() {} }, env).alarm(); } finally { Date.now = realNow; }
+    assert.ok(ib.keys.length >= 2, '闹钟又送了一次：' + ib.keys.length);
+    assert.deepEqual([...new Set(ib.keys)], [TQ_KEY]);
+    assert.equal(storage.values.get('scope'), 'tq');
+  } finally { ib.restore(); }
+});
+
+test('老的小芯实例（没存范围）照旧；范围对不上回 409', async () => {
+  const { XinTaskSupervisor } = await fresh(), ib = busyIB();
+  try {
+    const env = tqEnv(), old = memStorage();
+    assert.equal((await accept(new XinTaskSupervisor({ storage: old, waitUntil() {} }, env), {}, 'cid-xin00001')).status, 200);
+    assert.deepEqual([...new Set(ib.keys)], [XIN_KEY]);
+    assert.equal(old.values.has('scope'), false, '老实例不写新字段');
+    const bad = await accept(new XinTaskSupervisor({ storage: old, waitUntil() {} }, env), { 'x-xin-scope': 'tq' }, 'cid-tq000002');
+    assert.deepEqual([bad.status, await bad.json()], [409, { error: 'scope_mismatch' }]);
+    const tq = memStorage(); tq.values.set('scope', 'tq');
+    const bad2 = await accept(new XinTaskSupervisor({ storage: tq, waitUntil() {} }, env), {}, 'cid-xin00002');
+    assert.deepEqual([bad2.status, await bad2.json()], [409, { error: 'scope_mismatch' }]);
+  } finally { ib.restore(); }
+});
+
+test('Worker 发给 Durable Object 的请求：天启带 x-xin-scope: tq、实例名 tq-inbox；小芯不带头、实例名 xin-inbox', async () => {
+  const m = await fresh(), seen = [];
+  const sup = { idFromName: n => n, get: name => ({ fetch: async (url, init = {}) => {
+    seen.push([name, new URL(url).pathname, new Headers(init.headers).get('x-xin-scope')]);
+    return json({ view: { id: 'cid-00000001', state: 'delivered', result: { sid: 's1', run: 'r1' } } });
+  } }) };
+  const env = tqEnv({ XIN_TASK_SUPERVISOR: sup, XIN_INBOX: '1' }), ck = await login(m, env);
+  for (const p of ['/api/tq/call', '/api/xin/call']) {
+    const d = await (await m.handleXin(req(p, { body: { op: 'send', args: { text: '你好', clientId: 'cid-00000001' } }, headers: { cookie: ck } }), env, null)).json();
+    assert.deepEqual(d, { ok: true, data: { sid: 's1', run: 'r1' } }, p);
+  }
+  assert.deepEqual(seen, [['tq-inbox', '/inbox/accept', 'tq'], ['xin-inbox', '/inbox/accept', null]]);
+});

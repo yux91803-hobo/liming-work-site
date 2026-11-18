@@ -287,8 +287,15 @@ async function exec(env, origin, id, op, args, retried) {
    不知道执行没有的（超时、断线、没有内核头的 502/504）只给能安全重来的操作（只读的、带 clientId 由控制器去重的）走 exec，
    别的报「不确定」——宁可让用户刷新看一眼，也不让同一件事做两遍。 */
 const KERNEL_KEYS_FILE = '/data/home/.xin/kernel-keys.json';
-// 天启的待送达和内核配置在另一个实例 tq-inbox（同一个类，不用迁移）
-function inboxStub(env) { return env.XIN_TASK_SUPERVISOR?.get(env.XIN_TASK_SUPERVISOR.idFromName(isTq(env) ? 'tq-inbox' : 'xin-inbox')); }
+// 天启的待送达和内核配置在另一个实例 tq-inbox（同一个类，不用迁移）。天启的每个请求都带 x-xin-scope: tq，
+// 实例据此记住自己是天启的（XinTaskSupervisor.bindScope）；小芯的请求原样不动
+function inboxStub(env) {
+  const ns = env.XIN_TASK_SUPERVISOR;
+  if (!ns) return null;
+  const stub = ns.get(ns.idFromName(isTq(env) ? 'tq-inbox' : 'xin-inbox'));
+  if (!isTq(env)) return stub;
+  return { fetch: (url, init = {}) => stub.fetch(url, { ...init, headers: { ...(init.headers || {}), 'x-xin-scope': 'tq' } }) };
+}
 const kernelCache = new Map();   // 按电脑号：li 和 li2 的端口令牌、钥匙各存各的
 function workerKernel(env) {
   const stub = inboxStub(env);
@@ -824,9 +831,24 @@ export class XinTaskSupervisor {
     }
     return json({ error: 'bad_action' }, 400);
   }
-  // 小芯内核的配置（端口令牌、钥匙）放在实例 xin-inbox 里；Durable Object 自己调 call() 时直接用 kernelAdapter()，不经 stub 请求自己
+  /* 这个实例是小芯的还是天启的（tq-inbox）：天启的请求带 x-xin-scope: tq，第一次来时在存储里记下 scope:'tq'；
+     闹钟醒来时没有请求，读记下的。小芯的老实例什么都不记。对不上就拒（把小芯没送完的消息用 li2 的 key 送出去比不送还糟）：
+     存储里已经有东西却没记范围的，是小芯的老实例 */
+  async bindScope(req) {
+    const s = this.state.storage, want = req && req.headers.get('x-xin-scope') === 'tq' ? 'tq' : 'xin';
+    let have = await s.get('scope');
+    if (!have && want === 'tq') {
+      if ((await s.list({ limit: 1 })).size) return false;
+      await s.put('scope', 'tq'); have = 'tq';
+    }
+    if ((have || 'xin') !== want) return false;
+    this.scope = want;
+    return true;
+  }
+  scopedEnv() { return scopeEnv(this.env, this.scope === 'tq' ? 'tq' : 'xin'); }
+  // 小芯内核的配置（端口令牌、钥匙）放在实例 xin-inbox 里（天启的在 tq-inbox）；Durable Object 自己调 call() 时直接用 kernelAdapter()，不经 stub 请求自己
   kernelStore() {
-    return this.kernelConfig || (this.kernelConfig = new KernelConfigStore(this.state.storage, { ib: (p, init) => ib(this.env, p, init), ibErr,
+    return this.kernelConfig || (this.kernelConfig = new KernelConfigStore(this.state.storage, { ib: (p, init) => ib(this.scopedEnv(), p, init), ibErr,
       deploy: this.env.CF_VERSION_METADATA?.id }));
   }
   kernelAdapter() { const s = this.kernelStore(); return { get: id => s.get({ machineId: id }), markInstalled: kid => s.markInstalled(kid), invalidateToken: t => s.invalidateToken(t) }; }
@@ -842,7 +864,7 @@ export class XinTaskSupervisor {
   // 待送达（实例 xin-inbox，src/xin-inbox.js）：送的时候和 Worker 一样调 call()，内核配置直接读本实例的存储
   inbox() {
     return this.inboxImpl || (this.inboxImpl = new Inbox(this.state.storage, {
-      deliver: row => call(this.env, CRON_ORIGIN, row.op, { ...row.args, clientId: row.id }, { waitUntil: p => this.state.waitUntil?.(p) }, Date.now(), { kernel: this.kernelAdapter() })
+      deliver: row => call(this.scopedEnv(), CRON_ORIGIN, row.op, { ...row.args, clientId: row.id }, { waitUntil: p => this.state.waitUntil?.(p) }, Date.now(), { kernel: this.kernelAdapter() })
     }));
   }
   async inboxRoute(action, req) {
@@ -859,6 +881,7 @@ export class XinTaskSupervisor {
   }
   async fetch(req) {
     const path = new URL(req.url).pathname;
+    if (!(await this.bindScope(req))) return json({ error: 'scope_mismatch' }, 409);
     if (path.startsWith('/backup/')) return this.backup(path.slice('/backup/'.length), req);
     if (path.startsWith('/kernel/')) return this.kernelRoute(path.slice('/kernel/'.length), req);
     if (path.startsWith('/inbox/')) return this.inboxRoute(path.slice('/inbox/'.length), req);
@@ -875,7 +898,8 @@ export class XinTaskSupervisor {
     return json({ ok: true });
   }
   async alarm() {
-    if (await this.state.storage.get('inbox:meta')) return this.inbox().alarm();   // 实例 xin-inbox：待送达的闹钟
+    this.scope = (await this.state.storage.get('scope')) || 'xin';   // 天启的 tq-inbox 醒来也用 li2 的 key
+    if (await this.state.storage.get('inbox:meta')) return this.inbox().alarm();   // 实例 xin-inbox / tq-inbox：待送达的闹钟
     const current = await this.state.storage.get('tasks');
     if (!current) return;
     if (current.bg <= 0) { if (current.leaseCleanup) await this.releaseLease(current); return; }
