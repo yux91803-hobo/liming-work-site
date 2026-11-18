@@ -270,14 +270,14 @@ function lockedCall(key, op, args, options) {
   const { run, attempt } = callContext();
   const request = { op, args, locked: true, key, run, attempt };
   if (ownership.owning) return controller.invoke(request, { internal: true });
-  return retryLockedReport(op, timeoutMs => requestStateSync(BASE, { kind: 'op', ...request }, { timeoutMs }), options);
+  return retryLockedReport(op, timeoutMs => requestStateSync(BASE, { kind: 'op', ...request }, { timeoutMs:timeoutMs ?? options?.deadlineMs }), options);
 }
 // 后台任务的会话记录和调度共用 tasks 事务。
 function patchSession(sid, changes, options) { return lockedCall(isTask(readJ(sessF(sid))) ? 'tasks' : sid, 'session_patch', { sid, changes }, options); }
 function applyRunPatch(run,changes){
   const current=readJ(metaF(run));if(!current)return null;
   if(changes?.stopped&&current.ended)return current;
-  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','modelDone','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','effort','from','fallbacks','frontUsage','webCheck','pageCheck'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
+  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','modelDone','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','effort','from','fromErr','fallbacks','frontUsage','webCheck','pageCheck'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
   writeJ(metaF(run),current);return current;
 }
 function patchRun(run,changes,options){
