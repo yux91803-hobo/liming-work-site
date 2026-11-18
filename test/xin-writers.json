@@ -6,7 +6,7 @@
   "扫不到的：通过 cp、tar、sqlite3 这类子进程写的文件。状态库里的写不在这里管，靠只读连接和写入口（vm-state.mjs 的 writing）。",
   "agentLines 是 vm-agent.mjs 的行数基线（只减不增）；rmw 是「读了再写」的条数；atomic 是各文件里直接开事务（journal.atomic）的次数。"
  ],
- "agentLines": 3115,
+ "agentLines": 3049,
  "rmw": 5,
  "atomic": {
   "vm-agent.mjs": 1,
@@ -51,7 +51,7 @@
   "vm-browser.mjs::browserBroker.closeNow": { "calls": { "unlinkSync": 1 }, "kind": "outside", "what": "关浏览器时删自己的套接字" },
   "vm-browser.mjs::loginWindow": { "calls": { "mkdirSync": 1 }, "kind": "outside", "what": "登录窗口的临时资料目录" },
   "vm-front-agy.mjs::openFrontProvider": { "calls": { "mkdirSync": 2, "writeFileSync": 1, "renameSync": 1 }, "kind": "safe", "what": "前台模型的工作目录和它的代理定义文件：内容由人设推出来，整份替换" },
-  "vm-kernel-owner.mjs::Ownership.db": { "calls": { "mkdirSync": 1, "DatabaseSync": 1, "chmodSync": 1 }, "kind": "owner", "what": "所有权库 owner.sqlite：每个进程都会打开（旧模式写之前拿共享锁就是读它），只有当主人、改记录、第一次建表会写" },
+  "vm-kernel-owner.mjs::Ownership.db": { "calls": { "mkdirSync": 1, "DatabaseSync": 1, "chmodSync": 1 }, "kind": "owner", "what": "状态进程启动时打开 owner.sqlite 并取得独占锁，普通客户端直接用套接字" },
   "vm-kernel-state.mjs::snapshotBeforeSwitch": { "calls": { "mkdirSync": 1, "chmodSync": 2, "renameSync": 1, "unlinkSync": 2 }, "kind": "owner", "what": "切换前的一致备份 backups/owner-switch/workflow-<时间>.sqlite：只有刚从 legacy 拿到所有权的状态进程写，先写 .tmp 再改名，一天最多一次、留最新两份" },
   "vm-kernel-state.mjs::createStateServer": { "calls": { "unlinkSync": 2, "mkdirSync": 1, "chmodSync": 2 }, "kind": "owner", "what": "状态进程的套接字目录和套接字文件：只有拿到独占锁的主人建和删" },
   "vm-kernel.mjs::NonceStore.constructor": { "calls": { "DatabaseSync": 1, "chmodSync": 1 }, "kind": "shell", "what": "内核外壳的防重放库 kernel.sqlite" },

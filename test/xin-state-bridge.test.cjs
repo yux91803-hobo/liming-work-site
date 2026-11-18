@@ -9,7 +9,7 @@ function home(t) { const p=fs.mkdtempSync(path.join(os.tmpdir(),'xin-bridge-'));
 async function local(t, handle, extra={}) {
   const h=home(t), m=await load(), logs=[];
   const server=await m.createStateServer({home:h,handle,log:r=>logs.push(r),...extra});
-  t.after(async()=>{await server.close({legacy:true});await server.closed;});
+  t.after(async()=>{await server.close();await server.closed;});
   return {home:h,server,logs,...m};
 }
 async function actor(t,h) {
@@ -20,7 +20,7 @@ async function actor(t,h) {
       if(q.op==='delay')await new Promise(r=>setTimeout(r,q.args.ms));
       if(q.op==='write')return j.atomic(()=>{const f=home+'/count.json';let n=0;try{n=JSON.parse(fs.readFileSync(f)).n}catch{}j.write(f,JSON.stringify({n:n+1}));return {n:n+1,pid:process.pid};},{id:q.id,digest:inputDigest(q.args)});
       return {pid:process.pid,text:q.args?.text};
-    }});console.log('ready');process.stdin.resume();process.stdin.on('end',()=>s.close({legacy:true}));
+    }});console.log('ready');process.stdin.resume();process.stdin.on('end',()=>s.close());
     s.closed.then(()=>{process.stdin.destroy();});`;
   const child=spawn(process.execPath,['--input-type=module','-e',source],{stdio:['pipe','pipe','pipe']});
   let err='';child.stderr.on('data',b=>err+=b);
@@ -38,7 +38,7 @@ test('状态进程独占所有权，异步请求保留中文；套接字和目�
   assert.equal(fs.statSync(path.dirname(f.server.file)).mode&0o777,0o700);
   assert.equal(fs.statSync(f.server.file).mode&0o777,0o600);
   const o=new f.Ownership(f.home,{waitMs:10});t.after(()=>o.close());
-  assert.throws(()=>o.enter(),e=>e.code==='owner_unavailable'&&e.status==='alive');
+  assert.deepEqual(o.record(),{busy:true});
   assert.deepEqual(await f.requestState(f.home,{kind:'op',op:'echo',args:{text:'中文🙂'}}),{text:'中文🙂',pid:process.pid});
 });
 
@@ -98,7 +98,8 @@ test('排空拒绝新前台请求，但允许报告完成已有等待，随后�
   await assert.rejects(f.requestState(f.home,{kind:'op',op:'new'}),e=>e.code==='state_draining'&&e.executed===false);
   await f.requestState(f.home,{kind:'named',op:'report'});assert.equal(await waiting,'done');
   assert.equal((await release).mode,'kernel');
-  const o=new f.Ownership(f.home);t.after(()=>o.close());assert.throws(()=>o.enter(),e=>e.status==='missing');
+  const o=new f.Ownership(f.home);t.after(()=>o.close());
+  await assert.rejects(f.requestState(f.home,{kind:'op',op:'new'}),e=>e.executed===false);
   const r=o.record();assert.deepEqual([r.mode,r.epoch],['kernel',1]);
 });
 
@@ -106,7 +107,9 @@ test('kill -9 后内核记录保留；新主人恢复提交，旧写者不能趁
   const h=home(t),m=await load(),a=await actor(t,h);
   const req={kind:'op',op:'write',args:{}},id='stable-crash-0001';const first=m.requestStateSync(h,req,{id});
   a.child.kill('SIGKILL');await a.done;
-  const o=new m.Ownership(h,{waitMs:10});t.after(()=>o.close());assert.throws(()=>o.enter(),e=>e.status==='missing');
+  const o=new m.Ownership(h,{waitMs:10});t.after(()=>o.close());
+  assert.deepEqual([o.record().mode,o.record().epoch],['kernel',1]);
+  await assert.rejects(m.requestState(h,req,{id}),e=>e.executed===false);
   const b=await actor(t,h);assert.notEqual(b.child.pid,first.pid);
   assert.deepEqual(m.requestStateSync(h,req,{id}),first);assert.equal(JSON.parse(fs.readFileSync(path.join(h,'count.json'))).n,1);
 });
@@ -129,7 +132,8 @@ test('未知协议不执行，出错和诊断不抄请求正文',async t=>{
 test('套接字路径是普通文件或目录软链接时拒绝，原文件保留',async t=>{
   const h=home(t),m=await load();fs.mkdirSync(path.join(h,'run'));fs.writeFileSync(m.stateSocket(h),'keep');
   await assert.rejects(m.createStateServer({home:h,handle:()=>{}}));assert.equal(fs.readFileSync(m.stateSocket(h),'utf8'),'keep');
-  const o=new m.Ownership(h);t.after(()=>o.close());assert.equal(o.record().mode,'legacy');
+  const o=new m.Ownership(h);t.after(()=>o.close());
+  assert.deepEqual(o.record(),{mode:'legacy',epoch:0,protocol:0,since:0},'启动校验失败，不能提前提交接管记录');
   fs.unlinkSync(m.stateSocket(h));fs.rmdirSync(path.join(h,'run'));const other=home(t);fs.symlinkSync(other,path.join(h,'run'));
   await assert.rejects(m.createStateServer({home:h,handle:()=>{}}));assert.deepEqual(fs.readdirSync(other),[]);
 });
@@ -181,7 +185,7 @@ test('SIGSTOP/CONT：空闲 owner 恢复后的首个请求先扫状态，不等�
     let sweeps=0;const server=await createStateServer({home:${JSON.stringify(h)},tickMs:60000,
       wallClock:()=>Number(fs.readFileSync(${JSON.stringify(clock)},'utf8')),
       tick:()=>{fs.writeFileSync(${JSON.stringify(count)},String(++sweeps));return 60000;},handle:()=>({sweeps})});
-    console.log('ready');process.stdin.resume();process.stdin.on('end',()=>server.close({legacy:true}));server.closed.then(()=>process.stdin.destroy());`;
+    console.log('ready');process.stdin.resume();process.stdin.on('end',()=>server.close());server.closed.then(()=>process.stdin.destroy());`;
   const child=spawn(process.execPath,['--input-type=module','-e',source],{stdio:['pipe','pipe','pipe']});
   let error='';child.stderr.on('data',b=>error+=b);const exited=new Promise(resolve=>child.once('exit',resolve));
   t.after(async()=>{child.kill('SIGCONT');child.kill('SIGKILL');await exited;});

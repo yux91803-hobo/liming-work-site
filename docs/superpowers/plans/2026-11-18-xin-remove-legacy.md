@@ -144,7 +144,9 @@
 
 ---
 
-## PR C · 第 3 步：删掉走不到的代码（线上不变）
+## PR C · 第 3 步：删掉走不到的代码
+
+Codex 从 #170 实现本批。C1–C3 合成一个可整体测试、独立回滚的提交。SQLite 在提交接管记录前完成启动校验及首次迁移备份。联调采用状态进程 PID 和接管次数，假控制器夹具直接观测逐请求启动。发布证据与回退目标记在 [交接记录](../../AI-HANDOFF.md)。
 
 ### Task C1: 控制器入口和写库只剩转交
 
@@ -155,25 +157,25 @@
 - Modify: `test/helpers/locked.cjs`（不再包 `flock`）
 - Test: 现有全量 + Task C3 的替换测试
 
-- [ ] **Step 1**: 删代码，按「每次提交都能单独跑过全部测试」的顺序（spec §8）：先 `vm-state` 的写入口和 `lockedCall`，再看门狗，再 `owner-legacy` 和所有权的旧接口。
-- [ ] **Step 2**: 每删一块跑 `npm run check`；删掉的机制对应的测试在 Task C3 处理。
-- [ ] **Step 3: 提交**（可以分几次）。
+- [x] **Step 1**: 移除 `vm-state` 和 `lockedCall` 的旧写入路径、看门狗、`owner-legacy` 和旧所有权接口。
+- [x] **Step 2**: 与 C2–C3 合并验收。最终 `npm run check` 1,021/1,021，旧机制对应的行为测试一并通过。
+- [x] **Step 3**: 随本批提交。
 
 ### Task C2: 外壳删 `runAgent`
 
 **Files:**
 - Modify: `site/xin/vm-kernel.mjs`（删 `runAgent`、`running`、`maxConcurrent`、`spawns` 计数和 `runOnce` 里的 `owner-legacy`；健康检查和 `owner` 视图不再带 `spawns`；`mode` 字段固定 `kernel`）
-- Modify: 读 `spawns` 的地方（用量页、测试）
+- Modify: 读 `spawns` 的地方（正式联调、测试）
 
-- [ ] **Step 1**: 删；`grep -rn "spawns\|runAgent\|owner-legacy" site src test` 只剩历史文档。
-- [ ] **Step 2**: `npm run check`、`npm run test:e2e` 全过。
-- [ ] **Step 3: 提交**。
+- [x] **Step 1**: 移除逐请求进程和计数。套接字路由与状态进程就绪检查共用同一判定。
+- [x] **Step 2**: `npm run check` 与 13 组 `npm run test:e2e` 全过。
+- [x] **Step 3**: 随本批提交。
 
 ### Task C3: 旧模式测试换成行为测试
 
 **Files:**
 - Modify/Delete: PR A 列出的旧模式测试（`xin-owner`、`xin-state-controller`、`xin-kernel-owner:224` 兼容回滚、`xin-run-attempt` 的 legacy 分支、`locked-helper` 等）
 
-- [ ] **Step 1**: 逐条决定：机制删了、保证还要的 → 换成测保证的行为测试（spec §5 三条：只有一个写者；换版本不丢不重；`kill -9` 后执行进程在报告预算内等到新主人、派发和交接接着走）；B 里已经有的就指过去。
-- [ ] **Step 2**: `npm run check`、`npm run test:e2e` 全过。
-- [ ] **Step 3: 提交**；PR C 说明里一条一条写「删了 X → 由 Y 覆盖」。文档：CHANGES、AI-HANDOFF、README、第 2 步设计 §7 第 6 批标为已做、本 spec 状态改为「已实现」。
+- [x] **Step 1**: 对应行为测试覆盖唯一写者、换版重放和重启后派发与交接。保留旧记录和旧消息格式的兼容测试。
+- [x] **Step 2**: 完整检查通过。临时目录用 #170 实际代码演练升级与回滚，保留回执和在途执行尝试。
+- [x] **Step 3**: 随本批提交。CHANGES、AI-HANDOFF、README、两份设计及 PR 记录行为验证与回滚路径。

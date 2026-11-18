@@ -7,14 +7,14 @@ const AGENT=path.join(__dirname,'../site/xin/vm-agent.mjs');
 process.env.XIN_HOME=fs.mkdtempSync(path.join(os.tmpdir(),'xin-controller-proc-'));
 const url=name=>pathToFileURL(path.join(__dirname,'../site/xin/'+name+'.mjs')).href;
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-function fixture(t,mode='kernel'){
+function fixture(t,{startOwner=true}={}){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xin-controller-')),home=path.join(dir,'xin'),bin=path.join(dir,'bin');
   fs.mkdirSync(bin);fs.mkdirSync(home);fs.mkdirSync(path.join(home,'sessions'));fs.mkdirSync(path.join(home,'runs'));
   for(const name of ['codex','claude','agy','dsh'])fs.writeFileSync(path.join(bin,name),'#!/bin/sh\nexit 0\n',{mode:0o755});
   const env={...process.env,XIN_HOME:home,XIN_WORK:path.join(dir,'work'),XIN_DSH:path.join(bin,'dsh'),XIN_AGY_HOME:dir,
     XIN_ANTIGRAVITY_BIN:'',XIN_FRONT_PROVIDER:'deepseek',CODEX_HOME:path.join(dir,'codex'),CLAUDE_CONFIG_DIR:path.join(dir,'claude'),PATH:bin+':'+process.env.PATH};
   const start=()=>stateMode(t,env);
-  const owner=mode==='kernel'?start():null;
+  const owner=startOwner?start():null;
   t.after(()=>stopOwned(home,dir));
   const cli=(op,args={})=>{const r=spawnSync(process.execPath,[AGENT,op],{env,input:JSON.stringify(args),encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
   const js=code=>{const r=spawnSync(process.execPath,['--input-type=module','-e',`import * as b from ${JSON.stringify(url('vm-base'))};import * as m from ${JSON.stringify(url('vm-memory'))};import * as c from ${JSON.stringify(url('vm-context'))};import * as l from ${JSON.stringify(url('vm-learning'))};const out=await(async()=>{${code}})();process.stdout.write(JSON.stringify(out??null));`],{env,encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
@@ -23,9 +23,8 @@ function fixture(t,mode='kernel'){
 async function rpc(f,q,options){const {requestState}=await import(url('vm-kernel-client'));return requestState(f.home,q,options);}
 async function settle(f,run){for(let i=0;i<100;i++){if(f.cli('poll',{run}).done)return;await sleep(30);}assert.fail('fake executor did not settle');}
 
-// 删旧模式第 2 步：只剩常驻状态进程这一种（legacy 那一遍随旧模式删掉，断言和这一遍一样）
-for(const mode of ['kernel'])test(mode+'：主对话回执、重送冲突、结束后续聊及天启独立保持一致',async t=>{
-  const f=fixture(t,mode),a=f.cli('send',{main:true,text:'第一句',clientId:'same-receipt-0001'});
+test('主对话回执、重送冲突、结束后续聊及天启独立保持一致',async t=>{
+  const f=fixture(t),a=f.cli('send',{main:true,text:'第一句',clientId:'same-receipt-0001'});
   assert.ok(a.sid&&a.run,JSON.stringify(a));
   assert.deepEqual(f.cli('send',{main:true,text:'第一句',clientId:'same-receipt-0001'}),a);
   assert.equal(f.cli('send',{main:true,text:'不同内容',clientId:'same-receipt-0001'}).error,'message_conflict');
@@ -101,7 +100,7 @@ test('同一编号的具名操作和单次追加留回执；重送不重复、�
 });
 
 test('投影暂时失败而进程仍活着：下一次请求先恢复投影，再重放已提交回执',async t=>{
-  const f=fixture(t,'legacy'),file=path.join(f.home,'projection-retry.json'),preload=path.join(f.dir,'projection-fault.cjs');
+  const f=fixture(t,{startOwner:false}),file=path.join(f.home,'projection-retry.json'),preload=path.join(f.dir,'projection-fault.cjs');
   fs.writeFileSync(preload,`const fs=require('node:fs'),rename=fs.renameSync;let once=true;fs.renameSync=(a,b)=>{if(once&&b===${JSON.stringify(file)}){once=false;throw Object.assign(Error('synthetic projection failure'),{code:'EIO'});}return rename(a,b);};`);
   f.env.NODE_OPTIONS='--require='+preload;f.start();
   const q={kind:'write',name:path.basename(file),body:'{"value":1}'},options={id:'projection-retry-0001'};
@@ -120,8 +119,8 @@ test('杀死状态进程后旧入口拒绝写；重启恢复同一业务回执�
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.home,'sessions',a.sid+'.json'))).runs.length,1);
 });
 
-test('同一个长进程活过换主人（旧主人交回、新主人接手），单次写每次重新判断所有权',async t=>{
-  const f=fixture(t,'legacy'),first=f.start(),script=`import {setMemoryMeta,memoryMeta} from ${JSON.stringify(url('vm-memory'))};import readline from 'node:readline';
+test('同一个长进程活过换主人（旧主人交回、新主人接手），单次写通过套接字交给新主人',async t=>{
+  const f=fixture(t,{startOwner:false}),first=f.start(),script=`import {setMemoryMeta,memoryMeta} from ${JSON.stringify(url('vm-memory'))};import readline from 'node:readline';
     setMemoryMeta('phase',0);console.log('ready');for await(const line of readline.createInterface({input:process.stdin})){setMemoryMeta('phase',Number(line));console.log(memoryMeta('phase'));}`;
   const c=spawn(process.execPath,['--input-type=module','-e',script],{env:f.env,stdio:['pipe','pipe','pipe']});
   let buffer='',notify;const lines=[];c.stdout.on('data',b=>{buffer+=b;while(buffer.includes('\n')){const i=buffer.indexOf('\n');lines.push(buffer.slice(0,i));buffer=buffer.slice(i+1);}notify?.();});
@@ -141,7 +140,7 @@ test('父管道断开会排空退出并保留 kernel 记录，不能默默改回
 });
 
 for(const committed of [false,true])test((committed?'提交后、投影前':'提交前')+'被 kill -9：重启只恢复已提交的状态和事件',async t=>{
-  const f=fixture(t,'legacy');f.cli('sessions');
+  const f=fixture(t,{startOwner:false});f.cli('sessions');
   const code=`import {ownership,journal,BASE} from ${JSON.stringify(url('vm-base'))};
     ownership.take();journal.recover();${committed?"journal.recover=()=>process.kill(process.pid,'SIGKILL');":''}
     journal.atomic(()=>{journal.write(BASE+'/fault.json','{"value":1}');journal.append(BASE+'/fault.jsonl',{t:'text',text:'已提交的事件'});
@@ -158,7 +157,7 @@ for(const committed of [false,true])test((committed?'提交后、投影前':'提
 });
 
 test('取得独占锁后再次检查旧控制器；等待期间出现未兼容旧版本也不接管、不杀旧任务',async t=>{
-  const f=fixture(t,'legacy'),dir=path.join(f.dir,'agent'),release=path.join(f.dir,'release');fs.mkdirSync(dir);
+  const f=fixture(t,{startOwner:false}),dir=path.join(f.dir,'agent'),release=path.join(f.dir,'release');fs.mkdirSync(dir);
   for(const name of fs.readdirSync(path.dirname(AGENT)).filter(n=>/^vm-.*\.mjs$/.test(n)))fs.copyFileSync(path.join(path.dirname(AGENT),name),path.join(dir,name));
   const old=path.join(dir,'vm-agent-000000000001.mjs');fs.writeFileSync(old,"console.log('old');setInterval(()=>{},1000);");
   // 用一个读事务拿住 owner.sqlite 的共享锁，拖住新状态进程取独占锁（删旧模式第 2 步以后没有旧写者入口了，读者一样挡得住）
@@ -178,7 +177,7 @@ test('取得独占锁后再次检查旧控制器；等待期间出现未兼容�
   await new Promise(resolve=>previous.stdout.once('data',resolve));fs.writeFileSync(release,'release');
   const tm=setTimeout(()=>next.kill('SIGKILL'),5000);const result=await exited;clearTimeout(tm);
   assert.equal(result.code,1,err);assert.match(err,/state_compat/);assert.equal(fs.existsSync(path.join(f.home,'workflow.sqlite')),false);
-  const {Ownership}=await import(url('vm-kernel-owner'));const owner=new Ownership(f.home);assert.equal(owner.record().mode,'legacy');assert.equal(owner.record().epoch,2);owner.close();
+  const {Ownership}=await import(url('vm-kernel-owner'));const owner=new Ownership(f.home);assert.equal(owner.record().mode,'legacy');assert.equal(owner.record().epoch,0);owner.close();
   assert.doesNotThrow(()=>process.kill(previous.pid,0));
 });
 
@@ -193,31 +192,36 @@ test('异步调用交错等待时 locked/key/run 都留在各自上下文，不�
 });
 
 // 第 2 批（docs/superpowers/plans/2026-11-15-xin-state-owner-switch.md Task 1）
-const ownerRecord=async home=>{const {Ownership}=await import(url('vm-kernel-owner'));const o=new Ownership(home);try{return o.record({waitMs:0});}finally{o.close();}};
-test('owner-legacy（外壳已经不调它了，第 3 步删）：主人活着不改；被 kill -9 后改回 legacy 也只改记录，没有主人照样不写',async t=>{
-  const f=fixture(t,'legacy'),owner=f.start();
-  assert.deepEqual(f.cli('owner-legacy'),{error:'owner_busy'});
-  owner.child.kill('SIGKILL');await owner.exited;
-  assert.equal((await ownerRecord(f.home)).mode,'kernel');
-  assert.deepEqual(f.cli('owner-legacy'),{ok:true,mode:'legacy',epoch:2});
-  assert.deepEqual(f.cli('owner-legacy'),{ok:true,unchanged:true,mode:'legacy',epoch:2});
-  assert.equal(f.cli('sessions').error,'owner_unavailable','改回 legacy 也没有旧路可走');
-});
 test('空闲时一分钟一检，有活时五秒：pendingWork 看待派发、后台任务、通知、交接和控制器回调',async t=>{
-  const f=fixture(t,'legacy');
+  const f=fixture(t,{startOwner:false});
   const ask=code=>{const r=spawnSync(process.execPath,[...require('./helpers/own-state.cjs').OWN_IMPORT,'--input-type=module','-e',`import {pendingWork} from ${JSON.stringify(pathToFileURL(AGENT).href)};import {journal} from ${JSON.stringify(url('vm-base'))};${code};process.stdout.write(JSON.stringify(pendingWork()));`],{env:f.env,encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
   assert.equal(ask(''),false,'什么都没有：一分钟一检');
   assert.equal(ask("journal.enqueueLaunch('rpendingx01','s0000000001',0)"),true,'有待派发的一轮：五秒一检');
 });
-test('从 legacy 拿到所有权时先备份一份；从 kernel 记录接回不备份',async t=>{
-  const f=fixture(t,'legacy');f.cli('sessions');
+test('首次迁移识别已有的旧格式记录，备份可读，重启仅增加接管次数',async t=>{
+  const f=fixture(t,{startOwner:false}),{Ownership}=await import(url('vm-kernel-owner'));
+  const owner=new Ownership(f.home),put=owner.db.prepare('INSERT INTO owner(k,v) VALUES(?,?)');
+  const prior={mode:'legacy',epoch:3,protocol:1,since:123456};
+  for(const [key,value] of Object.entries(prior))put.run(key,String(value));
+  owner.close();
+
+  assert.equal(f.cli('sessions').error,'owner_unavailable');
+  assert.deepEqual(owner.record(),prior);owner.close();
+  const old=new (require('node:sqlite').DatabaseSync)(path.join(f.home,'workflow.sqlite'));
+  old.exec("CREATE TABLE imported_data(value TEXT); INSERT INTO imported_data VALUES('old data')");old.close();
   const dir=path.join(f.home,'backups','owner-switch'),first=f.start();
-  assert.equal(fs.readdirSync(dir).filter(n=>n.endsWith('.sqlite')).length,1);
+  assert.equal(first.ready.epoch,prior.epoch+1);
+  const files=fs.readdirSync(dir).filter(n=>n.endsWith('.sqlite'));
+  assert.equal(files.length,1);
+  const snapshot=new (require('node:sqlite').DatabaseSync)(path.join(dir,files[0]),{readOnly:true});
+  try{assert.equal(snapshot.prepare('SELECT value FROM imported_data').get().value,'old data');}finally{snapshot.close();}
   first.child.kill('SIGKILL');await first.exited;
-  f.start();assert.equal(fs.readdirSync(dir).filter(n=>n.endsWith('.sqlite')).length,1);
+  const next=f.start();
+  assert.equal(next.ready.epoch,first.ready.epoch+1);
+  assert.deepEqual(fs.readdirSync(dir).filter(n=>n.endsWith('.sqlite')),files);
 });
 test('切换窗口里来写（主人拿了锁还没开始听）：稍等后交给主人，只写一次',async t=>{
-  const f=fixture(t,'legacy');f.cli('sessions');
+  const f=fixture(t,{startOwner:false});f.cli('sessions');
   const holder=spawn(process.execPath,['--input-type=module','-e',`import {Ownership} from ${JSON.stringify(url('vm-kernel-owner'))};const o=new Ownership(process.env.XIN_HOME);o.take();console.log('held');setInterval(()=>{},1000);`],{env:f.env,stdio:['ignore','pipe','pipe']});
   const held=new Promise(resolve=>holder.once('exit',resolve));t.after(()=>{holder.kill('SIGKILL');return held;});
   await new Promise(resolve=>holder.stdout.once('data',resolve));
