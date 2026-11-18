@@ -136,6 +136,34 @@ export function publicationPlan(t, controller) {
   return { original, before, after, current, changes, deleted, conflicts, applied };
 }
 
+export function publicationInventory(plan) {
+  const entries = files => Object.keys(files).sort().map(name => [name, files[name]]);
+  return crypto.createHash('sha256').update(JSON.stringify([plan.original, entries(plan.before), entries(plan.after)])).digest('hex');
+}
+
+function syncPath(file, flags = fs.constants.O_RDONLY) {
+  const fd = fs.openSync(file, flags | fs.constants.O_NOFOLLOW);
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
+function syncParents(dir, root) {
+  for (; under(dir, root); dir = path.dirname(dir)) {
+    syncPath(dir, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+    if (dir === root) break;
+  }
+}
+
+function currentFileHash(file) {
+  let fd;
+  try { fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
+  catch (e) { if (e.code === 'ENOENT') return undefined; throw e; }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size > 150 * 1024 * 1024) throw Error('项目文件在写回期间发生变化');
+    return crypto.createHash('sha256').update(fs.readFileSync(fd)).digest('hex');
+  } finally { fs.closeSync(fd); }
+}
+
 export function stm32Task(t) {
   if(!t.workspace || !['code','review'].includes(t.tkind)) return false;
   if(t.web){try{return !!t.workspace.stm32||detectStm32(t.workspace.work,Object.keys(inventory(t.workspace.work)));}catch{return true;}}
@@ -211,8 +239,7 @@ export function compileWorkspace(t) {
   const ok=artifacts.length>0&&(!plan.artifacts||artifacts.length===plan.artifacts.length);
   return {ok,digest:ok?sourceDigest(t.workspace.work):null,artifacts,system:plan.system,output:output+(ok?'':'\n没有生成本次构建的新 ARM ELF / 有效 HEX / 非空 BIN 产物，不能使用旧文件作为编译证据。')};
 }
-export function validateTask(t, controller, meta) {
-  const plan = publicationPlan(t, controller);
+export function validateTask(t, controller, meta, plan = publicationPlan(t, controller)) {
   if (!stm32Task(t)) return { applicable: false };
   if (!meta.compileTrusted || !meta.compileOk || meta.compileDigest !== sourceDigest(t.workspace.work)) return { error: 'STM32 程序必须在最终改动后通过受控 make / CMake 构建并生成新的有效产物；现在没有针对最终源码的成功编译记录。' };
   if(t.tkind==='code' && ![...plan.changes,...plan.applied].some(n=>/\.(?:c|h|s|cpp|hpp)$/i.test(n))) return {error:'STM32 实现任务没有源码改动，不能把只编译模板当成完成。请完成要求的程序后重新构建。'};
@@ -234,8 +261,10 @@ export function sourceDigest(root) {
   return crypto.createHash('sha256').update(JSON.stringify(Object.entries(files).filter(([n])=>/\.(?:c|h|s|cpp|hpp|ld|mk|cmake|ioc)$|(?:^|\/)(?:Makefile|GNUmakefile|CMakeLists\.txt|CMakePresets\.json|xin-build\.json)$/i.test(n)).sort(([a],[b])=>a.localeCompare(b)))).digest('hex');
 }
 
-export function publishWorkspace(t, controller, approval = null) {
+export function publishWorkspace(t, controller, approval = null, finalization = null) {
   const plan = publicationPlan(t, controller);
+  if (finalization && (publicationInventory(plan) !== finalization.inventory || !/^[a-f0-9]{32}$/.test(finalization.id)))
+    throw Error('项目副本在收尾期间发生变化，已暂停写回。');
   // 批准的是这一份具体清单和文件内容，不是「这个任务以后都能删除/覆盖」。旧的无摘要批准也必须重新展示。
   const entries = [...new Set([...plan.changes, ...plan.deleted])].sort().map(name =>
     [name, plan.before[name] ?? null, plan.after[name] ?? null, plan.current[name] ?? null]);
@@ -251,32 +280,55 @@ export function publishWorkspace(t, controller, approval = null) {
     if (!under(fs.realpathSync(parent), plan.original)) throw new Error('结果路径包含外部软链接');
     if (fs.existsSync(dst) && fs.lstatSync(dst).isSymbolicLink()) throw new Error('结果路径变成了软链接');
   }
-  const backup = path.join(controller, 'backups', 'task-' + t.no + '-' + Date.now());
+  const backup = path.join(controller, 'backups', 'task-' + t.no + '-' + (finalization ? finalization.at + '-' + finalization.id : Date.now()));
+  const originals = finalization ? path.join(backup, 'originals') : backup;
   mkdir(backup);
   const created = plan.changes.filter(n => !fs.existsSync(path.join(plan.original, n)));
   for (const name of [...plan.changes, ...plan.deleted]) {
     const dst = path.join(plan.original, name);
-    if (fs.existsSync(dst)) { const b = path.join(backup, name); mkdir(path.dirname(b)); fs.copyFileSync(dst, b); }
+    if (fs.existsSync(dst)) {
+      const b = path.join(originals, name); mkdir(path.dirname(b)); fs.copyFileSync(dst, b);
+      if (finalization) {
+        if (currentFileHash(b) !== plan.current[name]) throw Error('项目文件在备份期间发生变化');
+        syncPath(b); syncParents(path.dirname(b), controller);
+      }
+    }
   }
   // 写回清单：一批文件不是原子的。中途出错按清单从备份还原；中途被杀则下次收尾把已写回的算 applied、补齐剩下的。
   // 参考 opencode packages/core/src/snapshot.ts（按内容记录、按文件还原）
-  const record = state => fs.writeFileSync(path.join(backup, 'publish.json'), JSON.stringify({ state, changes: plan.changes, deleted: plan.deleted, created, applied: plan.applied, at: Date.now() }), { mode: 0o600 });
+  const record = state => {
+    const file = path.join(backup, 'publish.json');
+    fs.writeFileSync(file, JSON.stringify({ state, changes: plan.changes, deleted: plan.deleted, created, applied: plan.applied, at: Date.now() }), { mode: 0o600 });
+    if (finalization) { syncPath(file); syncParents(backup, controller); }
+  };
   record('writing');
   const done = [], failAfter = Number(process.env.XIN_TEST_PUBLISH_FAIL_AFTER) || 0;
   const step = name => { done.push(name); if (failAfter && done.length >= failAfter) throw new Error('测试：模拟写回失败'); };
   try {
     for (const name of plan.changes) {
       const src = path.join(t.workspace.work, name), dst = path.join(plan.original, name);
-      mkdir(path.dirname(dst)); const tmp = dst + '.xin-' + process.pid;
-      fs.copyFileSync(src, tmp); fs.chmodSync(tmp, fs.statSync(src).mode & 0o777); fs.renameSync(tmp, dst); step(name);
+      mkdir(path.dirname(dst)); const tmp = dst + '.xin-' + (finalization ? crypto.randomBytes(8).toString('hex') : process.pid);
+      fs.copyFileSync(src, tmp, finalization ? fs.constants.COPYFILE_EXCL : 0);
+      try {
+        if (finalization && hash(tmp) !== plan.after[name]) throw Error('副本文件在写回期间发生变化');
+        fs.chmodSync(tmp, fs.statSync(src).mode & 0o777);
+        if (finalization) {
+          syncPath(tmp);
+          if (!under(fs.realpathSync(path.dirname(dst)),plan.original) || currentFileHash(dst) !== plan.current[name])
+            throw Error('项目文件在写回期间发生变化');
+        }
+        fs.renameSync(tmp, dst); step(name);
+        if (finalization) syncParents(path.dirname(dst), plan.original);
+      } finally { if (finalization) fs.rmSync(tmp, { force: true }); }
     }
     for (const name of plan.deleted) { fs.unlinkSync(path.join(plan.original, name)); step(name); }
   } catch (e) {
     const failed = [];
     for (const name of done) {
-      const dst = path.join(plan.original, name), saved = path.join(backup, name);
+      const dst = path.join(plan.original, name), saved = path.join(originals, name);
       try {
         if (process.env.XIN_TEST_RESTORE_FAIL === name) throw new Error('测试：模拟还原失败');
+        if (finalization && currentFileHash(dst) !== plan.after[name]) throw Error('项目文件已被其他操作修改');
         if (fs.existsSync(saved)) { mkdir(path.dirname(dst)); const tmp = dst + '.xin-restore-' + process.pid; fs.copyFileSync(saved, tmp); fs.renameSync(tmp, dst); }
         else fs.rmSync(dst, { force: true });
       } catch { failed.push(name); }   // 磁盘满时还原也可能失败：如实说，备份目录和 publish.json 留着清单
@@ -286,7 +338,7 @@ export function publishWorkspace(t, controller, approval = null) {
       : '写回中途失败，原项目已还原：' + e.message);
   }
   record('done');
-  return { ok: true, files: plan.changes.length, deleted: plan.deleted.length, backup };
+  return { ok: true, files: plan.changes.length + (finalization ? plan.applied.filter(n => n in plan.after).length : 0), deleted: plan.deleted.length, backup };
 }
 
 export function permissionArgs(t, base, files = [], readRoots = []) {
@@ -824,11 +876,11 @@ export function pruneTaskCopies(controller,tasks,now=Date.now(),maxAge=7*86400e3
   }
   return out;
 }
-// 写回前的备份属于项目，不随对话删；30 天后自动删（每日任务时顺手清）。目录名是 task-<号>-<毫秒时间>。
+// 写回前的备份属于项目，按已有的 30 天保留期处理。新版目录还带稳定发布编号。
 export function pruneBackups(controller,now=Date.now(),maxAge=30*86400e3){
   const root=path.join(controller,'backups'),out={removed:0,bytes:0};let names=[];try{names=fs.readdirSync(root);}catch{return out;}
   for(const name of names){
-    const m=/^task-\d+-(\d{10,})$/.exec(name);if(!m||now-Number(m[1])<maxAge)continue;
+    const m=/^task-\d+-(\d{10,})(?:-[a-f0-9]{32})?$/.exec(name);if(!m||now-Number(m[1])<maxAge)continue;
     const p=path.join(root,name);try{const st=fs.lstatSync(p);if(!st.isDirectory()||st.isSymbolicLink())continue;const b=treeBytes(p);removeTree(p);out.removed++;out.bytes+=b;}catch{}
   }
   return out;
@@ -913,9 +965,9 @@ export function checkWebWorkspace(t) {
   let result;try{result=JSON.parse(r.stdout.trim());}catch{return {ok:false,error:'浏览器预览检查未完成：'+String(r.stderr||r.error?.message||'').slice(-700)};}
   return {...result,ok:r.status===0&&!!result.ok,entry:manifest.entry,title:manifest.title,digest:manifest.digest,screenshot:path.join(t.workspace.tmp,'xin-web-preview.png')};
 }
-export function publishWebPreview(t,controller,check) {
+export function publishWebPreview(t,controller,check,id) {
   const m=webManifest(t);if(!check?.ok||m.digest!==check.digest)throw Error('网页需要在最终修改后通过浏览器检查');
-  return storePreview(t,controller,m,check);
+  return storePreview(t,controller,m,check,id);
 }
 // 不是「网页成品」的任务，这次新做或改过的 HTML（比如查资料时顺手做的看板）也给一个预览入口（站长 2026-11-11）。
 // 只挑一个：层级最浅的，同层先 index.html。要自包含才能在预览的沙盒里打开；不要求点击检查，只在浏览器里打开截一张图。
@@ -946,19 +998,35 @@ export function checkPageWorkspace(t) {
   let result;try{result=JSON.parse(r.stdout.trim());}catch{return {ok:false,entry,error:'页面没能在浏览器里打开'};}
   return {...result,ok:r.status===0&&!!result.ok,entry,title:m.title,digest:m.digest,screenshot:path.join(t.workspace.tmp,'xin-web-preview.png')};
 }
-export function publishPagePreview(t,controller,check) {
+export function publishPagePreview(t,controller,check,id) {
   const m=pageManifest(t,check?.entry||'');if(!check?.ok||m.digest!==check.digest)throw Error('页面在打开检查之后又改过');
-  return storePreview(t,controller,m,check);
+  return storePreview(t,controller,m,check,id);
 }
-function storePreview(t,controller,m,check) {
-  const id=crypto.randomBytes(16).toString('hex'),root=path.join(controller,'previews'),staging=path.join(root,'.'+id),dest=path.join(root,id);mkdir(root);fs.mkdirSync(staging,{mode:0o700});
+function storePreview(t,controller,m,check,stableId) {
+  if(stableId&&!/^[a-f0-9]{32}$/.test(stableId))throw Error('收尾预览标识无效');
+  const id=stableId||crypto.randomBytes(16).toString('hex'),root=path.join(controller,'previews'),dest=path.join(root,id);mkdir(root);
+  const checks = stableId ? m.checks.map(({selector,expectSelector,expectText,expectClass,expectAttribute})=>(
+    {selector,expectSelector,expectText,expectClass,...(expectAttribute ? {expectAttribute:{name:expectAttribute.name,value:expectAttribute.value}} : {})})) : m.checks;
+  const result=meta=>({id,title:meta.title,url:'/xin/preview.html?id='+id,ready:true,run:meta.run,at:meta.at,viewports:meta.viewports,checks});
+  if(stableId&&fs.existsSync(dest)){
+    if(!fs.lstatSync(dest).isDirectory()||!fs.lstatSync(path.join(dest,'manifest.json')).isFile())throw Error('已存在的收尾预览无法核对');
+    const html=previewAsset(controller,{id}),shot=previewAsset(controller,{id,file:'preview.png'});
+    const meta=html.real&&shot.real&&JSON.parse(fs.readFileSync(path.join(dest,'manifest.json'),'utf8'));
+    if(!meta||meta.sid!==t.sid||meta.run!==lastRunId(t)||html.sha256!==m.digest||hash(html.real)!==m.digest||hash(shot.real)!==shot.sha256)
+      throw Error('已存在的收尾预览无法核对');
+    return result(meta);
+  }
+  const staging=fs.mkdtempSync(path.join(root,'.'+id+'-'));
   try{
     fs.writeFileSync(path.join(staging,'index.html'),m.html,{mode:0o400,flag:'wx'});
-    const shot=fs.openSync(check.screenshot,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);let screenshot;try{screenshot=fs.readFileSync(shot);}finally{fs.closeSync(shot);}
+    const shot=fs.openSync(check.screenshot,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);let screenshot;
+    try{const s=fs.fstatSync(shot);if(!s.isFile()||s.size>16*1024*1024)throw Error('预览截图不是有效的普通文件');screenshot=fs.readFileSync(shot);}finally{fs.closeSync(shot);}
     if(!screenshot.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw Error('缺少真实预览截图');fs.writeFileSync(path.join(staging,'preview.png'),screenshot,{mode:0o400,flag:'wx'});
     const meta={id,sid:t.sid,parent:t.parent,run:lastRunId(t),title:m.title,at:Date.now(),files:{'index.html':{mime:'text/html; charset=utf-8',size:Buffer.byteLength(m.html),sha256:m.digest},'preview.png':{mime:'image/png',size:screenshot.length,sha256:crypto.createHash('sha256').update(screenshot).digest('hex')}},viewports:check.viewports};
-    fs.writeFileSync(path.join(staging,'manifest.json'),JSON.stringify(meta),{mode:0o400,flag:'wx'});fs.renameSync(staging,dest);
-    return {id,title:m.title,url:'/xin/preview.html?id='+id,ready:true,run:meta.run,at:meta.at,viewports:check.viewports,checks:m.checks};
+    fs.writeFileSync(path.join(staging,'manifest.json'),JSON.stringify(meta),{mode:0o400,flag:'wx'});
+    if(stableId){for(const name of ['index.html','preview.png','manifest.json'])syncPath(path.join(staging,name));syncPath(staging);}
+    fs.renameSync(staging,dest);if(stableId)syncPath(root);
+    return result(meta);
   }catch(e){fs.rmSync(staging,{recursive:true,force:true});throw e;}
 }
 const lastRunId=t=>(t.runs||[]).at(-1)||null;

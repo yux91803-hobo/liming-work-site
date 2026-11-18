@@ -6,7 +6,7 @@ import { inputDigest } from './vm-state.mjs';
 import { ACTS } from './vm-companion.mjs';
 import { callContext, withCallContext } from './vm-kernel-context.mjs';
 import { stateOperations } from './vm-kernel-operations.mjs';
-import { attemptError, staleAttempt } from './vm-run-attempt.mjs';
+import { attemptError, hasFinalization, staleAttempt } from './vm-run-attempt.mjs';
 
 const object = a => a && typeof a === 'object' && !Array.isArray(a);
 const bad = () => ({ error: 'bad_op', msg: '不认识的操作' });
@@ -14,11 +14,17 @@ const bad = () => ({ error: 'bad_op', msg: '不认识的操作' });
 export const TIANQI_OPS = new Set(['ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'rename', 'archive', 'forget', 'files', 'usage', 'prune', 'preview_asset', 'integrity_event']);
 const RUN_REPORTS = new Set(['session_patch','run_patch','run_complete','task_finish','task_stage','task_model','agy_conversation','front_reply','front_model','front_immediate','front_action','front_fallback','handoff_start','handoff_finish','continue_steers','run_stat','task_bridge','steer_take','steer_handover']);
 export function createController({ ops, iops, isTask, saveTask, rememberAgentSession, mainSid, listTasks,
-  lockedCall, dispatchLaunches, markCurrentController, xinCmd, reapNow }) {
+  lockedCall, dispatchLaunches, markCurrentController, xinCmd, reapNow, finalizeRun }) {
   const sessF = sid => path.join(BASE,'sessions',sid+'.json'), metaF = run => path.join(BASE,'runs',run+'.json');
   function inferKey(op,args) {
     const sid=args.sid||readJ(metaF(args.run||''))?.sid;
     return ['send','session_patch','run_complete','continue_steers'].includes(op)&&sid&&!isTask(readJ(sessF(sid)))?sid:'tasks';
+  }
+  function patchSession(sid, changes) {
+    const s=readJ(sessF(sid));if(!s)return {error:'no_session',msg:'找不到这个对话'};
+    for(const k of ['agentSid','started','ctxWin','hUsage','frontUsage'])if(Object.hasOwn(changes||{},k))s[k]=changes[k];
+    s.updated=Date.now();if(isTask(s))saveTask(s);else writeJ(sessF(sid),s);rememberAgentSession(s.agent,s.agentSid);
+    return {session:s};
   }
   function transaction(op,args,fn) {
     const { locked, key } = callContext();
@@ -44,6 +50,14 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
   }
   function invoke({ op, args = {}, locked = false, key, run = null, attempt = null, stdin = '' }, { internal = false } = {}) {
     args=object(args)?args:{};
+    if(op==='run_finalize'){
+      if(!locked||!okId(run,'r')||typeof attempt!=='string'||! /^[a-f0-9]{32}$/.test(attempt))return staleAttempt();
+      if(run!==args.run||typeof args.digest!=='string'||! /^[a-f0-9]{64}$/.test(args.digest)||Object.keys(args).length!==2)return bad();
+      const meta=readJ(metaF(run));
+      if(attemptError(meta,{run,attempt})||key!==(meta.task?'tasks':meta.sid))return staleAttempt();
+      const result=finalizeRun(meta,{digest:args.digest});
+      dispatchLaunches();return result;
+    }
     if(op==='task_bridge'&&(!run||! /^[a-f0-9]{32}$/.test(attempt||'')))return staleAttempt();
     if(run&&!okId(run,'r')||attempt&&(typeof attempt!=='string'||attempt.length>128))return bad();
     if(!internal){
@@ -51,20 +65,16 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
       if(run&&target&&run!==target)return staleAttempt();
       const source=run||(RUN_REPORTS.has(op)?target:null);
       if(source&&!okId(source,'r'))return bad();
-      if(source){const error=attemptError(readJ(metaF(source)),{run,attempt});if(error)return error;}
+      if(source){
+        const meta=readJ(metaF(source)), error=attemptError(meta,{run,attempt});if(error)return error;
+        if(hasFinalization(meta)&&['run_complete','task_finish','front_reply'].includes(op))return {error:'finalization_protocol'};
+      }
     }
     key=locked?(key||inferKey(op,args)):null;
     if(op==='task_bridge'&&(!locked||key!=='tasks'))return {error:'bad_bridge_request',msg:'任务请求需要状态事务'};
     if(locked&&key!=='new'&&key!=='daily'&&key!=='tasks'&&!okId(key,'s'))return bad();
     return withCallContext({locked,key,run,attempt,stdin},()=>{
-      if(op==='session_patch'&&locked&&okId(args.sid,'s')){
-        return journal.atomic(()=>{
-        const s=readJ(sessF(args.sid));if(!s)return {error:'no_session',msg:'找不到这个对话'};
-        for(const k of ['agentSid','started','ctxWin','hUsage','frontUsage'])if(Object.hasOwn(args.changes||{},k))s[k]=args.changes[k];
-        s.updated=Date.now();if(isTask(s))saveTask(s);else writeJ(sessF(args.sid),s);rememberAgentSession(s.agent,s.agentSid);
-        return {session:s};
-        });
-      }
+      if(op==='session_patch'&&locked&&okId(args.sid,'s'))return journal.atomic(()=>patchSession(args.sid,args.changes));
       if(locked&&Object.hasOwn(iops,op)){
         const res=transaction(op,args,()=>iops[op](args));dispatchLaunches();return res||{};
       }
@@ -120,5 +130,5 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
     }
     return bad();
   }
-  return { invoke, handle, transaction };
+  return { invoke, handle, transaction, patchSession };
 }

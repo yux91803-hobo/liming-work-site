@@ -72,15 +72,16 @@ import {dailyEvidence,dailyContext} from './vm-daily.mjs';
 import {openFrontProvider,preferredFrontModel,frontModelInfo,AGY_FRONT_MODEL} from './vm-front-agy.mjs';
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
 import { createDispatcher } from './vm-dispatch.mjs';
-import { attemptError, assertAttempt, attemptsEnabled } from './vm-run-attempt.mjs';
+import { attemptError, assertAttempt, attemptsEnabled, createFinalizationStore, finalizationEnabled, hasFinalization } from './vm-run-attempt.mjs';
 import { bridgeEnabled } from './vm-task-bridge.mjs';
-import { taskBridgeSession, createTaskBridgeHandler, drainTaskReports } from './vm-task-reports.mjs';
+import { taskBridgeSession, createTaskBridgeHandler, createTaskFinisher, drainTaskReports, checkTaskResult, recordRunnerResult, createRunFinalizer } from './vm-task-reports.mjs';
 export * from './vm-memory.mjs';
 import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
-import { transientFailure, finalFailure, retryDelays, RETRY_TEXT } from './vm-retry.mjs';
+import { transientFailure, finalFailure } from './vm-retry.mjs';
 import { quotaWindows, glowLevel, forecast, usageSummary, agyUsage, inclusive } from './vm-usage.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
+const finalizations = createFinalizationStore(BASE);
 function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
 const SESS = path.join(BASE, 'sessions'), RUNS = path.join(BASE, 'runs'), BIN = path.join(BASE, 'bin');
 const AGENTS = ['claude', 'codex', 'harness'];
@@ -230,11 +231,16 @@ export async function pushAll(msg, delivery = {}) { if (TIANQI) return [];   // 
   return out;
 }
 const NOTICE_DIR = () => path.join(BASE, 'outbox');
-function enqueueNotice(t, msg) {
-  const id = crypto.createHash('sha256').update(t.sid + ':' + taskVersion(t)).digest('hex').slice(0,32);
+function enqueueNotice(t, msg, version = taskVersion(t)) {
+  const id = crypto.createHash('sha256').update(t.sid + ':' + version).digest('hex').slice(0,32);
   mk(NOTICE_DIR()); const f = path.join(NOTICE_DIR(), id + '.json');
-  if (!fs.existsSync(f)) writeJ(f, { id, msg, state: 'pending', attempts: 0, nextAt: Date.now(), delivered: [], created: Date.now() });
+  if (!readJ(f)) writeJ(f, { id, msg, state: 'pending', attempts: 0, nextAt: Date.now(), delivered: [], created: Date.now() });
   return id;
+}
+function frontNotice(meta, done, reply) {
+  const text = plainText(reply || events(meta.run).filter(e=>e.t==='text').at(-1)?.text, 120);
+  return enqueueNotice(meta, {title:done.ok?'小芯做完了':'小芯没做成', body:text||(done.ok?'点开看看':'点开看看怎么回事'),
+    tag:'xin-'+meta.sid, sid:meta.sid, url:'/#xin='+meta.sid}, 'finish:'+meta.run);
 }
 async function deliverNotice(id) {
   if (!/^[a-f0-9]{32}$/.test(id || '')) return;
@@ -259,29 +265,29 @@ const runF = run => path.join(RUNS, run + '.jsonl');
 const metaF = run => path.join(RUNS, run + '.json');
 const seenF = run => path.join(RUNS, run + '.seen');   // 网页最近一次来取这一轮的进度（看修改时间）
 // key 标记请求所属的会话或任务事务。外部执行进程把写操作发给状态进程。
-function lockedCall(key, op, args) {
+function lockedCall(key, op, args, options) {
   if (key !== 'new' && key !== 'daily' && key !== 'tasks' && !okId(key, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
   const { run, attempt } = callContext();
   const request = { op, args, locked: true, key, run, attempt };
   if (ownership.owning) return controller.invoke(request, { internal: true });
-  return retryLockedReport(op, timeoutMs => requestStateSync(BASE, { kind: 'op', ...request }, { timeoutMs }));
+  return retryLockedReport(op, timeoutMs => requestStateSync(BASE, { kind: 'op', ...request }, { timeoutMs:timeoutMs ?? options?.deadlineMs }), options);
 }
 // 后台任务的会话记录和调度共用 tasks 事务。
-function patchSession(sid, changes) { return lockedCall(isTask(readJ(sessF(sid))) ? 'tasks' : sid, 'session_patch', { sid, changes }); }
+function patchSession(sid, changes, options) { return lockedCall(isTask(readJ(sessF(sid))) ? 'tasks' : sid, 'session_patch', { sid, changes }, options); }
 function applyRunPatch(run,changes){
   const current=readJ(metaF(run));if(!current)return null;
   if(changes?.stopped&&current.ended)return current;
-  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','modelDone','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','effort','from','fallbacks','frontUsage','webCheck','pageCheck'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
+  for(const k of ['pid','identity','childPid','childIdentity','threadId','turnId','transport','modelDone','compileOk','compileDigest','compileTrusted','stopped','ended','died','orphanStopping','model','effort','from','fromErr','fallbacks','frontUsage','webCheck','pageCheck'])if(Object.prototype.hasOwnProperty.call(changes||{},k))current[k]=changes[k];
   writeJ(metaF(run),current);return current;
 }
-function patchRun(run,changes){
+function patchRun(run,changes,options){
   const m=readJ(metaF(run));if(!m)return null;
   const key=m.task||isTask(readJ(sessF(m.sid)))?'tasks':m.sid;
   if(lockHeld(key))return applyRunPatch(run,changes);
-  const r=lockedCall(key,'run_patch',{run,changes});if(r.error)throw new Error(r.msg||r.error);return r.meta;
+  const r=lockedCall(key,'run_patch',{run,changes},options);if(r.error)throw Object.assign(Error(r.msg||r.error),{code:r.error});return r.meta;
 }
 function unwatched(run) { let t = 0; try { t = fs.statSync(seenF(run)).mtimeMs; } catch { /* 网页一次都没来取过 */ } return Date.now() - t > UNWATCHED_MS; }
-function emit(run, ev) { try{journal.checkWriter();}catch(e){if(e.code==='stale_attempt')return;throw e;} if(journal.active)journal.append(runF(run),ev);else fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); screenLog(ev); }
+function emit(run, ev) { try{journal.checkWriter();}catch(e){if(e.code==='stale_attempt')return;throw e;} if(journal.active)journal.append(runF(run),ev);else fs.appendFileSync(runF(run), JSON.stringify(ev) + '\n'); journal.defer(()=>screenLog(ev)); }
 // 从字节位置 from 开始读一轮的事件，只到最后一个完整行：items 每条带它那一行结束处的字节位置（解析不了的行 ev 为 null）。
 // 参考 Agent HUD docs/performance.md：日志从上次读到的位置接着读，半行等下次，不整份重读。
 function readRunFrom(file, from, maxBytes = Infinity) {
@@ -656,16 +662,25 @@ function runner(run) {
   if (meta.task) setScreenTag('[任务 ' + meta.no + '] ');   // 「小芯在干什么」终端里分得清是哪个分身
   const role = meta.kind === 'daily' ? 'daily' : meta.task ? 'task' : 'front';
   const t0 = Date.now(), usageBefore=sessionUsage(sess), state = {};
+  const durable = hasFinalization(meta), key = meta.task ? 'tasks' : meta.sid, shortReport = {deadlineMs:1000};
   let finished = false, stderr = '', child = null, app = null, appCode = null, retried = false, restarting = false, stallTm = 0, deadTm = 0, scopeSeq = 0;
   ensureReaperTimer();
   let bridgeTm = 0, steering = false, proxy = null;
-  const saveState = () => {
+  const sessionChanges = () => {
     const changes = {};
     if (state.sid) { changes.agentSid = state.sid; changes.started = true; }
     if (state.ctxWin) changes.ctxWin = state.ctxWin;
     if (state.frontUsage) changes.frontUsage = state.frontUsage;
     if (state.hUsage) changes.hUsage = state.hUsage;
-    const r = patchSession(meta.sid, changes);
+    return changes;
+  };
+  const reportState = fn => {
+    try { return fn(durable ? shortReport : undefined); }
+    catch (e) { if (!durable || !['owner_unavailable','state_busy','state_draining','state_disconnected','state_timeout','state_client_failed'].includes(e.code)) throw e; }
+  };
+  const saveState = () => {
+    const changes = sessionChanges(), r = reportState(options=>patchSession(meta.sid,changes,options));
+    if (!r) return {...readJ(sessF(meta.sid),sess),...changes};
     if (r.error) {
       state.failed = true;
       if (!state.errShown) { state.errShown = true; emit(run, { t: 'err', text: r.msg }); }
@@ -682,8 +697,6 @@ function runner(run) {
       setTimeout(()=>finish(code,why),100);return;
     }
     finished = true; clearTimeout(stallTm); clearTimeout(deadTm); clearInterval(bridgeTm);
-    // 模型这一步做完了：之后来的补充进不了这一轮（检查网页、编译核验时），taskTell 回「这一轮跑完再接着做」
-    if (meta.task) { try { patchRun(run, { modelDone: true }); } catch { /* 记不下来只是这期间的补充按「进了这一轮」回执，结束时照样带到下一轮 */ } }
     if (state.timeout && !why) why = '超过 ' + Math.round(((meta.deadline || 0) - meta.started) / 60e3) + ' 分钟还没做完，停下了';
     // Harness 的用量：这个对话以前的加上这一轮的（只在做完时加一次）
     if (meta.agent === 'harness' && state.hu) {
@@ -691,41 +704,41 @@ function runner(run) {
       const input = (prev.input || 0) + state.hu.input, output = (prev.output || 0) + state.hu.output;
       state.hUsage = { ctx: state.hu.last, win: HARNESS_WIN, input, output, total: input + output };
     }
-    const s = saveState();
-    let m = readJ(metaF(run), meta);
-    let stopped = !!m.stopped;
-    let ok = !stopped && code === 0 && !state.failed && !state.timeout;
-    if(ok&&meta.task&&s.web&&!s.pendingQuestion&&!s.approval&&s.workspace){
-      lockedCall('tasks','task_stage',{sid:meta.sid,run,stage:'checking'});
-      emit(run,{t:'tool',id:'xin-web-check',name:'检查网页',detail:'实际打开电脑和手机预览，点击交互并检查页面错误'});
-      let check;try{check=runtime.checkWebWorkspace(s);}catch(e){check={ok:false,error:e.message};}
-      m=patchRun(run,{webCheck:{...check,trusted:true}});stopped=!!m.stopped;ok=ok&&!stopped;
-      emit(run,{t:'tool_end',id:'xin-web-check',name:'检查网页',ok:!!check.ok,out:check.error||'电脑和手机交互检查通过'});
-    }
-    // 不是网页成品的任务也可能做出页面（比如查资料时顺手做的看板）：打开截一张图，做完后给它一个预览入口
-    if(ok&&meta.task&&!s.web&&!s.pendingQuestion&&!s.approval&&s.workspace&&runtime.findPage(s)){
-      emit(run,{t:'tool',id:'xin-page-check',name:'生成预览',detail:'在浏览器里打开这次做的页面'});
-      let page;try{page=runtime.checkPageWorkspace(s);}catch(e){page={ok:false,error:e.message};}
-      if(page)m=patchRun(run,{pageCheck:{...page,trusted:true}});
-      emit(run,{t:'tool_end',id:'xin-page-check',name:'生成预览',ok:!!page?.ok,out:page?.ok?'可以预览':(page?.error||'没有可预览的页面')});
-    }
-    if(ok && meta.task && !s.pendingQuestion && !s.approval && s.workspace && runtime.stm32Task(s)) {
-      emit(run,{t:'tool',id:'xin-build',name:'编译核验',detail:'控制器在隔离副本执行受控构建，并检查本次新生成的固件产物'});
-      let build;try{build=runtime.compileWorkspace(s);}catch(e){build={ok:false,output:e.message};}
-      m=patchRun(run,{compileTrusted:true,compileOk:!!build?.ok,compileDigest:build?.digest});
-      stopped=!!m.stopped;ok=ok&&!stopped;
-      emit(run,{t:'tool_end',id:'xin-build',name:'编译核验',detail:'受控构建 / '+(build?.artifacts||[]).join('、'),ok:!!build?.ok,out:build?.output||''});
-    }
+    const modelOK = () => code === 0 && !state.failed && !state.timeout;
+    const active = () => modelOK() && !readJ(metaF(run),meta).stopped;
+    const checking = () => reportState(options=>lockedCall('tasks','task_stage',{sid:meta.sid,run,stage:'checking'},options));
+    const announce = ev => emit(run, ev);
+    const transient = () => !active() && !readJ(metaF(run),meta).stopped && !state.timeout && transientFailure(finalFailure({ why, errs: tailEvents(run, 16384).filter(e => e.t === 'err').map(e => e.text), stderr }));
+    const delta = usage => usage ? {input:Math.max(0,usage.input-(usageBefore?.input||0)),cached:Math.max(0,(usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,usage.output-(usageBefore?.output||0)),...(usage.incl?{incl:true}:{})} : undefined;
+    const modelDone = () => { if (meta.task) { try { reportState(options=>patchRun(run,{modelDone:true},options)); } catch {} } };
+    const changes = sessionChanges();
+    if (!durable) modelDone();
+    const s = durable ? {...readJ(sessF(meta.sid),sess),...changes} : saveState();
+    if (!durable && meta.task) checkTaskResult(s,{active,emit:announce,checking,report:changes=>patchRun(run,changes)});
+    let stopped = !!readJ(metaF(run),meta).stopped, ok = active();
     if (!ok && !stopped && !state.errShown) {
       const tail = stderr.trim().split('\n').slice(-6).join('\n');
       emit(run, { t: 'err', text: why || tail || ('退出码 ' + code) });
+    }
+    if (durable) {
+      const usage = sessionUsage(s), at = Date.now();
+      let receipt;
+      try {
+        receipt = recordRunnerResult(finalizations,meta,{at,code,ok:modelOK(),timeout:!!state.timeout,transient:transient(),
+          changes,usage,delta:delta(usage),ms:at-t0,cost:state.cost,reply:state.reply,model:meta.model||undefined,providerModel:meta.providerModel||undefined,
+          from:meta.from||undefined,recordStats:meta.agent!=='claude'&&!state.frontReceipt},()=>readJ(sessF(meta.sid),s),
+        {active,emit:announce,preparing:modelDone,checking});
+      } catch (e) { if(e.code!=='stale_attempt')emit(run,{t:'err',text:'这轮的收尾记录未能写完，已保留现场。'}); return; }
+      // The owner can finish even if this report or its response never arrives.
+      reportState(options=>lockedCall(key,'run_finalize',{run,digest:receipt.digest},options));
+      return;
     }
     // 前台这一句带上了哪些任务结果：做成了就记下前台已经知道了（没做成下一句再带）。在 done 之前记，免得用户紧接着发的下一句又带一遍
     // Completion and the final stop decision are committed under the conversation/task lock below.
     // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
     const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
     if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {}, meta.providerModel ? {providerModel:meta.providerModel} : {});
-    const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,fromErr:meta.fromErr||undefined,...(doneEv.usage?{usage:{input:Math.max(0,doneEv.usage.input-(usageBefore?.input||0)),cached:Math.max(0,(doneEv.usage.cached||0)-(usageBefore?.cached||0)),output:Math.max(0,doneEv.usage.output-(usageBefore?.output||0)),...(doneEv.usage.incl?{incl:true}:{})}}:{}) } : null;
+    const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,fromErr:meta.fromErr||undefined,usage:delta(doneEv.usage) } : null;
     const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv,stat});
     if(completion.error==='stale_attempt')return;
     if(completion.error){finished=false;setTimeout(()=>finish(code,why),1000);return;}
@@ -734,8 +747,7 @@ function runner(run) {
       killTree(child); // 收掉本轮进程组，包括仍持有临时预览端口的子进程
       // 后台任务：结果先存进任务记录（接着做、等确认还是收尾、排下一个），要推送的在锁外发
       // 临时错误（断线、网关 5xx、限流）由控制器等一会儿接着做，见 vm-retry.mjs
-      const transient = !ok && !stopped && !state.timeout && transientFailure(finalFailure({ why, errs: tailEvents(run, 16384).filter(e => e.t === 'err').map(e => e.text), stderr }));
-      const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model, transient });
+      const r = lockedCall('tasks', 'task_finish', { sid: meta.sid, run, ok, stopped, timeout: !!state.timeout, model: meta.model, transient:transient() });
       if (r && r.notice) { setTimeout(() => process.exit(0), 20000).unref(); deliverNotice(r.notice).catch(() => {}); }
       return;
     }
@@ -811,7 +823,7 @@ function runner(run) {
         app = runtime.appServer(w.cmd, config, { commandArgs: w.args, spawn: { ...spawnOptions, env: w.env, stdio: ['pipe', 'pipe', 'pipe'] }, cwd,
           thread: currentSession.started ? currentSession.agentSid : null, text: meta.text, images: meta.images || [], model: meta.model,
           effort: meta.effort, boxed: false, rollback: !!meta.from && !!meta.turnId && !!currentSession.started, emit: accept,
-          turn: (threadId, turnId) => { Object.assign(meta, { threadId, turnId }); patchRun(run,{threadId,turnId,transport:'app-server'}); },
+          turn: (threadId, turnId) => { Object.assign(meta, { threadId, turnId }); reportState(options=>patchRun(run,{threadId,turnId,transport:'app-server'},options)); },
           complete: code => { appCode = code; },
           stop: killTree,
           fail: e => { state.failed = true; state.heldErr = { t: 'err', text: e.message }; },
@@ -906,10 +918,14 @@ function runner(run) {
     killTree(child);
   };
   process.on('SIGTERM', () => term(true)); process.on('SIGINT', () => term(false));
+  const saveReply = text => {
+    if (durable) { if (text) state.reply = String(text).slice(0,TEXT_MAX); return; }
+    return lockedCall(meta.sid,'front_reply',{run,text});
+  };
   if (meta.agent === 'codex' && role === 'front') {
     const immediate=lockedCall('tasks','front_immediate',{run});
     if(immediate.error){state.failed=true;finish(1,immediate.msg||immediate.error);return;}
-    if(immediate.terminal){state.frontReceipt=!immediate.reply;if(immediate.reply&&meta.frontUsage)state.frontUsage=meta.frontUsage;lockedCall(meta.sid,'front_reply',{run,text:immediate.text});finish(0);return;}
+    if(immediate.terminal){state.frontReceipt=!immediate.reply;if(immediate.reply&&meta.frontUsage)state.frontUsage=meta.frontUsage;saveReply(immediate.text);finish(0);return;}
     const context=foregroundContext(sess,run,r=>safeContextEvents(r,events,'own')),input=context.input;
     journal.write(path.join(BASE,'contexts',meta.sid+'.json'),JSON.stringify(context.checkpoint));
     try {
@@ -960,11 +976,11 @@ function runner(run) {
         const prev = state.frontUsage || usageBefore || {input:0,output:0,cached:0};
         state.frontUsage = {input:prev.input+(u.input_tokens||0),output:prev.output+(u.output_tokens||0),cached:prev.cached+(u.input_tokens_details?.cached_tokens||0),ctx:(u.input_tokens||0)+(u.output_tokens||0),win:1000000};
         state.frontUsage.total=state.frontUsage.input+state.frontUsage.output;
-        patchRun(run,{frontUsage:state.frontUsage});
+        if(!durable)patchRun(run,{frontUsage:state.frontUsage});
       }}
     });};
     if(!meta.handoff)frontStatus({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,text:meta.frontRequest,history:input,signal:controller.signal}).then(s=>{if(s&&!finished){emit(run,{t:'think',text:s.text,src:'status'});lockedCall('tasks','run_stat',{at:Date.now(),run,key:run+'.status',kind:'status',model:s.model,usage:s.usage});}}).catch(()=>{});
-    waitWarm({signal:controller.signal,notify:()=>emit(run,{t:'status',text:'电脑刚唤醒，正在连接网络'})}).then(()=>infer()).then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){if(text){const r=lockedCall(meta.sid,'front_reply',{run,text});if(r.error){state.failed=true;finish(1,r.msg||r.error);return;}}finish(0);}})
+    waitWarm({signal:controller.signal,notify:()=>emit(run,{t:'status',text:'电脑刚唤醒，正在连接网络'})}).then(()=>infer()).then(text=>{if(usedFallback)frontLog({run,outcome:'fallback',calls});if(!finished){const r=text&&saveReply(text);if(r?.error){state.failed=true;finish(1,r.msg||r.error);return;}finish(0);}})
       .catch(e=>{if(!finished){frontLog({run,outcome:usedFallback?'fallback':'error',error:String(e.message||e).slice(0,300),calls,...(Object.keys(protocol).length?{protocol}:{})});state.failed=true;finish(1,e.message);}})
       .finally(()=>provider?.close());
   } else start();
@@ -1380,7 +1396,7 @@ export function sessionUsage(s) {
 function launch(s, m, userEv) {
   memoryActivity(); // All foreground/background work preempts an in-flight idle review.
   const run = rid('r');
-  writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, attemptsEnabled()?{attemptProtocol:1,...(m.sandbox&&bridgeEnabled()?{bridgeProtocol:1}:{})}:{}, m));
+  writeJ(metaF(run), Object.assign({ run, sid: s.sid, agent: s.agent, started: Date.now() }, attemptsEnabled()?{attemptProtocol:1,...(m.sandbox&&bridgeEnabled()?{bridgeProtocol:1}:{}),...(finalizationEnabled()?{finalProtocol:1}:{})}:{}, m));
   if(userEv)emit(run, userEv);
   if(isTask(s))delete s.browserStep;   // 新的一轮：上一轮请站长登录的那一步已经过去了
   s.runs.push(run); s.updated = Date.now(); if(isTask(s))saveTask(s);else writeJ(sessF(s.sid),s);
@@ -1425,7 +1441,6 @@ export const SYSTEM_DIR = () => path.join(WORK, 'system');
 // 不进容器、不建项目副本的任务：每日任务和电脑维护
 export const hostTask = t => !!(t && (t.dailyDate || t.tkind === 'system'));
 const TASK_SEQ = () => path.join(BASE, 'task-seq.json');
-const RESUME_TEXT = '（刚才电脑暂停或重启，这一轮中途断了。先检查现在的状态——看看文件、编译结果、还在不在跑的进程——已经做过的有副作用的事别再做一遍，然后接着把任务做完。）';
 const isTask = s => !!s && s.kind === 'task';
 const isBackground = t => ['queued','running','stopping'].includes(t.status) || t.status==='waiting' && !!t.approval;
 const isFinished = t => t.status === 'done' || t.status === 'failed' || t.status === 'stopped';
@@ -1441,7 +1456,7 @@ function occupiesTask(t) {
 }
 function taskIndexEntry(t){
   if(!isFinished(t))return t;
-  const out={};for(const k of ['sid','no','parent','kind','tkind','title','model','requestedModel','requestedNamed','strictModel','actualModel','actualModels','reviewAuthors','why','status','created','updated','startedAt','endedAt','dir','after','frontSeen','question','note','verification','dailyDate','web','preview','stage','frontRun','processesCleaned','temporaryCleaned','delivery','autoContinues','approval','expired'])if(t[k]!==undefined)out[k]=t[k];
+  const out={};for(const k of ['sid','no','parent','kind','tkind','title','model','requestedModel','requestedNamed','strictModel','actualModel','actualModels','reviewAuthors','why','status','created','updated','startedAt','endedAt','dir','after','frontSeen','question','note','verification','dailyDate','web','preview','stage','frontRun','processesCleaned','temporaryCleaned','cleanupPending','delivery','autoContinues','approval','expired'])if(t[k]!==undefined)out[k]=t[k];
   out.runs=lastRun(t)?[lastRun(t)]:[];out.turnsCount=t.turnsCount??(t.runs||[]).length;
   if(t.result)out.result={...t.result,text:cut(t.result.text,2000)};return out;
 }
@@ -1643,6 +1658,7 @@ function startTask(t, all) {
   const deps = (t.after || []).map(n => all.find(x => x.no === n)).filter(Boolean);
   const first = !(t.runs && t.runs.length);
   delete t.verification;
+  delete t.cleanupPending;
   t.deadline = t.deadline || Date.now() + (Number(process.env.XIN_TASK_TIMEOUT_MS) || (t.minutes || TASK_MIN) * 60e3);
   // The author might have fallen back to a different model after the review was queued.
   if (t.tkind === 'review') {
@@ -1696,99 +1712,10 @@ function scheduleNow() {
 }
 const taskPush = (t, title, body) => ({ title, body: plainText(body, 120) || '点开看看', tag: 'xin-task-' + t.no, sid: t.parent || '', url: t.parent ? '/#xin=' + t.parent : '/#xin' });
 // 一轮做完（runner 调，在 tasks 锁里）：先把结果存进任务记录，再决定接着做、等用户，还是收尾；要推送的交回 runner 在锁外发
-function taskFinish(a) {
-  const t = readJ(sessF(a.sid));
-  // A late exit from a cancelled/replaced turn must never complete the new turn.
-  if (!isTask(t) || lastRun(t) !== a.run || t.finishedRun === a.run || (t.status !== 'running' && t.status !== 'waiting' && t.status !== 'stopping')) return {};
-  const evs = tailEvents(a.run, 65536);
-  const runMeta = readJ(metaF(a.run), {});
-  // Successful publication must never outlive a still-running producer.
-  if(t.web&&runMeta.childPid&&processGroupMembers(runMeta.childPid,runMeta.childIdentity).length)return {error:'cleanup_pending'};
-  if(t.web)t.processesCleaned=true;
-  const actual=a.model||runMeta.model||t.actualModel||t.model;
-  if(actual){t.model=t.actualModel=actual;t.actualModels=[...new Set((t.actualModels||[]).concat(actual))];}
-  // 这一轮结束了，挂在它上面的问题不能再按 approval 回复（taskTell 会说「这一轮已经结束」）：超时、断了、停了的直接丢掉；
-  // 正常结束的（到点锁忙、问题没记成 pendingQuestion）状态还是 waiting，下面照样停在「等你确认」，回复走普通的接着做
-  delete t.approval;
-  // 补充（docs/superpowers/specs/2026-11-17-xin-steer-design.md §2）：这一轮没送进去的带到下一轮，正常做完时它们让任务接着做；
-  // 这一轮没正常做完（超时、断线、重启、停下、出错）的话，送进去了的也带上（held）：没法确定模型已经照着做了，下一轮开头再交一次
-  const okEnd = !!a.ok && !a.stopped && !a.timeout && !a.died && !a.transient;
-  const carry = (runMeta.steers || []).filter(x => x.state === 'pending' || x.state === 'next' || (!okEnd && x.state === 'accepted'));
-  if (carry.length) t.inbox = (t.inbox || []).concat(carry.map(x => ({ id: x.id, text: x.text, at: x.at, ...(x.state === 'accepted' ? { held: true } : {}) })));
-  const last = evs.filter(e => e.t === 'text').pop(), err = evs.filter(e => e.t === 'err').pop();
-  let notify = null;
-  if (t.status === 'stopping') { t.status = 'stopped'; t.endedAt = Date.now(); }                  // 进程真正退出后才释放目录
-  else if ((t.status === 'waiting' || t.pendingQuestion) && !a.died && !a.timeout && !a.stopped) {
-    t.status='waiting';t.question=t.pendingQuestion||t.question;delete t.pendingQuestion;
-    Object.assign(t,{endedAt:Date.now(),frontSeen:false});notify=taskPush(t,(t.browserStep?'我这边需要你登录：':'我这边需要你确认：')+t.title,t.question);
-  }
-  else if (!a.stopped && !a.timeout && !a.died && t.inbox && t.inbox.some(x => !x.held)) {       // 干活时用户补充了、模型还没拿到的话：接着做
-    t.next = '用户在你干活时补充了：\n' + t.inbox.map(x => '- ' + x.text).join('\n') + '\n按补充的要求接着做（已经做对的不用重做）。';
-    t.nextShow = t.inbox.map(x => x.text).join('\n');
-    Object.assign(t, { inbox: [], status: 'queued', queuedAt: Date.now() });
-  } else if (a.died) {                                                                              // 电脑重启、进程被杀
-    if ((t.resumes || 0) < 1) Object.assign(t, { resumes: (t.resumes || 0) + 1, next: RESUME_TEXT, nextShow: '（中途断了，接着做）', status: 'queued', queuedAt: Date.now() });
-    else {
-      // 不是要站长拿主意的事，不停在「等你确认」：算没做成，站长回一句照样接着做
-      const why = '这个任务中途断了两次（电脑暂停或重启），没做完。要接着做，回复一句就行。';
-      Object.assign(t, { status: 'failed', question: '', result: { ok: false, text: why, err: '中途断了两次', at: Date.now() }, endedAt: Date.now(), frontSeen: false });
-      notify = taskPush(t, '我没做成：' + t.title, why);
-    }
-  } else if (a.transient && !a.stopped && !a.timeout && (t.transientRetries || 0) < retryDelays().length) {   // 断线、网关暂时不可用：等一会儿用同一个会话接着做
-    const n = (t.transientRetries || 0) + 1;
-    Object.assign(t, { transientRetries: n, retryAt: Date.now() + retryDelays()[n - 1], next: RETRY_TEXT, nextShow: '（连接出错，稍后接着做）', status: 'queued', queuedAt: Date.now() });
-  } else {
-    let ok = !!a.ok && !a.stopped && !a.timeout;
-    let publication = null;
-    if (ok && t.workspace) {
-      try {
-        if(t.web&&(!runMeta.webCheck?.trusted||!runMeta.webCheck.ok)){
-          const error='网页尚未通过实际浏览器检查：'+(runMeta.webCheck?.error||'缺少检查记录')+'。请修好自包含 HTML 和 xin-web.json 后结束，控制器会重新检查。';
-          if((t.webRetries||0)<2){t.webRetries=(t.webRetries||0)+1;t.status='queued';t.stage='working';t.next=error;t.nextShow='（修正网页交互检查）';t.finishedRun=a.run;saveTask(t);scheduleNow();return {};}
-          throw Error(error);
-        }
-        const verification = runtime.validateTask(t, BASE, runMeta);
-        if (verification.error) {
-          if ((t.validationRetries || 0) < 1) {
-            t.validationRetries = (t.validationRetries || 0) + 1; t.status = 'queued'; t.next = verification.error;
-            t.nextShow = '（补齐编译或检查证据）'; t.finishedRun = a.run; saveTask(t); scheduleNow(); return {};
-          }
-          throw new Error(verification.error);
-        }
-        if (verification.applicable) t.verification = verification;
-        publication = runtime.publishWorkspace(t, BASE);
-        if(t.web&&!publication.pending)t.preview=runtime.publishWebPreview(t,BASE,runMeta.webCheck);
-        // 普通任务做出的页面：能预览就给入口，预览不成不影响任务本身
-        if(!t.web&&!publication.pending&&runMeta.pageCheck?.trusted&&runMeta.pageCheck.ok){try{t.preview=runtime.publishPagePreview(t,BASE,runMeta.pageCheck);}catch{/* 没有预览也照样算做完 */}}
-      }
-      catch (e) { ok = false; t.publicationError = e.message; }
-    }
-    t.status = a.stopped ? 'stopped' : ok ? 'done' : 'failed';
-    if (t.status === 'done') { t.transientRetries = 0; t.retryAt = 0; }
-    const answer = ((last && last.text) || (a.timeout ? '超过 ' + t.minutes + ' 分钟还没做完，停下了。' : ok ? '做完了。' : '没做成。'));
-    t.result = { ok, text: cut(t.workspace ? answer.split(t.workspace.work).join(t.dir) : answer, 8000),
-      err: ok ? '' : String(t.publicationError || (a.timeout ? '超时（' + t.minutes + ' 分钟）' : (err && err.text) || '')).slice(0, 600), at: Date.now() };
-    if(t.web){t.result.internalText=t.result.text;t.result.internalError=t.result.err;t.result.err='';t.result.text=ok&&t.preview?.run===a.run?'我画好了，点下面的预览就能看。':a.stopped?'好，我停下了。':'这次还没完成，成品尚未通过检查。我保留了进度，可以继续处理。';}
-    if (publication?.pending) {
-      t.status = 'waiting'; t.publication = publication;
-      t.question = '结果还未写回项目：' + (publication.deleted.length ? '将删除 ' + publication.deleted.length + ' 个原文件；' : '') +
-        (publication.conflicts.length ? publication.conflicts.length + ' 个文件在任务期间被改过；' : '') + '批准这次写回吗？';
-      t.result.ok = false;
-    } else if (publication?.ok) t.publicationReceipt = publication;
-    Object.assign(t, { endedAt: Date.now(), frontSeen: false });
-    if(t.web&&ok&&t.preview?.ready)t.stage='ready';
-    if (!a.stopped) notify = taskPush(t, (ok ? '我弄好了：' : '我没做成：') + t.title, t.result.text);
-  }
-  t.finishedRun = a.run;
-  // 做完时记下用量：副本按保留期删掉以后，过程页照样显示这个任务用了多少
-  if (isFinished(t)) { const fresh = sessionUsage({ ...t, usage: null }); if (fresh) t.usage = fresh; }
-  cleanupFinishedTask(t);
-  if (t.dailyDate && isFinished(t)) dailyDone(a.run, { sid: t.sid, dailyDate: t.dailyDate }, t.status === 'done');
-  saveTask(t);
-  const notice = notify&&t.delivery?.state!=='pending' ? enqueueNotice(t, notify) : null;
-  scheduleNow();
-  return notice ? { notice, notify } : {};
-}
+const taskFinish = createTaskFinisher({
+  sessF, metaF, isTask, lastRun, tailEvents, taskPush, isFinished, sessionUsage,
+  cleanupFinishedTask, dailyDone, saveTask, enqueueNotice, scheduleNow
+});
 // 补充（taskTell、tellMode）、前台的 <手上的事>、后台主动说一句：在 vm-steer.mjs（docs/superpowers/specs/2026-11-17-xin-steer-design.md）。
 // 后面才定义的（runDone、taskVersion）包一层，用到时再取
 const { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover } = createSteerOps({
@@ -1874,6 +1801,13 @@ function taskNeedsTick(all) {
   if (running.some(t => { const r = lastRun(t); return !r || runDone(r); })) return true;
   return all.some(t => t.status === 'queued' && !(t.retryAt > Date.now())) && running.length < TASK_MAX;
 }
+function flushTaskCleanup() {
+  for (const entry of listTasks().filter(t=>t.cleanupPending).slice(0, 8)) {
+    const t=readJ(sessF(entry.sid));
+    if (!t || !isFinished(t) || t.finishedRun!==t.cleanupPending || lastRun(t)!==t.cleanupPending) continue;
+    cleanupFinishedTask(t); delete t.cleanupPending; journal.atomic(()=>saveTask(t));
+  }
+}
 function tickTasks() {
   const all = listTasks();
   if (!taskNeedsTick(all)) return;
@@ -1941,8 +1875,8 @@ function markCurrentController() {
 }
 // 无待处理的工作时一分钟检查一次，让 InstaBox 能按 CPU 空闲规则暂停。
 export function pendingWork(){const pending=readJ(path.join(BASE,'controller-event.json')),notices=fs.existsSync(NOTICE_DIR())&&fs.readdirSync(NOTICE_DIR()).some(n=>/^[a-f0-9]{32}\.json$/.test(n)&&readJ(path.join(NOTICE_DIR(),n))?.state==='pending');
-  return listTasks().some(isBackground)||notices||journal.hasPendingHandoffs()||journal.hasOpenLaunches()||!!(pending&&!pending.acknowledged);}
-function reconcileState(){journal.recover();dispatchLaunches();tickTasks();pumpHandoffs();}
+  return listTasks().some(t=>isBackground(t)||t.cleanupPending)||notices||journal.hasPendingHandoffs()||journal.hasOpenLaunches()||!!(pending&&!pending.acknowledged);}
+function reconcileState(){journal.recover();dispatchLaunches();flushTaskCleanup();tickTasks();pumpHandoffs();}
 async function flushState(){await flushNotices();await flushControllerEvent();return pendingWork()?5000:60000;}
 // 网页最近有没有在看这个对话（tasks 轮询会碰一下）：在看就不推送，卡片自己会更新
 const convSeenF = sid => path.join(RUNS, 'conv-' + sid + '.seen');
@@ -1970,6 +1904,7 @@ function handoffStart(a){
   if(!s||s.agent!=='codex'){journal.settleHandoff(h.id,'cancelled');return {};}
   if(h.payload?.kind==='note')return noteStart(h,t,s);
   if(!t||taskVersion(t)!==h.version){journal.settleHandoff(h.id,'superseded');return {};}
+  if(t.cleanupPending)return {waiting:true};
   if(h.state==='running'){
     if(h.run&&!runDone(h.run))return {};
     journal.retryHandoff(h.id);return {};
@@ -2448,6 +2383,7 @@ const ops = {
     for (const run of s.runs || []) for (const f of [runF(run), metaF(run), seenF(run), path.join(RUNS,run+'.front.json')]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
     fs.unlinkSync(sessF(a.sid));
     journal.dropConversation(a.sid,s.runs||[]);try{fs.unlinkSync(path.join(BASE,'contexts',a.sid+'.json'));}catch{}
+    journal.defer(()=>finalizations.forget(s.runs||[]));
     try { fs.unlinkSync(convSeenF(a.sid)); } catch { /* 没有 */ }
     dropConversationTraces(a.sid, s.runs || []);
     // AI 自己那份会话记录也删掉；顺手把别的没有对应对话的旧记录清一清
@@ -2622,12 +2558,12 @@ const iops = {
     }
     const done={...a.done,stopped:!!m.stopped,ok:!!a.done?.ok&&!m.stopped};
     if(a.stat){const stat={...a.stat,run:a.run,ok:done.ok,stopped:done.stopped};const saved=taskLockHeld()?iops.run_stat(stat):lockedCall('tasks','run_stat',stat);if(saved.error)return saved;}
-    if(done.ok&&!m.task&&m.injected?.length)journal.defer(()=>lockedCall('tasks','task_seen',{sids:m.injected}));
+    if(done.ok&&!m.task&&m.injected?.length){if(a.durable)taskSeen({sids:m.injected});else journal.defer(()=>lockedCall('tasks','task_seen',{sids:m.injected}));}
     emit(a.run,done);m.ended=Date.now();writeJ(metaF(a.run),m);journal.finishLaunch(a.run);
     memoryActivity(); // Count the quiet window from the latest completion as well as the latest input.
     journal.defer(ensureMemoryIdle);
     const pending=(m.steers||[]).filter(x=>x.state==='pending'||x.state==='next');
-    if(!m.task&&!done.stopped&&pending.length){
+    if(!m.task&&!done.stopped&&!a.uncertain&&pending.length){
       for(const q of pending)q.state='consumed';writeJ(metaF(a.run),m);
       const next=ops.send({sid:m.sid,text:pending.map(q=>q.text).join('\n'),clientId:pending[0].id});
       return {done,next};
@@ -2704,6 +2640,7 @@ const iops = {
       for (const run of t.runs || []) for (const f of [runF(run), metaF(run), seenF(run), path.join(RUNS,run+'.front.json')]) { try { fs.unlinkSync(f); } catch { /* 本来就没有 */ } }
       try { fs.unlinkSync(sessF(t.sid)); } catch { /* 没有 */ }
       journal.dropConversation(t.sid,t.runs||[]);
+      journal.defer(()=>finalizations.forget(t.runs||[]));
       try { bytes += dropLogs('codex', t.agentSid); } catch { /* 删不掉就留着 */ }
       const left = runtime.dropTaskFiles(t, BASE); bytes += left.bytes;
       if (left.kept.length) logLine(path.join(BASE, 'logs', 'forget.jsonl'), { task: t.sid, kept: left.kept.length });
@@ -3038,7 +2975,10 @@ async function main() {
     if (message) await pushAll(message, { readOnlyState: true }).catch(() => {});
   }
 }
-const {dispatchLaunches,runDone}=createDispatcher({self:SELF,metaF,sessF,runF,lockedCall,emit,patchRun});
-const controller=createController({ops,iops,isTask,saveTask,rememberAgentSession,mainSid,listTasks,lockedCall,dispatchLaunches,markCurrentController,xinCmd,reapNow});
+const finalizeRun=createRunFinalizer({store:finalizations,loadRun:r=>readJ(metaF(r)),loadSession:s=>readJ(sessF(s)),
+  taskFinish,emit,complete:iops.run_complete,rememberSession:(sid,changes)=>controller.patchSession(sid,changes),
+  patchRun:applyRunPatch,frontReply:iops.front_reply,frontNotice,dailyDone,statsFile:STATS_F});
+const {dispatchLaunches,runDone}=createDispatcher({self:SELF,metaF,sessF,runF,lockedCall,emit,patchRun,finalizations,finalizeRun});
+const controller=createController({ops,iops,isTask,saveTask,rememberAgentSession,mainSid,listTasks,lockedCall,dispatchLaunches,markCurrentController,xinCmd,reapNow,finalizeRun});
 
 if (process.argv[1] && path.resolve(process.argv[1]) === SELF) main().catch(e=>{process.stderr.write((e.code==='owner_unavailable'?e.message:e.code||'state_failed')+'\n');process.exitCode=1;});
