@@ -1195,6 +1195,18 @@ body.xs-open{overflow:hidden}
 .tm-sky{display:block;width:100%;height:auto;max-height:132px}
 .tm-cl1{fill:#4a4640}
 .tm-cl2{fill:#34312d}
+/* 在做的时候夜景动起来（站长 2026-11-18「加点等待动画，你自己发挥，要好看」）：云一格一格慢慢来回飘，隔几秒划过一颗流星；做完就停 */
+.tm-meteor{opacity:0}
+.tm-meteor .tm-mh{fill:#f3ecdf}.tm-meteor .tm-mt1{fill:#a39b8e}.tm-meteor .tm-mt2{fill:#5b564e}
+.tm-live .tm-cl1,.tm-live .tm-cl2{animation:tmdrift 9s steps(3,end) infinite alternate}
+.tm-live .tm-meteor{animation:tmmeteor 6.5s linear infinite}
+@keyframes tmdrift{to{transform:translateX(3px)}}
+@keyframes tmmeteor{0%,78%{opacity:0;transform:none}79%{opacity:1;transform:none;animation-timing-function:steps(10,end)}96%{opacity:1;transform:translate(-20px,10px)}100%{opacity:0;transform:translate(-20px,10px)}}
+/* 后台还没有输出：提示行下面一排像素方块，一道琥珀色的光从左扫到右，拖着两格渐暗的尾巴（照 cli-spinners 单行进度的画法）；来了第一行就淡出 */
+.tm-wait{display:flex;gap:5px;margin:-2px 0 16px 10px}
+.tm-wait i{width:10px;height:10px;background:var(--t-line);animation:tmscan 1.5s steps(1,end) infinite;animation-delay:calc(var(--i) * .07s)}
+.tm-wait.tm-out{animation:tmfadeout .2s ease forwards}
+@keyframes tmscan{0%{background:var(--t-glow)}7%{background:#a8803a}14%{background:#5e4b2c}21%,100%{background:var(--t-line)}}
 .tm-moon{fill:#d9d3c7}
 .tm-star{font:2.2px/1 var(--mono);fill:#b9b2a5;animation:tmtw 2.4s steps(1,end) infinite}
 @keyframes tmtw{50%{opacity:.25}}
@@ -1275,7 +1287,7 @@ body.xs-open{overflow:hidden}
 .tm-sheet:has(.tm-tabs:not([hidden])) .tm-name{display:none}
 .tm-sheet .tm-scr{padding:14px 14px 10px;font-size:12.5px}
 @media (prefers-reduced-motion:reduce){
-  .tm-win.tm-in,.tm-win.tm-sheet.tm-in,.tm-win.tm-out,.tm-win.tm-sheet.tm-out,.tm-scrim.tm-in,.tm-scrim.tm-out,.tm-l.tm-run > .tm-b,.tm-tp::after,.tm-star,.tm-caret,.tm-tl{animation:none}
+  .tm-win.tm-in,.tm-win.tm-sheet.tm-in,.tm-win.tm-out,.tm-win.tm-sheet.tm-out,.tm-scrim.tm-in,.tm-scrim.tm-out,.tm-l.tm-run > .tm-b,.tm-tp::after,.tm-star,.tm-caret,.tm-tl,.tm-wait i,.tm-live .tm-cl1,.tm-live .tm-cl2,.tm-live .tm-meteor{animation:none}
   .tm-sv{animation:none;background:none;-webkit-text-fill-color:currentColor}
   .xc-typing[data-term],.xc-tb{transition:none}
 }

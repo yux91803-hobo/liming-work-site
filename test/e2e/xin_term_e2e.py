@@ -657,6 +657,67 @@ async def part7(browser):
     await pg.context.close()
 
 
+async def part_wait(browser):
+    """站长 2026-11-18「做任务的时候如果没有输出就一直这个界面太丑了，可以加点等待动画，你自己发挥，要好看」：
+    后台还没输出时，提示行下面一排像素方块、一道光扫过去，上面的夜景在动（云飘、流星）；来了第一行方块就让开；做完了夜景不动；减少动态时都不动。"""
+    pg = await ui.page(browser, 1280, 860)
+    front = [[{'t': 'text', 'text': '好，我去编一下。'}, {'t': 'task', 'sid': TASK, 'no': 1, 'title': '编译 blink', 'kind': 'code', 'status': 'queued', 'after': [], 'at': now()}],
+             [{'t': 'done', 'ok': True, 'code': 0, 'ms': 800}]]
+    st = await ui.xin_mock(pg, authed=True, live=front)
+    st.update({'tasks': [], 'tp': {'rtask00b01': RUN1}, 'tp_rel': {}, 'tp_done': {}})
+
+    async def overlay(route):
+        body = json.loads(route.request.post_data or '{}')
+        op, args = body.get('op'), body.get('args') or {}
+        if op == 'poll' and str(args.get('run', '')).startswith('rtask'):
+            run = args['run']
+            pub = [e for blk in st['tp'].get(run, [])[:st['tp_rel'].get(run, 0)] for e in blk]
+            off = int(args.get('off', 0))
+            evs = pub[off:off + 400]
+            data = {'events': evs, 'off': off + len(evs), 'done': bool(st['tp_done'].get(run)) and off + len(evs) >= len(pub)}
+            return await route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'data': data}))
+        await route.fallback()
+    await pg.route('**/api/xin/call', overlay)
+    await open_work(pg)
+    await pg.click('.xc-new-b')
+    await pg.fill('.xc-row textarea', '帮我编一下 blink')
+    await pg.keyboard.press('Enter')
+    BOX = '.xc-tb[data-tsid="%s"]' % TASK
+    await pg.wait_for_function("!!document.querySelector('%s') && !document.querySelector('.xc-typing')" % BOX, timeout=10000)
+    st['tasks'] = [task(status='running', run='rtask00b01', startedAt=now() - 3000)]
+    await pg.evaluate('LimingXinChat.tasks()')
+    await pg.wait_for_function("document.querySelector('%s').classList.contains('live')" % BOX, timeout=5000)
+    await pg.click(BOX)
+    await pg.wait_for_function("!!document.querySelector('.tm-win:not([hidden]) .tm-wait')", timeout=8000)
+    await pg.wait_for_timeout(600)
+    W = """(() => { const w = document.querySelector('.tm-win'), q = w.querySelector('.tm-wait'), sq = q ? [...q.querySelectorAll('i')] : [], pr = w.querySelector('.tm-pr'), m = w.querySelector('.tm-meteor');
+      return [sq.length, sq.length ? getComputedStyle(sq[0]).animationName : '', !!pr && !!q && !!(pr.compareDocumentPosition(q) & 4), getComputedStyle(w.querySelector('.tm-cl1')).animationName,
+        m ? getComputedStyle(m).animationName : '', q ? q.getAttribute('aria-hidden') : null, w.querySelectorAll('.tm-log .tm-l').length]; })()"""
+    a = await pg.evaluate(W)
+    ui.check('后台还没输出：提示行下面一排 14 个像素方块、一道光扫过去，夜景的云在飘、隔一会儿划过一颗流星；读屏不念，不写假的输出',
+             a == [14, 'tmscan', True, 'tmdrift', 'tmmeteor', 'true', 0], a)
+    await pg.emulate_media(reduced_motion='reduce')
+    r = await pg.evaluate(W)
+    ui.check('系统开了「减少动态」：方块、云、流星都不动', r[:5] == [14, 'none', True, 'none', 'none'], r)
+    await pg.emulate_media(reduced_motion='no-preference')
+    st['tp_rel']['rtask00b01'] = 1
+    await pg.wait_for_function("[...document.querySelectorAll('.tm-win .tm-l')].some(r => r.textContent.includes('ls'))", timeout=10000)
+    try:
+        await pg.wait_for_function("!document.querySelector('.tm-win .tm-wait')", timeout=3000)
+        gone = True
+    except Exception:
+        gone = False
+    ui.check('来了第一行：方块淡出拿掉', gone, gone)
+    st['tp_rel']['rtask00b01'] = 3
+    st['tp_done']['rtask00b01'] = True
+    st['tasks'] = [task(status='done', run='rtask00b01', startedAt=now() - 5000, endedAt=now(), result={'ok': True, 'text': '编好了。', 'at': now()}, delivery={'state': 'delivered', 'at': now()})]
+    await pg.evaluate('LimingXinChat.tasks()')
+    await pg.wait_for_function("!!document.querySelector('.tm-win .tm-sum')", timeout=10000)
+    d = await pg.evaluate("(() => { const w = document.querySelector('.tm-win'), m = w.querySelector('.tm-meteor'); return [!w.querySelector('.tm-wait'), getComputedStyle(w.querySelector('.tm-cl1')).animationName, m ? getComputedStyle(m).animationName : 'none']; })()")
+    ui.check('做完了：没有方块，夜景不动', d == [True, 'none', 'none'], d)
+    await pg.context.close()
+
+
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
@@ -667,6 +728,7 @@ async def main():
         await part5(browser)
         await part6(browser)
         await part7(browser)
+        await part_wait(browser)
         await browser.close()
     bad = [name for name, ok in ui.results if not ok]
     real = [e for e in ui.errors if 'Failed to load resource' not in e]

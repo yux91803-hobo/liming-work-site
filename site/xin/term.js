@@ -105,7 +105,9 @@
     var wrap = h('div', 'tm-scene'), s = SKY;
     wrap.innerHTML = '<svg class="tm-sky xc-px" viewBox="0 0 ' + s.W + ' ' + s.H + '" preserveAspectRatio="xMidYMax meet" shape-rendering="crispEdges" aria-hidden="true">' +
       '<path class="tm-cl1" d="' + s.c1 + '"/><path class="tm-cl2" d="' + s.c2 + '"/><path class="tm-moon" d="' + s.moon + '"/>' +
-      s.stars.map(function (p, i) { return '<text class="tm-star" x="' + p[0] + '" y="' + p[1] + '" style="animation-delay:' + (i * .43 % 2.4).toFixed(2) + 's">*</text>'; }).join('') + '</svg>';
+      s.stars.map(function (p, i) { return '<text class="tm-star" x="' + p[0] + '" y="' + p[1] + '" style="animation-delay:' + (i * .43 % 2.4).toFixed(2) + 's">*</text>'; }).join('') +
+      // 在做的时候隔一会儿划过一颗流星（站长 2026-11-18「加点等待动画，你自己发挥，要好看」）：亮的头、两格渐暗的尾巴，一格一格往左下走
+      '<g class="tm-meteor"><path class="tm-mt2" d="M52 0h1v1h-1z"/><path class="tm-mt1" d="M51 1h1v1h-1z"/><path class="tm-mh" d="M50 2h1v1h-1z"/></g></svg>';
     var mk = h('div', 'tm-mk'); mk.innerHTML = tab.mark || mascot(tab.live ? 'focus' : 'smile'); mk.setAttribute('aria-hidden', 'true'); wrap.appendChild(mk);
     return wrap;
   }
@@ -228,7 +230,20 @@
       });
       return files;
     }
-    function put(r) { view.log.appendChild(r); follow(); return r; }
+    function put(r) { view.log.appendChild(r); follow(); waitSync(); return r; }
+    // 还在做、记录里一行都还没有：提示行下面一排像素方块，一道琥珀色的光扫过去（站长 2026-11-18「做任务的时候如果没有输出就一直这个界面太丑了，可以加点等待动画」）。
+    // 照 cli-spinners（sindresorhus/cli-spinners）aesthetic、bouncingBar 那类单行进度的画法，做成和夜景一样的像素方块。来了第一行就淡出拿掉；读屏不念，不写假的输出
+    function waitSync() {
+      if (!view) return;
+      var q = view.log.parentNode && view.log.parentNode.querySelector(':scope > .tm-wait'), want = !!view.tab.live && !view.tab.loading && !view.log.children.length;
+      if (want && !q) {
+        q = h('div', 'tm-wait'); q.setAttribute('aria-hidden', 'true');
+        for (var i = 0; i < 14; i++) { var c = h('i'); c.style.setProperty('--i', i); q.appendChild(c); }
+        view.log.parentNode.insertBefore(q, view.log);
+      } else if (!want && q && !q.classList.contains('tm-out')) {
+        if (reduce()) q.remove(); else { q.classList.add('tm-out'); setTimeout(function () { q.remove(); }, 220); }
+      }
+    }
 
     // 一个事件 → 排进打字机的几步
     function feed(ev) {
@@ -321,11 +336,12 @@
       // 打开、换页、读完历史时已经发生的步骤一次画好，停在最下面；打开以后来的才一个字一个字敲
       // （站长 2026-11-17：「我每次点开这个，都是从头在加载一遍，不符合逻辑」）
       drain();
+      waitSync();
     }
     // 结尾：还在做——最底下那一行在转；做完了——一行「已完成 · …」，然后一个闪着的光标
     function ending() {
       var tab = view.tab;
-      st.hidden = !tab.live; el.classList.toggle('tm-live', !!tab.live);
+      st.hidden = !tab.live; el.classList.toggle('tm-live', !!tab.live); waitSync();
       if (tab.live) { status(); startTick(); return; }
       if (tab.loading) return;   // 还在读记录：只写「正在读取…」；读完（fill）再写结尾和光标——光标在就说明这一页齐了
       step(function () {
