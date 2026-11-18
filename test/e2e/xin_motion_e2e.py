@@ -99,6 +99,7 @@ async def task_box(browser, reduce):
     BOX = '.xc-tb[data-tsid="%s"]' % T.TASK
     await pg.wait_for_selector(BOX)
     build = await pg.evaluate("getComputedStyle(document.querySelector('%s')).animationName" % BOX)
+    isle = await pg.evaluate("(() => { const i = document.querySelector('.xc-isle'); return [i.classList.contains('bump'), getComputedStyle(i).animationName, getComputedStyle(i, '::after').animationName]; })()")
     st['tasks'] = [T.task(status='running', run='rtask00b01', startedAt=T.now() - 3000)]
     await pg.evaluate('LimingXinChat.tasks()')
     await pg.wait_for_function("document.querySelector('%s').classList.contains('live')" % BOX, timeout=5000)
@@ -114,9 +115,10 @@ async def task_box(browser, reduce):
     await pg.wait_for_timeout(1000)
     after = await pg.evaluate("document.querySelectorAll('.xc-spark').length")
     if reduce:
-        ui.check('减少动态：任务框不搭、不绕光、做完不盖章不迸火花、不滑', build == 'none' and orbit in ('none', '') and done[:3] == [False, 0, 'none'] and not done[4], (build, orbit, done))
+        ui.check('减少动态：任务框不搭、不绕光、做完不盖章不迸火花、不滑；小芯岛不鼓', build == 'none' and orbit in ('none', '') and done[:3] == [False, 0, 'none'] and not done[4] and not isle[0], (build, orbit, done, isle))
     else:
         ui.check('派活：任务框从左到右一格格搭起来（xcbuild）', build == 'xcbuild', build)
+        ui.check('派活：小芯岛鼓一下（xcbump）、亮一圈往外扩的光（xcring2）', isle == [True, 'xcbump', 'xcring2'], isle)
         ui.check('在做：一颗像素小彗星绕着框边跑（::before 的 xcorbit）', orbit == 'xcorbit', orbit)
         ui.check('做完：✓ 盖章（xcstamp），迸出 6 颗像素火花，结果淡入（xcin），任务框平滑滑下去（FLIP）', done == [True, 6, 'xcstamp', 'xcin', True], done)
         ui.check('火花放完就拿掉', after == 0, after)

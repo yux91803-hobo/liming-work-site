@@ -1693,6 +1693,12 @@
      单独一条（.xc-tbw，不画头像，和结果那条同一种排法）：在做的（带 dock）一直在聊天最底下，新消息和「思考中」插在它上面；
      做完、没做成、停了、等你确认：落到这时候聊天的最后，结果接在它下面；又接着做就回到最底下。刷新以后在做的照样在最底下，
      做完的按结束时间排在各轮之间（openSession）。设计 docs/superpowers/specs/2026-11-17-xin-term-follow-design.md */
+  // 站长 2026-11-19：派出新活、活做完时小芯岛鼓一下、亮一圈往外扩的光（像灵动岛来通知）
+  function isleBump() {
+    var i = root && root.querySelector('.xc-isle'); if (!i || reduceMotion()) return;
+    i.classList.remove('bump'); void i.offsetWidth; i.classList.add('bump');
+    clearTimeout(i._bt); i._bt = setTimeout(function () { i.classList.remove('bump'); }, 900);
+  }
   // 站长 2026-11-19：亲眼看着做完的那一下 ✓ 盖章、迸几颗像素火花（刷新、翻历史时不盖）
   function stampBox(b) {
     b.classList.add('stamp');
@@ -1973,6 +1979,7 @@
     });
     termSync();
     paintCards(); renderWork(); renderHome();
+    if (changed.length) isleBump();
     changed.forEach(function (t) {
       var here = S.open && S.view === 'chat' && S.sid === t.parent;
       if (here && list) { var re = drawTaskResult(t, true); if (re) seeResult(re, t); }
@@ -3689,7 +3696,7 @@
       // 刚派出去的记下来，好知道它什么时候做完
       if (!S.tinfo[ev.sid]) S.tinfo[ev.sid] = { sid: ev.sid, no: ev.no, parent: S.sid || '', title: ev.title, kind: ev.kind, model: ev.model, status: ev.status || 'queued', after: ev.after || [], created: ev.at || Date.now() };
       TDISP[ev.sid] = run;   // 这件活属于派它的这一条消息
-      if (!old) { taskBox(ev.sid, true); pollTasksSoon(1500); paintBoxes(); }
+      if (!old) { taskBox(ev.sid, true); pollTasksSoon(1500); paintBoxes(); isleBump(); }
     } else if (ev.t === 'move') e = sysChip('学会了新动作：' + ev.name, 'move');   // 记忆、好感度是小芯自己的事，不在聊天里报
     if (e) {
       var bd = root.querySelector('.xc-body'), near = !old && bd.scrollHeight - bd.scrollTop - bd.clientHeight < 160;
