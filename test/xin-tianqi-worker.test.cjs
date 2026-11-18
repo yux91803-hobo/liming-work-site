@@ -215,3 +215,35 @@ test('Worker 发给 Durable Object 的请求：天启带 x-xin-scope: tq、实�
   }
   assert.deepEqual(seen, [['tq-inbox', '/inbox/accept', 'tq'], ['xin-inbox', '/inbox/accept', null]]);
 });
+
+test('8:55：先叫醒 li、再叫醒 li2；没配天启不碰 li2；li2 出错不改小芯那次的结果；9:10 的每日任务不碰 li2', async () => {
+  const m = await fresh();
+  // 两台都在睡：查电脑回 suspended，resume 回 202；li2 出错时它那把 key 的请求一律 500；busy 时一律 503
+  const run = async (cron, env, mode) => {
+    m._reset();
+    const calls = [], real = globalThis.fetch;
+    globalThis.fetch = async (url, init = {}) => {
+      const u = new URL(url), key = (init.headers || {})['X-API-Key'], method = init.method || 'GET';
+      calls.push([method, u.pathname, key]);
+      if (mode === 'busy') return json({ error: { code: 'busy' } }, 503);
+      if (mode === 'tq-broken' && key === TQ_KEY) return json({ error: { code: 'internal' } }, 500);
+      if (method === 'GET' && u.pathname === '/v1/machines') return json({ machines: ACCOUNTS[key] || [] });
+      if (method === 'GET' && /^\/v1\/machines\/m_li2?$/.test(u.pathname)) return json({ state: 'suspended' });
+      if (method === 'POST' && u.pathname.endsWith('/resume')) return json({}, 202);
+      throw new Error('意外的请求 ' + method + ' ' + u.pathname);
+    };
+    try { return { r: await m.runCron(cron, env, { waitUntil() {} }, { wait: async () => {} }), calls }; }
+    finally { globalThis.fetch = real; }
+  };
+  const only = await run(m.CRON_WAKE, mkEnv());
+  assert.deepEqual(only.r, { ok: true, data: { state: 'suspended', action: 'resume' } });
+  assert.ok(only.calls.every(c => c[2] === XIN_KEY), '没配天启：不碰 li2');
+  const both = await run(m.CRON_WAKE, tqEnv());
+  assert.deepEqual(both.r, only.r);
+  assert.deepEqual(both.calls.filter(c => c[1].endsWith('/resume')).map(c => c[1]), ['/v1/machines/m_li/resume', '/v1/machines/m_li2/resume']);
+  const broken = await run(m.CRON_WAKE, tqEnv(), 'tq-broken');
+  assert.deepEqual(broken.r, only.r);
+  assert.ok(broken.calls.some(c => c[2] === TQ_KEY), '试过叫醒 li2');
+  const daily = await run(m.CRON_DAILY, tqEnv(), 'busy');
+  assert.ok(daily.calls.length > 0 && daily.calls.every(c => c[2] === XIN_KEY), '每日任务只是小芯的');
+});

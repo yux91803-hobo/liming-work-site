@@ -765,7 +765,7 @@ async function backupDownload(req, env, url, now) {
 }
 
 /* ---------- 定时任务（Cloudflare Cron，只在正式站配了） ----------
-   北京时间 8:55 叫醒电脑：网关 9:00 自己签到要电脑醒着；
+   北京时间 8:55 叫醒电脑：网关 9:00 自己签到要电脑醒着。天启的 li2 上也有网关，配好了就跟着叫醒一次（只叫醒，不做别的）；
    北京时间 9:10、21:10 让小芯按每日任务清单做一遍（今天做成了 21:10 那次会跳过）。 */
 export const CRON_WAKE = '55 0 * * *', CRON_DAILY = '10 1,13 * * *';
 const CRON_ORIGIN = 'https://liming-work.com';   // 取 vm-agent.mjs 用（静态资源，和域名无关）
@@ -781,6 +781,11 @@ export async function runCron(cron, env, ctx, opt = {}) {
     r = await call(env, CRON_ORIGIN, op, {}, ctx, opt.now || Date.now());
     if (r.ok || (r.state !== 'waking' && r.state !== 'busy')) break;
     await wait(Math.min(30, Math.max(5, r.retryAfter || 5)) * 1000);
+  }
+  // 天启（li2）：小芯那台叫完再叫一次，叫不醒、在冷却都只是这一次没叫成，不影响小芯这次的结果
+  if (op === 'wake') {
+    const tq = scopeEnv(env, 'tq');
+    if (enabled(tq)) { kickInbox(tq, ctx); try { await call(tq, CRON_ORIGIN, 'wake', {}, ctx, opt.now || Date.now()); } catch { /* 明天再叫 */ } }
   }
   // 每日任务那两次顺手做机外备份（今天已有就跳过）；备份没成不影响每日任务的结果，下一次再来
   // （结果不挂在返回值上：每日任务的返回格式不变；做没做成看设置里「机外备份」那一行）
