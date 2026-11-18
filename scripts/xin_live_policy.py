@@ -79,6 +79,21 @@ def reply_shape(texts, marker, other=None):
 THIRD_PERSON = ('小芯', '分身', '同事', '助手')
 
 
+def front_lookup_verdict(events):
+    """站长 2026-11-18：几下就能查到的，前台自己用 search_web / read_url_content 查，不派后台。返回失败原因，空字符串表示通过。"""
+    events = events or []
+    if any(e.get('t') == 'task' for e in events):
+        return 'dispatched a background task'
+    steps = [e for e in events if e.get('t') == 'tool' and e.get('name') in ('WebSearch', 'WebFetch')]
+    if not steps:
+        return 'no web step recorded'
+    if not '\n'.join(e.get('text', '') for e in events if e.get('t') == 'text').strip():
+        return 'empty reply'
+    if not next((e for e in events if e.get('t') == 'done'), {}).get('ok'):
+        return 'turn did not finish ok'
+    return ''
+
+
 def first_person_receipt(reply):
     reply = str(reply or '').strip()
     return bool(reply) and not any(x in reply for x in THIRD_PERSON)

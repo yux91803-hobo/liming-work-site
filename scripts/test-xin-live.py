@@ -9,7 +9,7 @@ import os
 import re
 import time
 import uuid
-from xin_live_policy import validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, owner_brief
+from xin_live_policy import front_lookup_verdict, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, owner_brief
 from xin_live_steer import steer_live
 from playwright.async_api import async_playwright
 
@@ -249,6 +249,24 @@ async def main():
             if (await call('tasks', {'sid':image_sid})).get('tasks'):
                 raise RuntimeError('Foreground image chat unexpectedly delegated work')
             print('PASS real foreground reads random image text directly without delegating', flush=True)
+            # 站长 2026-11-18「简单的上网查资料它可以自己去做」：前台自己用 search_web 查公开网页，不派后台（同一个对话，不另开）
+            lookup = await call('send', {'agent':'codex','sid':image_sid,'clientId':'lookup-' + uuid.uuid4().hex,
+                'text':'联调自检：用 search_web 搜一下「Cloudflare Workers documentation」，只回第一个结果的网址。不要派后台，不要记忆。'})
+            limit = time.monotonic() + 210
+            while True:
+                result = await call('poll', {'run':lookup['run'],'off':0})
+                if result.get('done'): break
+                if time.monotonic() > limit: raise RuntimeError('Foreground web lookup timed out')
+                await asyncio.sleep(2)
+            lookup_events = result.get('events', [])
+            why = front_lookup_verdict(lookup_events)
+            if why:
+                raise RuntimeError('Foreground web lookup: ' + why)
+            require_finalization(lookup['run'], lookup_events, 'foreground')
+            await check_front(next((e for e in lookup_events if e.get('t') == 'done'), {}))
+            if (await call('tasks', {'sid':image_sid})).get('tasks'):
+                raise RuntimeError('Foreground web lookup unexpectedly delegated work')
+            print('PASS real foreground looks up a public page itself (' + str(sum(1 for e in lookup_events if e.get('t') == 'tool')) + ' web steps) without delegating', flush=True)
             # Kernel stage 1 (docs/xin-kernel-design.md §14): the message was stored before acknowledgement and maps to its turn,
             # and the turn's events stream from the kernel through Cloudflare. Only status codes and counts are printed.
             me = await (await raw('me', lambda: context.request.get(BASE + '/api/xin/me', timeout=30000), True)).json()
