@@ -1,3 +1,16 @@
+## 2026-11-19 · 天启 li2 第 9 步其实早就做完了（Claude Code 核对）
+
+- 站长 11-19：「这个早就弄好了」。我之前照着交接记录说「还在等 Secret 和网关账号」，是记录没更新，下面这些是核对过的。
+- **怎么核对的**：用 li2 的 key 经 InstaBox 只读地看，只看数量、状态和关键字。没看对话内容，没打印 key。
+- **核对结果**：
+  - 正式站：联调里 `/api/tq/me` 是 `enabled=true`，`XIN_TQ_INSTABOX_API_KEY` 已经写进 Worker。
+  - li2 网关：`workbuddy-gateway.service` 开机自启、在跑，只听 `127.0.0.1:8788`；`/data/workbuddy-gateway/accounts` 里有 3 个账号（站长自己加的）。
+  - `~/.xin/harness.key`：权限 600。拿它调本机网关 `/v1/models` 回 200（22 个模型），错的 key 回 401。
+  - 身份：Harness 人设里是「你叫天启」，没有「小芯」；常驻进程 `XIN_ROLE=tianqi`。
+  - 真对话：11-18 23:59（北京时间）天启回过一轮，成功，用时 5.3 秒。
+- **和设计不一样的地方**（站长自己装的，没动）：li2 的 Harness 带了 `dsh-purge` 插件，`~/.dsh` 里也有 `prompt-inject.md`、`redteam`，人设是 `purge-on`。设计 §4.2 原本写「li2 上没有 purge 这类插件」。天启页面的插件开关能把它关掉。
+- **以后**：交接记录写「等站长做什么」的，接手时先核对实际情况再跟站长说。
+
 ## 2026-11-19 · 工作台动画（Claude Code）
 
 - 见 CHANGES 最新一条。
@@ -38,7 +51,7 @@
   - 框的「在做」用 `tBusy`：任务在做，或者结束 10 分钟内 `delivery` 还是 `pending`。
 - **提示词**：站长明确不要讨好的性格描写，以后别再加回「温暖、俏皮、陪伴、跟着情绪走」这类话。「说实话，不讨好」由 `test/xin-persona-honest.test.cjs` 守着。
 - **前台**：前台用 Hydrogen 高档，账号里没有高档才用中档。
-- **还没做**：天启第 9 步（准备 li2）仍在等站长加 `XIN_TQ_INSTABOX_API_KEY` 和网关账号。
+- **天启第 9 步**：当时以为还在等站长加 `XIN_TQ_INSTABOX_API_KEY` 和网关账号，其实早就做完了（11-19 核对，见最上面一条）。
 
 ## 2026-11-18 · 天启独立工具集成（Codex）
 
