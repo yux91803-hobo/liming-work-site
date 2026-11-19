@@ -2,12 +2,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { lockedSpawn } = require('./helpers/locked.cjs');
-const { stateMode } = require('./helpers/state-mode.cjs');
+const { stateMode } = require('./helpers/state-mode.cjs'), { tmpDir } = require('./helpers/tmp.cjs');
 const AGENT = path.join(__dirname, '../site/xin/vm-agent.mjs');
 
 test('内部命令等待常驻写者，任务事务不再依赖旧锁文件', t => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-locked-'));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const home = tmpDir('xin-locked-');   // 进程退出时删：状态进程是后起的，在 t.after 里删会抢在停它之前
   const obsoleteLock = path.join(home, 'locks', 'tasks.lock');
   fs.mkdirSync(obsoleteLock, { recursive: true });
   const env = { ...process.env, XIN_HOME: home, XIN_WORK: path.join(home, 'work') };
