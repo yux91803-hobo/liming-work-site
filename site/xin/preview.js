@@ -2,6 +2,18 @@
   'use strict';
   var id=new URLSearchParams(location.search).get('id')||'',status=document.getElementById('status'),frame=document.getElementById('frame'),reload=document.getElementById('reload'),download=document.getElementById('download'),generation=0;
   function note(text){status.textContent=text;status.hidden=false;}
+  // 返回（站长 2026-11-19：手机上点了作品链接再返回，回到了工具箱首页的小窗，原来在全屏工作台）：
+  // 手机主屏幕上的网页应用没有标签页，作品链接就在原窗口打开——有上一页就后退，原来那页照原样（全屏工作台的 #xin-work 还在）；
+  // 电脑上新标签页里单独开的（只有这一页）就关掉它，回到原来那页；关不掉再照链接去全屏工作台。
+  // 参考 Next.js router.back() 配兜底的常见做法；只剩一页的标签页可以被脚本关掉（HTML 规范 script-closable）。
+  var back=document.getElementById('back');
+  if(back)back.addEventListener('click',function(e){
+    if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;   // 想在新标签里打开：照链接
+    e.preventDefault();
+    if(history.length>1){history.back();return;}
+    window.close();
+    setTimeout(function(){location.href=back.href;},300);
+  });
   async function load(){
     var mine=++generation;frame.hidden=true;download.hidden=true;
     if(!/^[a-f0-9]{32}$/.test(id)){note('这个预览地址不完整。请回到小芯聊天，打开作品里的预览链接。');return;}
