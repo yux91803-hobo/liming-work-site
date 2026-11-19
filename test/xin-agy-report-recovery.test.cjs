@@ -71,8 +71,8 @@ for (const reportOp of ['agy_conversation', 'agy_quota']) test(reportOp + ' 已�
       assert.equal(fault.pid, f.owner.child.pid);
       if (reportOp === 'agy_conversation') assert.equal(f.read(path.join(f.home, 'sessions', task.sid + '.json')).antigravityConversation, CONVERSATION, '先保存了会话编号，再丢回包');
       else {
-        assert.equal(f.read(path.join(f.home, 'antigravity-quota.json')).blocked, false, '先确认了真实额度，再丢报告回包');
-        assert.equal(f.lines(path.join(f.home, 'quota-history.jsonl')).length, 2, '首次额度采样的两个窗口已经提交');
+        assert.equal(f.read(path.join(f.home, 'antigravity-argon-quota.json')).blocked, false, '先确认了真实额度，再丢报告回包');
+        assert.equal(f.lines(path.join(f.home, 'quota-history.jsonl')).length, 1, '首次 Argon 周限额采样已经提交');
       }
       f.owner.child.kill('SIGKILL'); await f.owner.exited;
       f.startOwner();
@@ -94,7 +94,7 @@ for (const reportOp of ['agy_conversation', 'agy_quota']) test(reportOp + ' 已�
       }, '任务正常收尾');
       assert.equal(history.task.status, 'done', JSON.stringify(history.task));
       assert.equal(history.task.result.text, '实际启用的只有一个');
-      assert.equal(history.task.model, 'gemini-4-hydrogen');
+      assert.equal(history.task.model, 'gemini-4-argon');
       assert.equal(history.runs.length, 1);
       assert.deepEqual(history.runs[0].events.filter(e => e.t === 'note').map(e => e.text), NOTES);
       const saved = f.read(path.join(f.home, 'sessions', task.sid + '.json'));
@@ -103,11 +103,11 @@ for (const reportOp of ['agy_conversation', 'agy_quota']) test(reportOp + ' 已�
       assert.equal(f.read(path.join(f.home, 'runs', history.runs[0].run + '.json')).attempt, fault.attempt, '只恢复报告，不重新分配执行尝试');
       const stats = f.lines(path.join(f.home, 'model-stats.jsonl'));
       assert.equal(stats.length, 1);
-      assert.equal(stats[0].model, 'gemini-4-hydrogen');
+      assert.equal(stats[0].model, 'gemini-4-argon');
       assert.equal(stats[0].from, undefined, '实际用量记录也没有换执行器');
       assert.equal(fs.existsSync(path.join(f.root, 'codex.args')), false);
       assert.equal(f.lines(path.join(f.root, 'calls.jsonl')).length, 3, '收尾后仍无额外模型调用');
-      if (reportOp === 'agy_quota') assert.equal(f.lines(path.join(f.home, 'quota-history.jsonl')).length, 4, '只保留首次与收尾各两个窗口的真实采样，不重放丢 ACK 的采样');
+      if (reportOp === 'agy_quota') assert.equal(f.lines(path.join(f.home, 'quota-history.jsonl')).length, 2, '只保留首次与收尾各一个窗口的真实采样，不重放丢 ACK 的采样');
     } catch (error) {
       t.diagnostic(JSON.stringify(f.diagnostics()));
       throw error;

@@ -1045,17 +1045,42 @@ export function previewAsset(controller,a) {
 
 // Antigravity keeps its login in the controller profile. Its model receives no
 // native file/terminal/MCP permission; requested commands run through bwrap here.
-/* Antigravity 的后台执行模型。站长 2026-11-13：「后台干活优先也派 hydrogen，根据任务难度选择思考强度」，以前的 Gemini 模型不再用。
-   只用 Gemini 4 Hydrogen，思考强度按任务类别（前台派活时定的类别就是难度）：参考 Codex 的 model_reasoning_effort / plan_mode_reasoning_effort、
-   opencode 每个 agent 自己的 reasoningEffort、Antigravity Orchestrator（Carbon 规划、Hydrogen 执行）。
-   实测每一步（结构化动作）：low 3 秒、medium 5 秒、high 7 秒、xhigh 30 秒。 */
-export const AGY_MODEL='gemini-4-hydrogen';
-export const isAgyModel=id=>id===AGY_MODEL;
+export const AGY_MODEL='gemini-4-hydrogen';   // 前台用的（站长 11-18：前台 Hydrogen High）；后台按类别见 vm-models.mjs 的 agyPick
+/* 站长 11-19：后台写代码换 Gemini 4 Neon（High，难题 Extra = xhigh），检查和查资料用 Gemini 4 Argon；Hydrogen 后台不再默认用。
+   额度分池（li 上 agy -p /usage 实测）：Neon、Hydrogen 共用 Gemini 池（gemini-5h、gemini-weekly），Argon 单独一池（gemini-argon-wtu-weekly）。
+   li 上按小芯的单步方式实测：Hydrogen High 6～8 秒一步，Argon Medium ≈7.5，Argon High ≈13，Neon High 16～25，Neon Extra ≈45。
+   档位照 agy models 列出的：Argon 没有 xhigh。 */
+export const AGY_NEON='gemini-4-neon',AGY_ARGON='gemini-4-argon';
+export const AGY_CATALOG={
+  [AGY_MODEL]:{name:'Gemini 4 Hydrogen',pool:'gemini',efforts:['low','medium','high','xhigh']},
+  [AGY_NEON]:{name:'Gemini 4 Neon',pool:'gemini',efforts:['low','medium','high','xhigh']},
+  [AGY_ARGON]:{name:'Gemini 4 Argon',pool:'argon',efforts:['low','medium','high']}
+};
+export const isAgyModel=id=>Object.hasOwn(AGY_CATALOG,String(id||''));
+export const agyPool=id=>isAgyModel(id)?AGY_CATALOG[id].pool:null;
+export const AGY_QUOTA_FILES = {gemini:'antigravity-quota.json', argon:'antigravity-argon-quota.json'};
+export function agyPoolAvailable(pool, read) {
+  const files = pool === 'gemini' ? [AGY_QUOTA_FILES.gemini, 'front-antigravity-quota.json'] : [AGY_QUOTA_FILES[pool]];
+  return files.filter(Boolean).every(file => {
+    const quota = read(file);
+    return agyPool(quota?.model) !== pool || !quota.blocked || quota.retryAt <= Date.now();
+  });
+}
 export const AGY_EFFORTS=['low','medium','high','xhigh'];
 export const AGY_KIND_EFFORT={quick:'low',research:'medium',code:'high',review:'high',hard:'xhigh'};
-export const agyEffort=kind=>AGY_KIND_EFFORT[kind]||'high';
-// CLI 里 Hydrogen 的模型编号带思考强度（gemini-4-hydrogen-medium）
-export const agyProviderModel=effort=>AGY_MODEL+'-'+(AGY_EFFORTS.includes(effort)?effort:'high');
+// 这个模型没有的档位（Argon 的 xhigh）降到它有的、不高于要的那档里最高的；不认识的档当 high
+function agyLevel(model,effort){
+  const have=(AGY_CATALOG[model]||AGY_CATALOG[AGY_MODEL]).efforts,want=AGY_EFFORTS.includes(effort)?effort:'high';
+  return have.includes(want)?want:have.filter(e=>AGY_EFFORTS.indexOf(e)<=AGY_EFFORTS.indexOf(want)).at(-1)||have[0];
+}
+export const agyEffort=(kind,model=AGY_MODEL)=>agyLevel(model,AGY_KIND_EFFORT[kind]||'high');
+export function taskEffort(task, model = task.model) {
+  if (!isAgyModel(model)) return 'max';
+  if (model === AGY_NEON && /neon[\s-]*(?:extra\b|xhigh\b|超高)/i.test(task.userRequest || '')) return 'xhigh';
+  return agyEffort(task.tkind, model);
+}
+// CLI 里的模型编号带思考强度（gemini-4-neon-xhigh、gemini-4-argon-medium）
+export const agyProviderModel=(model,effort)=>(isAgyModel(model)?model:AGY_MODEL)+'-'+agyLevel(isAgyModel(model)?model:AGY_MODEL,effort);
 export function antigravityBinary(home=process.env.XIN_AGY_HOME||os.homedir()) {
   return [process.env.XIN_ANTIGRAVITY_BIN,path.join(home,'.local/bin/agy'),path.join(home,'.gemini/bin/agy')].find(p=>p&&fs.existsSync(p))||null;
 }
@@ -1097,18 +1122,19 @@ function agyProcess(binary,args,cwd,onEvent=()=>{},idleMs=0) {
     child.on('close',code=>{clearTimeout(timer);clearTimeout(idle);resolve({code,result,model,stderr,stalled});});
   });
 }
-export async function readAntigravityQuota(binary,cwd) {
+// 按任务自己的模型查它那个池（Neon、Hydrogen 看 Gemini 池，Argon 看 Argon 池）
+export async function readAntigravityQuota(binary,cwd,model=AGY_MODEL) {
   const r=await agyProcess(binary,['-p','/usage','--output-format','stream-json','--print-timeout','25s'],cwd);
-  if(r.code!==0)throw Error('Antigravity 额度查询失败');return antigravityQuota(r.result);
+  if(r.code!==0)throw Error('Antigravity 额度查询失败');return antigravityQuota(r.result,Date.now(),model);
 }
 export async function antigravityWork(t,options) {
   const binary=antigravityBinary();if(!binary)throw Error('Antigravity 命令不可用');
-  const effort=AGY_EFFORTS.includes(options.effort)?options.effort:'high',provider=agyProviderModel(effort);
+  const model=isAgyModel(options.model)?options.model:AGY_MODEL,effort=agyLevel(model,options.effort),provider=agyProviderModel(model,effort);
   if(!t.workspace)throw Error('Antigravity 只接收隔离的项目副本');
   const report=o=>process.stdout.write(JSON.stringify(o)+'\n');
   if(options.quotaState?.blocked&&options.quotaState.retryAt>Date.now()){report({type:'error',message:'Antigravity 额度仍在倒计时，按已记录的恢复时间等待。'});return 75;}
   const clientDir=options.clientDir;if(!clientDir||under(clientDir,t.workspace.work))throw Error('Antigravity 客户端目录必须由控制器单独持有');
-  let quota;try{quota=await readAntigravityQuota(binary,clientDir);}catch{quota=null;}
+  let quota;try{quota=await readAntigravityQuota(binary,clientDir,model);}catch{quota=null;}
   // A lost cache-report reply cannot invalidate the fresh provider reading; never replay its sample here.
   if(quota)try{options.quota(quota);}catch(e){if(!['owner_unavailable','state_disconnected','state_timeout','state_client_failed'].includes(e?.code)||![false,'unknown'].includes(e?.executed))throw e;}
   if(quota?.blocked){report({type:'error',message:'Antigravity 额度暂不可用，已记录服务端恢复时间。'});return 75;}
@@ -1136,7 +1162,7 @@ export async function antigravityWork(t,options) {
     if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);report({type:'xin.usage',usage:delta});}
     else options.budget.recordUsage?.(null);
     if(r.code!==0||result?.status!=='SUCCESS'){
-      try{quota=await readAntigravityQuota(binary,clientDir);options.quota(quota);}catch{}
+      try{quota=await readAntigravityQuota(binary,clientDir,model);options.quota(quota);}catch{}
       if(quota?.blocked||/quota|rate.limit|resource.exhausted/i.test(JSON.stringify(result||{})+' '+r.stderr)){report({type:'error',message:'Antigravity 额度已用尽，已保留当前文件和额度记录。'});return 75;}
       // 服务答了但没做完（2026-11-13 正式站：约 2 分钟后回了不是 SUCCESS 的状态，同时只回「OK」也要 118 秒）：和不出声一样记下，15 分钟内新任务先不派给它
       const status=String(result?.status||'').replace(/[^A-Za-z_]/g,'').slice(0,32)||'空';
@@ -1152,7 +1178,7 @@ export async function antigravityWork(t,options) {
       if(more.length){late++;prompt=steerBlock(more)+'\n\n'+(a.action==='ask'?'你刚才想问兄弟：'+a.text+'\n先按补充判断还要不要问；能做就接着做。\n':'')+LATE_STEER;continue;}
       if(a.action==='ask')options.ask(a.text);
       report({type:'item.completed',item:{type:'agent_message',text:a.text}});
-      try{options.quota(await readAntigravityQuota(binary,clientDir));}catch{}return 0;
+      try{options.quota(await readAntigravityQuota(binary,clientDir,model));}catch{}return 0;
     }
     if(a.action==='remember'){options.remember(a.text);prompt='已记录。请继续当前工作。';continue;}
     // 主动回原聊天说一句（docs/superpowers/specs/2026-11-17-xin-steer-design.md §4）：控制器记下、合并、到时候看还有没有用再发

@@ -1,3 +1,12 @@
+# 修改清单 · 2026-11-19（后台代码用 Neon，检查和查资料用 Argon）
+
+- Claude Code 完成模型表和路由基础，提交为 `0311bde`、`6443d12`。Codex 从 `23dccfb` 接续任务执行、分池额度、用量页和发布验收，并复核原有改动。两位 AI 分别自查各自实现。
+- 后台代码使用 Neon High，难题使用 Neon Extra。Neon 不可用时依次考虑 Argon High、GLM、Kimi、DeepSeek。检查用 Argon High、GLM、DeepSeek，并在开工和换模型前排除实际作者。资料任务使用 Argon Medium、DeepSeek。杂活、看图、每日任务和电脑维护使用 DeepSeek。带图代码保留 GLM、Kimi、DeepSeek 的候选顺序。 [站长确认的设计](superpowers/specs/2026-11-19-xin-neon-argon-design.md)
+- Neon 与 Hydrogen 共用 Gemini 池，Argon 单独使用周限额。沿用旧 Gemini 额度文件，并将有效的前台耗尽记录用于后台选池。Argon 读数单独保存、备份和展示，预测按池汇总。图表增加 Neon、Argon 系列。
+- 补齐 Claude 交接中指出的执行缺口。原 `safeFallbacks` 会过滤 Argon，`agy-run` 没有传任务模型。现在执行、思考强度、额度报告都跟随任务模型。Neon 转 Argon 时新开供应商会话，同一项目副本、用量与已收到的补充持续保留。换入口前的恢复提示也写回持久轮次，保证新执行进程能读到。 [OpenCode 的会话重试](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/runner/retry.ts)
+- 回归覆盖旧额度记录、两个池耗尽、账号没有 Argon 额度组、Neon 执行后换 Argon、已排队检查避开变更后的作者、实际模型核对、额度报告丢回包后的恢复、前台兼容和独立用量卡。Claude 记录的单步速度约为 Neon High 16—25 秒、Extra 45 秒、Argon Medium 7.5 秒、High 13 秒。Orchestrator 使用原生工具的执行方式与当前受限工具接口不匹配，继续采用单步受控执行。 [设计与实测记录](superpowers/specs/2026-11-19-xin-neon-argon-design.md)
+- 新任务采用新路由，已有任务继续其已保存的安排。新增额度文件为可选读数，无需状态迁移。回滚恢复发布前已验收版本，原会话、项目副本和旧额度记录可继续读取。发布验证和剩余事项见 PR 与交接记录。
+
 # 修改清单 · 2026-11-19（CI 偶发卡满 15 分钟：测试收尾先删了目录，停状态进程那步被跳过）
 
 - **谁做的**：Claude Code 实现并自查（同一会话，没有另一位审核）。只改测试，线上不变。

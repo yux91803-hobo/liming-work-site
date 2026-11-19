@@ -978,11 +978,18 @@ test('路由器：按类别挑（不是排名）；点名只认能干的（看�
   // 每个类别的候选都是 Codex 里配好的模型
   for (const k of Object.keys(ROUTES)) for (const id of ROUTES[k]) assert.ok(CODEX_MODELS.some(m => m.id === id), k + ':' + id);
   assert.deepStrictEqual(route({}), { model: 'deepseek-v4.1-flash', why: 'chat', kind: 'chat', fallbacks: [], note: '' });
+  // 站长 11-19：杂活、查资料、看图、每日任务、电脑维护用 DeepSeek；Kimi 只写代码（含前端）；GLM 只写代码和检查
+  assert.deepStrictEqual(ROUTES, { chat: ['deepseek-v4.1-flash'], quick: ['deepseek-v4.1-flash'], code: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'], research: ['deepseek-v4.1-flash'],
+    hard: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'], vision: ['deepseek-v4.1-flash'], review: ['glm-5.3', 'deepseek-v4.1-flash'], daily: ['deepseek-v4.1-flash'], system: ['deepseek-v4.1-flash'] });
+  for (const [k, ids] of Object.entries(ROUTES)) {
+    if (ids.includes('kimi-k3.1-pro')) assert.ok(['code', 'hard'].includes(k), 'Kimi 只写代码：' + k);
+    if (ids.includes('glm-5.3')) assert.ok(['code', 'hard', 'review'].includes(k), 'GLM 只写代码和检查：' + k);
+  }
   assert.strictEqual(route({ kind: 'code' }).model, 'glm-5.3');
-  assert.strictEqual(route({ kind: 'quick' }).model, 'glm-5.3-flash');
+  assert.strictEqual(route({ kind: 'quick' }).model, 'deepseek-v4.1-flash');
   assert.strictEqual(route({ kind: 'nope' }).kind, 'chat');
   // 看图：看不了图的 GLM-5.3 Flash 不在候选里，点名它也不给
-  assert.deepStrictEqual(route({ kind: 'quick', images: true }).fallbacks, ['glm-5.3']);
+  assert.deepStrictEqual(route({ kind: 'quick', images: true }).fallbacks, []);
   assert.strictEqual(route({ kind: 'quick', images: true }).model, 'deepseek-v4.1-flash');
   const v = route({ want: 'glm-5.3-flash', named: true, images: true });
   assert.deepStrictEqual([v.model, v.why], ['deepseek-v4.1-flash', 'chat']);
@@ -1029,11 +1036,11 @@ test('每日任务用默认模式：Codex 按 daily 类别挑模型、思考强�
   const { op } = agentEnv(t, { HOME: home, PATH: bin + ':' + process.env.PATH, XIN_DSH: dsh });
   op('daily_set', { text: '- 网关签到' });
   const r = op('daily');
-  assert.deepStrictEqual([r.agent, r.model], ['codex', 'glm-5.3'], JSON.stringify(r));
+  assert.deepStrictEqual([r.agent, r.model], ['codex', 'deepseek-v4.1-flash'], JSON.stringify(r));   // 站长 11-19：每日任务用 DeepSeek
   let p;
   for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
   const args = fs.readFileSync(log, 'utf8').split('\n');
-  assert.ok(args.includes('model="glm-5.3"') && args.includes('model_reasoning_effort="max"'), args.join(' '));
+  assert.ok(args.includes('model="deepseek-v4.1-flash"') && args.includes('model_reasoning_effort="max"'), args.join(' '));
   assert.ok(!fs.existsSync(path.join(tmp, 'dsh-ran')));
   // 没有 codex：报错（Harness 在也不用）
   const home2 = path.join(tmp, 'home2'); fs.mkdirSync(home2);
@@ -1148,7 +1155,7 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   const xinTask = (...a) => { try { return execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString(); } catch (e) { return String(e.stdout || '') + String(e.stderr || ''); } };
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
   assert.match(xinTask('new', '--title', 'A', '--dir', path.join(work, 'blink'), '--', '改 blink'), /任务 1「A」/);
-  assert.match(xinTask('new', '-t', 'B', '-d', 'blink', '-k', 'quick', '--', '再改 blink'), /任务 2「B」（杂活，GLM-5.3 Flash/);
+  assert.match(xinTask('new', '-t', 'B', '-d', 'blink', '-k', 'quick', '--', '再改 blink'), /任务 2「B」（杂活，DeepSeek V4.1 Flash/);
   assert.match(xinTask('new', '--title', 'C', '--kind', 'research', '--model', 'deepseek-v4.1-flash', '--', '查资料'), /任务 3「C」（查资料，DeepSeek V4.1 Flash/);
   const st = () => Object.fromEntries(op('tasks', { sid: r.sid }).tasks.map(t => [t.title, t.status]));
   await until(() => { const s = st(); return s.A === 'running' && s.C === 'running' && s; }, 15000, 'A、C 在做');
@@ -1267,7 +1274,7 @@ test('分身配合：--review 做完再派一个分身换个模型、在同一�
   const xinTask = (...a) => execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString();
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
   const out = xinTask('new', '--kind', 'code', '--title', '点灯', '--dir', 'pb5', '--review', '--', '写 PB5 点灯并编译');
-  assert.match(out, /任务 1「点灯」（写代码，GLM-5.3，[\s\S]*检查任务 2（Kimi K3.1 Pro）等它做完就开始/);
+  assert.match(out, /任务 1「点灯」（写代码，GLM-5.3，[\s\S]*检查任务 2（DeepSeek V4.1 Flash）等它做完就开始/);
   assert.match(xinTask('new', '--kind', 'research', '--title', '接着查', '--after', '1', '--', '在点灯基础上查串口'), /任务 3「接着查」/);
   const ts = () => op('tasks', { sid: r.sid }).tasks;
   let list = await until(() => { const x = ts(); return x.length === 3 && x[0].status === 'running' && x; }, 15000, '任务 1 在做');
@@ -1281,13 +1288,13 @@ test('分身配合：--review 做完再派一个分身换个模型、在同一�
   list = await until(() => { const x = ts(); return x.every(t => t.status === 'done') && x; }, 20000, '都做完');
   // 检查的那个分身拿到了前一个的结果和「检查」的要求；用的是另一个模型
   const rv = fc.args().find(a => a.includes('【后台任务 2：检查：点灯】'));
-  assert.ok(rv && rv.includes('【任务 1「点灯」的结果（做完了') && rv.includes('你的活是检查上面这些结果') && rv.includes('model="kimi-k3.1-pro"'), (rv || '').slice(0, 300));
+  assert.ok(rv && rv.includes('【任务 1「点灯」的结果（做完了') && rv.includes('你的活是检查上面这些结果') && rv.includes('model="deepseek-v4.1-flash"'), (rv || '').slice(0, 300));
   assert.ok(list[2].startedAt >= list[0].endedAt, '任务 3 等任务 1 做完才开始');
   // 任务中心：全部任务、对话名字、统计、每日任务
   const all = op('tasks', { all: true });
   assert.deepStrictEqual(all.tasks.map(t => t.no), [1, 2, 3]);
   assert.strictEqual(all.titles[r.sid], '你好');
-  assert.ok(all.stats.some(x => x.model === 'glm-5.3' && x.n >= 1 && x.ok >= 1) && all.stats.some(x => x.model === 'kimi-k3.1-pro'));
+  assert.ok(all.stats.some(x => x.model === 'glm-5.3' && x.n >= 1 && x.ok >= 1) && all.stats.some(x => x.model === 'deepseek-v4.1-flash'));   // 检查换成 DeepSeek（检查只用 GLM 或 DeepSeek，避开作者 GLM）
   assert.ok(all.daily && 'last' in all.daily && all.daily.today);
 });
 

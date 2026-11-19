@@ -37,10 +37,13 @@ export function forecast(samples, window, now = Date.now()) {
 // total_tokens = 输入 + 输出（2026-11-12 在正式机核对：input 54735、cache_read 149606、output 39807、total 94542），
 // 直接用会让缓存命中超过 100%。所以记账时换算，并标 incl；以前没换算的旧记录（这些模型、没有 incl）读的时候补上。
 // 参考 opencode packages/core/src/session/usage.ts：各家口径在入口处换成同一种。
-// 和 vm-runtime.mjs 的 AGY_MODEL 保持一致（测试会核对）。
-export const AGY_MODELS = ['gemini-4-hydrogen'];
+// 和 vm-runtime.mjs 的 AGY_CATALOG 保持一致（测试会核对）：Hydrogen、Neon、Argon 都是 Antigravity，口径一样。
+export const AGY_MODELS = ['gemini-4-hydrogen', 'gemini-4-neon', 'gemini-4-argon'];
 export function agyUsage(b, ctx = 0) {
-  const input = (b.input || 0) + (b.cached || 0), output = b.output || 0;
+  const native = Object.entries(b.providerUsage || {}).filter(([key]) => key.startsWith('antigravity:'));
+  // Gateway input already includes its cached tokens. Add only Antigravity's excluded cache reads after a handoff.
+  const excluded = native.length ? native.reduce((sum, [,u]) => sum + (u.cache_read_tokens || 0), 0) : (b.cached || 0);
+  const input = (b.input || 0) + excluded, output = b.output || 0;
   return { input, cached: b.cached || 0, output, total: input + output, ctx, win: 1000000, incl: true };
 }
 // 旧口径的 Antigravity 用量（输入不含缓存、没有 incl）换成「输入含缓存」：统计汇总和以前做完的任务取用量都用它
