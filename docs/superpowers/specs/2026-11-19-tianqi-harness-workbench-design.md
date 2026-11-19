@@ -46,7 +46,7 @@
 | 终端里自己输命令 | li2 控制器新操作：在工作目录里跑一条命令（限时、限输出） | 新做 |
 | 预览 | 文件里的图、svg、网页、markdown；回答里提到的这类路径能点开 | 新做（读文件用已有接口） |
 | 权限（只读 / 工作区内修改 / 完全权限） | `dsh --profile headless --permission-mode <预设> --approval-policy never`；三档是 Harness 基础配置自带的（`dsh-base` 的 `permission`：read-only / workspace-write / danger-full-access） | 第 2 个 PR 做了 |
-| 计划模式 | 这一轮用只读预设跑，只出计划；点「按计划执行」再按选的权限做 | 新做 |
+| 计划模式 | 这一轮用只读预设跑，只出计划；点「按计划执行」再按选的权限做 | 第 2 个 PR 做了 |
 | 工作区 | 每个对话一个工作目录（`~/work` 下的文件夹），Harness 在那里跑 | 新做 |
 | 插件开关（REA、Purge） | 已有的插件设置 | 已有，搬进设置 |
 | 电脑状态 | 已有的 li2 ping | 已有 |
