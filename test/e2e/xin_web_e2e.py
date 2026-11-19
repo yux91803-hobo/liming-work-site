@@ -129,13 +129,21 @@ async def main():
         tab = await opened.value
         await tab.wait_for_selector('#frame:not([hidden])')
         entries = await tab.evaluate('history.length')
+        # 新版 Chrome（CI 上 157）关标签页比 click() 收到回执还快，click() 会报「页面已关闭」。
+        # Playwright 的 expect_event 退出时先等到 close 事件，再把里面的错抛出来，所以要在里面接住：页面确实关了就不算错。
+        click_error = None
         try:
-            async with tab.expect_event('close', timeout=3000):
-                await tab.get_by_role('link', name='返回小芯聊天').click(no_wait_after=True)
+            async with tab.expect_event('close', timeout=5000):
+                try:
+                    await tab.get_by_role('link', name='返回小芯聊天').click(no_wait_after=True)
+                except Exception as e:
+                    click_error = type(e).__name__ + ': ' + str(e).splitlines()[0][:160]
             how = 'closed'
-        except Exception:
-            how = tab.url
-        still = await page.evaluate("[location.hash, document.querySelector('.xc').classList.contains('wb')]")
+        except Exception as e:
+            how = (tab.url, click_error, type(e).__name__ + ': ' + str(e).splitlines()[0][:160])
+        if click_error and how == 'closed':
+            print('NOTE preview back: the tab closed before click() returned (' + click_error + ')', flush=True)
+        still =await page.evaluate("[location.hash, document.querySelector('.xc').classList.contains('wb')]")
         assert entries == 1 and how == 'closed' and still == ['#xin-work', True], (entries, how, still)
         await page.context.close()
         print('PASS preview back: same window goes back to the full workbench, a lone tab closes itself', flush=True)
