@@ -411,6 +411,16 @@ async def main():
           return { w: Math.round(c.width), share: Math.round(c.width / m.width * 100), right: document.querySelector('.tq-frame').dataset.right,
             dot: document.querySelector('#tq-tab-plan').classList.contains('has'), chips: [...document.querySelectorAll('.tq-instruments > *')].every(e => e.getBoundingClientRect().right <= document.querySelector('.tq-box').getBoundingClientRect().right + 0.5) }; })()""")
         ui.check('手机：计划卡片占满整行；右栏不自动升起、「计划」亮小点；输入框里的按钮都在框内', phone['share'] >= 80 and phone['right'] == 'closed' and phone['dot'] and phone['chips'], phone)
+        # 站长 11-20：模型面板切到「最高」时面板弹一下。说明那行字换字时宽度跟着内容动画，新字长一点就在旧宽度里折成两行，面板先变高再缩回去
+        await pg.click('.xc-mdl')
+        await pg.wait_for_selector('.xc-pick:not([hidden])')
+        await pg.wait_for_timeout(450)
+        hs = await pg.evaluate("""() => new Promise(done => {
+          const p = document.querySelector('.xc-pick'), hs = [], t0 = performance.now();
+          document.querySelector('.xc-eff-d[data-v=max]').click();
+          (function f() { hs.push(p.getBoundingClientRect().height); if (performance.now() - t0 < 600) requestAnimationFrame(f); else done(hs); })();
+        })""")
+        ui.check('手机：模型面板从「高」切到「最高」，说明换字时面板高度一直不变（不弹一下）', len(hs) > 5 and max(hs) - min(hs) < 1, (round(min(hs), 1), round(max(hs), 1), len(hs)))
         await pg.context.close()
 
         # 3. 没登录
@@ -494,6 +504,41 @@ async def main():
             cat_name == '天启' and pg.url.endswith('/tianqi') and iframe_src == '/tools/tianqi/?embed=1' and embed_ui['embed'] and embed_ui['xHidden'],
             (cat_name, pg.url, iframe_src, embed_ui),
         )
+        await pg.context.close()
+
+        # 6b. 站长 11-20：手机上从首页打开天启，打字时键盘把面板推上去，下面露出首页（STM32 卡片）。
+        #     照 Vaul / React Aria 的 usePreventScroll：工具开着时首页钉在原处、页面没得滚（左滑返回时首页照样露出来）；
+        #     面板跟着可见区域（visualViewport）走，键盘弹出时正好缩到键盘上面。Chromium 没有软键盘，用改 visualViewport 的值来模拟。
+        pg = await ui.page(browser, 390, 560, mobile=True)
+        st = await tianqi_mock(pg, xin_enabled=True)
+        await pg.goto(ui.BASE + '/')
+        await pg.wait_for_selector('.card[data-id="tianqi"]')
+        await pg.evaluate("window.scrollTo(0, 80)")
+        await pg.wait_for_function("scrollY > 30")
+        # 首页的布局位置（offsetTop - scrollY，不受工具打开时首页缩小那一下的影响）
+        before = await pg.evaluate("[scrollY, document.getElementById('home').offsetTop - scrollY]")
+        await pg.click('.card[data-id="tianqi"]')
+        await pg.wait_for_selector('.panel[data-id="tianqi"].show iframe')
+        await pg.wait_for_timeout(700)
+        locked = await pg.evaluate("""(() => { const h = document.getElementById('home');
+          return { sy: scrollY, scrollable: document.scrollingElement.scrollHeight > innerHeight + 1,
+            homeTop: h.offsetTop - scrollY, homeVisible: getComputedStyle(h).visibility === 'visible' && getComputedStyle(h).display !== 'none' }; })()""")
+        await pg.evaluate("""(() => { const vv = window.visualViewport;
+          Object.defineProperty(vv, 'height', { configurable: true, get: () => 300 });
+          Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 40 });
+          vv.dispatchEvent(new Event('resize')); })()""")
+        kb = await pg.evaluate("(() => { const r = document.getElementById('stage').getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)]; })()")
+        await pg.evaluate("""(() => { const vv = window.visualViewport; delete vv.height; delete vv.offsetTop; vv.dispatchEvent(new Event('resize')); })()""")
+        kb_off = await pg.evaluate("(() => { const r = document.getElementById('stage').getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)]; })()")
+        await pg.click('.panel[data-id="tianqi"] .back')
+        await pg.wait_for_function("!document.body.classList.contains('tool-open')")
+        await pg.wait_for_timeout(600)
+        after = await pg.evaluate("[scrollY, getComputedStyle(document.getElementById('home')).position]")
+        ui.check('手机：从首页打开天启后首页钉在原处、页面不能滚（首页还看得见，左滑返回能露出来）；键盘弹出时面板缩到可见区域、收起后复原；关掉天启滚回原处',
+                 before[0] > 30 and locked == {'sy': 0, 'scrollable': False, 'homeTop': before[1], 'homeVisible': True}
+                 # 关掉后首页按「最近用过」重排卡片会变高，浏览器的滚动锚定可能再挪 1 像素
+                 and kb == [40, 300] and kb_off == [0, 560] and abs(after[0] - before[0]) <= 2 and after[1] == 'relative',
+                 (before, locked, kb, kb_off, after))
         await pg.context.close()
 
         # 手机双区上下排列，返回键与天启品牌、操作键分开。

@@ -436,6 +436,8 @@ html.xc-lock #home{display:none}   /* 全屏工作台盖着首页时首页不占
 .xc-pick.tq .xc-eff-th{background:var(--tq-chip);box-shadow:inset 0 1px 0 rgba(219,231,255,.14),0 2px 6px -2px rgba(20,32,80,.5)}
 .xc-pick.tq .xc-eff-d.on{color:#eef3ff}
 .xc-eff-hp{margin:9px 6px 2px;min-height:18px}
+/* 说明是整行的字：外框占满整行，换字只淡入淡出、宽度不动。原来宽度跟着内容动画，新字长一点就在旧宽度里折成两行，面板先变高再缩回去（站长 11-20「切到最高会弹一下」） */
+.xc-eff-hp > .xc-sw-w{display:grid;width:100%}
 .xc-eff-help{font-size:12px;line-height:1.5;color:var(--ink-3)}
 .xc-em{display:inline-flex;align-items:flex-end;gap:2px;height:12px;margin-left:8px;vertical-align:-1px}
 .xc-em b{display:block;width:4px;height:calc(4px + var(--h) * 8px);--rad:1px;background:var(--hair-2);transition:background-color .16s var(--e-out)}
