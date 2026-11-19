@@ -58,8 +58,8 @@ import { loginStore, normalizeSite } from './vm-logins.mjs';
 import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
 import { fromClaude, fromCodex, fromHarness, stepActivity } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
-import { resolveEffort, HARNESS_WIN, HARNESS_MODELS, harnessModel, HARNESS_ROUTE, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
-import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, TIANQI_NAME, tianqiPrompt, taskSystemPrompt } from './vm-persona.mjs';
+import { resolveEffort, HARNESS_WIN, harnessModel, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route } from './vm-models.mjs';
+import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
 export * from './vm-screen.mjs';
@@ -326,46 +326,8 @@ function installXin() {
     try { mk(d); fs.writeFileSync(path.join(d, 'xin'), sh, { mode: 0o755 }); fs.chmodSync(path.join(d, 'xin'), 0o755); } catch { /* 写不了就算了 */ }
   }
 }
-/* ---------- Harness（DeepSeek Harness，命令 dsh） ----------
-   dsh --profile headless --json：一句话一个进程，事件一行一个 JSON（session / status / text / tool_call / tool_result / final）。
-   线路（本地网关、这一轮选择的模型）和小芯的设定（system-prompt 的 personaPrefix）都写进一个 --patch 文件，
-   每一轮都带：不靠 ~/.dsh 里的配置，Harness 重装、升级、~/.dsh 被清掉都不影响小芯（只是 Harness 自己的旧会话接不上）。
-   网关的 key 在 ~/.xin/harness.key（只有自己能读），起的时候用环境变量 XIN_HARNESS_KEY 交给它（线路里写的是 apiKeyEnv）。
-   接着聊用 --session-id。
-   权限：DSH_PERMISSION_MODE=danger-full-access（和 Codex 的 --dangerously-bypass-approvals-and-sandbox 一样，用户确认过）。 */
-// 模型、强度和插件状态共同决定文件名，几个对话同时发送时互不覆盖。
-const HARNESS_PERSONA = (model, effort, purge) => path.join(BASE, 'harness-persona.' + model + '.' + effort + (purge == null ? '' : '.purge-' + (purge ? 'on' : 'off')) + '.yml');
 function hasAgent(agent) { return agent === 'harness' ? harnessInstalled() : hasCmd(agent); }
-function writePersona(effort, model) {
-  mk(BASE);
-  const R = HARNESS_ROUTE, M = harnessModel(model), q = JSON.stringify, e = resolveEffort('harness', M.id, effort);
-  const purge = harnessPurgeInstalled() ? pluginState()['harness:purge'] !== false : null, out = HARNESS_PERSONA(M.id, e, purge);
-  const t = out + '.' + process.pid + '.tmp';
-  // 字符串都用 JSON 写：JSON 字符串就是合法的 YAML 双引号字符串
-  fs.writeFileSync(t, [
-    '# 天启用的 Harness：线路、思考强度和设定（网站每一轮起 Harness 前重写，不用改 ~/.dsh 里的配置）',
-    '- id: llm-pi-ai', '  config:', '    providers:', '      ' + R.provider + ':',
-    '        displayName: ' + q(R.name), '        apiKeyEnv: XIN_HARNESS_KEY', '        api: ' + R.api, '        baseURL: ' + q(R.baseURL),
-    '        models:'].concat(HARNESS_MODELS.flatMap(m => [
-    '          - id: ' + q(m.id), '            name: ' + q(m.name), '            contextWindow: ' + m.win,
-    '            reasoningEfforts:'].concat(m.efforts.map(x => '              ' + x + ': ' + (x === 'off' ? 'none' : x)))), [
-    '- id: agent-default-model', '  config:', '    provider: ' + R.provider, '    model: ' + q(M.id), '    reasoningEffort: ' + e,
-    '- id: system-prompt', '  config:', '    personaPrefix: ' + q(TIANQI ? TIANQI_NAME : tianqiPrompt())
-  ], purge == null ? [] : ['- id: dsh-purge', '  config:', '    enabled: ' + purge], ['']).join('\n'));
-  fs.renameSync(t, out);
-  // Earlier patches embedded Xiaoxin's notebook. They are regenerated caches: drop any still carrying it.
-  for (const n of fs.readdirSync(BASE).filter(n => /^harness-persona\..+\.yml$/.test(n))) {
-    const f = path.join(BASE, n);
-    if (f !== out && readText(f).includes('<<<记事本')) { try { fs.unlinkSync(f); } catch { /* removed concurrently */ } }
-  }
-  return out;
-}
-function harnessEnv() {
-  const env = { DSH_PERMISSION_MODE: 'danger-full-access' };
-  const key = readText(HARNESS_KEY()).trim();
-  if (key) env.XIN_HARNESS_KEY = key;
-  return env;
-}
+function writePersona(effort, model) { return writeHarnessPatch(effort, model, pluginState()); }
 
 function authorModels(deps){return [...new Set(deps.flatMap(d=>(d.actualModels&&d.actualModels.length?d.actualModels:[d.actualModel||d.model])).filter(Boolean))];}
 function reviewAuthors(t){return [...new Set((t.reviewAuthors||[]).concat(authorModels((t.after||[]).map(no=>findTask({no})).filter(Boolean))))];}
@@ -1038,7 +1000,6 @@ function codexLogs(home = CODEX_HOME()) {
   return out;
 }
 // Harness：~/.dsh/sessions/<工作目录>/session-<uuid>/（一个文件夹），外加 storages/session_projcache/sessions/<会话号>.json
-const DSH_HOME = () => process.env.XIN_DSH_HOME || path.join(os.homedir(), '.dsh');
 function harnessLogs() {
   const out = [], root = path.join(DSH_HOME(), 'sessions');
   for (const d of listDir(root)) {
@@ -1172,10 +1133,6 @@ function mcpUser() { return new Set(mcpNames(readText(path.join(CODEX_HOME(), 'c
 function mcpBuiltin() { return new Set(mcpNames(readText(CODEX_SYS()))); }
 function pluginState() { const j = readJ(PLUGINS_F(), {}); return j && j.state && typeof j.state === 'object' ? j.state : {}; }
 function savePluginState(st) { mk(BASE); writeJ(PLUGINS_F(), { state: st }); }
-function harnessPurgeInstalled() {
-  const p = readJ(path.join(DSH_HOME(), 'profiles', 'headless', 'package.json'), {});
-  return !!(p.dependencies && p.dependencies['dsh-purge-community']);
-}
 // 后台分身：插件全关（自己装的、电脑自带的都关）
 export function mcpAllOff() {
   const out = [];
@@ -2320,6 +2277,7 @@ const ops = {
     return { ok: r.some(x => x.status >= 200 && x.status < 300), results: r };
   },
   plugins(a = {}) {
+    if (TIANQI) return a.agent && a.agent !== 'harness' ? { error: 'tianqi_only', msg: '天启只用 Harness' } : { plugins: tianqiPlugins(pluginState()), merged: [] };
     if (a.agent === 'harness') return { plugins: harnessPurgeInstalled() ? [{ name: 'purge', desc: '提示词与规则管理，下一句生效', on: pluginState()['harness:purge'] !== false, agent: 'harness' }] : [], merged: [] };
     if (a.agent === 'claude') return { plugins: [], merged: [] };
     let merged = [];
@@ -2338,6 +2296,13 @@ const ops = {
   plugin_set(a) {
     const name = String(a.name || '');
     if (!PLUGIN_RE.test(name)) return { error: 'bad_name', msg: '插件名字不对' };
+    if (TIANQI) {
+      if (a.agent && a.agent !== 'harness') return { error: 'tianqi_only', msg: '天启只用 Harness' };
+      if (!tianqiPlugins(pluginState()).some(p => p.name === name)) return { error: 'no_plugin', msg: '天启没有这个插件：' + name };
+      if (typeof a.on !== 'boolean') return { error: 'bad_value', msg: '插件开关值不对' };
+      const st = pluginState(); st['harness:' + name] = a.on; savePluginState(st);
+      return { ok: true, name, on: a.on, agent: 'harness' };
+    }
     if (a.agent === 'harness') {
       if (name !== 'purge' || !harnessPurgeInstalled()) return { error: 'no_plugin', msg: '没有这个 Harness 插件：' + name };
       const st = pluginState(); st['harness:purge'] = !!a.on; savePluginState(st);

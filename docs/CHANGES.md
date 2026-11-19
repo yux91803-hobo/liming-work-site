@@ -1,3 +1,14 @@
+# 修改清单 · 2026-11-19（天启星空工作台）
+
+- Codex 从 #178 接手，完成前同步 #179。实现和自查由 Codex 负责。
+- 按站长的反馈重新编写 `/tianqi` 的工作台模板。导航集中在顶部，探索台与对话区在宽屏并排、窄屏上下排列，历史改成按需打开的弹层。星形新建键、行星环历史键、星系插件键、模型行星、太阳发送和黑洞停止用于识别操作。输入、回复、模型、终端和弹层各自使用天启专用样式。
+- 天启标题栏增加插件入口。经登录校验后，Worker 只把操作送给 `li2`，内核只接受 Harness 的 Purge 和 REA。复用旧版 Purge 开关，新增 REA 的 MCP 补丁。开关由各轮分别读取，REA 默认关闭。插件命令固定在 `li2` 的本地启动器。将 Harness 补丁生成移到现有的 `vm-persona.mjs`，按实际位置更新写者清单并下调 `vm-agent.mjs` 行数基线。冷启动保持 40 个子请求。 [Harness MCP 配置](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md)
+- 本地复核了 1280、1024、768、390 四种宽度的两个主题偏好，以及返回键、历史对话、输入区和模型面板。定向测试覆盖未登录请求、`li2` 路由隔离、插件状态生效和键盘焦点。
+- `li2` 已加载来自 `li` 的 Purge 1.6.98。REA 使用同版 6.9.0，带 Ghidra 12.1.4 和 Java 21，MCP 握手后列出 255 个工具。 [云电脑验收](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44375942730)
+- Harness 补丁用 `insert` 注册新增的 MCP 插件。隔离的模型请求检查确认，REA 关闭时提供 0 个 REA 工具，开启时提供 255 个。 [Harness 请求验证](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44379926524)
+- `li2` 接好本机网关客户端鉴权。原来网关默认走 `intl`，现有账号在 `cn`，默认请求因此回 503。将 `li2` 网关默认线路匹配到现有账号后，真实 Responses 请求返回 200 并得到回复。 [网关连接验收](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44381303967)
+- 本地检查 1,062 项全过，15 组浏览器回归全过。执行环境重启时，浏览器回归已完成前 14 组，最后一组动画回归恢复后单独跑完 24 项。天启定向浏览器回归 15 项全过。
+
 # 修改清单 · 2026-11-19（工作台动画：体检修了 6 个问题，新加 7 种动画）
 
 - **谁做的**：Claude Code 实现并自查（同一会话，没有另一位审核）。站长 11-18：「检查一下当前工作台还有哪些动画逻辑不合理的地方……动画尽量要创新，新颖，好看特效多一点」；11-19：「做吧，兄弟支持你」。见 [设计](superpowers/specs/2026-11-19-xin-motion-design.md)、[计划](superpowers/plans/2026-11-19-xin-motion.md)。

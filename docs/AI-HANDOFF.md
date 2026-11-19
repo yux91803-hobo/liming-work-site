@@ -4,12 +4,22 @@
 - **怎么核对的**：用 li2 的 key 经 InstaBox 只读地看，只看数量、状态和关键字。没看对话内容，没打印 key。
 - **核对结果**：
   - 正式站：联调里 `/api/tq/me` 是 `enabled=true`，`XIN_TQ_INSTABOX_API_KEY` 已经写进 Worker。
-  - li2 网关：`workbuddy-gateway.service` 开机自启、在跑，只听 `127.0.0.1:8788`；`/data/workbuddy-gateway/accounts` 里有 3 个账号（站长自己加的）。
+  - li2 网关：`workbuddy-gateway.service` 开机自启、在跑，只听 `127.0.0.1:8788`；`/data/workbuddy-gateway/accounts` 里有 3 个账号（站长加的）；线路配置见下一条（#180）。
   - `~/.xin/harness.key`：权限 600。拿它调本机网关 `/v1/models` 回 200（22 个模型），错的 key 回 401。
   - 身份：Harness 人设里是「你叫天启」，没有「小芯」；常驻进程 `XIN_ROLE=tianqi`。
-  - 真对话：11-18 23:59（北京时间）天启回过一轮，成功，用时 5.3 秒。
-- **和设计不一样的地方**（站长自己装的，没动）：li2 的 Harness 带了 `dsh-purge` 插件，`~/.dsh` 里也有 `prompt-inject.md`、`redteam`，人设是 `purge-on`。设计 §4.2 原本写「li2 上没有 purge 这类插件」。天启页面的插件开关能把它关掉。
+  - 真对话：li2 上留着的一轮（11-18 23:59 北京时间）成功，用时 5.3 秒。
+- **Purge、REA**：li2 的 Harness 带 `dsh-purge` 插件（`~/.dsh` 里有 `prompt-inject.md`、`redteam`，人设是 `purge-on`），是 #180（Codex，见下一条）有意接进来的。设计 §4.2 里「li2 上没有 purge 这类插件」那句已经被 #180 取代。天启页面的插件开关能关。
 - **以后**：交接记录写「等站长做什么」的，接手时先核对实际情况再跟站长说。
+
+## 2026-11-19 · 天启星空工作台（Codex）
+
+- 基线更新到 #179 的 `f331b4c`，工作分支 `codex/xin-tianqi-universe-20261118`。Codex 实现并自查。按站长的要求先定稿并复核天启界面，再验收插件。 [变更记录](CHANGES.md)
+- 天启的工作台模板在 `site/tools/tianqi/index.html`，样式在 `site/tools/tianqi/workbench.css`。导航、探索台、对话区和历史弹层使用独立结构。工具箱返回键的样式按 `data-id=tianqi` 生效。小芯工作台和旧天启对话继续由原有入口处理。
+- 天启插件设置走 `/api/tq/call`，存于 `li2` 的状态库。Purge 的原始包来自 `li` 的只读文件接口，REA 按 `li` 上的版本准备本地 MCP 启动器。每轮生成的 Harness 补丁按模型、强度和插件开关区分。
+- `li2` 网关的服务配置含本机客户端的鉴权文件和 `61-liming-tianqi-realm.conf`，后者让默认线路匹配现有的 `cn` 账号。改线路前后只记录计数与响应状态，真实请求已回复。 [网关验证](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44381303967)
+- 更换 `li2` 的网关账号后，先对照 `/health` 的 `accounts_ready_current_realm` 和 `accounts_ready_by_realm`，再用客户端的密钥验证 Responses 回复。
+- 正式站验收覆盖天启模板、登录状态、`li2` 的 `ping`、Purge 和 REA 列表以及一条独立的验收对话。验收完成后清理该对话。
+- 发布按 PR 的全量测试、测试站检查及正式站联调验收。需要撤回界面或接口时，由发布流程回到发布前已验证的版本。撤回 VM 插件时，等天启执行中的对话结束，恢复同目录的 `package.json.before-tianqi-purge-1.6.98`，移开新增的 `dsh-purge-community` 包目录和 `~/.local/bin/tianqi-rea-mcp`。保留会话、账号与其他配置。
 
 ## 2026-11-19 · 工作台动画（Claude Code）
 

@@ -57,7 +57,7 @@ export function enabled(env) {
    （Worker 密钥 TQ_INSTABOX_API_KEY）、换一台电脑（XIN_TQ_MACHINE），待送达和内核配置存在另一个实例 tq-inbox；
    后台任务监督、备份、每日任务、推送这些小芯的东西在天启里都没有。登录还是同一个。
    参考 opencode 的 Instance（packages/opencode/src/project/instance.ts）：一个服务进程，状态按项目目录各存一份。 */
-export const TQ_OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'rename', 'archive', 'forget', 'files', 'usage', 'delivery', 'deliveries']);
+export const TQ_OPS = new Set(['status', 'wake', 'ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'rename', 'archive', 'forget', 'files', 'usage', 'plugins', 'plugin_set', 'delivery', 'deliveries']);
 const NOT_TQ = { error: 'not_in_tianqi', msg: '天启没有这个功能' };
 export function scopeEnv(env, scope) {
   if (scope !== 'tq') return env;

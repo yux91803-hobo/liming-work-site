@@ -251,3 +251,16 @@ h1{font-weight:400;font-size:26px}
   .round:hover{border-color:var(--pb);background:var(--sunk)}
 }
 .panel .back{border-radius:0}
+
+.panel[data-id=tianqi] .back {
+  top: calc(19px + var(--st));
+  border-radius: 11px !important;
+  background: #171c2b;
+  border-color: #434e6c;
+  color: #f1f4fe;
+}
+.panel[data-id=tianqi] .back:is(:hover,.press) {background:#222a40;border-color:#8595bf}
+.panel[data-id=tianqi] .back:focus-visible {outline:2px solid #b0bfff;outline-offset:2px}
+.panel[data-id=tianqi] .splash {background:#0d1019}
+.panel[data-id=tianqi] .splash .ic {background:#171c2b;border-color:#434e6c;color:#dce7ff}
+@media (max-width:559px){.panel[data-id=tianqi] .back{top:calc(9px + var(--st))}}
