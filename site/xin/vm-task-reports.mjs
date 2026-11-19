@@ -288,7 +288,7 @@ export function createRunFinalizer({ store, loadRun, loadSession, taskFinish, em
         const done = { t:'done', code:data?.code ?? -1, ms:data?.ms ?? Math.max(0, Date.now()-current.started),
           ok:result.ok && !files?.error && !files?.publication?.pending, stopped:result.stopped, usage:data?.usage ?? null,
           cost:data?.cost, effort:current.effort||'', ...(data?.model && current.agent!=='claude' ? {model:data.model,
-            why:current.why, from:data.from, providerModel:data.providerModel} : {}) };
+            why:current.why, from:data.from, providerModel:data.providerModel} : {}), ...(current.plan ? {plan:true} : {}) };   // 天启的计划轮次：网页据此放计划卡片
         if (data?.recordStats) journal.append(statsFile(), {at:data.at, run, agent:current.agent, model:data.model||'',
           kind:current.routeKind||current.kind||'chat', why:current.why||'', ms:done.ms, from:data.from, fromErr:current.fromErr,
           usage:data.delta, ok:done.ok, stopped:done.stopped});

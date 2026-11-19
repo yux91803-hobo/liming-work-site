@@ -59,7 +59,7 @@ import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
 import { fromClaude, fromCodex, fromHarness, stepActivity } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
 import { resolveEffort, HARNESS_WIN, harnessModel, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route, backgroundRoute } from './vm-models.mjs';
-import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch } from './vm-persona.mjs';
+import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, harnessPerm, harnessTurn, permError, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
 export * from './vm-screen.mjs';
@@ -395,7 +395,7 @@ export function agentArgs(agent, sess, text, effort, extra) {
   if (agent === 'harness') {
     // 文字放最后当任务；以 - 开头会被当成选项，前面垫个空格
     const task = /^-/.test(text) ? ' ' + text : text;
-    return [dshCmd(), ['--profile', 'headless'].concat((extra && extra.patch) ? ['--patch', extra.patch] : [], ['--json'],
+    return [dshCmd(), ['--profile', 'headless'].concat((extra && extra.patch) ? ['--patch', extra.patch] : [], ['--permission-mode', harnessPerm(extra && extra.perm), '--approval-policy', 'never', '--json'],
       sess.started && sess.agentSid ? ['--session-id', sess.agentSid] : [], [task])];
   }
   if (agent === 'claude') {
@@ -698,7 +698,7 @@ function runner(run) {
     // 前台这一句带上了哪些任务结果：做成了就记下前台已经知道了（没做成下一句再带）。在 done 之前记，免得用户紧接着发的下一句又带一遍
     // Completion and the final stop decision are committed under the conversation/task lock below.
     // usage：这个对话到这一轮为止的用量（网页聊天框底下那一行）；model：这一轮实际用的模型（网页在回答下面写出来），why：为什么挑它，from：先试了哪个没接上
-    const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s) };
+    const doneEv = { t: 'done', ok, stopped, code, ms: Date.now() - t0, cost: state.cost, effort: meta.effort || '', usage: sessionUsage(s), ...(meta.plan ? { plan: true } : {}) };
     if (meta.model && meta.agent !== 'claude') Object.assign(doneEv, { model: meta.model }, meta.why ? { why: meta.why } : {}, meta.from ? { from: meta.from } : {}, meta.providerModel ? {providerModel:meta.providerModel} : {});
     const stat=meta.agent !== 'claude'&&!state.frontReceipt ? { at:Date.now(),agent:meta.agent,model:meta.model||'',kind:meta.routeKind||meta.kind||'chat',why:meta.why||'',ms:Date.now()-t0,from:meta.from||undefined,fromErr:meta.fromErr||undefined,usage:delta(doneEv.usage) } : null;
     const completion=lockedCall(meta.task?'tasks':meta.sid,'run_complete',{run,done:doneEv,stat});
@@ -731,7 +731,7 @@ function runner(run) {
     const currentSession = taskBridgeSession(readJ(sessF(meta.sid), sess), meta);
     if(currentSession.tkind==='review'&&reviewAuthors(currentSession).includes(meta.model)){finish(127,'独立复核模型与实际作者相同，已拒绝启动。');return;}
     let invocation;
-    try { invocation = meta.task&&runtime.isAgyModel(meta.model)?[process.execPath,[SELF,'agy-run',run]]:agentArgs(meta.agent, currentSession, meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model, role, sandbox: !!meta.sandbox }); }
+    try { invocation = meta.task&&runtime.isAgyModel(meta.model)?[process.execPath,[SELF,'agy-run',run]]:agentArgs(meta.agent, currentSession, meta.text, meta.effort || '', { images: meta.images || [], patch, model: meta.model, role, sandbox: !!meta.sandbox, perm: meta.perm }); }
     catch (e) { finish(127, e.message); return; }
     // Gemini 后台每一步之间接补充（vm-runtime.mjs 的 antigravityWork）：这一轮能把补充送进去（taskTell 的 steerable）
     if (meta.task && runtime.isAgyModel(meta.model)) { try { patchRun(run, { transport: 'antigravity' }); } catch { /* 记不下来就按接不了：补充等这一轮跑完 */ } }
@@ -766,7 +766,7 @@ function runner(run) {
       // 自己一个进程组：卡住或停掉时连它起的子进程一起杀，不然子进程攥着输出管道，这边永远等不到它结束
       const spawnOptions = {
         cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
-        env: Object.assign({}, process.env, meta.agent === 'harness' ? harnessEnv() : meta.agent === 'codex' ? codexKeyEnv() : {}, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
+        env: Object.assign({}, process.env, meta.agent === 'harness' ? harnessEnv(meta.perm) : meta.agent === 'codex' ? codexKeyEnv() : {}, { PATH: BIN + ':' + (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'), XIN_RUN: run, XIN_HOME: BASE })
       };
       app = null; appCode = null;
       // 这一轮的命令放进自己的 systemd scope（vm-reaper.mjs）：setsid、nohup 甩出去的也认得出是这一轮的，结束 2 小时后还在就清掉
@@ -1369,7 +1369,7 @@ function launch(s, m, userEv) {
 function lastRun(s) { return s && s.runs && s.runs.length ? s.runs[s.runs.length - 1] : null; }
 function summary(s) {
   const r = lastRun(s);
-  return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null, archived: !!s.archived, model: s.model || null, ...(s.main ? { main: true } : {}) };
+  return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null, archived: !!s.archived, model: s.model || null, ...(s.agent === 'harness' ? { perm: harnessPerm(s.perm) } : {}), ...(s.main ? { main: true } : {}) };
 }
 // 主对话：一直聊下去的那一个（默认模式），所有设备共用。别的对话照常新建。归档后它变回普通对话，下一句再开一个新的主对话。
 const MAIN_F = () => path.join(BASE, 'main.json');
@@ -2152,7 +2152,7 @@ const ops = {
     const text = String(a.text || '').trim();
     if (!text && !files.length) return { error: 'empty', msg: '消息是空的' };
     if (text.length > TEXT_MAX) return { error: 'too_long', msg: '消息太长了（最多 ' + TEXT_MAX + ' 字）' };
-    const refused = tianqiRefuse(a, okId(a.sid, 's') ? readJ(sessF(a.sid)) : null); if (refused) return refused;   // 天启（li2）只用 Harness、网关要配好
+    const refused = permError(a.perm) || tianqiRefuse(a, okId(a.sid, 's') ? readJ(sessF(a.sid)) : null); if (refused) return refused;   // 权限只认三档；天启（li2）只用 Harness、网关要配好
     mk(SESS); mk(RUNS);
     let s;
     if (a.sid) {
@@ -2179,7 +2179,7 @@ const ops = {
     if (s.agent !== 'harness') try { bondAdd('chat', 1, '陪我聊天'); } catch { /* 好感度记不下来不影响聊天 */ }   // 天启聊天不算小芯的好感
     // 只发了文件没说话：给 AI 的话里补一句
     const said = text || (files.every(f => f.image) ? '看看我发的图片。' : '看看我发的文件。');
-    const userEv = { t: 'user', text, at: Date.now() };
+    const ht = harnessTurn(s, a, said), userEv = { t: 'user', text, at: Date.now(), ...(ht.plan ? { plan: true } : {}) };   // 天启：对话记住权限，计划那一轮只读
     if (ctxLabel) userEv.ctx = ctxLabel;
     if (files.length) userEv.files = files.map(f => ({ name: f.name, path: f.path, size: f.size, image: f.image }));
     // 前台优先 Antigravity 的 Gemini 4 Hydrogen；额度耗尽或推理未完成时可回 DeepSeek。点名只记给后台。
@@ -2197,7 +2197,7 @@ const ops = {
     const all = s.agent === 'codex' ? listTasks() : [];
     const tn = s.agent === 'codex' ? taskNotes(s.sid, all, { active: false }) : { text: '', seen: [] };
     const hands = s.agent === 'codex' && s.runs.length ? handNotes(s.sid, text, all) : null;
-    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:TIANQI?'':String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? (TIANQI ? said : withContext(said, a.context) + '\n\n' + TIANQI_REMIND) : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, frontTaskNotes: tn.text, ...(hands ? { frontHands: hands.text, frontHandModes: hands.modes } : {}), effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [] },
+    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:TIANQI?'':String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? (TIANQI ? ht.said : withContext(ht.said, a.context) + '\n\n' + TIANQI_REMIND) : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, frontTaskNotes: tn.text, ...(hands ? { frontHands: hands.text, frontHandModes: hands.modes } : {}), effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [], ...ht.meta },
       cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
     const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, s.main ? { main: true, turns: s.runs.length } : {}, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
     if (receipt) { mk(path.dirname(receipt)); writeJ(receipt, result); }

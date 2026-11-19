@@ -1363,7 +1363,7 @@ test('Harness（天启）：dsh headless --json 起，带天启自己的设定�
   assert.ok(done.ok);
   assert.deepStrictEqual(done.usage, { ctx: 6030, win: 1000000, input: 11000, output: 50, total: 11050 });
   const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
-  assert.match(calls[0], /^ARGS \[--profile\] \[headless\] \[--patch\] \[[^\]]+harness-persona\.deepseek-v4\.1-flash\.off\.yml\] \[--json\] \[ -看看目录/);
+  assert.match(calls[0], /^ARGS \[--profile\] \[headless\] \[--patch\] \[[^\]]+harness-persona\.deepseek-v4\.1-flash\.off\.yml\] \[--permission-mode\] \[danger-full-access\] \[--approval-policy\] \[never\] \[--json\] \[ -看看目录/);   // 没选权限：完全权限，和以前一样；每一轮都带
   assert.ok(calls.includes('KEY=gw-key-123 MODE=danger-full-access'), calls.join('\n').slice(-300));
   const persona = fs.readFileSync(path.join(xin, 'harness-persona.deepseek-v4.1-flash.off.yml'), 'utf8');
   // 思考强度：档位对照表（关 = none）+ 这一轮用的档
