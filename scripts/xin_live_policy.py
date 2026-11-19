@@ -105,17 +105,20 @@ def front_lookup_verdict(events):
     return ''
 
 
-def front_lookup_during_outage(events):
-    """During a verified provider 503, require an honest reply with no fabricated web step or dispatch."""
+def front_lookup_during_outage(events, plain_done=None):
+    """Check the degraded reply after a provider 503 or corroborated timeouts."""
     done = next((e for e in events if e.get('t') == 'done'), {})
-    if done.get('why') != 'front_capacity_fallback':
+    plain_done = plain_done or {}
+    repeated_timeout = (done.get('why') == 'front_timeout_fallback' and
+                        plain_done.get('ok') is True and recovered_front_timeout(plain_done))
+    if done.get('why') != 'front_capacity_fallback' and not repeated_timeout:
         return None  # The usual native-web check still applies.
     if done.get('ok') is not True or not recovered_front_timeout(done):
-        return 'capacity fallback did not finish on the backup model'
+        return 'outage fallback did not finish on the backup model'
     if any(e.get('t') in ('task', 'tool', 'tool_end') for e in events):
-        return 'capacity fallback reported an unexpected operation'
+        return 'outage fallback reported an unexpected operation'
     text = '\n'.join(e.get('text', '') for e in events if e.get('t') == 'text').strip().rstrip('。！.!')
-    return '' if text == FRONT_WEB_UNAVAILABLE else 'capacity fallback did not report that web lookup is unavailable'
+    return '' if text == FRONT_WEB_UNAVAILABLE else 'outage fallback did not report that web lookup is unavailable'
 
 
 def first_person_receipt(reply):

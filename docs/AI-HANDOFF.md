@@ -3,6 +3,7 @@
 - `codex/xin-reply-recovery-20261119` 从 #180 的 `82b52d6` 开出。Codex 实现并自查。#181 只改天启交接记录，由原分支继续。
 - 北京时间 11:30—11:32 的三轮均由 Hydrogen 高档发回片段，没有正常结束，也没有任务或工具事件。独立新对话同样复现。`vm-runtime.mjs` 原来的超时收尾直接调用控制器的 `front_fallback`，当时没有派活回执可交付。增加一次有界的备用推理，复用同一条已落库的消息，不自动重投旧消息。 [线上证据](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44453032285)
 - 着手换模型前检查没有控制器操作和原生网页步骤，且用户未停止。若备用推理也失败，原消息仍留在会话。定位时查本轮 `why=front_timeout_fallback` 或 `why=front_capacity_fallback`。后者对应实测 Antigravity ACP 重试时连续发出的 `UNAVAILABLE (code 503)` 容量通知。云电脑的备用模型已通过独立实测。发布保留健康时的原生查询验收，遇到明确容量故障时验证备用回复如实说明查询暂不可用。无需数据迁移，回滚使用发布流程的上一已验收版本。 [独立模型探针](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44454387424) [503 证据](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44454807003)
+- `codex/xin-reply-outage-verification-20261119` 由 Codex 从 #182 的 `5824151` 开出并自查。首次正式发布在新控制器上通过聊天、读图和派活，因单独的网页验收缺失网页步骤回滚。当时独立新对话也因 Gemini 超时由 DeepSeek 回复。现在只有明确容量错误，或两个独立对话共同记录上游超时且纯文字试验已实际回复时，才在联调中验收查询不可用时的真实回复。普通情况下仍要求真实查询步骤。发布结束后核对正式站回滚状态及实际回复。 [首次发布](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44456997209) [独立回复](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44458635321)
 
 ## 2026-11-19 · 天启星空工作台（Codex）
 
