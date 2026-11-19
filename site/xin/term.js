@@ -127,9 +127,12 @@
   }
 
   /* ---------- 窗口（一个页面一个，点不同的头像换内容）---------- */
-  function win(hostEl) {
+  // docked：停在页面的一栏里（天启右栏的「终端」，docs/superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md）：
+  // 不自己定位、不出遮罩、不抢焦点，点外面和按 Esc 都不关；收起由那一栏管
+  function win(hostEl, o) {
     if (hostEl._tmWin) return hostEl._tmWin;
-    var el = h('div', 'tm-win'); el.hidden = true;
+    var docked = !!(o && o.docked);
+    var el = h('div', 'tm-win' + (docked ? ' tm-docked' : '')); el.hidden = true;
     el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', '小芯的电脑'); el.tabIndex = -1;
     var bar = h('div', 'tm-bar'), face = h('span', 'tm-face'), name = h('span', 'tm-name', '小芯的电脑'), tabsEl = h('div', 'tm-tabs'), x = h('button', 'tm-x');
     face.setAttribute('aria-hidden', 'true');
@@ -362,7 +365,8 @@
       var tab = view && view.tab; if (!tab || !tab.live || !tab.status) return;
       var s = tab.status() || {};
       if (sv.textContent !== (s.verb || '')) sv.textContent = s.verb || '';
-      var t = '(' + (s.sec != null && s.sec >= 1 ? secs(s.sec) + ' · ' : '') + 'Esc 关闭)';
+      // 停在一栏里（docked）时 Esc 不关它，只写用了多久
+      var t = docked ? (s.sec != null && s.sec >= 1 ? '(' + secs(s.sec) + ')' : '') : '(' + (s.sec != null && s.sec >= 1 ? secs(s.sec) + ' · ' : '') + 'Esc 关闭)';
       if (ss.textContent !== t) ss.textContent = t;
     }
     function startTick() {
@@ -396,6 +400,7 @@
 
     // 放在头像旁边（手机上从底下升起来）；从头像那一点长出来
     function place() {
+      if (docked) { scrim.hidden = true; return; }
       var vw = innerWidth, vh = innerHeight, sheet = vw < 600;
       el.classList.toggle('tm-sheet', sheet); scrim.hidden = !sheet || el.hidden;
       if (sheet) { el.style.left = el.style.top = el.style.width = el.style.height = ''; el.style.transformOrigin = '50% 100%'; return; }
@@ -429,11 +434,10 @@
       if (!was) {
         boot = performance.now() + 360;
         enter(el); if (!scrim.hidden) enter(scrim);
-        document.addEventListener('keydown', onKey, true); document.addEventListener('pointerdown', onDown, true);
-        addEventListener('resize', place);
+        if (!docked) { document.addEventListener('keydown', onKey, true); document.addEventListener('pointerdown', onDown, true); addEventListener('resize', place); }
       }
       W.cur = null; W.show(key);
-      setTimeout(function () { if (!el.hidden) el.focus({ preventScroll: true }); }, 0);
+      if (!docked) setTimeout(function () { if (!el.hidden) el.focus({ preventScroll: true }); }, 0);
       return W;
     };
     W.show = function (key) {

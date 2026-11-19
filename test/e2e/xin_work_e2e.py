@@ -316,6 +316,8 @@ async def main():
         await pg.wait_for_function("document.querySelector('.xc-pal-i.on .xc-pal-t') && document.querySelector('.xc-pal-i.on .xc-pal-t').textContent === '换成深色'")
         await pg.keyboard.press('Enter')
         await pg.wait_for_selector('.xc-toast.in')
+        # 提示是同步弹的，换主题在 View Transition 的回调里（至少晚一帧）：等它真换过去再读，换不过去照样超时失败
+        await pg.wait_for_function("document.documentElement.dataset.theme === 'dark'", timeout=5000)
         t1 = await pg.evaluate("[document.documentElement.dataset.theme, localStorage.getItem('lm.theme'), document.querySelector('.xc-toast').textContent, document.querySelector('.xc-toast').getAttribute('role')]")
         ui.check('命令面板「换成深色」：整站换成深色并记住，底部轻提示说一声（读屏能念）', t1 == ['dark', 'dark', '换成深色了', 'status'], t1)
         # 复制：一轮回答复制原文；代码块复制代码、能换行

@@ -1,3 +1,15 @@
+## 2026-11-19 · 天启工作台 v4 第 1 个 PR：三栏版面（Claude Code）
+
+- 站长 11-19 看过可点击原型 v4 说「可以」。[设计](superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md) 分三个 PR，这是第一个，只动前端。改了什么见 CHANGES 最新一条。
+- **改天启页面的人注意**：
+  - 分工：chat.js 按类名找 `xc-*` 元素干活，`site/tools/tianqi/sky.js` 管夜空、三栏、右栏标签、预览、设置、快捷键。模板里 chat.js 要找的元素一个都不能少，包括 `.tq-desk`、`.tq-plug-b`、`.xc-isle`、`.xc-sub`。
+  - 圆角：chat.css 在 `.xc` 里统一 `border-radius: var(--rad) !important`，所以天启的圆角都写 `--rad`。天启页面不引 `pixel.css`（它会去掉圆角和毛玻璃）。
+  - Esc：chat.js 在没有弹层时按 Esc 会关掉整个天启；sky.js 在 window 捕获阶段先接住设置弹窗和手机右栏的 Esc。
+  - 外观：天启单独记 `lm.tq.theme`（默认夜空），不跟网站的 `lm.theme`。
+- **下一步**：
+  - 第 2 个 PR：权限预设和计划模式。先在 li2 上只读核对沙箱（bwrap），再给 `dsh --profile headless` 带 `--permission-mode`，补丁里写三个预设；计划模式用只读预设出计划。
+  - 第 3 个 PR：终端里自己输命令、按工作区分组。
+
 ## 2026-11-19 · Codex 接续 Neon / Argon 后台执行
 
 - 从 Claude Code 分支 `23dccfb` 另开 `codex/xin-neon-argon-20261119`，基线含 main 的 #184（`9798cfb`）。Claude 的 Task 1、2 提交保留。Codex 接续 Task 3、4 并自查，同时复核模型表、路由和作者排除规则。

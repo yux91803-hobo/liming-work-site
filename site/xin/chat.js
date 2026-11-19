@@ -407,7 +407,7 @@
     input.disabled = gwOff;
     loginEl.hidden = !login;
     foot.hidden = login || off || S.view !== 'chat';
-    sessEl.hidden = login || off || S.view === 'chat';
+    sessEl.hidden = login || off || !TQ && S.view === 'chat';   // 天启的文件在右栏，和聊天同时在
     root.querySelector('.xc-body').hidden = login || S.view !== 'chat';
     if (TQ) root.querySelector('.tq-desk').hidden = login || S.view !== 'chat';
     root.querySelector('.xc-list-b').hidden = root.querySelector('.xc-new-b').hidden = login || off;
@@ -1128,11 +1128,13 @@
   function fmtSize(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
   function loadFiles(p, from) {
     if (from) S.filesFrom = from;
-    S.view = 'files'; render();
-    var my = ++S.loadSeq;
+    // 天启：文件在右栏，聊天照常；用自己的序号，不然开文件会让正在读的对话作废（对话那边也看 loadSeq）
+    if (TQ) document.dispatchEvent(new CustomEvent('tq:panel', { detail: { tab: 'files', loading: true } }));
+    else { S.view = 'files'; render(); }
+    var seq = TQ ? 'fileSeq' : 'loadSeq', my = S[seq] = (S[seq] || 0) + 1;
     sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '正在读取…'));
     call('files', { path: p || WORK }, 60000).then(function (d) {
-      if (my !== S.loadSeq) return;
+      if (my !== S[seq]) return;
       sessEl.innerHTML = '';
       sessEl.appendChild(backBtn(S.filesFrom !== 'chat'));
       if (d.error) {
@@ -1145,7 +1147,7 @@
       sessEl.appendChild(crumbs(d.path, d.work || WORK));
       if (d.dir) drawDir(d); else drawFile(d);
     }, function (e) {
-      if (my !== S.loadSeq) return;
+      if (my !== S[seq]) return;
       sessEl.innerHTML = ''; sessEl.appendChild(h('p', 'xc-hint', '读取失败：' + e.message));
     });
   }
@@ -1188,6 +1190,12 @@
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(d.path).then(function () { msg.textContent = '复制好了'; }, function () { msg.textContent = d.path; });
       else msg.textContent = d.path;
     });
+    // 天启：图、网页、markdown 能在右栏的「预览」里看（site/tools/tianqi/sky.js 收 tq:preview）
+    if (TQ && /\.(png|jpe?g|gif|webp|svg|html?|md)$/i.test(name)) {
+      var pv = h('button', 'xc-btn', '预览'); pv.type = 'button';
+      pv.addEventListener('click', function () { document.dispatchEvent(new CustomEvent('tq:preview', { detail: { path: d.path, text: typeof d.text === 'string' ? d.text : null } })); });
+      row.appendChild(pv); dl.className = 'xc-btn xc-btn2';
+    }
     row.appendChild(dl); row.appendChild(cp); row.appendChild(msg); sessEl.appendChild(row);
     if (typeof d.text === 'string') {
       var pre = h('pre', 'xc-pre'), c = h('code');
@@ -1917,8 +1925,11 @@
     // 先看正在电脑上做事的那一页：这一轮自己在敲命令就看这一轮，不然看还在做的后台活
     var fg = tabs[0].key.indexOf('run:') === 0 && runTools(tabs[0].key.slice(4)) ? tabs[0] : null;
     var act = fg || tabs.filter(function (t) { return t.live && t.key.indexOf('task:') === 0; })[0] || tabs[0];
-    TW = LimingXinTerm.win(root);
+    // 天启：终端停在右栏的「终端」里，不再浮在上面
+    var dock = TQ && root.querySelector('.tq-term-host');
+    TW = dock ? LimingXinTerm.win(dock, { docked: true }) : LimingXinTerm.win(root);
     TW.open({ anchor: anchor, tabs: tabs, active: act.key, onTab: termFollow, onClose: termUnfollow });
+    if (dock) document.dispatchEvent(new CustomEvent('tq:panel', { detail: { tab: 'term' } }));
   }
   function termFollow(key) {
     Object.keys(S.tf).forEach(function (k) { if ('task:' + k !== key) { clearTimeout(S.tf[k].tm); S.tf[k].tm = 0; } });
@@ -2298,7 +2309,7 @@
   /* ---------- 工作台：全屏的聊天；首页一张卡片进来 ----------
      ≥1180 左边对话常驻、中间聊天；更窄只有聊天，☰ 拉出对话。小芯岛点开的面板（.xc-work）在全屏 ≥900 时能「钉住」成右边一栏。
      数据都是现成的：任务卡片和看过程用聊天里那一套（openTask），列表从 tasks {all:true} 来，有在做的 4 秒刷一次。 */
-  var SIDE_MIN = 1180, WORK_MIN = 900, wTm = 0, wSeq = 0, thumbs = {}, xwSeen = {};
+  var SIDE_MIN = 1180, TQ_SIDE_MIN = 900, WORK_MIN = 900, wTm = 0, wSeq = 0, thumbs = {}, xwSeen = {};
   S.wkCat = TQ ? 'all' : ls(LS_PFX + 'wkCat') || 'all'; S.tray = false;
   // 面板、首页每次刷新都是重画：循环的动画（进度条、闪的点）按同一个时钟接着走，不从头来；进场动画只给第一次出现的
   function phase(el) { var t = Date.now(); el.style.setProperty('--p16', -(t % 1600) + 'ms'); el.style.setProperty('--p12', -(t % 1200) + 'ms'); el.style.setProperty('--p10', -(t % 1000) + 'ms'); }
@@ -2332,7 +2343,8 @@
   function trayDocked() { return !TQ && !!(root && S.pin && S.wb && window.innerWidth >= WORK_MIN); }
   function layout() {
     if (!root) return;
-    var w = window.innerWidth, side = !TQ && !!S.wb && w >= SIDE_MIN, dock = trayDocked();
+    // 天启照 Harness 桌面端：≥900 对话记录常驻左栏（窄条也算），更窄才是抽屉
+    var w = window.innerWidth, side = TQ ? w >= TQ_SIDE_MIN : !!S.wb && w >= SIDE_MIN, dock = trayDocked();
     var was = root.classList.contains('wb-side');
     root.classList.toggle('wb-side', side); root.classList.toggle('wb-pin', dock);
     if (dock && S.tray) setTray(false, false, true);
@@ -4020,10 +4032,11 @@
   }
   function flipTheme() {
     var dark = document.documentElement.dataset.theme === 'dark';
-    try { localStorage.setItem('lm.theme', dark ? 'light' : 'dark'); } catch (e) { /* 存不了就只换这一次 */ }
+    // 天启的外观单独记在 lm.tq.theme（site/tools/tianqi/index.html：夜空 / 星图），不动网站其它页面的主题
+    try { localStorage.setItem(TQ ? 'lm.tq.theme' : 'lm.theme', dark ? 'light' : 'dark'); } catch (e) { /* 存不了就只换这一次 */ }
     themeSwap(function () {
       var h_ = document.documentElement; h_.dataset.theme = dark ? 'light' : 'dark'; h_.dataset.pref = dark ? 'light' : 'dark';
-      var m = document.getElementById('themeColor'); if (m) m.setAttribute('content', TQ ? (dark ? '#090c14' : '#0d1019') : (dark ? '#faf9f5' : '#1f1e1d'));
+      var m = document.getElementById('themeColor'); if (m) m.setAttribute('content', TQ ? (dark ? '#f8f9fc' : '#02040a') : (dark ? '#faf9f5' : '#1f1e1d'));
     });
     [].forEach.call(document.querySelectorAll('iframe'), function (f) { try { f.contentWindow.postMessage({ type: 'theme' }, location.origin); } catch (er) { /* 别的源 */ } });
     toast(dark ? '换成浅色了' : '换成深色了');
@@ -4262,6 +4275,7 @@
   function phase(n) { if (n.nodeType !== 1) return; (n.matches(PH) ? [n] : []).concat([].slice.call(n.querySelectorAll(PH))).forEach(function (e) { if (!e.style.getPropertyValue('--ph')) e.style.setProperty('--ph', (Math.random() * 1.8).toFixed(2) + 's'); }); }
   new MutationObserver(function (ms) { ms.forEach(function (m) { [].forEach.call(m.addedNodes, phase); }); }).observe(document.body, { childList: true, subtree: true });
   phase(document.body);
-  window.LimingXinChat = { open: open, close: close, work: work, ask: quick, played: played, page: page, tasks: function () { pollTasks(); }, get state() { return S; } };
+  window.LimingXinChat = { open: open, close: close, work: work, ask: quick, played: played, page: page, tasks: function () { pollTasks(); }, get state() { return S; },
+    tqFiles: function (p) { if (TQ && root) loadFiles(p || WORK); } };
   boot();
 })();

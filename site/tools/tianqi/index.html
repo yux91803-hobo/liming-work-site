@@ -1,97 +1,128 @@
 <!doctype html>
-<html lang="zh-CN" class="tianqi" data-theme="light">
+<html lang="zh-CN" class="tianqi" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0d1019" id="themeColor">
+<meta name="theme-color" content="#02040a" id="themeColor">
 <title>天启 · Liming 工具箱</title>
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <script>
+  // 天启的外观单独记（lm.tq.theme）：默认夜空；星图（浅色）、跟随系统在设置里选。网站其它页面的主题不影响它
   (function () {
     var h = document.documentElement;
     try { if (window.self !== window.top) h.classList.add('embed'); } catch (e) { h.classList.add('embed'); }
     if (/(?:^|[?&])embed=1(?:&|$)/.test(location.search)) h.classList.add('embed');
     var mq = window.matchMedia && matchMedia('(prefers-color-scheme: dark)');
     function apply() {
-      var t = 'light';
-      try { t = localStorage.getItem('lm.theme') || 'light'; } catch (e) {}
-      var d = t === 'dark' || (t === 'auto' && mq && mq.matches);
+      var t = 'dark';
+      try { t = localStorage.getItem('lm.tq.theme') || 'dark'; } catch (e) {}
+      var d = t === 'dark' || (t === 'auto' && (!mq || mq.matches));
       h.dataset.theme = d ? 'dark' : 'light';
       h.dataset.pref = t;
       var m = document.getElementById('themeColor');
-      if (m) m.setAttribute('content', d ? '#090c14' : '#0d1019');
+      if (m) m.setAttribute('content', d ? '#02040a' : '#f8f9fc');
     }
     apply();
     if (mq && mq.addEventListener) mq.addEventListener('change', apply);
-    window.addEventListener('storage', function (e) { if (e.key === 'lm.theme') apply(); });
+    window.addEventListener('storage', function (e) { if (e.key === 'lm.tq.theme') apply(); });
     window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data && e.data.type === 'theme') apply(); });
   })();
 </script>
-<link rel="stylesheet" href="/pixel.css?v=px3">
+<!-- 不引 pixel.css：那是首页的像素风（方角、点阵字、关毛玻璃），天启 v4 是圆角毛玻璃 -->
 <link rel="stylesheet" href="/xin/chat.css?v=models-20261119">
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   [hidden]{display:none!important}
-  html,body{margin:0;height:100%;overflow:hidden;background:#0d1019;color:#f1f4fe}
-  [data-theme=dark],[data-theme=dark] body{background:#090c14}
+  html,body{margin:0;height:100%;overflow:hidden;background:#02040a;color:#e8ecf5}
+  [data-theme=light],[data-theme=light] body{background:#f1f3f8;color:#141a2a}
   button,input,textarea{font:inherit;color:inherit}
   button{border:0;background:none;padding:0;cursor:pointer}
 </style>
-<link rel="stylesheet" href="/tools/tianqi/workbench.css?v=desk-20261119">
+<link rel="stylesheet" href="/tools/tianqi/workbench.css?v=tq4-20261119">
 </head>
 <body>
+<!-- 天启工作台 v4：照 DeepSeek Harness 桌面端分三栏（docs/superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md）。
+     chat.js 按类名找 xc-* 元素干活（对话、输入框、对话记录、文件、插件、终端），sky.js 管夜空、三栏、右栏、设置。 -->
 <template id="tianqi-workbench">
-  <header class="tq-mast">
-    <div class="tq-mast-inner">
-      <div class="tq-brand xc-isle" aria-live="polite">
-        <span class="tq-brand-mark" aria-hidden="true"></span>
-        <h1>天启</h1>
-        <span class="xc-sw-w"><span class="xc-sub"></span></span>
-        <span class="xc-isle-n" aria-hidden="true"></span>
-      </div>
-      <nav class="tq-nav" aria-label="工作台">
-        <button class="xc-new-b tq-nav-key tq-nav-new" type="button" aria-label="新对话"><i class="tq-star-key" aria-hidden="true"></i><span>新对话</span></button>
-        <button class="xc-list-b tq-nav-key" type="button" aria-label="对话记录" aria-expanded="false" aria-controls="tianqi-history"><i class="tq-planet-key" aria-hidden="true"></i><span>对话记录</span></button>
-        <button class="tq-plug-b tq-nav-key" type="button" aria-label="插件" aria-expanded="false" aria-controls="tianqi-sheet" hidden><i class="tq-galaxy-key" aria-hidden="true"></i><span>插件</span></button>
-        <button class="xc-x xc-ib" type="button" aria-label="关闭" title="关闭"></button>
-      </nav>
-    </div>
-  </header>
-  <div class="xc-st" role="status" aria-live="polite" hidden></div>
-  <main class="tq-desk">
-    <form class="xc-ft tq-console" aria-label="探索">
-      <div class="tq-console-head"><h2>探索</h2><i class="tq-infinity" aria-hidden="true"></i></div>
-      <div class="xc-menu" role="menu" hidden><button type="button" class="xc-mi xc-mi-file" role="menuitem">图片或文件</button></div>
-      <div class="xc-pick" id="xin-model-picker" role="dialog" aria-label="模型和思考强度" hidden></div>
-      <input type="file" class="xc-file" multiple hidden>
-      <div class="xc-atts" hidden></div>
-      <div class="xc-row tq-entry">
-        <textarea rows="1" placeholder="给天启发消息" aria-label="消息"></textarea>
-        <div class="tq-instruments">
-          <button type="button" class="xc-mdl" aria-haspopup="dialog" aria-controls="xin-model-picker" aria-expanded="false"><span></span></button>
-          <button type="button" class="xc-plus" aria-label="发图片或文件" aria-haspopup="menu" aria-expanded="false">附件</button>
-          <button type="submit" class="xc-send" aria-label="发送"></button>
+  <div class="tq-frame" data-mode="wide" data-left="open" data-right="closed">
+    <aside class="tq-side" aria-label="天启">
+      <div class="tq-glass tq-side-in">
+        <div class="tq-side-top">
+          <div class="tq-brand xc-isle" aria-live="polite">
+            <button class="tq-brand-key" type="button" aria-label="收起侧栏" title="收起侧栏（Ctrl+B）"><span class="tq-brand-mark" aria-hidden="true"></span></button>
+            <h1>天启</h1>
+            <span class="xc-sw-w"><span class="xc-sub"></span></span>
+            <span class="xc-isle-n" aria-hidden="true"></span>
+          </div>
+          <button class="tq-ib tq-fold" type="button" aria-label="收起侧栏" title="收起侧栏（Ctrl+B）"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9.5 4.5v15"/></svg></button>
+        </div>
+        <div class="tq-rail-keys">
+          <button class="xc-new-b tq-ib" type="button" aria-label="新对话" title="新对话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h8"/><path d="M16.4 3.6a2 2 0 0 1 2.9 2.9L8 17.8l-4 1 1-4z"/></svg></button>
+        </div>
+        <aside class="xc-drawer" id="tianqi-history" aria-label="对话记录" aria-hidden="true"><div class="xc-dr"></div></aside>
+        <div class="tq-side-foot">
+          <button class="tq-row tq-set-b" type="button" aria-haspopup="dialog" aria-controls="tq-settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>设置</span></button>
+          <button class="tq-row tq-plug-b" type="button" aria-label="插件" aria-expanded="false" aria-controls="tianqi-sheet" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3.5v4M15 3.5v4M7 7.5h10v3.5a5 5 0 0 1-10 0zM12 16v4.5"/></svg><span>插件</span></button>
+          <button class="tq-li2" type="button" aria-haspopup="dialog" aria-controls="tq-settings"><i aria-hidden="true"></i><span>li2</span></button>
         </div>
       </div>
-      <div class="xc-use" hidden></div>
-    </form>
-    <section class="tq-log" aria-labelledby="tianqi-conversation-title">
-      <header class="tq-log-head">
-        <span class="tq-log-icon" aria-hidden="true"></span>
+    </aside>
+
+    <main class="tq-desk tq-mid">
+      <header class="tq-mid-head">
+        <button class="xc-list-b tq-ib tq-menu" type="button" aria-label="对话记录" aria-expanded="false" aria-controls="tianqi-history"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h11M4 17h16"/></svg></button>
         <h2 class="xc-conv-t" id="tianqi-conversation-title"></h2>
+        <span class="tq-grow"></span>
+        <button class="tq-ib tq-panel-b" type="button" aria-label="打开面板" aria-expanded="false" aria-controls="tq-right" title="面板（Ctrl+J）"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M14.5 4.5v15"/></svg><i class="tq-badge" hidden></i></button>
+        <button class="xc-x tq-ib" type="button" aria-label="关闭" title="关闭"></button>
       </header>
+      <div class="xc-st" role="status" aria-live="polite" hidden></div>
       <div class="xc-body">
         <div class="xc-gw-warn" role="status" hidden>天启的网关还没配好，暂时发不了消息。</div>
         <div class="xc-up-w"><button type="button" class="xc-upchip" hidden></button></div>
         <div class="xc-msgs" aria-live="polite"></div>
         <div class="xc-jump-w"><button type="button" class="xc-jump" hidden><span>回到底部</span></button></div>
       </div>
-    </section>
-  </main>
-  <div class="xc-sess" hidden></div>
+      <form class="xc-ft tq-dock" aria-label="给天启发消息">
+        <div class="xc-menu" role="menu" hidden><button type="button" class="xc-mi xc-mi-file" role="menuitem">图片或文件</button></div>
+        <div class="xc-pick" id="xin-model-picker" role="dialog" aria-label="模型和思考强度" hidden></div>
+        <input type="file" class="xc-file" multiple hidden>
+        <div class="tq-box">
+          <div class="xc-atts" hidden></div>
+          <div class="xc-row tq-entry">
+            <textarea rows="1" placeholder="给天启发消息" aria-label="消息"></textarea>
+            <div class="tq-instruments">
+              <button type="button" class="xc-plus" aria-label="发图片或文件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg></button>
+              <button type="button" class="xc-mdl" aria-haspopup="dialog" aria-controls="xin-model-picker" aria-expanded="false"><span></span></button>
+              <span class="tq-grow"></span>
+              <button type="submit" class="xc-send" aria-label="发送"></button>
+            </div>
+          </div>
+        </div>
+        <div class="xc-use" hidden></div>
+      </form>
+    </main>
+
+    <aside class="tq-right" id="tq-right" aria-label="面板">
+      <div class="tq-glass tq-right-in">
+        <div class="tq-grab" aria-hidden="true"></div>
+        <div class="tq-r-head">
+          <div class="tq-tabs" role="tablist" aria-label="面板">
+            <button class="tq-tab" role="tab" type="button" id="tq-tab-files" data-tab="files" aria-controls="tq-p-files" aria-selected="true">文件<i class="tq-tdot" aria-hidden="true"></i></button>
+            <button class="tq-tab" role="tab" type="button" id="tq-tab-term" data-tab="term" aria-controls="tq-p-term" aria-selected="false" tabindex="-1">终端<i class="tq-tdot" aria-hidden="true"></i></button>
+            <button class="tq-tab" role="tab" type="button" id="tq-tab-prev" data-tab="prev" aria-controls="tq-p-prev" aria-selected="false" tabindex="-1">预览<i class="tq-tdot" aria-hidden="true"></i></button>
+            <span class="tq-tab-ink" aria-hidden="true"></span>
+          </div>
+          <button class="tq-ib tq-r-x" type="button" aria-label="收起面板" title="收起面板（Ctrl+J）"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+        </div>
+        <section class="tq-pane" role="tabpanel" id="tq-p-files" data-tab="files" aria-labelledby="tq-tab-files"><div class="xc-sess" hidden></div></section>
+        <section class="tq-pane tq-term-host" role="tabpanel" id="tq-p-term" data-tab="term" aria-labelledby="tq-tab-term" hidden><p class="tq-note">天启跑命令时，命令和输出会出现在这里。点对话里的「思考」那一行，也能看那一轮做了什么。</p></section>
+        <section class="tq-pane" role="tabpanel" id="tq-p-prev" data-tab="prev" aria-labelledby="tq-tab-prev" hidden><div class="tq-prev"><p class="tq-note">在「文件」里点图片、网页或 markdown 的「预览」，或者点回答里提到的这类文件，会在这里打开。</p></div></section>
+      </div>
+    </aside>
+  </div>
   <div class="xc-scrim" aria-hidden="true"></div>
-  <aside class="xc-drawer" id="tianqi-history" role="dialog" aria-label="对话记录" aria-hidden="true"><div class="xc-dr"></div></aside>
   <aside class="xc-work" hidden></aside>
   <form class="xc-login" hidden>
     <span class="xc-login-av" aria-hidden="true"></span>
@@ -103,9 +134,25 @@
   <section class="xc-sheet" id="tianqi-sheet" aria-label="详情" hidden></section>
   <div class="xc-pal" role="dialog" aria-label="搜索和命令" hidden></div>
   <div class="xc-toast" role="status" aria-live="polite"></div>
+  <div class="tq-modal" id="tq-settings" hidden>
+    <div class="tq-modal-bg"></div>
+    <div class="tq-sheet" role="dialog" aria-modal="true" aria-labelledby="tq-set-title">
+      <nav class="tq-set-nav" aria-label="设置分类">
+        <h2 id="tq-set-title">设置</h2>
+        <button class="tq-set-tab" type="button" data-sec="look" aria-current="true">外观</button>
+        <button class="tq-set-tab" type="button" data-sec="plug">插件</button>
+        <button class="tq-set-tab" type="button" data-sec="pc">电脑</button>
+      </nav>
+      <div class="tq-set-body">
+        <button class="tq-ib tq-set-x" type="button" aria-label="关闭设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+        <div class="tq-set-sec"></div>
+      </div>
+    </div>
+  </div>
 </template>
 <script>window.LIMING_CHAT = { role: 'tianqi' };</script>
-<script src="/xin/term.js?v=motion-20261119"></script>
-<script src="/xin/chat.js?v=models-20261119"></script>
+<script src="/xin/term.js?v=tq4-20261119"></script>
+<script src="/xin/chat.js?v=tq4-20261119"></script>
+<script src="/tools/tianqi/sky.js?v=tq4-20261119"></script>
 </body>
 </html>
