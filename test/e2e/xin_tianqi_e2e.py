@@ -335,7 +335,7 @@ async def main():
         plan_on = await pg.evaluate("""(() => ({ pressed: document.querySelector('#tq-plan').getAttribute('aria-pressed'),
           box: document.querySelector('.tq-box').classList.contains('plan'), ph: document.querySelector('.tq-entry textarea').placeholder }))()""")
         ui.check('Esc 只收起权限弹层（天启不关、焦点回按钮）；点「计划」进计划模式：输入框变蓝、提示换成先出计划',
-                 esc == (False, 1, True) and plan_on == {'pressed': 'true', 'box': True, 'ph': '说说要做什么，天启先出计划，你确认后再动手'}, (esc, plan_on))
+                 esc == (False, 1, True) and plan_on == {'pressed': 'true', 'box': True, 'ph': '说说要做什么，天启先出计划'}, (esc, plan_on))
         await pg.fill('.xc-row textarea', '把 LED 改快一点')
         await pg.press('.xc-row textarea', 'Enter')
         await pg.wait_for_selector('.tq-plan-card')
@@ -359,7 +359,7 @@ async def main():
                  and card['sum'].startswith('3 步') and card['bubble'] == 'none' and card['tag'] == ['计划']
                  and card['acts'] == [['按计划执行', False], ['继续改计划', False], ['看计划', False]]
                  and card['tab'] == 'true' and card['doc'] == '把 LED 闪烁改成 200 ms' and card['steps'] == 3
-                 and card['ph'] == '说说要做什么，天启先出计划，你确认后再动手', (sent, card))
+                 and card['ph'] == '说说要做什么，天启先出计划', (sent, card))
         await perm.click()
         await pg.get_by_role('menuitemradio', name='只读').click()
         ro_card = await pg.evaluate("""(() => { const c = document.querySelector('.tq-plan-card');
@@ -421,6 +421,16 @@ async def main():
           (function f() { hs.push(p.getBoundingClientRect().height); if (performance.now() - t0 < 600) requestAnimationFrame(f); else done(hs); })();
         })""")
         ui.check('手机：模型面板从「高」切到「最高」，说明换字时面板高度一直不变（不弹一下）', len(hs) > 5 and max(hs) - min(hs) < 1, (round(min(hs), 1), round(max(hs), 1), len(hs)))
+        # 截图自查：计划模式的提示语在手机上折成两行，输入框只按打的字长高，第二行被切掉一半。提示语要一行放得下（390 和更窄的 360 都量）
+        fit_js = """(() => { const t = document.querySelector('.xc-row textarea'), cs = getComputedStyle(t), s = document.createElement('span');
+          s.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;font:' + cs.font + ';letter-spacing:' + cs.letterSpacing;
+          s.textContent = t.placeholder; document.body.appendChild(s); const need = s.getBoundingClientRect().width; s.remove();
+          return [t.placeholder, Math.round(need), Math.round(t.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight))]; })()"""
+        fits = [await pg.evaluate(fit_js)]
+        await pg.set_viewport_size({'width': 360, 'height': 780})
+        await pg.wait_for_timeout(200)
+        fits.append(await pg.evaluate(fit_js))
+        ui.check('手机：计划模式的提示语一行放得下（390、360 宽都不折行、不被切掉）', all('计划' in f[0] and f[1] <= f[2] for f in fits), fits)
         await pg.context.close()
 
         # 3. 没登录

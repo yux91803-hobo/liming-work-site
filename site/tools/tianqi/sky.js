@@ -513,7 +513,7 @@
       planBtn.setAttribute('aria-pressed', String(cfg.plan));
       box.classList.toggle('plan', cfg.plan); orbit.plan = cfg.plan;
       // chat.js 每次重画会按 tqPh 写回提示，计划模式下就一直是这句
-      var s = state(), ph = cfg.plan ? '说说要做什么，天启先出计划，你确认后再动手' : PH0;
+      var s = state(), ph = cfg.plan ? '说说要做什么，天启先出计划' : PH0;
       if (s) s.tqPh = cfg.plan ? ph : '';
       say.setAttribute('placeholder', ph);
       planActs();
