@@ -147,6 +147,22 @@ test('额度按组算：Gemini 4 Argon 的单独周限额用完，不算 Hydroge
   const q=r.antigravityQuota(groups(.5,0),Date.now(),m);assert.equal(q.blocked,false,m);assert.deepEqual(q.buckets.map(b=>b.id).sort(),['gemini-5h','gemini-weekly'],m);
   assert.equal(r.antigravityQuota(groups(0,1),Date.now(),m).blocked,true,m);
  }
+ // 站长 11-19：Neon 和 Hydrogen 同一个 Gemini 池；Argon 单独一池
+ assert.equal(r.antigravityQuota(groups(.5,0),Date.now(),'gemini-4-neon').blocked,false);
+ assert.equal(r.antigravityQuota(groups(.5,0),Date.now(),'gemini-4-argon').blocked,true);
+ assert.equal(r.antigravityQuota(groups(0,1),Date.now(),'gemini-4-argon').blocked,false);
+});
+
+test('Antigravity 模型表：Hydrogen、Neon 在 Gemini 池，Argon 单独一池；没有的档位降到它最高的那档',async()=>{
+ const r=await import(pathToFileURL(path.join(__dirname,'../site/xin/vm-runtime.mjs')).href);
+ assert.deepEqual(Object.keys(r.AGY_CATALOG),['gemini-4-hydrogen','gemini-4-neon','gemini-4-argon']);
+ assert.deepEqual(['gemini-4-hydrogen','gemini-4-neon','gemini-4-argon','glm-5.3'].map(r.agyPool),['gemini','gemini','argon',null]);
+ assert.equal(r.isAgyModel('gemini-4-neon'),true);assert.equal(r.isAgyModel('gemini-3.8-flash'),false);
+ assert.equal(r.agyProviderModel('gemini-4-neon','xhigh'),'gemini-4-neon-xhigh');
+ assert.equal(r.agyProviderModel('gemini-4-argon','xhigh'),'gemini-4-argon-high');
+ assert.equal(r.agyProviderModel('gemini-4-argon','max'),'gemini-4-argon-high');
+ assert.deepEqual(['code','hard','review','research','quick'].map(k=>r.agyEffort(k,'gemini-4-neon')),['high','xhigh','high','medium','low']);
+ assert.deepEqual(['code','hard','review','research'].map(k=>r.agyEffort(k,'gemini-4-argon')),['high','high','high','medium']);
 });
 test('Gemini 后台的搜索、读网页：一开始就报搜什么（同一步只报一次），做完再报；读网页记成打开网页，不混成搜索',async t=>{
  const f=fixture(t,'steps'),task=f.call('task_new',{kind:'research',goal:'fixture research'}).task;const done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));

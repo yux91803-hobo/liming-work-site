@@ -106,6 +106,7 @@ test('Antigravity 的输入不含缓存读取（total = 输入 + 输出）：记
   const { usageSummary, agyUsage, AGY_MODELS } = await load();
   const runtime = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href);
   assert.ok(AGY_MODELS.includes(runtime.AGY_MODEL), '和 vm-runtime 的 AGY_MODEL 保持一致');
+  assert.deepStrictEqual(AGY_MODELS, Object.keys(runtime.AGY_CATALOG), '和 vm-runtime 的 Antigravity 模型表保持一致（Neon、Argon 的用量也按输入含缓存换算）');
   // 正式机上真实的累计值：input 54735、cache 149606、output 39807、total 94542（= input + output）
   assert.deepEqual(agyUsage({ input: 54735, cached: 149606, output: 39807, total: 94542 }, 1200),
     { input: 204341, cached: 149606, output: 39807, total: 244148, ctx: 1200, win: 1000000, incl: true });
