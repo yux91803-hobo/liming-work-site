@@ -38,6 +38,11 @@ function fixture(t,mode='ok'){
   setTimeout(()=>send({method:'session/update',params:{sessionId:S,update:{sessionUpdate:'tool_call_update',toolCallId:'call_s1',kind:'search',status:'completed'}}}),1200);
   return;}
  if(mode==='hang')return;
+ if(mode==='stalled_reply'||mode==='upstream_capacity'||mode==='stalled_after_memory'&&prompts===2){
+  const fragment=mode==='upstream_capacity'?'**API Error: UNAVAILABLE (code 503)**: No capacity available for model gemini-4-hydrogen-high on the server.':'未完成的模型输出';
+  for(let i=0;i<3;i++)send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:fragment}}}});
+  return;
+ }
  if(mode==='transient'||mode==='midquota'&&prompts===2){send({id:q.id,error:{code:429,message:mode==='transient'?'rate limit, retry shortly':'quota exhausted'}});return;}
  if(mode==='web'&&prompts===1){
  const opts=[{optionId:'allow-1',kind:'allow_once',name:'Allow'},{optionId:'reject-1',kind:'reject_once',name:'Reject'}],S='native-synthetic-session';
@@ -59,7 +64,7 @@ function fixture(t,mode='ok'){
  const current=JSON.stringify(body.input||[]);
  if(current.includes('FRONT_DISPATCH')){text='';calls=[{name:'xin',argv:['xin','task','new','--kind','code','--model','glm-5.3','--title','fixture','--','模型自己扩写的配色和技术栈']}];}
  if(mode==='claim')text=prompts===1?'我查了，今天已经签到了。':'查不到当天记录，暂时不能确认。';
- if(mode==='midquota'&&prompts===1){text='';calls=[{name:'xin',argv:['xin','remember','--basis','stated','--type','profile','喜欢先看时序图']}];}
+ if(['midquota','stalled_after_memory'].includes(mode)&&prompts===1){text='';calls=[{name:'xin',argv:['xin','remember','--basis','stated','--type','profile','喜欢先看时序图']}];}
  if((body.tools||[]).some(t=>t.name==='finish_event')){text='';calls=[{name:'finish_event',action:'deliver',text:'我核对好了，原生前台已交付结果。'}];}
  if(mode==='think')send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:"I'm thinking through how to approach this.\\n\\nThe user is greeting me, so a short friendly reply fits. Keep it brief."}}}});
  const answer=mode==='plain'&&prompts===1?text:mode==='broken'?'{"text":"半截回复':mode==='fenced'?'好的，按格式回复：\\n'+String.fromCharCode(96).repeat(3)+'json\\n'+JSON.stringify({text})+'\\n'+String.fromCharCode(96).repeat(3)+'\\n':JSON.stringify({text,calls});const reply=()=>{send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:answer}}}});
@@ -172,6 +177,37 @@ test('Hydrogen 用纯文字聊天时直接当作回复交付，不再报格式�
  assert.equal(done.events.find(e=>e.t==='text').text,'native-front-answer');
  assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,1);assert.equal(f.rows(f.gateway).length,0);
  assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
+});
+for (const [mode, why] of [['stalled_reply', 'front_timeout_fallback'], ['upstream_capacity', 'front_capacity_fallback']]) {
+ test(`Hydrogen 输出片段后没有结束，DeepSeek 继续答一次（${mode}）`, async t => {
+  const f = fixture(t, mode);
+  f.env.XIN_AGY_PROMPT_MS = '900';
+  const text = '请给这轮一个真实的回复', sent = f.call('send', {agent:'codex', text});
+  const done = await f.wait(sent.run);
+  const end = done.events.find(e => e.t === 'done');
+  assert.deepEqual([end.ok, end.model, end.from, end.why], [true, 'deepseek-v4.1-flash', 'gemini-4-hydrogen', why]);
+  assert.deepEqual(done.events.filter(e=>e.t==='user').map(e=>e.text), [text]);
+  assert.deepEqual(done.events.filter(e=>e.t==='text').map(e=>e.text), ['deepseek-quota-answer']);
+  assert.equal(done.events.some(e=>e.t==='err'), false);
+  assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length, 1);
+  const requests = f.rows(f.gateway);
+  assert.equal(requests.length, 1);
+  assert.match(JSON.stringify(requests[0].input), /真实的回复/);
+  assert.match(requests[0].instructions, /当前前台没有直接搜网页或读网页的工具/);
+  assert.equal(JSON.parse(fs.readFileSync(f.control+'/front-antigravity-quota.json')).blocked, false);
+  assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks, []);
+  fs.writeFileSync(f.root+'/mode', 'ok');
+  const next = f.call('send', {sid:sent.sid,text:'下一句话'});
+  assert.equal((await f.wait(next.run)).events.find(e=>e.t==='done').model, 'gemini-4-hydrogen');
+ });
+}
+test('Hydrogen 在记忆操作后超时，不把这一轮交给备用模型重新执行', async t => {
+ const f = fixture(t, 'stalled_after_memory');
+ f.env.XIN_AGY_PROMPT_MS = '900';
+ const sent = f.call('send', {agent:'codex', text:'你好'}), done = await f.wait(sent.run);
+ assert.equal(done.events.find(e=>e.t==='done').ok, false);
+ assert.equal(f.rows(f.gateway).length, 0);
+ assert.equal(f.call('memory_list').items.filter(i=>i.content==='喜欢先看时序图').length, 1);
 });
 test('Hydrogen 把协议包在代码块和说明文字里、省略空 calls 时照常解析，不需要修正',async t=>{
  const f=fixture(t,'fenced'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run);

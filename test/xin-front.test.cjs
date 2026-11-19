@@ -107,6 +107,23 @@ test('前台预算到期调用回退处理；网络错误不制造成功',async(
   o.fetch=async()=>{throw new Error('offline');};
   await assert.rejects(frontTurn(o),/offline/);assert.equal(fallback,1);
 });
+test('首轮推理到期时可以用新的时限向备用模型提交原话一次', async () => {
+  const {frontTurn} = await load();
+  const o = options(message('unused'));
+  o.ms = 20;
+  let switched = false, requests = 0;
+  o.useFallbackOnTimeout = () => { assert.equal(switched, false); switched = true; return true; };
+  o.fallback = () => assert.fail('还可以恢复回复');
+  o.request = async (payload, signal) => {
+    requests++;
+    assert.deepEqual(payload.input, o.input);
+    assert.equal(signal.aborted, false);
+    if (switched) return message('备用模型答复');
+    return new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(Error('expired')), {once:true}));
+  };
+  assert.equal(await frontTurn(o), '备用模型答复');
+  assert.equal(requests, 2);
+});
 test('REMIND/hint 不再装不知道；推送和卡片第一人称且隐藏模型',async()=>{
   const a=fs.readFileSync(path.join(__dirname,'../site/xin/vm-agent.mjs'),'utf8');
   const ui=fs.readFileSync(path.join(__dirname,'../site/xin/chat.js'),'utf8');

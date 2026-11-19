@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import front_lookup_verdict, HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, after_steer, steer_count, canned_reply
+from xin_live_policy import FRONT_WEB_UNAVAILABLE, front_lookup_during_outage, front_lookup_verdict, HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, after_steer, steer_count, canned_reply
 
 
 class SpokenMarker(unittest.TestCase):
@@ -123,6 +123,25 @@ class FrontPolicy(unittest.TestCase):
         for model in (HYDROGEN, DEEPSEEK):
             with self.subTest(model=model), self.assertRaises(RuntimeError):
                 validate_front_model({'ok': False, 'model': model})
+
+    def test_timeout_recovery_keeps_the_original_model_evidence_and_a_bounded_budget(self):
+        done = {'ok': True, 'model': DEEPSEEK, 'from': HYDROGEN, 'why': 'front_timeout_fallback'}
+        self.assertEqual(validate_front_model(done), DEEPSEEK)
+        self.assertEqual(front_reply_limit(DEEPSEEK, done), 120)
+        for invalid in ({'ok': False}, {'from': None}, {'why': 'chat'}):
+            with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
+                validate_front_model({**done, **invalid})
+
+    def test_live_web_check_requires_honest_reply_during_confirmed_capacity_failure(self):
+        done = {'t': 'done', 'ok': True, 'model': DEEPSEEK, 'from': HYDROGEN, 'why': 'front_capacity_fallback'}
+        answer = {'t': 'text', 'text': FRONT_WEB_UNAVAILABLE + '。'}
+        self.assertEqual(front_lookup_during_outage([answer, done]), '')
+        self.assertEqual(validate_front_model(done), DEEPSEEK)
+        self.assertIsNone(front_lookup_during_outage([answer, {**done, 'why': 'front_timeout_fallback'}]))
+        self.assertTrue(front_lookup_during_outage([{**answer, 'text': 'https://developers.cloudflare.com/workers/'}, done]))
+        self.assertTrue(front_lookup_during_outage([answer, {'t': 'task'}, done]))
+        self.assertTrue(front_lookup_during_outage([answer, {'t': 'tool', 'name': 'WebSearch'}, done]))
+        self.assertTrue(front_lookup_during_outage([answer, {**done, 'ok': False}]))
 
     def test_deadlines_include_existing_inference_budget_and_remain_bounded(self):
         self.assertGreaterEqual(front_reply_limit(HYDROGEN), 65)

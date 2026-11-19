@@ -1,11 +1,18 @@
 """Production smoke policy for the owner's configured foreground model."""
-# 站长 2026-11-13：前台用 Antigravity 的 Gemini 4 Hydrogen（思考强度中），Gemini 额度用完再切 DeepSeek；Claude 不再用。
+# 前台优先 Gemini 4 Hydrogen，使用备用模型时核对本轮的切换原因。
 import re
 HYDROGEN = 'gemini-4-hydrogen'
 DEEPSEEK = 'deepseek-v4.1-flash'
 # The foreground allows 65 s for Hydrogen and 25 s for DeepSeek inference. Allow
 # bounded provider setup and transport as well; creating background work still ends the turn.
 REPLY_LIMIT = {HYDROGEN: 75, DEEPSEEK: 30}
+RECOVERED_REPLY_LIMIT = REPLY_LIMIT[HYDROGEN] + 45  # One bounded DeepSeek attempt after Gemini's deadline.
+FRONT_WEB_UNAVAILABLE = '现在暂时查不了网页'
+
+
+def recovered_front_timeout(done):
+    return (done.get('model') == DEEPSEEK and done.get('from') == HYDROGEN and
+            done.get('why') in ('front_timeout_fallback', 'front_capacity_fallback'))
 
 
 def validate_front_model(done, quota=None, now_ms=0):
@@ -16,6 +23,8 @@ def validate_front_model(done, quota=None, now_ms=0):
         return model
     if model != DEEPSEEK:
         raise RuntimeError('Foreground used an unexpected model')
+    if recovered_front_timeout(done):
+        return model
     quota = quota or {}
     if (quota.get('model') != HYDROGEN or quota.get('blocked') is not True
             or not isinstance(quota.get('retryAt'), (int, float)) or quota['retryAt'] <= now_ms):
@@ -23,9 +32,11 @@ def validate_front_model(done, quota=None, now_ms=0):
     return model
 
 
-def front_reply_limit(model):
+def front_reply_limit(model, done=None):
     if model not in REPLY_LIMIT:
         raise RuntimeError('No reply deadline for this foreground model')
+    if model == DEEPSEEK and recovered_front_timeout(done or {}):
+        return RECOVERED_REPLY_LIMIT
     return REPLY_LIMIT[model]
 
 
@@ -92,6 +103,19 @@ def front_lookup_verdict(events):
     if not next((e for e in events if e.get('t') == 'done'), {}).get('ok'):
         return 'turn did not finish ok'
     return ''
+
+
+def front_lookup_during_outage(events):
+    """During a verified provider 503, require an honest reply with no fabricated web step or dispatch."""
+    done = next((e for e in events if e.get('t') == 'done'), {})
+    if done.get('why') != 'front_capacity_fallback':
+        return None  # The usual native-web check still applies.
+    if done.get('ok') is not True or not recovered_front_timeout(done):
+        return 'capacity fallback did not finish on the backup model'
+    if any(e.get('t') in ('task', 'tool', 'tool_end') for e in events):
+        return 'capacity fallback reported an unexpected operation'
+    text = '\n'.join(e.get('text', '') for e in events if e.get('t') == 'text').strip().rstrip('。！.!')
+    return '' if text == FRONT_WEB_UNAVAILABLE else 'capacity fallback did not report that web lookup is unavailable'
 
 
 def first_person_receipt(reply):

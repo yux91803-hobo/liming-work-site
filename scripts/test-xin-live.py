@@ -9,7 +9,7 @@ import os
 import re
 import time
 import uuid
-from xin_live_policy import front_lookup_verdict, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, owner_brief
+from xin_live_policy import FRONT_WEB_UNAVAILABLE, RECOVERED_REPLY_LIMIT, front_lookup_during_outage, front_lookup_verdict, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, owner_brief
 from xin_live_steer import steer_live
 from playwright.async_api import async_playwright
 
@@ -233,7 +233,7 @@ async def main():
                 'text':'只读取这张图片中唯一一行字符并照写出来。不要派任务、执行命令或记忆。',
                 'files':[{'path':upload_data['data']['path'],'name':'visual-check.png'}]})
             image_sid = image['sid']
-            limit = time.monotonic() + 90
+            limit = time.monotonic() + RECOVERED_REPLY_LIMIT
             while True:
                 result = await call('poll', {'run':image['run'],'off':0})
                 if result.get('done'): break
@@ -251,7 +251,7 @@ async def main():
             print('PASS real foreground reads random image text directly without delegating', flush=True)
             # 站长 2026-11-18「简单的上网查资料它可以自己去做」：前台自己用 search_web 查公开网页，不派后台（同一个对话，不另开）
             lookup = await call('send', {'agent':'codex','sid':image_sid,'clientId':'lookup-' + uuid.uuid4().hex,
-                'text':'联调自检：用 search_web 搜一下「Cloudflare Workers documentation」，只回第一个结果的网址。不要派后台，不要记忆。'})
+                'text':'联调自检：用 search_web 搜一下「Cloudflare Workers documentation」，只回第一个结果的网址。如果当前不能查询，只回复「' + FRONT_WEB_UNAVAILABLE + '」。不要派后台，不要记忆。'})
             limit = time.monotonic() + 210
             while True:
                 result = await call('poll', {'run':lookup['run'],'off':0})
@@ -259,14 +259,18 @@ async def main():
                 if time.monotonic() > limit: raise RuntimeError('Foreground web lookup timed out')
                 await asyncio.sleep(2)
             lookup_events = result.get('events', [])
-            why = front_lookup_verdict(lookup_events)
+            outage = front_lookup_during_outage(lookup_events)
+            why = front_lookup_verdict(lookup_events) if outage is None else outage
             if why:
                 raise RuntimeError('Foreground web lookup: ' + why)
             require_finalization(lookup['run'], lookup_events, 'foreground')
             await check_front(next((e for e in lookup_events if e.get('t') == 'done'), {}))
             if (await call('tasks', {'sid':image_sid})).get('tasks'):
                 raise RuntimeError('Foreground web lookup unexpectedly delegated work')
-            print('PASS real foreground looks up a public page itself (' + str(sum(1 for e in lookup_events if e.get('t') == 'tool')) + ' web steps) without delegating', flush=True)
+            if outage is None:
+                print('PASS real foreground looks up a public page itself (' + str(sum(1 for e in lookup_events if e.get('t') == 'tool')) + ' web steps) without delegating', flush=True)
+            else:
+                print('PASS foreground reports lookup is unavailable during a verified Gemini 503, without dispatching; native lookup is degraded', flush=True)
             # Kernel stage 1 (docs/xin-kernel-design.md §14): the message was stored before acknowledgement and maps to its turn,
             # and the turn's events stream from the kernel through Cloudflare. Only status codes and counts are printed.
             me = await (await raw('me', lambda: context.request.get(BASE + '/api/xin/me', timeout=30000), True)).json()
@@ -411,7 +415,7 @@ async def main():
             named_dispatched_ms = time.time() * 1000
             await page.locator('.xc-row textarea').fill(named_request)
             await page.locator('.xc-send').click()
-            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
+            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=RECOVERED_REPLY_LIMIT * 1000)
             ack_seconds = time.monotonic() - started
             reply = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text()
             receipt_history = await call('history', {'sid': alternate_sid})
@@ -420,7 +424,7 @@ async def main():
                 raise RuntimeError('Named web receipt did not retain exactly one original request')
             receipt_done = next((e for e in reversed(receipt_runs[0]['events']) if e.get('t') == 'done'), {})
             receipt_model = await check_front(receipt_done)
-            if ack_seconds > front_reply_limit(receipt_model) or not first_person_receipt(reply) or any(x in reply.lower() for x in LEAKS):
+            if ack_seconds > front_reply_limit(receipt_model, receipt_done) or not first_person_receipt(reply) or any(x in reply.lower() for x in LEAKS):
                 raise RuntimeError('Named web work did not receive a bounded first-person receipt'
                     + ' seconds=' + str(round(ack_seconds, 2)) + ' model=' + receipt_model
                     + ' firstPerson=' + str(first_person_receipt(reply))
