@@ -1,3 +1,62 @@
+## 2026-11-19 · 小芯后台换 Neon / Argon 做到一半，交给 Codex（Claude Code）
+
+- 站长 11-19：Claude Code 额度快用完，接下来交给 Codex。
+- **分支**：`claude/friendly-hopper-d7392n`，还没开 PR。Task 1、2 由 Claude Code 实现并自查，没有另一位审核。已推送的提交：
+  - `9b96754`：设计和计划。
+  - `0311bde`：Task 1，Antigravity 模型表、CLI 编号、按模型查额度。
+  - `6443d12`：Task 2，网关路由表、别名、`agyPick`/`agyNext`、派检查任务时的避开规则。
+- **接手**：从 `6443d12` 另开 `codex/...` 分支（CLAUDE.md 上线流程第 1 条），原分支不动。
+- **依据**：站长定的安排见 [设计文档](superpowers/specs/2026-11-19-xin-neon-argon-design.md) §3。步骤见 [实现计划](superpowers/plans/2026-11-19-xin-neon-argon.md)，Task 3、4 没做。Task 3 我只读了代码，没改任何文件。
+- **验证**：`6443d12` 上 `npm run check` 1069 项全过；e2e 没跑。
+
+### 计划之外已做的决定
+- 计划执行记录在 `.superpowers/`，被 git 忽略，所以抄在这里。
+- `test/xin-runtime.test.cjs` #728 那条（原任务 fallback 与复核 fallback 组合）：作者任务从 research 改成 code。
+  - 原因：新路由下查资料只有 DeepSeek，退不到 Kimi。测试意图不变。
+- 派检查任务时（`taskNew`），还没做完的被检查任务也按它分配到的模型避开。
+  - 原因：写代码和检查都从 GLM 起，不这样会出现「检查（GLM）」查 GLM 写的东西。
+  - 开工时（`startTask`）照旧按实际作者再挑一次。
+  - 代价：点名的检查模型如果和被检查任务计划用的模型相同，派任务时就会被拒（以前是开工时才拒）。
+
+### Task 3 要注意（读代码发现的，计划里没写全）
+- **行数基线**：`test/xin-writers.json` 的 `agentLines` 是 2949，`site/xin/vm-agent.mjs` 现在正好 2949 行，不能再涨。新逻辑放 `vm-models.mjs` 或 `vm-runtime.mjs`。
+- **换模型的候选**：`vm-agent.mjs:854` 的 `safeFallbacks()` 只留 `CODEX_MODELS` 里的模型。`agyNext` 给的 Argon 会被筛掉，Neon 额度用完就接不到 Argon。没带图片时也要留 Antigravity 模型。
+- **换模型时的档位**：`vm-agent.mjs:835` 换模型时一律 `meta.effort=AUTO_EFFORT`。换到 Antigravity 模型要用 `agyEffort(类别, 新模型)`：Neon 写代码额度用完换 Argon，应是 high，不是 max。
+- **`task_model`（`vm-agent.mjs:2512`）**：
+  - 现在只在 `t.model===runtime.AGY_MODEL` 时清 `agentSid` 和 `started`，要改成 `runtime.isAgyModel`。
+  - 从 Neon 换到 Argon 时还要清掉 `t.antigravityConversation`，不然 Argon 会用 `--conversation` 续接 Neon 的对话。
+  - `sessionUsage`（`vm-agent.mjs:1342`）靠这个字段决定从 `budgets/` 读用量，清掉之前想好用量怎么显示。
+- **`agy-run`（`vm-agent.mjs:2925-2927`）**：没把 `model: m.model` 传给 `antigravityWork`，现在实际一直跑 Hydrogen。`quotaState` 也只读 `antigravity-quota.json`。
+- **开工时给检查任务重新挑模型**：`startTask` 里检查任务那段只走网关 `route()`。
+  - 派任务时就给了 Argon 的（`why=picked`），开工时会保留。
+  - 派任务时是 GLM、实际作者又是 GLM 的，开工时会换成 DeepSeek，而不是 Argon。
+  - 要先看 `agyPick({kind:'review', poolOk, avoid: 实际作者})`，条件和派任务时一样（不是点名、不带图片和插件、有 agy、不在卡住冷却期）。
+- **另外两条要跟着改的测试**：`test/xin-antigravity.test.cjs` 除了计划 Step 1 列的，还有：
+  - 第一条「普通资料任务真正交给 Gemini 4 Hydrogen」：查资料现在是 Argon Medium，额度写进 `antigravity-argon-quota.json`，只有 1 个桶。
+  - 「实际返回其它模型时拒绝执行」：断言应和派出去的模型比，不再和 Hydrogen 比。
+- **没有 Argon 额度组时**：`antigravityQuota` 抛「额度字段不完整」，`antigravityWork` 接着抛错、退出码 1，`canSwitch()` 换下一个候选。计划里用 `mode='noargon'` 的测试覆盖这条。
+
+### Task 4（没做）
+- **用量图表**：`site/xin/chat.js:2769` 的 SERIES 加 Neon、Argon，并更新 `?v=`。
+- **正式站联调**：
+  - `scripts/test-xin-live.py`：第 18、20 行和第 316–327 行，查资料那步改成期望 Argon Medium。
+  - `explain_background_fallback` 遇到 Argon 任务改看 `antigravityArgon`。
+  - `scripts/xin_live_policy.py` 跟着改。
+- **文档**：README 第 17、40、80、84 行；docs/CHANGES.md 加一条。
+- **上线**：全量 check、e2e、用量页截图、PR、合并、确认正式站 Actions 和联调是绿的。
+
+### 其它没做完的
+- **li2 内核**：#184 上线后，li 已换成新内核 `44620ed417e4`。li2 要等下次被用到才换；下次用过天启后核对 li2 的内核也是这个版本。
+- **N1：天启工作台照 DeepSeek Harness 桌面端改版**：
+  - 布局三栏：左边会话、工作区、设置；中间聊天，输入框带模型、权限、计划模式；右边文件、终端、预览三个标签页；设置用弹窗。
+  - 保留星空和粒子。
+  - 映射过来的功能要在 li2 上真实生效。Harness 里还要哪些常用功能，站长说「以后再加」。
+  - 进度：我做到可点击原型 v3（claude.ai 上的 artifact，Codex 可能打不开），下一步是 v4 原型。
+  - 参考：Harness 源码在 `github.com/deepseek-ai/deepseek-harness`（`dsh-web-app`、`dsh-client-ui-*`）。直接运行下载的 dsh 被安全检查拒了，只做了静态阅读。
+- **站长口头定的**：
+  - li2 网关：「账号数据不要搬过去，我到时候会新加」。
+  - li 默认只读，要做实验先问站长。
+
 ## 2026-11-19 · 天启 li2 第 9 步其实早就做完了（Claude Code 核对）
 
 - 站长 11-19：「这个早就弄好了」。我之前照着交接记录说「还在等 Secret 和网关账号」，是记录没更新，下面这些是核对过的。
