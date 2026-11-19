@@ -10,6 +10,13 @@
   - 真对话：li2 上留着的一轮（11-18 23:59 北京时间）成功，用时 5.3 秒。
 - **Purge、REA**：li2 的 Harness 带 `dsh-purge` 插件（`~/.dsh` 里有 `prompt-inject.md`、`redteam`，人设是 `purge-on`），是 #180（Codex，见下一条）有意接进来的。设计 §4.2 里「li2 上没有 purge 这类插件」那句已经被 #180 取代。天启页面的插件开关能关。
 - **以后**：交接记录写「等站长做什么」的，接手时先核对实际情况再跟站长说。
+- **CI 偶发卡住（11-19，#181 的 check）**：单元测试打印到第 603 项（`xin-muse-rules` 最后一项）后 12 分钟没有输出，被 15 分钟超时取消。按文件对照，卡在 `test/xin-owner.test.cjs`（之后 33 个文件一项都没打印）；本地连跑 6 次，每次 2 到 3 秒过。这个文件里 `proc().line()` 等子进程输出没有超时，`cli()`、`send()` 和 `xin task list` 的 `spawnSync` 也没设 `timeout`，子进程一旦卡住整个文件就挂着。建议照 Jest、Mocha 给每个测试设默认超时的做法：`node --test` 加 `--test-timeout`，这几处 `spawnSync` 加 `timeout`，下次卡住会直接报出是哪一项。
+
+## 2026-11-19 · 小芯前台回复恢复（Codex）
+
+- `codex/xin-reply-recovery-20261119` 从 #180 的 `82b52d6` 开出。Codex 实现并自查。#181 只改天启交接记录，由原分支继续。
+- 北京时间 11:30—11:32 的三轮均由 Hydrogen 高档发回片段，没有正常结束，也没有任务或工具事件。独立新对话同样复现。`vm-runtime.mjs` 原来的超时收尾直接调用控制器的 `front_fallback`，当时没有派活回执可交付。增加一次有界的备用推理，复用同一条已落库的消息，不自动重投旧消息。 [线上证据](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44453032285)
+- 着手换模型前检查没有控制器操作和原生网页步骤，且用户未停止。若备用推理也失败，原消息仍留在会话。定位时查本轮 `why=front_timeout_fallback` 或 `why=front_capacity_fallback`。后者对应实测 Antigravity ACP 重试时连续发出的 `UNAVAILABLE (code 503)` 容量通知。云电脑的备用模型已通过独立实测。发布保留健康时的原生查询验收，遇到明确容量故障时验证备用回复如实说明查询暂不可用。无需数据迁移，回滚使用发布流程的上一已验收版本。 [独立模型探针](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44454387424) [503 证据](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44454807003)
 
 ## 2026-11-19 · 天启星空工作台（Codex）
 
