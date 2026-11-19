@@ -208,12 +208,17 @@ async def main():
             print('PASS real browser login and real background dispatch', flush=True)
             # Foreground stays usable while the task is executing.
             reply_marker = spoken_marker()
-            await page.locator('.xc-row textarea').fill('只回复 ' + reply_marker + '，不要执行命令，也不要等待后台。')
+            plain_request = '只回复 ' + reply_marker + '，不要执行命令，也不要等待后台。'
+            await page.locator('.xc-row textarea').fill(plain_request)
             await page.locator('.xc-send').click()
             await settle('!LimingXinChat.state.run && !LimingXinChat.state.sending', 180000)
             shown = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()
             if not any(says(text, reply_marker) for text in shown):
                 raise RuntimeError('Foreground reply missing: ' + await front_diagnosis(sid) + ' shape=' + json.dumps(reply_shape(shown, reply_marker)))
+            # A separate plain chat corroborates a provider outage when ACP stalled without an explicit 503.
+            plain_history = (await call('history', {'sid': sid})).get('runs', [])
+            plain_turn = next((r for r in reversed(plain_history) if any(e.get('t') == 'user' and e.get('text') == plain_request for e in r['events'])), {})
+            plain_done = next((e for e in plain_turn.get('events', []) if e.get('t') == 'done'), {})
             print('PASS foreground real-model reply during background work', flush=True)
             # Only pixels contain the random answer; neither the prompt nor the filename reveals it.
             visual_token = 'READ-' + uuid.uuid4().hex[:10].upper()
@@ -259,7 +264,7 @@ async def main():
                 if time.monotonic() > limit: raise RuntimeError('Foreground web lookup timed out')
                 await asyncio.sleep(2)
             lookup_events = result.get('events', [])
-            outage = front_lookup_during_outage(lookup_events)
+            outage = front_lookup_during_outage(lookup_events, plain_done)
             why = front_lookup_verdict(lookup_events) if outage is None else outage
             if why:
                 raise RuntimeError('Foreground web lookup: ' + why)
@@ -270,7 +275,7 @@ async def main():
             if outage is None:
                 print('PASS real foreground looks up a public page itself (' + str(sum(1 for e in lookup_events if e.get('t') == 'tool')) + ' web steps) without delegating', flush=True)
             else:
-                print('PASS foreground reports lookup is unavailable during a verified Gemini 503, without dispatching; native lookup is degraded', flush=True)
+                print('PASS foreground reports lookup is unavailable during a Gemini outage without dispatching; native lookup is degraded', flush=True)
             # Kernel stage 1 (docs/xin-kernel-design.md §14): the message was stored before acknowledgement and maps to its turn,
             # and the turn's events stream from the kernel through Cloudflare. Only status codes and counts are printed.
             me = await (await raw('me', lambda: context.request.get(BASE + '/api/xin/me', timeout=30000), True)).json()

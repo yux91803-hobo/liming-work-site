@@ -3,6 +3,7 @@
 - Codex 实现并自查，基线为 #180。正式站于北京时间 11:30 到 11:32 连续记录前台错误。Antigravity 发来了文本片段，未在 65 秒推理时限内结束。三个失败轮次均未调用控制器工具，额度记录未显示用尽。独立探针确认 Antigravity 1.5.12 的 Hydrogen 高档和中档都持续收到服务端容量错误，网关的 DeepSeek 正常回答。 [状态诊断](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44453032285) [正式站复测](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44453411591) [模型探针](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44454387424) [503 证据](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44454807003)
 - 首轮卡住且尚未执行控制器操作或前台网页步骤时，关闭原生请求，使用 DeepSeek V4.1 Flash 在同一轮继续回答，推理最多 45 秒。用户停止、已有操作及后台结果交付沿用现有结束路径。切换原因保存在本轮的 `why`，下一句照常优先 Hydrogen。参考 OpenCode 对超时推理设置独立重试上限的做法。 [OpenCode 重试实现](https://github.com/anomalyco/opencode/blob/20c94b79f1112b098b4e443b3955ecd0da3766f4/packages/core/src/model-retry.ts)
 - 回归覆盖模型输出片段却一直不结束、只保存和回复一次、额度保持、已执行操作不重做、用户停止和下一句恢复 Hydrogen。正式联调仍要求原生网页查询有真实步骤。检测到明确的上游容量错误且已切换时，改为验证小芯如实说明暂时无法查询，当轮没有代派后台或编造网址。
+- #182 首次发布期间，正式站独立对话由 DeepSeek 实际回复。整站联调也通过了派活、聊天和看图，随后前台查询因 Gemini 无响应而没有网页步骤，发布自动回滚。Codex 补充联调场景，自查仍要求原生路径有实际网页步骤。当独立的纯文字问答和网页查询都记录了超时切换，且纯文字问答已真实回复时，验证网页查询给出明确的不可用回复、没有任务和网页步骤。单独一个网页超时仍会触发原验证。 [独立对话](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44458635321) [首次发布及回滚](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44456997209)
 
 # 修改清单 · 2026-11-19（天启星空工作台）
 
