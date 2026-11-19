@@ -38,9 +38,16 @@ jobs:
 
               def post(path, data):
                   request = Request(site+path, data=json.dumps(data).encode(), headers={
-                      'Content-Type':'application/json','X-Xin':'1','Origin':site})
-                  with opener.open(request, timeout=55) as response:
-                      return json.loads(response.read(2*1024*1024))
+                      'Content-Type':'application/json','X-Xin':'1','Origin':site,'User-Agent':'Tianqi-release-check'})
+                  try:
+                      with opener.open(request, timeout=55) as response:
+                          return json.loads(response.read(2*1024*1024))
+                  except HTTPError as error:
+                      raw=error.read(4096).decode('utf-8','replace')
+                      print('SITE_CHECK',json.dumps({'path':path,'http':error.code,
+                          'challenge':'cf_chl' in raw.lower() or 'just a moment' in raw.lower(),
+                          'app_forbidden':'"forbidden"' in raw}),flush=True)
+                      raise
 
               post('/api/tq/login', {'password':os.environ['XIN_OWNER_PASSWORD']})
               deadline = time.monotonic()+130
