@@ -89,7 +89,7 @@ export function redact(text) {
    - 同版本的请求经本机套接字交给它；它还没好（换版本、被杀后重起）就等它，等不到回「主人不在」（没执行，Worker 待送达重试）。
      删旧模式第 2 步（docs/superpowers/specs/2026-11-17-xin-remove-legacy-design.md §4.3）：不再每个请求起一个控制器，参考 grpc wait-for-ready。
    - 状态进程意外退出：记录留在 kernel（停着不写，#140），按退避重起；连续 giveUpMs 起不来推送一次、阶段标成 down，
-     之后照最长退避一直重试（没有旧方式可退了）。
+     之后照最长退避一直重试（没有旧方式可退了）。起的时候被系统直接拒绝（只有 error、没有 exit）也算一次起不来。
    - 换版本、外壳正常停止：先发控制命令 release 让它排空、放锁退出，记录留在 kernel，下一个状态进程接手。
    只用内置模块：套接字协议和 vm-kernel-client.mjs 的一样（测试核对协议号）。 */
 export const BRIDGE_PROTOCOL = 1;
@@ -165,9 +165,19 @@ export function createStateKeeper({ home, env = process.env, clock = () => perfo
     catch { failed('spawn_failed'); return; }
     child.agent = agent; s.child = child;
     log({ event: 'start', agent: agentHash(agent) });
-    let out = '', err = '', ready = false, readyTimedOut = false;
+    let out = '', err = '', ready = false, readyTimedOut = false, spawned = false;
     const readyTimer = setTimeout(() => { if (!ready) { readyTimedOut = true; try { child.kill('SIGKILL'); } catch { /* 已经退出 */ } } }, readyMs);
-    child.stdin.on('error', () => {}); child.on('error', () => {});
+    child.stdin.on('error', () => {});
+    // 照 execa（lib/resolve/exit-async.js）：error 出在 spawn 之前，说明被系统直接拒绝了（找不到程序、进程数或文件句柄到上限），
+    // exit 永远不会来；当成一次没起来，照退避重试。spawn 之后的 error 不管，exit 照样会来
+    child.on('spawn', () => { spawned = true; });
+    child.on('error', e => {
+      if (spawned || s.child !== child) return;
+      clearTimeout(readyTimer); s.child = null;
+      log({ event: 'spawn_error', agent: agentHash(agent), code: e?.code || null });
+      if (s.phase === 'stopping' || s.closed) { s.phase = 'off'; child.stopped?.(); reconcile(); wake(); return; }
+      failed('spawn_failed'); wake();
+    });
     child.stdout.on('data', b => {
       if (ready) return;
       out += b; const nl = out.indexOf('\n');
