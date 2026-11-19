@@ -130,14 +130,14 @@ GEMINI_SKIP_MS = 15 * 60 * 1000  # vm-agent AGY_STALL_MS: new tasks skip Gemini 
 CLOCK_SKEW_MS = 60 * 1000  # the runner and the cloud computer keep separate clocks
 
 
-def explain_background_fallback(quota, issue, dispatched_ms, now_ms):
+def explain_background_fallback(quota, issue, dispatched_ms, now_ms, expected_model=None):
     """Why the default background task did not finish on Gemini, from what the controller recorded.
 
     Accepted: a quota cooldown still in force, or a Gemini outage (no output = stall, or a non-SUCCESS
     answer = status) recorded during this run or in the window before it in which new tasks skip Gemini.
     A local agy failure is never recorded by the controller, so it cannot explain anything here."""
     quota = quota or {}
-    if quota.get('blocked') is True and isinstance(quota.get('retryAt'), (int, float)) and quota['retryAt'] > now_ms:
+    if (expected_model is None or quota.get('model') == expected_model) and quota.get('blocked') is True and isinstance(quota.get('retryAt'), (int, float)) and quota['retryAt'] > now_ms:
         return 'quota'
     issue = issue or {}
     at = issue.get('at')

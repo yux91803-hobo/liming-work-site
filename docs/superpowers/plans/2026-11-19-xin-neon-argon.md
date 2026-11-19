@@ -18,7 +18,7 @@
 - 网关路由表（逐字）：chat、quick、research、vision、daily、system = `['deepseek-v4.1-flash']`；code、hard = `['glm-5.3','kimi-k3.1-pro','deepseek-v4.1-flash']`；review = `['glm-5.3','deepseek-v4.1-flash']`。
 - Antigravity 先用：code → Neon high，hard → Neon xhigh，review → Argon high，research → Argon medium；Gemini 池用完时 code、hard 改 Argon high；其余类别不用 Antigravity。
 - `AGY_MODEL` 仍是 `gemini-4-hydrogen`（前台用），前台代码不改。
-- 每个提交末尾带 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` 和 `Claude-Session: https://claude.ai/code/session_01C9CcWGievwRd2CQCU5tLkd`。
+- 提交、PR 和交接记录按实际分工署名。Task 1、2 由 Claude Code 实现，Task 3、4 由 Codex 接续；自查和独立复核分别记录。
 
 ## Review Focus
 
@@ -47,7 +47,7 @@
   - `antigravityWork(t, options)` 新增 `options.model`（缺省 `AGY_MODEL`）；`readAntigravityQuota(binary, cwd, model = AGY_MODEL)`。
 - Produces（`vm-usage.mjs`）：`AGY_MODELS = Object.keys(AGY_CATALOG)` 的同样三项（测试核对一致）。
 
-- [ ] **Step 1: 写会失败的测试**（`test/xin-antigravity.test.cjs` 新加）
+- [x] **Step 1: 写会失败的测试**（`test/xin-antigravity.test.cjs` 新加）
 
 ```js
 test('Antigravity 模型表：Hydrogen、Neon 在 Gemini 池，Argon 单独一池；没有的档位降到它最高的那档',async()=>{
@@ -67,18 +67,18 @@ test('Antigravity 模型表：Hydrogen、Neon 在 Gemini 池，Argon 单独一�
 
 `test/xin-usage.test.cjs` 里核对 `AGY_MODELS` 的断言改成等于 `Object.keys(runtime.AGY_CATALOG)`。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `node --test test/xin-antigravity.test.cjs test/xin-usage.test.cjs 2>&1 | grep -E "^not ok|^# (pass|fail)"`
 Expected: 新测试 FAIL（`AGY_CATALOG` 未定义），用量一致性断言 FAIL。
 
-- [ ] **Step 3: 实现**：按 Interfaces 加常量和函数；`antigravityWork` 里 `provider = agyProviderModel(model, effort)`，`readAntigravityQuota(binary, clientDir, model)`；`vm-usage.mjs` 的 `AGY_MODELS` 列三项。注释写明站长 11-19 的安排和实测速度。
+- [x] **Step 3: 实现**：按 Interfaces 加常量和函数；`antigravityWork` 里 `provider = agyProviderModel(model, effort)`，`readAntigravityQuota(binary, clientDir, model)`；`vm-usage.mjs` 的 `AGY_MODELS` 列三项。注释写明站长 11-19 的安排和实测速度。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: 同 Step 2。Expected: 0 fail。
 
-- [ ] **Step 5: 提交** `git commit -m "Antigravity 模型表：加 Neon、Argon，CLI 编号和额度按模型"`
+- [x] **Step 5: 提交** `git commit -m "Antigravity 模型表：加 Neon、Argon，CLI 编号和额度按模型"`
 
 ### Task 2: 网关路由表、别名和名字
 
@@ -90,7 +90,7 @@ Run: 同 Step 2。Expected: 0 fail。
 - Consumes: Task 1 的 `AGY_CATALOG`、`AGY_NEON`、`AGY_ARGON`、`agyPool`。
 - Produces: `agyPick({ kind, poolOk = () => true, avoid = [] }) -> string|null`：code、hard → Neon（`poolOk('gemini')` 且不在 avoid），否则 Argon（`poolOk('argon')` 且不在 avoid），否则 null；review、research → Argon（同样条件），否则 null；其他类别 null。`agyNext({ kind, model, poolOk, avoid }) -> string[]`：model 是 Neon 且类别是 code、hard 时，Argon 可用就返回 `['gemini-4-argon']`，否则 `[]`。
 
-- [ ] **Step 1: 改测试**（`xin.test.cjs` 路由器那条）
+- [x] **Step 1: 改测试**（`xin.test.cjs` 路由器那条）
 
 ```js
 assert.deepStrictEqual(ROUTES,{chat:['deepseek-v4.1-flash'],quick:['deepseek-v4.1-flash'],code:['glm-5.3','kimi-k3.1-pro','deepseek-v4.1-flash'],research:['deepseek-v4.1-flash'],
@@ -117,10 +117,10 @@ assert.deepEqual(agyNext({kind:'code',model:'gemini-4-neon',poolOk:p=>p!=='argon
 assert.deepEqual(agyNext({kind:'research',model:'gemini-4-argon',poolOk:ok}),[]);
 ```
 
-- [ ] **Step 2: 跑测试确认失败**：`node --test test/xin.test.cjs test/xin-antigravity.test.cjs 2>&1 | grep -E "^not ok|^# (pass|fail)"` → 路由、别名、`agyPick` 测试 FAIL。
-- [ ] **Step 3: 实现**：`ROUTES` 照 Global Constraints；`MODEL_ALIAS` 里 Antigravity 部分按顺序 Neon（`(?:gemini[\s-]*4[\s-]*)?neon`）、Argon（`(?:gemini[\s-]*4[\s-]*)?argon`）、Hydrogen（`(?:gemini[\s-]*4[\s-]*)?hydrogen|gemini(?:[\s-]*[\d.]+)?[\s-]*flash(?:[\s-]*high)?`）、泛指的 Gemini/antigravity/agy → Neon；`OTHER_NAMES` 从 `AGY_CATALOG` 取名字；按 Interfaces 加 `agyPick`、`agyNext`。路由表上方注释写站长 11-19 的规则。
-- [ ] **Step 4: 跑测试确认通过**：同 Step 2 → 0 fail。
-- [ ] **Step 5: 提交** `git commit -m "网关路由：杂活、查资料、每日、电脑维护、看图用 DeepSeek；Kimi 只写代码，GLM 写代码和检查"`
+- [x] **Step 2: 跑测试确认失败**：`node --test test/xin.test.cjs test/xin-antigravity.test.cjs 2>&1 | grep -E "^not ok|^# (pass|fail)"` → 路由、别名、`agyPick` 测试 FAIL。
+- [x] **Step 3: 实现**：`ROUTES` 照 Global Constraints；`MODEL_ALIAS` 里 Antigravity 部分按顺序 Neon（`(?:gemini[\s-]*4[\s-]*)?neon`）、Argon（`(?:gemini[\s-]*4[\s-]*)?argon`）、Hydrogen（`(?:gemini[\s-]*4[\s-]*)?hydrogen|gemini(?:[\s-]*[\d.]+)?[\s-]*flash(?:[\s-]*high)?`）、泛指的 Gemini/antigravity/agy → Neon；`OTHER_NAMES` 从 `AGY_CATALOG` 取名字；按 Interfaces 加 `agyPick`、`agyNext`。路由表上方注释写站长 11-19 的规则。
+- [x] **Step 4: 跑测试确认通过**：同 Step 2 → 0 fail。
+- [x] **Step 5: 提交** `git commit -m "网关路由：杂活、查资料、每日、电脑维护、看图用 DeepSeek；Kimi 只写代码，GLM 写代码和检查"`
 
 ### Task 3: 派任务、按池记额度、退路和用量卡
 
@@ -132,7 +132,7 @@ assert.deepEqual(agyNext({kind:'research',model:'gemini-4-argon',poolOk:ok}),[])
 - Consumes: Task 1 的 `isAgyModel`、`agyPool`、`agyEffort`、`AGY_CATALOG`；Task 2 的 `agyPick`、`agyNext`。
 - Produces（`vm-agent.mjs` 内部）：`AGY_QUOTA_FILE = { gemini: 'antigravity-quota.json', argon: 'antigravity-argon-quota.json' }`；`agyPoolOk(pool) -> boolean`（该池文件没标用完，或已过 `retryAt`）；`tasks` 输出新增 `antigravityArgon`（Argon 池记录或 null）；用量 `quotas` 依次是 `{key:'gemini',name:'Gemini'}`、`{key:'argon',name:'Argon'}`（有读数才出现）。
 
-- [ ] **Step 1: 夹具和测试**
+- [x] **Step 1: 夹具和测试**
   - 夹具里假 `agy` 的 `/usage` 加 Argon 分组：`{id:'gemini-argon-wtu-weekly',remaining_fraction:mode==='argonquota'&&count>1?0:1,reset_time:七天后}`；`mode==='noargon'` 时不带这一组。
   - 把「后台优先派 Hydrogen，按类别定思考强度」那条改成：code → `gemini-4-neon` 且 agy 调用参数 `['gemini-4-neon-high','high']`；hard → `['gemini-4-neon-xhigh','xhigh']`；research → `['gemini-4-argon-medium','medium']`；quick 的 `task.model === 'deepseek-v4.1-flash'`；检查网关模型写的任务 → `gemini-4-argon` 且 `['gemini-4-argon-high','high']`；检查 Argon 写的任务 → `glm-5.3`；点名 `gemini-4-hydrogen` 的 code 任务 → `['gemini-4-hydrogen-high','high']`。
   - 新测试「Gemini 池用完：写代码改派 Argon High；Argon 池也用完交给网关」：写旧格式 `antigravity-quota.json`（`{model:'gemini-4-hydrogen',blocked:true,retryAt:一小时后,buckets:[…]}`）→ code 任务 `model==='gemini-4-argon'`、`fallbacks[0]==='glm-5.3'`；再写 `antigravity-argon-quota.json` 标用完 → code `glm-5.3`、research `deepseek-v4.1-flash`、review `glm-5.3`；Neon 正常时 code 任务 `fallbacks` 以 `['gemini-4-argon','glm-5.3']` 开头。
@@ -142,8 +142,8 @@ assert.deepEqual(agyNext({kind:'research',model:'gemini-4-argon',poolOk:ok}),[])
   - 「不交给 Hydrogen 的」那条改名为「不交给 Antigravity 的：带图片、电脑维护、看图、杂活」，并加：带图片的 code 任务 `model==='glm-5.3'`。
   - 点名 Extra：`task_new({kind:'code',goal:'x',userRequest:'用 Neon Extra 写个脚本'})` 的 agy 参数是 `['gemini-4-neon-xhigh','xhigh']`；`userRequest:'加一个 extra 按钮'`（没提 Neon）仍是 `['gemini-4-neon-high','high']`。
   - `xin-usage.test.cjs`：同时有两个池的文件时，`usage` 的 `quotas.map(q=>q.key)` 是 `['gemini','argon']`，名字 `['Gemini','Argon']`。
-- [ ] **Step 2: 跑测试确认失败**：`node --test test/xin-antigravity.test.cjs test/xin-usage.test.cjs 2>&1 | grep -E "^not ok|^# (pass|fail)"` → 上面这些 FAIL。
-- [ ] **Step 3: 实现**
+- [x] **Step 2: 跑测试确认失败**：`node --test test/xin-antigravity.test.cjs test/xin-usage.test.cjs 2>&1 | grep -E "^not ok|^# (pass|fail)"` → 上面这些 FAIL。
+- [x] **Step 3: 实现**
   - 派任务：原 `preferAgy` 的前置条件保留（不是点名、不是每日、不带图片和插件、有 agy、不在卡住冷却期），模型改由 `agyPick({kind, poolOk: agyPoolOk, avoid})` 给；`fallbacks = [...agyNext(...), ...rt.fallbacks]`（去重）。
   - 带图片：`route` 的 kind 只有不是 review、code、hard 时才换成 vision。
   - 启动档位：Antigravity 模型用 `agyEffort(t.tkind, t.model)`；模型是 Neon 且用户原话（`t.userRequest`）匹配 `/neon[\s-]*(?:extra|xhigh)|neon\s*超高/i` 时用 `xhigh`。换模型时同样按新模型取档，不再一律 `AUTO_EFFORT`。
@@ -151,8 +151,8 @@ assert.deepEqual(agyNext({kind:'research',model:'gemini-4-argon',poolOk:ok}),[])
   - `agy_quota`：按 `agyPool(a.quota.model)` 写对应文件；`quotaSample(a.quota.model, …)`。
   - 用量：`QUOTA_FILES` 加 Argon 卡（`pool: 'argon'`），筛选和预测都按池（`agyPool(x.model) === q.pool`），旧记录（model 是 hydrogen）照样算 Gemini 池。
   - `tasks` 输出加 `antigravityArgon`；任务模型名字用 `AGY_CATALOG[id].name`；未知模型提示列出三个 Antigravity 模型。
-- [ ] **Step 4: 跑测试确认通过**：同 Step 2 → 0 fail；再跑 `node --test test/xin.test.cjs test/xin-front-agy.test.cjs test/xin-agy-report-recovery.test.cjs` → 0 fail。
-- [ ] **Step 5: 提交** `git commit -m "后台派任务：写代码 Neon、检查和查资料 Argon，额度按池记，用量页两张卡"`
+- [x] **Step 4: 跑测试确认通过**：同 Step 2 → 0 fail；再跑 `node --test test/xin.test.cjs test/xin-front-agy.test.cjs test/xin-agy-report-recovery.test.cjs` → 0 fail。
+- [x] **Step 5: 提交** `git commit -m "后台派任务：写代码 Neon、检查和查资料 Argon，额度按池记，用量页两张卡"`
 
 ### Task 4: 网页图表、正式站联调、文档，全量验证
 
@@ -162,9 +162,9 @@ assert.deepEqual(agyNext({kind:'research',model:'gemini-4-argon',poolOk:ok}),[])
 - Modify: `README.md`（第 17、40 行一带的默认安排）、`docs/CHANGES.md`、`docs/AI-HANDOFF.md`（含「下次核对 li2 内核 = 44620ed417e4」）
 - Test: `test/e2e/xin_usage_e2e.py`（若断言了 `SERIES` 或卡片数量就跟着改）
 
-- [ ] **Step 1: 改联调脚本**：`AGY_RESEARCH = 'gemini-4-argon'`；研究任务的判断改成 `actual == AGY_RESEARCH`、档位 `medium`，打印 `PASS real default Antigravity Gemini 4 Argon (medium for research) and confined file output`；退路时 `explain_background_fallback(center.get('antigravityArgon'), …)`。点名 Hydrogen 那段不改。
-- [ ] **Step 2: 验证脚本语法**：`python3 -m py_compile scripts/test-xin-live.py && python3 -m pytest -q test/xin_live_policy_test.py` → 无报错、全过。
-- [ ] **Step 3: 网页**：`SERIES` 加两项（颜色照现有写法补齐），改 `?v=`。
-- [ ] **Step 4: 文档**：CHANGES（站长原话、实测速度、表格、不用 Orchestrator 的原因、参考 Antigravity 官方模型文档）、README 默认安排、交接记录。
+- [x] **Step 1: 改联调脚本**：`AGY_RESEARCH = 'gemini-4-argon'`；研究任务的判断改成 `actual == AGY_RESEARCH`、档位 `medium`，打印 `PASS real default Antigravity Gemini 4 Argon (medium for research) and confined file output`；退路时 `explain_background_fallback(center.get('antigravityArgon'), …)`。点名 Hydrogen 那段不改。
+- [x] **Step 2: 验证脚本语法**：`python3 -m py_compile scripts/test-xin-live.py && python3 -m pytest -q test/xin_live_policy_test.py` → 无报错、全过。
+- [x] **Step 3: 网页**：`SERIES` 加两项（颜色照现有写法补齐），改 `?v=`。
+- [x] **Step 4: 文档**：CHANGES（站长原话、实测速度、表格、不用 Orchestrator 的原因、参考 Antigravity 官方模型文档）、README 默认安排、交接记录。
 - [ ] **Step 5: 全量验证**：`npm run check`（全过、测试数不少于改前的 1067）；起 `npm run dev` 后 `CHROMIUM_PATH=/opt/pw-browsers/chromium-1243/chrome-linux64/chrome npm run test:e2e`（15 组全过）；用量页 1280 和 390、浅色和深色截图自查两张额度卡。
 - [ ] **Step 6: 提交并开 PR**，CI 和测试站绿了合并；正式站联调绿了以后在 li 上只读核对：`antigravity-argon-quota.json` 已生成，最近的查资料任务实际模型是 `gemini-4-argon`。

@@ -89,6 +89,14 @@ export function agyNext({ kind, model, poolOk = () => true, avoid = [] } = {}) {
   const plan = AGY_PLAN[kind] || [], i = plan.indexOf(model);
   return i < 0 ? [] : plan.slice(i + 1).filter(id => poolOk(runtime.agyPool(id)) && !avoid.includes(id));
 }
+export function backgroundRoute({kind, want, named, images, avoid = [], plugins = [], daily, agyAvailable, poolOk}) {
+  const automatic = !named && !daily && !images && !plugins.length && agyAvailable;
+  const preferred = automatic ? agyPick({kind, poolOk, avoid}) : null;
+  const imageKind = images && !['review','code','hard'].includes(kind) ? 'vision' : kind;
+  const result = route({kind:imageKind, want:preferred || want, named, images, avoid});
+  if (preferred) result.fallbacks = [...new Set([...agyNext({kind, model:preferred, poolOk, avoid}), ...result.fallbacks])];
+  return result;
+}
 export const KIND_NAMES = { chat: '聊天', quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务', system: '电脑维护' };
 // 用户点名：「用 / 换成 / 让 … 模型」或者「模型 来做 / 来看 …」。Flash 要排在同名的前面
 export const MODEL_ALIAS = [

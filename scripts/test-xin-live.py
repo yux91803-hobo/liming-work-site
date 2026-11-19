@@ -16,6 +16,7 @@ from playwright.async_api import async_playwright
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
 PASSWORD = os.environ.get('XIN_OWNER_PASSWORD', '')
 AGY_MODEL = 'gemini-4-hydrogen'
+AGY_RESEARCH = 'gemini-4-argon'
 # 后台按类别定思考强度（vm-runtime.mjs 的 AGY_KIND_EFFORT）：默认文件任务是查资料（research），点名做网页是写代码（code）
 AGY_EFFORT = {'research': 'medium', 'code': 'high'}
 # Public replies must not mention model, runner or task internals.
@@ -313,18 +314,18 @@ async def main():
             require_finalization(turn['run'], turn['events'], 'background')
             print('PASS durable completion receipts for real foreground and background turns', flush=True)
             actual = again['task'].get('actualModel')
-            if actual == AGY_MODEL:
+            if actual == AGY_RESEARCH:
                 finished = [e for r in again['runs'] for e in r['events'] if e.get('t') == 'done']
                 if not finished or finished[-1].get('effort') != AGY_EFFORT['research']:
-                    raise RuntimeError('Research work on Hydrogen did not use medium thinking')
-                print('PASS real default Antigravity Gemini 4 Hydrogen (medium for research) and confined file output', flush=True)
+                    raise RuntimeError('Research work on Argon did not use medium thinking')
+                print('PASS real default Antigravity Gemini 4 Argon (medium for research) and confined file output', flush=True)
             else:
                 # Only a cause the controller itself recorded explains a fallback: a real quota cooldown, or Gemini being
                 # unavailable (no output at all = stall, or it answered with a non-SUCCESS status) during this run or in the
                 # 15 minutes before it (new tasks skip Gemini then). A local agy failure (no result, non-zero exit) is never
                 # recorded, so a broken integration on our side still fails here.
                 center = await call('tasks', {'all': True})
-                why = explain_background_fallback(center.get('antigravity'), center.get('antigravityIssue'), dispatched_ms, time.time() * 1000)
+                why = explain_background_fallback(center.get('antigravityArgon'), center.get('antigravityIssue'), dispatched_ms, time.time() * 1000, expected_model=AGY_RESEARCH)
                 print('PASS ' + ('real quota cooldown retained' if why == 'quota' else why + ' recorded by the controller') +
                       ' and fallback produced the verified file', flush=True)
             if errors:
