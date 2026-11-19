@@ -1,0 +1,85 @@
+name: Read foreground selected effort
+on:
+  push:
+    branches: [codex/xin-front-effort-readonly-20261119]
+    paths: [.github/workflows/xin-front-effort-readonly.yml]
+permissions: {}
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Read selected provider IDs without executing a model
+        env:
+          LI_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
+        run: |
+          python3 - <<'PY_READONLY'
+          import json
+          import os
+          import re
+          from datetime import datetime, timezone
+          from urllib.error import HTTPError
+          from urllib.parse import quote, urlencode
+          from urllib.request import Request, build_opener, HTTPRedirectHandler
+          
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self, request, fp, code, message, headers, newurl):
+                  return None
+          
+          opener=build_opener(NoRedirect())
+          headers={'X-API-Key':os.environ['LI_API_KEY'],'User-Agent':'Xin-front-effort-readonly'}
+          base='https://api.instabox.sh/v1/machines'
+          def read(url,limit=2*1024*1024):
+              with opener.open(Request(url,headers=headers),timeout=30) as r:
+                  data=r.read(limit+1)
+              if len(data)>limit: raise ValueError('Read exceeds bound')
+              return data
+          def inspect():
+              machines=json.loads(read(base))['machines']
+              matches=[m for m in machines if m.get('name')=='li']
+              if len(matches)!=1: raise ValueError('Expected one named machine')
+              machine=matches[0]
+              if machine.get('state')!='running': raise ValueError('Machine is not running; no resume requested')
+              api=base+'/'+quote(machine['id'],safe='')
+              def file(path):
+                  return read(api+'/files/content?'+urlencode({'path':path}))
+              directory=json.loads(read(api+'/files?'+urlencode({'path':'/data/home/.xin/runs'})))
+              if directory.get('truncated'): raise ValueError('Run listing truncated')
+              entries=[e for e in directory.get('entries',[]) if e.get('type')=='file' and re.fullmatch(r'r[a-z0-9]{6,30}\.json',e.get('name',''))]
+              entries=sorted(entries,key=lambda e:e.get('modTime',''),reverse=True)[:22]
+              results=[]
+              for e in entries:
+                  meta=json.loads(file('/data/home/.xin/runs/'+e['name']))
+                  if meta.get('task') or meta.get('agent')!='codex' or meta.get('kind') in ['daily','handoff']:
+                      continue
+                  started=meta.get('started',0)
+                  if not isinstance(started,(int,float)) or started<1795078080000:
+                      continue
+                  model=meta.get('model')
+                  provider=meta.get('providerModel')
+                  if model not in ['gemini-4-hydrogen','deepseek-v4.1-flash']: model='other'
+                  if not isinstance(provider,str) or not re.fullmatch(r'[a-zA-Z0-9_.:/ -]{1,100}',provider): provider=None
+                  result={'started_bj':datetime.fromtimestamp(started/1000,timezone.utc).astimezone(timezone(__import__('datetime').timedelta(hours=8))).isoformat(),
+                          'model':model,'providerModel':provider,'ended':bool(meta.get('ended')),
+                          'thinking_question':bool(re.search(r'思考强度|实际用的中档|什么模型',str(meta.get('frontRequest',''))))}
+                  events=file('/data/home/.xin/runs/'+e['name'][:-5]+'.jsonl').decode('utf-8')
+                  done=[]
+                  for line in events.splitlines():
+                      try: event=json.loads(line)
+                      except ValueError: continue
+                      event=event.get('ev',event)
+                      if event.get('t')=='done':
+                          p=event.get('providerModel')
+                          done.append({'ok':event.get('ok') is True,
+                                       'providerModel':p if isinstance(p,str) and re.fullmatch(r'[a-zA-Z0-9_.:/ -]{1,100}',p) else None})
+                  result['done']=done
+                  results.append(result)
+              print('FRONT_EFFORT_EVIDENCE '+json.dumps({'inspected':len(results),'runs':results},ensure_ascii=False),flush=True)
+          
+          try:
+              inspect()
+          except HTTPError as error:
+              raise SystemExit('Read-only check returned HTTP '+str(error.code)) from None
+          except (OSError,ValueError,KeyError,TypeError) as error:
+              raise SystemExit('Read-only check failed '+type(error).__name__) from None
+          PY_READONLY
