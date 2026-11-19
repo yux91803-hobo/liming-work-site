@@ -149,6 +149,7 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
   transition: grid-template-columns .42s var(--ease);
 }
 .tq-frame[data-left="rail"] { --lw: 60px; }
+.tq-frame.tq-instant, .tq-frame.tq-instant * { transition: none !important; }   /* 第一次摆好、换屏幕档位时直接到位 */
 .tq-frame[data-mode="wide"][data-right="open"] { --gr: 14px; --rw: 400px; }
 .tq-frame[data-mode="mid"] { grid-template-columns: var(--lw) var(--gl) minmax(0, 1fr); }
 .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) { grid-template-columns: minmax(0, 1fr); }

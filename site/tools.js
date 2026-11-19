@@ -33,7 +33,7 @@ window.TOOLS = [
   {
     id: 'tianqi',
     name: '天启',
-    cat: 'tool',
+    cat: 'ai',
     keywords: '天启 tianqi harness 模型 聊天 ai',
     path: '/tianqi',
     src: '/tools/tianqi/',
@@ -44,8 +44,10 @@ window.TOOLS = [
   }
 ];
 
-/* 首页分类（按这个顺序显示） */
+/* 首页分类（按这个顺序显示）。站长 2026-11-19：小芯、天启放最上面（小芯那块在分类前面），世界地图第三，学习最后。
+   每类的第一张卡是宽卡：天启单独一类，世界地图不会再因为天启排在前面被挤成半张 */
 window.TOOL_CATS = [
-  { id: 'learn', name: '学习' },
-  { id: 'tool', name: '工具' }
+  { id: 'ai', name: '天启' },
+  { id: 'tool', name: '工具' },
+  { id: 'learn', name: '学习' }
 ];

@@ -359,8 +359,8 @@ async def main():
           embed: document.documentElement.classList.contains('embed'),
         }))()""")
         ui.check(
-            '首页：「工具」分类有「天启」卡片，点击地址变 /tianqi，iframe 是 /tools/tianqi/?embed=1，嵌在首页时关闭键隐藏',
-            cat_name == '工具' and pg.url.endswith('/tianqi') and iframe_src == '/tools/tianqi/?embed=1' and embed_ui['embed'] and embed_ui['xHidden'],
+            '首页：「天启」分类有「天启」卡片，点击地址变 /tianqi，iframe 是 /tools/tianqi/?embed=1，嵌在首页时关闭键隐藏',
+            cat_name == '天启' and pg.url.endswith('/tianqi') and iframe_src == '/tools/tianqi/?embed=1' and embed_ui['embed'] and embed_ui['xHidden'],
             (cat_name, pg.url, iframe_src, embed_ui),
         )
         await pg.context.close()

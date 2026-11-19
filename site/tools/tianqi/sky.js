@@ -224,7 +224,9 @@
     var scrim2 = document.createElement('div'); scrim2.className = 'tq-scrim2'; root.appendChild(scrim2);
     var right = $('.tq-right'), drawer = $('.xc-drawer'), panelB = $('.tq-panel-b'), badge = $('.tq-badge');
     function modeNow() { return MQ.wide.matches ? 'wide' : MQ.mid.matches ? 'mid' : MQ.tab.matches ? 'narrow' : 'phone'; }
-    function layout() {
+    // instant：第一次摆好、换了屏幕档位（转屏、拉窗口）时直接到位，不放滑开的过渡；只有站长自己开关才动
+    function layout(instant) {
+      if (instant === true) { frame.classList.add('tq-instant'); requestAnimationFrame(function () { requestAnimationFrame(function () { frame.classList.remove('tq-instant'); }); }); }
       var m = modeNow(), changed = m !== L.mode, docked = m === 'wide' || m === 'mid';
       if (changed && L.mode && (m === 'phone' || m === 'narrow' || m === 'mid')) L.right = false;
       if (changed && !L.mode && m !== 'wide') L.right = false;
@@ -254,7 +256,8 @@
       if (L.mode === 'wide') store.set('right', L.right ? null : '0');
       layout();
     }
-    Object.keys(MQ).forEach(function (k) { var q = MQ[k]; (q.addEventListener ? q.addEventListener('change', layout) : q.addListener(layout)); });
+    var relayout = function () { layout(true); };
+    Object.keys(MQ).forEach(function (k) { var q = MQ[k]; (q.addEventListener ? q.addEventListener('change', relayout) : q.addListener(relayout)); });
     $('.tq-fold').addEventListener('click', toggleLeft);
     $('.tq-brand-key').addEventListener('click', function () { if (L.mode === 'wide' || L.mode === 'mid') toggleLeft(); });
     panelB.addEventListener('click', function () { L.touched = true; toggleRight(); });
@@ -481,6 +484,6 @@
       else if (e.key === 'Escape' && L.mode === 'phone' && L.right && !root.classList.contains('sheet-open') && !root.classList.contains('dr-open')) { stop(); toggleRight(false); }
     }, true);
 
-    layout(); select('files'); linkRefs(msgs);
+    layout(true); select('files'); linkRefs(msgs);
   }
 })();

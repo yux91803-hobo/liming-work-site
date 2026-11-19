@@ -469,7 +469,7 @@
       return;
     }
     if (!root) return;
-    S.open = false; root.classList.remove('show'); document.body.classList.remove('xc-open');
+    S.open = false; root.classList.remove('show'); document.body.classList.remove('xc-open'); homeLock(false);
     if (S.tray) setTray(false); closePal();
     setTimeout(function () { if (!S.open) { root.hidden = true; if (S.wb) unwork(true); } }, 240);
     if (XIN_HASH.test(location.hash) || location.hash === '#xin-work') history.replaceState(null, '', location.pathname + location.search);
@@ -2326,7 +2326,7 @@
       });
     }
     if (!root) build();
-    S.wb = true; root.classList.add('wb'); document.body.classList.add('xc-wb');
+    S.wb = true; root.classList.add('wb'); document.body.classList.add('xc-wb'); homeLock(true);
     layout();
     var p = open();
     if (location.hash !== '#xin-work' && !opt.keepHash) try { history.replaceState(history.state, '', location.pathname + location.search + '#xin-work'); } catch (e) { /* 地址改不了不影响 */ }
@@ -2334,10 +2334,21 @@
   }
   function unwork(silent) {
     if (!root) return;
-    S.wb = false; root.classList.remove('wb'); document.body.classList.remove('xc-wb');
+    S.wb = false; root.classList.remove('wb'); document.body.classList.remove('xc-wb'); homeLock(false);
     if (S.tray) setTray(false);
     layout();
     if (!silent && location.hash === '#xin-work') try { history.replaceState(history.state, '', location.pathname + location.search); } catch (e) { /* 同上 */ }
+  }
+  // 全屏工作台盖住首页时，首页不占地方（站长 2026-11-19：手机上第一次打开工作台打字，下面露出世界地图）：
+  // iOS 在固定定位的层里聚焦输入框会滚动整页，把工作台推上去、露出底下的首页；首页不占地方就没有能滚的地方。
+  // 记下首页滚到哪，关掉、收起时滚回去。参考 React Aria 的 usePreventScroll、body-scroll-lock：盖满屏的层打开时锁住底下的页面
+  var homeY = 0;
+  function homeLock(on) {
+    if (TQ) return;
+    var de = document.documentElement;
+    if (on === de.classList.contains('xc-lock')) return;
+    if (on) { homeY = window.scrollY || 0; de.classList.add('xc-lock'); }
+    else { de.classList.remove('xc-lock'); if (homeY) window.scrollTo(0, homeY); }
   }
   // 钉住的面板：只有全屏工作台、而且够宽（≥900）才是右边一栏
   function trayDocked() { return !TQ && !!(root && S.pin && S.wb && window.innerWidth >= WORK_MIN); }
