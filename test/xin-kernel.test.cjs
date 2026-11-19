@@ -744,8 +744,12 @@ test('一直起不来：请求回「主人不在」；超过期限推送一次�
   assert.ok(await until(() => fileCount(f.home, 'pushq') === 1), '推送一次');
   assert.match(fs.readFileSync(path.join(f.home, 'pushq.json'), 'utf8'), /常驻状态进程起不来：state_compat。小芯先停一下，会接着重试/);
   assert.strictEqual(fileCount(f.home, 'one-shot'), 0, '没有调用一次性命令');
-  const starts = fileCount(f.home, 'serve'); await sleep(500);
-  assert.ok(fileCount(f.home, 'serve') > starts, '接着重试'); assert.strictEqual(fileCount(f.home, 'pushq'), 1, '只推送一次');
+  // 「接着重试」等它真的又起两次（时限按机器放大，像 Playwright 的 expect.poll），不赌固定 500ms 里一定轮得到：
+  // CI 机器整机卡几百毫秒时，固定窗口里一次都轮不到（#181 的 CI 红过一次；本机把测试进程停 500ms 能稳定复现）。
+  // 看护真不重试了，等到时限照样失败；失败时带上看护的状态好查
+  const starts = fileCount(f.home, 'serve');
+  if (!await until(() => fileCount(f.home, 'serve') >= starts + 2)) assert.fail('接着重试 ' + JSON.stringify({ starts, now: fileCount(f.home, 'serve'), owner: (await health(f)).owner }));
+  assert.strictEqual(fileCount(f.home, 'pushq'), 1, '只推送一次');
   fs.unlinkSync(path.join(f.home, 'serve-fail'));
   assert.ok(await running(f), '修好了就自己起来');
   assert.strictEqual((await ownerOp(f, 'echo', {}, KERNEL(1))).body.data.via, 'state');

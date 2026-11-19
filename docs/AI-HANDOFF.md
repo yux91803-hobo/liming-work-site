@@ -1,3 +1,19 @@
+## 2026-11-19 · 天启 li2 第 9 步其实早就做完了（Claude Code 核对）
+
+- 站长 11-19：「这个早就弄好了」。我之前照着交接记录说「还在等 Secret 和网关账号」，是记录没更新，下面这些是核对过的。
+- **怎么核对的**：用 li2 的 key 经 InstaBox 只读地看，只看数量、状态和关键字。没看对话内容，没打印 key。
+- **核对结果**：
+  - 正式站：联调里 `/api/tq/me` 是 `enabled=true`，`XIN_TQ_INSTABOX_API_KEY` 已经写进 Worker。
+  - li2 网关：`workbuddy-gateway.service` 开机自启、在跑，只听 `127.0.0.1:8788`；`/data/workbuddy-gateway/accounts` 里有 3 个账号（站长加的）；线路配置见下一条（#180）。
+  - `~/.xin/harness.key`：权限 600。拿它调本机网关 `/v1/models` 回 200（22 个模型），错的 key 回 401。
+  - 身份：Harness 人设里是「你叫天启」，没有「小芯」；常驻进程 `XIN_ROLE=tianqi`。
+  - 真对话：li2 上留着的一轮（11-18 23:59 北京时间）成功，用时 5.3 秒。
+- **Purge、REA**：li2 的 Harness 带 `dsh-purge` 插件（`~/.dsh` 里有 `prompt-inject.md`、`redteam`，人设是 `purge-on`），是 #180（Codex，见下一条）有意接进来的。设计 §4.2 里「li2 上没有 purge 这类插件」那句已经被 #180 取代。天启页面的插件开关能关。
+- **以后**：交接记录写「等站长做什么」的，接手时先核对实际情况再跟站长说。
+- **CI 偶发卡住（11-19，#181 的 check）**：单元测试打印到第 603 项（`xin-muse-rules` 最后一项）后 12 分钟没有输出，被 15 分钟超时取消。按文件对照，卡在 `test/xin-owner.test.cjs`（之后 33 个文件一项都没打印）；本地连跑 6 次，每次 2 到 3 秒过。这个文件里 `proc().line()` 等子进程输出没有超时，`cli()`、`send()` 和 `xin task list` 的 `spawnSync` 也没设 `timeout`，子进程一旦卡住整个文件就挂着。建议照 Jest、Mocha 给每个测试设默认超时的做法：`node --test` 加 `--test-timeout`，这几处 `spawnSync` 加 `timeout`，下次卡住会直接报出是哪一项。
+- **CI 偶发失败（11-19，#181 第二次 check）**：`xin-kernel` 的「一直起不来……接着重试」原来固定等 500ms 再数，CI 整机卡一下就一次都轮不到；改成等它真的又起两次（时限按机器放大），详见 `docs/CHANGES.md` 最上面一条。
+- **待修（正式代码，下一个 PR）**：`site/xin/vm-kernel.mjs` 的看护只在子进程 `exit` 里安排重试；起子进程被系统直接拒绝时（ENOENT、EAGAIN、EMFILE 等），Node 只发 `error`、`close`，不发 `exit`（v22 本机试过），看护会一直停在「启动中」，不重试也不推送。做法：先用 `spawnImpl` 造一个只发 `error` 的子进程写会失败的测试，再让「没起来」的 `error` 也走 `failed()`。
+
 ## 2026-11-19 · 小芯前台回复恢复（Codex）
 
 - `codex/xin-reply-recovery-20261119` 从 #180 的 `82b52d6` 开出。Codex 实现并自查。#181 只改天启交接记录，由原分支继续。
@@ -55,7 +71,7 @@
   - 框的「在做」用 `tBusy`：任务在做，或者结束 10 分钟内 `delivery` 还是 `pending`。
 - **提示词**：站长明确不要讨好的性格描写，以后别再加回「温暖、俏皮、陪伴、跟着情绪走」这类话。「说实话，不讨好」由 `test/xin-persona-honest.test.cjs` 守着。
 - **前台**：前台用 Hydrogen 高档，账号里没有高档才用中档。
-- **还没做**：天启第 9 步（准备 li2）仍在等站长加 `XIN_TQ_INSTABOX_API_KEY` 和网关账号。
+- **天启第 9 步**：当时以为还在等站长加 `XIN_TQ_INSTABOX_API_KEY` 和网关账号，其实早就做完了（11-19 核对，见最上面一条）。
 
 ## 2026-11-18 · 天启独立工具集成（Codex）
 

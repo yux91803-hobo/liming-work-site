@@ -180,10 +180,12 @@ test('ensure 按电脑节流，天启的 ensure 带身份', async () => {
     m._ensureKernel(m.scopeEnv(env, 'tq'), ORIGIN, 'm_li2', ctx);
     m._ensureKernel(env, ORIGIN, 'm_li', ctx);   // 60 秒内同一台：不再跑
     await Promise.all(waits);
-    const ens = execs(ib.calls).filter(c => c.json.argv[2] === 'ensure');
-    assert.deepEqual(ens.map(c => c.path), ['/v1/machines/m_li/exec', '/v1/machines/m_li2/exec']);
-    assert.equal('envs' in ens[0].json, false);
-    assert.deepEqual([ens[1].key, ens[1].json.envs], [TQ_KEY, { XIN_ROLE: 'tianqi' }]);
+    // 两台的 ensure 同时在后台跑，各自算脚本哈希（crypto.subtle 在线程池里算，谁先回来不一定），先后不是约定：按电脑找
+    const ens = execs(ib.calls).filter(c => c.json.argv[2] === 'ensure'), at = p => ens.find(c => c.path === p);
+    assert.deepEqual(ens.map(c => c.path).sort(), ['/v1/machines/m_li/exec', '/v1/machines/m_li2/exec']);
+    assert.equal('envs' in at('/v1/machines/m_li/exec').json, false);
+    const tq = at('/v1/machines/m_li2/exec');
+    assert.deepEqual([tq.key, tq.json.envs], [TQ_KEY, { XIN_ROLE: 'tianqi' }]);
   } finally { ib.restore(); }
 });
 
