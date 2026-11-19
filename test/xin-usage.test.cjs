@@ -78,6 +78,13 @@ test('usage op：额度卡只显示一项 Gemini（前台、后台同一组）�
     assert.equal(u.totals.today.input, 10);
     assert.equal(typeof u.names['kimi-k3.1-pro'], 'string');
     assert.equal(op('tasks').glow, 'warn');
+    fs.writeFileSync(path.join(xin, 'antigravity-argon-quota.json'), JSON.stringify({model:'gemini-4-argon',checkedAt:now,
+      buckets:[{id:'gemini-argon-wtu-weekly',remaining:0.5,resetAt:now+80*H}]}));
+    const pools = op('usage').quotas;
+    assert.deepEqual(pools.map(q=>q.key), ['gemini','argon']);
+    assert.deepEqual(pools.map(q=>q.name), ['Gemini','Argon']);
+    assert.deepEqual(pools[1].windows.map(w=>[w.kind,w.used]), [['week',0.5]]);
+    fs.unlinkSync(path.join(xin, 'antigravity-argon-quota.json'));
     // 旧账号留下的 Claude 记录（还标着用完）不算：额度卡不显示，光环也不因它变红
     fs.writeFileSync(path.join(xin, 'front-antigravity-quota.json'), JSON.stringify({ model: 'claude-opus-4.6', checkedAt: now, blocked: true, retryAt: now + H, buckets: [{ id: '3p-weekly', remaining: 0, resetAt: now + H }] }));
     assert.deepEqual(op('usage').quotas, []);
@@ -99,6 +106,11 @@ test('前台每次读到额度都记一条读数，用量页据此给出预计�
     const five = w.find(x => x.kind === '5h'), week = w.find(x => x.kind === 'week');
     assert.ok(five.forecastAt > now && five.forecastAt < now + 4 * H, JSON.stringify(five));
     assert.equal(week.forecastAt, null, '每周额度没在动');
+    const later = {...read(now - 60e3, 0.5), model:'gemini-4-neon'};
+    assert.ok(run(['locked','agy_quota'], {quota:later}).ok);
+    const shared = run(['usage']).quotas;
+    assert.equal(shared.length, 1, '前台 Hydrogen 和后台 Neon 合并成同一张额度卡');
+    assert.ok(shared[0].windows.find(w=>w.kind==='5h').forecastAt > now, '预测包含同池不同模型的采样');
   } finally { t.after(() => fs.rmSync(dir, { recursive: true, force: true })); }   // 状态进程停下以后再删
 });
 
@@ -107,6 +119,8 @@ test('Antigravity 的输入不含缓存读取（total = 输入 + 输出）：记
   const runtime = await import(pathToFileURL(path.join(__dirname, '../site/xin/vm-runtime.mjs')).href);
   assert.ok(AGY_MODELS.includes(runtime.AGY_MODEL), '和 vm-runtime 的 AGY_MODEL 保持一致');
   assert.deepStrictEqual(AGY_MODELS, Object.keys(runtime.AGY_CATALOG), '和 vm-runtime 的 Antigravity 模型表保持一致（Neon、Argon 的用量也按输入含缓存换算）');
+  const mixed = agyUsage({input:120,cached:75,output:8,providerUsage:{'antigravity:neon':{cache_read_tokens:25}}});
+  assert.deepEqual([mixed.input,mixed.cached,mixed.total], [145,75,153], '换到网关后只补 Antigravity 没算进输入的缓存');
   // 正式机上真实的累计值：input 54735、cache 149606、output 39807、total 94542（= input + output）
   assert.deepEqual(agyUsage({ input: 54735, cached: 149606, output: 39807, total: 94542 }, 1200),
     { input: 204341, cached: 149606, output: 39807, total: 244148, ctx: 1200, win: 1000000, incl: true });

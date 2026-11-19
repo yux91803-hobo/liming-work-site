@@ -24,6 +24,12 @@ function fixture(t,mode='ok'){
  mode==='weekly'?{buckets:[{id:'gemini-weekly',remaining_fraction:0,reset_time:new Date(Date.now()+4*86400000).toISOString()},{id:'gemini-5h',window:'5h',disabled:true,remaining_fraction:.857}]}:
  {buckets:[{id:'gemini-5h',remaining_fraction:mode==='blocked'||mode==='midquota'&&count>1?0:1,reset_time:new Date(Date.now()+3600000).toISOString()},
  {id:'gemini-weekly',remaining_fraction:1,reset_time:new Date(Date.now()+7*86400000).toISOString()}]}]}}}}));process.exit(0);}
+ if(a.includes('--model')){
+  console.log(JSON.stringify({event:'init',init:{model:a[a.indexOf('--model')+1]}}));
+  console.log(JSON.stringify({event:'result',result:{status:'SUCCESS',conversation_id:'12345678-1234-1234-1234-123456789abc',
+   structured_output:{action:'final',command:'',text:'后台测试完成'},usage:{input_tokens:12,output_tokens:5}}}));
+  process.exit(0);
+ }
  if(a.includes('--help')){console.log('acp --agent --settings');process.exit(0);}
  let prompts=0,held=null;require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);record(q);if(!q.method)return;

@@ -1045,10 +1045,6 @@ export function previewAsset(controller,a) {
 
 // Antigravity keeps its login in the controller profile. Its model receives no
 // native file/terminal/MCP permission; requested commands run through bwrap here.
-/* Antigravity 的后台执行模型。站长 2026-11-13：「后台干活优先也派 hydrogen，根据任务难度选择思考强度」，以前的 Gemini 模型不再用。
-   只用 Gemini 4 Hydrogen，思考强度按任务类别（前台派活时定的类别就是难度）：参考 Codex 的 model_reasoning_effort / plan_mode_reasoning_effort、
-   opencode 每个 agent 自己的 reasoningEffort、Antigravity Orchestrator（Carbon 规划、Hydrogen 执行）。
-   实测每一步（结构化动作）：low 3 秒、medium 5 秒、high 7 秒、xhigh 30 秒。 */
 export const AGY_MODEL='gemini-4-hydrogen';   // 前台用的（站长 11-18：前台 Hydrogen High）；后台按类别见 vm-models.mjs 的 agyPick
 /* 站长 11-19：后台写代码换 Gemini 4 Neon（High，难题 Extra = xhigh），检查和查资料用 Gemini 4 Argon；Hydrogen 后台不再默认用。
    额度分池（li 上 agy -p /usage 实测）：Neon、Hydrogen 共用 Gemini 池（gemini-5h、gemini-weekly），Argon 单独一池（gemini-argon-wtu-weekly）。
@@ -1062,6 +1058,14 @@ export const AGY_CATALOG={
 };
 export const isAgyModel=id=>Object.hasOwn(AGY_CATALOG,String(id||''));
 export const agyPool=id=>isAgyModel(id)?AGY_CATALOG[id].pool:null;
+export const AGY_QUOTA_FILES = {gemini:'antigravity-quota.json', argon:'antigravity-argon-quota.json'};
+export function agyPoolAvailable(pool, read) {
+  const files = pool === 'gemini' ? [AGY_QUOTA_FILES.gemini, 'front-antigravity-quota.json'] : [AGY_QUOTA_FILES[pool]];
+  return files.filter(Boolean).every(file => {
+    const quota = read(file);
+    return agyPool(quota?.model) !== pool || !quota.blocked || quota.retryAt <= Date.now();
+  });
+}
 export const AGY_EFFORTS=['low','medium','high','xhigh'];
 export const AGY_KIND_EFFORT={quick:'low',research:'medium',code:'high',review:'high',hard:'xhigh'};
 // 这个模型没有的档位（Argon 的 xhigh）降到它有的、不高于要的那档里最高的；不认识的档当 high
@@ -1070,6 +1074,11 @@ function agyLevel(model,effort){
   return have.includes(want)?want:have.filter(e=>AGY_EFFORTS.indexOf(e)<=AGY_EFFORTS.indexOf(want)).at(-1)||have[0];
 }
 export const agyEffort=(kind,model=AGY_MODEL)=>agyLevel(model,AGY_KIND_EFFORT[kind]||'high');
+export function taskEffort(task, model = task.model) {
+  if (!isAgyModel(model)) return 'max';
+  if (model === AGY_NEON && /neon[\s-]*(?:extra\b|xhigh\b|超高)/i.test(task.userRequest || '')) return 'xhigh';
+  return agyEffort(task.tkind, model);
+}
 // CLI 里的模型编号带思考强度（gemini-4-neon-xhigh、gemini-4-argon-medium）
 export const agyProviderModel=(model,effort)=>(isAgyModel(model)?model:AGY_MODEL)+'-'+agyLevel(isAgyModel(model)?model:AGY_MODEL,effort);
 export function antigravityBinary(home=process.env.XIN_AGY_HOME||os.homedir()) {

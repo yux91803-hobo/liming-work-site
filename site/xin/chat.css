@@ -1046,8 +1046,8 @@ body.xs-open{overflow:hidden}
 
 /* ---------- 用量页 ---------- */
 .xu{padding-bottom:16px}
-.xu .s1{--c:#2a78d6}.xu .s2{--c:#eb6834}.xu .s3{--c:#1baf7a}.xu .s4{--c:#eda100}.xu .s5{--c:#e87ba4}.xu .s6{--c:#008300}.xu .so{--c:var(--ink-3)}
-[data-theme=dark] .xu .s1{--c:#3987e5}[data-theme=dark] .xu .s2{--c:#d95926}[data-theme=dark] .xu .s3{--c:#199e70}[data-theme=dark] .xu .s4{--c:#c98500}[data-theme=dark] .xu .s5{--c:#d55181}
+.xu .s1{--c:#2a78d6}.xu .s2{--c:#eb6834}.xu .s3{--c:#1baf7a}.xu .s4{--c:#eda100}.xu .s5{--c:#e87ba4}.xu .s6{--c:#008300}.xu .s7{--c:#8754c9}.xu .so{--c:var(--ink-3)}
+[data-theme=dark] .xu .s1{--c:#3987e5}[data-theme=dark] .xu .s2{--c:#d95926}[data-theme=dark] .xu .s3{--c:#199e70}[data-theme=dark] .xu .s4{--c:#c98500}[data-theme=dark] .xu .s5{--c:#d55181}[data-theme=dark] .xu .s6{--c:#5bbe65}[data-theme=dark] .xu .s7{--c:#ac83e5}
 .xu .wk-h{margin:18px 2px 8px;font-size:13px;font-weight:600;color:var(--ink-2)}
 .xu .wk-h:first-child{margin-top:4px}
 .xu-q{padding:2px 16px;--rad:16px;background:var(--chip);color:var(--chip-ink)}

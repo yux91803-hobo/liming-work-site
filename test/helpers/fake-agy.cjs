@@ -4,7 +4,7 @@
 function fakeAgy(root){
  return '#!'+process.execPath+'\n'+`const fs=require('node:fs'),a=process.argv.slice(2),dir=${JSON.stringify(root)};
 const prompt=a[a.indexOf('-p')+1],send=o=>console.log(JSON.stringify(o)),out=fs.existsSync(dir+'/quota-out');
-if(prompt==='/usage'){send({event:'result',result:{status:'SUCCESS',command:{data:{groups:[{buckets:[{id:'gemini-5h',remaining_fraction:out?0:1,reset_time:new Date(Date.now()+3600000).toISOString()},{id:'gemini-weekly',remaining_fraction:1,reset_time:new Date(Date.now()+604800000).toISOString()}]}]}}}});process.exit(0);}
+if(prompt==='/usage'){send({event:'result',result:{status:'SUCCESS',command:{data:{groups:[{buckets:[{id:'gemini-5h',remaining_fraction:out?0:1,reset_time:new Date(Date.now()+3600000).toISOString()},{id:'gemini-weekly',remaining_fraction:1,reset_time:new Date(Date.now()+604800000).toISOString()}]},{buckets:[{id:'gemini-argon-wtu-weekly',remaining_fraction:out?0:1,reset_time:new Date(Date.now()+604800000).toISOString()}]}]}}}});process.exit(0);}
 fs.appendFileSync(dir+'/calls.jsonl',JSON.stringify({prompt,conversation:a.includes('--conversation')})+'\\n');
 const n=fs.readFileSync(dir+'/calls.jsonl','utf8').trim().split('\\n').length,script=JSON.parse(fs.readFileSync(dir+'/script.json','utf8')),step=script[Math.min(n,script.length)-1];
 send({event:'init',init:{model:a[a.indexOf('--model')+1]}});

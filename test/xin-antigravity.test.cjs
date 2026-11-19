@@ -34,12 +34,45 @@ test('CLI 续接返回整段累计用量：按持久水位记增量，重启和�
 function fixture(t,mode='ok'){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-agy-test-')),control=root+'/control',profile=root+'/profile',bin=root+'/bin',log=root+'/calls.jsonl';for(const p of [control+'/sessions',control+'/runs',profile,bin])fs.mkdirSync(p,{recursive:true});
  const preload=root+'/preload.cjs';fs.writeFileSync(preload,'require("node:os").homedir=()=>'+JSON.stringify(profile)+';require("node:module").syncBuiltinESMExports();');
- const agy=bin+'/agy';fs.writeFileSync(agy,'#!'+process.execPath+'\n'+`const fs=require('node:fs'),a=process.argv.slice(2),quota=a[a.indexOf('-p')+1]==='/usage',log=${JSON.stringify(log)},mode=${JSON.stringify(mode)};fs.appendFileSync(log,JSON.stringify({quota,args:a.filter((_,i)=>i===a.indexOf('--model')+1||i===a.indexOf('--effort')+1),key:!!process.env.XIN_CODEX_KEY,cwd:process.cwd()})+'\\n');const count=fs.readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(x=>x.quota).length;const send=o=>console.log(JSON.stringify(o));if(quota){send({event:'result',result:{status:'SUCCESS',command:{data:{groups:[{buckets:[{id:'gemini-5h',remaining_fraction:mode==='quota'&&count>1?0:1,reset_time:new Date(Date.now()+3600000).toISOString()},{id:'gemini-weekly',remaining_fraction:1,reset_time:new Date(Date.now()+604800000).toISOString()}]}]}}}});process.exit(0);}if(mode==='crash'){process.stderr.write('unknown flag');process.exit(2);}send({event:'init',init:{model:mode==='wrong'?'another-model':a[a.indexOf('--model')+1]}});if(mode==='unfinished'){send({event:'result',result:{conversation_id:'12345678-1234-1234-1234-123456789abc',status:'ERROR',response:''}});process.exit(0);}const turns=fs.readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(x=>!x.quota).length;if(mode==='stall'||mode==='stall2'&&turns>1){setInterval(()=>{},1e9);return;}if(mode==='stall2'){send({event:'result',result:{conversation_id:'12345678-1234-1234-1234-123456789abc',status:'SUCCESS',structured_output:{action:'shell',command:'echo half > half.txt',text:''},usage:{input_tokens:20,output_tokens:8}}});process.exit(0);}if(mode==='quota')send({event:'step_update',step_update:{state:'DONE',step_type:'search_web',step_index:1}})
-if(mode==='steps'){send({event:'step_update',step_update:{state:'ACTIVE',step_type:'search_web',step_index:1,tool_info:{parameters:{query:'Gemini 4 Hydrogen review'}}}})
-send({event:'step_update',step_update:{state:'ACTIVE',step_type:'search_web',step_index:1,tool_info:{parameters:{query:'Gemini 4 Hydrogen review'}}}})
-send({event:'step_update',step_update:{state:'DONE',step_type:'search_web',step_index:1,tool_info:{parameters:{query:'Gemini 4 Hydrogen review'}}}})
-send({event:'step_update',step_update:{state:'ACTIVE',step_type:'read_url_content',step_index:2}})
-send({event:'step_update',step_update:{state:'DONE',step_type:'read_url_content',step_index:2,tool_info:{parameters:{url:'https://deepmind.google/models'}}}})};send({event:'result',result:{conversation_id:'12345678-1234-1234-1234-123456789abc',status:mode==='quota'?'ERROR':'SUCCESS',structured_output:{action:'final',command:'',text:'真实入口完成'},usage:{input_tokens:20,output_tokens:8}}});`,{mode:0o755});
+ const agy=bin+'/agy';
+ fs.writeFileSync(agy,'#!'+process.execPath+'\n'+`
+ const fs=require('node:fs'),a=process.argv.slice(2),mode=${JSON.stringify(mode)},root=${JSON.stringify(root)},log=${JSON.stringify(log)};
+ const model=a[a.indexOf('--model')+1],quota=a[a.indexOf('-p')+1]==='/usage';
+ const send=o=>console.log(JSON.stringify(o));
+ fs.appendFileSync(log,JSON.stringify({quota,args:quota?[]:[model,a[a.indexOf('--effort')+1]],key:!!process.env.XIN_CODEX_KEY,
+   cwd:process.cwd(),conversation:a.includes('--conversation'),model,prompt:a[a.indexOf('-p')+1]})+'\\n');
+ const records=fs.readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse);
+ const count=records.filter(x=>x.quota).length,turns=records.filter(x=>!x.quota).length;
+ const conversation=model?.startsWith('gemini-4-argon')?'22345678-1234-1234-1234-123456789abc':'12345678-1234-1234-1234-123456789abc';
+ if(quota){
+  const reset=new Date(Date.now()+604800000).toISOString();
+  const groups=[{buckets:[
+    {id:'gemini-5h',remaining_fraction:mode==='quota'&&count>1?0:1,reset_time:new Date(Date.now()+3600000).toISOString()},
+    {id:'gemini-weekly',remaining_fraction:1,reset_time:reset}]}];
+  if(mode!=='noargon')groups.push({buckets:[{id:'gemini-argon-wtu-weekly',remaining_fraction:mode==='argonquota'&&count>1?0:1,reset_time:reset}]});
+  send({event:'result',result:{status:'SUCCESS',command:{data:{groups}}}});process.exit(0);
+ }
+ if(mode==='crash'){process.stderr.write('unknown flag');process.exit(2);}
+ send({event:'init',init:{model:mode==='wrong'?'another-model':model}});
+ const result=(action,command='',text='真实入口完成',status='SUCCESS')=>send({event:'result',result:{conversation_id:conversation,
+   status,structured_output:{action,command,text},usage:{input_tokens:20,output_tokens:8}}});
+ if(mode==='unfinished'){send({event:'result',result:{conversation_id:conversation,status:'ERROR',response:''}});process.exit(0);}
+ if(mode==='stall'||mode==='stall2'&&turns>1){setInterval(()=>{},1e9);return;}
+ if(mode==='stall2'||mode==='quota'&&turns===1){result('shell','echo half > half.txt','');process.exit(0);}
+ if(mode==='quota'&&turns===2&&fs.existsSync(root+'/hold-neon')){
+  fs.writeFileSync(root+'/neon-at','');
+  while(!fs.existsSync(root+'/release-neon'))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);
+ }
+ const exhausted=mode==='argonquota'||mode==='quota'&&model.startsWith('gemini-4-neon');
+ if(exhausted)send({event:'step_update',step_update:{state:'DONE',step_type:'search_web',step_index:1}});
+ if(mode==='steps'){
+  send({event:'step_update',step_update:{state:'ACTIVE',step_type:'search_web',step_index:1,tool_info:{parameters:{query:'Gemini 4 Hydrogen review'}}}});
+  send({event:'step_update',step_update:{state:'ACTIVE',step_type:'search_web',step_index:1,tool_info:{parameters:{query:'Gemini 4 Hydrogen review'}}}});
+  send({event:'step_update',step_update:{state:'DONE',step_type:'search_web',step_index:1,tool_info:{parameters:{query:'Gemini 4 Hydrogen review'}}}});
+  send({event:'step_update',step_update:{state:'ACTIVE',step_type:'read_url_content',step_index:2}});
+  send({event:'step_update',step_update:{state:'DONE',step_type:'read_url_content',step_index:2,tool_info:{parameters:{url:'https://deepmind.google/models'}}}});
+ }
+ result('final','','真实入口完成',exhausted?'ERROR':'SUCCESS');`,{mode:0o755});
  fs.writeFileSync(bin+'/codex','#!'+process.execPath+'\n'+`const fs=require('node:fs');fs.appendFileSync(${JSON.stringify(root+'/fallback.log')},'codex\\n');fs.appendFileSync(${JSON.stringify(root+'/fallback.args')},process.argv.slice(2).join(' ')+'\\n');console.log(JSON.stringify({type:'turn.started'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'保留原进度后完成'}}));`,{mode:0o755});
  const env={...process.env,PATH:bin+':'+process.env.PATH,NODE_OPTIONS:'--require='+preload,XIN_HOME:control,XIN_WORK:root+'/work',CODEX_HOME:profile+'/.codex',XIN_AGY_HOME:profile,XIN_ANTIGRAVITY_BIN:agy,XIN_CODEX_TRANSPORT:'exec',XIN_TASK_SANDBOX:'0',XIN_CODEX_KEY:'must-not-reach-agy',XIN_AGY_IDLE_MS:'1500'};
   const ensureState=require('./helpers/state-mode.cjs').stateClient(t,env);
@@ -48,41 +81,97 @@ send({event:'step_update',step_update:{state:'DONE',step_type:'read_url_content'
  const wait=async sid=>{let task;for(const end=performance.now()+platformTimeout(15000);performance.now()<end;){task=call('history',{sid}).task;if(['done','failed','waiting'].includes(task.status))return task;await new Promise(r=>setTimeout(r,50));}assert.fail(JSON.stringify(task));};
  return {root,control,log,call,wait};
 }
-test('普通资料任务真正交给 Gemini 4 Hydrogen（查资料用 medium），前台模型和网关密钥不交给 agy',async t=>{
- const f=fixture(t),task=f.call('task_new',{kind:'research',goal:'fixture research'}).task;assert.equal(task.model,'gemini-4-hydrogen');const done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.equal(done.actualModel,'gemini-4-hydrogen');
- const calls=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse);assert.ok(calls.length>=3);assert.ok(calls.every(x=>!x.key&&x.cwd===f.control+'/antigravity-client'));assert.deepEqual(calls.find(x=>!x.quota).args,['gemini-4-hydrogen-medium','medium']);
- const quota=JSON.parse(fs.readFileSync(f.control+'/antigravity-quota.json'));assert.equal(quota.blocked,false);assert.equal(quota.buckets.length,2);
+test('普通资料任务真正交给 Gemini 4 Argon（查资料用 medium），前台模型和网关密钥不交给 agy',async t=>{
+ const f=fixture(t),task=f.call('task_new',{kind:'research',goal:'fixture research'}).task;assert.equal(task.model,'gemini-4-argon');const done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.equal(done.actualModel,'gemini-4-argon');
+ const calls=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse);assert.ok(calls.length>=3);assert.ok(calls.every(x=>!x.key&&x.cwd===f.control+'/antigravity-client'));assert.deepEqual(calls.find(x=>!x.quota).args,['gemini-4-argon-medium','medium']);
+ const quota=JSON.parse(fs.readFileSync(f.control+'/antigravity-argon-quota.json'));assert.equal(quota.blocked,false);assert.equal(quota.buckets.length,1);
  const named=f.call('task_new',{kind:'research',goal:'named work',model:'kimi-k3.1-pro',named:true,strictModel:true}).task;assert.equal(named.model,'kimi-k3.1-pro');await f.wait(named.sid);
 });
 test('额度耗尽可在查过资料后转交其它入口，倒计时期间不重复请求 agy，到期才再探测',async t=>{
- const f=fixture(t,'quota'),task=f.call('task_new',{kind:'research',goal:'quota continuation'}).task,done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-4-hydrogen');assert.equal(fs.readFileSync(f.root+'/fallback.log','utf8').trim(),'codex');
- const authors=JSON.parse(fs.readFileSync(f.control+'/sessions/'+task.sid+'.json')).actualModels;assert.ok(authors.includes('gemini-4-hydrogen'));assert.ok(authors.includes(done.actualModel));
- const review=f.call('task_new',{kind:'review',goal:'independent audit',model:'gemini-4-hydrogen',named:true,after:[task.no]});assert.equal(review.error,'independent_review_model');
- const state=JSON.parse(fs.readFileSync(f.control+'/antigravity-quota.json'));assert.equal(state.blocked,true);assert.ok(state.retryAt>Date.now());const count=fs.readFileSync(f.log,'utf8').trim().split('\n').length;
- const next=f.call('task_new',{kind:'research',goal:'cooldown task'}).task;assert.notEqual(next.model,'gemini-4-hydrogen');await f.wait(next.sid);assert.equal(fs.readFileSync(f.log,'utf8').trim().split('\n').length,count);
- state.retryAt=Date.now()-1;fs.writeFileSync(f.control+'/antigravity-quota.json',JSON.stringify(state));const retry=f.call('task_new',{kind:'research',goal:'expired quota'}).task;assert.equal(retry.model,'gemini-4-hydrogen');await f.wait(retry.sid);assert.ok(fs.readFileSync(f.log,'utf8').trim().split('\n').length>count);
+ const f=fixture(t,'argonquota'),task=f.call('task_new',{kind:'research',goal:'quota continuation'}).task,done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-4-argon');assert.equal(fs.readFileSync(f.root+'/fallback.log','utf8').trim(),'codex');
+ assert.ok(f.call('history',{sid:task.sid}).usage.total>=28,'转到网关后保留 Argon 已用的 token');
+ const authors=JSON.parse(fs.readFileSync(f.control+'/sessions/'+task.sid+'.json')).actualModels;assert.ok(authors.includes('gemini-4-argon'));assert.ok(authors.includes(done.actualModel));
+ const review=f.call('task_new',{kind:'review',goal:'independent audit',model:'gemini-4-argon',named:true,after:[task.no]});assert.equal(review.error,'independent_review_model');
+ const state=JSON.parse(fs.readFileSync(f.control+'/antigravity-argon-quota.json'));assert.equal(state.blocked,true);assert.ok(state.retryAt>Date.now());const count=fs.readFileSync(f.log,'utf8').trim().split('\n').length;
+ const next=f.call('task_new',{kind:'research',goal:'cooldown task'}).task;assert.notEqual(next.model,'gemini-4-argon');await f.wait(next.sid);assert.equal(fs.readFileSync(f.log,'utf8').trim().split('\n').length,count);
+ state.retryAt=Date.now()-1;fs.writeFileSync(f.control+'/antigravity-argon-quota.json',JSON.stringify(state));const retry=f.call('task_new',{kind:'research',goal:'expired quota'}).task;assert.equal(retry.model,'gemini-4-argon');await f.wait(retry.sid);assert.ok(fs.readFileSync(f.log,'utf8').trim().split('\n').length>count);
 });
-test('实际返回其它模型时拒绝执行，不把它当 Hydrogen 成功',async t=>{const f=fixture(t,'wrong'),a=f.call('task_new',{kind:'research',goal:'identity verification'}).task;const done=await f.wait(a.sid);assert.equal(done.status,'done');assert.notEqual(done.actualModel,'gemini-4-hydrogen');});
+test('实际返回其它模型时拒绝执行，不把它当 Argon 成功',async t=>{const f=fixture(t,'wrong'),a=f.call('task_new',{kind:'research',goal:'identity verification'}).task;const done=await f.wait(a.sid);assert.equal(done.status,'done');assert.notEqual(done.actualModel,'gemini-4-argon');});
+
+test('Gemini 旧额度文件已用完时改派 Argon，两个池都用完时走各自网关候选',async t=>{
+ const f=fixture(t);
+ const blocked=model=>({model,blocked:true,retryAt:Date.now()+3600000,buckets:[]});
+ fs.writeFileSync(f.control+'/antigravity-quota.json',JSON.stringify(blocked('gemini-4-hydrogen')));
+ const code=f.call('task_new',{kind:'code',goal:'code with the other pool'}).task;
+ assert.equal(code.model,'gemini-4-argon');
+ assert.equal(JSON.parse(fs.readFileSync(f.control+'/sessions/'+code.sid+'.json')).fallbacks[0],'glm-5.3');await f.wait(code.sid);
+ fs.writeFileSync(f.control+'/antigravity-argon-quota.json',JSON.stringify(blocked('gemini-4-argon')));
+ for(const [kind,model] of [['code','glm-5.3'],['research','deepseek-v4.1-flash']]){
+  const task=f.call('task_new',{kind,goal:kind+' after both pools'}).task;
+  assert.equal(task.model,model);await f.wait(task.sid);
+ }
+ fs.unlinkSync(f.control+'/antigravity-quota.json');fs.unlinkSync(f.control+'/antigravity-argon-quota.json');
+ const fresh=f.call('task_new',{kind:'code',goal:'neon after reset'}).task;
+ assert.equal(fresh.model,'gemini-4-neon');
+ assert.deepEqual(JSON.parse(fs.readFileSync(f.control+'/sessions/'+fresh.sid+'.json')).fallbacks.slice(0,2),['gemini-4-argon','glm-5.3']);await f.wait(fresh.sid);
+});
+test('Neon 额度用完转 Argon High，开新供应商会话并保留两个模型的用量和作者',async t=>{
+ const f=fixture(t,'quota'),task=f.call('task_new',{kind:'code',goal:'continue after Neon quota'}).task;
+ const done=await f.wait(task.sid);
+ assert.equal(done.status,'done');assert.equal(done.actualModel,'gemini-4-argon');
+ const calls=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse).filter(x=>!x.quota);
+ assert.deepEqual(calls.map(c=>c.args),[['gemini-4-neon-high','high'],['gemini-4-neon-high','high'],['gemini-4-argon-high','high']]);
+ assert.deepEqual(calls.map(c=>c.conversation),[false,true,false],'Neon 续接自身，Argon 使用新会话');
+ assert.match(calls[2].prompt,/先读取同一项目副本中的现有文件/);
+ assert.equal(f.call('history',{sid:task.sid}).usage.total,56,'两次独立的供应商用量都保留');
+ const saved=JSON.parse(fs.readFileSync(f.control+'/sessions/'+task.sid+'.json'));
+ assert.deepEqual(saved.actualModels,['gemini-4-neon','gemini-4-argon']);
+ const quota=f.call('tasks',{all:true}).antigravityArgon;
+ assert.equal(quota.blocked,false);assert.deepEqual(quota.buckets.map(b=>b.id),['gemini-argon-wtu-weekly']);
+ const review=f.call('task_new',{kind:'review',goal:'review both authors',after:[task.no]}).task;
+ assert.equal(review.model,'glm-5.3');await f.wait(review.sid);
+});
+test('账号没有 Argon 额度组时用 DeepSeek 完成，不写错误的 Gemini 池记录',async t=>{
+ const f=fixture(t,'noargon'),task=f.call('task_new',{kind:'research',goal:'research without Argon'}).task;
+ assert.equal(task.model,'gemini-4-argon');
+ const done=await f.wait(task.sid);
+ assert.equal(done.status,'done');assert.equal(done.actualModel,'deepseek-v4.1-flash');
+ assert.equal(fs.existsSync(f.control+'/antigravity-quota.json'),false);
+});
+test('已排队的 Argon 检查会在作者从 Neon 换到 Argon 后重新选择 GLM',async t=>{
+ const f=fixture(t,'quota');fs.writeFileSync(f.root+'/hold-neon','');
+ const author=f.call('task_new',{kind:'code',goal:'author with a pending quota handoff'}).task;
+ const until=performance.now()+platformTimeout(10000);
+ while(!fs.existsSync(f.root+'/neon-at')){
+  assert.ok(performance.now()<until,'Neon 已执行一步后到达可复现的交接点');
+  await new Promise(resolve=>setTimeout(resolve,30));
+ }
+ const review=f.call('task_new',{kind:'review',goal:'independent review',after:[author.no]}).task;
+ assert.equal(review.model,'gemini-4-argon');assert.equal(review.status,'queued');
+ fs.writeFileSync(f.root+'/release-neon','');
+ assert.equal((await f.wait(author.sid)).actualModel,'gemini-4-argon');
+ assert.equal((await f.wait(review.sid)).actualModel,'glm-5.3');
+});
 
 // 2026-11-12 正式站联调：Gemini（Antigravity）2 分 20 秒一个字不回，后台任务卡到超时。站长：「Gemini 一两分钟不回就换模型」。
 // 参考 opencode 的 chunkTimeout（packages/core/src/v1/config/provider.ts：两段输出之间等不到就中止）、Codex 的 stream_idle_timeout_ms（codex-rs/model-provider-info：默认 300 秒，按服务商可改）
 test('Gemini 一直不出声：到了闲置时限就换别的模型接着做，记下原因；之后 15 分钟内新任务先不派给 Gemini',async t=>{
- const f=fixture(t,'stall'),task=f.call('task_new',{kind:'research',goal:'stall research'}).task;assert.equal(task.model,'gemini-4-hydrogen');
- const t0=performance.now(),done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-4-hydrogen');
+ const f=fixture(t,'stall'),task=f.call('task_new',{kind:'research',goal:'stall research'}).task;assert.equal(task.model,'gemini-4-argon');
+ const t0=performance.now(),done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-4-argon');
  assert.ok(performance.now()-t0<platformTimeout(12000),'没有等满 4 分钟');
  assert.match(fs.readFileSync(f.root+'/fallback.log','utf8'),/codex/);
  const stats=fs.readFileSync(f.control+'/model-stats.jsonl','utf8').trim().split('\n').map(JSON.parse),last=stats.at(-1);
- assert.equal(last.from,'gemini-4-hydrogen');assert.match(last.fromErr||'',/没有任何回应/);
+ assert.equal(last.from,'gemini-4-argon');assert.match(last.fromErr||'',/没有任何回应/);
  const issue=f.call('tasks',{all:true}).antigravityIssue;assert.equal(issue.kind,'stall');assert.ok(Date.now()-issue.at<platformTimeout(15000));
- const next=f.call('task_new',{kind:'research',goal:'after stall'}).task;assert.notEqual(next.model,'gemini-4-hydrogen','刚卡过，先不派给 Gemini');await f.wait(next.sid);
+ const next=f.call('task_new',{kind:'research',goal:'after stall'}).task;assert.notEqual(next.model,'gemini-4-argon','刚卡过，先不派给 Gemini');await f.wait(next.sid);
  const st=JSON.parse(fs.readFileSync(f.control+'/antigravity-stall.json'));st.at=Date.now()-16*60e3;fs.writeFileSync(f.control+'/antigravity-stall.json',JSON.stringify(st));
- assert.equal(f.call('task_new',{kind:'research',goal:'later'}).task.model,'gemini-4-hydrogen','过了 15 分钟照常');
+ assert.equal(f.call('task_new',{kind:'research',goal:'later'}).task.model,'gemini-4-argon','过了 15 分钟照常');
 });
 test('Gemini 干了一步以后才卡住：一样换模型，接手的模型先读副本里已有的文件、不重复做完的外部操作',async t=>{
  const f=fixture(t,'stall2'),task=f.call('task_new',{kind:'research',goal:'stall after work'}).task,done=await f.wait(task.sid);
- assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-4-hydrogen');
+ assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-4-argon');
  const runs=JSON.parse(fs.readFileSync(f.control+'/sessions/'+task.sid+'.json')).runs,meta=JSON.parse(fs.readFileSync(f.control+'/runs/'+runs.at(-1)+'.json'));
- assert.equal(meta.from,'gemini-4-hydrogen');
+ assert.equal(meta.from,'gemini-4-argon');
  const ev=fs.readFileSync(f.control+'/runs/'+runs.at(-1)+'.jsonl','utf8');assert.match(ev,/echo half/,'Gemini 做过的那一步留在过程里');
  assert.match(fs.readFileSync(f.root+'/fallback.args','utf8'),/先读取同一项目副本中的现有文件/);
 });
@@ -90,56 +179,68 @@ test('Gemini 干了一步以后才卡住：一样换模型，接手的模型先�
 // 2026-11-13 #131 正式站联调：Gemini 约 2 分钟后回了「没做完」（状态不是 SUCCESS），控制器换 Kimi 做完了，联调却因为「不是额度原因」判失败、回滚。
 // 同一时间单独探测：只回「OK」也要 118 秒（平时 40 多秒），是 Gemini 服务那边慢。和不出声一样记下来，联调据此认可这次换模型。
 test('Gemini 回了没做完（状态不是 SUCCESS）：错误里写明状态，记下来，15 分钟内新任务先不派给它；换别的模型做完',async t=>{
- const f=fixture(t,'unfinished'),task=f.call('task_new',{kind:'research',goal:'unfinished research'}).task;assert.equal(task.model,'gemini-4-hydrogen');
- const done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-4-hydrogen');
+ const f=fixture(t,'unfinished'),task=f.call('task_new',{kind:'research',goal:'unfinished research'}).task;assert.equal(task.model,'gemini-4-argon');
+ const done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));assert.notEqual(done.actualModel,'gemini-4-argon');
  const last=fs.readFileSync(f.control+'/model-stats.jsonl','utf8').trim().split('\n').map(JSON.parse).at(-1);
- assert.equal(last.from,'gemini-4-hydrogen');assert.match(last.fromErr||'',/状态 ERROR/);
+ assert.equal(last.from,'gemini-4-argon');assert.match(last.fromErr||'',/状态 ERROR/);
  const issue=f.call('tasks',{all:true}).antigravityIssue;assert.equal(issue.kind,'status');assert.equal(issue.status,'ERROR');
- assert.notEqual(f.call('task_new',{kind:'research',goal:'after unfinished'}).task.model,'gemini-4-hydrogen');
+ assert.notEqual(f.call('task_new',{kind:'research',goal:'after unfinished'}).task.model,'gemini-4-argon');
 });
 test('agy 命令自己没跑起来（没有结果、退出码不为 0）：多半是我们这边调用出错，错误里写明退出码，不记成 Gemini 不可用',async t=>{
- const f=fixture(t,'crash'),task=f.call('task_new',{kind:'research',goal:'crash research'}).task;assert.equal(task.model,'gemini-4-hydrogen');
+ const f=fixture(t,'crash'),task=f.call('task_new',{kind:'research',goal:'crash research'}).task;assert.equal(task.model,'gemini-4-argon');
  await f.wait(task.sid);
  const last=fs.readFileSync(f.control+'/model-stats.jsonl','utf8').trim().split('\n').map(JSON.parse).at(-1);
- assert.equal(last.from,'gemini-4-hydrogen');assert.match(last.fromErr||'',/没有返回结果，退出码 2/);
+ assert.equal(last.from,'gemini-4-argon');assert.match(last.fromErr||'',/没有返回结果，退出码 2/);
  assert.equal(f.call('tasks',{all:true}).antigravityIssue,null);
- assert.equal(f.call('task_new',{kind:'research',goal:'after crash'}).task.model,'gemini-4-hydrogen','照常派给 Gemini');
+ assert.equal(f.call('task_new',{kind:'research',goal:'after crash'}).task.model,'gemini-4-argon','照常派给 Gemini');
 });
 
-// 站长 2026-11-13：「后台干活优先也派 hydrogen，根据任务难度选择思考强度」。前台按类别派活（类别就是难度），控制器按类别定思考强度：
-// 参考 Codex 的 model_reasoning_effort / plan_mode_reasoning_effort（规划和执行各用各的强度）、opencode 每个 agent 自己的 reasoningEffort、
-// Antigravity Orchestrator（Carbon 规划、Hydrogen 执行）。实测每一步：low 3 秒、medium 5 秒、high 7 秒、xhigh 30 秒。
-test('后台优先派 Hydrogen，按类别定思考强度：杂活 low、查资料 medium、写代码和网页 high、难题 xhigh、检查 high',async t=>{
- const f=fixture(t),want={quick:'low',research:'medium',code:'high',hard:'xhigh'};
- for(const [kind,effort] of Object.entries(want)){
-  const task=f.call('task_new',{kind,goal:kind+' work'}).task;assert.equal(task.model,'gemini-4-hydrogen',kind);
-  const done=await f.wait(task.sid);assert.equal(done.status,'done',kind+JSON.stringify(done));assert.equal(done.actualModel,'gemini-4-hydrogen',kind);
-  const last=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse).filter(x=>!x.quota).at(-1);
-  assert.deepEqual(last.args,['gemini-4-hydrogen-'+effort,effort],kind);
+test('后台按类别派 Neon High、Neon Extra 和 Argon，杂活交 DeepSeek',async t=>{
+ const f=fixture(t);
+ for(const [kind,model,effort] of [['code','gemini-4-neon','high'],['hard','gemini-4-neon','xhigh'],['research','gemini-4-argon','medium']]){
+  const task=f.call('task_new',{kind,goal:kind+' work'}).task;
+  assert.equal(task.model,model,kind);
+  assert.equal((await f.wait(task.sid)).actualModel,model,kind);
+  const calls=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse).filter(x=>!x.quota);
+  assert.deepEqual(calls.at(-1).args,[model+'-'+effort,effort],kind);
  }
- const web=f.call('task_new',{kind:'code',goal:'web page',web:true}).task;assert.equal(web.model,'gemini-4-hydrogen','web');
- // 检查：作者不是 Hydrogen 时也交给它（high）；作者是 Hydrogen 时换别的模型看
- const other=f.call('task_new',{kind:'code',goal:'kimi wrote it',model:'kimi-k3.1-pro',named:true}).task;await f.wait(other.sid);
- const r1=f.call('task_new',{kind:'review',goal:'review kimi',after:[other.no]}).task;assert.equal(r1.model,'gemini-4-hydrogen','review of kimi');const r1done=await f.wait(r1.sid);assert.equal(r1done.actualModel,'gemini-4-hydrogen','开工时重新挑模型也保留 Hydrogen');
- const hy=f.call('task_new',{kind:'code',goal:'hydrogen wrote it'}).task;await f.wait(hy.sid);
- const r2=f.call('task_new',{kind:'review',goal:'review hydrogen',after:[hy.no]}).task;assert.notEqual(r2.model,'gemini-4-hydrogen');
+ const quick=f.call('task_new',{kind:'quick',goal:'small work'}).task;
+ assert.equal(quick.model,'deepseek-v4.1-flash'); await f.wait(quick.sid);
+ const author=f.call('task_new',{kind:'code',goal:'gateway wrote it',model:'glm-5.3',named:true}).task;
+ await f.wait(author.sid);
+ const review=f.call('task_new',{kind:'review',goal:'review the code',after:[author.no]}).task;
+ assert.equal(review.model,'gemini-4-argon');
+ assert.equal((await f.wait(review.sid)).actualModel,'gemini-4-argon');
+ const last=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse).filter(x=>!x.quota).at(-1);
+ assert.deepEqual(last.args,['gemini-4-argon-high','high']);
+ const argon=f.call('task_new',{kind:'code',goal:'argon wrote it',model:'gemini-4-argon',named:true}).task;
+ await f.wait(argon.sid);
+ const independent=f.call('task_new',{kind:'review',goal:'review argon',after:[argon.no]}).task;
+ assert.equal(independent.model,'glm-5.3');await f.wait(independent.sid);
 });
-test('不交给 Hydrogen 的：带图片、电脑维护、看图；不再用 Gemini 3.8 Flash：点名 Gemini / Flash 都交给 Hydrogen',async t=>{
+test('Neon 的 Extra 只跟随用户点名，Hydrogen 点名仍是 high',async t=>{
+ const f=fixture(t);
+ for(const [userRequest,model,effort] of [['用 Neon Extra 写个脚本','gemini-4-neon','xhigh'],['加一个 extra 按钮','gemini-4-neon','high'],['用 Hydrogen 写个脚本','gemini-4-hydrogen','high']]){
+  const task=f.call('task_new',{kind:'code',goal:'write code',userRequest,model,named:true}).task;
+  assert.equal((await f.wait(task.sid)).actualModel,model);
+  const last=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse).filter(x=>!x.quota).at(-1);
+  assert.deepEqual(last.args,[model+'-'+effort,effort],userRequest);
+ }
+});
+test('不交给 Antigravity 的任务：图片、杂活、电脑维护、看图；带图代码保留代码候选',async t=>{
  const f=fixture(t);
  fs.mkdirSync(f.root+'/work/uploads',{recursive:true});fs.writeFileSync(f.root+'/work/uploads/a.png','x');
- assert.notEqual(f.call('task_new',{kind:'quick',goal:'look',files:['uploads/a.png']}).task.model,'gemini-4-hydrogen');
- assert.notEqual(f.call('task_new',{kind:'system',goal:'disk'}).task.model,'gemini-4-hydrogen');
- assert.notEqual(f.call('task_new',{kind:'vision',goal:'see'}).task.model,'gemini-4-hydrogen');
- // 站长 2026-11-13：「以后也不用 3.8 flash 了」
+ for(const kind of ['quick','system','vision'])assert.equal(f.call('task_new',{kind,goal:kind+' work'}).task.model,'deepseek-v4.1-flash');
+ const image=f.call('task_new',{kind:'code',goal:'code from picture',files:['uploads/a.png']}).task;
+ assert.equal(image.model,'glm-5.3');
  const {namedModel,modelLabel}=await import(pathToFileURL(path.join(__dirname,'../site/xin/vm-models.mjs')).href);
- // 站长 11-19：泛指的 Gemini / Antigravity 交给后台写代码的 Neon；点名 Hydrogen、Flash 才用 Hydrogen；Argon 照点名
  for(const text of ['你让 Gemini 3.8 Flash 去画个奶龙','交给 Hydrogen 做','让 Gemini 4 Hydrogen 查一下'])assert.equal(namedModel(text),'gemini-4-hydrogen',text);
  for(const text of ['用 Gemini 写','用 antigravity 做','用 Neon 写','让 Gemini 4 Neon 来做'])assert.equal(namedModel(text),'gemini-4-neon',text);
  for(const text of ['让 Argon 查一下','交给 Gemini 4 Argon 检查'])assert.equal(namedModel(text),'gemini-4-argon',text);
  assert.equal(modelLabel('gemini-4-neon'),'Gemini 4 Neon');assert.equal(modelLabel('gemini-4-argon'),'Gemini 4 Argon');
- const old=f.call('task_new',{kind:'research',goal:'old flash id',model:'gemini-3.8-flash-high',named:true}).task;assert.notEqual(old.model,'gemini-3.8-flash-high');
- await f.wait(old.sid);
- assert.ok((fs.existsSync(f.log)?fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse):[]).every(x=>x.quota||!/3\.8/.test(x.args[0])),'没有一次调用 Flash');
+ const old=f.call('task_new',{kind:'research',goal:'old flash id',model:'gemini-3.8-flash-high',named:true}).task;
+ assert.notEqual(old.model,'gemini-3.8-flash-high');await f.wait(old.sid);
+ assert.ok((fs.existsSync(f.log)?fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse):[]).every(x=>x.quota||!/3\.8/.test(x.args[0])));
 });
 test('额度按组算：Gemini 4 Argon 的单独周限额用完，不算 Hydrogen / Flash 用完；Gemini 组用完才算',async()=>{
  const r=await import(pathToFileURL(path.join(__dirname,'../site/xin/vm-runtime.mjs')).href);
