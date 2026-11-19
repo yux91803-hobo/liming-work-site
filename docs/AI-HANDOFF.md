@@ -10,9 +10,9 @@
   - 真对话：li2 上留着的一轮（11-18 23:59 北京时间）成功，用时 5.3 秒。
 - **Purge、REA**：li2 的 Harness 带 `dsh-purge` 插件（`~/.dsh` 里有 `prompt-inject.md`、`redteam`，人设是 `purge-on`），是 #180（Codex，见下一条）有意接进来的。设计 §4.2 里「li2 上没有 purge 这类插件」那句已经被 #180 取代。天启页面的插件开关能关。
 - **以后**：交接记录写「等站长做什么」的，接手时先核对实际情况再跟站长说。
-- **CI 偶发卡住（11-19，#181 的 check）**：单元测试打印到第 603 项（`xin-muse-rules` 最后一项）后 12 分钟没有输出，被 15 分钟超时取消。按文件对照，卡在 `test/xin-owner.test.cjs`（之后 33 个文件一项都没打印）；本地连跑 6 次，每次 2 到 3 秒过。这个文件里 `proc().line()` 等子进程输出没有超时，`cli()`、`send()` 和 `xin task list` 的 `spawnSync` 也没设 `timeout`，子进程一旦卡住整个文件就挂着。建议照 Jest、Mocha 给每个测试设默认超时的做法：`node --test` 加 `--test-timeout`，这几处 `spawnSync` 加 `timeout`，下次卡住会直接报出是哪一项。
+- **CI 偶发卡住（11-19，#181、#184 的 check 各一次）——查到了，#184 一起修**：两次都是 `xin-muse-rules` 打印完以后 12 分钟没输出，被 15 分钟超时取消，卡在 `test/xin-owner.test.cjs`。原因不是当初猜的 `spawnSync` 没超时，是测试收尾的先后：node:test 的 `t.after` 按登记顺序跑，前一个钩子出错会跳过后面的；这个文件先登记「删临时目录」、后登记「停状态进程」，删的时候撞上还在写的进程报 `ENOTEMPTY`，停状态进程那步被跳过，状态进程连着管道活着，文件退不出去。改成临时目录在进程退出时删（`test/helpers/tmp.cjs`），详见 `docs/CHANGES.md`。**以后写测试**：临时目录里要起状态进程或子进程的，用 `tmpDir()`，别在 `t.after` 里删。试过 `--test-force-exit`：能防卡住，但全量检查从 1067 项掉到 994 项（有文件没登记完测试就被结束），等于少跑测试，不能用。
 - **CI 偶发失败（11-19，#181 第二次 check）**：`xin-kernel` 的「一直起不来……接着重试」原来固定等 500ms 再数，CI 整机卡一下就一次都轮不到；改成等它真的又起两次（时限按机器放大），详见 `docs/CHANGES.md` 最上面一条。
-- **待修（正式代码，下一个 PR）**：`site/xin/vm-kernel.mjs` 的看护只在子进程 `exit` 里安排重试；起子进程被系统直接拒绝时（ENOENT、EAGAIN、EMFILE 等），Node 只发 `error`、`close`，不发 `exit`（v22 本机试过），看护会一直停在「启动中」，不重试也不推送。做法：先用 `spawnImpl` 造一个只发 `error` 的子进程写会失败的测试，再让「没起来」的 `error` 也走 `failed()`。
+- **已修（#181 之后的下一个 PR）**：`site/xin/vm-kernel.mjs` 的看护原来只在子进程 `exit` 里安排重试；起子进程被系统直接拒绝时（ENOENT、EAGAIN、EMFILE 等），Node 只发 `error`、`close`，不发 `exit`（v22 本机试过），看护会一直停在「启动中」，不重试也不推送。现在照 execa 的做法，`spawn` 之前来的 `error` 也算一次没起来，详见 `docs/CHANGES.md` 最上面一条。合并后要核对 li、li2 都换上了新内核。
 
 ## 2026-11-19 · 小芯前台回复恢复（Codex）
 

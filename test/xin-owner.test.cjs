@@ -5,7 +5,8 @@ const test = require('node:test'), assert = require('node:assert/strict'), fs = 
 const net = require('node:net');
 const { execFile, spawn, spawnSync } = require('node:child_process'); const { pathToFileURL } = require('node:url');
 const url = pathToFileURL(path.join(__dirname, '../site/xin/vm-kernel-owner.mjs')).href;
-const home = t => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-owner-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
+// 临时目录在进程退出时删（test/helpers/tmp.cjs）：在 t.after 里删会抢在停状态进程之前，撞上 ENOTEMPTY 时停进程的钩子被跳过，文件就退不出去
+const { tmpDir } = require('./helpers/tmp.cjs'), home = () => tmpDir('xin-owner-');
 // 另起一个进程执行一段脚本（脚本里有 o = new Ownership(dir, opts)）。line() 等下一行输出，exit() 等退出码
 function proc(t, dir, body, opts = {}) {
   const child = spawn(process.execPath, ['--input-type=module', '-e',

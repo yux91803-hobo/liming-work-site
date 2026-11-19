@@ -755,6 +755,21 @@ test('一直起不来：请求回「主人不在」；超过期限推送一次�
   assert.strictEqual((await ownerOp(f, 'echo', {}, KERNEL(1))).body.data.via, 'state');
 });
 
+// 起子进程被系统直接拒绝（找不到程序、进程数或文件句柄到上限）时，Node 只发 error、close，不发 exit（v22 实测 ENOENT、EMFILE）。
+// 看护要当成一次没起来、照退避重试；不能一直停在「启动中」，那样不重试也不推送。前两次真的去起一个不存在的程序
+test('起状态进程被系统拒绝（只有 error、没有 exit）：当成没起来，照退避重试，起来以后请求照常回答', async t => {
+  const { spawn } = require('node:child_process'), missing = path.join(os.tmpdir(), 'xin-no-such-node-' + process.pid);
+  let serves = 0;
+  const spawnImpl = (cmd, args, opts) => spawn(args[1] === 'serve' && ++serves <= 2 ? missing : cmd, args, opts);
+  const f = await keeperFixture(t, { spawnImpl }, { readyWaitMs: platformTimeout(5000) });
+  const r = await ownerOp(f, 'echo', { a: 1 }, KERNEL(1));
+  assert.strictEqual(r.status, 200, '请求等到它起来：' + JSON.stringify({ body: r.body, owner: (await health(f)).owner }));
+  assert.strictEqual(r.body.data.via, 'state'); assert.deepStrictEqual(r.body.data.args, { a: 1 });
+  const h = await running(f); assert.ok(h, '起来了');
+  assert.strictEqual(serves, 3, '拒绝两次、第三次起来'); assert.strictEqual(h.owner.failures, 2); assert.strictEqual(h.owner.lastError, 'spawn_failed');
+  assert.match(fs.readFileSync(path.join(f.home, 'logs', 'kernel.jsonl'), 'utf8'), /"route":"state","event":"spawn_error","agent":"000000000000","code":"ENOENT"/);
+});
+
 // 新部署多半就是来修它的：之前的失败和退避都不算了，不等原来的退避（正式环境最长 60 秒），马上照新的期望起
 test('起不来、正在退避时来了新部署（代号变大）：不等原来的退避，马上照新的期望起', async t => {
   const f = await keeperFixture(t, { giveUpMs: 600000, backoffMs: [platformTimeout(8000)] }, { readyWaitMs: platformTimeout(3000) });
