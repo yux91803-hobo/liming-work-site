@@ -8,147 +8,112 @@ jobs:
   diagnose:
     if: github.repository == 'yux91803-hobo/liming-work-site' && github.ref_name == 'codex/xin-reply-diagnostics-20261119'
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
-      - name: Read sanitized foreground diagnostics for li
+      - name: Check a real reply in an isolated Xiaoxin conversation
         env:
-          LI_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
+          XIN_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
         run: |
           python3 - <<'PY_REMOTE'
-          import hashlib
+          import http.cookiejar
           import json
           import os
           import re
-          from collections import Counter
-          from datetime import datetime, timezone
+          import sys
+          import time
+          import uuid
           from urllib.error import HTTPError
-          from urllib.parse import quote, urlencode
-          from urllib.request import HTTPRedirectHandler, Request, build_opener
+          from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, Request, build_opener
 
+          BASE='https://liming-work.com'
+          PASSWORD=os.environ['XIN_OWNER_PASSWORD']
 
           class NoRedirect(HTTPRedirectHandler):
-              def redirect_request(self, request, fp, code, message, headers, newurl):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
                   return None
 
+          OPENER=build_opener(NoRedirect(),HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
-          api = 'https://api.instabox.sh'
-          opener = build_opener(NoRedirect())
-          key = os.environ['LI_API_KEY']
-          base = '/data/home/.xin/'
+          def request(path, payload=None):
+              if not path.startswith('/') or path.startswith('//'): raise ValueError('Unexpected site path')
+              data=None if payload is None else json.dumps(payload).encode('utf-8')
+              req=Request(BASE+path,data=data,headers={'Content-Type':'application/json','X-Xin':'1',
+                                                      'Origin':BASE,'User-Agent':'Xiaoxin-reply-check'})
+              try:
+                  with OPENER.open(req,timeout=55) as response:
+                      return response.status,response.read(2*1024*1024)
+              except HTTPError as failure:
+                  return failure.code,failure.read(512*1024)
 
+          def get(path, body=None):
+              status,response=request(path,body)
+              try: content=json.loads(response)
+              except ValueError: content={}
+              return status,content
 
-          def read(endpoint, limit):
-              req = Request(api + endpoint, headers={'X-API-Key': key})
-              with opener.open(req, timeout=25) as response:
-                  raw = response.read(limit + 1)
-              if len(raw) > limit:
-                  raise ValueError('size limit')
-              return raw
+          def call(op,args=None):
+              status,body=get('/api/xin/call',{'op':op,'args':args or {}})
+              return status,body,body.get('data') or {}
 
-
-          def timestamp(value):
-              if type(value) in (int, float) and 0 < value < 2e12:
-                  return datetime.fromtimestamp(value / 1000, timezone.utc).strftime('%H:%M:%SZ')
-
-
-          def error_kind(error):
-              value = str(error or '')
-              checks = [
-                  ('dispatch_exhausted', '暂时没能安排好'), ('step_limit', '步数用完'),
-                  ('unsupported_command', '允许的|只能|动作无效|参数|不支持|合法|未知'),
-                  ('no_text', '没有返回文字|没有文字'), ('unfinished', '未完成回复'),
-                  ('invalid_model', 'bad_front_model|unknown model|model not found'),
-                  ('provider_credit', 'quota|credit|额度|resource.exhausted|rate.limit'),
-                  ('credentials', 'unauthenticated|unauthorized|token expired|login|登录|auth required'),
-                  ('deadline', 'time.?out|超时|deadline'), ('network', 'econn|fetch failed|network|socket'),
-                  ('database', 'sqlite|database|owner_changed|state_recov'), ('protocol', '协议|ACP|Antigravity'),
-                  ('stopped', 'stopped|已停止|cancel'),
-              ]
-              http = re.search(r'HTTP ([1-5][0-9]{2})\b', value)
-              if http:
-                  return 'http_' + http.group(1)
-              return next((kind for kind, pattern in checks if re.search(pattern, value, re.I)), 'other' if value else None)
-
-
-          def call_shape(row):
-              parts = str(row.get('call', '')).split()
-              command = ' '.join(parts[:3]) if parts[:2] == ['xin', 'task'] else ' '.join(parts[:2])
-              known = {'xin task new', 'xin task show', 'xin task list', 'xin task tell', 'xin task stop',
-                       'xin bond', 'xin move', 'xin next', 'xin remember', 'xin recall', 'xin forget',
-                       'finish_event deliver', 'finish_event silent'}
-              return {'call': command if command in known else 'other',
-                      'options': [p for p in parts if p in {'--model', '--kind', '--dir', '--goal', '--title', '--no', '--review', '--parent'}],
-                      'error': error_kind(row.get('error')), 'terminal': row.get('terminal') is True}
-
-
-          def rows(raw):
-              for line in raw.splitlines():
-                  try:
-                      entry = json.loads(line)
-                      if isinstance(entry, dict):
-                          yield entry
-                  except (ValueError, UnicodeError):
-                      continue
+          def wait_op(op, args, pred, seconds):
+              end = time.monotonic() + seconds
+              while time.monotonic() < end:
+                  status, response, data = call(op, args)
+                  if response.get('ok') and not data.get('error') and pred(data):
+                      return data
+                  if status in (400, 401, 403, 404) or data.get('error') not in {None, 'not_found'}:
+                      raise RuntimeError(f'{op} failed with HTTP {status}')
+                  time.sleep(2)
+              raise RuntimeError(f'{op} timed out')
 
 
           def main():
-              machines = json.loads(read('/v1/machines', 1024*1024))['machines']
-              matches = [row for row in machines if row.get('name') == 'li']
-              if len(matches) != 1:
-                  raise ValueError('li selection')
-              m = matches[0]
-              print('LI_STATUS', m.get('state', m.get('status')), flush=True)
-              endpoint = '/v1/machines/' + quote(m['id'], safe='') + '/files/content?'
-
-              def load(relative, limit=512*1024):
-                  try:
-                      return read(endpoint + urlencode({'path': base+relative}), limit)
-                  except HTTPError as e:
-                      print('READ_FAILED', relative.split('/')[0], e.code, flush=True)
-                      return b''
-
-              front = list(rows(load('logs/front.jsonl')))
-              known_protocol = {'format_repair', 'format_fallback', 'front_model_missing', 'front_model_fallback',
-                                'agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'usage_update',
-                                'config_option_update', 'current_mode_update', 'session_info_update', 'available_commands_update', 'plan', 'other'}
-              for row in front[-9:]:
-                  protocol = row.get('protocol') or {}
-                  run = row.get('run', '')
-                  meta, events = {}, []
-                  if re.fullmatch(r'r[a-z0-9_-]{6,80}', run, re.I) and (row.get('at') or 0) >= 1795053900000:
-                      meta = json.loads(load('runs/'+run+'.json', 600*1024) or b'{}')
-                      events = list(rows(load('runs/'+run+'.jsonl', 600*1024)))
-                  model = meta.get('model')
-                  started = meta.get('started')
-                  types = {'user', 'think', 'tool', 'tool_end', 'text', 'err', 'status', 'done', 'task'}
-                  counts = Counter(ev.get('t') for ev in events if ev.get('t') in types)
-                  done = next((e for e in reversed(events) if e.get('t') == 'done'), {})
-                  print('FRONT', json.dumps({'at': timestamp(row.get('at')), 'outcome': row.get('outcome'),
-                                            'error': error_kind(row.get('error')), 'error_bytes': len(str(row.get('error') or '')),
-                                            'calls': [call_shape(c) for c in row.get('calls', [])],
-                                            'model': model if model in {'gemini-4-hydrogen','deepseek-v4.1-flash'} else None,
-                                            'model_high': meta.get('providerModel') == 'gemini-4-hydrogen-high',
-                                            'elapsed_ms': int(row['at'] - started) if type(started) in (int,float) else None,
-                                            'done_ms': done.get('ms') if type(done.get('ms')) in (int,float) else None,
-                                            'events': counts, 'done_ok': done.get('ok') is True,
-                                            'protocol': {k: [protocol[k].get('count'),protocol[k].get('bytes')] for k in known_protocol & protocol.keys()},
-                                            'protocol_unknown': len(protocol.keys() - known_protocol)}), flush=True)
-
-              q = json.loads(load('front-antigravity-quota.json', 16*1024) or b'{}')
-              print('FRONT_QUOTA', json.dumps({**{k: q.get(k) is True for k in ('blocked', 'providerExhausted')},
-                                              'retryAt': timestamp(q.get('retryAt')), 'updatedAt': timestamp(q.get('checkedAt'))}), flush=True)
-              kernel = list(rows(load('logs/kernel.jsonl', 2200*1024)))
-              recent = [row for row in kernel if (row.get('at') or 0) >= 1795058580000]
-              recognized = {'send', 'front_immediate', 'front_model', 'front_quota', 'front_action', 'front_fallback', 'run_complete'}
-              counts = Counter(f"{row.get('op')}:{row.get('status')}" for row in recent if row.get('op') in recognized)
-              version = {row['agent'] for row in kernel[-160:] if re.fullmatch(r'[0-9a-f]{12}', str(row.get('agent', '')))}
-              print('KERNEL_RECENT', json.dumps({'outcomes': counts, 'builds_seen': sorted(version)}), flush=True)
+              status, _ = get('/api/xin/login', {'password': PASSWORD})
+              _, me = get('/api/xin/me')
+              if status != 200 or not (me.get('enabled') and me.get('authed')):
+                  raise RuntimeError('Xiaoxin login not confirmed')
+              probe = '青柠 松果 白鹭'
+              text = '这是小芯的独立联调。请只回复「'+probe+'」。不用查资料、派活或记忆。'
+              data = {'agent':'codex','main':False,'clientId':'xin-reply-check-'+uuid.uuid4().hex,'text':text}
+              status, response, accepted = call('send', data)
+              print('SMOKE_ACCEPT', status, bool(response.get('ok') or response.get('accepted')), flush=True)
+              if not (response.get('ok') or response.get('accepted')):
+                  raise RuntimeError('Xiaoxin fixture was not accepted')
+              if response.get('accepted'):
+                  delivered = wait_op('delivery', {'id':data['clientId']}, lambda d:d.get('state') in {'delivered','failed'}, 70)
+                  accepted = delivered.get('result') or {}
+              sid, run = accepted.get('sid',''), accepted.get('run','')
+              if accepted.get('main') or not (re.fullmatch(r's[a-z0-9]{6,26}',sid) and re.fullmatch(r'r[a-z0-9]{6,26}',run)):
+                  raise RuntimeError('Isolated conversation not confirmed')
+              results = {'real_reply':False,'done':False,'cleaned':False}
+              try:
+                  reply = wait_op('poll', {'run':run,'off':0}, lambda d:d.get('done') is True, 145)
+                  events = reply.get('events') or []
+                  done = next((e for e in events if e.get('t')=='done'),{})
+                  model = done.get('model')
+                  results.update(done=done.get('ok') is True,
+                                 real_reply=any(e.get('t')=='text' and all(w in e.get('text','') for w in probe.split()) for e in events),
+                                 model=model if model in {'gemini-4-hydrogen','deepseek-v4.1-flash'} else None,
+                                 task_count=sum(1 for e in events if e.get('t')=='task'),
+                                 round_ms=done.get('ms') if type(done.get('ms')) is int else None,
+                                 timeout_fallback=done.get('frontFallback')=='timeout')
+              finally:
+                  if not results['done']:
+                      call('stop', {'sid':sid,'run':run})
+                  for _ in range(12):
+                      _, response, d = call('forget', {'sid':sid})
+                      if response.get('ok') and not d.get('error'):
+                          results['cleaned'] = True
+                          break
+                      time.sleep(2)
+                  print('SMOKE_RESULT', json.dumps(results,sort_keys=True), flush=True)
+              if not (results['done'] and results['real_reply'] and results['cleaned'] and results['task_count']==0):
+                  raise RuntimeError('Xiaoxin fixture did not complete a real isolated reply')
 
 
-          try:
-              main()
-          except HTTPError as e:
-              raise SystemExit('InstaBox API status ' + str(e.code)) from None
-          except (ValueError, KeyError, TypeError, OSError) as e:
-              raise SystemExit('Diagnostic failed ' + type(e).__name__) from None
+          if __name__=='__main__':
+              try:
+                  main()
+              except (RuntimeError, ValueError, OSError, KeyError) as error:
+                  raise SystemExit(str(error) if isinstance(error, RuntimeError) else 'Xiaoxin live check could not finish') from None
           PY_REMOTE
