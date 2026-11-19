@@ -2,6 +2,10 @@
 
 - 第 1 个 PR（#186）已合并上线。第 2 个 PR 改了什么见 CHANGES 最新一条，实现计划见 [plans/2026-11-20-tianqi-permissions-plan.md](superpowers/plans/2026-11-20-tianqi-permissions-plan.md)。
 - **li2 上的沙箱**：三档权限 Harness 自带，li2 用内核的 Landlock（没装 bwrap 也行）。11-19 用三轮很短的探测对话核对过：只读、工作区内修改都拦得住。探测时要用 li2 的 key（上传的 key 文件，只用 `grep -oE` 取到变量里，别打印）。
+- **合并前用真模型在 li2 上跑过**（11-20，DeepSeek V4.1 Flash，参数、环境变量和计划要求都和新控制器一样，在临时目录里跑，跑完连同两轮的 Harness 会话记录一起删了）：
+  - 只读那轮：写文件被沙箱拒；模型按提示申请提到工作区内修改，`--approval-policy never` 直接拒了；文件没建，回答让用户先换权限。
+  - 计划那轮：只读了文件、跑了只读命令，第一行 `# 标题`，有现状和目标、6 步（每步写改哪、怎么验证）、「不做」和假设风险，没问「要不要开始」；文件没动。
+  - 网站这条路（Worker → li2 控制器 → Harness）要站长登录，会话里走不了；上线后站长第一次用天启时由 Worker 把新控制器装上去。
 - **改天启权限、计划的人注意**：
   - 控制器的逻辑在 `vm-persona.mjs`（`harnessTurn`、`permError`、`TIANQI_PLAN`）；`vm-agent.mjs` 有行数上限（`xin-writers.test.cjs`），新逻辑放别的模块。
   - 网页的权限、计划状态在 `site/tools/tianqi/sky.js`；`chat.js` 发送时问 `LimingXinChat.tqOpts()`，换对话时派发 `tq:session`，计划轮次结束派发 `tq:plan`，计划模式的提示放 `S.tqPh`（chat.js 重画时用它）。
