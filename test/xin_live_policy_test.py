@@ -143,6 +143,16 @@ class FrontPolicy(unittest.TestCase):
         self.assertTrue(front_lookup_during_outage([answer, {'t': 'tool', 'name': 'WebSearch'}, done]))
         self.assertTrue(front_lookup_during_outage([answer, {**done, 'ok': False}]))
 
+    def test_generic_web_timeout_requires_a_separate_completed_chat_on_fallback(self):
+        done = {'t': 'done', 'ok': True, 'model': DEEPSEEK, 'from': HYDROGEN, 'why': 'front_timeout_fallback'}
+        answer = {'t': 'text', 'text': FRONT_WEB_UNAVAILABLE}
+        self.assertIsNone(front_lookup_during_outage([answer, done]))
+        self.assertIsNone(front_lookup_during_outage([answer, done], {'ok': True, 'model': HYDROGEN}))
+        self.assertIsNone(front_lookup_during_outage([answer, done], {**done, 'ok': False}))
+        self.assertEqual(front_lookup_during_outage([answer, done], dict(done)), '')
+        self.assertTrue(front_lookup_during_outage([{'t': 'text', 'text': '虚构网址'}, done], dict(done)))
+        self.assertTrue(front_lookup_during_outage([answer, {'t': 'task'}, done], dict(done)))
+
     def test_deadlines_include_existing_inference_budget_and_remain_bounded(self):
         self.assertGreaterEqual(front_reply_limit(HYDROGEN), 65)
         self.assertLessEqual(front_reply_limit(HYDROGEN), 75)
