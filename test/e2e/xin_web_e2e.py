@@ -99,6 +99,55 @@ async def main():
             print('PASS isolated web preview ' + scenario, flush=True)
             await context.close()
 
+        # 返回（站长 2026-11-19：手机上点了作品链接再返回，回到了工具箱首页的小窗，原来在全屏工作台）：
+        # 主屏幕上的网页应用里作品链接在原窗口打开——点「← 小芯的作品」要后退回全屏工作台（#xin-work），不是新开一次首页；
+        # 新标签页里单独开的（只有这一页）就关掉这个标签页
+        async def ready_preview(route):
+            await route.fulfill(status=200, content_type='text/html', body=HTML, headers={'Content-Security-Policy': CSP})
+        page = await ui.page(browser, 390, 844)
+        await ui.xin_mock(page, authed=True)
+        await page.route('**/api/xin/preview/**', ready_preview)
+        await page.goto(ui.BASE + '/#xin-work')
+        await page.wait_for_selector('.xc.wb.show')
+        await page.goto(ui.BASE + URL)
+        await page.wait_for_selector('#frame:not([hidden])')
+        await page.get_by_role('link', name='返回小芯聊天').click()
+        await page.wait_for_function("location.pathname === '/' && location.hash === '#xin-work'")
+        await page.wait_for_selector('.xc.wb.show')
+        back_state = await page.evaluate("[location.hash, document.querySelector('.xc').classList.contains('wb'), history.length]")
+        assert back_state[:2] == ['#xin-work', True], back_state
+        await page.context.close()
+        # 电脑上：聊天里的作品链接是 target=_blank，开出来的新标签页只有这一页（直接 new_page 会先有一页 about:blank，不一样）
+        page = await ui.page(browser, 1280, 860)
+        await ui.xin_mock(page, authed=True)
+        await page.context.route('**/api/xin/preview/**', ready_preview)
+        await page.goto(ui.BASE + '/#xin-work')
+        await page.wait_for_selector('.xc.wb.show')
+        await page.evaluate("u => { const a = document.createElement('a'); a.href = u; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.id = 'open-preview'; document.body.appendChild(a); }", URL)
+        async with page.expect_popup() as opened:
+            await page.evaluate("document.getElementById('open-preview').click()")
+        tab = await opened.value
+        await tab.wait_for_selector('#frame:not([hidden])')
+        entries = await tab.evaluate('history.length')
+        # 新版 Chrome（CI 上 157）关标签页比 click() 收到回执还快，click() 会报「页面已关闭」。
+        # Playwright 的 expect_event 退出时先等到 close 事件，再把里面的错抛出来，所以要在里面接住：页面确实关了就不算错。
+        click_error = None
+        try:
+            async with tab.expect_event('close', timeout=5000):
+                try:
+                    await tab.get_by_role('link', name='返回小芯聊天').click(no_wait_after=True)
+                except Exception as e:
+                    click_error = type(e).__name__ + ': ' + str(e).splitlines()[0][:160]
+            how = 'closed'
+        except Exception as e:
+            how = (tab.url, click_error, type(e).__name__ + ': ' + str(e).splitlines()[0][:160])
+        if click_error and how == 'closed':
+            print('NOTE preview back: the tab closed before click() returned (' + click_error + ')', flush=True)
+        still =await page.evaluate("[location.hash, document.querySelector('.xc').classList.contains('wb')]")
+        assert entries == 1 and how == 'closed' and still == ['#xin-work', True], (entries, how, still)
+        await page.context.close()
+        print('PASS preview back: same window goes back to the full workbench, a lone tab closes itself', flush=True)
+
         page = await ui.page(browser)
         state = await ui.xin_mock(page, authed=True)
         now = int(time.time()*1000)

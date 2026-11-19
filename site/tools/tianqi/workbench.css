@@ -1,92 +1,204 @@
-/* 天启工作台。对话记录属于弹层，探索区和当前对话同屏。 */
+/* 天启工作台 v4：照 DeepSeek Harness 桌面端分三栏，三块玻璃浮在夜空上（docs/superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md）。
+   左栏：天启、新对话、对话记录（chat.js 的抽屉，≥900 常驻）、设置、插件、li2；中栏：对话和输入框；右栏：文件、终端、预览。
+   深色是夜空：星会发光；浅色是星图：星是印在纸上的墨点。sky.js 画星、流星、星尘，管三栏和右栏。 */
 html.tianqi .xc.tq-mode {
   color-scheme: dark;
-  --paper: #0d1019;
-  --paper-2: #111522;
-  --surface: #171c2b;
-  --surface-2: #1c2234;
-  --sunk: #222a40;
-  --ink: #f2f4ff;
-  --ink-2: #ccd3e7;
-  --ink-3: #a3aec9;
-  --hair: #2a3249;
-  --hair-2: #434e6c;
-  --me: #20283d;
-  --chip: #121622;
-  --chip-2: #1b2134;
-  --chip-ink: #f2f4ff;
-  --chip-ink-2: #ccd3e7;
-  --chip-ink-3: #a3aec9;
-  --chip-hair: #2a3249;
-  --chip-hi: #434e6c;
-  --glow: #ffcd88;
-  --glow-ink: #f9dbab;
-  --glow-soft: rgb(172 187 250 / .13);
-  --glow-ring: #b0bfff;
-  --wait: #efa880;
-  --wait-ink: #f8bda0;
-  --ok: #a4dfca;
-  --bad: #fc938f;
-  --bad-ink: #ffb0aa;
-  --code: #0a101d;
-  --code-ink: #e3ebff;
-  --code-mute: #a3b2cf;
-  --tq: #acbcff;
-  --tq-ink: #c9d4ff;
-  --tq-chip: #222844;
-  --tq-chip-2: #343d65;
-  --tq-ring: #879de8;
-  --tq-soft: rgb(154 177 255 / .15);
+  --sky-top: #02040a;
+  --sky-mid: #050913;
+  --sky-low: #0a1225;
+  --pane: rgb(7 10 22 / .66);
+  --pop: rgb(10 13 28 / .97);
+  --rim: inset 0 1px 0 rgb(255 255 255 / .045);
+  --line: rgb(190 205 255 / .12);
+  --line-2: rgb(190 205 255 / .22);
+  --hover: rgb(255 255 255 / .055);
+  --press: rgb(255 255 255 / .09);
+  --star: #f3dfae;
+  --star-soft: rgb(243 223 174 / .13);
+  --star-glow: rgb(243 223 174 / .6);
+  --go: #eef2ff;
+  --go-ink: #0a0f1e;
+  --scrim-c: rgb(1 2 6 / .55);
+  --shadow: 0 28px 80px rgb(0 0 0 / .55);
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  --spring: cubic-bezier(.3, 1.35, .5, 1);
+  --serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Noto Serif SC", "Source Han Serif SC", serif;
+  /* chat.js 的组件用这些 */
+  --paper: #050913;
+  --paper-2: #080c18;
+  --surface: #0c1120;
+  --surface-2: #121829;
+  --sunk: #182036;
+  --ink: #e8ecf5;
+  --ink-2: #b4bbcf;
+  --ink-3: #8c95ad;
+  --hair: rgb(190 205 255 / .12);
+  --hair-2: rgb(190 205 255 / .22);
+  --me: rgb(255 255 255 / .07);
+  --chip: #0c1120;
+  --chip-2: #121829;
+  --chip-ink: #e8ecf5;
+  --chip-ink-2: #b4bbcf;
+  --chip-ink-3: #8c95ad;
+  --chip-hair: rgb(190 205 255 / .14);
+  --chip-hi: rgb(190 205 255 / .26);
+  --glow: #f3dfae;
+  --glow-ink: #f6e6be;
+  --glow-soft: rgb(243 223 174 / .13);
+  --glow-ring: #f3dfae;
+  --wait: #f2b48a;
+  --wait-ink: #f6c6a4;
+  --ok: #7fd7b5;
+  --bad: #f09a9a;
+  --bad-ink: #f6b4b0;
+  --code: rgb(3 5 12 / .62);
+  --code-ink: #dce4f8;
+  --code-mute: #8c95ad;
+  --tq: #9db8ff;
+  --tq-ink: #c4d3ff;
+  --tq-chip: rgb(157 184 255 / .12);
+  --tq-chip-2: rgb(157 184 255 / .2);
+  --tq-ring: #9db8ff;
+  --tq-soft: rgb(157 184 255 / .13);
+  --tq-star: #f3dfae;
+  --tq-glint: #fff6dc;
   --sh-1: 0 10px 24px -17px #000;
   --sh-2: 0 24px 68px -28px #000;
-  --tq-gutter: clamp(16px, 4vw, 54px);
-  background: var(--paper);
+  background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 55%, var(--sky-low) 100%);
 }
 
-html.tianqi[data-theme="dark"] .xc.tq-mode {
-  --paper: #090c14;
-  --paper-2: #0d111d;
-  --surface: #121725;
-  --surface-2: #171d30;
-  --sunk: #222940;
-  --hair: #252d43;
-  --me: #1c2437;
+html.tianqi[data-theme="light"] .xc.tq-mode {
+  color-scheme: light;
+  --sky-top: #f8f9fc;
+  --sky-mid: #f1f3f8;
+  --sky-low: #e4e9f3;
+  --pane: rgb(253 253 255 / .7);
+  --pop: rgb(253 253 255 / .98);
+  --rim: inset 0 1px 0 rgb(255 255 255 / .85);
+  --line: rgb(28 40 80 / .11);
+  --line-2: rgb(28 40 80 / .2);
+  --hover: rgb(20 32 72 / .05);
+  --press: rgb(20 32 72 / .085);
+  --star: #a06c14;
+  --star-soft: rgb(160 108 20 / .12);
+  --star-glow: rgb(160 108 20 / .28);
+  --go: #141a2a;
+  --go-ink: #f8f9fc;
+  --scrim-c: rgb(20 26 42 / .22);
+  --shadow: 0 28px 70px rgb(30 40 80 / .18);
+  --paper: #f1f3f8;
+  --paper-2: #f8f9fc;
+  --surface: #fff;
+  --surface-2: #f3f5fa;
+  --sunk: #e6eaf2;
+  --ink: #141a2a;
+  --ink-2: #465069;
+  --ink-3: #5f6884;
+  --hair: rgb(28 40 80 / .11);
+  --hair-2: rgb(28 40 80 / .2);
+  --me: #fff;
+  --chip: #f3f5fa;
+  --chip-2: #e9edf5;
+  --chip-ink: #141a2a;
+  --chip-ink-2: #465069;
+  --chip-ink-3: #5f6884;
+  --chip-hair: rgb(28 40 80 / .12);
+  --chip-hi: rgb(28 40 80 / .24);
+  --glow: #a06c14;
+  --glow-ink: #8a5a0e;
+  --glow-soft: rgb(160 108 20 / .12);
+  --glow-ring: #a06c14;
+  --wait: #b4552a;
+  --wait-ink: #9a4520;
+  --ok: #1d8f68;
+  --bad: #b94141;
+  --bad-ink: #a33a3a;
+  --code: rgb(226 231 242 / .7);
+  --code-ink: #1c2438;
+  --code-mute: #5f6884;
+  --tq: #3558c8;
+  --tq-ink: #2b47a8;
+  --tq-chip: rgb(53 88 200 / .08);
+  --tq-chip-2: rgb(53 88 200 / .16);
+  --tq-ring: #3558c8;
+  --tq-soft: rgb(53 88 200 / .09);
+  --tq-star: #a06c14;
+  --tq-glint: #3558c8;
+  --sh-1: 0 10px 24px -17px rgb(30 40 80 / .3);
+  --sh-2: 0 24px 68px -28px rgb(30 40 80 / .35);
 }
 
-.tianqi .xc.wb.tq-mode {
-  display: flex;
-  box-shadow: none;
-}
+.tianqi .xc.wb.tq-mode { display: block; box-shadow: none; }
+.tq-sky { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; z-index: 0; }
+.tq-sky.tq-fx { z-index: 6; }
 
-.tq-mast {
+/* ---------- 三栏 ---------- */
+.tq-frame {
+  --lw: 272px;
+  --gl: 14px;
+  --gr: 0px;
+  --rw: 0px;
   position: relative;
-  z-index: 7;
+  height: 100%;
+  display: grid;
+  grid-template-columns: var(--lw) var(--gl) minmax(0, 1fr) var(--gr) var(--rw);
+  grid-template-rows: minmax(0, 1fr);
+  padding-block: calc(12px + var(--st, 0px)) calc(12px + var(--sb, 0px));
+  padding-left: max(16px, var(--sl, 0px));
+  padding-right: max(16px, var(--sr, 0px));
+  transition: grid-template-columns .42s var(--ease);
+}
+.tq-frame[data-left="rail"] { --lw: 60px; }
+.tq-frame.tq-instant, .tq-frame.tq-instant * { transition: none !important; }   /* 第一次摆好、换屏幕档位时直接到位 */
+.tq-frame[data-mode="wide"][data-right="open"] { --gr: 14px; --rw: 400px; }
+.tq-frame[data-mode="mid"] { grid-template-columns: var(--lw) var(--gl) minmax(0, 1fr); }
+.tq-frame:is([data-mode="narrow"], [data-mode="phone"]) { grid-template-columns: minmax(0, 1fr); }
+.tq-frame[data-mode="phone"] { padding-block: var(--st, 0px) var(--sb, 0px); }
+
+.tq-side { grid-column: 1; position: relative; z-index: 3; min-width: 0; min-height: 0; overflow: hidden; --rad: 18px; }
+.tq-mid { grid-column: 3; position: relative; z-index: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-mid { grid-column: 1; }
+.tq-right { grid-column: 5; position: relative; z-index: 3; min-width: 0; min-height: 0; overflow: hidden; --rad: 18px; visibility: hidden; transition: visibility 0s .42s; }
+.tq-frame[data-right="open"] .tq-right { visibility: visible; transition: none; }
+
+.tq-glass {
+  height: 100%;
+  border: 1px solid var(--line);
+  --rad: 18px;
+  background: var(--pane);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  backdrop-filter: blur(20px) saturate(130%);
+  box-shadow: var(--rim);
+}
+
+.tq-ib {
+  position: relative;
   flex: none;
-  padding-top: var(--st);
-  border-bottom: 1px solid var(--hair);
-  background: var(--paper-2);
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  --rad: 10px;
+  color: var(--ink-2);
+  transition: background-color .2s var(--ease), color .2s var(--ease);
 }
+.tq-ib:hover { background: var(--hover); color: var(--ink); }
+.tq-ib svg, .tq-row svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tq-grow { flex: 1; }
+.tianqi .xc.tq-mode :focus-visible { outline: 1.5px solid var(--star); outline-offset: 2px; }
+.tianqi .xc.tq-mode .tq-entry textarea:focus-visible { outline: none; }   /* 输入框聚焦看外框亮一圈就够了 */
+/* chat.css 在 .xc 里统一用 border-radius: var(--rad) !important，所以这里的圆角都写成 --rad */
 
-.tq-mast-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  max-width: 1536px;
-  min-height: 77px;
-  margin: auto;
-  padding: 0 var(--tq-gutter);
-}
-
-html.embed .tq-mast-inner {
-  padding-left: max(var(--tq-gutter), calc(64px + var(--sl)));
-}
-
+/* ---------- 左栏 ---------- */
+.tq-side-in { display: flex; flex-direction: column; padding: 10px; overflow: hidden; }
+.tq-side-top { flex: none; display: flex; align-items: center; height: 44px; margin-bottom: 4px; }
 .tianqi .xc.tq-mode .tq-brand {
   --rad: 0;
-  flex: 0 1 auto;
-  gap: 11px;
+  flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   max-width: none;
   height: auto;
   padding: 0;
@@ -94,501 +206,456 @@ html.embed .tq-mast-inner {
   background: none;
   box-shadow: none;
 }
-
-.tq-brand h1 {
-  margin: 0 2px 0 0;
-  font-size: 23px;
-  font-weight: 690;
-  letter-spacing: .15em;
-  white-space: nowrap;
-}
-
-.tq-brand-mark {
-  --rad: 50%;
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  border: 1px solid #596689;
-  background: radial-gradient(circle at 44% 44%, #404d7b, #18203a 72%);
-  flex: none;
-}
-
-.tq-brand .xc-tq svg { width: 21px; height: 21px; }
-.tq-brand .xc-sub { color: var(--ink-3); }
-
+.tq-brand-key { flex: none; width: 38px; height: 38px; display: grid; place-items: center; --rad: 11px; }
+.tq-brand-key:hover { background: var(--hover); }
+.tq-brand-mark { display: grid; place-items: center; width: 22px; height: 22px; color: var(--star); filter: drop-shadow(0 0 6px var(--star-glow)); }
+.tq-brand .xc-tq svg { width: 20px; height: 20px; }
+.tq-brand h1 { margin: 0; font: 600 17px/1 var(--serif); letter-spacing: .42em; white-space: nowrap; }
+.tq-brand .xc-sw-w { min-width: 0; overflow: hidden; }
+.tq-brand .xc-sub { display: block; overflow: hidden; color: var(--ink-3); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
 .tq-brand .xc-sub.on::before,
-.tq-brand .xc-sub.busy::before {
-  content: "";
-  --rad: 50%;
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 7px;
-  background: var(--ok);
-  vertical-align: 2px;
-}
+.tq-brand .xc-sub.busy::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; --rad: 50%; background: var(--ok); vertical-align: 1px; }
+.tq-brand .xc-sub.busy::before { background: var(--star); }
+.tianqi .xc.tq-mode.running .tq-brand-mark { animation: tq-twinkle 1.8s ease-in-out infinite; }
+@keyframes tq-twinkle { 0%, 100% { transform: scale(1) rotate(0); } 50% { transform: scale(.74) rotate(45deg); } }
+.tq-rail-keys { display: none; flex-direction: column; align-items: center; gap: 4px; padding-left: 1px; }
+.tq-frame[data-left="rail"] .tq-rail-keys { display: flex; }
+.tq-frame[data-left="rail"] :is(.tq-brand h1, .tq-brand .xc-sw-w, .tq-fold, .xc-drawer, .tq-row span, .tq-li2) { opacity: 0; pointer-events: none; }
+.tq-frame[data-left="rail"] .tq-side-foot { flex-direction: column; align-items: center; }
+.tq-frame[data-left="rail"] .tq-row { flex: none; width: 38px; padding: 0; justify-content: center; }
+:is(.tq-brand h1, .tq-brand .xc-sw-w, .tq-fold, .tq-row span, .tq-li2) { transition: opacity .2s var(--ease); }
 
-.tq-brand .xc-sub.busy::before { background: var(--glow); }
-
-.tq-nav,
-.tq-nav-key {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.tq-nav-key {
-  --rad: 12px;
-  flex: none;
-  justify-content: center;
-  min-height: 44px;
-  padding: 0 13px;
-  border: 1px solid transparent;
-  background: var(--paper-2);
-  color: var(--ink-2);
-  font-size: 13px;
-  font-weight: 620;
-  white-space: nowrap;
-  transition: background-color .18s, border-color .18s;
-}
-
-.tq-nav-key[aria-expanded="true"],
-.tq-nav-key:hover { border-color: var(--hair-2); background: var(--surface-2); color: var(--ink); }
-.tq-nav-new { background: var(--surface-2); border-color: var(--hair); color: var(--ink); }
-.tq-nav-key i { position: relative; width: 22px; height: 22px; flex: none; }
-.tq-nav-key i::before,
-.tq-nav-key i::after { content: ""; position: absolute; }
-
-.tq-star-key::before {
-  inset: 1px;
-  background: var(--glow);
-  clip-path: polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);
-}
-
-.tq-planet-key::before {
-  --rad: 50%;
-  inset: 4px;
-  background: radial-gradient(circle at 31% 28%, #d8e0ff, #788aba 65%, #3a486c);
-}
-
-.tq-planet-key::after,
-.tq-galaxy-key::before {
-  --rad: 50%;
-  inset: 7px 0;
-  border: 1px solid var(--tq-ink);
-  transform: rotate(-34deg);
-}
-
-.tq-galaxy-key::after {
-  --rad: 50%;
-  inset: 9px;
-  background: var(--tq-ink);
-  box-shadow: 0 0 8px #afc2ff, -7px 4px 0 -1px var(--tq), 7px -4px 0 -1px var(--tq);
-}
-
-.tq-desk {
-  display: grid;
-  grid-template-columns: minmax(288px, 376px) minmax(0, 1fr);
-  gap: clamp(16px, 2.3vw, 32px);
-  align-items: start;
+.tianqi .xc.tq-mode .tq-side .xc-drawer {
+  position: static;
+  inset: auto;
   flex: 1;
   min-height: 0;
-  width: 100%;
-  max-width: 1536px;
-  margin: 0 auto;
-  padding: clamp(18px, 3.4vw, 46px) var(--tq-gutter) calc(24px + var(--sb));
-}
-
-.tianqi .xc.tq-mode :is(.tq-console, .tq-log) {
-  --rad: 22px;
-  min-width: 0;
-  background: var(--paper-2);
-  border: 1px solid var(--hair);
-  box-shadow: var(--sh-1);
-}
-
-.tianqi .xc.tq-mode .tq-console {
-  grid-area: auto;
-  padding: 20px;
-  z-index: 8;
-}
-
-.tq-console-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 2px 2px 19px;
-}
-
-.tq-console-head h2,
-.tq-log-head h2 {
-  margin: 0;
-  font-weight: 640;
-}
-
-.tq-console-head h2 { font-size: 25px; letter-spacing: .075em; }
-
-.tq-infinity {
-  color: var(--tq-ink);
-  font: 24px/1 var(--sans);
-}
-
-.tq-infinity::before { content: "∞"; }
-
-.tianqi .xc.tq-mode .tq-entry {
-  --rad: 15px;
+  width: auto;
+  max-height: none;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  padding: 0;
-  overflow: hidden;
-  background: var(--surface);
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  transition: opacity .2s var(--ease);
 }
-
-.tianqi .tq-entry textarea {
-  flex: 0 0 auto;
+.tianqi .xc.tq-mode .tq-frame[data-left="rail"] .tq-side .xc-drawer { opacity: 0; visibility: hidden; pointer-events: none; }
+.tianqi .xc.tq-mode .tq-side :is(.xc-dr-new, .xc-dr-q, .xc-si, .xc-dr-h) { white-space: nowrap; overflow: hidden; }
+.tianqi .xc.tq-mode .tq-side .xc-dr { flex: 1; min-height: 0; display: flex; flex-direction: column; background: none; }
+.tianqi .xc.tq-mode .tq-side .xc-dr-hd { display: none; }
+.tianqi .xc.tq-mode .tq-side .xc-dr-sc { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 8px; }
+.tianqi .xc.tq-mode .tq-side .xc-dr-keys { display: block; margin: 0 0 2px; }
+.tianqi .xc.tq-mode .tq-side :is(.xc-dr-new, .xc-dr-q) {
+  --rad: 11px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  min-height: clamp(92px, 18vh, 164px);
-  padding: 14px;
+  height: 38px;
+  margin: 0 0 2px;
+  padding: 0 10px;
+  border: 0;
+  --rad: 11px;
+  background: none;
+  box-shadow: none;
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 400;
+}
+.tianqi .xc.tq-mode .tq-side .xc-dr-new { justify-content: flex-start; color: var(--ink); }
+.tianqi .xc.tq-mode .tq-side :is(.xc-dr-out, .xc-dr-ft) { display: none; }   /* 退出登录搬到设置的「电脑」里 */
+.tianqi .tq-mid .tq-me-name { display: none; }
+.tianqi .xc.tq-mode .tq-side :is(.xc-dr-new, .xc-dr-q):hover { background: var(--hover); color: var(--ink); }
+.tianqi .xc.tq-mode .tq-side .xc-dr-new .xc-tq svg { width: 18px; height: 18px; }
+.tianqi .xc.tq-mode .tq-side .xc-dr-q svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.tianqi .xc.tq-mode .tq-side .xc-dr-q kbd { margin-left: auto; color: var(--ink-3); font: 11px/1 var(--mono, monospace); background: none; border: 0; }
+.tianqi .xc.tq-mode .tq-side .xc-dr-h { margin: 14px 10px 4px; color: var(--ink-3); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.tianqi .xc.tq-mode .tq-side .xc-sli { position: relative; display: flex; align-items: center; }
+.tianqi .xc.tq-mode .tq-side .xc-si {
+  --rad: 10px;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 36px;
+  padding: 0 34px 0 10px;
+  border: 0;
+  --rad: 10px;
+  background: none;
+  color: var(--ink-2);
+  font-size: 14px;
+  transition: background-color .2s var(--ease), color .2s var(--ease);
+}
+.tianqi .xc.tq-mode .tq-side .xc-si:hover { background: var(--hover); color: var(--ink); }
+.tianqi .xc.tq-mode .tq-side .xc-si.cur { background: var(--press); color: var(--ink); }
+.tianqi .xc.tq-mode .tq-side .xc-si-tq svg { width: 13px; height: 13px; }
+.tianqi .xc.tq-mode .tq-side .xc-si-t { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tianqi .xc.tq-mode .tq-side .xc-si-m { flex: none; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tianqi .xc.tq-mode .tq-side .xc-si-m .on { background: var(--star); box-shadow: 0 0 8px var(--star-glow); }
+.tianqi .xc.tq-mode .tq-side .xc-si-more { position: absolute; right: 4px; width: 28px; height: 28px; --rad: 8px; opacity: 0; color: var(--ink-3); transition: opacity .2s var(--ease); }
+.tianqi .xc.tq-mode .tq-side .xc-sli:hover .xc-si-more,
+.tianqi .xc.tq-mode .tq-side .xc-si-more:focus-visible,
+.tianqi .xc.tq-mode .tq-side .xc-si-more[aria-expanded="true"] { opacity: 1; }
+.tianqi .xc.tq-mode .tq-side .xc-sli.tq-new { animation: tq-row-in .7s var(--ease) both; }
+@keyframes tq-row-in { 0% { opacity: 0; transform: translateY(-8px); background: var(--star-soft); } 60% { opacity: 1; transform: none; background: var(--star-soft); } 100% { background: transparent; } }
+
+.tq-side-foot { flex: none; display: flex; align-items: center; gap: 2px; padding-top: 6px; border-top: 1px solid var(--line); }
+.tq-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px; --rad: 11px; color: var(--ink-2); font-size: 14px; white-space: nowrap; transition: background-color .2s var(--ease), color .2s var(--ease); }
+.tq-row:hover, .tq-row[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
+.tq-row svg { flex: none; width: 18px; height: 18px; }
+.tq-li2 { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border: 1px solid var(--line); --rad: 999px; color: var(--ink-2); font: 12.5px/1 ui-monospace, Menlo, Consolas, monospace; }
+.tq-li2:hover { color: var(--ink); border-color: var(--line-2); }
+.tq-li2 i { width: 6px; height: 6px; --rad: 50%; background: var(--ink-3); }
+.tq-li2.ok i { background: var(--ok); box-shadow: 0 0 0 3px rgb(127 215 181 / .18); }
+.tq-li2.warn i { background: var(--wait); }
+
+/* ---------- 中栏 ---------- */
+.tq-mid-head { flex: none; display: flex; align-items: center; gap: 6px; height: 48px; padding: 0 2px 0 6px; }
+.tq-mid-head h2 { min-width: 0; margin: 0; overflow: hidden; color: var(--ink); font-size: 15px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+.tq-mid-head h2.tq-swap { animation: tq-swap .5s var(--ease); }
+@keyframes tq-swap { from { opacity: 0; transform: translateY(4px); } }
+.tq-menu { display: none; }
+.tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-menu { display: grid; }
+.tq-mid-head .xc-x svg { width: 18px; height: 18px; }
+html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有返回键 */
+.tq-badge { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; --rad: 50%; background: var(--star); box-shadow: 0 0 8px var(--star-glow); animation: tq-pulse 1.8s ease-in-out infinite; }
+@keyframes tq-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.6); opacity: .55; } }
+
+.tianqi .xc.tq-mode .xc-st { margin: 0 auto 6px; max-width: 720px; width: 100%; }
+.tianqi .xc.wb.tq-mode .tq-mid .xc-body { flex: 1; min-height: 0; padding: 0 4px; background: none; }
+.tianqi .tq-mid .xc-msgs { max-width: 720px; margin: 0 auto; padding: 14px 0 26px; gap: 22px; }
+.tianqi .tq-mid .xc-msgs > .xc-m { max-width: none; }
+.tianqi .tq-mid .xc-msgs > .xc-me { align-self: flex-end; max-width: min(78%, 560px); }
+.tianqi .tq-mid .xc-me .xc-bub {
+  --rad: 18px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  --rad: 18px 18px 6px 18px;
+  background: var(--me);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.7;
+  text-wrap: pretty;
+}
+.tianqi .tq-mid .xc-ai .xc-bub { padding: 0; background: none; color: var(--ink); font-size: 15.5px; line-height: 1.85; }
+.tianqi .tq-mid .xc-ai > .xc-av { background: none; box-shadow: none; }
+.tianqi .tq-mid .xc-ai.bad > .xc-bub { color: var(--bad-ink); }
+.tianqi .tq-mid .xc-bub :is(pre, code) { background: var(--code); }
+.tianqi .tq-mid .xc-bub pre { border: 1px solid var(--line); --rad: 14px; }
+.tq-ref { cursor: pointer; text-decoration: underline; text-decoration-color: var(--star); text-decoration-thickness: 1.5px; text-underline-offset: 4px; }
+.tq-ref:hover { background: var(--star-soft); }
+
+/* 新对话：输入框在中间，发出去后滑到底（sky.js 用 FLIP 做那一下） */
+.tianqi .tq-mid .xc-msgs > .tq-empty { display: flex; flex-direction: column; align-items: center; gap: 0; padding: 0; }
+.tq-empty-orbit { display: none; }
+.tq-empty-text { margin: 0; color: var(--ink-3); font-size: 14px; letter-spacing: .04em; }
+.tianqi .xc.wb.tq-mode .tq-frame[data-start] .tq-mid .xc-body { flex: 1 1 0; display: flex; flex-direction: column; justify-content: flex-end; }
+.tianqi .tq-frame[data-start] .tq-mid .xc-msgs { flex: none; width: 100%; padding: 0 0 16px; }
+.tq-frame[data-start] .tq-mid::after { content: ""; flex: .7 1 0; }
+
+.tq-dock { flex: none; position: relative; width: 100%; max-width: 720px; margin: 0 auto; padding: 0 0 4px; background: none; border: 0; }
+.tq-box {
+  position: relative;
+  border: 1px solid var(--line);
+  --rad: 22px;
+  background: var(--pop);
+  box-shadow: var(--shadow), var(--rim);
+  transition: border-color .3s var(--ease), box-shadow .3s var(--ease);
+}
+.tq-box:focus-within { border-color: var(--line-2); }
+.tianqi .xc.tq-mode .tq-entry { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; background: none; border: 0; box-shadow: none; }
+.tianqi .tq-entry textarea {
+  display: block;
+  width: 100%;
+  min-height: 56px;
+  max-height: 200px;
+  padding: 16px 20px 4px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: none;
+  color: var(--ink);
+  caret-color: var(--star);
   font-size: 16px;
   line-height: 1.65;
 }
-
-.tq-instruments {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 6px;
-  padding: 9px;
-  border-top: 1px solid var(--hair);
-  background: var(--paper-2);
-}
-
-.tianqi .tq-instruments .xc-mdl,
-.tianqi .tq-instruments .xc-plus {
-  --rad: 9px;
-  height: 44px;
-  width: auto;
-  max-width: none;
-  min-width: 0;
-  margin: 0;
-  padding: 0 8px;
-  color: var(--ink-2);
-  font-size: 13px;
-}
-
-.tianqi .tq-instruments .xc-mdl {
-  min-width: 0;
-  justify-content: flex-start;
-  gap: 7px;
-}
-
-.tianqi .tq-instruments .xc-mdl::before {
-  content: "";
-  --rad: 50%;
-  flex: none;
-  width: 14px;
-  height: 14px;
-  border: 1px solid #8292c3;
-  background: radial-gradient(circle at 35% 30%, #c8d4fc, #687ba9 60%, #263751);
-}
-
-.tianqi .tq-instruments .xc-plus[aria-expanded="true"] { transform: none; }
-
-.tianqi .tq-instruments .xc-send {
-  --rad: 24px;
+.tianqi .tq-entry textarea::placeholder { color: var(--ink-3); }
+.tq-instruments { display: flex; align-items: center; gap: 4px; padding: 6px 10px 10px; }
+.tianqi .tq-instruments :is(.xc-plus, .xc-mdl) {
+  --rad: 10px;
   display: inline-flex;
-  justify-content: center;
-  gap: 4px;
-  min-width: 46px;
+  align-items: center;
+  gap: 7px;
   width: auto;
-  height: 44px;
+  height: 32px;
+  min-width: 32px;
   margin: 0;
   padding: 0 10px;
-  border: 1px solid #927957;
-  background: #302c28;
-  color: #ffdcac;
+  border: 0;
+  --rad: 10px;
+  background: none;
+  box-shadow: none;
+  color: var(--ink-2);
+  font-size: 13px;
+  white-space: nowrap;
+  transform: none;
 }
-
-.tianqi .tq-instruments .xc-send.ready {
-  background: radial-gradient(circle at 35% 34%, #ffe9b2, #ffc776 78%);
-  border-color: #ffda9f;
-  color: #21180d;
-  box-shadow: 0 0 17px -7px #ffc776;
-}
-
-.tianqi .tq-instruments .xc-send[data-k="stop"] {
-  background: radial-gradient(circle, #0a0c14 43%, #27263e 60%, #58678e 82%);
-  border-color: #7180aa;
-  color: #f3f5ff;
-}
-
-.tianqi .tq-instruments .xc-send svg { width: 17px; height: 17px; }
-.tianqi .tq-instruments .xc-send::after { content: attr(aria-label); font-size: 12px; white-space: nowrap; }
-
-.tianqi .xc.wb.tq-mode :is(.xc-menu, .xc-pick) {
-  top: calc(100% + 8px);
-  left: 20px;
-  bottom: auto;
-  margin: 0;
-  border: 1px solid var(--hair-2);
-  transform-origin: 16px 0;
-}
-
-.tianqi .xc.wb.tq-mode .xc-pick.tq-pick-up {
-  top: auto;
-  bottom: calc(100% + 8px);
-  transform-origin: 16px 100%;
-}
-
-.tianqi .tq-console .xc-pk-agent { display: none; }
-
-.tq-log {
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.tq-log-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 68px;
-  padding: 0 clamp(16px, 3vw, 34px);
-  border-bottom: 1px solid var(--hair);
-}
-
-.tq-log-head h2 { font-size: 17px; min-width: 0; }
-
-.tq-log-icon {
+.tianqi .tq-instruments .xc-plus { padding: 0; width: 34px; justify-content: center; }
+.tianqi .tq-instruments .xc-plus svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.tianqi .tq-instruments :is(.xc-plus, .xc-mdl):hover,
+.tianqi .tq-instruments :is(.xc-plus, .xc-mdl)[aria-expanded="true"] { background: var(--hover); color: var(--ink); transform: none; }
+.tianqi .tq-instruments .xc-mdl span { overflow: hidden; text-overflow: ellipsis; }
+.tianqi .tq-instruments .xc-send {
   --rad: 50%;
   flex: none;
-  width: 25px;
-  height: 25px;
-  background: radial-gradient(circle, #d7e1ff 0 9%, #6676ab 13%, transparent 45%);
-  border: 1px solid #6c7ba9;
-  box-shadow: 0 0 0 4px #9eaefa12;
-}
-
-.tianqi .xc.wb.tq-mode .tq-log .xc-body {
-  padding: 22px clamp(15px, 3vw, 36px) 18px;
-}
-
-.tianqi .tq-log .xc-msgs { max-width: 800px; }
-
-.tianqi .tq-log .xc-msgs:has(> .tq-empty:only-child) {
-  min-height: 100%;
-  justify-content: center;
-}
-
-.tianqi .xc.wb.tq-mode .tq-empty {
-  align-items: center;
-  gap: 19px;
-  padding: 18px 8px;
-}
-
-.tq-empty-orbit {
-  position: relative;
-  width: 112px;
-  height: 112px;
-}
-
-.tq-empty-ring,
-.tq-empty-orbit::before,
-.tq-empty-orbit::after {
-  position: absolute;
-  content: "";
-  --rad: 50%;
-  inset: 8px;
-  border: 1px solid #394568;
-}
-
-.tq-empty-orbit::after {
-  inset: 24px;
-  border-color: #4d5b86;
-  background: radial-gradient(circle, #111423 30%, #2f395b 35%, transparent 55%);
-}
-
-.tq-empty-ring {
-  inset: 27px 0;
-  transform: rotate(-31deg);
-  border-color: #8996c4;
-}
-
-.tq-empty-star,
-.tq-empty-planet {
-  position: absolute;
-  z-index: 1;
-  --rad: 50%;
-  width: 10px;
-  height: 10px;
-  top: 11px;
-  right: 20px;
-  background: #e0e8ff;
-  box-shadow: 0 0 17px -1px #a6bbff;
-}
-
-.tq-empty-planet {
-  width: 15px;
-  height: 15px;
-  top: auto;
-  right: auto;
-  left: 15px;
-  bottom: 18px;
-  background: radial-gradient(circle at 30% 29%, #ffe7b9, #ab805c 65%, #563d35);
-  box-shadow: none;
-}
-
-.tq-empty-text {
+  width: 38px;
+  height: 38px;
   margin: 0;
-  color: var(--ink-2);
-  font-size: 15px;
-  letter-spacing: .04em;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  --rad: 50%;
+  background: var(--go);
+  color: var(--go-ink);
+  opacity: .32;
+  transition: transform .15s var(--ease), opacity .2s var(--ease), background-color .25s var(--ease);
 }
-
-.tianqi .tq-log .xc-msgs > .xc-m {
-  --rad: 11px;
-  max-width: none;
-  width: 100%;
-  align-self: stretch;
-  margin-left: 0;
-  padding: 12px 15px;
-  border: 1px solid var(--hair);
-  background: var(--surface);
+.tianqi .tq-instruments .xc-send.ready { opacity: 1; }
+.tianqi .tq-instruments .xc-send.ready:hover { transform: scale(1.06); }
+.tianqi .tq-instruments .xc-send[data-k="stop"] { opacity: 1; background: var(--press); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+.tianqi .tq-instruments .xc-send svg { width: 18px; height: 18px; }
+.tianqi .xc.wb.tq-mode :is(.xc-menu, .xc-pick) {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: 8px;
+  margin: 0;
+  border: 1px solid var(--line);
+  --rad: 15px;
+  background: var(--pop);
+  box-shadow: var(--shadow), var(--rim);
+  transform-origin: 24px 100%;
 }
+.tianqi .xc.wb.tq-mode .xc-pick.tq-pick-up { top: auto; bottom: calc(100% + 8px); }
+.tianqi .tq-mid .xc-pk-agent { display: none; }
+.tianqi .xc.tq-mode .xc-use { max-width: 720px; margin: 4px auto 0; }
 
-.tianqi .tq-log .xc-msgs > .xc-me {
-  align-items: flex-start;
-  border-left: 2px solid #b28d66;
-  background: var(--me);
+/* ---------- 右栏 ---------- */
+.tq-right-in { display: flex; flex-direction: column; overflow: hidden; }
+.tq-frame[data-mode="wide"] .tq-right-in { width: 400px; }
+.tq-grab { display: none; }
+.tq-r-head { flex: none; display: flex; align-items: center; gap: 4px; height: 50px; padding: 0 8px; border-bottom: 1px solid var(--line); }
+.tq-tabs { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; height: 100%; }
+.tq-tab { position: relative; height: 34px; padding: 0 12px; --rad: 9px; color: var(--ink-3); font-size: 13.5px; transition: color .2s var(--ease), background-color .2s var(--ease); }
+.tq-tab:hover { color: var(--ink); background: var(--hover); }
+.tq-tab[aria-selected="true"] { color: var(--ink); }
+.tq-tab-ink { position: absolute; left: 0; bottom: -1px; width: 18px; height: 2px; --rad: 2px; background: var(--star); box-shadow: 0 0 10px var(--star-glow); transition: transform .5s var(--spring); }
+.tq-tdot { position: absolute; top: 6px; right: 4px; width: 5px; height: 5px; --rad: 50%; background: var(--star); opacity: 0; transform: scale(.3); transition: opacity .25s var(--ease), transform .35s var(--spring); }
+.tq-tab.has .tq-tdot { opacity: 1; transform: none; }
+.tq-pane { position: relative; flex: 1; min-height: 0; overflow: auto; }
+.tq-pane.tq-in { animation: tq-pane-in .32s var(--ease); }
+@keyframes tq-pane-in { from { opacity: 0; transform: translateY(4px); } }
+.tq-note { margin: 0; padding: 40px 26px; color: var(--ink-3); font-size: 13.5px; line-height: 1.7; text-align: center; }
+
+/* 文件：chat.js 的工作目录浏览，换成面板里的样子 */
+.tianqi .xc.tq-mode .tq-pane .xc-sess { position: static; inset: auto; height: auto; padding: 10px 8px 18px; background: none; border: 0; box-shadow: none; overflow: visible; }
+.tianqi .xc.tq-mode .tq-pane .xc-back { display: none; }
+.tianqi .xc.tq-mode .tq-pane .xc-crumbs { padding: 2px 8px 8px; font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace; color: var(--ink-3); }
+.tianqi .xc.tq-mode .tq-pane .xc-hint { padding: 0 8px; color: var(--ink-3); font-size: 13px; }
+.tianqi .xc.tq-mode .tq-pane .xc-fl { margin: 6px 0 0; padding: 0; }
+.tianqi .xc.tq-mode .tq-pane .xc-fi { --rad: 8px; min-height: 34px; padding: 4px 10px; --rad: 8px; color: var(--ink-2); font-size: 13.5px; }
+.tianqi .xc.tq-mode .tq-pane .xc-fi:hover { background: var(--hover); color: var(--ink); }
+.tianqi .xc.tq-mode .tq-pane .xc-fi-m { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tianqi .xc.tq-mode .tq-pane .xc-fi.tq-reading { position: relative; overflow: hidden; }
+.tianqi .xc.tq-mode .tq-pane .xc-fi.tq-reading::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, var(--star-soft) 40%, var(--star-soft) 60%, transparent); transform: translateX(-100%); animation: tq-sweep 1.2s var(--ease) forwards; }
+@keyframes tq-sweep { to { transform: translateX(100%); } }
+.tianqi .xc.tq-mode .tq-pane .xc-pre { margin: 8px 4px 0; border: 1px solid var(--line); --rad: 12px; background: var(--code); font-size: 12.5px; }
+.tianqi .xc.tq-mode .tq-pane .xc-memrow { flex-wrap: wrap; gap: 6px; padding: 4px 8px; }
+
+/* 终端：term.js 停在这一栏里（docked） */
+.tq-term-host { display: flex; flex-direction: column; overflow: hidden; }
+.tq-term-host:has(.tm-win:not([hidden])) .tq-note { display: none; }
+.tianqi .tq-term-host .tm-win.tm-docked {
+  position: relative !important;
+  inset: auto !important;
+  flex: 1;
+  width: auto !important;
+  height: auto !important;
+  min-height: 0;
+  margin: 0;
+  border: 0;
+  --rad: 0;
+  box-shadow: none;
+  transform: none !important;
+  animation: none !important;
+  background: transparent;
 }
+.tianqi .tq-term-host .tm-docked .tm-x { display: none; }
+.tianqi .tq-term-host .tm-docked .tm-bar { min-height: 42px; background: none; border-bottom: 1px solid var(--line); }
+.tianqi .tq-term-host .tm-scrim { display: none !important; }
+.tianqi .tm-win {
+  --rad: 17px;
+  --t-bg: rgb(2 4 10 / .5);
+  --t-bg2: rgb(255 255 255 / .04);
+  --t-ink: #edf1ff;
+  --t-mid: #bfc9e4;
+  --t-dim: #8c95ad;
+  --t-line: rgb(190 205 255 / .14);
+  --t-pb: #465474;
+  --t-glow: #f3dfae;
+}
+html.tianqi[data-theme="light"] .tm-win {
+  --t-bg: rgb(226 231 242 / .55);
+  --t-bg2: rgb(20 32 72 / .04);
+  --t-ink: #141a2a;
+  --t-mid: #465069;
+  --t-dim: #5f6884;
+  --t-line: rgb(28 40 80 / .14);
+  --t-pb: #8e98b4;
+  --t-glow: #a06c14;
+}
+.tianqi .tm-name { font: 500 13.5px/1 var(--sans, system-ui); }
+.tianqi .tm-face { --rad: 50%; width: 24px; height: 24px; }
+.tianqi .tm-scene,
+.tianqi .tm-scene + .tm-rule { display: none; }
 
-.tianqi .tq-log .xc-me .xc-bub,
-.tianqi .tq-log .xc-ai .xc-bub { padding: 0; background: none; }
-.tianqi .tq-log .xc-mfiles { justify-content: flex-start; }
-.tianqi .tq-log .xc-by { margin: 6px 0 0 16px; }
-.tq-me-name { margin-bottom: 4px; font-size: 13px; color: var(--ink-2); }
-.tianqi .tq-log .xc-ai > .xc-av { background: var(--tq-chip-2); box-shadow: inset 0 0 0 1px var(--hair-2); margin-top: 0; }
-.tianqi .tq-log .xc-ai.bad > .xc-bub { color: var(--bad-ink); }
+/* 预览 */
+.tq-prev { padding: 12px 12px 20px; }
+.tq-pv-bar { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 6px 0 12px; --rad: 10px; background: var(--hover); color: var(--ink-2); font: 12px/1 ui-monospace, Menlo, Consolas, monospace; }
+.tq-pv-bar span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tq-pv-fig { margin: 12px 0 0; padding: 12px; border: 1px solid var(--line); --rad: 14px; background: var(--code); }
+.tq-pv-fig img { display: block; max-width: 100%; height: auto; margin: 0 auto; --rad: 6px; }
+.tq-pv-fig iframe { display: block; width: 100%; height: min(70vh, 640px); border: 0; --rad: 8px; background: #fff; }
+.tq-pv-fig pre { margin: 0; color: var(--ink-2); font: 13px/1.75 var(--sans, system-ui); white-space: pre-wrap; word-break: break-word; }
+.tq-pv-fig.tq-draw img { animation: tq-reveal 1.1s var(--ease) both; }
+@keyframes tq-reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 
-.tianqi .xc.tq-mode .xc-drawer,
+/* ---------- 浮层：插件、命令面板、登录 ---------- */
+.tianqi .xc.tq-mode .xc-scrim { background: var(--scrim-c); }
 .tianqi .xc.wb.tq-mode .xc-sheet {
-  --rad: 22px;
+  --rad: 20px;
   position: absolute;
   inset: 50% auto auto 50%;
-  width: min(640px, calc(100% - 28px));
-  max-height: min(78dvh, 680px);
-  transform: translate(-50%, calc(-50% + 12px));
-  background: var(--surface);
-  border: 1px solid var(--hair-2);
-  box-shadow: var(--sh-2);
-}
-
-.tianqi .xc.tq-mode.dr-open .xc-drawer,
-.tianqi .xc.wb.tq-mode .xc-sheet { transform: translate(-50%, -50%); }
-.tianqi .xc.tq-mode .xc-drawer { opacity: 0; transition: opacity .2s, transform .2s, visibility .2s; }
-.tianqi .xc.tq-mode.dr-open .xc-drawer { opacity: 1; }
-
-.tianqi .xc.tq-mode .xc-dr-hd {
-  padding: 0 12px 0 19px;
-  height: 62px;
-  border-bottom: 1px solid var(--hair);
-}
-
-.tianqi .xc.tq-mode .xc-dr-sc { padding: 14px; }
-.tianqi .xc.tq-mode .xc-dr-name { font-size: 17px; }
-.tianqi .xc.tq-mode .xc-dr-keys { display: none; }
-.tianqi .xc.tq-mode .xc-dr-q { margin-bottom: 12px; }
-
-.tianqi .xc.wb.tq-mode .xc-sheet {
+  z-index: 33;
   width: min(440px, calc(100% - 28px));
-  z-index: 13;
+  max-height: min(78dvh, 640px);
   padding-top: 0;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--line);
+  --rad: 20px;
+  background: var(--pop);
+  box-shadow: var(--shadow), var(--rim);
   animation: none;
 }
-
 .tianqi .xc.wb.tq-mode.sheet-open .xc-scrim,
-.tianqi .xc.wb.tq-mode.dr-open .xc-scrim { display: block; }
+.tianqi .xc.wb.tq-mode.dr-open .xc-scrim { display: block; z-index: 29; }
 .tianqi .xc.tq-mode .xc-sh-hd { padding: 10px 12px 6px 18px; touch-action: auto; }
 .tianqi .xc.tq-mode .xc-sh-grip { display: none; }
 .tianqi .xc.tq-mode .xc-sh-list { padding: 5px 18px 12px; }
 .tianqi .xc.tq-mode .xc-sw[aria-disabled="true"] { cursor: progress; opacity: .62; }
-
+.tianqi .xc.tq-mode .xc-pal { z-index: 40; }
+.tianqi .xc.tq-mode .xc-toast { z-index: 45; }
+.tianqi .xc.tq-mode.locked :is(.tq-side, .tq-right, .tq-mid-head .tq-panel-b) { display: none; }
+.tianqi .xc.tq-mode.locked .tq-frame { grid-template-columns: minmax(0, 1fr); }
+.tianqi .xc.tq-mode.locked .tq-mid { grid-column: 1 / -1; }
 .tianqi .xc.tq-mode .xc-login {
-  align-self: center;
-  flex: 1;
-  width: min(440px, 100%);
-  padding-inline: 24px;
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  width: min(400px, calc(100% - 32px));
+  height: max-content;
+  margin: auto;
+  padding: 28px 24px;
+  border: 1px solid var(--line);
+  --rad: 22px;
+  background: var(--pop);
+  box-shadow: var(--shadow), var(--rim);
 }
 
-.tianqi .tm-win {
-  --rad: 17px;
-  --t-bg: #0b1020;
-  --t-bg2: #171d30;
-  --t-ink: #edf1ff;
-  --t-mid: #bfc9e4;
-  --t-dim: #a2adc9;
-  --t-line: #323e5c;
-  --t-pb: #465474;
-  --t-glow: #ffc987;
-  overflow: hidden;
-  border-width: 1px;
-  box-shadow: 0 18px 56px -24px #000;
-}
+/* 设置 */
+.tq-modal { position: absolute; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px max(16px, var(--sl, 0px)) 24px max(16px, var(--sr, 0px)); }
+.tq-modal-bg { position: absolute; inset: 0; background: var(--scrim-c); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); opacity: 0; transition: opacity .3s var(--ease); }
+.tq-sheet { position: relative; width: min(760px, 100%); height: min(540px, 100%); display: grid; grid-template-columns: 188px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line); --rad: 20px; background: var(--pop); box-shadow: var(--shadow), var(--rim); opacity: 0; transform: translateY(12px) scale(.975); transition: opacity .3s var(--ease), transform .42s var(--ease); }
+.tq-modal.on .tq-modal-bg { opacity: 1; }
+.tq-modal.on .tq-sheet { opacity: 1; transform: none; }
+.tq-modal.out .tq-sheet { transition-duration: .16s, .2s; }
+.tq-set-nav { display: flex; flex-direction: column; gap: 2px; padding: 16px 10px; border-right: 1px solid var(--line); background: var(--hover); }
+.tq-set-nav h2 { margin: 4px 10px 12px; color: var(--ink); font-size: 15px; font-weight: 600; }
+.tq-set-tab { height: 36px; padding: 0 10px; --rad: 10px; color: var(--ink-2); font-size: 14px; text-align: left; white-space: nowrap; }
+.tq-set-tab:hover { color: var(--ink); background: var(--hover); }
+.tq-set-tab[aria-current="true"] { color: var(--ink); background: var(--press); }
+.tq-set-body { position: relative; min-width: 0; overflow-y: auto; padding: 26px 30px 30px; color: var(--ink); }
+.tq-set-x { position: absolute; top: 14px; right: 14px; }
+.tq-set-sec { animation: tq-pane-in .3s var(--ease); }
+.tq-set-sec h3 { margin: 0 0 4px; font-size: 14.5px; font-weight: 600; }
+.tq-set-sec h3 + p { margin: 0 0 14px; color: var(--ink-3); font-size: 13px; }
+.tq-set-sec h3:not(:first-child) { margin-top: 26px; }
+.tq-themes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.tq-theme { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line); --rad: 14px; color: var(--ink-2); font-size: 13px; text-align: left; transition: border-color .2s var(--ease), color .2s var(--ease); }
+.tq-theme:hover { color: var(--ink); border-color: var(--line-2); }
+.tq-theme[aria-checked="true"] { color: var(--ink); border-color: var(--star); box-shadow: 0 0 0 1px var(--star); }
+.tq-theme i { display: block; height: 58px; --rad: 9px; }
+/* 两种外观的缩略图：画的就是那个外观，颜色固定 */
+.tq-th-dark { background: radial-gradient(1px 1px at 22% 30%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 64% 22%, #f3dfae 50%, transparent 51%), radial-gradient(1.5px 1.5px at 80% 62%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 38% 70%, #cfd9ff 50%, transparent 51%), linear-gradient(180deg, #02040a, #0a1225); }
+.tq-th-light { background: radial-gradient(1.2px 1.2px at 22% 30%, #1c2848 50%, transparent 55%), radial-gradient(1px 1px at 64% 22%, #1c2848 50%, transparent 55%), radial-gradient(1.6px 1.6px at 80% 62%, #1c2848 50%, transparent 55%), radial-gradient(1px 1px at 38% 70%, #1c2848 50%, transparent 55%), linear-gradient(180deg, #f8f9fc, #e4e9f3); }
+.tq-th-auto { background: radial-gradient(1px 1px at 20% 35%, #fff 50%, transparent 51%), radial-gradient(1.2px 1.2px at 80% 55%, #1c2848 50%, transparent 55%), linear-gradient(105deg, #050913 50%, #eef1f7 50%); }
+.tq-set-row { display: flex; align-items: center; gap: 16px; padding: 14px 0; border-top: 1px solid var(--line); }
+.tq-set-row > div { flex: 1; min-width: 0; }
+.tq-set-row b { display: block; font-size: 14px; font-weight: 500; }
+.tq-set-row p { margin: 2px 0 0; color: var(--ink-3); font-size: 13px; }
+.tq-sw { position: relative; flex: none; width: 40px; height: 24px; border: 1px solid var(--line-2); --rad: 12px; background: var(--hover); transition: background-color .2s var(--ease), border-color .2s var(--ease); }
+.tq-sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; --rad: 50%; background: var(--ink-3); transition: transform .3s var(--spring), background-color .2s var(--ease); }
+.tq-sw[aria-checked="true"] { border-color: var(--star); background: var(--star-soft); }
+.tq-sw[aria-checked="true"]::after { transform: translateX(16px); background: var(--star); }
+.tq-btn { display: inline-flex; align-items: center; height: 34px; padding: 0 14px; border: 1px solid var(--line-2); --rad: 10px; color: var(--ink); font-size: 13.5px; transition: background-color .2s var(--ease); }
+.tq-btn:hover { background: var(--hover); }
+.tq-kv { display: grid; grid-template-columns: auto 1fr; gap: 10px 22px; margin: 14px 0 0; font-size: 13.5px; }
+.tq-kv dt { color: var(--ink-3); }
+.tq-kv dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.tq-mono { font: 12.5px/1.6 ui-monospace, Menlo, Consolas, monospace; }
 
-.tianqi .tm-bar { min-height: 52px; border-bottom-width: 1px; }
-.tianqi .tm-name { font: 620 15px/1 var(--sans); }
-.tianqi .tm-face { --rad: 50%; width: 28px; height: 28px; border-width: 1px; }
-.tianqi .tm-scene,
-.tianqi .tm-scene + .tm-rule { display: none; }
+/* ---------- 中屏：左栏窄条，右栏浮在聊天上 ---------- */
+.tq-frame[data-mode="mid"] .tq-right { position: absolute; z-index: 7; top: calc(12px + var(--st, 0px)); bottom: calc(12px + var(--sb, 0px)); right: max(16px, var(--sr, 0px)); width: min(400px, calc(100% - 140px)); grid-column: auto; overflow: visible; transform: translateX(calc(100% + 32px)); transition: transform .42s var(--ease), visibility 0s .42s; }
+.tq-frame[data-mode="mid"][data-right="open"] .tq-right { transform: none; transition: transform .42s var(--ease); }
+.tq-frame:is([data-mode="mid"], [data-mode="narrow"]) .tq-right .tq-glass { background: var(--pop); box-shadow: var(--shadow), var(--rim); }
 
-@media (max-width: 859px) {
-  .tq-desk {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(180px, 1fr);
-    align-items: stretch;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-  .tianqi .tq-entry textarea { min-height: 96px; }
-  .tianqi .xc.wb.tq-mode :is(.xc-menu, .xc-pick) { left: 14px; }
-}
+/* ---------- 窄屏：左栏变抽屉（chat.js 的 dr-open），右栏浮在右边 ---------- */
+.tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-side { position: fixed; z-index: 30; top: 0; bottom: 0; left: 0; width: min(300px, 86vw); padding: calc(10px + var(--st, 0px)) 0 calc(10px + var(--sb, 0px)) max(10px, var(--sl, 0px)); --rad: 0; overflow: visible; transform: translateX(-105%); visibility: hidden; transition: transform .38s var(--ease), visibility 0s .38s; }
+.tianqi .xc.tq-mode.dr-open .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-side { transform: none; visibility: visible; transition: transform .38s var(--ease); }
+.tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-side .tq-glass { background: var(--pop); box-shadow: var(--shadow), var(--rim); }
+.tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-fold { display: none; }
+.tq-frame[data-mode="narrow"] .tq-right { position: fixed; z-index: 30; top: calc(12px + var(--st, 0px)); bottom: calc(12px + var(--sb, 0px)); right: max(16px, var(--sr, 0px)); width: min(420px, calc(100vw - 48px)); overflow: visible; transform: translateX(calc(100% + 32px)); transition: transform .42s var(--ease), visibility 0s .42s; }
+.tq-frame[data-mode="narrow"][data-right="open"] .tq-right { transform: none; transition: transform .42s var(--ease); }
 
-@media (max-width: 559px) {
-  .tq-mast-inner {
-    flex-wrap: wrap;
-    gap: 9px;
-    padding: 9px 12px 8px;
-  }
+/* ---------- 手机：右栏从底下升起，能往下拖 ---------- */
+.tq-frame[data-mode="phone"] .tq-right { position: fixed; z-index: 30; left: 0; right: 0; bottom: 0; height: min(80%, 680px); --rad: 22px 22px 0 0; overflow: visible; transform: translateY(103%); transition: transform .45s var(--ease), visibility 0s .45s; }
+.tq-frame[data-mode="phone"][data-right="open"] .tq-right { transform: translateY(var(--drag, 0px)); transition: transform .45s var(--ease); }
+.tq-frame[data-mode="phone"] .tq-right.tq-dragging { transition: none; }
+.tq-frame[data-mode="phone"] .tq-right .tq-glass { padding-bottom: var(--sb, 0px); border-bottom: 0; --rad: 22px 22px 0 0; background: var(--pop); box-shadow: var(--shadow), var(--rim); }
+.tq-frame[data-mode="phone"] .tq-grab { display: block; flex: none; width: 38px; height: 4px; margin: 8px auto 0; --rad: 4px; background: var(--line-2); }
+.tq-frame[data-mode="phone"] .tq-r-head { height: 46px; touch-action: none; }
+.tq-scrim2 { position: absolute; inset: 0; z-index: 25; background: var(--scrim-c); opacity: 0; pointer-events: none; transition: opacity .32s var(--ease); }
+.tq-scrim2.on { opacity: 1; pointer-events: auto; }
+.tq-frame[data-mode="phone"] .tq-mid-head { height: 50px; }
+.tq-frame[data-mode="phone"] .tq-box { --rad: 20px; }
+.tianqi .tq-frame[data-mode="phone"] .tq-entry textarea { padding: 14px 16px 2px; }
+.tq-frame[data-mode="phone"] .tq-instruments { padding: 6px 8px 8px; }
+.tq-frame[data-mode="phone"] .tq-dock { padding-bottom: 8px; }
+html.embed .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-mid-head { padding-left: 52px; }
 
-  html.embed .tq-mast-inner { padding-left: 12px; }
-  html.tianqi.embed .tq-brand { margin-left: calc(52px + var(--sl)); }
-
-  .tq-mast .tq-brand { min-height: 40px; }
-  .tq-brand h1 { font-size: 21px; }
-  .tq-brand .xc-sub { max-width: 118px; }
-  .tq-nav { order: 1; gap: 5px; flex: 1 0 100%; }
-  .tq-nav-key { flex: 1; padding-inline: 6px; gap: 5px; }
-  .tq-nav-key i { width: 19px; height: 19px; }
-  .tq-nav .xc-x { margin-left: auto; width: 36px; }
-
-  .tq-desk { padding: 12px 12px calc(14px + var(--sb)); gap: 12px; }
-  .tianqi .xc.tq-mode :is(.tq-console, .tq-log) { --rad: 16px; }
-  .tianqi .xc.tq-mode .tq-console { padding: 12px; }
-  .tq-console-head { padding: 0 2px 11px; }
-  .tq-console-head h2 { font-size: 20px; }
-  .tianqi .tq-entry textarea { min-height: 82px; padding: 11px; }
-  .tq-instruments { padding: 5px; gap: 2px; }
-  .tq-log-head { min-height: 52px; }
-  .tianqi .xc.wb.tq-mode .tq-log .xc-body { padding: 12px 12px 10px; }
-  .tianqi .xc.wb.tq-mode .tq-empty { gap: 12px; }
+@media (max-width: 640px) {
+  .tq-sheet { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+  .tq-set-nav { flex-direction: row; align-items: center; overflow-x: auto; padding: 12px 12px 10px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .tq-set-nav h2 { margin: 0 8px 0 4px; }
+  .tq-set-body { padding: 22px 18px 28px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tq-nav-key { transition: none; }
+  .tianqi .xc.tq-mode *,
+  .tianqi .xc.tq-mode *::before,
+  .tianqi .xc.tq-mode *::after { animation: none !important; transition: none !important; }
 }

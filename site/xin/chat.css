@@ -64,6 +64,7 @@
 .xc.wb{inset:0;width:auto;height:auto;--rad:0;box-shadow:none;transform:translateY(14px);opacity:0;transition:transform .32s var(--e-out),opacity .22s var(--e-out)}
 .xc.wb.show{transform:none;opacity:1}
 body.xc-open.xc-wb #home{margin-right:0}
+html.xc-lock #home{display:none}   /* 全屏工作台盖着首页时首页不占地方：iOS 弹键盘不会把工作台推上去（chat.js homeLock） */
 .xc.wb:not(.locked){display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-areas:"hd" "st" "main" "ft"}
 .xc.wb.wb-side:not(.locked){grid-template-columns:280px minmax(0,1fr);grid-template-areas:"side hd" "side st" "side main" "side ft"}
 .xc.wb.wb-pin:not(.locked){grid-template-columns:minmax(0,1fr) 340px;grid-template-areas:"hd work" "st work" "main work" "ft work"}

@@ -134,6 +134,16 @@ async def main():
                  and rows[0][2] == '3 分钟' and rows[1][2] in ('剩 16 分钟', '剩 17 分钟') and rows[2][2] == '1 小时前' and await pg.text_content('.xw-st') == '在忙', rows)
         fit = await pg.evaluate("document.documentElement.scrollWidth <= innerWidth")
         ui.check('手机首页不横向滚动', fit)
+        # 1b. 站长 11-19：手机上全屏工作台打字，下面露出世界地图——iOS 聚焦输入框会滚整页。全屏工作台盖着首页时首页不占地方，关掉后滚回原处
+        await pg.evaluate("window.scrollTo(0, 260)")
+        y0 = await pg.evaluate("Math.round(scrollY)")
+        await pg.evaluate("LimingXinChat.work()")
+        await pg.wait_for_selector('.xc.wb.show')
+        lock = await pg.evaluate("[getComputedStyle(document.getElementById('home')).display, document.scrollingElement.scrollHeight <= innerHeight + 1]")
+        await pg.click('.xc-x')
+        await pg.wait_for_function("!document.querySelector('.xc').classList.contains('show')")
+        back = await pg.evaluate("[getComputedStyle(document.getElementById('home')).display, Math.round(scrollY)]")
+        ui.check('手机全屏工作台：首页不占地方（页面没有能滚的高度），关掉后首页滚回原处', y0 > 0 and lock == ['none', True] and back[0] != 'none' and abs(back[1] - y0) <= 2, (y0, lock, back))
 
         # 2. 首页打字回车：进工作台，发到主对话
         await pg.fill('.xw-ask input', '帮我看看定时器')
@@ -316,6 +326,8 @@ async def main():
         await pg.wait_for_function("document.querySelector('.xc-pal-i.on .xc-pal-t') && document.querySelector('.xc-pal-i.on .xc-pal-t').textContent === '换成深色'")
         await pg.keyboard.press('Enter')
         await pg.wait_for_selector('.xc-toast.in')
+        # 提示是同步弹的，换主题在 View Transition 的回调里（至少晚一帧）：等它真换过去再读，换不过去照样超时失败
+        await pg.wait_for_function("document.documentElement.dataset.theme === 'dark'", timeout=5000)
         t1 = await pg.evaluate("[document.documentElement.dataset.theme, localStorage.getItem('lm.theme'), document.querySelector('.xc-toast').textContent, document.querySelector('.xc-toast').getAttribute('role')]")
         ui.check('命令面板「换成深色」：整站换成深色并记住，底部轻提示说一声（读屏能念）', t1 == ['dark', 'dark', '换成深色了', 'status'], t1)
         # 复制：一轮回答复制原文；代码块复制代码、能换行
