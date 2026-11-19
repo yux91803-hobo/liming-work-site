@@ -131,8 +131,12 @@ test('不交给 Hydrogen 的：带图片、电脑维护、看图；不再用 Gem
  assert.notEqual(f.call('task_new',{kind:'system',goal:'disk'}).task.model,'gemini-4-hydrogen');
  assert.notEqual(f.call('task_new',{kind:'vision',goal:'see'}).task.model,'gemini-4-hydrogen');
  // 站长 2026-11-13：「以后也不用 3.8 flash 了」
- const {namedModel}=await import(pathToFileURL(path.join(__dirname,'../site/xin/vm-models.mjs')).href);
- for(const text of ['你让 Gemini 3.8 Flash 去画个奶龙','用 Gemini 写','交给 Hydrogen 做','让 Gemini 4 Hydrogen 查一下','用 antigravity 做'])assert.equal(namedModel(text),'gemini-4-hydrogen',text);
+ const {namedModel,modelLabel}=await import(pathToFileURL(path.join(__dirname,'../site/xin/vm-models.mjs')).href);
+ // 站长 11-19：泛指的 Gemini / Antigravity 交给后台写代码的 Neon；点名 Hydrogen、Flash 才用 Hydrogen；Argon 照点名
+ for(const text of ['你让 Gemini 3.8 Flash 去画个奶龙','交给 Hydrogen 做','让 Gemini 4 Hydrogen 查一下'])assert.equal(namedModel(text),'gemini-4-hydrogen',text);
+ for(const text of ['用 Gemini 写','用 antigravity 做','用 Neon 写','让 Gemini 4 Neon 来做'])assert.equal(namedModel(text),'gemini-4-neon',text);
+ for(const text of ['让 Argon 查一下','交给 Gemini 4 Argon 检查'])assert.equal(namedModel(text),'gemini-4-argon',text);
+ assert.equal(modelLabel('gemini-4-neon'),'Gemini 4 Neon');assert.equal(modelLabel('gemini-4-argon'),'Gemini 4 Argon');
  const old=f.call('task_new',{kind:'research',goal:'old flash id',model:'gemini-3.8-flash-high',named:true}).task;assert.notEqual(old.model,'gemini-3.8-flash-high');
  await f.wait(old.sid);
  assert.ok((fs.existsSync(f.log)?fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse):[]).every(x=>x.quota||!/3\.8/.test(x.args[0])),'没有一次调用 Flash');
@@ -163,6 +167,19 @@ test('Antigravity 模型表：Hydrogen、Neon 在 Gemini 池，Argon 单独一�
  assert.equal(r.agyProviderModel('gemini-4-argon','max'),'gemini-4-argon-high');
  assert.deepEqual(['code','hard','review','research','quick'].map(k=>r.agyEffort(k,'gemini-4-neon')),['high','xhigh','high','medium','low']);
  assert.deepEqual(['code','hard','review','research'].map(k=>r.agyEffort(k,'gemini-4-argon')),['high','high','high','medium']);
+});
+
+test('先用哪个 Antigravity 模型（站长 11-19）：写代码、难题 Neon，池用完换 Argon；检查、查资料 Argon；其余类别不用 Antigravity',async()=>{
+ const {agyPick,agyNext}=await import(pathToFileURL(path.join(__dirname,'../site/xin/vm-models.mjs')).href);
+ const ok=()=>true,noGemini=p=>p!=='gemini',none=()=>false;
+ assert.deepEqual(['code','hard','review','research','quick','daily','system','vision'].map(kind=>agyPick({kind,poolOk:ok})),
+  ['gemini-4-neon','gemini-4-neon','gemini-4-argon','gemini-4-argon',null,null,null,null]);
+ assert.equal(agyPick({kind:'code',poolOk:noGemini}),'gemini-4-argon');assert.equal(agyPick({kind:'code',poolOk:none}),null);
+ assert.equal(agyPick({kind:'review',poolOk:ok,avoid:['gemini-4-argon']}),null,'检查要独立：作者是 Argon 就不用 Argon');
+ assert.equal(agyPick({kind:'code',poolOk:ok,avoid:['gemini-4-neon']}),'gemini-4-argon');
+ assert.deepEqual(agyNext({kind:'code',model:'gemini-4-neon',poolOk:ok}),['gemini-4-argon']);
+ assert.deepEqual(agyNext({kind:'code',model:'gemini-4-neon',poolOk:p=>p!=='argon'}),[]);
+ assert.deepEqual(agyNext({kind:'research',model:'gemini-4-argon',poolOk:ok}),[]);
 });
 test('Gemini 后台的搜索、读网页：一开始就报搜什么（同一步只报一次），做完再报；读网页记成打开网页，不混成搜索',async t=>{
  const f=fixture(t,'steps'),task=f.call('task_new',{kind:'research',goal:'fixture research'}).task;const done=await f.wait(task.sid);assert.equal(done.status,'done',JSON.stringify(done));

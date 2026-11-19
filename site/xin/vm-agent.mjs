@@ -1570,8 +1570,8 @@ function taskNew(a) {
     if (!real.startsWith(realWork + '/') || !st.isFile()) return { error: 'bad_file', msg: '文件要在 ' + WORK + ' 里面：' + f };
     files.push({ path: p, name: path.basename(p), size: st.size, image: IMG_RE.test(p) });
   }
-  // 检查别的任务：避开被检查的那个模型（换个模型看，才看得出问题）
-  const avoid = kind === 'review' ? authorModels(after.map(n=>all.find(t=>t.no===n)).filter(d=>d?.status==='done')) : [];
+  // 检查别的任务：避开被检查任务的模型（换个模型看才看得出问题）。没做完的按分配到的模型算（写代码和检查都从 GLM 起，不然会 GLM 查 GLM），开工时再按实际作者挑
+  const avoid = kind === 'review' ? authorModels(after.map(n=>all.find(t=>t.no===n)).filter(Boolean)) : [];
   const agyState=readJ(path.join(BASE,'antigravity-quota.json'),{}),images=files.some(f=>f.image);
   // 刚卡过（AGY_STALL_MS 内）先不派给 Gemini：不然每个新任务都要先白等 2 分钟
   const stalledAt=(readJ(AGY_STALL_F(),{})||{}).at||0;

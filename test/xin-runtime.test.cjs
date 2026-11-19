@@ -568,7 +568,8 @@ test('独立复核不忽略 avoid，点名作者及耗尽全部视觉候选均�
 test('原任务 fallback 与复核 fallback 组合：requestedModel 保持原值，actualModel 避开实际作者',async t=>{
  const f=fixture(t);fs.unlinkSync(path.join(f.control,'sessions',f.task.sid+'.json'));const bin=path.join(f.root,'bin');fs.mkdirSync(bin);f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_CODEX_TRANSPORT='exec';const log=path.join(f.root,'models.jsonl');
  fs.writeFileSync(path.join(bin,'codex'),'#!'+process.execPath+'\n'+`const fs=require('node:fs');const a=process.argv.slice(2),v=a.find(s=>s.startsWith('model='));if(!v){console.log('[]');process.exit(0);}const model=JSON.parse(v.slice(6)),role=a.join(' ').includes('REVIEW_CASE')?'review':'author';fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({role,model})+'\\n');if(role==='author'&&model==='glm-5.3'||role==='review'&&model==='deepseek-v4.1-flash'){setTimeout(()=>{console.log(JSON.stringify({type:'error',message:'provider unavailable'}));process.exit(1);},300);}else{console.log(JSON.stringify({type:'thread.started',thread_id:role+'-fixture'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'done'}}));console.log(JSON.stringify({type:'turn.completed'}));}` ,{mode:0o755});
- const a=f.call('task_new',{kind:'research',goal:'AUTHOR_CASE',dir:f.task.dir,model:'glm-5.3',named:true}).task;
+ // 作者用写代码任务：写代码的网关候选有 GLM→Kimi→DeepSeek，才退得到 Kimi（站长 11-19 起查资料的网关候选只有 DeepSeek）
+ const a=f.call('task_new',{kind:'code',goal:'AUTHOR_CASE',dir:f.task.dir,model:'glm-5.3',named:true}).task;
  const review=f.call('task_new',{kind:'review',goal:'REVIEW_CASE',after:[a.no],dir:f.task.dir,model:'deepseek-v4.1-flash',named:true}).task;
  const deadline=performance.now()+platformTimeout(20000);let ah,rh;
  while(performance.now()<deadline){f.call('tasks',{});ah=f.call('history',{sid:a.sid}).task;rh=f.call('history',{sid:review.sid}).task;if(['done','failed','waiting'].includes(rh.status))break;await new Promise(r=>setTimeout(r,100));}

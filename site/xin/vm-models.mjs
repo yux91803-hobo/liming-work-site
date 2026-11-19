@@ -44,7 +44,7 @@ export const CODEX_MODELS = [
 ];
 export function codexModel(id) { return CODEX_MODELS.find(m => m.id === id) || CODEX_MODELS[0]; }   // 起 Codex 用：不认识的照样按第一个开工
 // 只用来显示名字：认得后台的 Gemini（Antigravity）和前台的 Opus；不认识的原样显示编号，不冒充成列表里第一个（审查问题 13）
-const OTHER_NAMES = { 'gemini-4-hydrogen': 'Gemini 4 Hydrogen' };
+const OTHER_NAMES = Object.fromEntries(Object.entries(runtime.AGY_CATALOG).map(([id, m]) => [id, m.name]));   // Hydrogen、Neon、Argon
 export function modelLabel(id) { const m = CODEX_MODELS.find(x => x.id === id) || HARNESS_MODELS.find(x => x.id === id); return m ? m.name : OTHER_NAMES[id] || String(id || '未知模型'); }
 // 用量页按来源分（站长 2026-11-16：「把网关和谷歌的分开」）：Google = Antigravity 的 Gemini；网关 = 小芯电脑上 WorkBuddy 网关的模型；其他（以前的 Claude 之类）
 export function modelSource(id) {
@@ -64,22 +64,40 @@ export function modelSource(id) {
    - 模型还没开始干活就报错（网关限流、模型挂了）：runner 换 fallbacks 里的下一个再试一次；已经执行过命令、说过话的不重试，免得重复做。
    候选顺序是起步时的猜测，不是排名：按 model-stats.jsonl 里的实际记录（用了谁、多久、成没成）手动调，不让程序自己改。 */
 export const AUTO_EFFORT = 'max';
+// 站长 11-19：杂活、查资料、看图、每日任务、电脑维护用 DeepSeek；Kimi 只写代码（含前端）；GLM 只写代码和检查。
+// 写代码、难题、检查、查资料先交给 Antigravity（下面的 agyPick），这里是它用不了时的网关候选
 export const ROUTES = {
   chat: ['deepseek-v4.1-flash'],   // 前台聊天
-  quick: ['glm-5.3-flash', 'deepseek-v4.1-flash', 'glm-5.3'],                  // 简单杂活：看文件、跑几条命令、整理
+  quick: ['deepseek-v4.1-flash'],                                              // 简单杂活：看文件、跑几条命令、整理
   code: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                   // 写代码、改代码、编译、调试
-  research: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'],               // 查资料、读文档、写长一点的说明
-  hard: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'],                   // 难题：方案设计、疑难 bug、推理
-  vision: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                 // 看图
-  review: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'],                 // 检查别的任务的结果（会避开被检查的那个模型）
-  daily: ['glm-5.3', 'deepseek-v4.1-flash', 'kimi-k3.1-pro'],                  // 每日任务
-  system: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash']                  // 电脑维护：不进容器，直接在电脑上查、修
+  research: ['deepseek-v4.1-flash'],                                           // 查资料、读文档、写长一点的说明
+  hard: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                   // 难题：复杂代码、疑难 bug、方案设计
+  vision: ['deepseek-v4.1-flash'],                                             // 看图
+  review: ['glm-5.3', 'deepseek-v4.1-flash'],                                  // 检查别的任务的结果（会避开被检查的那个模型）
+  daily: ['deepseek-v4.1-flash'],                                              // 每日任务
+  system: ['deepseek-v4.1-flash']                                              // 电脑维护：不进容器，直接在电脑上查、修
 };
+/* 后台先用哪个 Antigravity 模型（站长 11-19）：写代码、难题 → Neon（Gemini 池），Gemini 池用完 → Argon；检查、查资料 → Argon（Argon 池）。
+   杂活、每日任务、电脑维护、看图不用 Antigravity，走上面的网关路由表。
+   poolOk(pool)：这个池现在能不能用（派任务的地方按额度记录判断）；avoid：不能用的模型（检查要避开被检查任务的作者）。 */
+const AGY_PLAN = { code: [runtime.AGY_NEON, runtime.AGY_ARGON], hard: [runtime.AGY_NEON, runtime.AGY_ARGON], review: [runtime.AGY_ARGON], research: [runtime.AGY_ARGON] };
+export function agyPick({ kind, poolOk = () => true, avoid = [] } = {}) {
+  return (AGY_PLAN[kind] || []).find(id => poolOk(runtime.agyPool(id)) && !avoid.includes(id)) || null;
+}
+// 先用的是 Neon 时，Argon 池能用就排在网关候选前面（运行中 Gemini 池用完、卡住时换过去）；其余没有 Antigravity 候选
+export function agyNext({ kind, model, poolOk = () => true, avoid = [] } = {}) {
+  const plan = AGY_PLAN[kind] || [], i = plan.indexOf(model);
+  return i < 0 ? [] : plan.slice(i + 1).filter(id => poolOk(runtime.agyPool(id)) && !avoid.includes(id));
+}
 export const KIND_NAMES = { chat: '聊天', quick: '杂活', code: '写代码', research: '查资料', hard: '难题', vision: '看图', review: '检查', daily: '每日任务', system: '电脑维护' };
 // 用户点名：「用 / 换成 / 让 … 模型」或者「模型 来做 / 来看 …」。Flash 要排在同名的前面
 export const MODEL_ALIAS = [
-  // 站长 2026-11-13：Antigravity 只用 Gemini 4 Hydrogen；说 Gemini、Flash、Hydrogen、Antigravity 都交给它
-  [runtime.AGY_MODEL,'antigravity\\b|agy\\b|(?:gemini[\\s-]*4[\\s-]*)?hydrogen|gemini(?:[\\s-]*[\\d.]+)?(?:[\\s-]*flash)?(?:[\\s-]*high)?'],
+  // 站长 11-19：泛指的 Gemini、Antigravity 交给后台写代码的 Neon；点名 Hydrogen、Flash 才用 Hydrogen（Gemini 3.8 Flash 13 日起不用）；Argon 照点名。
+  // 具体的排在泛指的前面：「Gemini 4 Hydrogen」「Gemini 3.8 Flash」不能被泛指的 Gemini 先认走
+  [runtime.AGY_NEON, '(?:gemini[\\s-]*4[\\s-]*)?neon'],
+  [runtime.AGY_ARGON, '(?:gemini[\\s-]*4[\\s-]*)?argon'],
+  [runtime.AGY_MODEL, '(?:gemini[\\s-]*4[\\s-]*)?hydrogen|gemini(?:[\\s-]*[\\d.]+)?[\\s-]*flash(?:[\\s-]*high)?'],
+  [runtime.AGY_NEON, 'antigravity\\b|agy\\b|gemini(?:[\\s-]*[\\d.]+)?(?:[\\s-]*high)?'],
   ['glm-5.3-flash', 'glm[\\s-]*(?:5(?:\\.3)?)?[\\s-]*flash|智谱\\s*flash'],
   ['glm-5.3', 'glm(?:[\\s-]*5(?:\\.3)?)?|智谱'],
   ['kimi-k3.1-pro', 'kimi(?:[\\s-]*k?3(?:\\.1)?)?(?:[\\s-]*pro)?|月之暗面'],
