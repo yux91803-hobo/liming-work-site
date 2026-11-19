@@ -109,18 +109,34 @@ jobs:
 
               front = list(rows(load('logs/front.jsonl')))
               known_protocol = {'format_repair', 'format_fallback', 'front_model_missing', 'front_model_fallback',
-                                'empty', 'object', 'structured', 'prose', 'invalid', 'text', 'updates', 'tool', 'json'}
+                                'agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'usage_update',
+                                'config_option_update', 'current_mode_update', 'session_info_update', 'available_commands_update', 'plan', 'other'}
               for row in front[-9:]:
                   protocol = row.get('protocol') or {}
+                  run = row.get('run', '')
+                  meta, events = {}, []
+                  if re.fullmatch(r'r[a-z0-9_-]{6,80}', run, re.I) and (row.get('at') or 0) >= 1795053900000:
+                      meta = json.loads(load('runs/'+run+'.json', 600*1024) or b'{}')
+                      events = list(rows(load('runs/'+run+'.jsonl', 600*1024)))
+                  model = meta.get('model')
+                  started = meta.get('started')
+                  types = {'user', 'think', 'tool', 'tool_end', 'text', 'err', 'status', 'done', 'task'}
+                  counts = Counter(ev.get('t') for ev in events if ev.get('t') in types)
+                  done = next((e for e in reversed(events) if e.get('t') == 'done'), {})
                   print('FRONT', json.dumps({'at': timestamp(row.get('at')), 'outcome': row.get('outcome'),
                                             'error': error_kind(row.get('error')), 'error_bytes': len(str(row.get('error') or '')),
                                             'calls': [call_shape(c) for c in row.get('calls', [])],
-                                            'protocol': {k: protocol[k].get('count') for k in known_protocol & protocol.keys()},
+                                            'model': model if model in {'gemini-4-hydrogen','deepseek-v4.1-flash'} else None,
+                                            'model_high': meta.get('providerModel') == 'gemini-4-hydrogen-high',
+                                            'elapsed_ms': int(row['at'] - started) if type(started) in (int,float) else None,
+                                            'done_ms': done.get('ms') if type(done.get('ms')) in (int,float) else None,
+                                            'events': counts, 'done_ok': done.get('ok') is True,
+                                            'protocol': {k: [protocol[k].get('count'),protocol[k].get('bytes')] for k in known_protocol & protocol.keys()},
                                             'protocol_unknown': len(protocol.keys() - known_protocol)}), flush=True)
 
               q = json.loads(load('front-antigravity-quota.json', 16*1024) or b'{}')
               print('FRONT_QUOTA', json.dumps({**{k: q.get(k) is True for k in ('blocked', 'providerExhausted')},
-                                              'retryAt': timestamp(q.get('retryAt')), 'updatedAt': timestamp(q.get('at'))}), flush=True)
+                                              'retryAt': timestamp(q.get('retryAt')), 'updatedAt': timestamp(q.get('checkedAt'))}), flush=True)
               kernel = list(rows(load('logs/kernel.jsonl', 2200*1024)))
               recent = [row for row in kernel if (row.get('at') or 0) >= 1795058580000]
               recognized = {'send', 'front_immediate', 'front_model', 'front_quota', 'front_action', 'front_fallback', 'run_complete'}
