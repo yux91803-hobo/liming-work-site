@@ -10,26 +10,136 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - name: Classify the upstream error using a synthetic prompt
+      - name: Verify the deployed Xiaoxin controller and a real isolated reply
         env:
+          XIN_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
           LI_API_KEY: ${{ secrets.XIN_INSTABOX_API_KEY }}
         run: |
           python3 - <<'PY_REMOTE'
-          import json,os
-          from urllib.parse import quote
-          from urllib.request import HTTPRedirectHandler,Request,build_opener
+          import http.cookiejar
+          import json
+          import os
+          import re
+          import sys
+          import time
+          import uuid
+          from urllib.parse import quote, urlencode
+          from urllib.error import HTTPError
+          from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, Request, build_opener
+
+          BASE='https://liming-work.com'
+          PASSWORD=os.environ['XIN_OWNER_PASSWORD']
+
           class NoRedirect(HTTPRedirectHandler):
-              def redirect_request(self,request,fp,code,message,headers,newurl): return None
-          opener=build_opener(NoRedirect())
-          api='https://api.instabox.sh/v1/machines'
-          headers={'X-API-Key':os.environ['LI_API_KEY'],'Content-Type':'application/json'}
-          with opener.open(Request(api,headers=headers),timeout=20) as r:
-              machines=[m for m in json.load(r)['machines'] if m.get('name')=='li' and m.get('state')=='running']
-          if len(machines)!=1: raise SystemExit('Expected a running li')
-          args={'argv':['python3','-c',"import http.client\nimport json\nimport os\nimport re\nimport selectors\nimport signal\nimport subprocess\nimport tempfile\nimport time\nfrom collections import Counter\nfrom pathlib import Path\n\n\nROOT = Path('/data/home/.xin')\ncfg = json.loads((ROOT/'kernel.env.json').read_text())\nif cfg.get('XIN_ROLE') == 'tianqi':\n    raise SystemExit('Unexpected Tianqi provider profile')\nhome = Path(cfg.get('XIN_AGY_HOME') or '/data/home')\nbinary = next((p for p in (cfg.get('XIN_ANTIGRAVITY_BIN'), home/'.local/bin/agy', home/'.gemini/bin/agy') if p and Path(p).is_file()), None)\nenv = {'HOME':str(home),'PATH':cfg.get('PATH') or '/usr/local/bin:/usr/bin:/bin','LANG':'C.UTF-8'}\nMARKER = '松果好'\n\n\ndef classify(text):\n    return [k for k,p in {\n        'capacity':r'capacity|temporarily unavailable|service unavailable|overloaded|busy|503',\n        'retry':r'retrying|retry in|retrying in|retrying request',\n        'quota':r'quota|exhausted|rate limit|throttl|429|额度',\n        'auth':r'auth|not signed in|token expired|401|403',\n        'transport':r'timeout|connection|network|deadline|transport',\n        'server':r'error|failed|internal|unexpected|502|504',\n        'cancelled':r'cancelled|canceled|aborted',\n        'model':r'not supported|model unavailable|model not found|invalid model',\n    }.items() if re.search(p,text,re.I)]\n\n\ndef agy(work, level):\n    counts, chunks = Counter(), []\n    begin = time.monotonic()\n    reply = {'level':level,'done':False,'marker':False,'phase':'startup'}\n    with subprocess.Popen([binary,'acp','--agent','xin-front-controller','--log-file','/dev/null'],\n                          stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,\n                          cwd=work,env=env,start_new_session=True) as child:\n        try:\n            with selectors.DefaultSelector() as select:\n                select.register(child.stdout,selectors.EVENT_READ)\n                buffer = b''\n\n                def send(data):\n                    child.stdin.write(json.dumps({'jsonrpc':'2.0', **data}).encode()+b'\\n')\n                    child.stdin.flush()\n\n                def request(id, method, params):\n                    reply['phase'] = method\n                    send({'id':id, 'method':method, 'params':params})\n\n                request(1,'initialize',{'protocolVersion':1,'clientInfo':{'name':'xin-front','version':'1'},\n                                         'clientCapabilities':{'fs':{'readTextFile':False,'writeTextFile':False},'terminal':False}})\n                sid = None\n                while time.monotonic() - begin < 26 and not reply['done']:\n                    if not select.select(0.5):\n                        continue\n                    data = os.read(child.stdout.fileno(),32768)\n                    if not data:\n                        reply['process_closed'] = True\n                        break\n                    buffer += data\n                    while b'\\n' in buffer:\n                        line, buffer = buffer.split(b'\\n',1)\n                        try: message = json.loads(line)\n                        except ValueError: continue\n                        if method := message.get('method'):\n                            if 'id' in message:\n                                send({'id':message['id'],'result':{'outcome':{'outcome':'cancelled'}}} if method=='session/request_permission'\n                                     else {'id':message['id'],'error':{'code':-32601,'message':'Unavailable'}})\n                            update = (message.get('params') or {}).get('update') or {}\n                            if update.get('sessionUpdate') == 'agent_message_chunk':\n                                chunks.append(str((update.get('content') or {}).get('text',''))[:2048])\n                            if update.get('sessionUpdate') in {'agent_message_chunk','agent_thought_chunk','usage_update','tool_call','tool_call_update'}:\n                                counts[update['sessionUpdate']] += 1\n                            continue\n                        if 'error' in message:\n                            error = message['error']\n                            reply.update(error_code=error.get('code') if type(error.get('code')) is int else None,\n                                         errors=classify(str(error.get('message') or '')))\n                            return reply\n                        data = message.get('result') or {}\n                        if message.get('id') == 1:\n                            request(2,'session/new',{'cwd':work,'mcpServers':[]})\n                        elif message.get('id') == 2:\n                            sid = data.get('sessionId')\n                            models = data.get('models',{}).get('availableModels',[])\n                            model = next((m['modelId'] for m in models if m.get('modelId')=='gemini-4-hydrogen-'+level or re.search('Gemini\\\\W+4\\\\W+Hydrogen\\\\W+'+level,m.get('name',''),re.I)),None)\n                            if not (sid and model):\n                                reply['model_missing'] = True\n                                return reply\n                            request(3,'session/set_model',{'sessionId':sid,'modelId':model})\n                        elif message.get('id') == 3:\n                            content=json.dumps({'instructions':'用控制器期望的 JSON 格式回复。不要调用工具。', 'input':[{'role':'user','content':'只回复 '+MARKER}], 'tools':[], 'replyFormat':{'text':'自然回复','calls':[]}},ensure_ascii=False)\n                            request(4,'session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':content}]})\n                        elif message.get('id') == 4:\n                            reply.update(done=data.get('stopReason')=='end_turn',prompt_resolved=True)\n                            return reply\n        finally:\n            if child.poll() is None:\n                os.killpg(child.pid,signal.SIGKILL)\n            child.wait(timeout=4)\n            reply.update(marker=MARKER in ''.join(chunks),counts=counts,distinct_chunks=len(set(chunks)),\n                         chunk_bytes=sorted(set(len(c.encode()) for c in chunks)),\n                         chunk_known_words=[' '.join(w for w in re.findall(r'[a-z0-9_-]+',c.lower()) if w in {'api','error','server','http','code','status','503','service','unavailable','capacity','available','temporarily','no','has','is','on','from','upstream','model','retry','in','seconds','for','the','please','again','retries','none','exhausted','try','requested','busy','gemini-4-hydrogen-high','response','internal','exceeded','backend','timed','out','limit'}) for c in chunks[:3]],\n                         chunk_categories=classify(''.join(chunks)),seconds=round(time.monotonic()-begin,1))\n    return reply\n\n\ndef gateway():\n    key = next((p.read_text().strip() for p in (ROOT/'codex.key',ROOT/'harness.key') if p.is_file() and p.stat().st_size), '')\n    con = http.client.HTTPConnection('127.0.0.1',8788,timeout=35)\n    try:\n        payload={'model':'deepseek-v4.1-flash','input':'只回复 '+MARKER,'stream':False,\n                 'reasoning':{'effort':'max'},'max_output_tokens':3000}\n        con.request('POST','/v1/responses',body=json.dumps(payload).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+key})\n        response=con.getresponse(); text=response.read(1024*1024).decode('utf-8','replace')\n        data=json.loads(text)\n        output=''.join(c.get('text','') for i in data.get('output',[]) if i.get('type')=='message' for c in i.get('content',[]) if c.get('type')=='output_text')\n        return {'http':response.status,'marker':MARKER in output, 'errors':classify(str(data.get('error') or ''))}\n    except (OSError,ValueError,http.client.HTTPException):\n        return {'transport':False}\n    finally:\n        con.close()\n\n\ndef main():\n    from concurrent.futures import ThreadPoolExecutor\n    if not binary or not (home/'.gemini/config/agents/xin-front-controller.md').is_file():\n        raise SystemExit('Configured production ACP opener missing')\n    version=subprocess.run([binary,'--version'],env=env,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,timeout=12).stdout\n    version=re.search(r'(?<!\\d)\\d+\\.\\d+\\.\\d+(?!\\d)',version)\n    print('AGY_VERSION',version.group(0) if version else 'unknown',flush=True)\n    with tempfile.TemporaryDirectory(prefix='xin-reply-probe-',dir='/data/tmp') as work, ThreadPoolExecutor(max_workers=2) as pool:\n        print('AGY_SYNTHETIC',json.dumps(agy(work,'high')),flush=True)\n\n\ntry:\n    main()\nexcept (OSError,ValueError,subprocess.SubprocessError,KeyError) as error:\n    raise SystemExit('Provider check failed '+type(error).__name__) from None\n"],'timeoutSeconds':50}
-          with opener.open(Request(api+'/'+quote(machines[0]['id'],safe='')+'/exec',headers=headers,data=json.dumps(args).encode()),timeout=65) as r:
-              result=json.load(r)
-          for line in result.get('stdout','').splitlines():
-              if line.startswith('AGY_SYNTHETIC '): print(line,flush=True)
-          if result.get('exitCode')!=0: raise SystemExit('Isolated provider check did not finish')
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          OPENER=build_opener(NoRedirect(),HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+          def request(path, payload=None):
+              if not path.startswith('/') or path.startswith('//'): raise ValueError('Unexpected site path')
+              data=None if payload is None else json.dumps(payload).encode('utf-8')
+              req=Request(BASE+path,data=data,headers={'Content-Type':'application/json','X-Xin':'1',
+                                                      'Origin':BASE,'User-Agent':'Xiaoxin-reply-check'})
+              try:
+                  with OPENER.open(req,timeout=55) as response:
+                      return response.status,response.read(2*1024*1024)
+              except HTTPError as failure:
+                  return failure.code,failure.read(512*1024)
+
+          def get(path, body=None):
+              status,response=request(path,body)
+              try: content=json.loads(response)
+              except ValueError: content={}
+              return status,content
+
+          def call(op,args=None):
+              status,body=get('/api/xin/call',{'op':op,'args':args or {}})
+              return status,body,body.get('data') or {}
+
+          def wait_op(op, args, pred, seconds):
+              end = time.monotonic() + seconds
+              while time.monotonic() < end:
+                  status, response, data = call(op, args)
+                  if response.get('ok') and not data.get('error') and pred(data):
+                      return data
+                  if status in (400, 401, 403, 404) or data.get('error') not in {None, 'not_found'}:
+                      raise RuntimeError(f'{op} failed with HTTP {status}')
+                  time.sleep(2)
+              raise RuntimeError(f'{op} timed out')
+
+
+          def installed_controller():
+              key = os.environ['LI_API_KEY']
+              api = 'https://api.instabox.sh/v1/machines'
+              def read(url):
+                  req = Request(url,headers={'X-API-Key':key})
+                  with OPENER.open(req,timeout=20) as r:
+                      return json.loads(r.read(1024*1024))
+              found = [m for m in read(api)['machines'] if m.get('name') == 'li']
+              if len(found) != 1:
+                  return False
+              record = read(api+'/'+quote(found[0]['id'],safe='')+'/files/content?'+urlencode({'path':'/data/home/.xin/controller-current.json'}))
+              return str(record.get('self','')).endswith('/vm-agent-f8f0bac4865a.mjs')
+
+
+          def main():
+              for _ in range(32):
+                  try:
+                      if installed_controller():
+                          break
+                  except (HTTPError, TimeoutError):
+                      pass
+                  time.sleep(2)
+              else:
+                  raise RuntimeError('Expected Xiaoxin controller build is not active')
+              print('SMOKE_CONTROLLER', 'f8f0bac4865a', flush=True)
+              status, _ = get('/api/xin/login', {'password': PASSWORD})
+              _, me = get('/api/xin/me')
+              if status != 200 or not (me.get('enabled') and me.get('authed')):
+                  raise RuntimeError('Xiaoxin login not confirmed')
+              probe = '青柠 松果 白鹭'
+              text = '这是小芯的独立联调。请只回复「'+probe+'」。不用查资料、派活或记忆。'
+              data = {'agent':'codex','main':False,'clientId':'xin-reply-check-'+uuid.uuid4().hex,'text':text}
+              status, response, accepted = call('send', data)
+              print('SMOKE_ACCEPT', status, bool(response.get('ok') or response.get('accepted')), flush=True)
+              if not (response.get('ok') or response.get('accepted')):
+                  raise RuntimeError('Xiaoxin fixture was not accepted')
+              if response.get('accepted'):
+                  delivered = wait_op('delivery', {'id':data['clientId']}, lambda d:d.get('state') in {'delivered','failed'}, 70)
+                  accepted = delivered.get('result') or {}
+              sid, run = accepted.get('sid',''), accepted.get('run','')
+              if accepted.get('main') or not (re.fullmatch(r's[a-z0-9]{6,26}',sid) and re.fullmatch(r'r[a-z0-9]{6,26}',run)):
+                  raise RuntimeError('Isolated conversation not confirmed')
+              results = {'real_reply':False,'done':False,'cleaned':False}
+              try:
+                  reply = wait_op('poll', {'run':run,'off':0}, lambda d:d.get('done') is True, 145)
+                  events = reply.get('events') or []
+                  done = next((e for e in events if e.get('t')=='done'),{})
+                  model = done.get('model')
+                  results.update(done=done.get('ok') is True,
+                                 real_reply=any(e.get('t')=='text' and all(w in e.get('text','') for w in probe.split()) for e in events),
+                                 model=model if model in {'gemini-4-hydrogen','deepseek-v4.1-flash'} else None,
+                                 task_count=sum(1 for e in events if e.get('t')=='task'),
+                                 round_ms=done.get('ms') if type(done.get('ms')) is int else None,
+                                 recovery=done.get('why') if done.get('why') in {'front_timeout_fallback','front_capacity_fallback'} else None)
+              finally:
+                  if not results['done']:
+                      call('stop', {'sid':sid,'run':run})
+                  for _ in range(12):
+                      _, response, d = call('forget', {'sid':sid})
+                      if response.get('ok') and not d.get('error'):
+                          results['cleaned'] = True
+                          break
+                      time.sleep(2)
+                  print('SMOKE_RESULT', json.dumps(results,sort_keys=True), flush=True)
+              if not (results['done'] and results['real_reply'] and results['cleaned'] and results['task_count']==0):
+                  raise RuntimeError('Xiaoxin fixture did not complete a real isolated reply')
+
+
+          if __name__=='__main__':
+              try:
+                  main()
+              except (RuntimeError, ValueError, OSError, KeyError) as error:
+                  raise SystemExit(str(error) if isinstance(error, RuntimeError) else 'Xiaoxin live check could not finish') from None
           PY_REMOTE
