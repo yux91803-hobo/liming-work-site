@@ -15,9 +15,9 @@ export const AGY_FRONT_PROVIDER=AGY_MODEL+'-high';
 export const preferredFrontModel=()=>process.env.XIN_FRONT_PROVIDER==='deepseek'?FRONT_MODEL:AGY_FRONT_MODEL;
 export const frontModelInfo=id=>{id=id||preferredFrontModel();return {id,name:id===FRONT_MODEL?'DeepSeek V4.1 Flash':'Gemini 4 Hydrogen',image:true};};
 export function frontRouting({model,providerModel,reason}, why) {
-  const from = ['quota','format','front_model','unavailable','timeout'].includes(reason) ? AGY_FRONT_MODEL : undefined;
-  if (reason === 'timeout') why = 'front_timeout_fallback';
-  else if (why === 'front_timeout_fallback') why = 'chat';
+  const from = ['quota','format','front_model','unavailable','timeout','capacity'].includes(reason) ? AGY_FRONT_MODEL : undefined;
+  if (reason === 'timeout' || reason === 'capacity') why = `front_${reason}_fallback`;
+  else if (why === 'front_timeout_fallback' || why === 'front_capacity_fallback') why = 'chat';
   return {model,providerModel:String(providerModel||model).slice(0,200),why,from};
 }
 const AGENT='xin-front-controller';
@@ -157,11 +157,14 @@ export function frontOutput(text,{prose=true}={}){
  return {status:'completed',output};
 }
 const quotaError=e=>e?.code===429||/resource[_ ]exhausted|quota.*(?:exceed|exhaust)|(?:exceed|exhaust).*quota|rate.limit/i.test(String(e?.message||'')+' '+JSON.stringify(e?.data||{}));
+// ACP 1.5.12 streams this provider notice as assistant text while retrying. Count it only after a prompt actually times out.
+const capacityNotice = text => /\bapi error unavailable code 503 no capacity available for model gemini-4-hydrogen-(?:high|medium) on the server\b/i.test(text.replace(/[^a-z0-9-]+/gi, ' '));
 export async function openFrontProvider(o={}){
  let actual=FRONT_MODEL,reason=null,acp=null,sid=null,sent=0,previous=[],images=false;
  const chosen=(model,why=null,providerModel=model)=>{actual=model;reason=why;o.model?.({model,reason:why,providerModel});};
  const fallback=async(payload,signal)=>{
-  const r=await (o.fetch||fetch)(o.baseURL.replace(/\/$/,'')+'/responses',{method:'POST',signal,headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},body:JSON.stringify({...payload,model:FRONT_MODEL})});
+  const instructions = (payload.instructions||'')+'\n当前前台没有直接搜网页或读网页的工具。需要实时查询时按用户要求交后台；用户要求不派后台时，如实说明现在无法查询。';
+  const r=await (o.fetch||fetch)(o.baseURL.replace(/\/$/,'')+'/responses',{method:'POST',signal,headers:{authorization:'Bearer '+o.key,'content-type':'application/json'},body:JSON.stringify({...payload,model:FRONT_MODEL,instructions})});
   if(!r.ok)throw Error('前台连接失败（HTTP '+r.status+'）');return r.json();
  };
  if(preferredFrontModel()===FRONT_MODEL){chosen(FRONT_MODEL);return {request:fallback,image:true,close(){}};}
@@ -206,7 +209,8 @@ export async function openFrontProvider(o={}){
  }
  return {image:images,close(){acp?.close();},useFallbackOnTimeout(){
   if(actual!==AGY_FRONT_MODEL||acp.web||o.signal?.aborted)return false;
-  acp.close();chosen(FRONT_MODEL,'timeout');return true;
+  const reason = capacityNotice(acp.text) ? 'capacity' : 'timeout';
+  acp.close();chosen(FRONT_MODEL,reason);return true;
  },async request(payload,signal){
   if(actual===FRONT_MODEL)return fallback(payload,signal);
   // 前台自己查（站长 2026-11-18）：用了网页工具这一轮放宽到 3 分钟。查的时候兄弟插话、或者时间到了：等手上的网页步骤做完，

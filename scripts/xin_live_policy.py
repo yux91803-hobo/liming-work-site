@@ -7,10 +7,12 @@ DEEPSEEK = 'deepseek-v4.1-flash'
 # bounded provider setup and transport as well; creating background work still ends the turn.
 REPLY_LIMIT = {HYDROGEN: 75, DEEPSEEK: 30}
 RECOVERED_REPLY_LIMIT = REPLY_LIMIT[HYDROGEN] + 45  # One bounded DeepSeek attempt after Gemini's deadline.
+FRONT_WEB_UNAVAILABLE = '现在暂时查不了网页'
 
 
 def recovered_front_timeout(done):
-    return done.get('model') == DEEPSEEK and done.get('from') == HYDROGEN and done.get('why') == 'front_timeout_fallback'
+    return (done.get('model') == DEEPSEEK and done.get('from') == HYDROGEN and
+            done.get('why') in ('front_timeout_fallback', 'front_capacity_fallback'))
 
 
 def validate_front_model(done, quota=None, now_ms=0):
@@ -101,6 +103,19 @@ def front_lookup_verdict(events):
     if not next((e for e in events if e.get('t') == 'done'), {}).get('ok'):
         return 'turn did not finish ok'
     return ''
+
+
+def front_lookup_during_outage(events):
+    """During a verified provider 503, require an honest reply with no fabricated web step or dispatch."""
+    done = next((e for e in events if e.get('t') == 'done'), {})
+    if done.get('why') != 'front_capacity_fallback':
+        return None  # The usual native-web check still applies.
+    if done.get('ok') is not True or not recovered_front_timeout(done):
+        return 'capacity fallback did not finish on the backup model'
+    if any(e.get('t') in ('task', 'tool', 'tool_end') for e in events):
+        return 'capacity fallback reported an unexpected operation'
+    text = '\n'.join(e.get('text', '') for e in events if e.get('t') == 'text').strip().rstrip('。！.!')
+    return '' if text == FRONT_WEB_UNAVAILABLE else 'capacity fallback did not report that web lookup is unavailable'
 
 
 def first_person_receipt(reply):

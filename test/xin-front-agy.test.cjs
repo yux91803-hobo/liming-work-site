@@ -38,8 +38,9 @@ function fixture(t,mode='ok'){
   setTimeout(()=>send({method:'session/update',params:{sessionId:S,update:{sessionUpdate:'tool_call_update',toolCallId:'call_s1',kind:'search',status:'completed'}}}),1200);
   return;}
  if(mode==='hang')return;
- if(mode==='stalled_reply'||mode==='stalled_after_memory'&&prompts===2){
-  for(let i=0;i<3;i++)send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'未完成的模型输出'}}}});
+ if(mode==='stalled_reply'||mode==='upstream_capacity'||mode==='stalled_after_memory'&&prompts===2){
+  const fragment=mode==='upstream_capacity'?'**API Error: UNAVAILABLE (code 503)**: No capacity available for model gemini-4-hydrogen-high on the server.':'未完成的模型输出';
+  for(let i=0;i<3;i++)send({method:'session/update',params:{sessionId:'native-synthetic-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:fragment}}}});
   return;
  }
  if(mode==='transient'||mode==='midquota'&&prompts===2){send({id:q.id,error:{code:429,message:mode==='transient'?'rate limit, retry shortly':'quota exhausted'}});return;}
@@ -177,26 +178,29 @@ test('Hydrogen 用纯文字聊天时直接当作回复交付，不再报格式�
  assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,1);assert.equal(f.rows(f.gateway).length,0);
  assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks,[]);
 });
-test('Hydrogen 输出片段后没有结束，已保存的一句话由 DeepSeek 接续回答一次', async t => {
- const f = fixture(t, 'stalled_reply');
- f.env.XIN_AGY_PROMPT_MS = '900';
- const text = '请给这轮一个真实的回复', sent = f.call('send', {agent:'codex', text});
- const done = await f.wait(sent.run);
- const end = done.events.find(e => e.t === 'done');
- assert.deepEqual([end.ok, end.model, end.from, end.why], [true, 'deepseek-v4.1-flash', 'gemini-4-hydrogen', 'front_timeout_fallback']);
- assert.deepEqual(done.events.filter(e=>e.t==='user').map(e=>e.text), [text]);
- assert.deepEqual(done.events.filter(e=>e.t==='text').map(e=>e.text), ['deepseek-quota-answer']);
- assert.equal(done.events.some(e=>e.t==='err'), false);
- assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length, 1);
- const requests = f.rows(f.gateway);
- assert.equal(requests.length, 1);
- assert.match(JSON.stringify(requests[0].input), /真实的回复/);
- assert.equal(JSON.parse(fs.readFileSync(f.control+'/front-antigravity-quota.json')).blocked, false);
- assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks, []);
- fs.writeFileSync(f.root+'/mode', 'ok');
- const next = f.call('send', {sid:sent.sid,text:'下一句话'});
- assert.equal((await f.wait(next.run)).events.find(e=>e.t==='done').model, 'gemini-4-hydrogen');
-});
+for (const [mode, why] of [['stalled_reply', 'front_timeout_fallback'], ['upstream_capacity', 'front_capacity_fallback']]) {
+ test(`Hydrogen 输出片段后没有结束，DeepSeek 继续答一次（${mode}）`, async t => {
+  const f = fixture(t, mode);
+  f.env.XIN_AGY_PROMPT_MS = '900';
+  const text = '请给这轮一个真实的回复', sent = f.call('send', {agent:'codex', text});
+  const done = await f.wait(sent.run);
+  const end = done.events.find(e => e.t === 'done');
+  assert.deepEqual([end.ok, end.model, end.from, end.why], [true, 'deepseek-v4.1-flash', 'gemini-4-hydrogen', why]);
+  assert.deepEqual(done.events.filter(e=>e.t==='user').map(e=>e.text), [text]);
+  assert.deepEqual(done.events.filter(e=>e.t==='text').map(e=>e.text), ['deepseek-quota-answer']);
+  assert.equal(done.events.some(e=>e.t==='err'), false);
+  assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length, 1);
+  const requests = f.rows(f.gateway);
+  assert.equal(requests.length, 1);
+  assert.match(JSON.stringify(requests[0].input), /真实的回复/);
+  assert.match(requests[0].instructions, /当前前台没有直接搜网页或读网页的工具/);
+  assert.equal(JSON.parse(fs.readFileSync(f.control+'/front-antigravity-quota.json')).blocked, false);
+  assert.deepEqual(f.call('tasks',{sid:sent.sid}).tasks, []);
+  fs.writeFileSync(f.root+'/mode', 'ok');
+  const next = f.call('send', {sid:sent.sid,text:'下一句话'});
+  assert.equal((await f.wait(next.run)).events.find(e=>e.t==='done').model, 'gemini-4-hydrogen');
+ });
+}
 test('Hydrogen 在记忆操作后超时，不把这一轮交给备用模型重新执行', async t => {
  const f = fixture(t, 'stalled_after_memory');
  f.env.XIN_AGY_PROMPT_MS = '900';
