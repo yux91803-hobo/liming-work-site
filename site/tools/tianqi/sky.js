@@ -36,8 +36,8 @@
     var INK = html.dataset.theme === 'light', PAL;
     function setPalette() {
       PAL = INK
-        ? { trail: [168, 116, 30], head: [92, 60, 8], meteor: [[30, 44, 78], [150, 104, 28]], op: 'source-over', glowA: .09, bloomA: .2 }
-        : { trail: [243, 223, 174], head: [255, 250, 238], meteor: [[255, 248, 232], [196, 255, 222]], op: 'lighter', glowA: .16, bloomA: .42 };
+        ? { trail: [168, 116, 30], head: [92, 60, 8], pTrail: [53, 88, 200], pHead: [24, 44, 120], meteor: [[30, 44, 78], [150, 104, 28]], op: 'source-over', glowA: .09, bloomA: .2 }
+        : { trail: [243, 223, 174], head: [255, 250, 238], pTrail: [157, 184, 255], pHead: [232, 238, 255], meteor: [[255, 248, 232], [196, 255, 222]], op: 'lighter', glowA: .16, bloomA: .42 };
     }
     setPalette();
     var gl = null;
@@ -128,8 +128,8 @@
         c.fillStyle = rgba(p.c, a); c.beginPath(); c.arc(p.x, p.y, p.s * (.5 + .5 * left), 0, 6.283); c.fill();
       }
     }
-    /* 输入框边上走的星：天启在想、在做事的时候才有 */
-    var orbit = { on: false, d: 0 }, P = {}, Q = {};
+    /* 输入框边上走的星：天启在想、在做事的时候才有；计划模式下是蓝的 */
+    var orbit = { on: false, d: 0, plan: false }, P = {}, Q = {};
     function rrPoint(x, y, w, h, r, dist, out) {
       var sw = w - 2 * r, sh = h - 2 * r, arc = Math.PI * r / 2, per = 2 * (sw + sh) + 4 * arc;
       dist = ((dist % per) + per) % per;
@@ -150,7 +150,7 @@
     }
     function drawOrbit(dt) {
       var b = box.getBoundingClientRect(); if (!b.width || !b.height) return;
-      var r = parseFloat(getComputedStyle(box).borderTopLeftRadius) || 22, trail = PAL.trail, head = PAL.head;
+      var r = parseFloat(getComputedStyle(box).borderTopLeftRadius) || 22, trail = orbit.plan ? PAL.pTrail : PAL.trail, head = orbit.plan ? PAL.pHead : PAL.head;
       var per = rrPoint(b.left, b.top, b.width, b.height, r, 0, P), L = 170, steps = 44;
       orbit.d += per / 4.2 * dt;
       rrPoint(b.left, b.top, b.width, b.height, r, orbit.d, P);
@@ -291,7 +291,8 @@
     tabs.forEach(function (t) { t.addEventListener('click', function () { L.touched = true; select(t.dataset.tab); }); });
     $('.tq-tabs').addEventListener('keydown', function (e) {
       if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-      var i = tabs.map(function (t) { return t.dataset.tab; }).indexOf(tab), n = tabs[(i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+      // 藏着的标签（没计划时的「计划」）跳过
+      var vis = tabs.filter(function (t) { return !t.hidden; }), i = vis.map(function (t) { return t.dataset.tab; }).indexOf(tab), n = vis[(i + (e.key === 'ArrowRight' ? 1 : -1) + vis.length) % vis.length];
       select(n.dataset.tab, true); e.preventDefault();
     });
     function notify(name) {
@@ -402,7 +403,10 @@
           var last = $$('.xc-ai', msgs).pop();
           if (last) { var r = last.getBoundingClientRect(); spawnMeteor({ big: true, x: Math.min(W * .8, r.right + 40), y: Math.max(40, r.top - 60) }); }
         }
+        hook();
       }
+      // 「按计划执行」在做的时候不能点：按钮是按画的那一刻在不在做画的，和现在不一样就重画（一轮很快做完时上面的 busy 可能根本没变过）
+      if (now !== actsBusy && latest) planActs();
       var chip = $('.tq-li2'), ok = !!(s.enabled && s.authed && !s.tqNoGw), warn = !!(s.enabled && s.authed && s.tqNoGw);
       chip.classList.toggle('ok', ok); chip.classList.toggle('warn', warn);
       chip.title = ok ? 'li2 在线' : warn ? 'li2 的网关还没配好' : 'li2 还没连上';
@@ -418,6 +422,12 @@
         return '<h3>外观</h3><p>夜空的星会发光；星图像印在纸上的星表。</p><div class="tq-themes" role="radiogroup" aria-label="外观">' +
           [['dark', '夜空', 'tq-th-dark'], ['light', '星图', 'tq-th-light'], ['auto', '跟随系统', 'tq-th-auto']].map(function (t) { return '<button class="tq-theme" type="button" role="radio" aria-checked="' + (themePref() === t[0]) + '" data-theme-set="' + t[0] + '"><i class="' + t[2] + '"></i>' + t[1] + '</button>'; }).join('') +
           '</div><h3>动态</h3><p>系统开了「减少动态」时，星不闪、流星不出现。</p><div class="tq-set-row"><div><b>流星</b><p>偶尔划过一颗；天启答完时也会有一颗。</p></div><button class="tq-sw" type="button" role="switch" aria-checked="' + meteorsOn + '" data-sw="meteor" aria-label="流星"></button></div>';
+      },
+      perm: function () {
+        var d = defPerm();
+        return '<h3>默认权限</h3><p>新对话用这一档。对话里点输入框旁边的权限按钮可以换，只管那一个对话。</p><div class="tq-perms" role="radiogroup" aria-label="默认权限">' +
+          PERMS.map(function (p) { return '<button class="tq-permopt' + (p[0] === FULL ? ' risk' : '') + '" type="button" role="radio" aria-checked="' + (d === p[0]) + '" data-perm-def="' + p[0] + '"><b>' + p[1] + '</b><span>' + p[3] + '</span></button>'; }).join('') +
+          '</div><p class="tq-set-note">计划模式那一轮总是只读。沙箱用 li2 内核的 Landlock：只读时什么文件都写不了，工作区内修改时只能写工作目录 ' + WORK + '。没人能当场批准，越过沙箱的操作直接被拒。</p>';
       },
       plug: function () {
         return '<h3>插件</h3><p>装在 li2 上的 Harness 插件。开关存在 li2 上，下一轮就生效。</p><button class="tq-btn" type="button" data-act="plugins">打开插件开关</button>';
@@ -459,6 +469,10 @@
         setTimeout(function () { showSec('look'); var f = $('.tq-theme[aria-checked="true"]', modal); if (f) f.focus(); }, 0);
       } else if (b.dataset.sw === 'meteor') {
         meteorsOn = !meteorsOn; store.set('meteor', meteorsOn ? null : 'off'); b.setAttribute('aria-checked', String(meteorsOn)); if (meteorsOn) spawnMeteor();
+      } else if (b.dataset.permDef) {
+        store.set('perm', b.dataset.permDef === FULL ? null : b.dataset.permDef);
+        if (!state().sid) { cfg.perm = b.dataset.permDef; syncChips(); }   // 还没发第一句的新对话也跟着换
+        setTimeout(function () { showSec('perm'); var f = $('.tq-permopt[aria-checked="true"]', modal); if (f) f.focus(); }, 0);
       } else if (b.dataset.act === 'logout') {
         closeSettings(); var o = $('.xc-dr-out'); if (o) o.click();   // chat.js 的退出登录（左栏里藏着）
       } else if (b.dataset.act === 'plugins') {
@@ -473,10 +487,162 @@
       else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { f[0].focus(); e.preventDefault(); }
     });
 
+    /* ================= 权限和计划（第 2 个 PR，设计 §3） =================
+       三档权限是 Harness 自带的预设（vm-persona.mjs）：对话记住自己的权限，新对话用设置里的默认（lm.tq.perm，默认完全权限，和以前一样）。
+       计划模式那一轮控制器固定只读、任务前面加计划要求；计划出来以后点「按计划执行」，再按对话的权限动手。
+       照 Harness 的 dsh-client-ui-permission-presets（输入框里切这个对话的、设置里改以后的默认）和 dsh-client-ui-plan、dsh-plan-mode
+       （计划在右栏打开，对话里留一张卡片；通过才动手，「继续改计划」接着改）。 */
+    var PERMS = [
+      ['read-only', '只读', '只读', '只看文件、跑只读命令，不改任何东西'],
+      ['workspace-write', '工作区内修改', '工作区', '能改工作目录里的文件、运行命令'],
+      ['danger-full-access', '完全权限', '完全', '还能改工作目录外的文件和 li2 的系统设置']
+    ], RO = 'read-only', FULL = 'danger-full-access';
+    function permOf(v) { return PERMS.filter(function (p) { return p[0] === v; })[0] || null; }
+    function defPerm() { var v = store.get('perm'); return permOf(v) ? v : FULL; }
+    var cfg = { perm: permOf(state().tqPerm) ? state().tqPerm : defPerm(), plan: false };
+    var permBtn = $('#tq-perm'), planBtn = $('#tq-plan'), PH0 = say.getAttribute('placeholder') || '给天启发消息';
+    // chat.js 发消息时来问这一句带什么权限、是不是计划（只在天启模式里问）
+    function tqOpts() { return { perm: cfg.perm, plan: cfg.plan }; }
+    function hook() { var c = chat(); if (c && c.tqOpts !== tqOpts) c.tqOpts = tqOpts; }
+    hook();
+    function syncChips() {
+      var p = permOf(cfg.perm);
+      $('.tq-perm-n', permBtn).textContent = p[2];
+      permBtn.setAttribute('aria-label', '权限：' + p[1]);
+      permBtn.classList.toggle('full', cfg.perm === FULL); permBtn.classList.toggle('ro', cfg.perm === RO);
+      planBtn.setAttribute('aria-pressed', String(cfg.plan));
+      box.classList.toggle('plan', cfg.plan); orbit.plan = cfg.plan;
+      // chat.js 每次重画会按 tqPh 写回提示，计划模式下就一直是这句
+      var s = state(), ph = cfg.plan ? '说说要做什么，天启先出计划，你确认后再动手' : PH0;
+      if (s) s.tqPh = cfg.plan ? ph : '';
+      say.setAttribute('placeholder', ph);
+      planActs();
+    }
+    // 弹层：这个对话的权限。完全权限要再确认一次（原型 v4；Harness 的 picker 也是先确认再切）
+    var pop = document.createElement('div'); pop.className = 'tq-pop'; pop.id = 'tq-perm-pop'; pop.hidden = true; root.appendChild(pop);
+    var CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>';
+    function permMenu(confirm) {
+      pop.setAttribute('role', confirm ? 'dialog' : 'menu'); pop.setAttribute('aria-label', '这个对话的权限');
+      pop.innerHTML = confirm
+        ? '<div class="tq-confirm" role="alert"><p>完全权限下，天启能改 li2 上的任何文件，包括系统设置。只在这个对话里生效。</p><div class="tq-acts"><button class="tq-btn" type="button" data-cancel="1">取消</button><button class="tq-btn go-risk" type="button" data-perm="' + FULL + '" data-sure="1">换成完全权限</button></div></div>'
+        : '<p class="tq-pop-h">这个对话的权限</p>' + PERMS.map(function (p) { return '<button class="tq-opt' + (p[0] === FULL ? ' risk' : '') + '" type="button" role="menuitemradio" aria-checked="' + (p[0] === cfg.perm) + '" data-perm="' + p[0] + '"><span class="tq-opt-t"><span>' + p[1] + '</span><small>' + p[3] + '</small></span>' + CHECK + '</button>'; }).join('');
+    }
+    function placePop() {
+      var b = permBtn.getBoundingClientRect(), w = pop.offsetWidth, hh = pop.offsetHeight;
+      var x = Math.max(12, Math.min(innerWidth - w - 12, b.left)), y = b.top - hh - 8;
+      if (y < 12) y = Math.max(12, Math.min(innerHeight - hh - 12, b.bottom + 8));
+      pop.style.left = x + 'px'; pop.style.top = y + 'px';
+    }
+    function focusOpt() { var f = $('.tq-opt[aria-checked="true"]', pop) || $('.tq-opt', pop); if (f) f.focus(); }
+    function openPop() {
+      permMenu(false); pop.hidden = false; placePop(); permBtn.setAttribute('aria-expanded', 'true');
+      if (!REDUCE) { pop.classList.remove('in'); void pop.offsetWidth; pop.classList.add('in'); }
+      focusOpt();
+    }
+    function closePop(back) { if (pop.hidden) return false; pop.hidden = true; permBtn.setAttribute('aria-expanded', 'false'); if (back) permBtn.focus(); return true; }
+    permBtn.addEventListener('click', function () { if (pop.hidden) openPop(); else closePop(true); });
+    pop.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.cancel) { permMenu(false); placePop(); focusOpt(); return; }
+      var v = b.dataset.perm; if (!permOf(v)) return;
+      if (v === FULL && cfg.perm !== FULL && !b.dataset.sure) { permMenu(true); placePop(); $('[data-cancel]', pop).focus(); return; }
+      cfg.perm = v; syncChips(); closePop(true);
+    });
+    pop.addEventListener('keydown', function (e) {
+      if (['ArrowDown', 'ArrowUp', 'Home', 'End'].indexOf(e.key) < 0) return;
+      var o = $$('.tq-opt', pop); if (!o.length) return;
+      var i = o.indexOf(document.activeElement), n = e.key === 'Home' ? 0 : e.key === 'End' ? o.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + o.length) % o.length;
+      o[n].focus(); e.preventDefault();
+    });
+    document.addEventListener('pointerdown', function (e) { if (!pop.hidden && !pop.contains(e.target) && !permBtn.contains(e.target)) closePop(false); }, true);
+    addEventListener('resize', function () { if (!pop.hidden) placePop(); });
+    planBtn.addEventListener('click', function () { cfg.plan = !cfg.plan; syncChips(); });
+
+    // 计划：对话里一张卡片（标题、几步、按计划执行 / 继续改计划 / 看计划），右栏「计划」放全文
+    var plans = {}, latest = '', shown = '', planBox = $('.tq-plan-box'), planTab = $('#tq-tab-plan');
+    var PLAN_IC = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6.5h10M10 12h10M10 17.5h10"/><path d="M3.8 6.4l1.3 1.3 2.3-2.4M3.8 11.9l1.3 1.3 2.3-2.4M3.8 17.4l1.3 1.3 2.3-2.4"/></svg>';
+    function planTitle(text) { var m = /^\s*#{1,3}\s+(.+)$/m.exec(text || ''); return ((m ? m[1] : String(text || '').trim().split('\n')[0]) || '计划').replace(/[*_`#]/g, '').trim().slice(0, 80); }
+    function planSteps(text) { return (String(text || '').match(/^\s*\d+[.)、]\s+\S/gm) || []).length; }
+    function mdEl(text) { var c = chat(); if (c && c.md) { try { return c.md(text); } catch (e) { /* 画不了就放原文 */ } } var pre = document.createElement('pre'); pre.textContent = text; return pre; }
+    // 最新的这份、而且后面还没再说过话，才能「按计划执行」；以前的只能看
+    function isLive(run) {
+      var p = plans[run]; if (!p || run !== latest || !p.card || !document.contains(p.card)) return false;
+      var mine = $$('.xc-me', msgs), last = mine[mine.length - 1];
+      return !(last && (p.card.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING));
+    }
+    function actsFor(run, inDoc) {
+      var s = state(), live = isLive(run), ro = cfg.perm === RO, busyNow = !!(s && (s.run || s.sending));
+      var sig = [run, live, ro, busyNow, inDoc].join('|'), w = document.createElement('div');
+      w.className = 'tq-acts'; w.dataset.run = run; w.dataset.sig = sig;
+      if (live) w.innerHTML = '<button class="tq-btn primary" type="button" data-plan-act="run"' + (ro || busyNow ? ' disabled' : '') + '>按计划执行</button><button class="tq-btn" type="button" data-plan-act="edit">继续改计划</button>' +
+        (inDoc ? '' : '<button class="tq-btn" type="button" data-plan-act="open">看计划</button>') +
+        (ro ? '<p class="tq-btn-note">现在是只读权限，改不了文件。先把权限换成「工作区内修改」或「完全权限」。</p>' : '');
+      else if (!inDoc) w.innerHTML = '<button class="tq-btn" type="button" data-plan-act="open">看计划</button>';
+      else return null;
+      return w;
+    }
+    // 状态变了才换按钮（换了会丢焦点）
+    function swapActs(host, run, inDoc) {
+      if (!host) return;
+      var old = $(':scope > .tq-acts', host), nu = actsFor(run, inDoc);
+      if (old && nu && old.dataset.sig === nu.dataset.sig) return;
+      if (old) old.remove(); if (nu) host.appendChild(nu);
+    }
+    var actsBusy = false;
+    function planActs() {
+      var s = state(); actsBusy = !!(s && (s.run || s.sending));
+      Object.keys(plans).forEach(function (run) { swapActs(plans[run].card, run, false); });
+      swapActs($('.tq-plan-doc', planBox), shown, true);
+    }
+    function renderPlanDoc() {
+      planBox.innerHTML = '';
+      var p = plans[shown]; if (!p) return;
+      var doc = document.createElement('article'); doc.className = 'tq-plan-doc';
+      doc.appendChild(mdEl(p.text)); planBox.appendChild(doc);
+      swapActs(doc, shown, true);
+    }
+    function openPlan(run, focus) {
+      if (!plans[run]) return;
+      shown = run; renderPlanDoc(); planTab.hidden = false;
+      L.touched = true; toggleRight(true); select('plan', focus);
+    }
+    function resetPlans() { plans = {}; latest = shown = ''; planBox.innerHTML = ''; planTab.hidden = true; planTab.classList.remove('has'); if (tab === 'plan') select('files'); }
+    document.addEventListener('tq:plan', function (e) {
+      var d = e.detail || {}; if (!d.run || !d.text || plans[d.run]) return;
+      var card = document.createElement('div'); card.className = 'tq-plan-card' + (d.old || REDUCE ? '' : ' enter'); card.dataset.run = d.run;
+      card.innerHTML = '<div class="tq-pc-top">' + PLAN_IC + '<span></span></div><p></p>';
+      $('.tq-pc-top span', card).textContent = '计划：' + planTitle(d.text);
+      var n = planSteps(d.text); $('p', card).textContent = (n ? n + ' 步。' : '') + '完整计划在右边「计划」里。';
+      var el = d.el && document.contains(d.el) ? d.el : null;
+      if (el) { el.classList.add('tq-planned'); el.insertBefore(card, $(':scope > .xc-acts', el)); } else msgs.appendChild(card);
+      plans[d.run] = { text: d.text, card: card }; latest = d.run;
+      planTab.hidden = false; moveInk();
+      if (!shown || !d.old) { shown = d.run; renderPlanDoc(); }
+      planActs();
+      // 刚出的计划：宽屏、中屏直接在右栏打开（Harness 的计划也是交上来就打开），窄屏和手机亮个小点
+      if (!d.old) { if (L.mode === 'wide' || L.mode === 'mid') openPlan(d.run, false); else notify('plan'); }
+    });
+    root.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-plan-act]'); if (!b || b.disabled) return;
+      var act = b.dataset.planAct, run = b.closest('[data-run]').dataset.run;
+      if (act === 'open') openPlan(run, true);
+      else if (act === 'edit') { cfg.plan = true; syncChips(); if (L.mode === 'phone') toggleRight(false); say.focus(); }
+      else if (act === 'run') { cfg.plan = false; syncChips(); if (L.mode === 'phone') toggleRight(false); var c = chat(); if (c && c.tqSend) c.tqSend('按计划执行'); }
+    });
+    // 换对话：权限换成这个对话记下的（新对话用默认），计划模式关掉，右栏的计划清掉（读历史时会再画回来）
+    document.addEventListener('tq:session', function (e) {
+      var d = e.detail || {};
+      cfg.perm = permOf(d.perm) ? d.perm : defPerm(); cfg.plan = false; closePop(false);
+      resetPlans(); syncChips();
+    });
+    new MutationObserver(function (list) { if (list.some(function (m) { return [].some.call(m.addedNodes, function (n) { return n.nodeType === 1 && (n.matches('.xc-me') || n.querySelector('.xc-me')); }); })) planActs(); }).observe(msgs, { childList: true, subtree: true });
+    syncChips();
+
     /* ================= 快捷键 =================
        在 window 的捕获阶段最先处理：chat.js 在没有弹层时按 Esc 会关掉整个天启，设置和手机上的面板要先把 Esc 接住 */
     window.addEventListener('keydown', function (e) {
       var mod = e.ctrlKey || e.metaKey, k = (e.key || '').toLowerCase(), stop = function () { e.preventDefault(); e.stopImmediatePropagation(); };
+      if (e.key === 'Escape' && closePop(true)) { stop(); return; }
       if (!modal.hidden) { if (e.key === 'Escape') { stop(); closeSettings(); } return; }
       if (root.classList.contains('locked')) return;
       if (mod && !e.shiftKey && !e.altKey && k === 'b') { e.preventDefault(); toggleLeft(); }

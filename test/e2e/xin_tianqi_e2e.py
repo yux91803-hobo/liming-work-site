@@ -34,6 +34,8 @@ def load_tq_ops():
 
 
 TQ_OPS = load_tq_ops()
+# 计划模式那一轮天启交回来的计划（第一行 # 标题，编号列步骤）
+PLAN_MD = '# 把 LED 闪烁改成 200 ms\n\n现在主循环里是 `HAL_Delay(500)`，亮灭各半秒。\n\n1. 把 `main.c` 里的延时改成 200\n2. 编译，确认没有新警告\n3. 核对固件大小没有异常\n\n不做：烧录到板子（li2 没接开发板）。'
 
 
 async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=False, xin_enabled=False):
@@ -52,6 +54,8 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
         'plugins': {'purge': True, 'rea': False},
         'plugin_updates': [],
         'files_reqs': [],
+        'hist_perm': None,     # 旧对话记下的权限（history 的 session.perm）
+        'hist_plan': False,    # 旧对话里有一轮计划、后面又按计划执行过
         'sessions': [
             {'sid': 'stq000001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1762214400000},
         ],
@@ -113,7 +117,16 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             st['plugins'][args['name']] = args['on']
             return await ok({'ok': True, 'data': {'on': args['on']}})
         if op == 'history':
-            return await ok({'ok': True, 'data': {'session': {'sid': args.get('sid'), 'agent': 'harness', 'title': '天启旧对话', 'model': 'deepseek-v4.1-flash'}, 'runs': [{'run': 'rhist0001', 'events': [{'t': 'user', 'text': '老问题'}, {'t': 'text', 'text': '老回答'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 800, 'model': 'deepseek-v4.1-flash'}], 'done': True}], 'active': None}})
+            sess = {'sid': args.get('sid'), 'agent': 'harness', 'title': '天启旧对话', 'model': 'deepseek-v4.1-flash'}
+            if st['hist_perm']:
+                sess['perm'] = st['hist_perm']
+            runs = [{'run': 'rhist0001', 'events': [{'t': 'user', 'text': '老问题'}, {'t': 'text', 'text': '老回答'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 800, 'model': 'deepseek-v4.1-flash'}], 'done': True}]
+            if st['hist_plan']:
+                runs += [
+                    {'run': 'rhist0002', 'events': [{'t': 'user', 'text': '把 LED 改快一点', 'plan': True}, {'t': 'text', 'text': PLAN_MD}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 900, 'plan': True}], 'done': True},
+                    {'run': 'rhist0003', 'events': [{'t': 'user', 'text': '按计划执行'}, {'t': 'text', 'text': '改好了，编译通过。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 900}], 'done': True},
+                ]
+            return await ok({'ok': True, 'data': {'session': sess, 'runs': runs, 'active': None}})
         if op == 'files':
             p = args.get('path') or '/data/workspace'
             st['files_reqs'].append(p)
@@ -139,7 +152,7 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
                     'retryAfter': 1,
                     'delivery': {'id': 'dtq0001', 'state': 'pending', 'wait': {'state': 'waking'}},
                 })
-            return await ok({'ok': True, 'data': {'sid': args.get('sid') or 'stqnew0001', 'run': 'rtq0001', 'agent': 'harness'}})
+            return await ok({'ok': True, 'data': {'sid': args.get('sid') or 'stqnew0001', 'run': 'rtq%04d' % len(st['sends']), 'agent': 'harness'}})
         if op == 'delivery':
             st['delivery_checks'] += 1
             if st['delivery_checks'] == 1:
@@ -148,10 +161,11 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
         if op == 'poll':
             st['polls'] += 1
             reply = '唤醒后回复完成。' if args.get('run') == 'rtqwake01' else '你好，我是天启。'
+            planned = bool(st['sends'] and st['sends'][-1].get('plan'))
             evs = [
-                {'t': 'user', 'text': st['last_text']},
-                {'t': 'text', 'text': reply},
-                {'t': 'done', 'ok': True, 'code': 0, 'ms': 1200, 'model': 'deepseek-v4.1-flash'},
+                dict({'t': 'user', 'text': st['last_text']}, **({'plan': True} if planned else {})),
+                {'t': 'text', 'text': PLAN_MD if planned else reply},
+                dict({'t': 'done', 'ok': True, 'code': 0, 'ms': 1200, 'model': 'deepseek-v4.1-flash'}, **({'plan': True} if planned else {})),
             ]
             return await ok({'ok': True, 'data': {'events': evs, 'off': len(evs), 'done': True}})
         return await ok({'ok': True, 'data': {}})
@@ -199,7 +213,8 @@ async def main():
             brand: document.querySelector('.tq-brand h1')?.textContent,
             star: !!document.querySelector('.tq-brand .xc-tq'),
             sky: document.querySelectorAll('.xc.tq-mode canvas.tq-sky').length,
-            tabs: [...document.querySelectorAll('.tq-tab')].map(e => e.textContent.trim()),
+            tabs: [...document.querySelectorAll('.tq-tab:not([hidden])')].map(e => e.textContent.trim()),
+            planTabHidden: document.querySelector('#tq-tab-plan').hidden,
             foot: [...document.querySelectorAll('.tq-side-foot .tq-row')].filter(e => e.offsetParent).map(e => e.textContent.trim()),
             history: [...document.querySelectorAll('.tq-side .xc-si-t')].map(e => e.textContent),
             files: [...document.querySelectorAll('.tq-pane .xc-fi-n')].map(e => e.textContent),
@@ -210,7 +225,7 @@ async def main():
         })()""")
         ui.check('三栏：左边对话记录常驻、中间对话、右边文件终端预览，夜空三层画布，页面无小芯功能', info['fullScreen'] and info['columns']
                  and info['brand'] == '天启' and info['star'] and info['sky'] == 3 and info['noXiaoxinControls']
-                 and info['tabs'] == ['文件', '终端', '预览'] and info['foot'] == ['设置', '插件']
+                 and info['tabs'] == ['文件', '终端', '预览'] and info['planTabHidden'] and info['foot'] == ['设置', '插件']
                  and info['history'] == ['天启旧对话'] and 'stm32-blink' in info['files'] and st['files_reqs'][:1] == ['/data/workspace']
                  and info['placeholder'] == '给天启发消息' and '小芯' not in info['bodyText'], info)
         await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
@@ -234,6 +249,10 @@ async def main():
         await pg.keyboard.press('Control+j')
         opened = await pg.evaluate("document.querySelector('.tq-frame').dataset.right")
         ui.check('Ctrl+B 把左栏收成窄条、Ctrl+J 收起和打开右栏', (rail, closed, opened) == ('rail', 'closed', 'open'), (rail, closed, opened))
+        await pg.locator('#tq-tab-prev').click()
+        await pg.keyboard.press('ArrowRight')
+        wrapped = await pg.evaluate("[document.activeElement.id, document.querySelector('#tq-tab-files').getAttribute('aria-selected'), document.querySelector('#tq-tab-plan').getAttribute('aria-selected')]")
+        ui.check('右栏标签用方向键切换：从「预览」往右绕回「文件」，跳过藏着的「计划」', wrapped == ['tq-tab-files', 'true', 'false'], wrapped)
         await pg.get_by_role('button', name='设置', exact=True).click()
         await pg.wait_for_selector('#tq-settings.on')
         await pg.get_by_role('radio', name='星图').click()
@@ -280,6 +299,118 @@ async def main():
             and not bad_ops and st['xin_reqs'] == [],
             (sent, after_text, bad_ops, st['xin_reqs']),
         )
+        await pg.context.close()
+
+        # 2b. 权限和计划（第 2 个 PR）：输入框里的权限按钮切这个对话的、完全权限要再确认；计划模式那一句带 plan，
+        #     计划出来后对话里一张卡片、右栏「计划」打开；只读时「按计划执行」不能点；按计划执行用对话的权限；设置里改默认权限
+        pg = await ui.page(browser, 1280, 860)
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        perm = pg.locator('#tq-perm')
+        first = (await perm.get_attribute('aria-label'), await perm.text_content(), await pg.locator('#tq-plan').get_attribute('aria-pressed'))
+        await perm.click()
+        menu = pg.get_by_role('menu', name='这个对话的权限')
+        await menu.wait_for()
+        opts = await menu.get_by_role('menuitemradio').evaluate_all("es => es.map(e => [e.querySelector('.tq-opt-t > span').textContent, e.getAttribute('aria-checked')])")
+        focused = await pg.evaluate("document.activeElement?.dataset?.perm")
+        await menu.get_by_role('menuitemradio', name='只读').click()
+        ro_label = await perm.text_content()
+        await perm.click()
+        await pg.get_by_role('menuitemradio', name='完全权限').click()
+        confirm = await pg.locator('.tq-confirm').text_content()
+        await pg.get_by_role('button', name='取消').click()
+        still_ro = await perm.text_content()
+        await pg.get_by_role('menuitemradio', name='工作区内修改').click()
+        ui.check('权限按钮：默认完全权限；弹出三档（当前那档打勾、焦点在它上面）；切只读；切完全权限要再确认，取消就不换；换成工作区内修改',
+                 first == ('权限：完全权限', '完全', 'false') and opts == [['只读', 'false'], ['工作区内修改', 'false'], ['完全权限', 'true']]
+                 and focused == 'danger-full-access' and ro_label == '只读' and '能改 li2 上的任何文件' in (confirm or '')
+                 and still_ro == '只读' and await perm.text_content() == '工作区' and not await menu.is_visible(),
+                 (first, opts, focused, ro_label, confirm, still_ro))
+        await perm.click()
+        await menu.wait_for()
+        await pg.keyboard.press('Escape')
+        esc = (await menu.is_visible(), await pg.locator('.xc.wb.show.tq-mode').count(), await perm.evaluate('e => document.activeElement === e'))
+        await pg.locator('#tq-plan').click()
+        plan_on = await pg.evaluate("""(() => ({ pressed: document.querySelector('#tq-plan').getAttribute('aria-pressed'),
+          box: document.querySelector('.tq-box').classList.contains('plan'), ph: document.querySelector('.tq-entry textarea').placeholder }))()""")
+        ui.check('Esc 只收起权限弹层（天启不关、焦点回按钮）；点「计划」进计划模式：输入框变蓝、提示换成先出计划',
+                 esc == (False, 1, True) and plan_on == {'pressed': 'true', 'box': True, 'ph': '说说要做什么，天启先出计划，你确认后再动手'}, (esc, plan_on))
+        await pg.fill('.xc-row textarea', '把 LED 改快一点')
+        await pg.press('.xc-row textarea', 'Enter')
+        await pg.wait_for_selector('.tq-plan-card')
+        await pg.wait_for_function(ui.CHAT_DONE)
+        # 这一轮还在收尾时「按计划执行」是灰的，做完才能点
+        await pg.wait_for_function("!document.querySelector('.tq-plan-card [data-plan-act=run]').disabled")
+        sent = st['sends'][-1]
+        card = await pg.evaluate("""(() => {
+          const c = document.querySelector('.tq-plan-card'), m = c.closest('.xc-ai');
+          return { title: c.querySelector('.tq-pc-top span').textContent, sum: c.querySelector('p').textContent,
+            bubble: m ? getComputedStyle(m.querySelector(':scope > .xc-bub')).display : '',
+            acts: [...c.querySelectorAll('.tq-acts button')].map(b => [b.textContent, b.disabled]),
+            tag: [...document.querySelectorAll('.xc-me .tq-plan-tag')].map(e => e.textContent),
+            tab: !document.querySelector('#tq-tab-plan').hidden && document.querySelector('#tq-tab-plan').getAttribute('aria-selected'),
+            doc: document.querySelector('#tq-p-plan:not([hidden]) .tq-plan-doc h4')?.textContent,
+            steps: document.querySelectorAll('#tq-p-plan .tq-plan-doc ol > li').length,
+            ph: document.querySelector('.tq-entry textarea').placeholder };
+        })()""")
+        ui.check('计划模式发出去带 plan、权限是对话的；计划出来：用户那句标「计划」，回答换成计划卡片（标题、3 步），右栏「计划」打开、有标题和三步',
+                 sent.get('plan') is True and sent.get('perm') == 'workspace-write' and card['title'] == '计划：把 LED 闪烁改成 200 ms'
+                 and card['sum'].startswith('3 步') and card['bubble'] == 'none' and card['tag'] == ['计划']
+                 and card['acts'] == [['按计划执行', False], ['继续改计划', False], ['看计划', False]]
+                 and card['tab'] == 'true' and card['doc'] == '把 LED 闪烁改成 200 ms' and card['steps'] == 3
+                 and card['ph'] == '说说要做什么，天启先出计划，你确认后再动手', (sent, card))
+        await perm.click()
+        await pg.get_by_role('menuitemradio', name='只读').click()
+        ro_card = await pg.evaluate("""(() => { const c = document.querySelector('.tq-plan-card');
+          return [c.querySelector('[data-plan-act=run]').disabled, c.querySelector('.tq-btn-note')?.textContent || ''] })()""")
+        await perm.click()
+        await pg.get_by_role('menuitemradio', name='工作区内修改').click()
+        n_sends = len(st['sends'])
+        await pg.locator('.tq-plan-card').get_by_role('button', name='按计划执行').click()
+        await pg.wait_for_function("[...document.querySelectorAll('.xc-me .xc-bub')].some(e => e.textContent === '按计划执行')")
+        await pg.wait_for_function(ui.CHAT_DONE + " && [...document.querySelectorAll('.xc-ai .xc-bub')].some(e => e.textContent.includes('你好，我是天启'))", timeout=10000)
+        run_sent = st['sends'][-1] if len(st['sends']) > n_sends else {}
+        after = await pg.evaluate("""(() => ({ pressed: document.querySelector('#tq-plan').getAttribute('aria-pressed'),
+          acts: [...document.querySelector('.tq-plan-card').querySelectorAll('.tq-acts button')].map(b => b.textContent),
+          ph: document.querySelector('.tq-entry textarea').placeholder }))()""")
+        ui.check('只读时「按计划执行」不能点并说明；换回工作区内修改后点它：发「按计划执行」、不带 plan、权限是对话的；计划模式关掉，旧卡片只剩「看计划」',
+                 ro_card[0] is True and '只读' in ro_card[1] and run_sent.get('text') == '按计划执行' and not run_sent.get('plan')
+                 and run_sent.get('perm') == 'workspace-write' and after == {'pressed': 'false', 'acts': ['看计划'], 'ph': '给天启发消息'}, (ro_card, run_sent, after))
+        await pg.get_by_role('button', name='设置', exact=True).click()
+        await pg.wait_for_selector('#tq-settings.on')
+        await pg.locator('.tq-set-tab', has_text='权限').click()
+        await pg.get_by_role('radio', name=re.compile('^只读')).click()
+        saved = await pg.evaluate("localStorage.getItem('lm.tq.perm')")
+        await pg.keyboard.press('Escape')
+        await pg.wait_for_selector('#tq-settings', state='hidden')
+        await pg.get_by_role('button', name='新建对话').click()
+        await pg.get_by_text('从一个问题开始探索').wait_for()
+        new_label = await perm.text_content()
+        st['hist_perm'] = 'workspace-write'
+        st['hist_plan'] = True
+        await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
+        await pg.get_by_text('改好了，编译通过。', exact=True).wait_for()
+        hist = await pg.evaluate("""(() => ({ label: document.querySelector('#tq-perm .tq-perm-n').textContent,
+          cards: [...document.querySelectorAll('.tq-plan-card')].map(c => [...c.querySelectorAll('.tq-acts button')].map(b => b.textContent)),
+          tab: !document.querySelector('#tq-tab-plan').hidden }))()""")
+        ui.check('设置里把默认权限改成只读（存在 lm.tq.perm），新对话用它；打开记着工作区内修改的旧对话，按钮跟着换；旧计划刷新后还在、只能看',
+                 saved == 'read-only' and new_label == '只读' and hist == {'label': '工作区', 'cards': [['看计划']], 'tab': True}, (saved, new_label, hist))
+        await pg.context.close()
+        # 手机：计划卡片和正文一样占满整行（回答是两栏网格，没指定的话会掉进头像那一栏，挤成一条竖线）；右栏不自动升起，「计划」亮个小点
+        pg = await ui.page(browser, 390, 844)
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.locator('#tq-plan').click()
+        await pg.fill('.xc-row textarea', '把 LED 改快一点')
+        await pg.press('.xc-row textarea', 'Enter')
+        await pg.wait_for_selector('.tq-plan-card')
+        await pg.wait_for_function(ui.CHAT_DONE)
+        phone = await pg.evaluate("""(() => { const c = document.querySelector('.tq-plan-card').getBoundingClientRect(), m = document.querySelector('.tq-mid').getBoundingClientRect();
+          return { w: Math.round(c.width), share: Math.round(c.width / m.width * 100), right: document.querySelector('.tq-frame').dataset.right,
+            dot: document.querySelector('#tq-tab-plan').classList.contains('has'), chips: [...document.querySelectorAll('.tq-instruments > *')].every(e => e.getBoundingClientRect().right <= document.querySelector('.tq-box').getBoundingClientRect().right + 0.5) }; })()""")
+        ui.check('手机：计划卡片占满整行；右栏不自动升起、「计划」亮小点；输入框里的按钮都在框内', phone['share'] >= 80 and phone['right'] == 'closed' and phone['dot'] and phone['chips'], phone)
         await pg.context.close()
 
         # 3. 没登录

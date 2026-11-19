@@ -45,7 +45,7 @@
 | 终端 | term.js 的回合终端（天启这一轮跑的命令） | 已有，从浮动窗口换到右栏 |
 | 终端里自己输命令 | li2 控制器新操作：在工作目录里跑一条命令（限时、限输出） | 新做 |
 | 预览 | 文件里的图、svg、网页、markdown；回答里提到的这类路径能点开 | 新做（读文件用已有接口） |
-| 权限（只读 / 工作区内修改 / 完全权限） | `dsh --profile headless --permission-mode <预设>`；预设写进补丁（沙箱 read-only / workspace-write / danger-full-access，审批 never） | 新做 |
+| 权限（只读 / 工作区内修改 / 完全权限） | `dsh --profile headless --permission-mode <预设> --approval-policy never`；三档是 Harness 基础配置自带的（`dsh-base` 的 `permission`：read-only / workspace-write / danger-full-access） | 第 2 个 PR 做了 |
 | 计划模式 | 这一轮用只读预设跑，只出计划；点「按计划执行」再按选的权限做 | 新做 |
 | 工作区 | 每个对话一个工作目录（`~/work` 下的文件夹），Harness 在那里跑 | 新做 |
 | 插件开关（REA、Purge） | 已有的插件设置 | 已有，搬进设置 |
@@ -54,7 +54,13 @@
 
 计划模式不用 Harness 自己的 `/plan`：它只在支持斜杠命令的界面里能用，无界面模式下 `exit_plan_mode` 跑不了（`dsh-plan-mode` README）。改成只读预设出计划、站长批准后再动手，和 Codex、Claude Code 的计划模式一样：先只读探索、出计划，批准了才改。
 
-权限预设：Harness 默认只有 `workspace-write`、`danger-full-access`，补丁里加上 `read-only`。无界面模式下没有人能当场批准，审批一律 `never`，越过沙箱的操作直接拒绝（`dsh-user-approval`：`never` 用于无人值守）。沙箱要 li2 上有可用的 runner（bwrap）；没有时 Harness 报 `SANDBOX_UNAVAILABLE`，不会悄悄放开（`dsh-sandbox-local`）。上线前先在 li2 上只读核对。默认仍是完全权限，和现在一样。
+权限预设：无界面模式下没有人能当场批准，审批一律 `never`，越过沙箱的操作直接拒绝（`dsh-user-approval`：`never` 用于无人值守）。没有可用的沙箱时 Harness 报 `SANDBOX_UNAVAILABLE`，不会悄悄放开（`dsh-sandbox-local`）。默认仍是完全权限，和现在一样。
+
+11-19 在 li2 上核对（第 2 个 PR 前）：
+- 三档不用写补丁：Harness 的基础配置（`dsh-base/cordis.patch.yml` 的 `permission`）已经有 read-only、workspace-write、danger-full-access。原来以为只有后两档，是按 `dsh-permission-presets` README 的默认值写的。
+- li2 没装 bwrap，但内核开了 Landlock；Harness 在 Linux 上先找 bwrap、再用自带的 `landlock-run`，所以用的是 Landlock，不用装别的。
+- 跑了三轮很短的探测对话：只读下，bash 写工作目录里外、写文件工具都被拒；工作区内修改下，工作目录里能写、外面被拒。探测目录已删。
+- `--permission-mode` 会覆盖会话保存的选择，续聊也要每一轮重复带（`dsh-headless` README），环境变量 `DSH_PERMISSION_MODE` 一起设成同一档。
 
 ## 4. 分三个 PR 上线
 
@@ -64,10 +70,10 @@
    - 预览只读已有的文件接口。
    - 权限和计划按钮这一步先不出现。
 2. **权限和计划模式**：
-   - 控制器每一轮带 `--permission-mode`，补丁里写三个预设。
+   - 控制器每一轮带 `--permission-mode` 和 `--approval-policy never`（三档 Harness 自带，不用写补丁）。
    - 对话记下自己的权限；计划模式的那一轮用只读预设，并让 Harness 只出计划。
    - 前端加权限和计划按钮、计划卡片和「计划」标签。
-   - 先在 li2 上核对沙箱。
+   - 先在 li2 上核对沙箱（11-19 已核对，见第 3 节）。
 3. **终端输入和工作区**：
    - 控制器加「在工作目录跑一条命令」：只给登录了的站长，限时 60 秒，输出最多 64 KB。
    - 对话加工作目录：新对话时选，之后固定，因为 Harness 的会话按目录存。
@@ -90,4 +96,4 @@
 
 - **chat.js 改坏小芯**：天启专用逻辑放 `site/tools/tianqi/` 下的新脚本；chat.js 只加天启模式下的挂载点，全量 e2e 兜底。
 - **右栏和夜空在手机上太费电**：手机上面板不用毛玻璃；不在看的时候停动画（页面隐藏时停 RAF）；星的数量按屏幕面积算，有上限。
-- **沙箱在 li2 上不可用**：第 2 个 PR 前先核对。不可用就只上「完全权限」和计划模式（计划那一轮靠提示词只读），并在这里写明。
+- **沙箱在 li2 上不可用**：11-19 核对过，可用（Landlock），见第 3 节。

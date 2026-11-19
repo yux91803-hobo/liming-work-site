@@ -1,3 +1,12 @@
+## 2026-11-20 · 天启工作台 v4 第 2 个 PR：权限预设和计划模式（Claude Code）
+
+- 第 1 个 PR（#186）已合并上线。第 2 个 PR 改了什么见 CHANGES 最新一条，实现计划见 [plans/2026-11-20-tianqi-permissions-plan.md](superpowers/plans/2026-11-20-tianqi-permissions-plan.md)。
+- **li2 上的沙箱**：三档权限 Harness 自带，li2 用内核的 Landlock（没装 bwrap 也行）。11-19 用三轮很短的探测对话核对过：只读、工作区内修改都拦得住。探测时要用 li2 的 key（上传的 key 文件，只用 `grep -oE` 取到变量里，别打印）。
+- **改天启权限、计划的人注意**：
+  - 控制器的逻辑在 `vm-persona.mjs`（`harnessTurn`、`permError`、`TIANQI_PLAN`）；`vm-agent.mjs` 有行数上限（`xin-writers.test.cjs`），新逻辑放别的模块。
+  - 网页的权限、计划状态在 `site/tools/tianqi/sky.js`；`chat.js` 发送时问 `LimingXinChat.tqOpts()`，换对话时派发 `tq:session`，计划轮次结束派发 `tq:plan`，计划模式的提示放 `S.tqPh`（chat.js 重画时用它）。
+- **下一步**：第 3 个 PR，终端里自己输命令（控制器新操作：只给登录了的站长，限时 60 秒、输出最多 64 KB）、对话的工作区（新对话时选、之后固定）、左栏按工作区分组。
+
 ## 2026-11-19 · 天启工作台 v4 第 1 个 PR：三栏版面（Claude Code）
 
 - 站长 11-19 看过可点击原型 v4 说「可以」。[设计](superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md) 分三个 PR，这是第一个，只动前端。改了什么见 CHANGES 最新一条。
