@@ -124,6 +124,14 @@ class FrontPolicy(unittest.TestCase):
             with self.subTest(model=model), self.assertRaises(RuntimeError):
                 validate_front_model({'ok': False, 'model': model})
 
+    def test_timeout_recovery_keeps_the_original_model_evidence_and_a_bounded_budget(self):
+        done = {'ok': True, 'model': DEEPSEEK, 'from': HYDROGEN, 'why': 'front_timeout_fallback'}
+        self.assertEqual(validate_front_model(done), DEEPSEEK)
+        self.assertEqual(front_reply_limit(DEEPSEEK, done), 120)
+        for invalid in ({'ok': False}, {'from': None}, {'why': 'chat'}):
+            with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
+                validate_front_model({**done, **invalid})
+
     def test_deadlines_include_existing_inference_budget_and_remain_bounded(self):
         self.assertGreaterEqual(front_reply_limit(HYDROGEN), 65)
         self.assertLessEqual(front_reply_limit(HYDROGEN), 75)

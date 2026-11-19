@@ -69,7 +69,7 @@ export * from './vm-persona.mjs';
 import { addMemory, updateMemory, forgetMemory, forgetByKeyword, listMemory, memoryPreferences,setMemoryPreferences,MEMORY_TYPES, MEMORY_BASIS } from './vm-memory.mjs';
 import {recallAll,turnGuidance,safeContextEvents,dropRecall} from './vm-context.mjs';
 import {dailyEvidence,dailyContext} from './vm-daily.mjs';
-import {openFrontProvider,preferredFrontModel,frontModelInfo,AGY_FRONT_MODEL} from './vm-front-agy.mjs';
+import {openFrontProvider,preferredFrontModel,frontModelInfo,frontRouting,AGY_FRONT_MODEL} from './vm-front-agy.mjs';
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
 import { createDispatcher } from './vm-dispatch.mjs';
 import { attemptError, assertAttempt, attemptsEnabled, createFinalizationStore, finalizationEnabled, hasFinalization } from './vm-run-attempt.mjs';
@@ -923,7 +923,7 @@ function runner(run) {
         protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},thought:t=>{if(!finished)emit(run,{t:'think',text:t,src:'model'});},tool:e=>{if(!finished)emit(run,{...e,at:Date.now()});},steers:()=>{try{const r=lockedCall('tasks','steer_take',{run});return Array.isArray(r?.steers)?r.steers:[];}catch{return [];}},
         quotaState:readJ(path.join(BASE,'front-antigravity-quota.json')),
         quota:quota=>lockedCall('tasks','front_quota',{quota}),
-        model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);meta.model=chosen.model;meta.providerModel=chosen.providerModel;if(['quota','format','front_model','unavailable'].includes(chosen.reason))meta.from=AGY_FRONT_MODEL;}
+        model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);Object.assign(meta,frontRouting(chosen,meta.why));}
       });
       if(meta.frontFiles?.some(f=>f.image)&&provider.image===false){
         patchRun(run,{frontSeesImages:false,images:[]});
@@ -931,7 +931,7 @@ function runner(run) {
         if(vision.terminal)return vision.text;
         throw Error('当前前台没有视觉输入，无法读取图片');
       }
-      return runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,request:provider.request,ms:meta.model===runtime.FRONT_MODEL?45000:65000,
+      return runtime.frontTurn({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,request:provider.request,useFallbackOnTimeout:provider.useFallbackOnTimeout,ms:meta.model===runtime.FRONT_MODEL?runtime.FRONT_GATEWAY_MS:65000,
       instructions:systemPrompt(undefined,{tasks:true,materials:false}),acts:Object.keys(ACTS),input,command:action,fallback,trace,signal:controller.signal,handoff:!!meta.handoff,lookupBeforeAnswer:!meta.handoff&&runtime.frontLookupRequired(meta.frontRequest||''),deliver,takeBudget:handoffBudget,
       usage:u=>{if(u){
         handoffBudget?.recordUsage(u);
@@ -2185,7 +2185,7 @@ const ops = {
     const userEv = { t: 'user', text, at: Date.now() };
     if (ctxLabel) userEv.ctx = ctxLabel;
     if (files.length) userEv.files = files.map(f => ({ name: f.name, path: f.path, size: f.size, image: f.image }));
-    // 前台优先 Antigravity 的 Gemini 4 Hydrogen（思考强度中）；Gemini 额度实际耗尽才回 DeepSeek。点名只记给后台。
+    // 前台优先 Antigravity 的 Gemini 4 Hydrogen；额度耗尽或推理未完成时可回 DeepSeek。点名只记给后台。
     // Harness（天启模式）按网页选的，续聊没带 model 时保留对话里的选择。
     let rt = null, cm = null;
     if (s.agent === 'codex') {
@@ -2497,7 +2497,7 @@ const ops = {
 const iops = {
   front_model(a){
     const m=readJ(metaF(a.run));if(!m||m.task||m.agent!=='codex'||m.stopped||m.ended||![runtime.FRONT_MODEL,AGY_FRONT_MODEL].includes(a.model))return {error:'bad_front_model'};
-    m.model=a.model;m.providerModel=String(a.providerModel||a.model).slice(0,200);if(['quota','format','front_model','unavailable'].includes(a.reason))m.from=AGY_FRONT_MODEL;else delete m.from;writeJ(metaF(a.run),m);
+    Object.assign(m,frontRouting(a,m.why));writeJ(metaF(a.run),m);
     const s=readJ(sessF(m.sid));if(s){s.model=a.model;writeJ(sessF(m.sid),s);}return {ok:true};
   },
   front_quota(a){

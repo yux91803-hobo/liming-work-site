@@ -1,11 +1,16 @@
 """Production smoke policy for the owner's configured foreground model."""
-# 站长 2026-11-13：前台用 Antigravity 的 Gemini 4 Hydrogen（思考强度中），Gemini 额度用完再切 DeepSeek；Claude 不再用。
+# 前台优先 Gemini 4 Hydrogen，使用备用模型时核对本轮的切换原因。
 import re
 HYDROGEN = 'gemini-4-hydrogen'
 DEEPSEEK = 'deepseek-v4.1-flash'
 # The foreground allows 65 s for Hydrogen and 25 s for DeepSeek inference. Allow
 # bounded provider setup and transport as well; creating background work still ends the turn.
 REPLY_LIMIT = {HYDROGEN: 75, DEEPSEEK: 30}
+RECOVERED_REPLY_LIMIT = REPLY_LIMIT[HYDROGEN] + 45  # One bounded DeepSeek attempt after Gemini's deadline.
+
+
+def recovered_front_timeout(done):
+    return done.get('model') == DEEPSEEK and done.get('from') == HYDROGEN and done.get('why') == 'front_timeout_fallback'
 
 
 def validate_front_model(done, quota=None, now_ms=0):
@@ -16,6 +21,8 @@ def validate_front_model(done, quota=None, now_ms=0):
         return model
     if model != DEEPSEEK:
         raise RuntimeError('Foreground used an unexpected model')
+    if recovered_front_timeout(done):
+        return model
     quota = quota or {}
     if (quota.get('model') != HYDROGEN or quota.get('blocked') is not True
             or not isinstance(quota.get('retryAt'), (int, float)) or quota['retryAt'] <= now_ms):
@@ -23,9 +30,11 @@ def validate_front_model(done, quota=None, now_ms=0):
     return model
 
 
-def front_reply_limit(model):
+def front_reply_limit(model, done=None):
     if model not in REPLY_LIMIT:
         raise RuntimeError('No reply deadline for this foreground model')
+    if model == DEEPSEEK and recovered_front_timeout(done or {}):
+        return RECOVERED_REPLY_LIMIT
     return REPLY_LIMIT[model]
 
 

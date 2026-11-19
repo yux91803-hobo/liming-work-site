@@ -693,6 +693,7 @@ export function appServer(cmd, configArgs, options) {
 // Foreground is an inference-only client, NOT a CLI with a filtered shell.
 // Function arguments are data; no eval, shell, MCP, filesystem or browser tool exists here.
 export const FRONT_MODEL = 'deepseek-v4.1-flash';
+export const FRONT_GATEWAY_MS = 45000;
 // acts: the mascot's display actions. bond/next/move only touch the page mascot and small personal data files.
 export function frontCommand(argv, acts = []) {
   if (!Array.isArray(argv) || argv.length > 128 || argv.some(x => typeof x !== 'string' || x.length > 60000)) return false;
@@ -719,6 +720,8 @@ export async function frontTurn(o) {
   if(o.signal?.aborted)cancel();
   const timer = setTimeout(() => {expired=true;abort.abort();}, o.ms || 25000);
   const input = o.input.slice(), max = o.steps || 3;
+  let usedCommand = false;
+  const command = (...args) => { usedCommand = true; return o.command(...args); };
   // Expressions (mascot actions, bond, greeting, moves) never consume the work-step budget; they get their
   // own small cap, and the total number of model rounds stays bounded.
   const expression = argv => Array.isArray(argv) && argv[0] === 'xin' && (['bond','next','move'].includes(argv[1]) || (o.acts||[]).includes(argv[1]));
@@ -728,7 +731,7 @@ export async function frontTurn(o) {
   const lookup=async()=>{
     lookupAttempted=true;
     const argv=['xin','task','list'],call_id='controller_lookup';
-    const result=await o.command(argv,call_id);o.trace?.('xin',{argv},result);
+    const result=await command(argv,call_id);o.trace?.('xin',{argv},result);
     lookedUp=!!result&&!result.error;
     input.push({type:'function_call',name:'xin',call_id,arguments:JSON.stringify({argv})},
       {type:'function_call_output',call_id,output:JSON.stringify(result??{error:'没有查询结果'})});
@@ -785,7 +788,7 @@ export async function frontTurn(o) {
       }
       // Text plus expressions only: perform them and answer now, without another model round.
       if (said && !o.handoff && calls.length && calls.every((c, i) => c.name === 'xin' && expression(parsed[i]?.argv))) {
-        for (const [i, call] of calls.entries()) if (++expressed <= 2 && frontCommand(parsed[i].argv, o.acts)) await o.command(parsed[i].argv, call.call_id);
+        for (const [i, call] of calls.entries()) if (++expressed <= 2 && frontCommand(parsed[i].argv, o.acts)) await command(parsed[i].argv, call.call_id);
         return said;
       }
       if (!calls.length) {
@@ -802,7 +805,7 @@ export async function frontTurn(o) {
           : o.handoff&&call.name==='finish_event'&&['deliver','silent'].includes(args?.action)
           ? await o.deliver(args)
           : call.name === 'xin' && frontCommand(args?.argv, o.acts)
-          ? await o.command(args.argv, call.call_id)
+          ? await command(args.argv, call.call_id)
           : {error:'请派出去：前台只能使用 xin task new/list/show/tell/stop、xin remember/forget/recall 和小芯自己的表情、好感度、开场白、动作。'};
         o.trace?.(call.name, args, result);
         if(call.name==='xin'&&isLookup(args?.argv)&&result&&!result.error)lookedUp=true;
@@ -820,7 +823,11 @@ export async function frontTurn(o) {
     }
     return await o.fallback();
   } catch (e) {
-    // Connection errors do not manufacture success. Budget expiry alone delegates.
+    if (o.signal?.aborted) throw e;
+    // Before any controller action, the saved request can get one fresh inference budget.
+    if ((expired || e?.code === 'front_prompt_timeout') && !o.handoff && !usedCommand && o.useFallbackOnTimeout?.()) {
+      return frontTurn({ ...o, ms: FRONT_GATEWAY_MS, useFallbackOnTimeout: undefined });
+    }
     if (expired) return await o.fallback();
     throw e;
   } finally { clearTimeout(timer);o.signal?.removeEventListener('abort',cancel); }
