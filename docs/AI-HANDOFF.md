@@ -5,7 +5,7 @@
   - `9b96754`：设计和计划。
   - `0311bde`：Task 1，Antigravity 模型表、CLI 编号、按模型查额度。
   - `6443d12`：Task 2，网关路由表、别名、`agyPick`/`agyNext`、派检查任务时的避开规则。
-- **接手**：从 `6443d12` 另开 `codex/...` 分支（CLAUDE.md 上线流程第 1 条），原分支不动。
+- **接手**：从这个分支的最新提交（含这条记录）另开 `codex/...` 分支（CLAUDE.md 上线流程第 1 条），原分支不动。
 - **依据**：站长定的安排见 [设计文档](superpowers/specs/2026-11-19-xin-neon-argon-design.md) §3。步骤见 [实现计划](superpowers/plans/2026-11-19-xin-neon-argon.md)，Task 3、4 没做。Task 3 我只读了代码，没改任何文件。
 - **验证**：`6443d12` 上 `npm run check` 1069 项全过；e2e 没跑。
 
