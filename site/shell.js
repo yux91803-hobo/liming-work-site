@@ -242,6 +242,26 @@
 
   /* ---------- 工具面板 & 路由 ---------- */
   var stage = $('#stage'), panels = {}, current = null;
+  /* 工具开着（body.locked）时：首页钉在原处、页面没得滚；触屏上面板跟着可见区域走。
+     站长 11-20：手机上从首页打开天启，打字时键盘把面板推上去，下面露出首页的卡片。
+     照 Vaul / React Aria 的 usePreventScroll（iOS：记住滚动位置、页面滚回顶、被滚了就滚回去，关掉时滚回原处），
+     和 Vaul 的 repositionInputs（键盘弹出、visualViewport 变小时，浮层的高度和位置跟着它）。
+     首页不藏：触屏从左缘滑动返回时要露出它，所以按原来的位置固定住，看起来一点没动，页面却没有能滚的高度。 */
+  var pinY = 0;
+  function pinHome(on) {
+    if (on === html.classList.contains('home-pin')) return;
+    if (on) { pinY = window.scrollY || 0; home.style.top = -pinY + 'px'; html.classList.add('home-pin'); window.scrollTo(0, 0); }
+    else { html.classList.remove('home-pin'); home.style.top = ''; window.scrollTo(0, pinY); }
+  }
+  function fitStage() {
+    var vv = window.visualViewport, s = stage.style;
+    // 只在触屏、工具开着、没在放大、可见区域确实比窗口矮（键盘）的时候跟；别的时候回到铺满
+    if (!vv || !lite || !current || Math.abs((vv.scale || 1) - 1) > 0.01 || vv.height >= innerHeight - 1) { s.top = s.height = s.bottom = ''; return; }
+    s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = vv.height + 'px'; s.bottom = 'auto';
+  }
+  new MutationObserver(function () { pinHome(body.classList.contains('locked')); fitStage(); }).observe(body, { attributes: true, attributeFilter: ['class'] });
+  addEventListener('scroll', function () { if (html.classList.contains('home-pin') && window.scrollY) window.scrollTo(0, 0); }, { passive: true });
+  if (window.visualViewport) { visualViewport.addEventListener('resize', fitStage); visualViewport.addEventListener('scroll', fitStage); }
   function clip(r) {
     if (!r) return 'inset(0px 0px 0px 0px round 0px)';
     return 'inset(' + r.top + 'px ' + (innerWidth - r.right) + 'px ' + (innerHeight - r.bottom) + 'px ' + r.left + 'px round 12px)';

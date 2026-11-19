@@ -30,7 +30,7 @@
   })();
 </script>
 <!-- 不引 pixel.css：那是首页的像素风（方角、点阵字、关毛玻璃），天启 v4 是圆角毛玻璃 -->
-<link rel="stylesheet" href="/xin/chat.css?v=lock-20261119">
+<link rel="stylesheet" href="/xin/chat.css?v=tqperm-20261120">
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   [hidden]{display:none!important}
@@ -39,7 +39,7 @@
   button,input,textarea{font:inherit;color:inherit}
   button{border:0;background:none;padding:0;cursor:pointer}
 </style>
-<link rel="stylesheet" href="/tools/tianqi/workbench.css?v=tq4-20261119">
+<link rel="stylesheet" href="/tools/tianqi/workbench.css?v=tqperm-20261120">
 </head>
 <body>
 <!-- 天启工作台 v4：照 DeepSeek Harness 桌面端分三栏（docs/superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md）。
@@ -95,6 +95,8 @@
             <div class="tq-instruments">
               <button type="button" class="xc-plus" aria-label="发图片或文件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg></button>
               <button type="button" class="xc-mdl" aria-haspopup="dialog" aria-controls="xin-model-picker" aria-expanded="false"><span></span></button>
+              <button type="button" class="tq-chip tq-perm" id="tq-perm" aria-haspopup="menu" aria-expanded="false" aria-controls="tq-perm-pop" aria-label="权限：完全权限" title="这次对话的权限"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.6c0 4.4-3.1 8.2-7.5 9.4-4.4-1.2-7.5-5-7.5-9.4V6z"/><path class="tq-perm-tick" d="M9 12.2l2.1 2.1L15.3 10"/></svg><span class="tq-perm-n">完全</span></button>
+              <button type="button" class="tq-chip tq-plan" id="tq-plan" aria-pressed="false" title="计划模式：先出计划，你确认后再动手"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6.5h10M10 12h10M10 17.5h10"/><path d="M3.8 6.4l1.3 1.3 2.3-2.4M3.8 11.9l1.3 1.3 2.3-2.4M3.8 17.4l1.3 1.3 2.3-2.4"/></svg><span>计划</span></button>
               <span class="tq-grow"></span>
               <button type="submit" class="xc-send" aria-label="发送"></button>
             </div>
@@ -112,6 +114,7 @@
             <button class="tq-tab" role="tab" type="button" id="tq-tab-files" data-tab="files" aria-controls="tq-p-files" aria-selected="true">文件<i class="tq-tdot" aria-hidden="true"></i></button>
             <button class="tq-tab" role="tab" type="button" id="tq-tab-term" data-tab="term" aria-controls="tq-p-term" aria-selected="false" tabindex="-1">终端<i class="tq-tdot" aria-hidden="true"></i></button>
             <button class="tq-tab" role="tab" type="button" id="tq-tab-prev" data-tab="prev" aria-controls="tq-p-prev" aria-selected="false" tabindex="-1">预览<i class="tq-tdot" aria-hidden="true"></i></button>
+            <button class="tq-tab" role="tab" type="button" id="tq-tab-plan" data-tab="plan" aria-controls="tq-p-plan" aria-selected="false" tabindex="-1" hidden>计划<i class="tq-tdot" aria-hidden="true"></i></button>
             <span class="tq-tab-ink" aria-hidden="true"></span>
           </div>
           <button class="tq-ib tq-r-x" type="button" aria-label="收起面板" title="收起面板（Ctrl+J）"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
@@ -119,6 +122,7 @@
         <section class="tq-pane" role="tabpanel" id="tq-p-files" data-tab="files" aria-labelledby="tq-tab-files"><div class="xc-sess" hidden></div></section>
         <section class="tq-pane tq-term-host" role="tabpanel" id="tq-p-term" data-tab="term" aria-labelledby="tq-tab-term" hidden><p class="tq-note">天启跑命令时，命令和输出会出现在这里。点对话里的「思考」那一行，也能看那一轮做了什么。</p></section>
         <section class="tq-pane" role="tabpanel" id="tq-p-prev" data-tab="prev" aria-labelledby="tq-tab-prev" hidden><div class="tq-prev"><p class="tq-note">在「文件」里点图片、网页或 markdown 的「预览」，或者点回答里提到的这类文件，会在这里打开。</p></div></section>
+        <section class="tq-pane" role="tabpanel" id="tq-p-plan" data-tab="plan" aria-labelledby="tq-tab-plan" hidden><div class="tq-plan-box"></div></section>
       </div>
     </aside>
   </div>
@@ -140,6 +144,7 @@
       <nav class="tq-set-nav" aria-label="设置分类">
         <h2 id="tq-set-title">设置</h2>
         <button class="tq-set-tab" type="button" data-sec="look" aria-current="true">外观</button>
+        <button class="tq-set-tab" type="button" data-sec="perm">权限</button>
         <button class="tq-set-tab" type="button" data-sec="plug">插件</button>
         <button class="tq-set-tab" type="button" data-sec="pc">电脑</button>
       </nav>
@@ -152,7 +157,7 @@
 </template>
 <script>window.LIMING_CHAT = { role: 'tianqi' };</script>
 <script src="/xin/term.js?v=tq4-20261119"></script>
-<script src="/xin/chat.js?v=tq4-20261119"></script>
-<script src="/tools/tianqi/sky.js?v=tq4-20261119"></script>
+<script src="/xin/chat.js?v=tqperm-20261120"></script>
+<script src="/tools/tianqi/sky.js?v=tqperm-20261120"></script>
 </body>
 </html>

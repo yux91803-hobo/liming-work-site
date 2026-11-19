@@ -24,10 +24,10 @@ function agentEnv(t, extra = {}) {
   const op = (name, args) => { ensureState(); return JSON.parse(execFileSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args || {}) }).toString()); };
   return { home, xin: env.XIN_HOME, op };
 }
-// 假的 dsh：记下参数（一行一次），按真 dsh 的格式吐几条事件
+// 假的 dsh：记下权限环境变量和参数（MODE 一行，ARGS 一行；任务里有换行时 ARGS 会跨行），按真 dsh 的格式吐几条事件
 function fakeDsh(dir) {
   const log = path.join(dir, 'calls.log'), dsh = path.join(dir, 'dsh');
-  fs.writeFileSync(dsh, '#!/bin/sh\n{ printf "ARGS"; for a in "$@"; do printf " [%s]" "$a"; done; echo; } >> "' + log + '"\n' +
+  fs.writeFileSync(dsh, '#!/bin/sh\n{ echo "MODE=$DSH_PERMISSION_MODE"; printf "ARGS"; for a in "$@"; do printf " [%s]" "$a"; done; echo; } >> "' + log + '"\n' +
     'echo \'{"type":"session","sessionId":"session-1de23629-51a4-47e9-8626-be15439b8b66","cwd":"/w"}\'\n' +
     'echo \'{"type":"text","text":"好"}\'\n' +
     'echo \'{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}\'\n' +
@@ -58,6 +58,67 @@ test('天启身份：不写 agent 也是 Harness；补丁里的提示词只有�
   assert.ok(!patches[0].includes('小芯') && !patches[0].includes('独立高级模式'), patches[0]);
   const args = fs.readFileSync(log, 'utf8').trim().split('\n').filter(l => l.startsWith('ARGS')).pop();
   assert.match(args, /\[--json\] \[看看目录\]$/, '没有提醒、没有附带的页面');
+});
+
+// 权限预设和计划模式（docs/superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md §3、§4 第 2 个 PR）：
+// Harness 基础配置自带 read-only / workspace-write / danger-full-access 三档；headless 每一轮用 --permission-mode 选，
+// 续聊也要重复带（dsh-headless README）；--approval-policy never：没人当场批准，越过沙箱的直接拒。
+test('天启的权限：每一轮带 --permission-mode 和 --approval-policy never；对话记住权限；计划那一轮只读、任务前面加计划要求；不认识的权限报错', async t => {
+  const { dsh, log } = fakeDsh(fs.mkdtempSync(path.join(os.tmpdir(), 'xin-tq-dsh-')));
+  const { xin, op } = agentEnv(t, { XIN_ROLE: 'tianqi', XIN_DSH: dsh });
+  fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
+  const calls = () => { try { return fs.readFileSync(log, 'utf8').split(/^MODE=/m).slice(1); } catch { return []; } };
+  const last = () => { const c = calls().pop(), nl = c.indexOf('\n'); return { mode: c.slice(0, nl), args: c.slice(nl + 1).trim() }; };
+  const turn = async a => {
+    const r = op('send', a);
+    assert.ok(r.run, JSON.stringify(r));
+    const p = await poll(op, r.run);
+    assert.ok(p.done && p.events.at(-1).ok, JSON.stringify(p.events));
+    return { r, p, ...last() };
+  };
+  const flags = m => '[--permission-mode] [' + m + '] [--approval-policy] [never]';
+  // 默认：完全权限，和以前一样
+  const a = await turn({ text: '看看目录' });
+  assert.ok(a.args.includes(flags('danger-full-access')), a.args);
+  assert.equal(a.mode, 'danger-full-access');
+  assert.match(a.args, /\[--json\] \[看看目录\]$/, '普通一轮发给 Harness 的还是原话');
+  const sid = a.r.sid;
+  assert.equal(op('history', { sid }).session.perm, 'danger-full-access');
+  // 换成工作区内修改：这一轮起作用，对话记住；续聊（--session-id）每一轮都重复带
+  const b = await turn({ sid, text: '改个文件', perm: 'workspace-write' });
+  assert.ok(b.args.includes(flags('workspace-write')) && b.args.includes('[--session-id]'), b.args);
+  assert.equal(b.mode, 'workspace-write');
+  const c = await turn({ sid, text: '再看看' });
+  assert.ok(c.args.includes(flags('workspace-write')), c.args);
+  assert.equal(op('history', { sid }).session.perm, 'workspace-write');
+  // 计划模式：这一轮只读，任务前面是计划要求；对话的权限不变；用户那句、这一轮的结束都标着计划
+  const d = await turn({ sid, text: '把 LED 改快一点', plan: true });
+  assert.ok(d.args.includes(flags('read-only')), d.args);
+  assert.equal(d.mode, 'read-only');
+  assert.ok(d.args.includes('【计划模式】') && d.args.includes('只出计划') && d.args.endsWith('把 LED 改快一点]'), d.args);
+  const h = op('history', { sid }), pr = h.runs.find(x => x.run === d.r.run);
+  assert.deepEqual([pr.events[0].t, pr.events[0].text, pr.events[0].plan], ['user', '把 LED 改快一点', true]);
+  assert.equal(pr.events.at(-1).t, 'done');
+  assert.equal(pr.events.at(-1).plan, true);
+  assert.equal(h.session.perm, 'workspace-write');
+  // 按计划执行：下一句不带 plan，回到对话的权限
+  const e = await turn({ sid, text: '按上面的计划执行。' });
+  assert.ok(e.args.includes(flags('workspace-write')) && !e.args.includes('【计划模式】'), e.args);
+  assert.equal(op('history', { sid }).runs.find(x => x.run === e.r.run).events[0].plan, undefined);
+  // 不认识的权限：直接报错，不起 Harness，也不改对话记下的权限
+  const n = calls().length;
+  assert.deepEqual(op('send', { sid, text: 'x', perm: 'root' }), { error: 'bad_perm', msg: '权限只能是只读、工作区内修改或完全权限' });
+  assert.equal(calls().length, n);
+  assert.equal(op('history', { sid }).session.perm, 'workspace-write');
+  // 新对话第一句就选只读
+  const f = await turn({ text: '只看看', perm: 'read-only' });
+  assert.ok(f.args.includes(flags('read-only')), f.args);
+  assert.equal(op('history', { sid: f.r.sid }).session.perm, 'read-only');
+  // 同一个消息标识换了权限再发：当成不同内容，不拿上一次的回执顶替
+  const g = op('send', { sid, text: '同一句', perm: 'read-only', clientId: 'tq-perm-same-1' });
+  assert.ok(g.run, JSON.stringify(g));
+  await poll(op, g.run);
+  assert.equal(op('send', { sid, text: '同一句', perm: 'danger-full-access', clientId: 'tq-perm-same-1' }).error, 'message_conflict');
 });
 
 test('天启身份：要 Codex、Claude 的被拒，接着聊别的 agent 的对话也被拒；网关 key 没放好时说网关还没配好', t => {

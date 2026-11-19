@@ -62,6 +62,13 @@ html.tianqi .xc.tq-mode {
   --tq-soft: rgb(157 184 255 / .13);
   --tq-star: #f3dfae;
   --tq-glint: #fff6dc;
+  /* 计划模式是蓝的；完全权限用暖色提醒（原型 v4 的取值） */
+  --plan: #9db8ff;
+  --plan-soft: rgb(157 184 255 / .13);
+  --plan-line: rgb(157 184 255 / .5);
+  --plan-ink: #0a0f1e;
+  --risk: #f2b48a;
+  --risk-soft: rgb(242 180 138 / .12);
   --sh-1: 0 10px 24px -17px #000;
   --sh-2: 0 24px 68px -28px #000;
   background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 55%, var(--sky-low) 100%);
@@ -108,6 +115,12 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
   --glow-ink: #8a5a0e;
   --glow-soft: rgb(160 108 20 / .12);
   --glow-ring: #a06c14;
+  --plan: #3558c8;
+  --plan-soft: rgb(53 88 200 / .09);
+  --plan-line: rgb(53 88 200 / .42);
+  --plan-ink: #fff;
+  --risk: #b4552a;
+  --risk-soft: rgb(180 85 42 / .09);
   --wait: #b4552a;
   --wait-ink: #9a4520;
   --ok: #1d8f68;
@@ -367,6 +380,7 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
   transition: border-color .3s var(--ease), box-shadow .3s var(--ease);
 }
 .tq-box:focus-within { border-color: var(--line-2); }
+.tq-box.plan { border-color: var(--plan-line); box-shadow: var(--shadow), 0 0 0 4px var(--plan-soft); }
 .tianqi .xc.tq-mode .tq-entry { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; background: none; border: 0; box-shadow: none; }
 .tianqi .tq-entry textarea {
   display: block;
@@ -384,7 +398,8 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
   line-height: 1.65;
 }
 .tianqi .tq-entry textarea::placeholder { color: var(--ink-3); }
-.tq-instruments { display: flex; align-items: center; gap: 4px; padding: 6px 10px 10px; }
+/* 外层 .tq-entry 是能换行的弹性布局，这一排的宽度会按里面最宽的算；限制在输入框以内，挤的时候让模型名收窄 */
+.tq-instruments { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 6px 10px 10px; }
 .tianqi .tq-instruments :is(.xc-plus, .xc-mdl) {
   --rad: 10px;
   display: inline-flex;
@@ -409,6 +424,8 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .tq-instruments :is(.xc-plus, .xc-mdl):hover,
 .tianqi .tq-instruments :is(.xc-plus, .xc-mdl)[aria-expanded="true"] { background: var(--hover); color: var(--ink); transform: none; }
 .tianqi .tq-instruments .xc-mdl span { overflow: hidden; text-overflow: ellipsis; }
+/* 输入框一行放不下（手机上多了权限、计划两个按钮）时，模型名先收窄成省略号，发送键不出框 */
+.tianqi .tq-instruments .xc-mdl { flex: 0 1 auto; min-width: 0; }
 .tianqi .tq-instruments .xc-send {
   --rad: 50%;
   flex: none;
@@ -429,6 +446,16 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .tq-instruments .xc-send.ready:hover { transform: scale(1.06); }
 .tianqi .tq-instruments .xc-send[data-k="stop"] { opacity: 1; background: var(--press); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
 .tianqi .tq-instruments .xc-send svg { width: 18px; height: 18px; }
+.tq-box.plan .xc-send:not([data-k="stop"]) { background: var(--plan); color: var(--plan-ink); }
+/* 权限、计划：输入框里的两个小按钮（照原型 v4 和 Harness 的 composer：权限在前，计划在它右边） */
+.tq-chip { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 32px; padding: 0 10px; border: 0; --rad: 10px; background: none; color: var(--ink-2); font-size: 13px; white-space: nowrap; transition: background-color .2s var(--ease), color .2s var(--ease); }
+.tq-chip svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tq-chip:hover, .tq-chip[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
+.tq-perm.full { color: var(--risk); background: var(--risk-soft); }
+.tq-perm:not(.ro) .tq-perm-tick { display: none; }
+.tq-plan[aria-pressed="true"] { color: var(--plan); background: var(--plan-soft); }
+.tq-frame[data-mode="phone"] .tq-perm-n { display: none; }
+.tq-frame[data-mode="phone"] .tq-chip { padding: 0 8px; }
 .tianqi .xc.wb.tq-mode :is(.xc-menu, .xc-pick) {
   top: auto;
   bottom: calc(100% + 8px);
@@ -617,6 +644,64 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-kv dt { color: var(--ink-3); }
 .tq-kv dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .tq-mono { font: 12.5px/1.6 ui-monospace, Menlo, Consolas, monospace; }
+
+/* ---------- 权限弹层（这次对话的权限；完全权限要再确认一次） ---------- */
+.tq-pop { position: fixed; z-index: 40; width: max-content; min-width: 244px; max-width: min(330px, calc(100vw - 24px)); padding: 6px; border: 1px solid var(--line); --rad: 15px; background: var(--pop); box-shadow: var(--shadow), var(--rim); transform-origin: 30% 100%; }
+.tq-pop.in { animation: tqPopIn .2s var(--ease); }
+@keyframes tqPopIn { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+.tq-pop-h { margin: 6px 10px 4px; color: var(--ink-3); font-size: 12px; }
+.tq-opt { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 8px 10px; border: 0; --rad: 10px; background: none; color: var(--ink); font-size: 14px; text-align: left; transition: background-color .15s var(--ease); }
+.tq-opt:hover, .tq-opt:focus-visible { background: var(--hover); outline: 0; }
+.tq-opt-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tq-opt small { color: var(--ink-3); font-size: 12.5px; line-height: 1.5; }
+.tq-opt svg { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--star); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+.tq-opt[aria-checked="true"] svg { opacity: 1; }
+.tq-opt.risk .tq-opt-t > span { color: var(--risk); }
+.tq-confirm { margin: 4px; padding: 12px; --rad: 11px; background: var(--risk-soft); color: var(--ink-2); font-size: 13px; line-height: 1.6; }
+.tq-confirm p { margin: 0 0 10px; }
+.tq-confirm .tq-btn { height: 30px; padding: 0 12px; font-size: 13px; }
+.tq-confirm .tq-btn.go-risk { border-color: transparent; background: var(--risk); color: var(--go-ink); }
+
+/* ---------- 计划：对话里的卡片、用户那句上的标签、右栏的计划 ---------- */
+.tq-plan-tag { display: inline-flex; align-items: center; gap: 4px; align-self: flex-end; margin: 0 2px 4px 0; padding: 1px 8px; --rad: 999px; background: var(--plan-soft); color: var(--plan); font-size: 12px; }
+.tianqi .xc-m.tq-planned > .xc-bub { display: none; }
+.tq-plan-card { align-self: stretch; margin: 2px 0 6px; padding: 14px 16px; border: 1px solid var(--plan-line); --rad: 16px; background: var(--plan-soft); }
+.tq-plan-card.enter { animation: tqRise .45s var(--ease) both; }
+/* 卡片放在回答里（替掉气泡）：和正文一样在内容那一栏；手机上头像单独一行，正文占满整行（同 chat.css 的 .xc-tb） */
+.tianqi .xc-ai > .tq-plan-card { grid-column: 2; min-width: 0; }
+@media (max-width: 599px) { .tianqi .xc-ai > .tq-plan-card { grid-column: 1 / -1; margin-top: 4px; } }
+@keyframes tqRise { from { opacity: 0; transform: translateY(8px); } }
+.tq-pc-top { display: flex; align-items: center; gap: 9px; color: var(--plan); font-size: 14.5px; font-weight: 600; }
+.tq-pc-top svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.tq-pc-top span { min-width: 0; overflow-wrap: anywhere; }
+.tq-plan-card > p { margin: 6px 0 12px; color: var(--ink-2); font-size: 14px; }
+.tq-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tq-btn.primary { border-color: transparent; background: var(--plan); color: var(--plan-ink); }
+.tq-btn.primary:hover { background: var(--plan); filter: brightness(1.06); }
+.tq-btn:disabled { opacity: .45; cursor: default; filter: none; }
+.tq-btn-note { width: 100%; margin: 2px 0 0; color: var(--ink-3); font-size: 12.5px; }
+.tq-plan-card.done .tq-acts { display: none; }
+.tq-plan-doc { padding: 18px 18px 26px; color: var(--ink-2); font-size: 13.5px; line-height: 1.7; }
+/* chat.js 的 markdown 把各级标题都画成 h4；计划第一行的「# 标题」是这份计划的题目，大一号 */
+.tq-plan-doc h4 { margin: 18px 0 6px; color: var(--ink); font-size: 15px; font-weight: 600; text-wrap: balance; }
+.tq-plan-doc > :first-child, .tq-plan-doc h4:first-child { margin-top: 0; }
+.tq-plan-doc h4:first-child { font-size: 16.5px; }
+.tq-plan-doc ol { counter-reset: s; list-style: none; margin: 14px 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.tq-plan-doc ol > li { counter-increment: s; position: relative; padding-left: 34px; }
+.tq-plan-doc ol > li::before { content: counter(s); position: absolute; left: 0; top: 1px; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--plan-line); --rad: 50%; color: var(--plan); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tq-plan-doc :is(p, ul) { margin: 6px 0; }
+.tq-plan-doc code { font: 12.5px/1.6 ui-monospace, Menlo, Consolas, monospace; }
+.tq-plan-doc .tq-acts { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+/* ---------- 设置：默认权限 ---------- */
+.tq-perms { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 0; }
+.tq-permopt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 12px 14px; border: 1px solid var(--line); --rad: 12px; background: none; color: var(--ink); text-align: left; transition: border-color .2s var(--ease), background-color .2s var(--ease); }
+.tq-permopt:hover { background: var(--hover); }
+.tq-permopt b { font-size: 14px; font-weight: 500; }
+.tq-permopt span { color: var(--ink-3); font-size: 13px; }
+.tq-permopt[aria-checked="true"] { border-color: var(--star); box-shadow: 0 0 0 1px var(--star); }
+.tq-permopt.risk b { color: var(--risk); }
+.tq-set-note { margin: 16px 0 0; color: var(--ink-3); font-size: 13px; line-height: 1.7; }
 
 /* ---------- 中屏：左栏窄条，右栏浮在聊天上 ---------- */
 .tq-frame[data-mode="mid"] .tq-right { position: absolute; z-index: 7; top: calc(12px + var(--st, 0px)); bottom: calc(12px + var(--sb, 0px)); right: max(16px, var(--sr, 0px)); width: min(400px, calc(100% - 140px)); grid-column: auto; overflow: visible; transform: translateX(calc(100% + 32px)); transition: transform .42s var(--ease), visibility 0s .42s; }

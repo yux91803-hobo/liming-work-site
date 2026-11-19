@@ -401,7 +401,7 @@
   }
   function render() {
     if (!root) return;
-    var login = S.enabled && !S.authed, off = !S.enabled, gwOff = !!(TQ && S.enabled && S.authed && S.tqNoGw), ph = tqConv() ? '给天启发消息' : '给小芯发消息';
+    var login = S.enabled && !S.authed, off = !S.enabled, gwOff = !!(TQ && S.enabled && S.authed && S.tqNoGw), ph = tqConv() ? (S.tqPh || '给天启发消息') : '给小芯发消息';   // tqPh：天启计划模式的提示（sky.js 填）
     if (input.placeholder !== ph) input.placeholder = ph;   // 天启的对话（和选了天启的空白页）
     if (gwWarnEl) gwWarnEl.hidden = !gwOff;
     input.disabled = gwOff;
@@ -539,6 +539,7 @@
     S.toMain = !TQ && !!toMain; S.more = false; S.title = '';
     if (!stay) { S.view = 'chat'; setDrawer(false); }
     clearList(); S.histFor = ''; welcome(); render(); refreshSide();
+    if (TQ) { S.tqPerm = ''; document.dispatchEvent(new CustomEvent('tq:session', { detail: { sid: '', perm: '' } })); }   // 新对话用默认权限
   }
   // 回到主对话：有就打开，还没有就是一张空白页，第一句发出去才有
   function goMain() {
@@ -592,6 +593,8 @@
       clearList();
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid; S.toMain = false; S.title = d.session.title || '';
       if (!TQ) { if (d.session.main) setMain(sid); else if (sid === S.main) setMain(''); }
+      // 天启：这个对话记下的权限（输入框旁边的按钮跟着换），先于画历史（历史里的计划卡片按它显示按钮）
+      if (TQ) { S.tqPerm = d.session.perm || ''; document.dispatchEvent(new CustomEvent('tq:session', { detail: { sid: sid, perm: S.tqPerm } })); }
       refreshSide();
       S.more = !!d.more; S.first = d.runs.length ? d.runs[0].run : '';
       if (S.more) list.appendChild(earlierBtn());
@@ -1610,6 +1613,7 @@
   function endAt(t) { var d = t.delivery; return d && (d.state === 'delivered' || d.state === 'silent') && d.at ? d.at : t.endedAt; }
   // 一条消息的分组：派活那一轮，和它派出去的活的框、结果（站长 2026-11-18「这个整体只能算一段话」）。找不到派活那一轮的自成一组
   var TDISP = {};
+  var tqLast = {};   // 天启：每一轮最后一段回答（计划轮次结束时交给 sky.js）
   function tgrp(sid) { return TDISP[sid] || 'task-' + sid; }
   function grpOf(e) { return e.dataset.grp || e.dataset.run || ''; }
   // 待处理最多等 30 分钟（控制器给 waitUntil），过了任务自己停下；这里显示还剩多久
@@ -3211,14 +3215,16 @@
     var c = curCtx();
     var files = atts.map(function (a) { return { name: a.name, path: a.path, size: a.size, image: a.image, url: a.url }; });
     if (atts.length && !prep) { S.atts = []; renderAtts(); }
-    var pending = draw({ t: 'user', text: text, ctx: c ? ctxLabel(c) : '', files: files });
+    // 天启：这句带什么权限、是不是计划（site/tools/tianqi/sky.js 的输入框按钮管，控制器按它起 Harness）
+    var tqo = TQ && typeof window.LimingXinChat.tqOpts === 'function' ? window.LimingXinChat.tqOpts() : null;
+    var pending = draw({ t: 'user', text: text, ctx: c ? ctxLabel(c) : '', files: files, plan: tqo && tqo.plan || undefined });
     pending.classList.add('pending');
     if (given == null && !prep) { input.value = ''; ls(LS_DRAFT, null); grow(); }
     // 还没送到小芯的电脑：「正在输入」旁边写「接收中」（电脑在睡写「唤醒中」），送到了才「思考中」并开始计时
     S.lastText = ''; S.doing = 'think'; S.act = ''; S.thinkS = ''; S.thinkFixed = false; S.note = null; S.waitSend = '';
     typing(true); renderHead(); toBottom(true); if (!TQ) flyFromComposer(pending);
     var x = xin(); if (x) x.ai('think');
-    flight.payload=retry&&retry.payload||{ sid: flight.sid || undefined, main: !TQ && !flight.sid && mainDraft() || undefined, clientId: flight.id, agent: flight.sid ? undefined : (TQ ? 'harness' : S.agent), text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,files:files.length?files.map(function(f){return {path:f.path,name:f.name};}):undefined};
+    flight.payload=retry&&retry.payload||{ sid: flight.sid || undefined, main: !TQ && !flight.sid && mainDraft() || undefined, clientId: flight.id, agent: flight.sid ? undefined : (TQ ? 'harness' : S.agent), text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,files:files.length?files.map(function(f){return {path:f.path,name:f.name};}):undefined,perm:tqo?tqo.perm:undefined,plan:tqo&&tqo.plan?true:undefined};
     call('send', flight.payload, 90000, function (w) { if(generation===S.convSeq){S.waitSend = w.state; progress();} },function(){return generation===S.convSeq;}).then(function (d) {
       if (d && d._accepted) return waitDelivery(d.delivery, d, function () { return generation === S.convSeq; }, function (w) { if (generation === S.convSeq) { S.waitSend = w; progress(); } });
       return d;
@@ -3732,6 +3738,7 @@
       if (TQ) e.appendChild(h('b', 'tq-me-name', '你'));
       if(ev.clientId) e.dataset.messageId=ev.clientId;
       if (ev.files && ev.files.length) e.appendChild(msgFiles(ev.files));
+      if (TQ && ev.plan) e.appendChild(h('span', 'tq-plan-tag', '计划'));   // 天启计划模式的那一句
       if (ev.text) e.appendChild(h('div', 'xc-bub', ev.text));
       if (ev.ctx) e.appendChild(h('div', 'xc-ctxm', '附带：' + ev.ctx));
     } else if (ev.t === 'text') {
@@ -3756,6 +3763,7 @@
       m = aiMsg(run); m.b.appendChild(body); msgActs(m.e, ev.text);
       if (body.querySelector('.xc-code, .xc-tbl')) m.e.classList.add('wide');
       e = m.e;
+      if (TQ) tqLast[run] = { text: ev.text, el: e };   // 计划轮次结束时，最后这段就是计划
     } else if (ev.t === 'err') {
       S.errRuns[run] = true;
       m = aiMsg(run, 'bad'); m.b.textContent = ev.text; e = m.e;
@@ -3766,6 +3774,8 @@
       if (ev.model) S.lastModel = ev.model;
       // 这一轮实际用的模型写在回答下面（默认模式是小芯挑的；用户点名、换了模型也说一声）
       if (ev.model && !ev.stopped && S.sessAgent !== 'codex') { if (e) put(e); e = byLine(ev, run); }
+      // 天启计划模式的那一轮做完：交给 sky.js 放计划卡片、右栏「计划」（读历史时 old 为真，不自动打开）
+      if (TQ && ev.plan && ev.ok && !ev.stopped && tqLast[run]) document.dispatchEvent(new CustomEvent('tq:plan', { detail: { run: run, text: tqLast[run].text, el: tqLast[run].el, old: !!old } }));
     } else if (ev.t === 'task') {
       // 前台派出去的后台任务：那段话下面一个框（站长 2026-11-16）。不是卡片（2026-11-11 定的「聊天里不放卡片」还算数：没有按钮，点开是终端，操作在工作台和「详情」）。
       // 刚派出去的记下来，好知道它什么时候做完
@@ -4287,6 +4297,8 @@
   new MutationObserver(function (ms) { ms.forEach(function (m) { [].forEach.call(m.addedNodes, phase); }); }).observe(document.body, { childList: true, subtree: true });
   phase(document.body);
   window.LimingXinChat = { open: open, close: close, work: work, ask: quick, played: played, page: page, tasks: function () { pollTasks(); }, get state() { return S; },
-    tqFiles: function (p) { if (TQ && root) loadFiles(p || WORK); } };
+    tqFiles: function (p) { if (TQ && root) loadFiles(p || WORK); },
+    // 天启：sky.js 的「按计划执行」代发一句；右栏「计划」用同一套 markdown 渲染
+    tqSend: function (t) { return TQ && root ? send(t) : false; }, md: function (t) { return md(t); } };
   boot();
 })();
