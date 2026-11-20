@@ -958,6 +958,38 @@ async def main():
                  [x[0] for x in hdr] == ['对话记录', '搜索和命令', '打开面板'] and all(w >= 44 and hh >= 44 for _, w, hh in hdr) and pal_ok, (hdr, pal_ok))
         await pg.context.close()
 
+        # 平板横屏（1180×820）从首页打开天启：左栏是窄条。站长 11-20 iPad 截图：返回键压在星星上，设置、插件歪在左边；点输入框屏幕闪一下
+        pg = await ui.page(browser, 1180, 820, mobile=True, theme='dark')
+        st = await tianqi_mock(pg)
+        await pg.goto(ui.BASE + '/tianqi')
+        frame = pg.frame_locator('.panel[data-id=tianqi] iframe')
+        await frame.locator('.tq-box').wait_for()
+        await pg.wait_for_timeout(600)
+        back = await pg.locator('.panel[data-id=tianqi] .back').bounding_box()
+        tf = next(f for f in pg.frames if '/tools/tianqi/' in f.url)
+        rail = await tf.evaluate("""(() => { const g = document.querySelector('.tq-side .tq-glass').getBoundingClientRect(), mid = g.left + g.width / 2;
+          const c = s => { const r = document.querySelector(s).getBoundingClientRect(); return Math.round((r.left + r.width / 2 - mid) * 10) / 10; };
+          const k = document.querySelector('.tq-brand-key').getBoundingClientRect();
+          return { left: document.querySelector('.tq-frame').dataset.left, keyTop: k.top, off: [c('.tq-brand-mark'), c('.xc-new-b svg'), c('.tq-set-b svg'), c('.tq-plug-b svg')] }; })()""")
+        ui.check('平板横屏天启：左栏窄条里星星、新对话、设置、插件的图标都在窄条正中，首页返回键不压在星星上',
+                 rail['left'] == 'rail' and all(abs(x) <= 1 for x in rail['off']) and back['y'] + back['height'] <= rail['keyTop'], (rail, back))
+        sky0 = await tf.evaluate("[...document.querySelectorAll('canvas.tq-sky')].map(c => [c.width, c.height])")
+        await tf.evaluate("""window.__skyResets = 0; (() => { const d = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'height');
+          Object.defineProperty(HTMLCanvasElement.prototype, 'height', { configurable: true, get() { return d.get.call(this); }, set(v) { if (this.classList.contains('tq-sky')) window.__skyResets++; d.set.call(this, v); } }); })()""")
+        # 键盘弹起：外壳把面板缩到可见区域（shell.js fitStage 的做法），收起再复原
+        await pg.evaluate("const s = document.getElementById('stage').style; s.top = '0px'; s.height = '430px'; s.bottom = 'auto'")
+        await pg.wait_for_timeout(400)
+        kb = await tf.evaluate("[innerHeight, window.__skyResets, [...document.querySelectorAll('canvas.tq-sky')].map(c => [c.width, c.height, Math.round(c.getBoundingClientRect().height)])]")
+        await pg.evaluate("const s = document.getElementById('stage').style; s.top = s.height = s.bottom = ''")
+        await pg.wait_for_timeout(400)
+        kb_done = await tf.evaluate('window.__skyResets')
+        ui.check('平板点输入框、键盘弹起又收起：夜空不重设画布、不压扁（不闪）',
+                 kb[0] == 430 and kb[1] == 0 and kb_done == 0 and all(c[:2] == s0 and c[2] == s0[1] // max(1, round(s0[1] / 820)) for c, s0 in zip(kb[2], sky0)), (sky0, kb, kb_done))
+        await pg.set_viewport_size({'width': 820, 'height': 1180})
+        await pg.wait_for_timeout(500)
+        ui.check('平板转成竖屏：夜空按新尺寸重画', await tf.evaluate('window.__skyResets') > 0, await tf.evaluate('window.__skyResets'))
+        await pg.context.close()
+
         # 7. 深链：只启动天启；返回首页后再启动小芯。
         pg = await ui.page(browser, 1280, 860)
         st = await tianqi_mock(pg, xin_enabled=True)
