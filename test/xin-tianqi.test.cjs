@@ -164,6 +164,44 @@ test('天启的工作区：新对话选了工作区就在那个文件夹里跑�
   assert.equal(op('send', { sid: a.sid, text: '同一句', work: 'other', clientId: 'tq-work-same-1' }).error, 'message_conflict');
 });
 
+// 终端里自己输命令（设计 §4 第 3 个 PR）：只给天启，在工作区里跑，最多 60 秒、输出最多 64 KB。
+// 外壳转一个操作最多等 40 秒，所以命令放后台跑：term_run 马上回编号，term_poll 按字节位置取输出（计划的 Rulings）
+test('天启的终端：在工作区里跑命令，有输出和退出码；超时停掉；输出最多 64 KB；新文件夹先建好；小芯不能用', async t => {
+  const { home, op } = agentEnv(t, { XIN_ROLE: 'tianqi', XIN_TERM_LIMIT_MS: '1500' });
+  const work = path.join(home, 'work');
+  const run = async a => {
+    const r = op('term_run', a);
+    assert.ok(r.id, JSON.stringify(r));
+    let p = {}, all = '', off = 0;
+    for (const end = performance.now() + platformTimeout(10000); performance.now() < end;) {
+      p = op('term_poll', { id: r.id, off });
+      assert.ok(!p.error, JSON.stringify(p));
+      all += p.out; off = p.off;
+      if (p.done) break;
+      await new Promise(ok => setTimeout(ok, 100));
+    }
+    return { ...p, all };
+  };
+  const a = await run({ work: 'blink', cmd: 'pwd -P; echo 你好; exit 3' });
+  assert.deepEqual([a.done, a.code, a.timedOut, a.truncated], [true, 3, false, false]);
+  assert.equal(a.all, fs.realpathSync(path.join(work, 'blink')) + '\n你好\n');
+  // 超时（测试里把 60 秒调成 1.5 秒）：停掉，说是超时
+  const b = await run({ work: '', cmd: 'sleep 30' });
+  assert.deepEqual([b.done, b.timedOut], [true, true]);
+  // 输出截到 64 KB，命令照样跑完
+  const c = await run({ work: '', cmd: 'yes | head -c 200000' });
+  assert.deepEqual([c.done, c.code, c.truncated, Buffer.byteLength(c.all)], [true, 0, true, 65536]);
+  // 新对话选了还不存在的新文件夹：先建好再跑
+  const d = await run({ work: 'new-folder', cmd: 'pwd -P' });
+  assert.equal(d.all.trim(), fs.realpathSync(path.join(work, 'new-folder')));
+  assert.equal(op('term_run', { work: '../x', cmd: 'pwd' }).error, 'bad_work');
+  assert.ok(!fs.existsSync(path.join(home, 'x')));
+  for (const cmd of ['', 'a\0b', 'x'.repeat(4001), 42]) assert.equal(op('term_run', { cmd }).error, 'bad_cmd', String(cmd).slice(0, 9));
+  assert.equal(op('term_poll', { id: '../../etc/passwd', off: 0 }).error, 'bad_id');
+  // 小芯（不是天启）：这两个操作不给用
+  assert.equal(agentEnv(t, {}).op('term_run', { cmd: 'pwd' }).error, 'tianqi_only');
+});
+
 test('天启身份：要 Codex、Claude 的被拒，接着聊别的 agent 的对话也被拒；网关 key 没放好时说网关还没配好', t => {
   const { dsh } = fakeDsh(fs.mkdtempSync(path.join(os.tmpdir(), 'xin-tq-dsh-')));
   const { xin, op } = agentEnv(t, { XIN_ROLE: 'tianqi', XIN_DSH: dsh });
