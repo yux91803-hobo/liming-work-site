@@ -58,6 +58,7 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
         'hist_plan': False,    # 旧对话里有一轮计划、后面又按计划执行过
         'hist_work': None,     # 旧对话的工作区（history 的 session.work）
         'files_uploads': False,  # 工作目录根下多一个 uploads 文件夹（工作区选择里不该列它）
+        'files_gate': None,    # 设成 asyncio.Event 时，列目录的 files 停住、等测试放行（照 MSW 的 delay('infinite') 测「读取中」）
         'term_runs': [],       # 终端里输的命令（term_run 的参数）
         'term_polls': {},      # 每条命令取了几次输出
         'sessions': [
@@ -138,6 +139,8 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             st['files_reqs'].append(p)
             if p.endswith('.md'):
                 return await ok({'ok': True, 'data': {'path': p, 'work': '/data/workspace', 'size': 64, 'mtime': 1763520000000, 'text': '# 天启的笔记\n\nPC13 接板上的 LED，低电平亮。'}})
+            if st['files_gate'] is not None:
+                await st['files_gate'].wait()
             return await ok({'ok': True, 'data': {'dir': True, 'path': p, 'work': '/data/workspace', 'entries': [
                 {'name': 'stm32-blink', 'dir': True, 'mtime': 1763520000000},
                 {'name': 'notes.md', 'dir': False, 'size': 64, 'mtime': 1763520000000},
@@ -465,16 +468,21 @@ async def main():
         seen = """(() => { const p = document.querySelector('#tq-work-pick'), w = document.querySelector('#tq-work');
           return { pick: !!p && p.offsetParent !== null, label: p ? p.textContent.trim() : '', head: w ? w.textContent.trim() : '' }; })()"""
         first = await pg.evaluate(seen)
+        st['files_gate'] = asyncio.Event()   # 列目录先停住：弹层这时还在「读取文件夹…」（CI 比本地慢，测试曾在这时读了列表）
         await pg.locator('#tq-work-pick').click()
         await pg.wait_for_selector('#tq-work-pop:not([hidden]) [role=menuitemradio]')
+        loading = await pg.evaluate("[document.querySelector('#tq-work-pop').textContent.includes('读取文件夹…'), document.querySelectorAll('#tq-work-pop [data-work]').length]")
+        st['files_gate'].set()
+        # 等读完再读列表（照 Playwright 的 web-first assertions、Testing Library 的 findBy：等条件成立，不是等随便哪个元素出现）
+        await pg.wait_for_function("!document.querySelector('#tq-work-pop').textContent.includes('读取文件夹…')")
         items = await pg.evaluate("[...document.querySelectorAll('#tq-work-pop [role^=menuitem]')].map(b => b.textContent.trim())")
         await pg.locator('#tq-work-pop [role=menuitemradio]', has_text='stm32-blink').click()
         chosen = await pg.evaluate(seen)
         popped = await pg.evaluate("document.querySelector('#tq-work-pop').hidden")
-        ui.check('新对话：输入框上面选工作区，列出文件夹、「工作目录」和「新建文件夹…」，不列 uploads 和文件；选了标题旁跟着换',
-                 first['pick'] and '工作目录' in first['label'] and '工作目录' in first['head'] and popped
+        ui.check('新对话：输入框上面选工作区，先写「读取文件夹…」，读完列出文件夹、「工作目录」和「新建文件夹…」，不列 uploads 和文件；选了标题旁跟着换',
+                 first['pick'] and '工作目录' in first['label'] and '工作目录' in first['head'] and popped and loading == [True, 1]
                  and any('stm32-blink' in t for t in items) and any('工作目录' in t for t in items) and any('新建文件夹' in t for t in items)
-                 and not any('uploads' in t or 'notes.md' in t for t in items) and 'stm32-blink' in chosen['label'] and 'stm32-blink' in chosen['head'], (first, items, chosen))
+                 and not any('uploads' in t or 'notes.md' in t for t in items) and 'stm32-blink' in chosen['label'] and 'stm32-blink' in chosen['head'], (first, loading, items, chosen))
         await pg.fill('.xc-row textarea', '看看工程')
         await pg.press('.xc-row textarea', 'Enter')
         await pg.wait_for_function(ui.CHAT_DONE)
