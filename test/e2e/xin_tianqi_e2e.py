@@ -597,6 +597,60 @@ async def main():
                  and plug['grip'] and plug['h'] <= plug['need'] + 2 and plug['desc'] == ['提示词与规则管理', 'Ghidra 本地分析工具'], plug)
         await pg.context.close()
 
+        # 2c-2. 照 Linear 的命令面板（Cmd K，开源的同类是 pacocoursey/cmdk）：天启的常用操作都在里面，每项右边写快捷键；
+        #       单键快捷键 C 新对话、M 模型、P 权限、W 工作区，只在没在打字、没按 Ctrl / Alt / ⌘ 时生效
+        pg = await ui.page(browser, 1280, 860)
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        st['sessions'] = [{'sid': 'stqb00001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1763500000000}]
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.keyboard.press('Control+k')
+        await pg.wait_for_selector('.xc-pal.in .xc-pal-i')
+        pal = await pg.evaluate("""[...document.querySelectorAll('.xc-pal-i')].map(b => [b.querySelector('.xc-pal-t').textContent,
+          [...b.querySelectorAll('.xc-pal-k kbd')].map(k => k.textContent).join(' ')])""")
+        # 截图自查：天启全局的金色焦点框盖掉了命令面板输入框的「不画框」，搜索框外面多一个金色方框；面板还是旧的 20px 圆角
+        pal_box = await pg.evaluate("""[document.activeElement.matches('.xc-pal-q input'), getComputedStyle(document.activeElement).outlineStyle,
+          getComputedStyle(document.querySelector('.xc-pal-box')).borderTopLeftRadius]""")
+        ui.check('照 Linear：命令面板 12px 圆角，打开就能打字，搜索框外面不画焦点框（光标就够了）', pal_box == [True, 'none', '12px'], pal_box)
+        await pg.keyboard.press('Escape')
+        await pg.wait_for_function("document.querySelector('.xc-pal').hidden")
+        kb = dict(pal)
+        ui.check('照 Linear：Ctrl K 命令面板里有天启的常用操作（换模型、换权限、计划模式、切换工作区、打开终端、左栏、右栏、插件、设置），右边写着快捷键',
+                 all(t in kb for t in ['换模型', '换权限', '计划模式', '切换工作区', '打开终端', '插件', '设置'])
+                 and kb.get('新建对话') == 'C' and kb.get('换模型') == 'M' and kb.get('换权限') == 'P' and kb.get('切换工作区') == 'W'
+                 and any(t.endswith('右栏') and k == 'Ctrl J' for t, k in pal) and any(t.endswith('左栏') and k == 'Ctrl B' for t, k in pal), pal)
+        opened = """(() => ({ perm: !document.querySelector('#tq-perm-pop').hidden, model: document.querySelector('.tq-instruments .xc-mdl').getAttribute('aria-expanded') === 'true',
+          work: !document.querySelector('#tq-work-pop').hidden, sid: window.LimingXinChat.state.sid || '' }))()"""
+        # 在输入框里打这几个字母只是打字
+        await pg.locator('.xc-row textarea').click()
+        await pg.keyboard.type('cmpw')
+        typed = await pg.evaluate("document.querySelector('.xc-row textarea').value")
+        in_box = await pg.evaluate(opened)
+        await pg.fill('.xc-row textarea', '')
+        # 没在打字时：P 弹出权限、M 弹出模型、W 弹出工作区（各自 Esc 关掉）；打开旧对话后按 C 回到新对话
+        await pg.evaluate("document.activeElement && document.activeElement.blur()")
+        keys = {}
+        for key in ['p', 'm', 'w']:
+            await pg.keyboard.press(key)
+            await pg.wait_for_timeout(120)
+            keys[key] = await pg.evaluate(opened)
+            await pg.keyboard.press('Escape')
+            await pg.wait_for_timeout(120)
+            await pg.evaluate("document.activeElement && document.activeElement.blur()")
+        await pg.keyboard.press('Control+p')   # 带 Ctrl 的不算（浏览器自己的打印也不能被抢）
+        ctrl_p = await pg.evaluate(opened)
+        await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
+        await pg.wait_for_function("window.LimingXinChat.state.sid === 'stqb00001'")
+        await pg.evaluate("document.activeElement && document.activeElement.blur()")
+        await pg.keyboard.press('c')
+        await pg.wait_for_function("!window.LimingXinChat.state.sid", timeout=3000)
+        after_c = await pg.evaluate("[window.LimingXinChat.state.sid || '', document.activeElement === document.querySelector('.xc-row textarea')]")
+        ui.check('照 Linear：没在打字时单键 P 权限、M 模型、W 工作区、C 新对话（光标进输入框）；在输入框里打 cmpw 只是打字；带 Ctrl 的不算',
+                 typed == 'cmpw' and not (in_box['perm'] or in_box['model'] or in_box['work'])
+                 and keys['p']['perm'] and keys['m']['model'] and keys['w']['work']
+                 and not (ctrl_p['perm'] or ctrl_p['model'] or ctrl_p['work']) and after_c == ['', True], (typed, in_box, keys, ctrl_p, after_c))
+        await pg.context.close()
+
         # 2d. 终端里自己输命令（第 3 个 PR）：右栏「终端」底下一个输入框，在这个对话（或新对话选的）工作区里跑；
         #     命令后台跑、分几次取输出；跑的时候不能再发；结尾写退出码和用时，超时、输出太多各有一句话
         pg = await ui.page(browser, 1280, 860)
@@ -785,6 +839,17 @@ async def main():
         ui.check('手机天启工作台：左栏收进抽屉，返回键不挡菜单键，输入框在屏幕里，面板键能点', back['x'] + back['width'] <= menu['x']
                  and box['y'] + box['height'] <= 844 and await frame.locator('.tq-panel-b').is_visible(),
                  (back, menu, box))
+        # 照 Linear 的手机版：顶栏是菜单、标题（下面小字写工作区）、搜索和命令、右栏，能点的都不小于 44px；点「搜索和命令」打开命令面板
+        hdr = await frame.locator('.tq-mid-head').evaluate("""h => [...h.querySelectorAll('button')].filter(b => getComputedStyle(b).display !== 'none' && b.offsetWidth)
+          .map(b => [b.getAttribute('aria-label'), Math.round(b.getBoundingClientRect().width), Math.round(b.getBoundingClientRect().height)])""")
+        try:   # 没有这个键时记一项失败，不让整组测试停在这里
+            await frame.get_by_role('button', name='搜索和命令').tap(timeout=3000)
+            await frame.locator('.xc-pal.in .xc-pal-i').first.wait_for(timeout=3000)
+            pal_ok = True
+        except Exception:
+            pal_ok = False
+        ui.check('手机天启顶栏：菜单、搜索和命令、右栏三个键都在，都不小于 44px；点「搜索和命令」打开命令面板',
+                 [x[0] for x in hdr] == ['对话记录', '搜索和命令', '打开面板'] and all(w >= 44 and hh >= 44 for _, w, hh in hdr) and pal_ok, (hdr, pal_ok))
         await pg.context.close()
 
         # 7. 深链：只启动天启；返回首页后再启动小芯。

@@ -355,6 +355,10 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 .tq-menu { display: none; }
 .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-menu { display: grid; }
 .tq-mid-head .xc-x svg { width: 18px; height: 18px; }
+/* 顶栏的「搜索和命令」：电脑上左栏有搜索那一行、还有 Ctrl K，只在窄屏和手机上放；手机上顶栏能点的都不小于 44px */
+.tq-cmd-b { display: none; }
+.tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-cmd-b { display: grid; }
+@media (pointer: coarse) { .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-mid-head .tq-ib { width: 44px; height: 44px; } }
 html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有返回键 */
 .tq-badge { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; --rad: 50%; background: var(--star); animation: tq-pulse 1.8s ease-in-out infinite; }
 @keyframes tq-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.6); opacity: .55; } }
@@ -646,8 +650,16 @@ html.tianqi[data-theme="light"] .tm-win {
 @keyframes tq-sheet-up { from { transform: translateY(24px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .tianqi .xc.wb.tq-mode .xc-sheet { animation: none; } }
 .tianqi .xc.tq-mode .xc-pal { z-index: 40; }
+/* 命令面板：和别的弹层一样实心、12px 圆角、一条细边；搜索框打开就有光标，不再画天启的金色焦点框 */
+.tianqi .xc.tq-mode .xc-pal-box { --rad: 12px; background: var(--pop); box-shadow: 0 0 0 1px var(--line-2), var(--shadow); }
+.tianqi .xc.tq-mode .xc-pal-q { box-shadow: inset 0 -1px 0 var(--line); }
+.tianqi .xc.tq-mode .xc-pal-q input:focus-visible { outline: none; }
+.tianqi .xc.tq-mode .xc-pal-i { --rad: 8px; min-height: 40px; font-size: 14px; }
+.tianqi .xc.tq-mode .xc-pal-i.on { background: var(--press); }
+.tianqi .xc.tq-mode .xc-pal-k { flex: none; display: inline-flex; gap: 3px; margin-left: 8px; }
+.tianqi .xc.tq-mode .xc-pal-k kbd { min-width: 20px; height: 20px; padding: 0 5px; display: inline-grid; place-items: center; border: 1px solid var(--line-2); --rad: 5px; background: var(--hover); color: var(--ink-3); font: 500 11px/1 var(--sans); }
 .tianqi .xc.tq-mode .xc-toast { z-index: 45; }
-.tianqi .xc.tq-mode.locked :is(.tq-side, .tq-right, .tq-mid-head .tq-panel-b) { display: none; }
+.tianqi .xc.tq-mode.locked :is(.tq-side, .tq-right, .tq-mid-head .tq-panel-b, .tq-mid-head .tq-cmd-b) { display: none; }
 .tianqi .xc.tq-mode.locked .tq-frame { grid-template-columns: minmax(0, 1fr); }
 .tianqi .xc.tq-mode.locked .tq-mid { grid-column: 1 / -1; }
 .tianqi .xc.tq-mode .xc-login {
