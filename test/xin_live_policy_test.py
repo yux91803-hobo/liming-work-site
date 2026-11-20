@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import FRONT_WEB_UNAVAILABLE, front_lookup_during_outage, front_lookup_verdict, HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, after_steer, steer_count, canned_reply
+from xin_live_policy import FRONT_WEB_UNAVAILABLE, front_lookup_during_outage, front_lookup_verdict, HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, drop_mentions, after_steer, steer_count, canned_reply
 
 
 class SpokenMarker(unittest.TestCase):
@@ -40,6 +40,14 @@ class Steer(unittest.TestCase):
         self.assertEqual(list_verdict('alpha-main,gamma-main', ['alpha-main', 'gamma-main'], ['beta-backup']), {'keeps': True, 'drops': True})
         self.assertEqual(list_verdict('alpha-main,beta-backup', ['alpha-main'], ['beta-backup']), {'keeps': True, 'drops': False})
         self.assertEqual(list_verdict('', ['alpha-main'], []), {'keeps': False, 'drops': True})
+
+    # 11-20 正式联调「Gemini supplement final list wrong」：原话随对话删了，看不出是把备用的当结果列了，还是在说明里提了一句。失败时只给这些布尔值
+    def test_drop_mentions_tell_a_listed_backup_from_an_exclusion_note_without_text(self):
+        self.assertEqual(drop_mentions('- alpha-main\n- beta-backup\n- gamma-main', ['beta-backup']), [{'listed': True, 'note': False}])
+        self.assertEqual(drop_mentions('只列启用的：alpha-main、gamma-main。\nbeta-backup 是备用的，按要求没列。', ['beta-backup']), [{'listed': False, 'note': True}])
+        self.assertEqual(drop_mentions('1. alpha-main\n2. beta-backup（备用，按新要求不列）', ['beta-backup', 'delta-backup']), [{'listed': True, 'note': True}])
+        self.assertEqual(drop_mentions('核对了 alpha-main、beta-backup、gamma-main', ['beta-backup']), [{'listed': False, 'note': False}])
+        self.assertEqual(drop_mentions('alpha-main、gamma-main', ['beta-backup']), [])
 
     def test_after_steer_finds_later_commands_on_dropped_names(self):
         ev = [{'t': 'tool', 'detail': 'echo alpha-main'}, {'t': 'user', 'steer': True, 'text': 'x', 'clientId': 'ft-0123456789abcdef01234567'}, {'t': 'tool', 'detail': 'echo gamma-main'}]

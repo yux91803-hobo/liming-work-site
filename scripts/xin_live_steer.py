@@ -14,7 +14,7 @@ C. Codex（点名 Kimi）：同样的补充经 turn/steer 进当前轮，最终�
 import asyncio
 import time
 import uuid
-from xin_live_policy import steer_request, list_verdict, after_steer, steer_count, canned_reply
+from xin_live_policy import steer_request, list_verdict, drop_mentions, after_steer, steer_count, canned_reply
 
 KEEP, DROP = ['alpha-main', 'gamma-main'], ['beta-backup', 'delta-backup']
 ITEMS = [('alpha-main', True), ('beta-backup', False), ('gamma-main', True), ('delta-backup', False)]
@@ -77,9 +77,12 @@ async def steer_live(page, call, settle, errors, leaks, owned, base_dir):
             await asyncio.sleep(4)
 
     def final_list(h, keep, drop, what):
-        v = list_verdict((h['task'].get('result') or {}).get('text', ''), keep, drop)
+        text = (h['task'].get('result') or {}).get('text', '')
+        v = list_verdict(text, keep, drop)
         if h['task']['status'] != 'done' or not v['keeps'] or not v['drops']:
-            raise RuntimeError(what + ' final list wrong: status=' + h['task']['status'] + ' keepsEnabled=' + str(v['keeps']) + ' dropsBackups=' + str(v['drops']))
+            # 只打印布尔值：每一处提到备用名字的行，是当一项列出来了，还是在说明里提的（原话不打印，仓库公开）
+            raise RuntimeError(what + ' final list wrong: status=' + h['task']['status'] + ' keepsEnabled=' + str(v['keeps']) + ' dropsBackups=' + str(v['drops'])
+                               + ' backupLines=' + str(drop_mentions(text, drop)))
 
     # ---------- A. Gemini：聊天里补一句，下一步跟着改，最后的名单只有启用的 ----------
     # 每步睡 30 秒：前台这一轮（模型、转补充、回话）说完时任务还在做，后面带编号的重送也赶得上这一轮

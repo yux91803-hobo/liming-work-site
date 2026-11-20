@@ -192,6 +192,16 @@ def list_verdict(text, keep, drop):
     t = str(text or '')
     return {'keeps': all(n in t for n in keep), 'drops': not any(n in t for n in drop)}
 
+# 最终名单里出现了不要的名字：每一行分清是当一项列出来了（以 -、*、1. 这类开头），还是在说明里提了一句（不列、排除、按要求……）。
+# 只给布尔值、不给原话（仓库公开），失败时打出来，下次能看出是模型没照补充筛，还是说明里多提了名字
+LIST_ITEM = re.compile(r'^\s*(?:[-*•·]|\d+\s*[.)、．])\s*')
+EXCLUDE_NOTE = re.compile(r'不列|没列|未列|不再|排除|去掉|筛掉|按要求|按新要求|按你的要求|备用')
+
+
+def drop_mentions(text, drop):
+    return [{'listed': bool(LIST_ITEM.match(line)), 'note': bool(EXCLUDE_NOTE.search(line))}
+            for line in str(text or '').splitlines() if any(n in line for n in drop)]
+
 # 核对某个名字的命令：照任务的说法是 sleep N; echo 名字 >> checked.txt（只看命令，不看输出）。
 # 按新要求把之前查到的筛掉（sed -i '/名字/d'、grep -v 名字）是站长要的「重新筛一遍」，不算再核对
 def checks_name(detail, names):
