@@ -65,6 +65,18 @@ test('Codex 事件：网页搜索开始时就给一步、读网页记成打开�
     [{ t: 'think', text: 'Planning the fix', src: 'model' }]);
 });
 
+test('Harness 结构化错误提取实际原因，同一轮只显示一次，不把未知对象或凭据转成正文', async () => {
+  const { fromHarness } = await load('../site/xin/vm-events.mjs');
+  const message = 'xin-gateway API error (400): invalid function call parameters';
+  const st = {};
+  assert.deepEqual(fromHarness({ type: 'status', phase: 'turn_end', reason: { kind: 'error', error: { message, code: 'INVALID_REQUEST' } } }, st), [{ t: 'err', text: message }]);
+  assert.equal(st.failed, true);
+  assert.deepEqual(fromHarness({ type: 'error', message: { error: { message } } }, st), []);
+  assert.deepEqual(fromHarness({ type: 'error', message: { error: { message } } }, {}), [{ t: 'err', text: message }]);
+  assert.deepEqual(fromHarness({ type: 'error', error: { code: 'INVALID_REQUEST' } }, {}), [{ t: 'err', text: 'INVALID_REQUEST' }]);
+  assert.deepEqual(fromHarness({ type: 'error', message: { headers: { authorization: 'secret-should-not-appear' } } }, {}), [{ t: 'err', text: '出错了' }]);
+});
+
 test('天启（Harness）的思考：攒成一句再给 think，太碎的不给；思考从来不变成聊天里的话', async () => {
   const { fromHarness } = await load('../site/xin/vm-events.mjs');
   assert.deepEqual(fromHarness({ type: 'thinking', text: 'x' }, {}), []);

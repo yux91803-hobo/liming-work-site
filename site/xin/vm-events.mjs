@@ -135,6 +135,15 @@ export function harnessResult(r) {
   if (typeof r === 'object' && typeof r.text === 'string') return r.text;
   return JSON.stringify(r);
 }
+function harnessError(value, depth = 0) {
+  if (typeof value === 'string') return value.trim();
+  if (!value || typeof value !== 'object' || depth >= 4) return '';
+  for (const key of ['message', 'error', 'reason', 'code']) {
+    const text = harnessError(value[key], depth + 1);
+    if (text) return text;
+  }
+  return '';
+}
 export function fromHarness(o, state) {
   const out = [];
   if (!o || typeof o !== 'object') return out;
@@ -161,12 +170,12 @@ export function fromHarness(o, state) {
       }
       if (o.phase === 'turn_end' && o.reason && o.reason.kind && o.reason.kind !== 'completed' && !state.errShown) {
         state.failed = true; state.errShown = true;
-        out.push({ t: 'err', text: String(o.reason.message || o.reason.error || ('这一轮没做完（' + o.reason.kind + '）')) });
+        out.push({ t: 'err', text: harnessError(o.reason.message) || harnessError(o.reason.error) || ('这一轮没做完（' + o.reason.kind + '）') });
       }
       break;
     case 'error': {
       state.failed = true;
-      if (!state.errShown) { state.errShown = true; out.push({ t: 'err', text: String(o.message || (o.error && (o.error.message || o.error.code)) || o.code || '出错了') }); }
+      if (!state.errShown) { state.errShown = true; out.push({ t: 'err', text: harnessError(o.message) || harnessError(o.error) || harnessError(o.code) || '出错了' }); }
       break;
     }
     case 'thinking': {

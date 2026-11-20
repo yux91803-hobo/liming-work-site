@@ -1,4 +1,6 @@
-# 小芯后台模型：写代码用 Neon，检查和查资料用 Argon，杂活回 DeepSeek（设计）
+# 小芯后台模型：写代码用 Neon，检查用 Argon，查资料用 Hydrogen（设计）
+
+2026-11-20 站长调整：后台资料默认 `gemini-4-hydrogen-high`，不是 Argon Medium；下表按当前安排更新。此前的实现和实测记录保留。已排好或明确点名 Argon 的资料任务仍用 Medium。
 
 站长 11-19 在聊天里逐条定下；实现和自查：Claude Code（同一会话，没有另一位审核）。
 
@@ -28,7 +30,7 @@
 | 写代码（code） | Neon High | Argon High → GLM-5.3 → Kimi K3.1 Pro → DeepSeek |
 | 难题（hard） | Neon Extra | Argon High → GLM-5.3 → Kimi K3.1 Pro → DeepSeek |
 | 检查（review） | Argon High | GLM-5.3 → DeepSeek |
-| 查资料（research） | Argon Medium | DeepSeek |
+| 查资料（research） | Hydrogen High | DeepSeek |
 | 杂活（quick） | DeepSeek | — |
 | 带图片的写代码 / 难题（Antigravity 不收图片） | GLM-5.3 | Kimi → DeepSeek |
 | 带图片的检查 | GLM-5.3 | DeepSeek |
@@ -37,7 +39,7 @@
 
 - 「先用」的额度池已经用完（派任务时看各池记录）：直接从下一个开始，不白试。
 - 检查要独立：写代码的是 Argon（Neon 额度用完退过去的）时，检查不用 Argon，从 GLM 开始。
-- Hydrogen 后台不再默认用；点名还可以用。
+- Hydrogen 后台默认用于查资料；代码、难题和检查按上表选择。
 - 点名照点名的用；点名 Neon 时带「Extra / xhigh / 超高」就用 Extra。
 - 前台聊天不动（Hydrogen High，额度用完换 DeepSeek）；它和 Neon 同池，后台写代码多时前台可能更早换到 DeepSeek。
 
