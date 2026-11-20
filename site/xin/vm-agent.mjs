@@ -50,7 +50,7 @@ import { initializeStateTables } from './vm-kernel-operations.mjs';
 import { checkControllers } from './vm-kernel-compat.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
-import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps } from './vm-steer.mjs';
+import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps, saysContinue } from './vm-steer.mjs';
 import { BASE, TIANQI, HARNESS_KEY, dshCmd, harnessInstalled, tianqiReady, tianqiRefuse, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
@@ -1953,8 +1953,8 @@ export function frontAction(a) {
       t.autoContinues=(t.autoContinues||0)+1;saveTask(t);
     }
     if (sub === 'tell') {
-      // --continue：兄弟明确说继续一件做完、停了、没做成的事（站长 2026-11-17）；完成事件里让原工作接着改不用写
-      const resume = rest[1] === '--continue', said = rest.slice(resume ? 2 : 1).join(' ').trim();
+      // --continue：兄弟明确说继续一件做完、停了、没做成的事（站长 2026-11-17），还要他这一句原话里真说了继续（saysContinue，前台模型会给只是补充的话也带上）；完成事件里让原工作接着改不用写
+      const asked = rest[1] === '--continue', said = rest.slice(asked ? 2 : 1).join(' ').trim(), resume = asked && saysContinue((events(a.run).find(e => e.t === 'user') || {}).text);
       // 同一轮里同一句只算一次（前台中断后重放）：编号由这一轮和这句话定
       const clientId = 'ft-' + crypto.createHash('sha256').update(a.run + '\n' + t.no + '\n' + said).digest('hex').slice(0, 24);
       r = taskTell({ no: t.no, text: said, front: !handoff, resume: !!handoff || resume, clientId });

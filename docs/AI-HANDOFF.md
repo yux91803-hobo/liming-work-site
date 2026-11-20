@@ -1,3 +1,9 @@
+## 2026-11-20 · #192 上线时联调失败、自动回滚；修「没说继续也重新开工」（Claude Code）
+
+- #192（天启照 Linear 改版）合并后，正式站部署运行 44723887043 的联调在小芯插话 B 段失败（「A supplement without "continue" restarted a stopped task」），已自动回滚到 #191 的版本。原因和改法见 CHANGES 最新一条：前台模型给只是补充的话也带了 `--continue`，控制器以前完全信它。
+- **改插话、继续的人注意**：要不要重新开工以站长原话为准（`vm-steer.mjs` 的 `saysContinue`），不要只看前台模型给的标志。以后再有「要站长拿主意」的动作（删东西、花钱、对外发），也照这个做：程序核对站长原话或确认，模型只能申请。
+- 这个修复的 PR 合并后会把 #192 一起重新部署上去；上线后正式站联调要再过一遍。
+
 ## 2026-11-20 · 天启照 Linear 改版（Claude Code）
 
 - 改了什么见 CHANGES 最新一条。设计和计划：[specs/2026-11-20-tianqi-linear-design.md](superpowers/specs/2026-11-20-tianqi-linear-design.md)、[plans/2026-11-20-tianqi-linear-plan.md](superpowers/plans/2026-11-20-tianqi-linear-plan.md)。
