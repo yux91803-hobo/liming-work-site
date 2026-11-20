@@ -1,3 +1,9 @@
+## 2026-11-20 · #187 上线时的两次失败（Claude Code）
+
+- 正式站部署运行 44572786582 一共跑了 3 次才上线：第 1 次 check 一条单元测试失败，第 2 次正式站联调失败并自动回滚，第 3 次全过。经过和改法见 CHANGES 最新一条。
+- 单元测试那条是测试里假状态进程的计数文件不是原子写入，已修并加了测试。
+- 联调那条没找到确切原因（原话随联调对话删了），只补了诊断。**下次再看到「Gemini supplement final list wrong」**：看同一行的 `backupLines`，`listed=True` 是模型把备用的当一项列了（要改后台怎么接补充），只有 `note=True` 是说明里提了名字（考虑放宽联调的判断，要先和站长商量）。
+
 ## 2026-11-20 · 天启工作台 v4 第 2 个 PR：权限预设和计划模式（Claude Code）
 
 - 第 1 个 PR（#186）已合并上线。第 2 个 PR 改了什么见 CHANGES 最新一条，实现计划见 [plans/2026-11-20-tianqi-permissions-plan.md](superpowers/plans/2026-11-20-tianqi-permissions-plan.md)。

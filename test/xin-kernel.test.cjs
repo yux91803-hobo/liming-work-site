@@ -20,7 +20,8 @@ import {spawn} from 'node:child_process';
 const op = process.argv[2];
 let input = ''; if (op !== 'serve') for await (const c of process.stdin) input += c;   // serve 的标准输入是外壳的管道，一直开着
 const a = input ? JSON.parse(input) : {};
-const count = n => { const f = process.env.XIN_HOME + '/' + n + '.count'; let k = 0; try { k = Number(fs.readFileSync(f, 'utf8')) || 0; } catch {} fs.writeFileSync(f, String(k + 1)); };
+// 先写临时文件再改名（照 npm 的 write-file-atomic）：测试读计数时不会读到截断后还没写的空文件
+const count = n => { const f = process.env.XIN_HOME + '/' + n + '.count', tmp = f + '.' + process.pid + '.tmp'; let k = 0; try { k = Number(fs.readFileSync(f, 'utf8')) || 0; } catch {} fs.writeFileSync(tmp, String(k + 1)); fs.renameSync(tmp, f); };
 if (op !== 'serve' && op !== 'pushq') count('one-shot');
 if (op === 'echo') process.stdout.write(JSON.stringify(a));
 else if (op === 'slow') { await new Promise(r => setTimeout(r, a.ms || 500)); if (a.mark) fs.writeFileSync(a.mark, 'done'); process.stdout.write('{"ok":true}'); }
@@ -287,6 +288,24 @@ test('流：没变化也定期调 poll（保住「有人在看」）', async () 
     await sleep(1100);
     assert.ok(pollCount(f) >= 3, 'poll 次数 ' + pollCount(f));
     s.ac.abort(); await s.done;
+  } finally { await f.k.close(); }
+});
+
+// 11-20 main 的运行 44572786582 里上面那条读到「poll 次数 0」：假状态进程的 count() 是先截断再写，测试正好在中间读，读到的是空文件（=0）。
+// 计数要先写临时文件再改名（照 npm 的 write-file-atomic），读的一方永远读到完整的数
+test('假状态进程的计数：一边 poll 一边读，读不到写了一半的空文件', async () => {
+  const f = await kernelFixture({ kernel: { pollEveryMs: 1, keepWatchMs: 0 } });
+  try {
+    await f.start();
+    const s = await openStream(f, { run: 'rstream09', off: '0', watching: '1' });
+    let seen = 0, torn = 0, reads = 0;
+    for (const end = performance.now() + 1500; performance.now() < end;) {
+      for (let i = 0; i < 200; i++) { const n = pollCount(f); reads++; if (n > 0) seen = Math.max(seen, n); else if (seen) torn++; }
+      await sleep(0);
+    }
+    s.ac.abort(); await s.done;
+    assert.ok(seen > 20, '流一直在 poll：' + seen);
+    assert.strictEqual(torn, 0, '读到写了一半的计数 ' + torn + ' 次（共读 ' + reads + ' 次）');
   } finally { await f.k.close(); }
 });
 
