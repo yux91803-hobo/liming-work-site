@@ -75,6 +75,35 @@ test('做完了的事：补充不重新开工，前台先说状态问要不要�
  assert.ok(resumed.includes('兄弟之前补充过')&&resumed.includes('再加一条：只列启用的')&&resumed.includes('要，接着做吧'),resumed.slice(0,300));
 });
 
+// 2026-11-20 正式站联调：停下的任务，兄弟说「那件事再加一条：名单按字母顺序排」（没说继续），前台模型却带了 --continue，任务又跑起来了。
+// 要不要接着做是兄弟拿主意：控制器按兄弟这一句原话判断（照 Codex 的做法，批不批准由程序判定，模型只能申请），没说继续就只记下补充、先报状态。
+// 做完、停了、没做成走的是同一段（isFinished），这里用做完的任务。
+test('前台给一句没说继续的补充带了 --continue：按兄弟的原话不重新开工，先报状态；兄弟说继续才接着做',async t=>{
+ const f=fixture(t,[{action:'final',text:'名单：alpha-main、beta-backup'},{action:'final',text:'按字母排好了：alpha-main、beta-backup'}],[
+  {when:'再加一条：名单按字母顺序排',text:'行',calls:[['xin','task','tell','1','--continue','再加一条：名单按字母顺序排']]},
+  {when:'再加一条：名单按字母顺序排',text:'那件事已经做完了。要我按字母顺序重排一遍吗？'},
+  {when:'继续把那件事做完',text:'好，接着做',calls:[['xin','task','tell','1','--continue','继续把那件事做完']]}]);
+ const first=await f.say(null,'TEST_DISPATCH');
+ await f.until(()=>f.task(first.sid).status==='done','做完');
+ await f.idle(first.sid);
+ const ask=await f.say(first.sid,'刚才那件事再加一条：名单按字母顺序排');
+ const req=f.fronts().at(-1);
+ assert.ok(req.input.some(x=>x.type==='function_call_output'&&JSON.parse(x.output).ended===true),'回执说已经结束、没有接着做');
+ assert.equal(reply(ask.events),'那件事已经做完了。要我按字母顺序重排一遍吗？');
+ const still=f.op('history',{sid:f.task(first.sid).sid}).task;assert.equal(still.status,'done');assert.equal(still.inbox,1,'补充记下了，接着做时带上');
+ assert.equal(f.calls().length,1,'没有重新开工');
+ const go=await f.say(first.sid,'继续把那件事做完');
+ assert.equal(reply(go.events),'好，接着做');
+ await f.until(()=>f.calls().length===2&&f.task(first.sid).status==='done','接着做完');
+ assert.ok(f.calls()[1].prompt.includes('再加一条：名单按字母顺序排'),'接着做时带着之前的补充');
+});
+
+test('saysContinue：兄弟原话里明确说继续才算；只是补充、说别继续都不算',async()=>{
+ const { saysContinue } = await import('../site/xin/vm-steer.mjs');
+ for (const s of ['继续把那件事做完','要，接着做吧','重做一遍','resume it','恢复刚才那个任务']) assert.equal(saysContinue(s),true,s);
+ for (const s of ['那件事再加一条：名单按字母顺序排','先别继续','不用接着做了','刚才那件事，备用的别列','']) assert.equal(saysContinue(s),false,s);
+});
+
 test('没附 <手上的事>（这句没有补充的说法）却转了补充：不用预先写好的话，带着实际接法再要一句',async t=>{
  const f=fixture(t,[{action:'shell',command:'echo a >> list.txt',gate:true},{action:'final',text:'好了'}],[
   {when:'蓝灯也算上',text:'好的我记下了',calls:[['xin','task','tell','1','蓝灯也算上']]},

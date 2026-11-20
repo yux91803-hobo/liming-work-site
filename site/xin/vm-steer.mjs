@@ -41,6 +41,12 @@ const CUE = new RegExp([
   '算了', '不做了', '别做了', '停下', '停掉', '先停', '继续', '接着(?:做|查|弄|来|干)'
 ].join('|'));
 export const mentionsWork = text => CUE.test(String(text || '').slice(0, 2000));
+// 兄弟这一句是不是明确要接着做（停了、做完、没做成的事）。要不要重新开工是他拿主意：控制器按他的原话判断，不只看前台模型带没带 --continue
+// （2026-11-20 正式站联调：「那件事再加一条：名单按字母顺序排」被前台带上 --continue，停下的任务又跑起来了）。
+// 照 Codex 的做法：要不要批准由程序判定（codex-rs/core/src/safety.rs），模型只能申请。说「别继续」「先不用接着做」不算。
+const GO_ON = /继续|接着(?:做|查|弄|来|干|写|画|改|跑|整理|核对|搞)|恢复|重新(?:开始|做|跑|来)|重做|重跑|再(?:跑|做)一(?:遍|次)|\b(?:continue|resume|go on|carry on)\b/i;
+const NOT_GO_ON = /(?:别|不要|不用|先别|暂时不|不必|无需|不)(?:再)?(?:继续|接着)/;
+export const saysContinue = text => { const s = String(text || '').slice(0, 2000); return GO_ON.test(s) && !NOT_GO_ON.test(s); };
 // <手上的事> 里每件事补充现在怎么接
 export const HAND_MODE = {
   now: '补充能接进正在做的这一轮，它下一步就按新要求来',
