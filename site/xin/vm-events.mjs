@@ -165,8 +165,12 @@ export function fromHarness(o, state) {
     }
     case 'status':
       if (o.phase === 'step_end' && o.usage) {
-        const u = o.usage, hu = state.hu = state.hu || { input: 0, output: 0, last: 0 };
-        hu.input += u.inputTokens || 0; hu.output += u.outputTokens || 0; hu.last = (u.inputTokens || 0) + (u.outputTokens || 0);
+        // inputTokens 只是没命中缓存的输入，命中缓存的在 cacheReadTokens（站长 11-20：以前漏了它，上下文算成 5 千、实际 35 万）
+        const u = o.usage, hu = state.hu = state.hu || { input: 0, cached: 0, output: 0, last: 0, hit: false };
+        const hit = u.cacheReadTokens || 0;
+        hu.input += (u.inputTokens || 0) + hit; hu.cached += hit; hu.output += u.outputTokens || 0;
+        if (typeof u.cacheReadTokens === 'number') hu.hit = true;   // 报了缓存命中才往外给 cached（老版本不报，网页就不显示命中率）
+        hu.last = u.totalTokens || (u.inputTokens || 0) + hit + (u.outputTokens || 0);
       }
       if (o.phase === 'turn_end' && o.reason && o.reason.kind && o.reason.kind !== 'completed' && !state.errShown) {
         state.failed = true; state.errShown = true;

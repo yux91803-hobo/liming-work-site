@@ -253,11 +253,24 @@
     if (on) { pinY = window.scrollY || 0; home.style.top = -pinY + 'px'; html.classList.add('home-pin'); window.scrollTo(0, 0); }
     else { html.classList.remove('home-pin'); home.style.top = ''; window.scrollTo(0, pinY); }
   }
+  /* iOS 的键盘和状态栏是半透明的，后面透出来的是整页的底（站长 11-20 第二次截图：面板缩到键盘上面了，键盘后面还是白的首页）。
+     照 Vaul 抽屉下面那层同色遮罩：跟着键盘的这段时间，整页底色换成工具自己的 theme-color、首页藏起来；键盘收起就复原
+     （平时首页不藏：左缘滑动返回时要露出它）。 */
+  function toolColor() {
+    var p = current && panels[current], c = '';
+    try { var m = p && p._frame.contentDocument.querySelector('meta[name="theme-color"]'); c = m ? (m.getAttribute('content') || '').trim() : ''; } catch (e) { /* 别的源 */ }
+    return /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/i.test(c) ? c : '';
+  }
+  function kbCover(on) {
+    var c = on ? toolColor() : '';
+    html.classList.toggle('kb-up', !!on);
+    if (c) html.style.setProperty('--kb-bg', c); else html.style.removeProperty('--kb-bg');
+  }
   function fitStage() {
     var vv = window.visualViewport, s = stage.style;
     // 只在触屏、工具开着、没在放大、可见区域确实比窗口矮（键盘）的时候跟；别的时候回到铺满
-    if (!vv || !lite || !current || Math.abs((vv.scale || 1) - 1) > 0.01 || vv.height >= innerHeight - 1) { s.top = s.height = s.bottom = ''; return; }
-    s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = vv.height + 'px'; s.bottom = 'auto';
+    if (!vv || !lite || !current || Math.abs((vv.scale || 1) - 1) > 0.01 || vv.height >= innerHeight - 1) { s.top = s.height = s.bottom = ''; kbCover(false); return; }
+    s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = vv.height + 'px'; s.bottom = 'auto'; kbCover(true);
   }
   new MutationObserver(function () { pinHome(body.classList.contains('locked')); fitStage(); }).observe(body, { attributes: true, attributeFilter: ['class'] });
   addEventListener('scroll', function () { if (html.classList.contains('home-pin') && window.scrollY) window.scrollTo(0, 0); }, { passive: true });

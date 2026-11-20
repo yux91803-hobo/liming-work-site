@@ -39,6 +39,9 @@ body.tool-open #home{transform:scale(.94);opacity:.55}
 .standalone.lite body.tool-open #home{transform:none;opacity:1}
 /* 工具开着：首页按原来的位置固定住（shell.js 的 pinHome 写 top），页面没有能滚的高度，iOS 弹键盘不会把面板推上去露出首页 */
 html.home-pin #home{position:fixed;left:0;right:0}
+/* 键盘弹出、面板跟着可见区域缩小时（shell.js 的 kbCover）：整页底色是工具的颜色、首页藏起来，半透明的键盘和状态栏后面不再透出首页 */
+html.kb-up,html.kb-up body{background:var(--kb-bg,var(--bg));transition:none}   /* 键盘升起那一下就要换好，不能先闪首页的底色 */
+html.kb-up #home{visibility:hidden}
 body.covered #home{visibility:hidden}
 .lite body.covered #home{visibility:visible}
 /* 系统手势返回/前进后直接落到终态，不补播动画 */

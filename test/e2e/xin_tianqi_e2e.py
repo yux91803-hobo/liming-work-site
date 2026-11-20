@@ -696,8 +696,15 @@ async def main():
           Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 40 });
           vv.dispatchEvent(new Event('resize')); })()""")
         kb = await pg.evaluate("(() => { const r = document.getElementById('stage').getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)]; })()")
+        # 键盘和状态栏后面透出来的是整页的底：键盘弹出时它要是天启的颜色（#02040a），首页藏起来（站长 11-20 第二次截图：键盘后面还是白的首页）
+        cover = """(() => ({ bg: getComputedStyle(document.documentElement).backgroundColor,
+          home: getComputedStyle(document.getElementById('home')).visibility }))()"""
+        kb_cover = await pg.evaluate(cover)
         await pg.evaluate("""(() => { const vv = window.visualViewport; delete vv.height; delete vv.offsetTop; vv.dispatchEvent(new Event('resize')); })()""")
         kb_off = await pg.evaluate("(() => { const r = document.getElementById('stage').getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)]; })()")
+        # 收起后底色按首页原来的 0.3 秒过渡褪回去（面板这时已经铺满整屏，看不见）：等它复原
+        await pg.wait_for_function("getComputedStyle(document.documentElement).backgroundColor !== 'rgb(2, 4, 10)'", timeout=3000)
+        off_cover = await pg.evaluate(cover)
         await pg.click('.panel[data-id="tianqi"] .back')
         await pg.wait_for_function("!document.body.classList.contains('tool-open')")
         await pg.wait_for_timeout(600)
@@ -707,6 +714,9 @@ async def main():
                  # 关掉后首页按「最近用过」重排卡片会变高，浏览器的滚动锚定可能再挪 1 像素
                  and kb == [40, 300] and kb_off == [0, 560] and abs(after[0] - before[0]) <= 2 and after[1] == 'relative',
                  (before, locked, kb, kb_off, after))
+        ui.check('手机：键盘弹出时整页底色换成天启的颜色、首页藏起来（键盘和状态栏后面不再透出首页）；收起后首页回来，底色复原',
+                 kb_cover == {'bg': 'rgb(2, 4, 10)', 'home': 'hidden'} and off_cover['home'] == 'visible' and off_cover['bg'] != 'rgb(2, 4, 10)',
+                 (kb_cover, off_cover))
         await pg.context.close()
 
         # 手机双区上下排列，返回键与天启品牌、操作键分开。
