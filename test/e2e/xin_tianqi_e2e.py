@@ -879,6 +879,28 @@ async def main():
                  (up, up_rect, down, pad_before, pad_up, pad_down))
         await pg.context.close()
 
+        # 6d. 站长 11-20：手机上左栏要点两下才切换对话。iOS 手指一点先算悬停，悬停让「⋯」从看不见变看得见，
+        #     WebKit 就把第一下只当悬停（content change observer）。触屏上「⋯」一直显示（照小芯 chat.css 的 hover:none），悬停不改它
+        pg = await ui.page(browser, 390, 844, mobile=True)
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        st['sessions'] = [{'sid': 'stqa00001', 'agent': 'harness', 'title': 'LED 快闪', 'turns': 2, 'updated': 1763600000000},
+                          {'sid': 'stqb00001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1763500000000}]
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.locator('.tq-menu').tap()
+        row = pg.locator('.tq-side .xc-sli', has_text='天启旧对话')
+        await row.wait_for()
+        await pg.wait_for_timeout(300)
+        more = "e => getComputedStyle(e.querySelector('.xc-si-more')).opacity"
+        touch = await pg.evaluate("matchMedia('(hover: none)').matches")
+        o_before = await row.evaluate(more)
+        await row.hover()
+        await pg.wait_for_timeout(300)
+        o_after = await row.evaluate(more)
+        ui.check('手机：左栏每一行的「⋯」一直看得见，悬停不改它（不然 iOS 第一下点只算悬停，要点两下才切换对话）',
+                 touch and o_before == o_after and float(o_before) > 0, (touch, o_before, o_after))
+        await pg.context.close()
+
         # 手机双区上下排列，返回键与天启品牌、操作键分开。
         pg = await ui.page(browser, 390, 844, mobile=True)
         st = await tianqi_mock(pg)

@@ -315,7 +315,7 @@ html.kb-up { --sb: 0px; }   /* 键盘弹起时外壳给的标记：键盘盖住�
 .tianqi .xc.tq-mode .tq-side .xc-sli,
 .tianqi .xc.tq-mode .tq-side .xc-sli:hover,
 .tianqi .xc.tq-mode .tq-side .xc-sli:has(.xc-si.cur) { background: none; box-shadow: none; }
-.tianqi .xc.tq-mode .tq-side .xc-si:hover { background: var(--hover); color: var(--ink); }
+@media (hover: hover) { .tianqi .xc.tq-mode .tq-side .xc-si:hover { background: var(--hover); color: var(--ink); } }
 .tianqi .xc.tq-mode .tq-side .xc-si.cur { background: var(--press); color: var(--ink); }
 /* 行首的星：16px 的格子、不垫底色、不闪；只有选中的那一行是金色 */
 .tianqi .xc.tq-mode .tq-side .xc-si .xc-si-tq.xc-tq { width: 16px; height: 16px; background: none; }
@@ -333,10 +333,15 @@ html.kb-up { --sb: 0px; }   /* 键盘弹起时外壳给的标记：键盘盖住�
 .tianqi .xc.tq-mode .tq-side .xc-si-m { flex: none; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; transition: opacity .12s var(--ease); }
 .tianqi .xc.tq-mode .tq-side .xc-si-m .on { background: var(--star); box-shadow: none; }
 .tianqi .xc.tq-mode .tq-side .xc-si-more { position: absolute; right: 4px; width: 24px; height: 24px; --rad: 6px; opacity: 0; color: var(--ink-3); transition: opacity .12s var(--ease); }
-.tianqi .xc.tq-mode .tq-side .xc-si-more:hover { background: var(--hover); color: var(--ink); }
-.tianqi .xc.tq-mode .tq-side .xc-sli:hover .xc-si-more,
 .tianqi .xc.tq-mode .tq-side .xc-si-more:focus-visible,
 .tianqi .xc.tq-mode .tq-side .xc-si-more[aria-expanded="true"] { opacity: 1; }
+/* 悬停才出现「⋯」、换底色只给有鼠标的设备。触屏上「⋯」一直显示（照小芯 chat.css 的 hover:none）：
+   悬停让它从看不见变看得见的话，iOS 第一下点只算悬停（WebKit 的 content change observer），要点两下才切换对话（站长 11-20） */
+@media (hover: hover) {
+  .tianqi .xc.tq-mode .tq-side .xc-sli:hover .xc-si-more { opacity: 1; }
+  .tianqi .xc.tq-mode .tq-side .xc-si-more:hover { background: var(--hover); color: var(--ink); }
+}
+@media (hover: none) { .tianqi .xc.tq-mode .tq-side .xc-si-more { opacity: .7; } }
 .tianqi .xc.tq-mode .tq-side .xc-sli.tq-new { animation: tq-row-in .7s var(--ease) both; }
 @keyframes tq-row-in { 0% { opacity: 0; transform: translateY(-8px); background: var(--star-soft); } 60% { opacity: 1; transform: none; background: var(--star-soft); } 100% { background: transparent; } }
 
