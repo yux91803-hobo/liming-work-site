@@ -73,6 +73,7 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
         'hist_plan': False,    # 旧对话里有一轮计划、后面又按计划执行过
         'hist_work': None,     # 旧对话的工作区（history 的 session.work）
         'hist_extra': [],      # 旧对话后面再接的几轮（各测试自己造内容）
+        'done_usage': None,    # 一轮答完时 done 事件带的用量（输入框下面那一行）
         'files_uploads': False,  # 工作目录根下多一个 uploads 文件夹（工作区选择里不该列它）
         'files_gate': None,    # 设成 asyncio.Event 时，列目录的 files 停住、等测试放行（照 MSW 的 delay('infinite') 测「读取中」）
         'term_runs': [],       # 终端里输的命令（term_run 的参数）
@@ -206,7 +207,7 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             evs = [
                 dict({'t': 'user', 'text': st['last_text']}, **({'plan': True} if planned else {})),
                 {'t': 'text', 'text': PLAN_MD if planned else reply},
-                dict({'t': 'done', 'ok': True, 'code': 0, 'ms': 1200, 'model': 'deepseek-v4.1-flash'}, **({'plan': True} if planned else {})),
+                dict({'t': 'done', 'ok': True, 'code': 0, 'ms': 1200, 'model': 'deepseek-v4.1-flash'}, **({'plan': True} if planned else {}), **({'usage': st['done_usage']} if st['done_usage'] else {})),
             ]
             return await ok({'ok': True, 'data': {'events': evs, 'off': len(evs), 'done': True}})
         return await ok({'ok': True, 'data': {}})
@@ -914,10 +915,18 @@ async def main():
         #     手机上气泡占满整列、天启的对话区左右只留 4px，微光就把对话区撑宽了 4px；它在动画放完后还在（只是透明），所以每条新回答都留下这 4px
         await pg.locator('.tq-side .xc-si', has_text='LED 快闪').tap()
         await pg.get_by_text('老回答', exact=True).wait_for()
+        # 6f. 站长 11-20：每次回答完界面抖一下。输入框下面那一行用量答完才出现（或换数字），手机上还折成两行，把输入框整块顶上去 48px
+        st['done_usage'] = {'ctx': 351417, 'win': 1000000, 'input': 1051027, 'cached': 1045888, 'output': 1513, 'total': 1052540}
+        dock = "(() => { const r = document.querySelector('.tq-dock').getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)]; })()"
+        dock_before = await pg.evaluate(dock)
         await pg.locator('.xc-row textarea').fill('你好')
         await pg.locator('.xc-send').tap()
         await pg.wait_for_function(ui.CHAT_DONE)
         await pg.wait_for_timeout(1500)   # 等回答的动画放完
+        dock_after = await pg.evaluate(dock)
+        use = await pg.evaluate("(() => { const u = document.querySelector('.xc-use-b'); return u ? [u.textContent.includes('35%'), Math.round(u.getBoundingClientRect().height)] : null; })()")
+        ui.check('手机：回答完输入框整块不挪位置（用量那一行一直占着一行、不折行），用量数字照常出来',
+                 dock_before == dock_after and use is not None and use[0] and use[1] <= 24, (dock_before, dock_after, use))
         sx = await pg.evaluate("""(() => { const b = document.querySelector('.xc-body');
           return { sw: b.scrollWidth, cw: b.clientWidth, ox: getComputedStyle(b).overflowX, enter: document.querySelectorAll('.xc-ai.enter').length }; })()""")
         ui.check('手机：新回答出来以后对话区不比屏幕宽、也不能左右滑（回答出现时的微光不再宽出气泡）',
