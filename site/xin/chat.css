@@ -203,7 +203,6 @@ html.xc-lock #home{display:none}   /* 全屏工作台盖着首页时首页不占
   .xc-ai.cont > .xc-bub{margin-top:0}
   .xc-ai.cont > .xc-av{display:none}
   .xc-acts{margin-left:-6px}
-  .xc-by{margin-left:0}
 }
 .xc-mcopy,.xc-copy,.xc-wrap{--rad:8px;display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;font-size:12px;color:var(--ink-3);transition:background-color .15s,color .15s}
 .xc-mcopy svg,.xc-copy svg,.xc-wrap svg{width:15px;height:15px}
@@ -274,6 +273,7 @@ html.xc-lock #home{display:none}   /* 全屏工作台盖着首页时首页不占
 .xc-sys.move::before{content:"";display:inline-block;width:6px;height:6px;margin-right:7px;vertical-align:1px;background:var(--glow)}
 .xc-time{align-self:center;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .xc-by{align-self:flex-start;margin:-10px 0 0 44px;font-size:12px;color:var(--ink-3)}
+@media (max-width:599px){.xc-by{margin-left:0}}   /* 手机上正文占满整行，模型名也贴左；要写在上面这条后面，不然被它盖掉 */
 .xc-earlier{align-self:center;--rad:999px;padding:7px 16px;background:var(--surface);box-shadow:var(--sh-1);font-size:13px;color:var(--ink-2);transition:transform .12s}
 .xc-earlier:active{transform:scale(.97)}
 .xc-earlier:disabled{opacity:.5}

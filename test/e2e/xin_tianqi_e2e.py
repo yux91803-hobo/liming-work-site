@@ -252,11 +252,35 @@ async def main():
                  and info['tabs'] == ['文件', '终端', '预览'] and info['planTabHidden'] and info['foot'] == ['设置', '插件']
                  and info['history'] == ['天启旧对话'] and 'stm32-blink' in info['files'] and st['files_reqs'][:1] == ['/data/workspace']
                  and info['placeholder'] == '给天启发消息' and '小芯' not in info['bodyText'], info)
+        # 照 Linear 改版（docs/superpowers/specs/2026-11-20-tianqi-linear-design.md）：层次靠底色和细线——面板实心、没有毛玻璃；
+        # 输入框没有大阴影；品牌星、标签下划线不发光；用系统字体（国内打不开 Google Fonts，不从外面加载样式表）
+        look = await pg.evaluate("""(() => { const cs = s => getComputedStyle(document.querySelector(s));
+          const alpha = c => { const m = /rgba?\\(([^)]+)\\)/.exec(c); if (!m) return null; const p = m[1].split(/[\\s,\\/]+/).filter(Boolean); return p.length > 3 ? parseFloat(p[3]) : 1; };
+          const g = cs('.tq-side .tq-glass');
+          return { blur: g.backdropFilter || 'none', alpha: alpha(g.backgroundColor), boxShadow: cs('.tq-box').boxShadow,
+            markGlow: cs('.tq-brand-mark').filter, inkGlow: cs('.tq-tab-ink').boxShadow, font: cs('.xc.tq-mode').fontFamily,
+            ext: [...document.querySelectorAll('link[rel=stylesheet]')].map(l => l.href).filter(h => !h.startsWith(location.origin)) }; })()""")
+        ui.check('照 Linear：面板实心、没有毛玻璃；输入框没有大阴影；品牌星、标签下划线不发光；用系统字体，不加载外面的样式表',
+                 look['blur'] == 'none' and look['alpha'] == 1 and '80px' not in look['boxShadow'] and look['markGlow'] == 'none'
+                 and look['inkGlow'] == 'none' and bool(re.match(r'^\s*(Inter|-apple-system|system-ui|"SF Pro)', look['font'])) and not look['ext'], look)
         await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
         await pg.get_by_text('老回答', exact=True).wait_for()
         ui.check('对话记录常驻左栏，点历史对话打开并更新标题，左栏不收起', await pg.locator('.tq-side .xc-drawer').is_visible()
                  and await pg.locator('.tq-mid-head h2').text_content() == '天启旧对话'
                  and st['tq_ops'].count('history') == 1, st['tq_ops'])
+        # 照 Linear：左栏每行一样高（32px），选中的一行只换底色、没有竖条；顶栏是「工作区 / 标题」一行（面包屑，不再是胶囊）；
+        # 右栏标签下划线 0.2 秒到位、不回弹；发送键是圆角方块。左栏打开对话后隔 250ms 重读列表，等选中的那一行画出来再量
+        await pg.wait_for_selector('.tq-side .xc-si.cur')
+        lay = await pg.evaluate("""(() => { const q = s => document.querySelector(s), cs = s => getComputedStyle(q(s));
+          const rows = [...document.querySelectorAll('.tq-side .xc-si')].map(e => Math.round(e.getBoundingClientRect().height));
+          const sel = q('.tq-side .xc-sli:has(.xc-si.cur)'), w = q('#tq-work').getBoundingClientRect(), t = q('.tq-mid-head h2').getBoundingClientRect();
+          return { rows, selShadow: sel ? getComputedStyle(sel).boxShadow : null, workFirst: w.right <= t.left + 1,
+            sameLine: Math.abs((w.top + w.bottom) - (t.top + t.bottom)) < 4, workBorder: cs('#tq-work').borderTopWidth,
+            sep: getComputedStyle(q('#tq-work'), '::after').content, ink: cs('.tq-tab-ink').transitionDuration, send: cs('.xc-send').borderTopLeftRadius,
+            workCut: q('#tq-work span').scrollWidth > q('#tq-work span').clientWidth }; })()""")
+        ui.check('照 Linear：左栏每行 32px、选中只换底色；顶栏是「工作区 / 标题」一行，地方够时工作区名字不截断；标签下划线 0.2 秒不回弹；发送键是圆角方块',
+                 set(lay['rows']) == {32} and lay['selShadow'] == 'none' and lay['workFirst'] and lay['sameLine'] and lay['workBorder'] == '0px' and not lay['workCut']
+                 and lay['sep'] == '"/"' and lay['ink'] == '0.2s' and lay['send'] in ('8px', '9px'), lay)
         await pg.locator('.tq-pane .xc-fi', has_text='notes.md').click()
         await pg.get_by_role('button', name='预览', exact=True).click()
         await pg.wait_for_selector('#tq-p-prev:not([hidden]) .tq-pv-fig pre')
@@ -433,8 +457,11 @@ async def main():
         await pg.wait_for_function(ui.CHAT_DONE)
         phone = await pg.evaluate("""(() => { const c = document.querySelector('.tq-plan-card').getBoundingClientRect(), m = document.querySelector('.tq-mid').getBoundingClientRect();
           return { w: Math.round(c.width), share: Math.round(c.width / m.width * 100), right: document.querySelector('.tq-frame').dataset.right,
-            dot: document.querySelector('#tq-tab-plan').classList.contains('has'), chips: [...document.querySelectorAll('.tq-instruments > *')].every(e => e.getBoundingClientRect().right <= document.querySelector('.tq-box').getBoundingClientRect().right + 0.5) }; })()""")
-        ui.check('手机：计划卡片占满整行；右栏不自动升起、「计划」亮小点；输入框里的按钮都在框内', phone['share'] >= 80 and phone['right'] == 'closed' and phone['dot'] and phone['chips'], phone)
+            dot: document.querySelector('#tq-tab-plan').classList.contains('has'), chips: [...document.querySelectorAll('.tq-instruments > *')].every(e => e.getBoundingClientRect().right <= document.querySelector('.tq-box').getBoundingClientRect().right + 0.5),
+            by: (() => { const b = document.querySelector('.xc-by'), l = document.querySelector('.xc-msgs'); return b ? Math.round(b.getBoundingClientRect().left - l.getBoundingClientRect().left - parseFloat(getComputedStyle(l).paddingLeft)) : null; })() }; })()""")
+        # 截图自查：回答下面那行模型名在手机上还缩进 44px（chat.css 手机规则写在 .xc-by 的基本规则前面，被盖掉了），要和正文左边对齐
+        ui.check('手机：计划卡片占满整行；右栏不自动升起、「计划」亮小点；输入框里的按钮都在框内；回答下面的模型名和正文左边对齐',
+                 phone['share'] >= 80 and phone['right'] == 'closed' and phone['dot'] and phone['chips'] and phone['by'] is not None and abs(phone['by']) <= 1, phone)
         # 站长 11-20：模型面板切到「最高」时面板弹一下。说明那行字换字时宽度跟着内容动画，新字长一点就在旧宽度里折成两行，面板先变高再缩回去
         await pg.click('.xc-mdl')
         await pg.wait_for_selector('.xc-pick:not([hidden])')
