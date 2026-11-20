@@ -9,7 +9,7 @@ import os
 import re
 import time
 import uuid
-from xin_live_policy import FRONT_WEB_UNAVAILABLE, RECOVERED_REPLY_LIMIT, front_lookup_during_outage, front_lookup_verdict, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, owner_brief
+from xin_live_policy import FRONT_WEB_UNAVAILABLE, RECOVERED_REPLY_LIMIT, front_lookup_during_outage, front_lookup_verdict, event_digest, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, owner_brief
 from xin_live_steer import steer_live
 from playwright.async_api import async_playwright
 
@@ -268,6 +268,7 @@ async def main():
             outage = front_lookup_during_outage(lookup_events, plain_done)
             why = front_lookup_verdict(lookup_events) if outage is None else outage
             if why:
+                print('Foreground web lookup events: ' + json.dumps(event_digest(lookup_events), ensure_ascii=False), flush=True)
                 raise RuntimeError('Foreground web lookup: ' + why)
             require_finalization(lookup['run'], lookup_events, 'foreground')
             await check_front(next((e for e in lookup_events if e.get('t') == 'done'), {}))

@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import FRONT_WEB_UNAVAILABLE, front_lookup_during_outage, front_lookup_verdict, HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, drop_mentions, after_steer, steer_count, canned_reply
+from xin_live_policy import FRONT_WEB_UNAVAILABLE, front_lookup_during_outage, front_lookup_verdict, event_digest, HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, drop_mentions, after_steer, steer_count, canned_reply
 
 
 class SpokenMarker(unittest.TestCase):
@@ -108,6 +108,20 @@ class LeftoverSmoke(unittest.TestCase):
             with self.subTest(title=title):
                 self.assertFalse(is_leftover_smoke({'sid': 'sx', 'title': title}))
         self.assertFalse(is_leftover_smoke(None))
+
+
+class LookupDiagnosis(unittest.TestCase):
+    def test_failed_turn_is_not_called_empty_reply(self):
+        web = {'t': 'tool', 'name': 'WebSearch'}
+        self.assertEqual(front_lookup_verdict([web, {'t': 'done', 'ok': False, 'why': 'front_error'}]), 'turn did not finish ok (why=front_error)')
+        self.assertEqual(front_lookup_verdict([web, {'t': 'done', 'ok': True}]), 'empty reply')
+        self.assertEqual(front_lookup_verdict([web, {'t': 'text', 'text': 'https://x'}, {'t': 'done', 'ok': True}]), '')
+
+    def test_digest_keeps_shape_and_trims_text(self):
+        d = event_digest([{'t': 'tool', 'name': 'WebSearch', 'detail': 'q'}, {'t': 'text', 'text': 'a' * 500}, {'t': 'done', 'ok': False, 'why': 'x', 'model': 'm'}])
+        self.assertEqual(d[0], {'t': 'tool', 'name': 'WebSearch', 'detail': 'q'})
+        self.assertEqual((d[1]['len'], len(d[1]['text'])), (500, 300))
+        self.assertEqual(d[2], {'t': 'done', 'ok': False, 'why': 'x', 'model': 'm'})
 
 
 class FrontPolicy(unittest.TestCase):
