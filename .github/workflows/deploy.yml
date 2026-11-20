@@ -313,13 +313,27 @@ jobs:
           echo "小芯聊天：$(curl -s --max-time 20 "$BASE/api/xin/me")"
           exit $fail
 
-      - uses: actions/setup-python@v6
+      # 站长 2026-11-21：只改天启界面、文档、浏览器测试时，不跑小芯真模型联调（规则和理由见 scripts/xin-live-scope.cjs）。
+      # 基准是上一次成功发布到正式站的提交，之间任何一个文件碰到小芯或服务端就照跑；判断不了也照跑。
+      - name: 判断这次要不要跑小芯联调
+        id: xin_scope
         if: steps.smoke.outcome == 'success' && env.TARGET == 'production'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {decide}=require(require('path').join(process.env.GITHUB_WORKSPACE,'scripts/xin-live-scope.cjs'));
+            const r=await decide({github,context,core});
+            core.info((r.run?'跑小芯联调：':'跳过小芯联调：')+r.reason);
+            await core.summary.addRaw((r.run?'小芯联调：照跑。':'小芯联调：跳过。')+r.reason+'\n').write();
+            core.setOutput('run',r.run?'true':'false');
+
+      - uses: actions/setup-python@v6
+        if: steps.smoke.outcome == 'success' && env.TARGET == 'production' && steps.xin_scope.outputs.run != 'false'
         with:
           python-version: "3.12"
 
       - name: 安装正式站联调浏览器
-        if: steps.smoke.outcome == 'success' && env.TARGET == 'production'
+        if: steps.smoke.outcome == 'success' && env.TARGET == 'production' && steps.xin_scope.outputs.run != 'false'
         run: |
           pip install playwright==1.64.1
           if command -v google-chrome >/dev/null 2>&1; then
@@ -330,7 +344,7 @@ jobs:
 
       - name: 正式站登录、真实模型、后台任务、奶龙网页和文件下载
         id: live_xin
-        if: steps.smoke.outcome == 'success' && env.TARGET == 'production'
+        if: steps.smoke.outcome == 'success' && env.TARGET == 'production' && steps.xin_scope.outputs.run != 'false'
         # 2026-11-17 加了插话的三段真模型联调（scripts/xin_live_steer.py，约 8–12 分钟）；整个作业 55 分钟，超时后回滚还来得及
         timeout-minutes: 45
         env:
