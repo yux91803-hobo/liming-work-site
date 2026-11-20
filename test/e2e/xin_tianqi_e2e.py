@@ -72,6 +72,7 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
         'hist_perm': None,     # 旧对话记下的权限（history 的 session.perm）
         'hist_plan': False,    # 旧对话里有一轮计划、后面又按计划执行过
         'hist_work': None,     # 旧对话的工作区（history 的 session.work）
+        'hist_extra': [],      # 旧对话后面再接的几轮（各测试自己造内容）
         'files_uploads': False,  # 工作目录根下多一个 uploads 文件夹（工作区选择里不该列它）
         'files_gate': None,    # 设成 asyncio.Event 时，列目录的 files 停住、等测试放行（照 MSW 的 delay('infinite') 测「读取中」）
         'term_runs': [],       # 终端里输的命令（term_run 的参数）
@@ -148,6 +149,7 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
                     {'run': 'rhist0002', 'events': [{'t': 'user', 'text': '把 LED 改快一点', 'plan': True}, {'t': 'text', 'text': PLAN_MD}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 900, 'plan': True}], 'done': True},
                     {'run': 'rhist0003', 'events': [{'t': 'user', 'text': '按计划执行'}, {'t': 'text', 'text': '改好了，编译通过。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 900}], 'done': True},
                 ]
+            runs += st['hist_extra']
             return await ok({'ok': True, 'data': {'session': sess, 'runs': runs, 'active': None}})
         if op == 'files':
             p = args.get('path') or '/data/workspace'
@@ -908,6 +910,18 @@ async def main():
         o_after = await row.evaluate(more)
         ui.check('手机：左栏每一行的「⋯」一直看得见，悬停不改它（不然 iOS 第一下点只算悬停，要点两下才切换对话）',
                  touch and o_before == o_after and float(o_before) > 0, (touch, o_before, o_after))
+        # 6e. 站长 11-20：有时候对话里的字能左右滑。新回答出来时扫过的那道微光（.xc-ai.enter > .xc-bub::after）左右各宽出气泡 8px，
+        #     手机上气泡占满整列、天启的对话区左右只留 4px，微光就把对话区撑宽了 4px；它在动画放完后还在（只是透明），所以每条新回答都留下这 4px
+        await pg.locator('.tq-side .xc-si', has_text='LED 快闪').tap()
+        await pg.get_by_text('老回答', exact=True).wait_for()
+        await pg.locator('.xc-row textarea').fill('你好')
+        await pg.locator('.xc-send').tap()
+        await pg.wait_for_function(ui.CHAT_DONE)
+        await pg.wait_for_timeout(1500)   # 等回答的动画放完
+        sx = await pg.evaluate("""(() => { const b = document.querySelector('.xc-body');
+          return { sw: b.scrollWidth, cw: b.clientWidth, ox: getComputedStyle(b).overflowX, enter: document.querySelectorAll('.xc-ai.enter').length }; })()""")
+        ui.check('手机：新回答出来以后对话区不比屏幕宽、也不能左右滑（回答出现时的微光不再宽出气泡）',
+                 sx['enter'] > 0 and sx['sw'] <= sx['cw'] and sx['ox'] == 'hidden', sx)
         await pg.context.close()
 
         # 手机双区上下排列，返回键与天启品牌、操作键分开。

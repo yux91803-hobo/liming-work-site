@@ -372,6 +372,11 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .xc.tq-mode .xc-st { margin: 0 auto 6px; max-width: 720px; width: 100%; }
 .tianqi .xc.wb.tq-mode .tq-mid .xc-body { flex: 1; min-height: 0; padding: 0 4px; background: none; }
 .tianqi .tq-mid .xc-msgs { max-width: 720px; margin: 0 auto; padding: 14px 0 26px; gap: 22px; }
+/* 站长 11-20：有时候对话里的字能左右滑。新回答出来时扫过的微光（chat.css 的 .xc-ai.enter > .xc-bub::after）左右各宽出气泡 8px，
+   手机上气泡占满整列、天启对话区左右只留 4px，就把对话区撑宽了；它在动画放完后还在（透明），所以每条新回答都留下这一截。
+   微光收在气泡里；对话区本身也不横向滚动（宽的代码块、表格在自己的框里滚） */
+.tianqi .xc.tq-mode .xc-ai.enter > .xc-bub::after { left: 0; right: 0; }
+.tianqi .xc.tq-mode .xc-body { overflow-x: hidden; }
 .tianqi .tq-mid .xc-msgs > .xc-m { max-width: none; }
 .tianqi .tq-mid .xc-msgs > .xc-me { align-self: flex-end; max-width: min(78%, 560px); }
 .tianqi .tq-mid .xc-me .xc-bub {
