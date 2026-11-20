@@ -1,3 +1,12 @@
+## 2026-11-20 · 天启工作台 v4 第 3 个 PR：工作区和终端输入（Claude Code）
+
+- v4 的三个 PR 做完了。这一个改了什么见 CHANGES 最新一条，实现计划见 [plans/2026-11-20-tianqi-terminal-workspace-plan.md](superpowers/plans/2026-11-20-tianqi-terminal-workspace-plan.md)（Rulings 里写了和设计不一样的三处）。
+- **改天启工作区、终端的人注意**：
+  - 工作区的规则（`WORK_NAME`）控制器（`vm-persona.mjs`）和网页（`sky.js`）各有一份，要改一起改。
+  - 终端的代码在 `vm-persona.mjs` 的 `termOps`，不要另开控制器模块：冷启动子请求已经到 40 个的线（`xin.test.cjs`），多一个模块就红。
+  - 命令记录在 li2 的 `~/.xin/term/`，一天前的在下一次跑命令时删掉。
+- **网站这条路要站长登录**：会话里只用 li2 的 key 在临时目录试过命令的包装；上线后站长第一次用天启时 Worker 把新控制器装上去。
+
 ## 2026-11-20 · #187 上线时的两次失败（Claude Code）
 
 - 正式站部署运行 44572786582 一共跑了 3 次才上线：第 1 次 check 一条单元测试失败，第 2 次正式站联调失败并自动回滚，第 3 次全过。经过和改法见 CHANGES 最新一条。

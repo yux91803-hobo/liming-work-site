@@ -97,6 +97,10 @@ test('配了 key：/api/tq 用 li2 的 key 找 li2，exec 带 XIN_ROLE=tianqi；
 test('终端命令（term_run、term_poll）只在天启范围里有，/api/xin 没有', async () => {
   const xin = await load('../src/xin.js');
   for (const op of ['term_run', 'term_poll']) { assert.ok(xin.TQ_OPS.has(op), op); assert.ok(!xin.OPS.has(op), op); }
+  // 内核通道出错、不知道做没做时：取输出只读，能重试；跑命令会起进程，不能重做
+  const k = await load('../src/xin-kernel.js');
+  assert.equal(k.retrySafe('term_poll', { id: 'tabc123', off: 0 }), true);
+  assert.equal(k.retrySafe('term_run', { cmd: 'ls' }), false);
 });
 
 test('天启范围里小芯专属的操作回「天启没有这个功能」，不碰电脑', async () => {

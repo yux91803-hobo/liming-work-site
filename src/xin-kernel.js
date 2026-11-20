@@ -78,7 +78,7 @@ export class KernelConfigStore {
    内核的每个回应都带 X-Xin-Kernel 头；没有这个头的回应是 InstaBox 自己回的（端口令牌不对、正在叫醒、冷却），请求没到内核。
    四种结果：ok（成功）、executed_error（做了但出错，不能换通道重来）、not_sent（确定没执行）、unknown（不知道执行没有）。 */
 export const READ_OPS = new Set(['status', 'ping', 'poll', 'sessions', 'history', 'memory', 'memory_list', 'memory_export', 'memory_preferences', 'learning_report',
-  'daily_get', 'files', 'plugins', 'moves', 'bond', 'tasks', 'usage', 'logins', 'preview_asset', 'greet']);
+  'daily_get', 'files', 'plugins', 'moves', 'bond', 'tasks', 'usage', 'logins', 'preview_asset', 'greet', 'term_poll']);   // term_poll：天启终端取输出（term_run 起进程，不算）
 export const KEYED_OPS = new Set(['send', 'steer', 'task_tell', 'task_stop']);   // 控制器按 clientId 去重（vm-agent.mjs 的 transactionalOp、steer）
 // 本身重做无害的：stop（已经停了就回 already）、daily（控制器按日期和在跑的每日任务认得出做过了，vm-agent.mjs 的 ops.stop、ops.daily）。
 // 内核没在跑（502）时这两个最不能卡住：出问题时要停得下来，定时的每日任务不能因此跳过。
