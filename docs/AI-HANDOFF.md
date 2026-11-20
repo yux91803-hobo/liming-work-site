@@ -1,9 +1,19 @@
+## 2026-11-20 · 天启照 Linear 改版（Claude Code）
+
+- 改了什么见 CHANGES 最新一条。设计和计划：[specs/2026-11-20-tianqi-linear-design.md](superpowers/specs/2026-11-20-tianqi-linear-design.md)、[plans/2026-11-20-tianqi-linear-plan.md](superpowers/plans/2026-11-20-tianqi-linear-plan.md)。
+- **改天启样式的人注意**：
+  - 颜色和圆角都在 `workbench.css` 开头 `.xc.tq-mode` 的 token 里（`--pane`、`--pop`、`--line`、`--ink*`、`--star`、`--go`），`chat.css` 的组件读这些变量。别再加毛玻璃和光晕。
+  - 样式限定在 `.tq-mode` 里，不动小芯的工作台；`chat.js` 只给天启开挂载点（`tqOpts`、`tqActions`、`tqNew`、`tqPal`）。
+  - 天启全局的焦点框（`.tq-mode :focus-visible`）权重比 `chat.css` 里「这个输入框不画框」的规则高，新加输入框要在 `workbench.css` 里单独关。
+  - 宽度别用百分比去限一个跟着内容收缩的 flex 子项（会对着它自己算，名字被截断），用 em 和 `flex-shrink`。
+- **命令面板**：天启的操作在 `sky.js` 的 `tqActions` 里加，带 `kbd` 就在右边画快捷键；单键的判断在 `quietKeys`（chat.js 的根是 `role=dialog`，按具体的弹层查，不能查 `[role=dialog]`）。
+
 ## 2026-11-20 · 天启：键盘后面不透首页、用量按 Harness 记录算（Claude Code）
 
 - 改了什么见 CHANGES 最新一条。
 - **Harness 的用量**：`inputTokens` 不含缓存命中，`cacheReadTokens` 才是命中缓存的那部分；算上下文、消耗都要加上。以 Harness 自己的会话记录为准（`vm-persona.mjs` 的 `harnessUsage`，zstd 用 Node 自带的 `zlib.zstdDecompressSync`，Node 22.15 起有）。`vm-agent.mjs` 正好在行数上限，这次只改原有的行。
 - **手机键盘**：键盘弹出时外壳把整页底色换成工具 iframe 里 `meta[name=theme-color]` 的颜色。新工具要在页面里写好 theme-color，换外观时一起改。
-- **接下来**：照站长看过的模板，把天启的界面改成 Linear 那样的克制风格，重做插件页，Ctrl K 做成命令面板。
+- 接下来的 Linear 改版已经做了，见上面一条。
 
 ## 2026-11-20 · 资料改 Hydrogen High，天启 REA 的 allOf 兼容（Codex）
 

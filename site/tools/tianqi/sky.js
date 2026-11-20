@@ -187,7 +187,7 @@
     if (gl) initGL();
     size();
     if (REDUCE) drawStars(performance.now());
-    else { wake(); (function clock() { setTimeout(function () { spawnMeteor(); clock(); }, 9000 + Math.random() * 13000); })(); setTimeout(function () { spawnMeteor(); }, 2200); }
+    else { wake(); (function clock() { setTimeout(function () { spawnMeteor(); clock(); }, 18000 + Math.random() * 24000); })(); setTimeout(function () { spawnMeteor(); }, 2200); }
     new MutationObserver(function () { INK = html.dataset.theme === 'light'; setPalette(); if (!gl) fallbackStars(); if (REDUCE) drawStars(performance.now()); }).observe(html, { attributes: true, attributeFilter: ['data-theme'] });
 
     /* 发出去的字化成星尘：先把字画到离屏画布，再按像素取样成粒子 */
@@ -503,7 +503,7 @@
     var permBtn = $('#tq-perm'), planBtn = $('#tq-plan'), PH0 = say.getAttribute('placeholder') || '给天启发消息';
     // chat.js 发消息时来问这一句带什么权限、是不是计划（只在天启模式里问）
     function tqOpts() { return { perm: cfg.perm, plan: cfg.plan, work: fresh() && ws.pick ? ws.pick : undefined }; }
-    function hook() { var c = chat(); if (c && c.tqOpts !== tqOpts) c.tqOpts = tqOpts; }
+    function hook() { var c = chat(); if (c && c.tqOpts !== tqOpts) c.tqOpts = tqOpts; if (c && c.tqActions !== tqActions) c.tqActions = tqActions; }
     hook();
     function syncChips() {
       var p = permOf(cfg.perm);
@@ -649,6 +649,7 @@
     function fresh() { return !ws.sid && !msgs.querySelector('.xc-me'); }   // 还没发第一句
     function curWork() { return ws.sid ? ws.work : ws.pick; }
     function syncWork() {
+      root.classList.toggle('tq-in-conv', !fresh());   // 进了对话夜空暗一点（照 Linear 的内容优先），新对话亮回来
       var w = curWork(), name = w || ROOT_W;
       workHead.innerHTML = FOLDER + '<span></span>'; workHead.lastChild.textContent = name;
       workHead.title = WORK_DIR + (w ? '/' + w : ''); workHead.setAttribute('aria-label', '工作区：' + name);
@@ -771,6 +772,51 @@
       }, fail);
     });
 
+    /* ================= 命令面板里天启的操作、单键快捷键 =================
+       照 Linear 的 Cmd K（开源的同类是 pacocoursey/cmdk）：chat.js 画命令面板时来要（LimingXinChat.tqActions），每项右边写快捷键。
+       单键 C / M / P / W 只在没在打字、没开着弹层或面板、没按 Ctrl / Alt / ⌘ 时算（同 Linear）。 */
+    var PI = {
+      model: '<path d="M12 3.5 19.5 7.5v9L12 20.5 4.5 16.5v-9z"/><path d="M4.5 7.5 12 11.5l7.5-4M12 11.5v9"/>',
+      shield: '<path d="M12 3.5 19 6v5.5c0 4.2-3 7.6-7 9-4-1.4-7-4.8-7-9V6z"/>',
+      plan: '<path d="M10 7h9.5M10 12h9.5M10 17h9.5"/><path d="M4.5 7l1.2 1.2L8 6M4.5 12l1.2 1.2L8 11M4.5 17l1.2 1.2L8 16"/>',
+      term: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 9.5l3 2.5-3 2.5M12.5 15h4"/>',
+      left: '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9.5 4.5v15"/>',
+      right: '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M14.5 4.5v15"/>',
+      plug: '<path d="M9 3.5v4M15 3.5v4M6.5 7.5h11v3a5.5 5.5 0 0 1-11 0zM12 16v4.5"/>'
+    };
+    function pickWorkspace() {   // 对话开始后工作区就固定了，所以「换工作区」是开个新对话再选
+      if (!fresh()) { var c = chat(); if (c && c.tqNew) c.tqNew(); }
+      if (wpop.hidden) openWork();
+    }
+    function openModel() { var b = $('.tq-instruments .xc-mdl'); if (b && b.getAttribute('aria-expanded') !== 'true') b.click(); }
+    function tqActions() {
+      var lf = frame.dataset.left;
+      return [
+        { ic: PI.model, t: '换模型', k: '模型 model 思考强度', kbd: 'M', run: openModel },
+        { ic: PI.shield, t: '换权限', k: '权限 只读 完全 permission', kbd: 'P', run: function () { if (pop.hidden) openPop(); } },
+        { ic: PI.plan, t: cfg.plan ? '关掉计划模式' : '计划模式', k: '计划 plan 先出计划', run: function () { planBtn.click(); } },
+        { ic: 'files', t: '切换工作区', k: '工作区 文件夹 workspace 目录', kbd: 'W', run: pickWorkspace },
+        { ic: PI.term, t: '打开终端', k: '终端 命令行 terminal shell', run: function () { L.touched = true; toggleRight(true); select('term', true); } },
+        { ic: PI.left, t: lf === 'open' ? '收起左栏' : lf === 'rail' ? '展开左栏' : '打开左栏', k: '左栏 侧栏 对话记录 sidebar', kbd: 'Ctrl B', run: toggleLeft },
+        { ic: PI.right, t: L.right ? '收起右栏' : '打开右栏', k: '右栏 面板 文件 终端 预览', kbd: 'Ctrl J', run: function () { L.touched = true; toggleRight(); } },
+        { ic: PI.plug, t: '插件', k: '插件 plugin purge rea', run: function () { var b = $('.tq-plug-b'); if (b) b.click(); } },
+        { ic: 'gear', t: '设置', k: '设置 外观 主题 默认权限 电脑 退出', run: function () { openSettings(); } }
+      ];
+    }
+    var KEY1 = { c: function () { var c = chat(); if (c && c.tqNew) c.tqNew(); }, m: openModel, p: function () { if (pop.hidden) openPop(); }, w: pickWorkspace };
+    function typing(el) { return !!el && el.nodeType === 1 && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); }
+    // 能不能用单键：没在打字，焦点不在弹层、面板里，也没开着它们（chat.js 的根本身是 role=dialog，所以按具体的弹层查）
+    function quietKeys(e) {
+      var t = e.target && e.target.nodeType === 1 ? e.target : document.activeElement, a = document.activeElement;
+      if (typing(t) || typing(a)) return false;
+      var OVER = '.tq-pop, .xc-pick, .xc-menu, .xc-sheet, .xc-pal, .tq-modal, .xc-drawer[role="dialog"]';
+      if ((t && t.closest && t.closest(OVER)) || (a && a.closest && a.closest(OVER))) return false;
+      if (root.classList.contains('pal-open') || root.classList.contains('sheet-open')) return false;
+      if (root.classList.contains('dr-open') && drawer.getAttribute('role') === 'dialog') return false;
+      return pop.hidden && wpop.hidden && !$('.xc-pick:not([hidden])') && !$('.xc-menu:not([hidden])');
+    }
+    $('.tq-cmd-b').addEventListener('click', function () { var c = chat(); if (c && c.tqPal) c.tqPal(); });
+
     /* ================= 快捷键 =================
        在 window 的捕获阶段最先处理：chat.js 在没有弹层时按 Esc 会关掉整个天启，设置和手机上的面板要先把 Esc 接住 */
     window.addEventListener('keydown', function (e) {
@@ -780,6 +826,7 @@
       if (root.classList.contains('locked')) return;
       if (mod && !e.shiftKey && !e.altKey && k === 'b') { e.preventDefault(); toggleLeft(); }
       else if (mod && !e.shiftKey && !e.altKey && k === 'j') { e.preventDefault(); L.touched = true; toggleRight(); }
+      else if (!mod && !e.altKey && !e.shiftKey && !e.repeat && !e.isComposing && KEY1[k] && e.key.length === 1 && quietKeys(e)) { e.preventDefault(); KEY1[k](); }
       else if (e.key === 'Escape' && L.mode === 'phone' && L.right && !root.classList.contains('sheet-open') && !root.classList.contains('dr-open')) { stop(); toggleRight(false); }
     }, true);
 

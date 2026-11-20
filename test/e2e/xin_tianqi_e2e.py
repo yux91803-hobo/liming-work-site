@@ -38,6 +38,21 @@ TQ_OPS = load_tq_ops()
 PLAN_MD = '# 把 LED 闪烁改成 200 ms\n\n现在主循环里是 `HAL_Delay(500)`，亮灭各半秒。\n\n1. 把 `main.c` 里的延时改成 200\n2. 编译，确认没有新警告\n3. 核对固件大小没有异常\n\n不做：烧录到板子（li2 没接开发板）。'
 
 
+PLUG_DESC = {'purge': '提示词与规则管理', 'rea': 'Ghidra 本地分析工具'}
+PLUG_LOOK = """(() => { const s = document.querySelector('.xc-sheet'), r = s.getBoundingClientRect(), cs = getComputedStyle(s);
+  const alpha = c => { const m = /rgba?\\(([^)]+)\\)/.exec(c); if (!m) return null; const p = m[1].split(/[\\s,\\/]+/).filter(Boolean); return p.length > 3 ? parseFloat(p[3]) : 1; };
+  const px = (e, k) => parseFloat(getComputedStyle(e)[k]) || 0, hd = s.querySelector('.xc-sh-hd'), list = s.querySelector('.xc-sh-list');
+  const kids = [...list.children], content = kids.length ? kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top : 0;
+  const need = hd.getBoundingClientRect().height + px(hd, 'marginTop') + px(hd, 'marginBottom') + content + px(list, 'paddingTop') + px(list, 'paddingBottom')
+    + px(s, 'paddingTop') + px(s, 'paddingBottom') + px(s, 'borderTopWidth') + px(s, 'borderBottomWidth');
+  const grip = s.querySelector('.xc-sh-grip'), on = s.querySelector('.xc-sw[aria-checked=true]');
+  const probe = document.createElement('i'); probe.style.background = 'var(--star)'; s.appendChild(probe); const star = getComputedStyle(probe).backgroundColor; probe.remove();
+  return { w: Math.round(r.width), cx: Math.round((r.left + r.right) / 2), left: Math.round(r.left), right: Math.round(r.right), bottom: Math.round(r.bottom),
+    iw: innerWidth, ih: innerHeight, h: Math.round(r.height), need: Math.round(need), alpha: alpha(cs.backgroundColor),
+    grip: !!grip && getComputedStyle(grip).display !== 'none' && grip.getBoundingClientRect().height > 0,
+    desc: [...s.querySelectorAll('.xc-tg-t span')].map(e => e.textContent), onBg: on ? getComputedStyle(on).backgroundColor : null, star }; })()"""
+
+
 async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=False, xin_enabled=False):
     st = {
         'enabled': enabled,
@@ -113,9 +128,9 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             return await ok({'ok': True, 'data': {'rows': []}})
         if op == 'sessions':
             return await ok({'ok': True, 'data': {'sessions': st['sessions']}})
-        if op == 'plugins':
+        if op == 'plugins':  # 每个插件带一句说明，和控制器回的一样（PLUG_DESC）
             return await ok({'ok': True, 'data': {'plugins': [
-                {'name': name, 'on': on, 'agent': 'harness'} for name, on in st['plugins'].items()
+                {'name': name, 'on': on, 'agent': 'harness', 'desc': PLUG_DESC.get(name, '')} for name, on in st['plugins'].items()
             ]}})
         if op == 'plugin_set':
             st['plugin_updates'].append(args)
@@ -252,11 +267,35 @@ async def main():
                  and info['tabs'] == ['文件', '终端', '预览'] and info['planTabHidden'] and info['foot'] == ['设置', '插件']
                  and info['history'] == ['天启旧对话'] and 'stm32-blink' in info['files'] and st['files_reqs'][:1] == ['/data/workspace']
                  and info['placeholder'] == '给天启发消息' and '小芯' not in info['bodyText'], info)
+        # 照 Linear 改版（docs/superpowers/specs/2026-11-20-tianqi-linear-design.md）：层次靠底色和细线——面板实心、没有毛玻璃；
+        # 输入框没有大阴影；品牌星、标签下划线不发光；用系统字体（国内打不开 Google Fonts，不从外面加载样式表）
+        look = await pg.evaluate("""(() => { const cs = s => getComputedStyle(document.querySelector(s));
+          const alpha = c => { const m = /rgba?\\(([^)]+)\\)/.exec(c); if (!m) return null; const p = m[1].split(/[\\s,\\/]+/).filter(Boolean); return p.length > 3 ? parseFloat(p[3]) : 1; };
+          const g = cs('.tq-side .tq-glass');
+          return { blur: g.backdropFilter || 'none', alpha: alpha(g.backgroundColor), boxShadow: cs('.tq-box').boxShadow,
+            markGlow: cs('.tq-brand-mark').filter, inkGlow: cs('.tq-tab-ink').boxShadow, font: cs('.xc.tq-mode').fontFamily,
+            ext: [...document.querySelectorAll('link[rel=stylesheet]')].map(l => l.href).filter(h => !h.startsWith(location.origin)) }; })()""")
+        ui.check('照 Linear：面板实心、没有毛玻璃；输入框没有大阴影；品牌星、标签下划线不发光；用系统字体，不加载外面的样式表',
+                 look['blur'] == 'none' and look['alpha'] == 1 and '80px' not in look['boxShadow'] and look['markGlow'] == 'none'
+                 and look['inkGlow'] == 'none' and bool(re.match(r'^\s*(Inter|-apple-system|system-ui|"SF Pro)', look['font'])) and not look['ext'], look)
         await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
         await pg.get_by_text('老回答', exact=True).wait_for()
         ui.check('对话记录常驻左栏，点历史对话打开并更新标题，左栏不收起', await pg.locator('.tq-side .xc-drawer').is_visible()
                  and await pg.locator('.tq-mid-head h2').text_content() == '天启旧对话'
                  and st['tq_ops'].count('history') == 1, st['tq_ops'])
+        # 照 Linear：左栏每行一样高（32px），选中的一行只换底色、没有竖条；顶栏是「工作区 / 标题」一行（面包屑，不再是胶囊）；
+        # 右栏标签下划线 0.2 秒到位、不回弹；发送键是圆角方块。左栏打开对话后隔 250ms 重读列表，等选中的那一行画出来再量
+        await pg.wait_for_selector('.tq-side .xc-si.cur')
+        lay = await pg.evaluate("""(() => { const q = s => document.querySelector(s), cs = s => getComputedStyle(q(s));
+          const rows = [...document.querySelectorAll('.tq-side .xc-si')].map(e => Math.round(e.getBoundingClientRect().height));
+          const sel = q('.tq-side .xc-sli:has(.xc-si.cur)'), w = q('#tq-work').getBoundingClientRect(), t = q('.tq-mid-head h2').getBoundingClientRect();
+          return { rows, selShadow: sel ? getComputedStyle(sel).boxShadow : null, workFirst: w.right <= t.left + 1,
+            sameLine: Math.abs((w.top + w.bottom) - (t.top + t.bottom)) < 4, workBorder: cs('#tq-work').borderTopWidth,
+            sep: getComputedStyle(q('#tq-work'), '::after').content, ink: cs('.tq-tab-ink').transitionDuration, send: cs('.xc-send').borderTopLeftRadius,
+            workCut: q('#tq-work span').scrollWidth > q('#tq-work span').clientWidth }; })()""")
+        ui.check('照 Linear：左栏每行 32px、选中只换底色；顶栏是「工作区 / 标题」一行，地方够时工作区名字不截断；标签下划线 0.2 秒不回弹；发送键是圆角方块',
+                 set(lay['rows']) == {32} and lay['selShadow'] == 'none' and lay['workFirst'] and lay['sameLine'] and lay['workBorder'] == '0px' and not lay['workCut']
+                 and lay['sep'] == '"/"' and lay['ink'] == '0.2s' and lay['send'] in ('8px', '9px'), lay)
         await pg.locator('.tq-pane .xc-fi', has_text='notes.md').click()
         await pg.get_by_role('button', name='预览', exact=True).click()
         await pg.wait_for_selector('#tq-p-prev:not([hidden]) .tq-pv-fig pre')
@@ -300,6 +339,10 @@ async def main():
         focus_restored = await trigger.evaluate('e => document.activeElement === e')
         await trigger.click()
         await rea.wait_for()
+        plug = await pg.evaluate(PLUG_LOOK)
+        ui.check('照 Linear：电脑上插件页居中、宽不超过 440；每个插件下面一行说明；开着的开关是金色（天启的星）',
+                 plug['w'] <= 440 and abs(plug['cx'] - plug['iw'] / 2) < 2 and plug['desc'] == ['提示词与规则管理', 'Ghidra 本地分析工具']
+                 and plug['onBg'] == plug['star'] and plug['alpha'] == 1, plug)
         ui.check('天启插件面板向 li2 保存开关，关闭后恢复键盘焦点', initial == ('true', 'false') and focus_restored
                  and await rea.get_attribute('aria-checked') == 'true'
                  and st['plugin_updates'] == [{'agent': 'harness', 'name': 'rea', 'on': True}]
@@ -433,8 +476,11 @@ async def main():
         await pg.wait_for_function(ui.CHAT_DONE)
         phone = await pg.evaluate("""(() => { const c = document.querySelector('.tq-plan-card').getBoundingClientRect(), m = document.querySelector('.tq-mid').getBoundingClientRect();
           return { w: Math.round(c.width), share: Math.round(c.width / m.width * 100), right: document.querySelector('.tq-frame').dataset.right,
-            dot: document.querySelector('#tq-tab-plan').classList.contains('has'), chips: [...document.querySelectorAll('.tq-instruments > *')].every(e => e.getBoundingClientRect().right <= document.querySelector('.tq-box').getBoundingClientRect().right + 0.5) }; })()""")
-        ui.check('手机：计划卡片占满整行；右栏不自动升起、「计划」亮小点；输入框里的按钮都在框内', phone['share'] >= 80 and phone['right'] == 'closed' and phone['dot'] and phone['chips'], phone)
+            dot: document.querySelector('#tq-tab-plan').classList.contains('has'), chips: [...document.querySelectorAll('.tq-instruments > *')].every(e => e.getBoundingClientRect().right <= document.querySelector('.tq-box').getBoundingClientRect().right + 0.5),
+            by: (() => { const b = document.querySelector('.xc-by'), l = document.querySelector('.xc-msgs'); return b ? Math.round(b.getBoundingClientRect().left - l.getBoundingClientRect().left - parseFloat(getComputedStyle(l).paddingLeft)) : null; })() }; })()""")
+        # 截图自查：回答下面那行模型名在手机上还缩进 44px（chat.css 手机规则写在 .xc-by 的基本规则前面，被盖掉了），要和正文左边对齐
+        ui.check('手机：计划卡片占满整行；右栏不自动升起、「计划」亮小点；输入框里的按钮都在框内；回答下面的模型名和正文左边对齐',
+                 phone['share'] >= 80 and phone['right'] == 'closed' and phone['dot'] and phone['chips'] and phone['by'] is not None and abs(phone['by']) <= 1, phone)
         # 站长 11-20：模型面板切到「最高」时面板弹一下。说明那行字换字时宽度跟着内容动画，新字长一点就在旧宽度里折成两行，面板先变高再缩回去
         await pg.click('.xc-mdl')
         await pg.wait_for_selector('.xc-pick:not([hidden])')
@@ -541,6 +587,80 @@ async def main():
         fit = await pg.evaluate("""(() => { const r = e => document.querySelector(e).getBoundingClientRect();
           return { pick: [Math.round(r('#tq-work-pick').left), Math.round(r('#tq-work-pick').right)], box: Math.round(r('.tq-box').right), iw: innerWidth, sw: document.documentElement.scrollWidth }; })()""")
         ui.check('手机：工作区选择和输入框都在屏幕里，没有横向滚动', fit['pick'][0] >= 0 and fit['pick'][1] <= fit['iw'] and fit['box'] <= fit['iw'] and fit['sw'] <= fit['iw'], fit)
+        await pg.locator('.tq-menu').click()
+        await pg.locator('.tq-plug-b').click()
+        await pg.wait_for_selector('.xc-sheet .xc-plug-rea .xc-sw')
+        await pg.wait_for_timeout(350)   # 等升起的动画走完再量
+        plug = await pg.evaluate(PLUG_LOOK)
+        ui.check('照 Linear：手机上插件页从底部升起——贴底、左右贴边、不透明、顶上一条拖动条，高度跟着内容走（底下没有空白）',
+                 abs(plug['bottom'] - plug['ih']) <= 1 and plug['left'] == 0 and plug['right'] == plug['iw'] and plug['alpha'] == 1
+                 and plug['grip'] and plug['h'] <= plug['need'] + 2 and plug['desc'] == ['提示词与规则管理', 'Ghidra 本地分析工具'], plug)
+        await pg.context.close()
+
+        # 2c-2. 照 Linear 的命令面板（Cmd K，开源的同类是 pacocoursey/cmdk）：天启的常用操作都在里面，每项右边写快捷键；
+        #       单键快捷键 C 新对话、M 模型、P 权限、W 工作区，只在没在打字、没按 Ctrl / Alt / ⌘ 时生效
+        pg = await ui.page(browser, 1280, 860)
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        st['sessions'] = [{'sid': 'stqb00001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1763500000000}]
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.keyboard.press('Control+k')
+        await pg.wait_for_selector('.xc-pal.in .xc-pal-i')
+        pal = await pg.evaluate("""[...document.querySelectorAll('.xc-pal-i')].map(b => [b.querySelector('.xc-pal-t').textContent,
+          [...b.querySelectorAll('.xc-pal-k kbd')].map(k => k.textContent).join(' ')])""")
+        # 截图自查：天启全局的金色焦点框盖掉了命令面板输入框的「不画框」，搜索框外面多一个金色方框；面板还是旧的 20px 圆角
+        pal_box = await pg.evaluate("""[document.activeElement.matches('.xc-pal-q input'), getComputedStyle(document.activeElement).outlineStyle,
+          getComputedStyle(document.querySelector('.xc-pal-box')).borderTopLeftRadius]""")
+        ui.check('照 Linear：命令面板 12px 圆角，打开就能打字，搜索框外面不画焦点框（光标就够了）', pal_box == [True, 'none', '12px'], pal_box)
+        await pg.keyboard.press('Escape')
+        await pg.wait_for_function("document.querySelector('.xc-pal').hidden")
+        kb = dict(pal)
+        ui.check('照 Linear：Ctrl K 命令面板里有天启的常用操作（换模型、换权限、计划模式、切换工作区、打开终端、左栏、右栏、插件、设置），右边写着快捷键',
+                 all(t in kb for t in ['换模型', '换权限', '计划模式', '切换工作区', '打开终端', '插件', '设置'])
+                 and kb.get('新建对话') == 'C' and kb.get('换模型') == 'M' and kb.get('换权限') == 'P' and kb.get('切换工作区') == 'W'
+                 and any(t.endswith('右栏') and k == 'Ctrl J' for t, k in pal) and any(t.endswith('左栏') and k == 'Ctrl B' for t, k in pal), pal)
+        opened = """(() => ({ perm: !document.querySelector('#tq-perm-pop').hidden, model: document.querySelector('.tq-instruments .xc-mdl').getAttribute('aria-expanded') === 'true',
+          work: !document.querySelector('#tq-work-pop').hidden, sid: window.LimingXinChat.state.sid || '' }))()"""
+        # 在输入框里打这几个字母只是打字
+        await pg.locator('.xc-row textarea').click()
+        await pg.keyboard.type('cmpw')
+        typed = await pg.evaluate("document.querySelector('.xc-row textarea').value")
+        in_box = await pg.evaluate(opened)
+        await pg.fill('.xc-row textarea', '')
+        # 没在打字时：P 弹出权限、M 弹出模型、W 弹出工作区（各自 Esc 关掉）；打开旧对话后按 C 回到新对话
+        await pg.evaluate("document.activeElement && document.activeElement.blur()")
+        keys = {}
+        for key in ['p', 'm', 'w']:
+            await pg.keyboard.press(key)
+            await pg.wait_for_timeout(120)
+            keys[key] = await pg.evaluate(opened)
+            await pg.keyboard.press('Escape')
+            await pg.wait_for_timeout(120)
+            await pg.evaluate("document.activeElement && document.activeElement.blur()")
+        await pg.keyboard.press('Control+p')   # 带 Ctrl 的不算（浏览器自己的打印也不能被抢）
+        ctrl_p = await pg.evaluate(opened)
+        sky = "parseFloat(getComputedStyle(document.querySelector('.tq-sky')).opacity)"
+        sky_new = await pg.evaluate(sky)
+        await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
+        await pg.wait_for_function("window.LimingXinChat.state.sid === 'stqb00001'")
+        sky_dim = sky_back = False
+        try:   # 照 Linear「内容优先」：进了对话夜空暗一点，回到新对话再亮回来（各自等过渡走完）
+            await pg.wait_for_function(sky + ' < 0.7', timeout=3000); sky_dim = True
+        except Exception:
+            pass
+        await pg.evaluate("document.activeElement && document.activeElement.blur()")
+        await pg.keyboard.press('c')
+        await pg.wait_for_function("!window.LimingXinChat.state.sid", timeout=3000)
+        after_c = await pg.evaluate("[window.LimingXinChat.state.sid || '', document.activeElement === document.querySelector('.xc-row textarea')]")
+        try:
+            await pg.wait_for_function(sky + ' > 0.99', timeout=3000); sky_back = True
+        except Exception:
+            pass
+        ui.check('照 Linear：新对话时夜空亮着；进了对话夜空暗一点，回到新对话又亮', sky_new == 1 and sky_dim and sky_back, (sky_new, sky_dim, sky_back))
+        ui.check('照 Linear：没在打字时单键 P 权限、M 模型、W 工作区、C 新对话（光标进输入框）；在输入框里打 cmpw 只是打字；带 Ctrl 的不算',
+                 typed == 'cmpw' and not (in_box['perm'] or in_box['model'] or in_box['work'])
+                 and keys['p']['perm'] and keys['m']['model'] and keys['w']['work']
+                 and not (ctrl_p['perm'] or ctrl_p['model'] or ctrl_p['work']) and after_c == ['', True], (typed, in_box, keys, ctrl_p, after_c))
         await pg.context.close()
 
         # 2d. 终端里自己输命令（第 3 个 PR）：右栏「终端」底下一个输入框，在这个对话（或新对话选的）工作区里跑；
@@ -731,6 +851,17 @@ async def main():
         ui.check('手机天启工作台：左栏收进抽屉，返回键不挡菜单键，输入框在屏幕里，面板键能点', back['x'] + back['width'] <= menu['x']
                  and box['y'] + box['height'] <= 844 and await frame.locator('.tq-panel-b').is_visible(),
                  (back, menu, box))
+        # 照 Linear 的手机版：顶栏是菜单、标题（下面小字写工作区）、搜索和命令、右栏，能点的都不小于 44px；点「搜索和命令」打开命令面板
+        hdr = await frame.locator('.tq-mid-head').evaluate("""h => [...h.querySelectorAll('button')].filter(b => getComputedStyle(b).display !== 'none' && b.offsetWidth)
+          .map(b => [b.getAttribute('aria-label'), Math.round(b.getBoundingClientRect().width), Math.round(b.getBoundingClientRect().height)])""")
+        try:   # 没有这个键时记一项失败，不让整组测试停在这里
+            await frame.get_by_role('button', name='搜索和命令').tap(timeout=3000)
+            await frame.locator('.xc-pal.in .xc-pal-i').first.wait_for(timeout=3000)
+            pal_ok = True
+        except Exception:
+            pal_ok = False
+        ui.check('手机天启顶栏：菜单、搜索和命令、右栏三个键都在，都不小于 44px；点「搜索和命令」打开命令面板',
+                 [x[0] for x in hdr] == ['对话记录', '搜索和命令', '打开面板'] and all(w >= 44 and hh >= 44 for _, w, hh in hdr) and pal_ok, (hdr, pal_ok))
         await pg.context.close()
 
         # 7. 深链：只启动天启；返回首页后再启动小芯。

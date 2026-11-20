@@ -4037,12 +4037,13 @@
   };
   function palActions() {
     if (TQ) {
-      return [
-        { ic: 'new', t: '新建对话', k: '新对话 新建 对话', run: function () { newChat(); input.focus(); } },
+      // 天启自己的常用操作（换模型、权限、计划、工作区、终端、左右栏、插件、设置）由 sky.js 给，每项可带快捷键 kbd
+      var tqa = typeof window.LimingXinChat.tqActions === 'function' ? window.LimingXinChat.tqActions() || [] : [];
+      return [{ ic: 'new', t: '新建对话', k: '新对话 新建 对话', kbd: 'C', run: function () { newChat(); input.focus(); } }].concat(tqa, [
         { ic: 'usage', t: '用量', k: '额度 token 用量 统计', run: function () { openUsage(); } },
         { ic: 'files', t: '天启的文件', k: '文件 工作目录 下载', run: function () { loadFiles(WORK, 'sess'); } },
         { ic: 'theme', t: document.documentElement.dataset.theme === 'dark' ? '换成浅色' : '换成深色', k: '主题 深色 浅色 夜间', run: function () { flipTheme(); } }
-      ];
+      ]);
     }
     var x = [
       { ic: 'new', t: '新建对话', k: '新对话 新建 对话', run: function () { newChat(); input.focus(); } },
@@ -4129,10 +4130,15 @@
       l.appendChild(h('p', 'xc-pal-g', name));
       arr.forEach(function (it) { var o = mk(it); palItems.push(o); l.appendChild(o.el); });
     };
-    var item = function (ic, text, meta, run, cls) {
+    var item = function (ic, text, meta, run, cls, kbd) {
       var b = h('button', 'xc-pal-i' + (cls ? ' ' + cls : '')); b.type = 'button'; b.setAttribute('role', 'option'); b.id = 'xin-pal-' + palItems.length;
-      b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + (PICON[ic] || PICON.chat) + '</svg>';
+      b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + (PICON[ic] || (/^</.test(ic || '') ? ic : PICON.chat)) + '</svg>';
       b.appendChild(h('span', 'xc-pal-t', text)); if (meta) b.appendChild(h('span', 'xc-pal-m', meta));
+      if (kbd) {   // 右边的快捷键：一键一格；读屏用 aria-keyshortcuts
+        var kk = h('span', 'xc-pal-k'); kk.setAttribute('aria-hidden', 'true');
+        String(kbd).split(' ').forEach(function (x) { kk.appendChild(h('kbd', '', x)); });
+        b.appendChild(kk); b.setAttribute('aria-keyshortcuts', String(kbd).replace(/^Ctrl /, 'Control+'));
+      }
       var o = { el: b, run: run }, i = palItems.length;
       b.addEventListener('mousemove', function () { if (palIdx !== i) { palIdx = i; palPaint(); } });
       b.addEventListener('click', function (ev) { palRun(i, ev); });
@@ -4140,7 +4146,7 @@
     };
     if (q) group('对话', sess, function (s_) { return item('chat', s_.main ? '主对话' : s_.title || '（无标题）', s_.active ? '进行中' : s_.updated ? when(s_.updated) : '', function () { if (s_.main) goMain(); else openSession(s_.sid); }); });
     group('在做的事', tasks, function (t) { return item('task', t.title, tStatText(t), function () { openTask(t.sid); }, t.status === 'waiting' ? 'wait' : 'live'); });
-    group(q ? '操作' : '常用', acts, function (a) { return item(a.ic, a.t, '', a.run); });
+    group(q ? '操作' : '常用', acts, function (a) { return item(a.ic, a.t, '', a.run, '', a.kbd); });
     if (!q) group('最近的对话', sess, function (s_) { return item('chat', s_.main ? '主对话' : s_.title || '（无标题）', s_.active ? '进行中' : s_.updated ? when(s_.updated) : '', function () { if (s_.main) goMain(); else openSession(s_.sid); }); });
     if (!palItems.length) {
       var e = h('div', 'xc-pal-e'); e.appendChild(h('b', '', '没有找到「' + inp.value.trim() + '」'));
@@ -4319,6 +4325,8 @@
     // 天启：sky.js 的「按计划执行」代发一句；右栏「计划」用同一套 markdown 渲染
     tqSend: function (t) { return TQ && root ? send(t) : false; }, md: function (t) { return md(t); },
     // 天启：sky.js 读工作区的文件夹、终端里跑命令（第 3 个 PR）
-    tqCall: function (op, args, ms) { return TQ ? call(op, args || {}, ms || 30000) : Promise.reject(new Error('只在天启里能用')); } };
+    tqCall: function (op, args, ms) { return TQ ? call(op, args || {}, ms || 30000) : Promise.reject(new Error('只在天启里能用')); },
+    // 天启：单键 C 开新对话（光标进输入框）；手机顶栏的「搜索和命令」打开命令面板
+    tqNew: function () { if (TQ && root) { newChat(); input.focus(); } }, tqPal: function () { if (TQ && root) openPal(); } };
   boot();
 })();

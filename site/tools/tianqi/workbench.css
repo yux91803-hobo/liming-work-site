@@ -1,76 +1,83 @@
-/* 天启工作台 v4：照 DeepSeek Harness 桌面端分三栏，三块玻璃浮在夜空上（docs/superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md）。
+/* 天启工作台：三栏浮在夜空上（docs/superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md）。
    左栏：天启、新对话、对话记录（chat.js 的抽屉，≥900 常驻）、设置、插件、li2；中栏：对话和输入框；右栏：文件、终端、预览。
-   深色是夜空：星会发光；浅色是星图：星是印在纸上的墨点。sky.js 画星、流星、星尘，管三栏和右栏。 */
+   11-20 照 Linear 改版（docs/superpowers/specs/2026-11-20-tianqi-linear-design.md）：层次靠实心的分层底色和 1px 细线，
+   不用毛玻璃、大阴影和光晕；点缀色只留金色；系统字体（不从外面加载）；圆角 12 / 8 / 6；动效短、不回弹。
+   深色是夜空、浅色是星图，夜空本身留着：两侧面板盖住，只在中间对话区看得到。sky.js 画星、流星、星尘，管三栏和右栏。 */
 html.tianqi .xc.tq-mode {
   color-scheme: dark;
   --sky-top: #02040a;
   --sky-mid: #050913;
   --sky-low: #0a1225;
-  --pane: rgb(7 10 22 / .66);
-  --pop: rgb(10 13 28 / .97);
-  --rim: inset 0 1px 0 rgb(255 255 255 / .045);
-  --line: rgb(190 205 255 / .12);
-  --line-2: rgb(190 205 255 / .22);
-  --hover: rgb(255 255 255 / .055);
-  --press: rgb(255 255 255 / .09);
-  --star: #f3dfae;
-  --star-soft: rgb(243 223 174 / .13);
-  --star-glow: rgb(243 223 174 / .6);
-  --go: #eef2ff;
-  --go-ink: #0a0f1e;
-  --scrim-c: rgb(1 2 6 / .55);
-  --shadow: 0 28px 80px rgb(0 0 0 / .55);
-  --ease: cubic-bezier(.16, 1, .3, 1);
-  --spring: cubic-bezier(.3, 1.35, .5, 1);
+  /* 照 Linear 的分层：面板、抬高一档、弹层一档比一档亮一点；线是 7% / 12% 的白 */
+  --pane: #0d0e12;
+  --pop: #1b1d22;
+  --rim: 0 0 #0000;
+  --line: rgb(255 255 255 / .07);
+  --line-2: rgb(255 255 255 / .12);
+  --hover: rgb(255 255 255 / .045);
+  --press: rgb(255 255 255 / .075);
+  --star: #f0d79c;
+  --star-soft: rgb(240 215 156 / .12);
+  --star-glow: transparent;   /* 不发光：以前所有 0 0 8px var(--star-glow) 的光晕都没了 */
+  --go: #f0d79c;
+  --go-ink: #17130a;
+  --scrim-c: rgb(2 3 8 / .55);
+  --shadow: 0 8px 24px rgb(0 0 0 / .32);   /* 只给浮起来的弹层；面板、输入框不用 */
+  --ease: cubic-bezier(.2, .7, .3, 1);
+  --spring: cubic-bezier(.2, .7, .3, 1);   /* 不回弹 */
   --serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Noto Serif SC", "Source Han Serif SC", serif;
+  --sans: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
   /* chat.js 的组件用这些 */
   --paper: #050913;
   --paper-2: #080c18;
-  --surface: #0c1120;
-  --surface-2: #121829;
-  --sunk: #182036;
-  --ink: #e8ecf5;
-  --ink-2: #b4bbcf;
-  --ink-3: #8c95ad;
-  --hair: rgb(190 205 255 / .12);
-  --hair-2: rgb(190 205 255 / .22);
-  --me: rgb(255 255 255 / .07);
-  --chip: #0c1120;
-  --chip-2: #121829;
-  --chip-ink: #e8ecf5;
-  --chip-ink-2: #b4bbcf;
-  --chip-ink-3: #8c95ad;
-  --chip-hair: rgb(190 205 255 / .14);
-  --chip-hi: rgb(190 205 255 / .26);
-  --glow: #f3dfae;
-  --glow-ink: #f6e6be;
-  --glow-soft: rgb(243 223 174 / .13);
-  --glow-ring: #f3dfae;
-  --wait: #f2b48a;
-  --wait-ink: #f6c6a4;
+  --surface: #15161b;
+  --surface-2: #1b1d22;
+  --sunk: #202228;
+  --ink: #f1f2f4;
+  --ink-2: #c9ced7;
+  --ink-3: #9aa0ab;
+  --hair: rgb(255 255 255 / .07);
+  --hair-2: rgb(255 255 255 / .12);
+  --me: #15161b;
+  --chip: #15161b;
+  --chip-2: #1b1d22;
+  --chip-ink: #f1f2f4;
+  --chip-ink-2: #c9ced7;
+  --chip-ink-3: #9aa0ab;
+  --chip-hair: rgb(255 255 255 / .08);
+  --chip-hi: rgb(255 255 255 / .16);
+  --glow: #f0d79c;
+  --glow-ink: #f3e0b0;
+  --glow-soft: rgb(240 215 156 / .12);
+  --glow-ring: #f0d79c;
+  --wait: #efb187;
+  --wait-ink: #f3c19f;
   --ok: #7fd7b5;
   --bad: #f09a9a;
-  --bad-ink: #f6b4b0;
-  --code: rgb(3 5 12 / .62);
-  --code-ink: #dce4f8;
-  --code-mute: #8c95ad;
-  --tq: #9db8ff;
-  --tq-ink: #c4d3ff;
-  --tq-chip: rgb(157 184 255 / .12);
-  --tq-chip-2: rgb(157 184 255 / .2);
-  --tq-ring: #9db8ff;
-  --tq-soft: rgb(157 184 255 / .13);
-  --tq-star: #f3dfae;
-  --tq-glint: #fff6dc;
-  /* 计划模式是蓝的；完全权限用暖色提醒（原型 v4 的取值） */
+  --bad-ink: #f4b3b0;
+  --code: #0a0b0e;
+  --code-ink: #dfe3ea;
+  --code-mute: #9aa0ab;
+  /* 天启的标记也用金色（以前是蓝的）：点缀色只留一个 */
+  --tq: #f0d79c;
+  --tq-ink: #f3e0b0;
+  --tq-chip: rgb(240 215 156 / .1);
+  --tq-chip-2: rgb(240 215 156 / .18);
+  --tq-ring: #f0d79c;
+  --tq-soft: rgb(240 215 156 / .1);
+  --tq-star: #f0d79c;
+  --tq-glint: #fff4d6;
+  /* 计划模式是蓝的、完全权限是暖色：都只用在小圆点、文字和细线上 */
   --plan: #9db8ff;
-  --plan-soft: rgb(157 184 255 / .13);
-  --plan-line: rgb(157 184 255 / .5);
+  --plan-soft: rgb(157 184 255 / .08);
+  --plan-line: rgb(157 184 255 / .4);
   --plan-ink: #0a0f1e;
-  --risk: #f2b48a;
-  --risk-soft: rgb(242 180 138 / .12);
-  --sh-1: 0 10px 24px -17px #000;
-  --sh-2: 0 24px 68px -28px #000;
+  --risk: #efb187;
+  --risk-soft: rgb(239 177 135 / .1);
+  --sh-1: none;
+  --sh-2: 0 8px 24px rgb(0 0 0 / .32);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
   background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 55%, var(--sky-low) 100%);
 }
 
@@ -79,71 +86,75 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
   --sky-top: #f8f9fc;
   --sky-mid: #f1f3f8;
   --sky-low: #e4e9f3;
-  --pane: rgb(253 253 255 / .7);
-  --pop: rgb(253 253 255 / .98);
-  --rim: inset 0 1px 0 rgb(255 255 255 / .85);
-  --line: rgb(28 40 80 / .11);
-  --line-2: rgb(28 40 80 / .2);
-  --hover: rgb(20 32 72 / .05);
-  --press: rgb(20 32 72 / .085);
-  --star: #a06c14;
-  --star-soft: rgb(160 108 20 / .12);
-  --star-glow: rgb(160 108 20 / .28);
-  --go: #141a2a;
-  --go-ink: #f8f9fc;
-  --scrim-c: rgb(20 26 42 / .22);
-  --shadow: 0 28px 70px rgb(30 40 80 / .18);
+  --pane: #ffffff;
+  --pop: #ffffff;
+  --rim: 0 0 #0000;
+  --line: rgb(16 20 30 / .08);
+  --line-2: rgb(16 20 30 / .14);
+  --hover: rgb(16 20 30 / .04);
+  --press: rgb(16 20 30 / .065);
+  /* 金色在白底上太淡：界面上的金色（选中线、焦点、星）用深一档 #b0852a（对白底 3.4:1），发送键用深墨色 */
+  --star: #b0852a;
+  --star-soft: rgb(176 133 42 / .1);
+  --star-glow: transparent;
+  --go: #15171c;
+  --go-ink: #ffffff;
+  --scrim-c: rgb(16 20 30 / .18);
+  --shadow: 0 8px 24px rgb(16 20 30 / .1);
   --paper: #f1f3f8;
   --paper-2: #f8f9fc;
-  --surface: #fff;
-  --surface-2: #f3f5fa;
-  --sunk: #e6eaf2;
-  --ink: #141a2a;
-  --ink-2: #465069;
-  --ink-3: #5f6884;
-  --hair: rgb(28 40 80 / .11);
-  --hair-2: rgb(28 40 80 / .2);
-  --me: #fff;
-  --chip: #f3f5fa;
-  --chip-2: #e9edf5;
-  --chip-ink: #141a2a;
-  --chip-ink-2: #465069;
-  --chip-ink-3: #5f6884;
-  --chip-hair: rgb(28 40 80 / .12);
-  --chip-hi: rgb(28 40 80 / .24);
-  --glow: #a06c14;
-  --glow-ink: #8a5a0e;
-  --glow-soft: rgb(160 108 20 / .12);
-  --glow-ring: #a06c14;
+  --surface: #f5f6f8;
+  --surface-2: #eef0f3;
+  --sunk: #e8eaee;
+  --ink: #111318;
+  --ink-2: #373d48;
+  --ink-3: #5d636e;
+  --hair: rgb(16 20 30 / .08);
+  --hair-2: rgb(16 20 30 / .14);
+  --me: #f5f6f8;
+  --chip: #f5f6f8;
+  --chip-2: #eef0f3;
+  --chip-ink: #111318;
+  --chip-ink-2: #373d48;
+  --chip-ink-3: #5d636e;
+  --chip-hair: rgb(16 20 30 / .1);
+  --chip-hi: rgb(16 20 30 / .2);
+  --glow: #b0852a;
+  --glow-ink: #8a6017;
+  --glow-soft: rgb(176 133 42 / .1);
+  --glow-ring: #b0852a;
   --plan: #3558c8;
-  --plan-soft: rgb(53 88 200 / .09);
-  --plan-line: rgb(53 88 200 / .42);
+  --plan-soft: rgb(53 88 200 / .06);
+  --plan-line: rgb(53 88 200 / .35);
   --plan-ink: #fff;
   --risk: #b4552a;
-  --risk-soft: rgb(180 85 42 / .09);
+  --risk-soft: rgb(180 85 42 / .07);
   --wait: #b4552a;
   --wait-ink: #9a4520;
   --ok: #1d8f68;
   --bad: #b94141;
   --bad-ink: #a33a3a;
-  --code: rgb(226 231 242 / .7);
-  --code-ink: #1c2438;
-  --code-mute: #5f6884;
-  --tq: #3558c8;
-  --tq-ink: #2b47a8;
-  --tq-chip: rgb(53 88 200 / .08);
-  --tq-chip-2: rgb(53 88 200 / .16);
-  --tq-ring: #3558c8;
-  --tq-soft: rgb(53 88 200 / .09);
-  --tq-star: #a06c14;
-  --tq-glint: #3558c8;
-  --sh-1: 0 10px 24px -17px rgb(30 40 80 / .3);
-  --sh-2: 0 24px 68px -28px rgb(30 40 80 / .35);
+  --code: #f6f7f9;
+  --code-ink: #1c2230;
+  --code-mute: #5d636e;
+  --tq: #b0852a;
+  --tq-ink: #8a6017;
+  --tq-chip: rgb(176 133 42 / .08);
+  --tq-chip-2: rgb(176 133 42 / .15);
+  --tq-ring: #b0852a;
+  --tq-soft: rgb(176 133 42 / .08);
+  --tq-star: #b0852a;
+  --tq-glint: #b0852a;
+  --sh-1: none;
+  --sh-2: 0 8px 24px rgb(16 20 30 / .1);
 }
 
 .tianqi .xc.wb.tq-mode { display: block; box-shadow: none; }
 .tq-sky { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; z-index: 0; }
 .tq-sky.tq-fx { z-index: 6; }
+.tianqi .xc.tq-mode > .tq-sky:not(.tq-fx) { transition: opacity .6s var(--ease); }
+.tianqi .xc.tq-mode.tq-in-conv > .tq-sky:not(.tq-fx) { opacity: .55; }   /* 进了对话夜空暗一点，字更清楚 */
+@media (prefers-reduced-motion: reduce) { .tianqi .xc.tq-mode > .tq-sky:not(.tq-fx) { transition: none; } }
 
 /* ---------- 三栏 ---------- */
 .tq-frame {
@@ -168,20 +179,18 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) { grid-template-columns: minmax(0, 1fr); }
 .tq-frame[data-mode="phone"] { padding-block: var(--st, 0px) var(--sb, 0px); }
 
-.tq-side { grid-column: 1; position: relative; z-index: 3; min-width: 0; min-height: 0; overflow: hidden; --rad: 18px; }
+.tq-side { grid-column: 1; position: relative; z-index: 3; min-width: 0; min-height: 0; overflow: hidden; --rad: 12px; }
 .tq-mid { grid-column: 3; position: relative; z-index: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-mid { grid-column: 1; }
-.tq-right { grid-column: 5; position: relative; z-index: 3; min-width: 0; min-height: 0; overflow: hidden; --rad: 18px; visibility: hidden; transition: visibility 0s .42s; }
+.tq-right { grid-column: 5; position: relative; z-index: 3; min-width: 0; min-height: 0; overflow: hidden; --rad: 12px; visibility: hidden; transition: visibility 0s .42s; }
 .tq-frame[data-right="open"] .tq-right { visibility: visible; transition: none; }
 
+/* 照 Linear：实心面板，边上一条 1px 细线，不用毛玻璃、不用阴影 */
 .tq-glass {
   height: 100%;
   border: 1px solid var(--line);
-  --rad: 18px;
+  --rad: 12px;
   background: var(--pane);
-  -webkit-backdrop-filter: blur(20px) saturate(130%);
-  backdrop-filter: blur(20px) saturate(130%);
-  box-shadow: var(--rim);
 }
 
 .tq-ib {
@@ -191,9 +200,9 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
   height: 36px;
   display: grid;
   place-items: center;
-  --rad: 10px;
+  --rad: 8px;
   color: var(--ink-2);
-  transition: background-color .2s var(--ease), color .2s var(--ease);
+  transition: background-color .12s var(--ease), color .12s var(--ease);
 }
 .tq-ib:hover { background: var(--hover); color: var(--ink); }
 .tq-ib svg, .tq-row svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
@@ -221,7 +230,7 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 }
 .tq-brand-key { flex: none; width: 38px; height: 38px; display: grid; place-items: center; --rad: 11px; }
 .tq-brand-key:hover { background: var(--hover); }
-.tq-brand-mark { display: grid; place-items: center; width: 22px; height: 22px; color: var(--star); filter: drop-shadow(0 0 6px var(--star-glow)); }
+.tq-brand-mark { display: grid; place-items: center; width: 22px; height: 22px; color: var(--star); }
 .tq-brand .xc-tq svg { width: 20px; height: 20px; }
 .tq-brand h1 { margin: 0; font: 600 17px/1 var(--serif); letter-spacing: .42em; white-space: nowrap; }
 .tq-brand .xc-sw-w { min-width: 0; overflow: hidden; }
@@ -262,54 +271,68 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 .tianqi .xc.tq-mode .tq-side .xc-dr-sc { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 8px; }
 .tianqi .xc.tq-mode .tq-side .xc-dr-keys { display: block; margin: 0 0 2px; }
 .tianqi .xc.tq-mode .tq-side :is(.xc-dr-new, .xc-dr-q) {
-  --rad: 11px;
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 38px;
-  margin: 0 0 2px;
+  height: 32px;
+  margin: 0 0 1px;
   padding: 0 10px;
   border: 0;
-  --rad: 11px;
+  --rad: 8px;
   background: none;
   box-shadow: none;
   color: var(--ink-2);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 400;
 }
 .tianqi .xc.tq-mode .tq-side .xc-dr-new { justify-content: flex-start; color: var(--ink); }
 .tianqi .xc.tq-mode .tq-side :is(.xc-dr-out, .xc-dr-ft) { display: none; }   /* 退出登录搬到设置的「电脑」里 */
 .tianqi .tq-mid .tq-me-name { display: none; }
 .tianqi .xc.tq-mode .tq-side :is(.xc-dr-new, .xc-dr-q):hover { background: var(--hover); color: var(--ink); }
-.tianqi .xc.tq-mode .tq-side .xc-dr-new .xc-tq svg { width: 18px; height: 18px; }
-.tianqi .xc.tq-mode .tq-side .xc-dr-q svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.tianqi .xc.tq-mode .tq-side .xc-dr-new .xc-tq svg { width: 16px; height: 16px; }
+.tianqi .xc.tq-mode .tq-side .xc-dr-q svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .tianqi .xc.tq-mode .tq-side .xc-dr-q kbd { margin-left: auto; color: var(--ink-3); font: 11px/1 var(--mono, monospace); background: none; border: 0; }
-.tianqi .xc.tq-mode .tq-side .xc-dr-h { margin: 14px 10px 4px; color: var(--ink-3); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.tianqi .xc.tq-mode .tq-side .xc-dr-h { margin: 16px 10px 4px; color: var(--ink-3); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .tianqi .xc.tq-mode .tq-side .xc-sli { position: relative; display: flex; align-items: center; }
 .tianqi .xc.tq-mode .tq-side .xc-si {
-  --rad: 10px;
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: 36px;
+  gap: 10px;
+  height: 32px;
+  min-height: 32px;
   padding: 0 34px 0 10px;
   border: 0;
-  --rad: 10px;
+  --rad: 6px;
   background: none;
   color: var(--ink-2);
-  font-size: 14px;
-  transition: background-color .2s var(--ease), color .2s var(--ease);
+  font-size: 13.5px;
+  transition: background-color .12s var(--ease), color .12s var(--ease);
 }
+.tianqi .xc.tq-mode .tq-side .xc-sli,
+.tianqi .xc.tq-mode .tq-side .xc-sli:hover,
+.tianqi .xc.tq-mode .tq-side .xc-sli:has(.xc-si.cur) { background: none; box-shadow: none; }
 .tianqi .xc.tq-mode .tq-side .xc-si:hover { background: var(--hover); color: var(--ink); }
 .tianqi .xc.tq-mode .tq-side .xc-si.cur { background: var(--press); color: var(--ink); }
+/* 行首的星：16px 的格子、不垫底色、不闪；只有选中的那一行是金色 */
+.tianqi .xc.tq-mode .tq-side .xc-si .xc-si-tq.xc-tq { width: 16px; height: 16px; background: none; }
 .tianqi .xc.tq-mode .tq-side .xc-si-tq svg { width: 13px; height: 13px; }
+.tianqi .xc.tq-mode .tq-side .xc-si .xc-tq .tq-s { fill: var(--ink-3); }
+.tianqi .xc.tq-mode .tq-side .xc-si .xc-tq :is(.tq-c, .tq-g) { display: none; }
+.tianqi .xc.tq-mode .tq-side .xc-si.cur .xc-tq .tq-s { fill: var(--star); }
+/* 有鼠标的电脑：日期贴右边，鼠标移上去换成「⋯」；手机上照旧给「⋯」留位置 */
+@media (hover: hover) and (pointer: fine) {
+  .tianqi .xc.tq-mode .tq-side .xc-si { padding-right: 10px; }
+  .tianqi .xc.tq-mode .tq-side :is(.xc-sli:hover, .xc-sli:has(.xc-si-more:focus-visible), .xc-sli:has(.xc-si-more[aria-expanded="true"])) .xc-si-m { opacity: 0; }
+}
+@media (pointer: coarse) { .tianqi .xc.tq-mode .tq-side :is(.xc-si, .xc-dr-new, .xc-dr-q) { height: 44px; min-height: 44px; } }
 .tianqi .xc.tq-mode .tq-side .xc-si-t { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.tianqi .xc.tq-mode .tq-side .xc-si-m { flex: none; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
-.tianqi .xc.tq-mode .tq-side .xc-si-m .on { background: var(--star); box-shadow: 0 0 8px var(--star-glow); }
-.tianqi .xc.tq-mode .tq-side .xc-si-more { position: absolute; right: 4px; width: 28px; height: 28px; --rad: 8px; opacity: 0; color: var(--ink-3); transition: opacity .2s var(--ease); }
+.tianqi .xc.tq-mode .tq-side .xc-si-m { flex: none; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; transition: opacity .12s var(--ease); }
+.tianqi .xc.tq-mode .tq-side .xc-si-m .on { background: var(--star); box-shadow: none; }
+.tianqi .xc.tq-mode .tq-side .xc-si-more { position: absolute; right: 4px; width: 24px; height: 24px; --rad: 6px; opacity: 0; color: var(--ink-3); transition: opacity .12s var(--ease); }
+.tianqi .xc.tq-mode .tq-side .xc-si-more:hover { background: var(--hover); color: var(--ink); }
 .tianqi .xc.tq-mode .tq-side .xc-sli:hover .xc-si-more,
 .tianqi .xc.tq-mode .tq-side .xc-si-more:focus-visible,
 .tianqi .xc.tq-mode .tq-side .xc-si-more[aria-expanded="true"] { opacity: 1; }
@@ -317,25 +340,30 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 @keyframes tq-row-in { 0% { opacity: 0; transform: translateY(-8px); background: var(--star-soft); } 60% { opacity: 1; transform: none; background: var(--star-soft); } 100% { background: transparent; } }
 
 .tq-side-foot { flex: none; display: flex; align-items: center; gap: 2px; padding-top: 6px; border-top: 1px solid var(--line); }
-.tq-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px; --rad: 11px; color: var(--ink-2); font-size: 14px; white-space: nowrap; transition: background-color .2s var(--ease), color .2s var(--ease); }
+.tq-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; --rad: 8px; color: var(--ink-2); font-size: 13.5px; white-space: nowrap; transition: background-color .12s var(--ease), color .12s var(--ease); }
 .tq-row:hover, .tq-row[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
-.tq-row svg { flex: none; width: 18px; height: 18px; }
-.tq-li2 { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border: 1px solid var(--line); --rad: 999px; color: var(--ink-2); font: 12.5px/1 ui-monospace, Menlo, Consolas, monospace; }
-.tq-li2:hover { color: var(--ink); border-color: var(--line-2); }
+.tq-row svg { flex: none; width: 16px; height: 16px; }
+.tq-li2 { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px; border: 1px solid transparent; --rad: 6px; color: var(--ink-3); font: 12px/1 ui-monospace, Menlo, Consolas, monospace; }
+.tq-li2:hover { color: var(--ink); background: var(--hover); }
 .tq-li2 i { width: 6px; height: 6px; --rad: 50%; background: var(--ink-3); }
-.tq-li2.ok i { background: var(--ok); box-shadow: 0 0 0 3px rgb(127 215 181 / .18); }
+.tq-li2.ok i { background: var(--ok); }
 .tq-li2.warn i { background: var(--wait); }
 
 /* ---------- 中栏 ---------- */
 .tq-mid-head { flex: none; display: flex; align-items: center; gap: 6px; height: 48px; padding: 0 2px 0 6px; }
-.tq-mid-head h2 { min-width: 0; margin: 0; overflow: hidden; color: var(--ink); font-size: 15px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
-.tq-mid-head h2.tq-swap { animation: tq-swap .5s var(--ease); }
+.tq-crumb { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; padding-left: 4px; }
+.tq-mid-head h2 { min-width: 0; margin: 0; overflow: hidden; color: var(--ink); font-size: 14px; font-weight: 600; letter-spacing: -.005em; white-space: nowrap; text-overflow: ellipsis; }
+.tq-mid-head h2.tq-swap { animation: tq-swap .2s var(--ease); }
 @keyframes tq-swap { from { opacity: 0; transform: translateY(4px); } }
 .tq-menu { display: none; }
 .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-menu { display: grid; }
 .tq-mid-head .xc-x svg { width: 18px; height: 18px; }
+/* 顶栏的「搜索和命令」：电脑上左栏有搜索那一行、还有 Ctrl K，只在窄屏和手机上放；手机上顶栏能点的都不小于 44px */
+.tq-cmd-b { display: none; }
+.tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-cmd-b { display: grid; }
+@media (pointer: coarse) { .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-mid-head .tq-ib { width: 44px; height: 44px; } }
 html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有返回键 */
-.tq-badge { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; --rad: 50%; background: var(--star); box-shadow: 0 0 8px var(--star-glow); animation: tq-pulse 1.8s ease-in-out infinite; }
+.tq-badge { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; --rad: 50%; background: var(--star); animation: tq-pulse 1.8s ease-in-out infinite; }
 @keyframes tq-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.6); opacity: .55; } }
 
 .tianqi .xc.tq-mode .xc-st { margin: 0 auto 6px; max-width: 720px; width: 100%; }
@@ -344,21 +372,20 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .tq-mid .xc-msgs > .xc-m { max-width: none; }
 .tianqi .tq-mid .xc-msgs > .xc-me { align-self: flex-end; max-width: min(78%, 560px); }
 .tianqi .tq-mid .xc-me .xc-bub {
-  --rad: 18px;
-  padding: 10px 16px;
+  padding: 10px 14px;
   border: 1px solid var(--line);
-  --rad: 18px 18px 6px 18px;
+  --rad: 12px;
   background: var(--me);
   color: var(--ink);
   font-size: 15px;
-  line-height: 1.7;
+  line-height: 1.65;
   text-wrap: pretty;
 }
-.tianqi .tq-mid .xc-ai .xc-bub { padding: 0; background: none; color: var(--ink); font-size: 15.5px; line-height: 1.85; }
+.tianqi .tq-mid .xc-ai .xc-bub { padding: 0; background: none; color: var(--ink); font-size: 15px; line-height: 1.75; }
 .tianqi .tq-mid .xc-ai > .xc-av { background: none; box-shadow: none; }
 .tianqi .tq-mid .xc-ai.bad > .xc-bub { color: var(--bad-ink); }
 .tianqi .tq-mid .xc-bub :is(pre, code) { background: var(--code); }
-.tianqi .tq-mid .xc-bub pre { border: 1px solid var(--line); --rad: 14px; }
+.tianqi .tq-mid .xc-bub pre { border: 1px solid var(--line); --rad: 10px; }
 .tq-ref { cursor: pointer; text-decoration: underline; text-decoration-color: var(--star); text-decoration-thickness: 1.5px; text-underline-offset: 4px; }
 .tq-ref:hover { background: var(--star-soft); }
 
@@ -371,16 +398,17 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tq-frame[data-start] .tq-mid::after { content: ""; flex: .7 1 0; }
 
 .tq-dock { flex: none; position: relative; width: 100%; max-width: 720px; margin: 0 auto; padding: 0 0 4px; background: none; border: 0; }
+/* 输入框：实心面板加细线，没有阴影；聚焦时线亮一点（照模板） */
 .tq-box {
   position: relative;
-  border: 1px solid var(--line);
-  --rad: 22px;
-  background: var(--pop);
-  box-shadow: var(--shadow), var(--rim);
-  transition: border-color .3s var(--ease), box-shadow .3s var(--ease);
+  border: 1px solid var(--line-2);
+  --rad: 12px;
+  background: var(--pane);
+  box-shadow: none;
+  transition: border-color .12s var(--ease), box-shadow .12s var(--ease);
 }
-.tq-box:focus-within { border-color: var(--line-2); }
-.tq-box.plan { border-color: var(--plan-line); box-shadow: var(--shadow), 0 0 0 4px var(--plan-soft); }
+.tq-box:focus-within { border-color: color-mix(in srgb, var(--star) 50%, transparent); }
+.tq-box.plan { border-color: var(--plan-line); box-shadow: 0 0 0 3px var(--plan-soft); }
 .tianqi .xc.tq-mode .tq-entry { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; background: none; border: 0; box-shadow: none; }
 .tianqi .tq-entry textarea {
   display: block;
@@ -427,31 +455,33 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 /* 输入框一行放不下（手机上多了权限、计划两个按钮）时，模型名先收窄成省略号，发送键不出框 */
 .tianqi .tq-instruments .xc-mdl { flex: 0 1 auto; min-width: 0; }
 .tianqi .tq-instruments .xc-send {
-  --rad: 50%;
   flex: none;
-  width: 38px;
-  height: 38px;
+  width: 32px;
+  height: 32px;
   margin: 0;
   padding: 0;
   display: grid;
   place-items: center;
   border: 0;
-  --rad: 50%;
-  background: var(--go);
-  color: var(--go-ink);
-  opacity: .32;
-  transition: transform .15s var(--ease), opacity .2s var(--ease), background-color .25s var(--ease);
+  --rad: 8px;
+  background: var(--press);
+  color: var(--ink-3);
+  opacity: 1;
+  transition: background-color .12s var(--ease), color .12s var(--ease), transform .12s var(--ease);
 }
-.tianqi .tq-instruments .xc-send.ready { opacity: 1; }
-.tianqi .tq-instruments .xc-send.ready:hover { transform: scale(1.06); }
-.tianqi .tq-instruments .xc-send[data-k="stop"] { opacity: 1; background: var(--press); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
-.tianqi .tq-instruments .xc-send svg { width: 18px; height: 18px; }
-.tq-box.plan .xc-send:not([data-k="stop"]) { background: var(--plan); color: var(--plan-ink); }
+.tianqi .tq-instruments .xc-send.ready { background: var(--go); color: var(--go-ink); }
+.tianqi .tq-instruments .xc-send:active { transform: scale(.94); }
+.tianqi .xc.running .tq-instruments .xc-send { animation: none; box-shadow: none; }
+.tianqi .tq-instruments .xc-send[data-k="stop"] { background: var(--press); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+.tianqi .tq-instruments .xc-send svg { width: 16px; height: 16px; }
+@media (pointer: coarse) { .tianqi .tq-instruments .xc-send { width: 36px; height: 36px; --rad: 9px; } }
+.tq-box.plan .xc-send.ready:not([data-k="stop"]) { background: var(--plan); color: var(--plan-ink); }
 /* 权限、计划：输入框里的两个小按钮（照原型 v4 和 Harness 的 composer：权限在前，计划在它右边） */
-.tq-chip { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 32px; padding: 0 10px; border: 0; --rad: 10px; background: none; color: var(--ink-2); font-size: 13px; white-space: nowrap; transition: background-color .2s var(--ease), color .2s var(--ease); }
+.tq-chip { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 32px; padding: 0 10px; border: 0; --rad: 8px; background: none; color: var(--ink-2); font-size: 13px; white-space: nowrap; transition: background-color .12s var(--ease), color .12s var(--ease); }
 .tq-chip svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .tq-chip:hover, .tq-chip[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
-.tq-perm.full { color: var(--risk); background: var(--risk-soft); }
+.tq-perm.full { color: var(--risk); background: none; }
+.tq-perm.full:hover, .tq-perm.full[aria-expanded="true"] { color: var(--risk); background: var(--hover); }
 .tq-perm:not(.ro) .tq-perm-tick { display: none; }
 .tq-plan[aria-pressed="true"] { color: var(--plan); background: var(--plan-soft); }
 .tq-frame[data-mode="phone"] .tq-perm-n { display: none; }
@@ -461,10 +491,10 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
   bottom: calc(100% + 8px);
   left: 8px;
   margin: 0;
-  border: 1px solid var(--line);
-  --rad: 15px;
+  border: 1px solid var(--line-2);
+  --rad: 12px;
   background: var(--pop);
-  box-shadow: var(--shadow), var(--rim);
+  box-shadow: var(--shadow);
   transform-origin: 24px 100%;
 }
 .tianqi .xc.wb.tq-mode .xc-pick.tq-pick-up { top: auto; bottom: calc(100% + 8px); }
@@ -477,10 +507,10 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tq-grab { display: none; }
 .tq-r-head { flex: none; display: flex; align-items: center; gap: 4px; height: 50px; padding: 0 8px; border-bottom: 1px solid var(--line); }
 .tq-tabs { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; height: 100%; }
-.tq-tab { position: relative; height: 34px; padding: 0 12px; --rad: 9px; color: var(--ink-3); font-size: 13.5px; transition: color .2s var(--ease), background-color .2s var(--ease); }
+.tq-tab { position: relative; height: 32px; padding: 0 12px; --rad: 8px; color: var(--ink-3); font-size: 13.5px; transition: color .12s var(--ease), background-color .12s var(--ease); }
 .tq-tab:hover { color: var(--ink); background: var(--hover); }
 .tq-tab[aria-selected="true"] { color: var(--ink); }
-.tq-tab-ink { position: absolute; left: 0; bottom: -1px; width: 18px; height: 2px; --rad: 2px; background: var(--star); box-shadow: 0 0 10px var(--star-glow); transition: transform .5s var(--spring); }
+.tq-tab-ink { position: absolute; left: 0; bottom: -1px; width: 18px; height: 2px; --rad: 2px; background: var(--star); box-shadow: none; transition: transform .2s var(--ease); }
 .tq-tdot { position: absolute; top: 6px; right: 4px; width: 5px; height: 5px; --rad: 50%; background: var(--star); opacity: 0; transform: scale(.3); transition: opacity .25s var(--ease), transform .35s var(--spring); }
 .tq-tab.has .tq-tdot { opacity: 1; transform: none; }
 .tq-pane { position: relative; flex: 1; min-height: 0; overflow: auto; }
@@ -582,8 +612,8 @@ html.tianqi[data-theme="light"] .tm-win {
 
 /* ---------- 浮层：插件、命令面板、登录 ---------- */
 .tianqi .xc.tq-mode .xc-scrim { background: var(--scrim-c); }
+/* 插件页这类小面板：电脑上居中、实心、12px 圆角；手机上从底部升起（见下面的 599px 规则） */
 .tianqi .xc.wb.tq-mode .xc-sheet {
-  --rad: 20px;
   position: absolute;
   inset: 50% auto auto 50%;
   z-index: 33;
@@ -591,10 +621,10 @@ html.tianqi[data-theme="light"] .tm-win {
   max-height: min(78dvh, 640px);
   padding-top: 0;
   transform: translate(-50%, -50%);
-  border: 1px solid var(--line);
-  --rad: 20px;
+  border: 1px solid var(--line-2);
+  --rad: 12px;
   background: var(--pop);
-  box-shadow: var(--shadow), var(--rim);
+  box-shadow: var(--shadow);
   animation: none;
 }
 .tianqi .xc.wb.tq-mode.sheet-open .xc-scrim,
@@ -603,9 +633,36 @@ html.tianqi[data-theme="light"] .tm-win {
 .tianqi .xc.tq-mode .xc-sh-grip { display: none; }
 .tianqi .xc.tq-mode .xc-sh-list { padding: 5px 18px 12px; }
 .tianqi .xc.tq-mode .xc-sw[aria-disabled="true"] { cursor: progress; opacity: .62; }
+.tianqi .xc.tq-mode .xc-sw[aria-checked="true"] { background: var(--star); }   /* 开着是天启的金色，不用小芯的绿 */
+.tianqi .xc.tq-mode .xc-sheet .xc-sh-list > .xc-tg:last-child { box-shadow: none; }
+/* 手机：照 iOS 的底部面板（Vaul 那种）——贴底、左右贴边、只有上面两个角圆，顶上一条拖动条（往下拖能关）；高度跟着内容走 */
+@media (max-width: 599.98px) {
+  .tianqi .xc.wb.tq-mode .xc-sheet {
+    inset: auto 0 0 0;
+    width: auto;
+    max-height: min(86dvh, 640px);
+    transform: none;
+    border: 0;
+    border-top: 1px solid var(--line-2);
+    --rad: 14px 14px 0 0;
+    animation: tq-sheet-up .22s var(--ease);
+  }
+  .tianqi .xc.tq-mode .xc-sh-grip { display: block; top: 6px; width: 36px; height: 4px; margin-left: -18px; background: var(--line-2); }
+  .tianqi .xc.tq-mode .xc-sh-hd { padding-top: 16px; touch-action: none; }
+}
+@keyframes tq-sheet-up { from { transform: translateY(24px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .tianqi .xc.wb.tq-mode .xc-sheet { animation: none; } }
 .tianqi .xc.tq-mode .xc-pal { z-index: 40; }
+/* 命令面板：和别的弹层一样实心、12px 圆角、一条细边；搜索框打开就有光标，不再画天启的金色焦点框 */
+.tianqi .xc.tq-mode .xc-pal-box { --rad: 12px; background: var(--pop); box-shadow: 0 0 0 1px var(--line-2), var(--shadow); }
+.tianqi .xc.tq-mode .xc-pal-q { box-shadow: inset 0 -1px 0 var(--line); }
+.tianqi .xc.tq-mode .xc-pal-q input:focus-visible { outline: none; }
+.tianqi .xc.tq-mode .xc-pal-i { --rad: 8px; min-height: 40px; font-size: 14px; }
+.tianqi .xc.tq-mode .xc-pal-i.on { background: var(--press); }
+.tianqi .xc.tq-mode .xc-pal-k { flex: none; display: inline-flex; gap: 3px; margin-left: 8px; }
+.tianqi .xc.tq-mode .xc-pal-k kbd { min-width: 20px; height: 20px; padding: 0 5px; display: inline-grid; place-items: center; border: 1px solid var(--line-2); --rad: 5px; background: var(--hover); color: var(--ink-3); font: 500 11px/1 var(--sans); }
 .tianqi .xc.tq-mode .xc-toast { z-index: 45; }
-.tianqi .xc.tq-mode.locked :is(.tq-side, .tq-right, .tq-mid-head .tq-panel-b) { display: none; }
+.tianqi .xc.tq-mode.locked :is(.tq-side, .tq-right, .tq-mid-head .tq-panel-b, .tq-mid-head .tq-cmd-b) { display: none; }
 .tianqi .xc.tq-mode.locked .tq-frame { grid-template-columns: minmax(0, 1fr); }
 .tianqi .xc.tq-mode.locked .tq-mid { grid-column: 1 / -1; }
 .tianqi .xc.tq-mode .xc-login {
@@ -616,16 +673,16 @@ html.tianqi[data-theme="light"] .tm-win {
   height: max-content;
   margin: auto;
   padding: 28px 24px;
-  border: 1px solid var(--line);
-  --rad: 22px;
+  border: 1px solid var(--line-2);
+  --rad: 14px;
   background: var(--pop);
-  box-shadow: var(--shadow), var(--rim);
+  box-shadow: var(--shadow);
 }
 
 /* 设置 */
 .tq-modal { position: absolute; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px max(16px, var(--sl, 0px)) 24px max(16px, var(--sr, 0px)); }
-.tq-modal-bg { position: absolute; inset: 0; background: var(--scrim-c); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); opacity: 0; transition: opacity .3s var(--ease); }
-.tq-sheet { position: relative; width: min(760px, 100%); height: min(540px, 100%); display: grid; grid-template-columns: 188px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line); --rad: 20px; background: var(--pop); box-shadow: var(--shadow), var(--rim); opacity: 0; transform: translateY(12px) scale(.975); transition: opacity .3s var(--ease), transform .42s var(--ease); }
+.tq-modal-bg { position: absolute; inset: 0; background: var(--scrim-c); opacity: 0; transition: opacity .2s var(--ease); }
+.tq-sheet { position: relative; width: min(760px, 100%); height: min(540px, 100%); display: grid; grid-template-columns: 188px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line-2); --rad: 14px; background: var(--pop); box-shadow: var(--shadow); opacity: 0; transform: translateY(8px) scale(.985); transition: opacity .2s var(--ease), transform .24s var(--ease); }
 .tq-modal.on .tq-modal-bg { opacity: 1; }
 .tq-modal.on .tq-sheet { opacity: 1; transform: none; }
 .tq-modal.out .tq-sheet { transition-duration: .16s, .2s; }
@@ -665,9 +722,9 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-mono { font: 12.5px/1.6 ui-monospace, Menlo, Consolas, monospace; }
 
 /* ---------- 权限弹层（这次对话的权限；完全权限要再确认一次） ---------- */
-.tq-pop { position: fixed; z-index: 40; width: max-content; min-width: 244px; max-width: min(330px, calc(100vw - 24px)); padding: 6px; border: 1px solid var(--line); --rad: 15px; background: var(--pop); box-shadow: var(--shadow), var(--rim); transform-origin: 30% 100%; }
-.tq-pop.in { animation: tqPopIn .2s var(--ease); }
-@keyframes tqPopIn { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+.tq-pop { position: fixed; z-index: 40; width: max-content; min-width: 244px; max-width: min(330px, calc(100vw - 24px)); padding: 6px; border: 1px solid var(--line-2); --rad: 12px; background: var(--pop); box-shadow: var(--shadow); transform-origin: 30% 100%; }
+.tq-pop.in { animation: tqPopIn .14s var(--ease); }
+@keyframes tqPopIn { from { opacity: 0; transform: translateY(4px) scale(.98); } }
 .tq-pop-h { margin: 6px 10px 4px; color: var(--ink-3); font-size: 12px; }
 .tq-opt { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 8px 10px; border: 0; --rad: 10px; background: none; color: var(--ink); font-size: 14px; text-align: left; transition: background-color .15s var(--ease); }
 .tq-opt:hover, .tq-opt:focus-visible { background: var(--hover); outline: 0; }
@@ -682,7 +739,9 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-confirm .tq-btn.go-risk { border-color: transparent; background: var(--risk); color: var(--go-ink); }
 
 /* ---------- 工作区（第 3 个 PR）：标题旁的工作区、新对话时输入框上面的选择、新建文件夹、左栏的分组 ---------- */
-.tq-work { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; max-width: 42%; height: 24px; padding: 0 9px; border: 1px solid var(--line); --rad: 999px; color: var(--ink-3); font-size: 12.5px; }
+/* 工作区的宽度不能用百分比：面包屑本身按内容收缩，百分比会对着它自己算，名字被无端截成「stm3…」。窄了先缩工作区 */
+.tq-work { display: inline-flex; align-items: center; gap: 6px; flex: 0 3 auto; min-width: 0; max-width: 16em; color: var(--ink-3); font-size: 13.5px; white-space: nowrap; }
+.tq-work::after { content: "/"; flex: none; margin-left: 2px; color: var(--ink-3); opacity: .6; }
 .tq-work svg, .tq-work-pick svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
 .tq-work span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tq-work-row { display: flex; justify-content: center; margin: 0 0 10px; }
@@ -710,10 +769,10 @@ html.tianqi[data-theme="light"] .tm-win {
 @media (prefers-reduced-motion: reduce) { .xc-sgrp-b svg { transition: none; } }
 
 /* ---------- 计划：对话里的卡片、用户那句上的标签、右栏的计划 ---------- */
-.tq-plan-tag { display: inline-flex; align-items: center; gap: 4px; align-self: flex-end; margin: 0 2px 4px 0; padding: 1px 8px; --rad: 999px; background: var(--plan-soft); color: var(--plan); font-size: 12px; }
+.tq-plan-tag { display: inline-flex; align-items: center; gap: 4px; align-self: flex-end; margin: 0 2px 4px 0; padding: 1px 8px; --rad: 6px; background: var(--plan-soft); color: var(--plan); font-size: 12px; }
 .tianqi .xc-m.tq-planned > .xc-bub { display: none; }
-.tq-plan-card { align-self: stretch; margin: 2px 0 6px; padding: 14px 16px; border: 1px solid var(--plan-line); --rad: 16px; background: var(--plan-soft); }
-.tq-plan-card.enter { animation: tqRise .45s var(--ease) both; }
+.tq-plan-card { align-self: stretch; margin: 2px 0 6px; padding: 14px 16px; border: 1px solid var(--line-2); --rad: 12px; background: var(--surface); }
+.tq-plan-card.enter { animation: tqRise .2s var(--ease) both; }
 /* 卡片放在回答里（替掉气泡）：和正文一样在内容那一栏；手机上头像单独一行，正文占满整行（同 chat.css 的 .xc-tb） */
 .tianqi .xc-ai > .tq-plan-card { grid-column: 2; min-width: 0; }
 @media (max-width: 599px) { .tianqi .xc-ai > .tq-plan-card { grid-column: 1 / -1; margin-top: 4px; } }
@@ -735,7 +794,7 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-plan-doc h4:first-child { font-size: 16.5px; }
 .tq-plan-doc ol { counter-reset: s; list-style: none; margin: 14px 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
 .tq-plan-doc ol > li { counter-increment: s; position: relative; padding-left: 34px; }
-.tq-plan-doc ol > li::before { content: counter(s); position: absolute; left: 0; top: 1px; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--plan-line); --rad: 50%; color: var(--plan); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tq-plan-doc ol > li::before { content: counter(s); position: absolute; left: 0; top: 1px; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--line-2); --rad: 50%; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
 .tq-plan-doc :is(p, ul) { margin: 6px 0; }
 .tq-plan-doc code { font: 12.5px/1.6 ui-monospace, Menlo, Consolas, monospace; }
 .tq-plan-doc .tq-acts { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
@@ -773,6 +832,12 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-scrim2 { position: absolute; inset: 0; z-index: 25; background: var(--scrim-c); opacity: 0; pointer-events: none; transition: opacity .32s var(--ease); }
 .tq-scrim2.on { opacity: 1; pointer-events: auto; }
 .tq-frame[data-mode="phone"] .tq-mid-head { height: 50px; }
+.tq-frame[data-mode="phone"] .tq-crumb { flex: 1 1 auto; flex-direction: column-reverse; align-items: flex-start; gap: 1px; padding-left: 2px; }
+.tq-frame[data-mode="phone"] .tq-crumb > * { max-width: 100%; }
+.tq-frame[data-mode="phone"] .tq-mid-head h2 { font-size: 15px; }
+.tq-frame[data-mode="phone"] .tq-work { gap: 4px; font-size: 12px; line-height: 1.3; }
+.tq-frame[data-mode="phone"] .tq-work::after { content: none; }
+.tq-frame[data-mode="phone"] .tq-work svg { width: 12px; height: 12px; }
 .tq-frame[data-mode="phone"] .tq-box { --rad: 20px; }
 .tianqi .tq-frame[data-mode="phone"] .tq-entry textarea { padding: 14px 16px 2px; }
 .tq-frame[data-mode="phone"] .tq-instruments { padding: 6px 8px 8px; }
