@@ -649,20 +649,15 @@ async def main():
         sky_new = await pg.evaluate(sky)
         await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
         await pg.wait_for_function("window.LimingXinChat.state.sid === 'stqb00001'")
-        sky_dim = sky_back = False
-        try:   # 照 Linear「内容优先」：进了对话夜空暗一点，回到新对话再亮回来（各自等过渡走完）
-            await pg.wait_for_function(sky + ' < 0.7', timeout=3000); sky_dim = True
-        except Exception:
-            pass
+        await pg.wait_for_timeout(900)   # 原来变暗的过渡是 0.6 秒：等过它再量
+        sky_conv = await pg.evaluate(sky)
         await pg.evaluate("document.activeElement && document.activeElement.blur()")
         await pg.keyboard.press('c')
         await pg.wait_for_function("!window.LimingXinChat.state.sid", timeout=3000)
         after_c = await pg.evaluate("[window.LimingXinChat.state.sid || '', document.activeElement === document.querySelector('.xc-row textarea')]")
-        try:
-            await pg.wait_for_function(sky + ' > 0.99', timeout=3000); sky_back = True
-        except Exception:
-            pass
-        ui.check('照 Linear：新对话时夜空亮着；进了对话夜空暗一点，回到新对话又亮', sky_new == 1 and sky_dim and sky_back, (sky_new, sky_dim, sky_back))
+        sky_back = await pg.evaluate(sky)
+        # 站长 11-20：背景有点淡了。进了对话也不再把夜空调暗（原来照 Linear「内容优先」暗到 0.55）
+        ui.check('夜空在新对话、进了对话、回到新对话都一样亮（不再调暗）', sky_new == 1 and sky_conv == 1 and sky_back == 1, (sky_new, sky_conv, sky_back))
         ui.check('照 Linear：没在打字时单键 P 权限、M 模型、W 工作区、C 新对话（光标进输入框）；在输入框里打 cmpw 只是打字；带 Ctrl 的不算',
                  typed == 'cmpw' and not (in_box['perm'] or in_box['model'] or in_box['work'])
                  and keys['p']['perm'] and keys['m']['model'] and keys['w']['work']

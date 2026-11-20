@@ -44,13 +44,13 @@
     try { gl = starCv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false }); } catch (e) { gl = null; }
     var VS = 'attribute vec2 aPos;attribute vec4 aStar;attribute vec3 aCol;uniform vec2 uPar;uniform float uTime;uniform float uDpr;uniform float uTw;varying vec3 vCol;varying float vA;varying float vS;' +
       'void main(){vec2 p=fract(aPos+uPar*aStar.y);gl_Position=vec4(p.x*2.0-1.0,1.0-p.y*2.0,0.0,1.0);' +
-      'float amp=uTw*(aStar.x>1.7?0.55:0.3);vA=1.0-amp*(0.5+0.5*sin(uTime*aStar.z+aStar.w));vCol=aCol;vS=aStar.x;gl_PointSize=aStar.x*uDpr*4.0;}';
+      'float amp=uTw*(aStar.x>1.7?0.55:0.3);vA=1.0-amp*(0.5+0.5*sin(uTime*aStar.z+aStar.w));vCol=aCol;vS=aStar.x;gl_PointSize=aStar.x*uDpr*5.5;}';
     var FS = 'precision mediump float;varying vec3 vCol;varying float vA;varying float vS;uniform float uInk;' +
       'void main(){vec2 u=gl_PointCoord*2.0-1.0;float d=length(u);float edge=smoothstep(1.0,0.72,d);' +
       'if(uInk>0.5){float b=max(max(vCol.r,vCol.g),vCol.b);if(b<0.6)discard;float core=exp(-d*d*30.0);float rays=0.0;' +
       'if(vS>1.9){rays=(exp(-abs(u.y)*60.0)*exp(-abs(u.x)*3.0)+exp(-abs(u.x)*60.0)*exp(-abs(u.y)*3.0))*0.4;}' +
       'float a=(core+rays)*(0.6+0.4*vA)*b*0.78*edge;gl_FragColor=vec4(vec3(0.11,0.16,0.28)*a,a);return;}' +
-      'float core=exp(-d*d*22.0);float halo=exp(-d*5.0)*0.28;float rays=0.0;' +
+      'float core=exp(-d*d*16.0);float halo=exp(-d*4.5)*0.3;float rays=0.0;' +
       'if(vS>1.9){rays=(exp(-abs(u.y)*46.0)*exp(-abs(u.x)*2.6)+exp(-abs(u.x)*46.0)*exp(-abs(u.y)*2.6))*0.5;}' +
       'float a=(core+halo+rays)*vA*edge;gl_FragColor=vec4(vCol*a,a);}';
     var uPar, uTime, uDpr, uTw, uInk, nStars = 0, buf;
@@ -60,7 +60,7 @@
       var r = rng(19), n = Math.max(700, Math.min(3000, Math.round(W * H / 560))), data = new Float32Array(n * 9);
       for (var i = 0; i < n; i++) {
         var m = r(), size = m < .82 ? .55 + r() * .45 : m < .975 ? 1.0 + r() * .7 : 1.95 + r() * .8;
-        var bright = m < .82 ? .32 + r() * .4 : m < .975 ? .6 + r() * .35 : .9 + r() * .1, c = tint(r), o = i * 9;
+        var bright = m < .82 ? .4 + r() * .42 : m < .975 ? .6 + r() * .35 : .9 + r() * .1, c = tint(r), o = i * 9;
         data[o] = r(); data[o + 1] = r(); data[o + 2] = size; data[o + 3] = .25 + r() * .75; data[o + 4] = .6 + r() * 2.6; data[o + 5] = r() * 6.283;
         data[o + 6] = c[0] * bright; data[o + 7] = c[1] * bright; data[o + 8] = c[2] * bright;
       }
@@ -90,7 +90,7 @@
     function fallbackStars() {
       var c = starCv.getContext('2d'); if (!c) return; var r = rng(19);
       c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, W, H);
-      for (var i = 0; i < W * H / 900; i++) { var s = r() < .95 ? .4 + r() * .6 : 1.2 + r(); c.fillStyle = INK ? 'rgba(28,40,72,' + (.2 + r() * .45) + ')' : 'rgba(230,236,255,' + (.25 + r() * .6) + ')'; c.beginPath(); c.arc(r() * W, r() * H, s * .6, 0, 7); c.fill(); }
+      for (var i = 0; i < W * H / 900; i++) { var s = r() < .95 ? .4 + r() * .6 : 1.2 + r(); c.fillStyle = INK ? 'rgba(28,40,72,' + (.2 + r() * .45) + ')' : 'rgba(230,236,255,' + (.25 + r() * .6) + ')'; c.beginPath(); c.arc(r() * W, r() * H, s * .85, 0, 7); c.fill(); }
     }
     var ctx = fx.getContext('2d'), bctx = back.getContext('2d'), meteors = [], dust = [], skyDust = [], fxRaf = 0, meteorsOn = store.get('meteor') !== 'off';
     function size() {
@@ -635,7 +635,6 @@
     function fresh() { return !ws.sid && !msgs.querySelector('.xc-me'); }   // 还没发第一句
     function curWork() { return ws.sid ? ws.work : ws.pick; }
     function syncWork() {
-      root.classList.toggle('tq-in-conv', !fresh());   // 进了对话夜空暗一点（照 Linear 的内容优先），新对话亮回来
       var w = curWork(), name = w || ROOT_W;
       workHead.innerHTML = FOLDER + '<span></span>'; workHead.lastChild.textContent = name;
       workHead.title = WORK_DIR + (w ? '/' + w : ''); workHead.setAttribute('aria-label', '工作区：' + name);
