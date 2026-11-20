@@ -24,10 +24,10 @@ function agentEnv(t, extra = {}) {
   const op = (name, args) => { ensureState(); return JSON.parse(execFileSync(process.execPath, [AGENT, name], { env, input: JSON.stringify(args || {}) }).toString()); };
   return { home, xin: env.XIN_HOME, op };
 }
-// 假的 dsh：记下权限环境变量和参数（MODE 一行，ARGS 一行；任务里有换行时 ARGS 会跨行），按真 dsh 的格式吐几条事件
+// 假的 dsh：记下权限环境变量、在哪个目录跑、参数（MODE、PWD 各一行，ARGS 一行；任务里有换行时 ARGS 会跨行），按真 dsh 的格式吐几条事件
 function fakeDsh(dir) {
   const log = path.join(dir, 'calls.log'), dsh = path.join(dir, 'dsh');
-  fs.writeFileSync(dsh, '#!/bin/sh\n{ echo "MODE=$DSH_PERMISSION_MODE"; printf "ARGS"; for a in "$@"; do printf " [%s]" "$a"; done; echo; } >> "' + log + '"\n' +
+  fs.writeFileSync(dsh, '#!/bin/sh\n{ echo "MODE=$DSH_PERMISSION_MODE"; echo "PWD=$(pwd -P)"; printf "ARGS"; for a in "$@"; do printf " [%s]" "$a"; done; echo; } >> "' + log + '"\n' +
     'echo \'{"type":"session","sessionId":"session-1de23629-51a4-47e9-8626-be15439b8b66","cwd":"/w"}\'\n' +
     'echo \'{"type":"text","text":"好"}\'\n' +
     'echo \'{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}\'\n' +
@@ -119,6 +119,49 @@ test('天启的权限：每一轮带 --permission-mode 和 --approval-policy nev
   assert.ok(g.run, JSON.stringify(g));
   await poll(op, g.run);
   assert.equal(op('send', { sid, text: '同一句', perm: 'danger-full-access', clientId: 'tq-perm-same-1' }).error, 'message_conflict');
+});
+
+// 工作区（设计 §4 第 3 个 PR）：新对话时选、之后固定（Harness 的会话按目录存，换目录就续不上），Harness 在那个文件夹里跑。
+// 工作区是 /data/workspace（WORK）本身，或它下面一层的文件夹（计划的 Rulings：不是 ~/work）
+test('天启的工作区：新对话选了工作区就在那个文件夹里跑；续聊固定；旧对话在工作目录；不认识的名字报错', async t => {
+  const { dsh, log } = fakeDsh(fs.mkdtempSync(path.join(os.tmpdir(), 'xin-tq-dsh-')));
+  const { home, xin, op } = agentEnv(t, { XIN_ROLE: 'tianqi', XIN_DSH: dsh });
+  fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
+  const work = path.join(home, 'work'), real = p => fs.realpathSync(p);
+  const pwds = () => { try { return fs.readFileSync(log, 'utf8').split('\n').filter(l => l.startsWith('PWD=')).map(l => l.slice(4)); } catch { return []; } };
+  const turn = async a => {
+    const r = op('send', a);
+    assert.ok(r.run, JSON.stringify(r));
+    const p = await poll(op, r.run);
+    assert.ok(p.done && p.events.at(-1).ok, JSON.stringify(p.events));
+    return r;
+  };
+  const summary = sid => op('sessions', {}).sessions.find(s => s.sid === sid);
+  // 新对话选了 blink：Harness 在 work/blink 里跑，文件夹建好了，对话记下工作区
+  const a = await turn({ text: '看看', work: 'blink' });
+  assert.equal(pwds().pop(), real(path.join(work, 'blink')));
+  assert.equal(summary(a.sid).work, 'blink');
+  assert.equal(op('history', { sid: a.sid }).session.work, 'blink');
+  // 续聊带了别的工作区：不理，还在 blink，也不建那个文件夹
+  await turn({ sid: a.sid, text: '再看', work: 'other' });
+  assert.equal(pwds().pop(), real(path.join(work, 'blink')));
+  assert.ok(!fs.existsSync(path.join(work, 'other')));
+  assert.equal(summary(a.sid).work, 'blink');
+  // 不选工作区：在工作目录本身（旧对话也是这样）
+  const b = await turn({ text: '随便看看' });
+  assert.equal(pwds().pop(), real(work));
+  assert.equal(summary(b.sid).work, '');
+  // 不认识的名字：报错，不起 Harness，工作目录外面什么都不建
+  const n = pwds().length;
+  for (const w of ['../x', '/etc', '.ssh', 'a/b', ' blink', '..', 'x'.repeat(65)])
+    assert.deepEqual(op('send', { text: 'x', work: w }), { error: 'bad_work', msg: '工作区只能是 /data/workspace 下面一层的文件夹' }, w);
+  assert.equal(pwds().length, n);
+  assert.ok(!fs.existsSync(path.join(home, 'x')));
+  // 同一个消息标识换了工作区再发：当成不同内容，不拿上一次的回执顶替
+  const g = op('send', { sid: a.sid, text: '同一句', work: 'blink', clientId: 'tq-work-same-1' });
+  assert.ok(g.run, JSON.stringify(g));
+  await poll(op, g.run);
+  assert.equal(op('send', { sid: a.sid, text: '同一句', work: 'other', clientId: 'tq-work-same-1' }).error, 'message_conflict');
 });
 
 test('天启身份：要 Codex、Claude 的被拒，接着聊别的 agent 的对话也被拒；网关 key 没放好时说网关还没配好', t => {

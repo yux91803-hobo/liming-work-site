@@ -40,7 +40,7 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
     }
     if(op==='send'&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
       const {sid,agent,text,effort,model,context,ctxLabel,files}=args;
-      command={id:'send:'+args.clientId,digest:inputDigest({sid:args.mainSid?null:sid||null,agent:agent||null,text:text||'',effort:effort||null,model:model||null,context:context||'',ctxLabel:ctxLabel||'',files:files||[],...(args.main?{main:true}:{}),...(args.perm!=null?{perm:args.perm}:{}),...(args.plan===true?{plan:true}:{})})};   // 权限、计划只在带了时算进去：旧网页重发的同一句摘要不变
+      command={id:'send:'+args.clientId,digest:inputDigest({sid:args.mainSid?null:sid||null,agent:agent||null,text:text||'',effort:effort||null,model:model||null,context:context||'',ctxLabel:ctxLabel||'',files:files||[],...(args.main?{main:true}:{}),...(args.perm!=null?{perm:args.perm}:{}),...(args.work!=null?{work:args.work}:{}),...(args.plan===true?{plan:true}:{})})};   // 权限、计划只在带了时算进去：旧网页重发的同一句摘要不变
     }else if(['task_tell','task_stop'].includes(op)&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
       command={id:op+':'+args.clientId,digest:inputDigest(args)};
     }else if(op==='front_action'&&(['remember','forget','task','bond','next','move'].includes(args.argv?.[1])||Object.hasOwn(ACTS,args.argv?.[1]||''))&&!['list','show'].includes(args.argv?.[2])){

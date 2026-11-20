@@ -362,11 +362,16 @@ export const harnessPerm = p => HARNESS_PERMS.includes(p) ? p : HARNESS_DEFAULT_
 export const permError = p => p == null || HARNESS_PERMS.includes(p) ? null : { error: 'bad_perm', msg: '权限只能是只读、工作区内修改或完全权限' };
 // 天启（Harness 对话）这一轮：对话记住选过的权限（旧对话没记过按完全权限）；计划那一轮固定只读、任务前面加计划要求，对话记下的不变。
 // 返回 said（交给 Harness 的话）和 meta（写进这一轮：perm、plan）；别的 agent 原样返回
+// 工作区（天启 v4 第 3 个 PR）：/data/workspace（WORK）本身，或它下面一层的文件夹。新对话第一句时选、之后固定：Harness 的会话按目录存，换目录就续不上
+export const WORK_NAME = /^(?!\.)[\w.一-龥-]{1,64}$/;
+export const workPath = name => name == null || name === '' ? WORK : WORK_NAME.test(name) ? path.join(WORK, name) : null;
+export const workError = w => w == null || w === '' || (typeof w === 'string' && WORK_NAME.test(w)) ? null : { error: 'bad_work', msg: '工作区只能是 /data/workspace 下面一层的文件夹' };
 export function harnessTurn(s, a, said) {
   if (s.agent !== 'harness') return { plan: false, said, meta: {} };
   if (a.perm) s.perm = a.perm;
+  if (a.work && !s.work && !(s.runs || []).length) s.work = a.work;
   const plan = a.plan === true;
-  return { plan, said: plan ? TIANQI_PLAN + '\n\n' + said : said, meta: { perm: plan ? 'read-only' : harnessPerm(s.perm), ...(plan ? { plan: true } : {}) } };
+  return { plan, said: plan ? TIANQI_PLAN + '\n\n' + said : said, meta: { perm: plan ? 'read-only' : harnessPerm(s.perm), ...(plan ? { plan: true } : {}), cwd: workPath(s.work) } };
 }
 // 模型、强度和插件状态共同决定文件名，几个对话同时发送时互不覆盖。
 const HARNESS_PERSONA = (model, effort, purge, rea) => path.join(BASE, 'harness-persona.' + model + '.' + effort + (purge == null ? '' : '.purge-' + (purge ? 'on' : 'off')) + (rea ? '.rea-on' : '') + '.yml');
