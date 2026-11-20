@@ -14,7 +14,7 @@
 
 小芯前台能直接看你上传的图片，读字、识图和解释图片直接回答；要根据图片做网页或写代码时再派后台，原图一同传过去。派活要求照传用户原话，不替用户补造型、配色、技术栈或交互细节；终端的 `xin task list/show` 显示实际执行模型。
 
-小芯最新默认安排（2026-11-19）：前台仍用 Antigravity 的 Gemini 4 Hydrogen High，账号里没有高档时用中档。额度耗尽，或推理超时且尚未执行操作时，由 DeepSeek V4.1 Flash 接续。后台写代码先用 Neon High，难题用 Neon Extra，后备依次是 Argon High、GLM-5.3、Kimi K3.1 Pro、DeepSeek。检查先用 Argon High，再用 GLM、DeepSeek，始终避开实际作者。查资料先用 Argon Medium，再用 DeepSeek。杂活、看图、每日任务和电脑维护用 DeepSeek。带图的代码和难题先用 GLM，再用 Kimi、DeepSeek；带图检查用 GLM、DeepSeek。Hydrogen 与 Neon 共用 Gemini 池，Argon 使用独立周限额，派任务时先跳过已用完的池。运行中仍最多换一次模型。点名 Neon 的 Extra、xhigh、超高用 xhigh，其余按类别取档；点名 Hydrogen 仍可使用。用量页分别显示 Gemini、Argon 两张额度卡。网页交付仍须实际通过电脑和手机交互检查。具体机制见 [后台模型设计](docs/superpowers/specs/2026-11-19-xin-neon-argon-design.md)。
+小芯最新默认安排（2026-11-20）：前台仍用 Antigravity 的 Gemini 4 Hydrogen High，账号里没有高档时用中档。额度耗尽，或推理超时且尚未执行操作时，由 DeepSeek V4.1 Flash 接续。后台写代码先用 Neon High，难题用 Neon Extra，后备依次是 Argon High、GLM-5.3、Kimi K3.1 Pro、DeepSeek。检查先用 Argon High，再用 GLM、DeepSeek，始终避开实际作者。查资料先用 Hydrogen High，再用 DeepSeek。杂活、看图、每日任务和电脑维护用 DeepSeek。带图的代码和难题先用 GLM，再用 Kimi、DeepSeek；带图检查用 GLM、DeepSeek。Hydrogen 与 Neon 共用 Gemini 池，Argon 使用独立周限额，派任务时先跳过已用完的池。运行中仍最多换一次模型。点名 Neon 的 Extra、xhigh、超高用 xhigh，其余按类别取档；点名 Hydrogen 仍可使用。用量页分别显示 Gemini、Argon 两张额度卡。网页交付仍须实际通过电脑和手机交互检查。具体机制见 [后台模型设计](docs/superpowers/specs/2026-11-19-xin-neon-argon-design.md)。
 
 ## 世界地图有什么
 
@@ -49,6 +49,8 @@
 
 天启工作台照 DeepSeek Harness 桌面端分三栏，三块玻璃浮在会动的夜空上（深色夜空、浅色星图，在设置里换）。左栏是对话记录、设置和插件，Ctrl+B 收成窄条；中间是对话和输入框；右栏是文件、终端、预览，Ctrl+J 收起。天启跑命令时右栏自动换到终端跟着看；文件里的图、网页、markdown 和回答里提到的这类路径能在「预览」里打开。宽度不到 1200 时右栏浮在聊天上，不到 900 时左栏是抽屉，手机上右栏从底下升起。输入框里能选这个对话的权限（只读、工作区内修改、完全权限，默认完全权限，设置里改新对话的默认），沙箱用 li2 内核的 Landlock；也能开计划模式：那一轮天启只读、只出计划，对话里一张计划卡片、右栏「计划」放全文，点「按计划执行」再按对话的权限动手。每个对话有自己的工作区：新对话时在输入框上面选 `/data/workspace` 本身或它下面一层的文件夹（也能新建），对话开始后固定，标题旁显示，左栏按工作区分组。右栏「终端」底下能自己输命令，在这个对话的工作区里跑，最多 60 秒、输出最多 64 KB。 [v4 设计](docs/superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md)
 
+REA 开启时通过 MCP 兼容桥转换当前网关不接受的 pattern `allOf` 广告约束；工具与实际调用不删减，原服务继续验证参数。
+
 新站点需配置 `li2` 的 InstaBox key、Harness 和独立网关账号，再验收真实回话。已有天启对话仍在小芯工作台，通过 `li` 继续。 [天启设计与验收条件](docs/superpowers/specs/2026-11-18-tianqi-li2-design.md)
 
 ## 小芯后台运行方式
@@ -81,7 +83,7 @@
 - 网页通过结构化语义派工 `xin task new --web` 交付自包含 HTML 与 `xin-web.json`。控制器在容器里真正用 Chromium 检查 1280/390 宽度、页面错误和点击变化（同一页面按顺序连续点击，每次点击后最多等 1.5 秒看预期变化；不过时说明实际看到的状态），最多返工两次；通过后才出现「我画好了」与预览链接。
 - 预览是控制目录里的不可变快照，需站长登录，脚本在不共享站点权限的 iframe 中运行。下载的 HTML 可离线打开；不依赖常驻端口，任务进程和私有临时目录清理后预览仍保留。当前只支持自包含 HTML，不托管需要后端或外部资源的多文件应用。
 
-- 前台默认 Antigravity Gemini 4 Hydrogen（high，账号没有高档时用 medium）。额度耗尽或推理超时且尚未执行操作时，经 Responses API 用 DeepSeek V4.1 Flash 接续。前台聊天、读取真实进度，并通过结构化函数派工。后台代码与难题优先 Neon，检查和资料优先 Argon，其余按类型选择网关模型。独立检查在启动和 fallback 时都避开实际作者模型，候选耗尽会等待，点名同作者会明确拒绝。请求模型与实际模型分别记录。模型统计用于人工调整，少量测试不会自动改变默认路由。
+- 前台默认 Antigravity Gemini 4 Hydrogen（high，账号没有高档时用 medium）。额度耗尽或推理超时且尚未执行操作时，经 Responses API 用 DeepSeek V4.1 Flash 接续。前台聊天、读取真实进度，并通过结构化函数派工。后台代码与难题优先 Neon，检查优先 Argon，资料优先 Hydrogen High，其余按类型选择网关模型。独立检查在启动和 fallback 时都避开实际作者模型，候选耗尽会等待，点名同作者会明确拒绝。请求模型与实际模型分别记录。模型统计用于人工调整，少量测试不会自动改变默认路由。
 - 后台通过 Codex app-server 管理轮次。「立即补充」送入当前轮次；默认排队消息逐条发送，刷新可恢复，重试携带稳定消息编号。
 - **后台干活时插话**（2026-11-17）：在原聊天里随口补一句（「刚才查模型那件事，备用的别列」），小芯认出是哪件事转过去。Codex 任务经 `turn/steer`、Gemini 后台在每一步之间把补充放进下一次请求，回话按实际接法说一次（「行，最后只给你列正在用的」/「这轮跑完我就按你补的范围再核一遍」）。做完或停了的事先说状态，明确说继续才接着做。补充在超时、断线、重启、停下、换模型后都带到下一轮，同一编号只算一次。只有兄弟这句像在补充、改主意、要停或要接着做时，前台才看得到 `<手上的事>`，平时不列进行中。
 - **后台主动回来说一句**：发现会改变结论的事、碰到会改变计划的阻塞时，后台用 `xin task note`（Gemini 用 `action=note`）说一句，接着做；20 秒内相关的合成一条，每件事最多 3 条；最终结果先到了就不发。这句直接记进原聊天（不调模型、不推送），终端里也看得到兄弟的补充和这句。

@@ -203,6 +203,9 @@ class BackgroundFallback(unittest.TestCase):
         self.assertEqual(explain_background_fallback(argon, None, self.SENT, self.NOW, expected_model='gemini-4-argon'), 'quota')
         with self.assertRaises(RuntimeError):
             explain_background_fallback({**argon,'model':HYDROGEN}, None, self.SENT, self.NOW, expected_model='gemini-4-argon')
+        self.assertEqual(explain_background_fallback({**argon,'model':'gemini-4-neon'}, None, self.SENT, self.NOW, expected_model=HYDROGEN), 'quota')
+        with self.assertRaises(RuntimeError):
+            explain_background_fallback(argon, None, self.SENT, self.NOW, expected_model=HYDROGEN)
 
     def test_recorded_gemini_outage_in_this_run_or_the_15_minutes_before_explains_it(self):
         for issue in ({'kind': 'stall', 'at': self.SENT + 120_000}, {'kind': 'status', 'status': 'ERROR', 'at': self.SENT + 125_000},
