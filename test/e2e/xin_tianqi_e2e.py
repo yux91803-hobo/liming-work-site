@@ -278,6 +278,14 @@ async def main():
         ui.check('照 Linear：面板实心、没有毛玻璃；输入框没有大阴影；品牌星、标签下划线不发光；用系统字体，不加载外面的样式表',
                  look['blur'] == 'none' and look['alpha'] == 1 and '80px' not in look['boxShadow'] and look['markGlow'] == 'none'
                  and look['inkGlow'] == 'none' and bool(re.match(r'^\s*(Inter|-apple-system|system-ui|"SF Pro)', look['font'])) and not look['ext'], look)
+        # 站长 11-20：模型名旁边那个信号格样子的思考强度不符合星空，换成一排星星：一样大，亮着的是天启的金色
+        em = await pg.evaluate("""(() => { const bs = [...document.querySelectorAll('.tq-instruments .xc-mdl .xc-em b')];
+          const probe = document.createElement('i'); probe.style.background = 'var(--star)'; document.querySelector('.tq-instruments').appendChild(probe);
+          const star = getComputedStyle(probe).backgroundColor; probe.remove();
+          return { n: bs.length, clip: bs.map(b => getComputedStyle(b).clipPath.startsWith('polygon')), h: [...new Set(bs.map(b => Math.round(b.getBoundingClientRect().height)))],
+            on: bs.filter(b => b.classList.contains('on')).map(b => getComputedStyle(b).backgroundColor === star) }; })()""")
+        ui.check('天启的思考强度是一排星星（不是信号格）：一样大，亮着的是天启的金色',
+                 em['n'] >= 3 and all(em['clip']) and len(em['h']) == 1 and len(em['on']) > 0 and all(em['on']), em)
         await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
         await pg.get_by_text('老回答', exact=True).wait_for()
         ui.check('对话记录常驻左栏，点历史对话打开并更新标题，左栏不收起', await pg.locator('.tq-side .xc-drawer').is_visible()

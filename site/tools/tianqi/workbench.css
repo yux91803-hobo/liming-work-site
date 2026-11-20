@@ -455,6 +455,12 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .tq-instruments :is(.xc-plus, .xc-mdl):hover,
 .tianqi .tq-instruments :is(.xc-plus, .xc-mdl)[aria-expanded="true"] { background: var(--hover); color: var(--ink); transform: none; }
 .tianqi .tq-instruments .xc-mdl span { overflow: hidden; text-overflow: ellipsis; }
+/* 思考强度：天启用一排四角星（站长 11-20：信号格不符合星空），一档一颗、一样大，亮到当前那一档；小芯照旧是格子 */
+.tianqi .xc.tq-mode .xc-em { align-items: center; gap: 2px; height: 12px; }
+.tianqi .xc.tq-mode .xc-em b { width: 9px; height: 9px; --rad: 0; clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); background: color-mix(in srgb, var(--ink-3) 45%, transparent); }
+.tianqi .xc.tq-mode .xc-em b.on { background: var(--star); }
+.tianqi .xc.tq-mode .xc-em.big { height: 16px; gap: 3px; }
+.tianqi .xc.tq-mode .xc-em.big b { width: 13px; height: 13px; }
 /* 输入框一行放不下（手机上多了权限、计划两个按钮）时，模型名先收窄成省略号，发送键不出框 */
 .tianqi .tq-instruments .xc-mdl { flex: 0 1 auto; min-width: 0; }
 .tianqi .tq-instruments .xc-send {
