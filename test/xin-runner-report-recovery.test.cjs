@@ -175,7 +175,8 @@ test('front_immediate 不可重试的报告错误：辅助定时器不阻止 run
   const first = f.meta(sent.run); assert.ok(first.pid, '先登记 runner 再报告');
   const running = () => {
     try { const stat = fs.readFileSync('/proc/' + first.pid + '/stat', 'utf8'); return !['Z', 'X'].includes(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0]); }
-    catch (e) { if (e.code === 'ENOENT') return false; throw e; }
+    // 进程在 open 和读之间退出时 Linux 报 ESRCH 而不是 ENOENT（2026-11-21 main 运行 44775024922 偶发），两种都算已退出
+    catch (e) { if (e.code === 'ENOENT' || e.code === 'ESRCH') return false; throw e; }
   };
   assert.ok(await until(() => !running(), platformTimeout(3000)), '不可重试错误之后 runner 仍被辅助定时器挂住');
   const lock = spawnSync('flock', ['-n', '--conflict-exit-code', '73', path.join(f.home, 'locks', sent.run + '.lock'), 'true'], { timeout: 1000 });
