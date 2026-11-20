@@ -1,0 +1,66 @@
+name: Diagnose Tianqi REA
+on:
+  push:
+    branches: [codex/xin-rea-diagnostic-20261120]
+    paths: [.github/workflows/xin-rea-diagnostic.yml]
+permissions: {}
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read failure metadata and REA patch without messages or credentials
+        env:
+          LI2_API_KEY: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
+        run: |
+          python3 - <<'PY_DIAG'
+          import json,os,re,hashlib
+          from urllib.parse import quote,urlencode
+          from urllib.request import Request,build_opener,HTTPRedirectHandler
+          from urllib.error import HTTPError
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self,*args): return None
+          opener=build_opener(NoRedirect())
+          base='https://api.instabox.sh/v1/machines'
+          headers={'X-API-Key':os.environ['LI2_API_KEY'],'User-Agent':'Tianqi-rea-diagnostic'}
+          def read(url,limit=2097152):
+              with opener.open(Request(url,headers=headers),timeout=30) as r: b=r.read(limit+1)
+              if len(b)>limit: raise ValueError('Read bound exceeded')
+              return b
+          try:
+              machines=json.loads(read(base))['machines']
+              m=[m for m in machines if m.get('name')=='li2']
+              if len(m)!=1 or m[0].get('state')!='running': raise ValueError('Target is not running')
+              base+='/'+quote(m[0]['id'],safe='')
+              def file(path): return read(base+'/files/content?'+urlencode({'path':path}))
+              def listing(path):
+                  data=json.loads(read(base+'/files?'+urlencode({'path':path})))
+                  if data.get('truncated'): raise ValueError('Listing truncated')
+                  return data.get('entries',[])
+              entries=[e for e in listing('/data/home/.xin/runs') if re.fullmatch(r'r[a-z0-9]{6,30}\.json',e.get('name',''))]
+              runs=[]
+              for e in sorted(entries,key=lambda e:e.get('modTime',''),reverse=True)[:12]:
+                  meta=json.loads(file('/data/home/.xin/runs/'+e['name']))
+                  if meta.get('agent')!='harness': continue
+                  events=[]
+                  for line in file('/data/home/.xin/runs/'+e['name'][:-5]+'.jsonl').decode().splitlines():
+                      try: v=json.loads(line);events.append(v.get('ev',v))
+                      except ValueError: pass
+                  errors=[v.get('text') for v in events if v.get('t')=='err']
+                  kinds=[]
+                  for raw in errors:
+                      text=str(raw)
+                      kinds.extend(k for k in ['[object Object]','Invalid schema','invalid_request','too many tools','maximum','timeout','MCP','rea','429','400','schema'] if k.lower() in text.lower())
+                  runs.append({'started':meta.get('started'),'perm':meta.get('perm'),'ended':bool(meta.get('ended')),
+                               'error_count':len(errors),'error_types':sorted(set(kinds)),
+                               'error_object_keys':[list(v) if isinstance(v,dict) else [] for v in errors],
+                               'success':any(v.get('t')=='done' and v.get('ok') is True for v in events)})
+              patches=[e['name'] for e in listing('/data/home/.xin') if re.fullmatch(r'harness-persona\.[a-zA-Z0-9_.-]+\.rea-on\.yml',e.get('name',''))]
+              configs=[]
+              for name in patches[:3]:
+                  raw=file('/data/home/.xin/'+name).decode()
+                  configs.append({'patch':name,'rea_config':'serverName: rea' in raw,'command_local':'tianqi-rea-mcp' in raw,'all_tools':not re.search(r'(?m)^\s+tools:',raw)})
+              print('REA_DIAGNOSTIC '+json.dumps({'runs':runs,'patches':configs}),flush=True)
+          except HTTPError as e: raise SystemExit('Diagnostic HTTP '+str(e.code)) from None
+          except (OSError,ValueError,KeyError,TypeError) as e: raise SystemExit('Diagnostic '+type(e).__name__) from None
+          PY_DIAG
