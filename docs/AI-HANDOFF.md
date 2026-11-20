@@ -1,3 +1,11 @@
+## 2026-11-20 · 资料改 Hydrogen High，天启 REA 的 allOf 兼容（Codex）
+
+- 分支 `codex/xin-research-rea-20261120` 从 `ff6d41d`（#189）开出。Codex 实现并自查，Claude Code 未参与此次新增代码的复核。 [本次实施记录](superpowers/plans/2026-11-20-xin-research-rea.md)
+- 站长本次明确要求新资料任务改 `gemini-4-hydrogen-high`。不要继续按 #185 的旧交接说默认 Argon Medium。写代码仍 Neon，检查仍 Argon；已经排好或点名 Argon 的资料任务保持 Medium。
+- REA 在 li2 的启动、发现工具正常，失败是网关不接受参数广告里的 pattern `allOf`，并非缺工具。`vm-persona.mjs` 内的兼容桥只转换 `tools/list`，不删工具，不改调用和原 REA 的验证。不要为此复制网关账号、改 REA 原生安装或关掉插件。`vm-events.mjs` 同时修复结构化错误被显示成 `[object Object]`。
+- 已有现场定位、对照、真模型调用证据，详见 CHANGES 最新条目。探测都使用 li2 的独立临时目录和独立 Harness 状态，未改用户会话。全量检查、浏览器、PR 与正式发布结果以本次 PR 后续记录为准；正式发布还需经网站验证已安装的控制器实际调用 REA。
+- 无 SQLite 结构变化或数据迁移。回滚沿用发布前已验收版本，原生程序和用户数据不动。
+
 ## 2026-11-20 · 天启工作台 v4 第 3 个 PR：工作区和终端输入（Claude Code）
 
 - v4 的三个 PR 做完了。这一个改了什么见 CHANGES 最新一条，实现计划见 [plans/2026-11-20-tianqi-terminal-workspace-plan.md](superpowers/plans/2026-11-20-tianqi-terminal-workspace-plan.md)（Rulings 里写了和设计不一样的三处）。

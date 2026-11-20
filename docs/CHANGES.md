@@ -1,3 +1,13 @@
+# 修改清单 · 2026-11-20（资料默认 Hydrogen High；天启 REA 工具定义兼容与真实报错）
+
+- Codex 从最新 main `ff6d41d`（#189）实现并自查，Claude Code 未参与本次新增代码的复核。按站长新要求调整 #185 的资料路由；保留 #186–189 的天启界面、权限、计划和工作区实现。
+- 新的后台资料任务使用 `gemini-4-hydrogen-high`，读取与前台、Neon 共用的 Gemini 额度。用尽时仍转 DeepSeek。检查继续 Argon High；已保存或明确点名的 Argon 资料任务仍按 Medium 执行，无需迁移任务或数据库。
+- 在 li2 独立临时目录、独立 Harness 状态目录复现：打开 REA 后网关返回 HTTP 400 / `invalid_function_parameters`，尚未推理就失败。分组核对定位到 `binary_session` 等工具字符串参数里的 `allOf: [{pattern: …}]`。只删 `$schema` 无效，转换这类 `allOf` 后完整 284 个工具定义可被网关接受。 [定位](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44666594618) [对照](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44666858434)
+- 天启的 REA MCP 启动增加受控的 stdio 兼容桥，只转换 `tools/list` 中字符串 pattern 的组合约束；所有工具、字段、分页、通知和 `tools/call` 原参数继续透传。REA 服务仍按原始定义验证调用，未改原生包、用户凭据和插件开关。参考 Harness [MCP 工具注册](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/src/tools.ts) 保留原工具身份和服务调用；REA [#1484](https://github.com/morluto/rea/issues/1484) 同样说明单个不兼容定义会导致整轮失败，本次实测原因是 `allOf`，不是该 issue 的体积上限。
+- 原控制器把 Harness 的 `turn_end.reason.error` 对象直接转字符串，页面只剩 `[object Object]`。现按 Harness [headless 事件结构](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/bundle/headless/src/json-stream.ts) 提取 message/error/code；未知对象不展开，避免把请求头、凭据等旁支数据输出，同一轮仍只报一次。
+- 回归覆盖实际 CLI 型号与 High 档位、Gemini 额度用尽保留副本和用量、Argon 池独立、结构化错误、MCP 透传和真实服务校验。li2 真模型已通过兼容桥实际调用 `mcp__rea__binary_session` 并完成回复。 [真实调用](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44667333300)
+- 无数据迁移。需撤回时按现有发布流程恢复上一已验收版本；兼容桥随控制器撤回，任务、会话、凭据和 REA 原生安装保留。全量验证、发布和交接结果以本次 PR 后续记录为准。
+
 # 修改清单 · 2026-11-20（天启工作台 v4 第 3 个 PR：对话的工作区、终端里自己输命令）
 
 - **谁做的**：Claude Code 实现并自查（同一会话，没有另一位审核）。[设计](superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md) §4 第 3 个 PR，[实现计划](superpowers/plans/2026-11-20-tianqi-terminal-workspace-plan.md)。

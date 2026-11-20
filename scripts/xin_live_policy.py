@@ -137,7 +137,9 @@ def explain_background_fallback(quota, issue, dispatched_ms, now_ms, expected_mo
     answer = status) recorded during this run or in the window before it in which new tasks skip Gemini.
     A local agy failure is never recorded by the controller, so it cannot explain anything here."""
     quota = quota or {}
-    if (expected_model is None or quota.get('model') == expected_model) and quota.get('blocked') is True and isinstance(quota.get('retryAt'), (int, float)) and quota['retryAt'] > now_ms:
+    gemini_pool = ('gemini-4-hydrogen', 'gemini-4-neon')
+    model_matches = expected_model is None or quota.get('model') == expected_model or (expected_model in gemini_pool and quota.get('model') in gemini_pool)
+    if model_matches and quota.get('blocked') is True and isinstance(quota.get('retryAt'), (int, float)) and quota['retryAt'] > now_ms:
         return 'quota'
     issue = issue or {}
     at = issue.get('at')

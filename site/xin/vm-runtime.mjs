@@ -1045,8 +1045,8 @@ export function previewAsset(controller,a) {
 
 // Antigravity keeps its login in the controller profile. Its model receives no
 // native file/terminal/MCP permission; requested commands run through bwrap here.
-export const AGY_MODEL='gemini-4-hydrogen';   // 前台用的（站长 11-18：前台 Hydrogen High）；后台按类别见 vm-models.mjs 的 agyPick
-/* 站长 11-19：后台写代码换 Gemini 4 Neon（High，难题 Extra = xhigh），检查和查资料用 Gemini 4 Argon；Hydrogen 后台不再默认用。
+export const AGY_MODEL='gemini-4-hydrogen';   // 前台与后台资料都用 Hydrogen High；后台类别见 vm-models.mjs 的 agyPick
+/* 站长 11-19：后台写代码换 Gemini 4 Neon（High，难题 Extra = xhigh），检查用 Argon；11-20 资料改 Hydrogen High。
    额度分池（li 上 agy -p /usage 实测）：Neon、Hydrogen 共用 Gemini 池（gemini-5h、gemini-weekly），Argon 单独一池（gemini-argon-wtu-weekly）。
    li 上按小芯的单步方式实测：Hydrogen High 6～8 秒一步，Argon Medium ≈7.5，Argon High ≈13，Neon High 16～25，Neon Extra ≈45。
    档位照 agy models 列出的：Argon 没有 xhigh。 */
@@ -1073,7 +1073,7 @@ function agyLevel(model,effort){
   const have=(AGY_CATALOG[model]||AGY_CATALOG[AGY_MODEL]).efforts,want=AGY_EFFORTS.includes(effort)?effort:'high';
   return have.includes(want)?want:have.filter(e=>AGY_EFFORTS.indexOf(e)<=AGY_EFFORTS.indexOf(want)).at(-1)||have[0];
 }
-export const agyEffort=(kind,model=AGY_MODEL)=>agyLevel(model,AGY_KIND_EFFORT[kind]||'high');
+export const agyEffort=(kind,model=AGY_MODEL)=>agyLevel(model,kind==='research'&&model===AGY_MODEL?'high':AGY_KIND_EFFORT[kind]||'high');
 export function taskEffort(task, model = task.model) {
   if (!isAgyModel(model)) return 'max';
   if (model === AGY_NEON && /neon[\s-]*(?:extra\b|xhigh\b|超高)/i.test(task.userRequest || '')) return 'xhigh';

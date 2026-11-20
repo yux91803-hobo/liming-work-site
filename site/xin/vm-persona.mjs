@@ -374,6 +374,50 @@ export function harnessTurn(s, a, said) {
   const plan = a.plan === true;
   return { plan, said: plan ? TIANQI_PLAN + '\n\n' + said : said, meta: { perm: plan ? 'read-only' : harnessPerm(s.perm), ...(plan ? { plan: true } : {}), cwd: workPath(s.work) } };
 }
+// 网关不接受 REA 路径约束里的 allOf。只转换向模型广告的 schema；实际参数仍由 REA 按原定义校验。
+export function reaInputSchema(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const out = { ...schema };
+  if (Array.isArray(out.allOf) && out.allOf.length && out.allOf.every(x => x && typeof x.pattern === 'string' && Object.keys(x).length === 1)) delete out.allOf;
+  for (const key of ['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas']) {
+    if (out[key] && typeof out[key] === 'object' && !Array.isArray(out[key])) out[key] = Object.fromEntries(Object.entries(out[key]).map(([name, value]) => [name, reaInputSchema(value)]));
+  }
+  for (const key of ['items', 'additionalProperties', 'unevaluatedProperties', 'contains', 'propertyNames', 'not', 'if', 'then', 'else']) {
+    if (out[key] && typeof out[key] === 'object') out[key] = Array.isArray(out[key]) ? out[key].map(reaInputSchema) : reaInputSchema(out[key]);
+  }
+  for (const key of ['allOf', 'anyOf', 'oneOf', 'prefixItems']) if (Array.isArray(out[key])) out[key] = out[key].map(reaInputSchema);
+  return out;
+}
+export const REA_MCP_BRIDGE = `
+const normalize = ${reaInputSchema.toString()};
+const {spawn} = require('node:child_process'), {createInterface} = require('node:readline');
+const child = spawn(process.argv[1], [], {stdio:['pipe','pipe','inherit']}), lists = new Set();
+let ended = false, timer;
+const input = createInterface({input:process.stdin}), output = createInterface({input:child.stdout});
+input.on('line', line => {
+  try { const m=JSON.parse(line); if(m.method==='tools/list' && m.id!=null) lists.add(m.id); } catch {}
+  if(!child.stdin.destroyed) child.stdin.write(line+'\\n');
+});
+output.on('line', line => {
+  try {
+    const m=JSON.parse(line);
+    if(!m.method && lists.delete(m.id) && Array.isArray(m.result?.tools)) {
+      m.result.tools=m.result.tools.map(t=>({...t,inputSchema:normalize(t.inputSchema)}));
+      line=JSON.stringify(m);
+    }
+  } catch {}
+  process.stdout.write(line+'\\n');
+});
+input.on('close', () => {
+  if(ended) return;
+  child.stdin.end(); timer=setTimeout(()=>child.kill('SIGKILL'),1500);timer.unref();
+});
+child.stdin.on('error',()=>{});
+child.on('error',()=>{process.stderr.write('REA MCP 启动失败\\n');process.exitCode=1;input.close();process.stdin.destroy();});
+child.on('close',code=>{ended=true;clearTimeout(timer);input.close();process.stdin.destroy();process.exitCode=Number.isInteger(code)?code:1;});
+for(const signal of ['SIGTERM','SIGINT']) process.on(signal,()=>{child.kill(signal);clearTimeout(timer);timer=setTimeout(()=>child.kill('SIGKILL'),1000);timer.unref();});
+`;
+
 // 模型、强度和插件状态共同决定文件名，几个对话同时发送时互不覆盖。
 const HARNESS_PERSONA = (model, effort, purge, rea) => path.join(BASE, 'harness-persona.' + model + '.' + effort + (purge == null ? '' : '.purge-' + (purge ? 'on' : 'off')) + (rea ? '.rea-on' : '') + '.yml');
 export function writeHarnessPatch(effort, model, state) {
@@ -395,7 +439,8 @@ export function writeHarnessPatch(effort, model, state) {
     '- id: system-prompt', '  config:', '    personaPrefix: ' + q(TIANQI ? TIANQI_NAME : tianqiPrompt())
   ], purge == null ? [] : ['- id: dsh-purge', '  config:', '    enabled: ' + purge], rea ? [
     '- insert:', '    - id: mcp-rea', '      name: "@deepseek-ai/dsh-mcp-client"', '      config:',
-    '        serverName: rea', '        transport: stdio', '        command: ' + q(rea),
+    '        serverName: rea', '        transport: stdio', '        command: ' + q(process.execPath),
+    '        args: ' + q(['-e', REA_MCP_BRIDGE, rea]),
     '        startupTimeoutMs: 30000', '        toolCallTimeoutMs: 450000'
   ] : [], ['']).join('\n'));
   fs.renameSync(t, out);

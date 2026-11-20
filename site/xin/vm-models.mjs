@@ -80,7 +80,7 @@ export const ROUTES = {
 /* 后台先用哪个 Antigravity 模型（站长 11-19）：写代码、难题 → Neon（Gemini 池），Gemini 池用完 → Argon；检查、查资料 → Argon（Argon 池）。
    杂活、每日任务、电脑维护、看图不用 Antigravity，走上面的网关路由表。
    poolOk(pool)：这个池现在能不能用（派任务的地方按额度记录判断）；avoid：不能用的模型（检查要避开被检查任务的作者）。 */
-const AGY_PLAN = { code: [runtime.AGY_NEON, runtime.AGY_ARGON], hard: [runtime.AGY_NEON, runtime.AGY_ARGON], review: [runtime.AGY_ARGON], research: [runtime.AGY_ARGON] };
+const AGY_PLAN = { code: [runtime.AGY_NEON, runtime.AGY_ARGON], hard: [runtime.AGY_NEON, runtime.AGY_ARGON], review: [runtime.AGY_ARGON], research: [runtime.AGY_MODEL] };
 export function agyPick({ kind, poolOk = () => true, avoid = [] } = {}) {
   return (AGY_PLAN[kind] || []).find(id => poolOk(runtime.agyPool(id)) && !avoid.includes(id)) || null;
 }
