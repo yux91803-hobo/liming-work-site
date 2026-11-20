@@ -524,6 +524,25 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .tq-term-host .tm-docked .tm-x { display: none; }
 .tianqi .tq-term-host .tm-docked .tm-bar { min-height: 42px; background: none; border-bottom: 1px solid var(--line); }
 .tianqi .tq-term-host .tm-scrim { display: none !important; }
+/* 终端里自己输命令（第 3 个 PR）：输出记录在上、输入框贴底；这一轮的终端也在时，记录让出地方 */
+.tq-cli { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 120px; }
+.tq-term-host:has(.tm-win:not([hidden])) .tq-cli { flex: 0 0 auto; max-height: 42%; border-top: 1px solid var(--line); }
+.tq-cli-log { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 8px 14px; color: var(--ink-2); font: 12.5px/1.6 ui-monospace, Menlo, Consolas, monospace; }
+.tq-cli-run + .tq-cli-run { margin-top: 10px; }
+.tq-cli-cmd { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tq-cli-cmd span:first-child { color: var(--star); }
+.tq-cli-out { margin: 2px 0 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tq-cli-out:empty { display: none; }
+.tq-cli-end { margin-top: 2px; color: var(--ink-3); font-size: 12px; }
+.tq-cli-run.bad .tq-cli-end { color: var(--risk); }
+.tq-cli-form { display: flex; align-items: center; gap: 8px; flex: none; padding: 6px 8px 8px 14px; border-top: 1px solid var(--line); }
+.tq-cli-form:focus-within { box-shadow: inset 0 1.5px 0 var(--star); }   /* 聚焦看这一条亮线（和发消息的输入框一样只亮一处） */
+.tq-cli-ps { color: var(--star); font: 13px ui-monospace, Menlo, Consolas, monospace; }
+.tq-cli-form input { flex: 1; min-width: 0; height: 34px; padding: 0; border: 0; background: none; color: var(--ink); font: 13.5px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+.tianqi .xc.tq-mode .tq-cli-form input:focus-visible, .tq-cli-form input:focus-visible { outline: none; }
+.tq-cli-form input:disabled, .tq-cli-form button:disabled { opacity: .5; }
+.tq-cli-form .tq-ib svg { width: 16px; height: 16px; stroke-linecap: round; stroke-linejoin: round; }
+@media (pointer: coarse) { .tq-cli-form input { font-size: 16px; } }   /* iOS：小于 16px 聚焦时会放大页面 */
 .tianqi .tm-win {
   --rad: 17px;
   --t-bg: rgb(2 4 10 / .5);
@@ -661,6 +680,34 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-confirm p { margin: 0 0 10px; }
 .tq-confirm .tq-btn { height: 30px; padding: 0 12px; font-size: 13px; }
 .tq-confirm .tq-btn.go-risk { border-color: transparent; background: var(--risk); color: var(--go-ink); }
+
+/* ---------- 工作区（第 3 个 PR）：标题旁的工作区、新对话时输入框上面的选择、新建文件夹、左栏的分组 ---------- */
+.tq-work { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; max-width: 42%; height: 24px; padding: 0 9px; border: 1px solid var(--line); --rad: 999px; color: var(--ink-3); font-size: 12.5px; }
+.tq-work svg, .tq-work-pick svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.tq-work span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tq-work-row { display: flex; justify-content: center; margin: 0 0 10px; }
+.tq-work-row[hidden] { display: none; }
+.tq-work-pick { max-width: 100%; border: 1px solid var(--line); --rad: 999px; }
+.tq-work-pick span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tq-work-pick:hover, .tq-work-pick[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
+.tq-work-pick .tq-chev { width: 12px; height: 12px; stroke-width: 2; stroke-linecap: round; }
+.tq-work-new { display: flex; flex-direction: column; gap: 8px; padding: 4px; }
+.tq-work-new input { height: 36px; padding: 0 10px; border: 1px solid var(--line-2); --rad: 10px; background: none; color: var(--ink); font: inherit; font-size: 16px; }   /* 16px：iOS 聚焦时不放大 */
+.tq-work-new input:focus-visible { outline: 2px solid var(--star); outline-offset: 1px; }
+.tq-work-err { min-height: 0; margin: 0; color: var(--risk); font-size: 12.5px; line-height: 1.5; }
+.tq-work-err:empty { display: none; }
+.tq-work-new .tq-acts { display: flex; justify-content: flex-end; gap: 8px; }
+.tq-work-new .tq-btn { height: 32px; font-size: 13px; }
+.tq-work-new .tq-btn.go { border-color: transparent; background: var(--go); color: var(--go-ink); }
+.tianqi .xc.tq-mode .tq-side .xc-sgrp { list-style: none; margin: 10px 0 2px; }
+.tianqi .xc.tq-mode .tq-side .xc-sgrp:first-child { margin-top: 0; }
+.xc-sgrp-b { display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; padding: 0 8px; border: 0; --rad: 8px; background: none; color: var(--ink-3); font-size: 12.5px; text-align: left; }
+.xc-sgrp-b:hover { background: var(--hover); color: var(--ink-2); }
+.xc-sgrp-b svg { flex: none; width: 12px; height: 12px; transition: transform .2s var(--ease); }
+.xc-sgrp-b[aria-expanded="true"] svg { transform: rotate(90deg); }   /* 箭头默认朝右（›），展开朝下，和侧栏别的折叠一样 */
+.xc-sgrp-b span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.xc-sgrp-b i { font-style: normal; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .xc-sgrp-b svg { transition: none; } }
 
 /* ---------- 计划：对话里的卡片、用户那句上的标签、右栏的计划 ---------- */
 .tq-plan-tag { display: inline-flex; align-items: center; gap: 4px; align-self: flex-end; margin: 0 2px 4px 0; padding: 1px 8px; --rad: 999px; background: var(--plan-soft); color: var(--plan); font-size: 12px; }

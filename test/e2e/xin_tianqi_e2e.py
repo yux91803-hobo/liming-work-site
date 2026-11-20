@@ -56,6 +56,11 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
         'files_reqs': [],
         'hist_perm': None,     # 旧对话记下的权限（history 的 session.perm）
         'hist_plan': False,    # 旧对话里有一轮计划、后面又按计划执行过
+        'hist_work': None,     # 旧对话的工作区（history 的 session.work）
+        'files_uploads': False,  # 工作目录根下多一个 uploads 文件夹（工作区选择里不该列它）
+        'files_gate': None,    # 设成 asyncio.Event 时，列目录的 files 停住、等测试放行（照 MSW 的 delay('infinite') 测「读取中」）
+        'term_runs': [],       # 终端里输的命令（term_run 的参数）
+        'term_polls': {},      # 每条命令取了几次输出
         'sessions': [
             {'sid': 'stq000001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1762214400000},
         ],
@@ -120,6 +125,8 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             sess = {'sid': args.get('sid'), 'agent': 'harness', 'title': '天启旧对话', 'model': 'deepseek-v4.1-flash'}
             if st['hist_perm']:
                 sess['perm'] = st['hist_perm']
+            if st['hist_work'] is not None:
+                sess['work'] = st['hist_work']
             runs = [{'run': 'rhist0001', 'events': [{'t': 'user', 'text': '老问题'}, {'t': 'text', 'text': '老回答'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 800, 'model': 'deepseek-v4.1-flash'}], 'done': True}]
             if st['hist_plan']:
                 runs += [
@@ -132,10 +139,27 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             st['files_reqs'].append(p)
             if p.endswith('.md'):
                 return await ok({'ok': True, 'data': {'path': p, 'work': '/data/workspace', 'size': 64, 'mtime': 1763520000000, 'text': '# 天启的笔记\n\nPC13 接板上的 LED，低电平亮。'}})
+            if st['files_gate'] is not None:
+                await st['files_gate'].wait()
             return await ok({'ok': True, 'data': {'dir': True, 'path': p, 'work': '/data/workspace', 'entries': [
                 {'name': 'stm32-blink', 'dir': True, 'mtime': 1763520000000},
                 {'name': 'notes.md', 'dir': False, 'size': 64, 'mtime': 1763520000000},
-            ]}})
+            ] + ([{'name': 'uploads', 'dir': True, 'mtime': 1763520000000}] if st['files_uploads'] and p == '/data/workspace' else [])}})
+        if op == 'term_run':
+            st['term_runs'].append(args)
+            return await ok({'ok': True, 'data': {'id': 't%07d' % len(st['term_runs'])}})
+        if op == 'term_poll':
+            tid = args.get('id', '')
+            cmd = st['term_runs'][int(tid[1:]) - 1]['cmd']
+            k = st['term_polls'][tid] = st['term_polls'].get(tid, 0) + 1
+            end = {'done': True, 'code': 0, 'timedOut': False, 'truncated': False, 'ms': 1200}
+            if cmd == 'sleep 99':
+                steps = [{'out': '', 'off': 0, **end, 'code': 124, 'timedOut': True, 'ms': 60000}]
+            elif cmd == 'yes':
+                steps = [{'out': 'y\n' * 5, 'off': 10, **end, 'truncated': True, 'ms': 300}]
+            else:   # 输出分两次给：先给一段、没跑完，再给剩下的
+                steps = [{'out': 'total 8\n', 'off': 8, 'done': False}, {'out': 'drwxr-xr-x stm32-blink\n', 'off': 31, **end}]
+            return await ok({'ok': True, 'data': steps[min(k, len(steps)) - 1]})
         if op == 'usage':
             return await ok({'ok': True, 'data': {'quotas': [], 'days': [], 'totals': {}, 'names': {}, 'sources': {}}})
         if op == 'send':
@@ -431,6 +455,140 @@ async def main():
         await pg.wait_for_timeout(200)
         fits.append(await pg.evaluate(fit_js))
         ui.check('手机：计划模式的提示语一行放得下（390、360 宽都不折行、不被切掉）', all('计划' in f[0] and f[1] <= f[2] for f in fits), fits)
+        await pg.context.close()
+
+        # 2c. 工作区（第 3 个 PR）：新对话时输入框上面选工作区（列 /data/workspace 下的文件夹，不列 uploads 和文件，能新建），
+        #     发出去带 work；标题旁显示工作区；左栏按工作区分组、组能收起；打开旧对话时不再让选，标题旁是它的工作区
+        pg = await ui.page(browser, 1280, 860)
+        await pg.add_init_script("try{localStorage.removeItem('lm.tq.work')}catch(e){}")
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        st['files_uploads'] = True
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        seen = """(() => { const p = document.querySelector('#tq-work-pick'), w = document.querySelector('#tq-work');
+          return { pick: !!p && p.offsetParent !== null, label: p ? p.textContent.trim() : '', head: w ? w.textContent.trim() : '' }; })()"""
+        first = await pg.evaluate(seen)
+        st['files_gate'] = asyncio.Event()   # 列目录先停住：弹层这时还在「读取文件夹…」（CI 比本地慢，测试曾在这时读了列表）
+        await pg.locator('#tq-work-pick').click()
+        await pg.wait_for_selector('#tq-work-pop:not([hidden]) [role=menuitemradio]')
+        loading = await pg.evaluate("[document.querySelector('#tq-work-pop').textContent.includes('读取文件夹…'), document.querySelectorAll('#tq-work-pop [data-work]').length]")
+        st['files_gate'].set()
+        # 等读完再读列表（照 Playwright 的 web-first assertions、Testing Library 的 findBy：等条件成立，不是等随便哪个元素出现）
+        await pg.wait_for_function("!document.querySelector('#tq-work-pop').textContent.includes('读取文件夹…')")
+        items = await pg.evaluate("[...document.querySelectorAll('#tq-work-pop [role^=menuitem]')].map(b => b.textContent.trim())")
+        await pg.locator('#tq-work-pop [role=menuitemradio]', has_text='stm32-blink').click()
+        chosen = await pg.evaluate(seen)
+        popped = await pg.evaluate("document.querySelector('#tq-work-pop').hidden")
+        ui.check('新对话：输入框上面选工作区，先写「读取文件夹…」，读完列出文件夹、「工作目录」和「新建文件夹…」，不列 uploads 和文件；选了标题旁跟着换',
+                 first['pick'] and '工作目录' in first['label'] and '工作目录' in first['head'] and popped and loading == [True, 1]
+                 and any('stm32-blink' in t for t in items) and any('工作目录' in t for t in items) and any('新建文件夹' in t for t in items)
+                 and not any('uploads' in t or 'notes.md' in t for t in items) and 'stm32-blink' in chosen['label'] and 'stm32-blink' in chosen['head'], (first, loading, items, chosen))
+        await pg.fill('.xc-row textarea', '看看工程')
+        await pg.press('.xc-row textarea', 'Enter')
+        await pg.wait_for_function(ui.CHAT_DONE)
+        after = await pg.evaluate(seen)
+        ui.check('发出去的这句带 work；对话开始后不再让选，标题旁还是这个工作区', st['sends'][-1].get('work') == 'stm32-blink' and not after['pick'] and 'stm32-blink' in after['head'], (st['sends'][-1].get('work'), after))
+        # 左栏按工作区分组：最近有动静的组在前，组里照旧按时间；组标题能收起
+        st['sessions'] = [
+            {'sid': 'stqa00001', 'agent': 'harness', 'title': 'LED 快闪', 'turns': 2, 'updated': 1763600000000, 'work': 'stm32-blink'},
+            {'sid': 'stqb00001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1763500000000, 'work': ''},
+            {'sid': 'stqc00001', 'agent': 'harness', 'title': '串口调试', 'turns': 3, 'updated': 1763400000000, 'work': 'stm32-blink'},
+        ]
+        await pg.reload()
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-sgrp')
+        rows_js = "[...document.querySelectorAll('.xc-sl-main > li')].filter(li => !li.hidden).map(li => li.classList.contains('xc-sgrp') ? 'G:' + li.textContent.trim() : 'S:' + li.querySelector('.xc-si-t').textContent)"
+        rows = await pg.evaluate(rows_js)
+        await pg.locator('.xc-sgrp-b', has_text='stm32-blink').click()
+        folded = await pg.evaluate(rows_js)
+        exp = await pg.evaluate("document.querySelector('.xc-sgrp-b').getAttribute('aria-expanded')")
+        ui.check('左栏按工作区分组：最近的组在前、组里按时间；点组标题收起，读屏知道收起了',
+                 len(rows) == 5 and rows[0].startswith('G:stm32-blink') and rows[1:3] == ['S:LED 快闪', 'S:串口调试'] and rows[3].startswith('G:工作目录') and rows[4] == 'S:天启旧对话'
+                 and folded == [rows[0], rows[3], rows[4]] and exp == 'false', (rows, folded, exp))
+        # 打开旧对话：不再让选，标题旁是它的工作区
+        st['hist_work'] = 'stm32-blink'
+        await pg.locator('.xc-si', has_text='天启旧对话').click()
+        await pg.wait_for_function("document.querySelector('.xc-msgs').textContent.includes('老回答')")
+        old = await pg.evaluate(seen)
+        ui.check('打开旧对话：不出工作区选择，标题旁是它记下的工作区', not old['pick'] and 'stm32-blink' in old['head'], old)
+        await pg.context.close()
+        # 新建文件夹：名字不合规矩说清楚、不收；合规矩的记下来，发出去带上
+        pg = await ui.page(browser, 1280, 860)
+        await pg.add_init_script("try{localStorage.removeItem('lm.tq.work')}catch(e){}")
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.locator('#tq-work-pick').click()
+        await pg.locator('#tq-work-pop [role=menuitem]', has_text='新建文件夹').click()
+        box_in = pg.locator('#tq-work-pop input')
+        await box_in.fill('a/b')
+        await box_in.press('Enter')
+        bad = await pg.evaluate("[!document.querySelector('#tq-work-pop').hidden, (document.querySelector('#tq-work-pop .tq-work-err') || {}).textContent || '']")
+        await box_in.fill('led-fast')
+        await box_in.press('Enter')
+        good = await pg.evaluate(seen)
+        saved = await pg.evaluate("localStorage.getItem('lm.tq.work')")
+        await pg.fill('.xc-row textarea', '把 LED 改快一点')
+        await pg.press('.xc-row textarea', 'Enter')
+        await pg.wait_for_function(ui.CHAT_DONE)
+        ui.check('新建文件夹：名字不合规矩时说清楚、不收；合规矩的选上、记住，发出去带 work',
+                 bad[0] and '字母' in bad[1] and 'led-fast' in good['label'] and saved == 'led-fast' and st['sends'][-1].get('work') == 'led-fast', (bad, good, saved, st['sends'][-1].get('work')))
+        await pg.context.close()
+        # 手机：工作区选择和输入框都在屏幕里
+        pg = await ui.page(browser, 390, 844)
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        fit = await pg.evaluate("""(() => { const r = e => document.querySelector(e).getBoundingClientRect();
+          return { pick: [Math.round(r('#tq-work-pick').left), Math.round(r('#tq-work-pick').right)], box: Math.round(r('.tq-box').right), iw: innerWidth, sw: document.documentElement.scrollWidth }; })()""")
+        ui.check('手机：工作区选择和输入框都在屏幕里，没有横向滚动', fit['pick'][0] >= 0 and fit['pick'][1] <= fit['iw'] and fit['box'] <= fit['iw'] and fit['sw'] <= fit['iw'], fit)
+        await pg.context.close()
+
+        # 2d. 终端里自己输命令（第 3 个 PR）：右栏「终端」底下一个输入框，在这个对话（或新对话选的）工作区里跑；
+        #     命令后台跑、分几次取输出；跑的时候不能再发；结尾写退出码和用时，超时、输出太多各有一句话
+        pg = await ui.page(browser, 1280, 860)
+        await pg.add_init_script("try{localStorage.removeItem('lm.tq.work')}catch(e){}")
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.locator('#tq-tab-term').click()
+        cli = pg.locator('#tq-term-form input')
+        await cli.fill('ls')
+        await cli.press('Enter')
+        busy = await pg.evaluate("document.querySelector('#tq-term-form input').disabled")
+        ended = lambda n: "document.querySelectorAll('.tq-cli-run').length === %d && document.querySelectorAll('.tq-cli-run')[%d].querySelector('.tq-cli-end').textContent" % (n, n - 1)
+        await pg.wait_for_function(ended(1))
+        r1 = await pg.evaluate("""(() => { const b = document.querySelector('.tq-cli-run');
+          return { cmd: b.querySelector('.tq-cli-cmd').textContent, out: b.querySelector('.tq-cli-out').textContent, end: b.querySelector('.tq-cli-end').textContent,
+            live: document.querySelector('.tq-cli-log').getAttribute('aria-live'), dis: document.querySelector('#tq-term-form input').disabled, focus: document.activeElement === document.querySelector('#tq-term-form input') }; })()""")
+        ui.check('右栏「终端」底下能自己输命令：带上工作区跑，跑的时候不能再发；输出分两次拼起来，结尾写退出码和用时；跑完焦点回输入框',
+                 st['term_runs'][-1] == {'work': '', 'cmd': 'ls'} and busy and r1['cmd'] == '$ ls' and r1['out'] == 'total 8\ndrwxr-xr-x stm32-blink\n'
+                 and '退出码 0' in r1['end'] and '1.2 秒' in r1['end'] and r1['live'] == 'polite' and not r1['dis'] and r1['focus'], (st['term_runs'], busy, r1))
+        await cli.fill('sleep 99')
+        await cli.press('Enter')
+        await pg.wait_for_function(ended(2))
+        await cli.fill('yes')
+        await cli.press('Enter')
+        await pg.wait_for_function(ended(3))
+        ends = await pg.evaluate("[...document.querySelectorAll('.tq-cli-run .tq-cli-end')].map(e => e.textContent)")
+        ui.check('超时、输出太多各有一句话说清楚', '超过 60 秒' in ends[1] and '64 KB' in ends[2], ends)
+        await pg.locator('#tq-work-pick').click()
+        await pg.locator('#tq-work-pop [role=menuitemradio]', has_text='stm32-blink').click()
+        await cli.fill('ls')
+        await cli.press('Enter')
+        await pg.wait_for_function(ended(4))
+        ui.check('终端跟着工作区走：新对话选了 stm32-blink，命令就在那里跑', st['term_runs'][-1] == {'work': 'stm32-blink', 'cmd': 'ls'}, st['term_runs'][-1])
+        await pg.context.close()
+        # 手机：右栏从底下升起，终端的输入框在屏幕里
+        pg = await ui.page(browser, 390, 844)
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.locator('.tq-panel-b').click()
+        await pg.locator('#tq-tab-term').click()
+        await pg.wait_for_timeout(600)
+        tfit = await pg.evaluate("""(() => { const r = document.querySelector('#tq-term-form').getBoundingClientRect();
+          return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom), iw: innerWidth, ih: innerHeight }; })()""")
+        ui.check('手机：终端的输入框在屏幕里', tfit['l'] >= 0 and tfit['r'] <= tfit['iw'] and tfit['t'] >= 0 and tfit['b'] <= tfit['ih'], tfit)
         await pg.context.close()
 
         # 3. 没登录

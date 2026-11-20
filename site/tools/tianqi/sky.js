@@ -502,7 +502,7 @@
     var cfg = { perm: permOf(state().tqPerm) ? state().tqPerm : defPerm(), plan: false };
     var permBtn = $('#tq-perm'), planBtn = $('#tq-plan'), PH0 = say.getAttribute('placeholder') || '给天启发消息';
     // chat.js 发消息时来问这一句带什么权限、是不是计划（只在天启模式里问）
-    function tqOpts() { return { perm: cfg.perm, plan: cfg.plan }; }
+    function tqOpts() { return { perm: cfg.perm, plan: cfg.plan, work: fresh() && ws.pick ? ws.pick : undefined }; }
     function hook() { var c = chat(); if (c && c.tqOpts !== tqOpts) c.tqOpts = tqOpts; }
     hook();
     function syncChips() {
@@ -638,11 +638,144 @@
     new MutationObserver(function (list) { if (list.some(function (m) { return [].some.call(m.addedNodes, function (n) { return n.nodeType === 1 && (n.matches('.xc-me') || n.querySelector('.xc-me')); }); })) planActs(); }).observe(msgs, { childList: true, subtree: true });
     syncChips();
 
+    /* ================= 工作区（第 3 个 PR） =================
+       新对话时输入框上面选：/data/workspace 本身（「工作目录」）或它下面一层的文件夹，也能新建；对话开始后固定（控制器只认第一句带的 work）。
+       标题旁一直显示这个对话的工作区。新对话选过的记在 lm.tq.work。规则和控制器的 WORK_NAME 一样 */
+    var WORK_NAME = /^(?!\.)[\w.一-龥-]{1,64}$/, ROOT_W = '工作目录', WORK_DIR = '/data/workspace';
+    var FOLDER = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>';
+    var ws = { sid: '', work: '', pick: WORK_NAME.test(store.get('work') || '') ? store.get('work') : '' };
+    var workHead = $('#tq-work'), workBtn = $('#tq-work-pick'), workRow = workBtn.parentNode;
+    var wpop = document.createElement('div'); wpop.className = 'tq-pop tq-work-pop'; wpop.id = 'tq-work-pop'; wpop.hidden = true; root.appendChild(wpop);
+    function fresh() { return !ws.sid && !msgs.querySelector('.xc-me'); }   // 还没发第一句
+    function curWork() { return ws.sid ? ws.work : ws.pick; }
+    function syncWork() {
+      var w = curWork(), name = w || ROOT_W;
+      workHead.innerHTML = FOLDER + '<span></span>'; workHead.lastChild.textContent = name;
+      workHead.title = WORK_DIR + (w ? '/' + w : ''); workHead.setAttribute('aria-label', '工作区：' + name);
+      workRow.hidden = !fresh();
+      $('span', workBtn).textContent = name; workBtn.setAttribute('aria-label', '新对话的工作区：' + name);
+    }
+    function workOpt(w, label, sub) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'tq-opt'; b.setAttribute('role', 'menuitemradio');
+      b.setAttribute('aria-checked', String(w === ws.pick)); b.dataset.work = w;
+      b.innerHTML = '<span class="tq-opt-t"><span></span><small></small></span>' + CHECK;
+      b.querySelector('.tq-opt-t > span').textContent = label; b.querySelector('small').textContent = sub;
+      return b;
+    }
+    function workMenu(names, note) {
+      wpop.setAttribute('role', 'menu'); wpop.setAttribute('aria-label', '新对话的工作区'); wpop.innerHTML = '<p class="tq-pop-h">新对话在哪个文件夹里跑</p>';
+      wpop.appendChild(workOpt('', ROOT_W, WORK_DIR + '，不分文件夹'));
+      (names || []).forEach(function (n) { wpop.appendChild(workOpt(n, n, WORK_DIR + '/' + n)); });
+      if (note) { var p = document.createElement('p'); p.className = 'tq-pop-h'; p.textContent = note; wpop.appendChild(p); }
+      var add = document.createElement('button'); add.type = 'button'; add.className = 'tq-opt tq-work-add'; add.setAttribute('role', 'menuitem'); add.dataset.add = '1';
+      add.innerHTML = '<span class="tq-opt-t"><span>新建文件夹…</span><small>发第一句时建好</small></span>'; wpop.appendChild(add);
+    }
+    function newFolder() {
+      wpop.setAttribute('role', 'dialog'); wpop.setAttribute('aria-label', '新建文件夹');
+      wpop.innerHTML = '<form class="tq-work-new"><label class="tq-pop-h" for="tq-work-name">新文件夹的名字（在 ' + WORK_DIR + ' 下面）</label>' +
+        '<input id="tq-work-name" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" placeholder="比如 led-fast">' +
+        '<p class="tq-work-err" role="alert"></p><div class="tq-acts"><button class="tq-btn" type="button" data-cancel="1">取消</button><button class="tq-btn go" type="submit">建好</button></div></form>';
+      placeWork(); $('input', wpop).focus();
+    }
+    function placeWork() {
+      var b = workBtn.getBoundingClientRect(), w = wpop.offsetWidth, hh = wpop.offsetHeight;
+      var x = Math.max(12, Math.min(innerWidth - w - 12, b.left)), y = b.top - hh - 8;
+      if (y < 12) y = Math.max(12, Math.min(innerHeight - hh - 12, b.bottom + 8));
+      wpop.style.left = x + 'px'; wpop.style.top = y + 'px';
+    }
+    function focusWork() { var f = $('.tq-opt[aria-checked="true"]', wpop) || $('.tq-opt', wpop); if (f) f.focus(); }
+    function openWork() {
+      workMenu(null, '读取文件夹…'); wpop.hidden = false; placeWork(); workBtn.setAttribute('aria-expanded', 'true');
+      if (!REDUCE) { wpop.classList.remove('in'); void wpop.offsetWidth; wpop.classList.add('in'); }
+      focusWork();
+      var c = chat(), my = wpop.dataset.seq = String(+(wpop.dataset.seq || 0) + 1);
+      var stale = function () { return wpop.hidden || wpop.dataset.seq !== my || wpop.getAttribute('role') !== 'menu'; };
+      if (!c || typeof c.tqCall !== 'function') return;
+      c.tqCall('files', { path: WORK_DIR }, 30000).then(function (d) {
+        if (stale()) return;
+        var names = (d && d.entries || []).filter(function (x) { return x.dir && x.name !== 'uploads' && WORK_NAME.test(x.name); }).map(function (x) { return x.name; });
+        workMenu(names, names.length ? '' : '工作目录下面还没有文件夹'); placeWork(); focusWork();
+      }, function (e) {
+        if (stale()) return;
+        workMenu(null, '读不到文件夹：' + (e && e.message || '出错了')); placeWork(); focusWork();
+      });
+    }
+    function closeWork(back) { if (wpop.hidden) return false; wpop.hidden = true; workBtn.setAttribute('aria-expanded', 'false'); if (back) workBtn.focus(); return true; }
+    function pickWork(w) { ws.pick = w; store.set('work', w || null); syncWork(); closeWork(true); }
+    workBtn.addEventListener('click', function () { if (wpop.hidden) openWork(); else closeWork(true); });
+    wpop.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.cancel) { closeWork(true); return; }
+      if (b.dataset.add) { newFolder(); return; }
+      if (b.dataset.work != null && b.getAttribute('role') === 'menuitemradio') pickWork(b.dataset.work);
+    });
+    wpop.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var v = ($('input', wpop).value || '').trim();
+      if (!WORK_NAME.test(v) || v === 'uploads') { $('.tq-work-err', wpop).textContent = '只能用字母、数字、汉字、点、横线和下划线，不能以点开头，最多 64 个字（uploads 留给上传的文件）'; $('input', wpop).focus(); return; }
+      pickWork(v);
+    });
+    wpop.addEventListener('keydown', function (e) {
+      if (['ArrowDown', 'ArrowUp', 'Home', 'End'].indexOf(e.key) < 0 || wpop.getAttribute('role') !== 'menu') return;
+      var o = $$('.tq-opt', wpop); if (!o.length) return;
+      var i = o.indexOf(document.activeElement), n = e.key === 'Home' ? 0 : e.key === 'End' ? o.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + o.length) % o.length;
+      o[n].focus(); e.preventDefault();
+    });
+    document.addEventListener('pointerdown', function (e) { if (!wpop.hidden && !wpop.contains(e.target) && !workBtn.contains(e.target)) closeWork(false); });
+    addEventListener('resize', function () { if (!wpop.hidden) placeWork(); });
+    document.addEventListener('tq:session', function (e) { var d = e.detail || {}; ws.sid = d.sid || ''; ws.work = d.work || ''; closeWork(false); syncWork(); });
+    new MutationObserver(syncWork).observe(msgs, { childList: true });
+    syncWork();
+
+    /* ================= 终端里自己输命令（第 3 个 PR） =================
+       右栏「终端」底下一个输入框，在这个对话（新对话就是选的）工作区里跑，最多 60 秒、输出最多 64 KB。
+       控制器把命令放后台跑（term_run 回编号），这里每 400 毫秒取一次新输出（term_poll），网页藏起来时停。输出当文字画，不当 HTML */
+    var cli = document.createElement('div'); cli.className = 'tq-cli';
+    cli.innerHTML = '<div class="tq-cli-log" aria-live="polite"></div>' +
+      '<form class="tq-cli-form" id="tq-term-form"><span class="tq-cli-ps" aria-hidden="true">$</span>' +
+      '<input aria-label="在工作区里运行命令" placeholder="在工作区里运行命令，最多 60 秒" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go">' +
+      '<button type="submit" class="tq-ib" aria-label="运行"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button></form>';
+    $('#tq-p-term').appendChild(cli);
+    var cliLog = $('.tq-cli-log', cli), cliForm = $('form', cli), cliIn = $('input', cliForm), cliBtn = $('button', cliForm), cliBusy = false;
+    function cliDur(ms) { var s = (ms || 0) / 1000; return (s < 10 ? Math.round(s * 10) / 10 : Math.round(s)) + ' 秒'; }
+    function cliBlock(cmd) {
+      var b = document.createElement('div'); b.className = 'tq-cli-run';
+      b.innerHTML = '<div class="tq-cli-cmd"><span aria-hidden="true">$ </span><span></span></div><pre class="tq-cli-out"></pre><div class="tq-cli-end"></div>';
+      b.querySelector('.tq-cli-cmd span:last-child').textContent = cmd;
+      cliLog.appendChild(b); cliLog.scrollTop = cliLog.scrollHeight;
+      return b;
+    }
+    function cliEnd(b, p, err) {
+      var t = err ? '没跑成：' + err : p.timedOut ? '超过 60 秒，停了' : '退出码 ' + p.code + ' · 用时 ' + cliDur(p.ms);
+      if (!err && p.truncated) t += ' · 输出超过 64 KB，后面的没显示';
+      $('.tq-cli-end', b).textContent = t; b.classList.toggle('bad', !!err || p.code !== 0);
+      cliBusy = false; cliIn.disabled = cliBtn.disabled = false; cliIn.focus();
+    }
+    cliForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var cmd = cliIn.value.trim(), c = chat();
+      if (!cmd || cliBusy || !c || typeof c.tqCall !== 'function') return;
+      var b = cliBlock(cmd), out = $('.tq-cli-out', b), off = 0, fail = function (x) { cliEnd(b, null, x && (x.msg || x.message) || '出错了'); };
+      cliIn.value = ''; cliBusy = true; cliIn.disabled = cliBtn.disabled = true;
+      c.tqCall('term_run', { work: curWork(), cmd: cmd }, 30000).then(function (r) {
+        if (!r || r.error || !r.id) { fail(r); return; }
+        (function next() {
+          if (document.hidden) { setTimeout(next, 1000); return; }
+          c.tqCall('term_poll', { id: r.id, off: off }, 30000).then(function (p) {
+            if (!p || p.error) { fail(p); return; }
+            if (p.out) { out.textContent += p.out; cliLog.scrollTop = cliLog.scrollHeight; }
+            off = p.off;
+            if (p.done) cliEnd(b, p); else setTimeout(next, 400);
+          }, fail);
+        })();
+      }, fail);
+    });
+
     /* ================= 快捷键 =================
        在 window 的捕获阶段最先处理：chat.js 在没有弹层时按 Esc 会关掉整个天启，设置和手机上的面板要先把 Esc 接住 */
     window.addEventListener('keydown', function (e) {
       var mod = e.ctrlKey || e.metaKey, k = (e.key || '').toLowerCase(), stop = function () { e.preventDefault(); e.stopImmediatePropagation(); };
-      if (e.key === 'Escape' && closePop(true)) { stop(); return; }
+      if (e.key === 'Escape' && (closePop(true) || closeWork(true))) { stop(); return; }
       if (!modal.hidden) { if (e.key === 'Escape') { stop(); closeSettings(); } return; }
       if (root.classList.contains('locked')) return;
       if (mod && !e.shiftKey && !e.altKey && k === 'b') { e.preventDefault(); toggleLeft(); }

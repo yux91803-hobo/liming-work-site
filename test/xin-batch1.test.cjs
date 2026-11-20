@@ -228,10 +228,15 @@ test('模型还没开工就失败、换下一个候选：失败原因记进 mode
   const h = home(t);
   h.script(['early:upstream connect error 503 from gateway']);
   const n = h.locked('task_new', { kind: 'code', title: '换模型', goal: '编译工程' });
-  await until(() => h.task(n.task.sid).status === 'done', 20000, '换了模型做完');
-  const stats = fs.readFileSync(path.join(h.xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(x => x.kind === 'code');
-  const last = stats.at(-1);
-  assert.equal(last.from, 'glm-5.3', JSON.stringify(stats));
+  const done = await until(() => { const v = h.task(n.task.sid); return v.status === 'done' && v; }, 20000, '换了模型做完');
+  // 任务 done 和统计那一行在同一个事务里提交，但写到磁盘时先写文档（会话）、后写追加的行（vm-state.mjs 的 project）。
+  // 这里直接读文件，会看到「会话已经 done、统计还没写」的那一下（11-20 本地跑全量时读到 ENOENT）。
+  // 照 Marten 的 WaitForNonStaleProjectionDataAsync、Testing Library 的 waitFor：等这一轮的那行写进来再断言
+  const statsF = path.join(h.xin, 'model-stats.jsonl');
+  const rows = () => { let s = ''; try { s = fs.readFileSync(statsF, 'utf8'); } catch { /* 还没写 */ } return s.split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } }); };
+  const last = await until(() => rows().find(x => x.run === done.finishedRun), 15000, 'model-stats 记下这一轮');
+  assert.equal(last.kind, 'code', JSON.stringify(last));
+  assert.equal(last.from, 'glm-5.3', JSON.stringify(last));
   assert.equal(last.model, 'kimi-k3.1-pro');
   assert.match(last.fromErr || '', /503/);
 });

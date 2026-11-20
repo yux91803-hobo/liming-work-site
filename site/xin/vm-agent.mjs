@@ -59,7 +59,7 @@ import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
 import { fromClaude, fromCodex, fromHarness, stepActivity } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
 import { resolveEffort, HARNESS_WIN, harnessModel, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route, backgroundRoute } from './vm-models.mjs';
-import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, harnessPerm, harnessTurn, permError, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch } from './vm-persona.mjs';
+import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, harnessPerm, harnessTurn, permError, workError, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch } from './vm-persona.mjs';import { termOps } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
 export * from './vm-screen.mjs';
@@ -1369,7 +1369,7 @@ function launch(s, m, userEv) {
 function lastRun(s) { return s && s.runs && s.runs.length ? s.runs[s.runs.length - 1] : null; }
 function summary(s) {
   const r = lastRun(s);
-  return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null, archived: !!s.archived, model: s.model || null, ...(s.agent === 'harness' ? { perm: harnessPerm(s.perm) } : {}), ...(s.main ? { main: true } : {}) };
+  return { sid: s.sid, agent: s.agent, title: s.title, created: s.created, updated: s.updated, turns: (s.runs || []).length, active: r && !runDone(r) ? r : null, archived: !!s.archived, model: s.model || null, ...(s.agent === 'harness' ? { perm: harnessPerm(s.perm), work: s.work || '' } : {}), ...(s.main ? { main: true } : {}) };
 }
 // 主对话：一直聊下去的那一个（默认模式），所有设备共用。别的对话照常新建。归档后它变回普通对话，下一句再开一个新的主对话。
 const MAIN_F = () => path.join(BASE, 'main.json');
@@ -2073,7 +2073,7 @@ function bgInfo(all) {
   const glow = glowLevel(quotaReadings().map(q => q.quota));   // 头像光环：额度用得最多的那项
   return lease ? { bg, lease, version, glow } : { bg, version, glow };
 }
-const ops = {
+const ops = { ...termOps,   // 天启终端里自己输命令（vm-persona.mjs 的 termOps）
   // 网站发现控制器脚本被改过并已重传（src/xin.js 的 verifyAgent）：记下来
   integrity_event(a){const files=(Array.isArray(a.files)?a.files:[]).filter(f=>/^vm-[a-z0-9-]+\.mjs$/.test(f)).slice(0,32);if(files.length)logLine(INTEGRITY_F(),{files});return {ok:true};},
   // 记忆的可读导出（条目、依据、出处）；整份状态库的每日副本在 exports/
@@ -2152,7 +2152,7 @@ const ops = {
     const text = String(a.text || '').trim();
     if (!text && !files.length) return { error: 'empty', msg: '消息是空的' };
     if (text.length > TEXT_MAX) return { error: 'too_long', msg: '消息太长了（最多 ' + TEXT_MAX + ' 字）' };
-    const refused = permError(a.perm) || tianqiRefuse(a, okId(a.sid, 's') ? readJ(sessF(a.sid)) : null); if (refused) return refused;   // 权限只认三档；天启（li2）只用 Harness、网关要配好
+    const refused = permError(a.perm) || workError(a.work) || tianqiRefuse(a, okId(a.sid, 's') ? readJ(sessF(a.sid)) : null); if (refused) return refused;   // 权限只认三档；天启（li2）只用 Harness、网关要配好
     mk(SESS); mk(RUNS);
     let s;
     if (a.sid) {

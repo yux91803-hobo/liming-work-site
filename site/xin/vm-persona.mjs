@@ -2,7 +2,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BASE, WORK, TEMPLATE, bjNow, bjWeek, readText, UPLOADS, TIANQI, HARNESS_KEY, mk, readJ } from './vm-base.mjs';
+import { spawn } from 'node:child_process';
+import { BASE, WORK, TEMPLATE, bjNow, bjWeek, readText, UPLOADS, TIANQI, HARNESS_KEY, mk, readJ, rid } from './vm-base.mjs';
 import { ACTS, readMoves } from './vm-companion.mjs';
 import { screenDisplay } from './vm-screen.mjs';
 import { addMemory, coreMemory } from './vm-memory.mjs';
@@ -362,11 +363,16 @@ export const harnessPerm = p => HARNESS_PERMS.includes(p) ? p : HARNESS_DEFAULT_
 export const permError = p => p == null || HARNESS_PERMS.includes(p) ? null : { error: 'bad_perm', msg: '权限只能是只读、工作区内修改或完全权限' };
 // 天启（Harness 对话）这一轮：对话记住选过的权限（旧对话没记过按完全权限）；计划那一轮固定只读、任务前面加计划要求，对话记下的不变。
 // 返回 said（交给 Harness 的话）和 meta（写进这一轮：perm、plan）；别的 agent 原样返回
+// 工作区（天启 v4 第 3 个 PR）：/data/workspace（WORK）本身，或它下面一层的文件夹。新对话第一句时选、之后固定：Harness 的会话按目录存，换目录就续不上
+export const WORK_NAME = /^(?!\.)[\w.一-龥-]{1,64}$/;
+export const workPath = name => name == null || name === '' ? WORK : WORK_NAME.test(name) ? path.join(WORK, name) : null;
+export const workError = w => w == null || w === '' || (typeof w === 'string' && WORK_NAME.test(w)) ? null : { error: 'bad_work', msg: '工作区只能是 /data/workspace 下面一层的文件夹' };
 export function harnessTurn(s, a, said) {
   if (s.agent !== 'harness') return { plan: false, said, meta: {} };
   if (a.perm) s.perm = a.perm;
+  if (a.work && !s.work && !(s.runs || []).length) s.work = a.work;
   const plan = a.plan === true;
-  return { plan, said: plan ? TIANQI_PLAN + '\n\n' + said : said, meta: { perm: plan ? 'read-only' : harnessPerm(s.perm), ...(plan ? { plan: true } : {}) } };
+  return { plan, said: plan ? TIANQI_PLAN + '\n\n' + said : said, meta: { perm: plan ? 'read-only' : harnessPerm(s.perm), ...(plan ? { plan: true } : {}), cwd: workPath(s.work) } };
 }
 // 模型、强度和插件状态共同决定文件名，几个对话同时发送时互不覆盖。
 const HARNESS_PERSONA = (model, effort, purge, rea) => path.join(BASE, 'harness-persona.' + model + '.' + effort + (purge == null ? '' : '.purge-' + (purge ? 'on' : 'off')) + (rea ? '.rea-on' : '') + '.yml');
@@ -406,3 +412,61 @@ export function harnessEnv(perm) {
   if (key) env.XIN_HARNESS_KEY = key;
   return env;
 }
+
+// 天启的终端里站长自己输命令（天启 v4 第 3 个 PR，docs/superpowers/plans/2026-11-20-tianqi-terminal-workspace-plan.md）：
+// 在对话的工作区里跑，最多 60 秒、输出最多 64 KB。外壳转一个操作最多等 40 秒，所以命令放后台跑：
+// term_run 马上回编号，term_poll 按字节位置取输出。只给天启（li2）；/api/tq 本身只给登录了的站长。
+// 站长自己输的命令不受对话权限（只读等）限制：权限管的是天启，和 Claude Code 的 ! 命令一样直接跑。
+// （放在这个模块里、不另开文件：每多一个控制器模块，Worker 冷启动多一个子请求，已经到「免费套餐 50 个留 10 个余量」的线）
+
+export const TERM_OUT_MAX = 65536;
+const TERM_DIR = () => path.join(BASE, 'term'), TERM_ID = /^t[0-9a-z]{6,24}$/, KEEP_MS = 86400000;
+export function termLimitMs() { const n = Number(process.env.XIN_TERM_LIMIT_MS); return Number.isFinite(n) && n > 0 && n < 60000 ? n : 60000; }
+// timeout 管时限（超时退出码 124，-k 5：不理 TERM 的再过 5 秒 KILL，退出码 137）；head 截到 64 KB 以后接着吞掉，命令不会因为管道断了被杀；
+// 退出码最后写，先写临时文件再改名：看到退出码时输出一定写完了
+const WRAP = 'timeout -k 5 "$4" bash -lc "$1" 2>&1 | { head -c ' + TERM_OUT_MAX + '; cat >/dev/null; } > "$2"\n' +
+  'echo "${PIPESTATUS[0]}" > "$3.tmp" && mv "$3.tmp" "$3"';
+const no = (error, msg) => ({ error, msg });
+const ONLY = no('tianqi_only', '只有天启能在终端里跑命令');
+// 一天前的命令记录删掉
+function termSweep(dir) {
+  const old = Date.now() - KEEP_MS;
+  for (const f of fs.readdirSync(dir)) { try { if (fs.statSync(path.join(dir, f)).mtimeMs < old) fs.unlinkSync(path.join(dir, f)); } catch { /* 已经删了 */ } }
+}
+// 还没跑完时，末尾半个多字节字符留到下次再给
+function wholeChars(buf) {
+  let i = buf.length - 1, k = 0;
+  while (i >= 0 && k < 3 && (buf[i] & 0xc0) === 0x80) { i--; k++; }
+  if (i < 0) return buf.length;
+  const need = buf[i] >= 0xf0 ? 4 : buf[i] >= 0xe0 ? 3 : buf[i] >= 0xc0 ? 2 : 1;
+  return buf.length - i >= need ? buf.length : i;
+}
+export const termOps = {
+  term_run(a) {
+    if (!TIANQI) return ONLY;
+    const bad = workError(a.work); if (bad) return bad;
+    const cmd = a.cmd;
+    if (typeof cmd !== 'string' || !cmd.trim() || cmd.length > 4000 || cmd.includes('\0')) return no('bad_cmd', '命令不能为空，最多 4000 个字');
+    const cwd = workPath(a.work), dir = TERM_DIR(), id = rid('t');
+    mk(cwd); mk(dir); termSweep(dir);
+    fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify({ cmd, work: a.work || '', at: Date.now() }));
+    const child = spawn('bash', ['-c', WRAP, 'term', cmd, path.join(dir, id + '.out'), path.join(dir, id + '.code'), String(termLimitMs() / 1000)],
+      { cwd, detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+    return { id };
+  },
+  term_poll(a) {
+    if (!TIANQI) return ONLY;
+    const id = String(a.id || ''), base = path.join(TERM_DIR(), id);
+    if (!TERM_ID.test(id) || !readText(base + '.json')) return no('bad_id', '没有这条命令');
+    const at = JSON.parse(readText(base + '.json')).at, codeText = readText(base + '.code').trim();   // 先看退出码：有了就说明输出写完了
+    let buf = Buffer.alloc(0);
+    try { buf = fs.readFileSync(base + '.out'); } catch { /* 还没开始输出 */ }
+    const off = Math.min(Math.max(0, a.off | 0), buf.length), part = buf.subarray(off), take = codeText ? part.length : wholeChars(part);
+    const code = codeText ? Number(codeText) : null, done = !!codeText && off + take >= buf.length;
+    let ms = Date.now() - at;
+    if (codeText) { try { ms = fs.statSync(base + '.code').mtimeMs - at; } catch { /* 刚好被清掉 */ } }
+    return { out: part.subarray(0, take).toString('utf8'), off: off + take, done, code, timedOut: code === 124 || code === 137, truncated: buf.length >= TERM_OUT_MAX, ms: Math.round(ms) };
+  }
+};

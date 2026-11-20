@@ -11,7 +11,7 @@ import { attemptError, hasFinalization, staleAttempt } from './vm-run-attempt.mj
 const object = a => a && typeof a === 'object' && !Array.isArray(a);
 const bad = () => ({ error: 'bad_op', msg: '不认识的操作' });
 // 天启身份（li2）下网页和 Worker 能用的操作：聊天、看对话、文件、用量、插件以及例行维护。
-export const TIANQI_OPS = new Set(['ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'rename', 'archive', 'forget', 'files', 'usage', 'plugins', 'plugin_set', 'prune', 'preview_asset', 'integrity_event']);
+export const TIANQI_OPS = new Set(['ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'rename', 'archive', 'forget', 'files', 'usage', 'plugins', 'plugin_set', 'prune', 'preview_asset', 'integrity_event', 'term_run', 'term_poll']);
 const RUN_REPORTS = new Set(['session_patch','run_patch','run_complete','task_finish','task_stage','task_model','agy_conversation','front_reply','front_model','front_immediate','front_action','front_fallback','handoff_start','handoff_finish','continue_steers','run_stat','task_bridge','steer_take','steer_handover']);
 export function createController({ ops, iops, isTask, saveTask, rememberAgentSession, mainSid, listTasks,
   lockedCall, dispatchLaunches, markCurrentController, xinCmd, reapNow, finalizeRun }) {
@@ -40,7 +40,7 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
     }
     if(op==='send'&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
       const {sid,agent,text,effort,model,context,ctxLabel,files}=args;
-      command={id:'send:'+args.clientId,digest:inputDigest({sid:args.mainSid?null:sid||null,agent:agent||null,text:text||'',effort:effort||null,model:model||null,context:context||'',ctxLabel:ctxLabel||'',files:files||[],...(args.main?{main:true}:{}),...(args.perm!=null?{perm:args.perm}:{}),...(args.plan===true?{plan:true}:{})})};   // 权限、计划只在带了时算进去：旧网页重发的同一句摘要不变
+      command={id:'send:'+args.clientId,digest:inputDigest({sid:args.mainSid?null:sid||null,agent:agent||null,text:text||'',effort:effort||null,model:model||null,context:context||'',ctxLabel:ctxLabel||'',files:files||[],...(args.main?{main:true}:{}),...(args.perm!=null?{perm:args.perm}:{}),...(args.work!=null?{work:args.work}:{}),...(args.plan===true?{plan:true}:{})})};   // 权限、计划只在带了时算进去：旧网页重发的同一句摘要不变
     }else if(['task_tell','task_stop'].includes(op)&&/^[a-zA-Z0-9_-]{8,80}$/.test(args.clientId||'')){
       command={id:op+':'+args.clientId,digest:inputDigest(args)};
     }else if(op==='front_action'&&(['remember','forget','task','bond','next','move'].includes(args.argv?.[1])||Object.hasOwn(ACTS,args.argv?.[1]||''))&&!['list','show'].includes(args.argv?.[2])){
