@@ -337,7 +337,8 @@ test('思考强度：只认这个模型真正支持的档位，别的（以前�
   const { resolveEffort, effortSpec } = await load('../site/xin/vm-agent.mjs');
   assert.deepStrictEqual(effortSpec('harness').efforts, ['off', 'low', 'high', 'max']);
   for (const m of ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']) assert.deepStrictEqual(effortSpec('codex', m).efforts, ['low', 'high', 'max'], m);
-  for (const m of ['glm-5.3-flash', 'glm-5.3']) assert.deepStrictEqual(effortSpec('harness', m).efforts, ['low', 'high', 'max'], m);
+  // 天启（Harness）也能用 Kimi K3.1 Pro（站长 11-20），和 GLM 一样三档
+  for (const m of ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']) assert.deepStrictEqual(effortSpec('harness', m).efforts, ['low', 'high', 'max'], m);
   assert.deepStrictEqual(effortSpec('codex', 'deepseek-v4.1-flash').efforts, ['off', 'low', 'high', 'max']);
   assert.strictEqual(resolveEffort('harness', 'glm-5.3', 'off'), 'high');
   assert.strictEqual(resolveEffort('codex', 'deepseek-v4.1-flash', 'off'), 'off');
@@ -1368,6 +1369,8 @@ test('Harness（天启）：dsh headless --json 起，带天启自己的设定�
   const persona = fs.readFileSync(path.join(xin, 'harness-persona.deepseek-v4.1-flash.off.yml'), 'utf8');
   // 思考强度：档位对照表（关 = none）+ 这一轮用的档
   assert.ok(persona.includes('            reasoningEfforts:\n              off: none\n              low: low\n              high: high\n              max: max\n') && persona.includes('    reasoningEffort: off\n'), persona.slice(0, 900));
+  // 网关的模型表里有 Kimi K3.1 Pro（天启能换到它）
+  assert.ok(persona.includes('          - id: "kimi-k3.1-pro"\n            name: "Kimi K3.1 Pro"\n            contextWindow: 1000000\n'), persona.slice(0, 1600));
   // 天启是独立功能：自己的设定，不带小芯的记事本、好感度；聊天不加小芯的好感；每句附的是天启的提醒
   assert.ok(persona.includes('- id: system-prompt') && persona.includes('personaPrefix: "你是「天启」'));
   assert.ok(!persona.includes('<<<记事本') && !persona.includes('xin bond') && !persona.includes('xin remember') && !persona.includes('你和用户现在的关系'), persona.slice(0, 400));

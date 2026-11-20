@@ -20,7 +20,7 @@
   var AGENTS = { harness: 'Harness', codex: 'Codex', claude: 'Claude' };
   // Codex（默认模式）的几个模型：小芯每一轮自己挑（见 vm-agent.mjs 的路由器），这里只用来显示名字
   var CX_MODELS = { 'glm-5.3-flash': 'GLM-5.3 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash' };
-  var HM_MODELS = { 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash', 'glm-5.3': 'GLM-5.3', 'glm-5.3-flash': 'GLM-5.3 Flash' };
+  var HM_MODELS = { 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash', 'glm-5.3': 'GLM-5.3', 'glm-5.3-flash': 'GLM-5.3 Flash', 'kimi-k3.1-pro': 'Kimi K3.1 Pro' };
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
   var WORK = '/data/workspace';
 

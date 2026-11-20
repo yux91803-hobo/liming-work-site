@@ -72,6 +72,8 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
         'hist_perm': None,     # 旧对话记下的权限（history 的 session.perm）
         'hist_plan': False,    # 旧对话里有一轮计划、后面又按计划执行过
         'hist_work': None,     # 旧对话的工作区（history 的 session.work）
+        'hist_extra': [],      # 旧对话后面再接的几轮（各测试自己造内容）
+        'done_usage': None,    # 一轮答完时 done 事件带的用量（输入框下面那一行）
         'files_uploads': False,  # 工作目录根下多一个 uploads 文件夹（工作区选择里不该列它）
         'files_gate': None,    # 设成 asyncio.Event 时，列目录的 files 停住、等测试放行（照 MSW 的 delay('infinite') 测「读取中」）
         'term_runs': [],       # 终端里输的命令（term_run 的参数）
@@ -148,6 +150,7 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
                     {'run': 'rhist0002', 'events': [{'t': 'user', 'text': '把 LED 改快一点', 'plan': True}, {'t': 'text', 'text': PLAN_MD}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 900, 'plan': True}], 'done': True},
                     {'run': 'rhist0003', 'events': [{'t': 'user', 'text': '按计划执行'}, {'t': 'text', 'text': '改好了，编译通过。'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 900}], 'done': True},
                 ]
+            runs += st['hist_extra']
             return await ok({'ok': True, 'data': {'session': sess, 'runs': runs, 'active': None}})
         if op == 'files':
             p = args.get('path') or '/data/workspace'
@@ -204,7 +207,7 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             evs = [
                 dict({'t': 'user', 'text': st['last_text']}, **({'plan': True} if planned else {})),
                 {'t': 'text', 'text': PLAN_MD if planned else reply},
-                dict({'t': 'done', 'ok': True, 'code': 0, 'ms': 1200, 'model': 'deepseek-v4.1-flash'}, **({'plan': True} if planned else {})),
+                dict({'t': 'done', 'ok': True, 'code': 0, 'ms': 1200, 'model': 'deepseek-v4.1-flash'}, **({'plan': True} if planned else {}), **({'usage': st['done_usage']} if st['done_usage'] else {})),
             ]
             return await ok({'ok': True, 'data': {'events': evs, 'off': len(evs), 'done': True}})
         return await ok({'ok': True, 'data': {}})
@@ -278,6 +281,14 @@ async def main():
         ui.check('照 Linear：面板实心、没有毛玻璃；输入框没有大阴影；品牌星、标签下划线不发光；用系统字体，不加载外面的样式表',
                  look['blur'] == 'none' and look['alpha'] == 1 and '80px' not in look['boxShadow'] and look['markGlow'] == 'none'
                  and look['inkGlow'] == 'none' and bool(re.match(r'^\s*(Inter|-apple-system|system-ui|"SF Pro)', look['font'])) and not look['ext'], look)
+        # 站长 11-20：模型名旁边那个信号格样子的思考强度不符合星空，换成一排星星：一样大，亮着的是天启的金色
+        em = await pg.evaluate("""(() => { const bs = [...document.querySelectorAll('.tq-instruments .xc-mdl .xc-em b')];
+          const probe = document.createElement('i'); probe.style.background = 'var(--star)'; document.querySelector('.tq-instruments').appendChild(probe);
+          const star = getComputedStyle(probe).backgroundColor; probe.remove();
+          return { n: bs.length, clip: bs.map(b => getComputedStyle(b).clipPath.startsWith('polygon')), h: [...new Set(bs.map(b => Math.round(b.getBoundingClientRect().height)))],
+            on: bs.filter(b => b.classList.contains('on')).map(b => getComputedStyle(b).backgroundColor === star) }; })()""")
+        ui.check('天启的思考强度是一排星星（不是信号格）：一样大，亮着的是天启的金色',
+                 em['n'] >= 3 and all(em['clip']) and len(em['h']) == 1 and len(em['on']) > 0 and all(em['on']), em)
         await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
         await pg.get_by_text('老回答', exact=True).wait_for()
         ui.check('对话记录常驻左栏，点历史对话打开并更新标题，左栏不收起', await pg.locator('.tq-side .xc-drawer').is_visible()
@@ -444,13 +455,18 @@ async def main():
         ui.check('只读时「按计划执行」不能点并说明；换回工作区内修改后点它：发「按计划执行」、不带 plan、权限是对话的；计划模式关掉，旧卡片只剩「看计划」',
                  ro_card[0] is True and '只读' in ro_card[1] and run_sent.get('text') == '按计划执行' and not run_sent.get('plan')
                  and run_sent.get('perm') == 'workspace-write' and after == {'pressed': 'false', 'acts': ['看计划'], 'ph': '给天启发消息'}, (ro_card, run_sent, after))
+        # 站长 11-20：设置里的「权限」「插件」两页多余（输入框旁边有权限按钮、左栏有插件），去掉；
+        # 新对话沿用上次在新对话里选的权限（存在 lm.tq.perm，代替原来设置里的默认权限，和模型一样记着上次的）
         await pg.get_by_role('button', name='设置', exact=True).click()
         await pg.wait_for_selector('#tq-settings.on')
-        await pg.locator('.tq-set-tab', has_text='权限').click()
-        await pg.get_by_role('radio', name=re.compile('^只读')).click()
-        saved = await pg.evaluate("localStorage.getItem('lm.tq.perm')")
+        tabs = await pg.evaluate("[...document.querySelectorAll('.tq-set-tab')].map(b => b.textContent.trim())")
         await pg.keyboard.press('Escape')
         await pg.wait_for_selector('#tq-settings', state='hidden')
+        await pg.get_by_role('button', name='新建对话').click()
+        await pg.get_by_text('从一个问题开始探索').wait_for()
+        await perm.click()
+        await pg.get_by_role('menuitemradio', name=re.compile('^只读')).click()
+        saved = await pg.evaluate("localStorage.getItem('lm.tq.perm')")
         await pg.get_by_role('button', name='新建对话').click()
         await pg.get_by_text('从一个问题开始探索').wait_for()
         new_label = await perm.text_content()
@@ -461,8 +477,9 @@ async def main():
         hist = await pg.evaluate("""(() => ({ label: document.querySelector('#tq-perm .tq-perm-n').textContent,
           cards: [...document.querySelectorAll('.tq-plan-card')].map(c => [...c.querySelectorAll('.tq-acts button')].map(b => b.textContent)),
           tab: !document.querySelector('#tq-tab-plan').hidden }))()""")
-        ui.check('设置里把默认权限改成只读（存在 lm.tq.perm），新对话用它；打开记着工作区内修改的旧对话，按钮跟着换；旧计划刷新后还在、只能看',
-                 saved == 'read-only' and new_label == '只读' and hist == {'label': '工作区', 'cards': [['看计划']], 'tab': True}, (saved, new_label, hist))
+        ui.check('设置里只剩外观和电脑两页；新对话里选了只读，下一个新对话沿用（存在 lm.tq.perm）；打开记着工作区内修改的旧对话，按钮跟着换；旧计划刷新后还在、只能看',
+                 tabs == ['外观', '电脑'] and saved == 'read-only' and new_label == '只读' and hist == {'label': '工作区', 'cards': [['看计划']], 'tab': True},
+                 (tabs, saved, new_label, hist))
         await pg.context.close()
         # 手机：计划卡片和正文一样占满整行（回答是两栏网格，没指定的话会掉进头像那一栏，挤成一条竖线）；右栏不自动升起，「计划」亮个小点
         pg = await ui.page(browser, 390, 844)
@@ -643,20 +660,15 @@ async def main():
         sky_new = await pg.evaluate(sky)
         await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
         await pg.wait_for_function("window.LimingXinChat.state.sid === 'stqb00001'")
-        sky_dim = sky_back = False
-        try:   # 照 Linear「内容优先」：进了对话夜空暗一点，回到新对话再亮回来（各自等过渡走完）
-            await pg.wait_for_function(sky + ' < 0.7', timeout=3000); sky_dim = True
-        except Exception:
-            pass
+        await pg.wait_for_timeout(900)   # 原来变暗的过渡是 0.6 秒：等过它再量
+        sky_conv = await pg.evaluate(sky)
         await pg.evaluate("document.activeElement && document.activeElement.blur()")
         await pg.keyboard.press('c')
         await pg.wait_for_function("!window.LimingXinChat.state.sid", timeout=3000)
         after_c = await pg.evaluate("[window.LimingXinChat.state.sid || '', document.activeElement === document.querySelector('.xc-row textarea')]")
-        try:
-            await pg.wait_for_function(sky + ' > 0.99', timeout=3000); sky_back = True
-        except Exception:
-            pass
-        ui.check('照 Linear：新对话时夜空亮着；进了对话夜空暗一点，回到新对话又亮', sky_new == 1 and sky_dim and sky_back, (sky_new, sky_dim, sky_back))
+        sky_back = await pg.evaluate(sky)
+        # 站长 11-20：背景有点淡了。进了对话也不再把夜空调暗（原来照 Linear「内容优先」暗到 0.55）
+        ui.check('夜空在新对话、进了对话、回到新对话都一样亮（不再调暗）', sky_new == 1 and sky_conv == 1 and sky_back == 1, (sky_new, sky_conv, sky_back))
         ui.check('照 Linear：没在打字时单键 P 权限、M 模型、W 工作区、C 新对话（光标进输入框）；在输入框里打 cmpw 只是打字；带 Ctrl 的不算',
                  typed == 'cmpw' and not (in_box['perm'] or in_box['model'] or in_box['work'])
                  and keys['p']['perm'] and keys['m']['model'] and keys['w']['work']
@@ -837,6 +849,88 @@ async def main():
         ui.check('手机：键盘弹出时整页底色换成天启的颜色、首页藏起来（键盘和状态栏后面不再透出首页）；收起后首页回来，底色复原',
                  kb_cover == {'bg': 'rgb(2, 4, 10)', 'home': 'hidden'} and off_cover['home'] == 'visible' and off_cover['bg'] != 'rgb(2, 4, 10)',
                  (kb_cover, off_cover))
+        await pg.context.close()
+
+        # 6c. 站长 11-20 第三次截图（iOS 26）：点天启的输入框，键盘出来了，输入框却被键盘挡住；打一个字才跳到键盘上面。
+        #     iOS 键盘弹出、收起时 visualViewport 不一定发事件（WebKit 198347、WICG visual-viewport #79、iOS 26 的 WebKit 297779），
+        #     外壳只靠事件就跟不上。模拟：点进输入框以后把可见区域改小、不发任何事件，面板要自己跟上；失焦后改回、也不发事件，面板要自己铺回整屏。
+        #     键盘弹起时天启底下给 iPhone 横条留的安全区（--sb）不再留白：键盘已经把那条盖住了（用 34px 模拟 iPhone 的值）。
+        pg = await ui.page(browser, 390, 560, mobile=True)
+        st = await tianqi_mock(pg, xin_enabled=True)
+        await pg.goto(ui.BASE + '/')
+        await pg.wait_for_selector('.card[data-id="tianqi"]')
+        await pg.click('.card[data-id="tianqi"]')
+        await pg.wait_for_selector('.panel[data-id="tianqi"].show iframe')
+        frame = pg.frame_locator('.panel[data-id=tianqi] iframe')
+        box_in = frame.locator('.xc-row textarea')
+        await box_in.wait_for()
+        await frame.locator('html').evaluate("h => { const s = h.ownerDocument.createElement('style'); s.textContent = ':root{--sb:34px}'; h.ownerDocument.head.appendChild(s); }")
+        await pg.wait_for_timeout(500)
+        rect = "(() => { const r = document.getElementById('stage').getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)]; })()"
+        pad = "h => getComputedStyle(h.ownerDocument.querySelector('.tq-frame')).paddingBottom"
+        pad_before = await frame.locator('html').evaluate(pad)
+        await box_in.tap()
+        await pg.evaluate("""(() => { const vv = window.visualViewport;
+          Object.defineProperty(vv, 'height', { configurable: true, get: () => 300 });
+          Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 }); })()""")
+        up = down = False
+        try:
+            await pg.wait_for_function(rect + '[1] === 300', timeout=2500); up = True
+        except Exception:
+            pass
+        up_rect, pad_up = await pg.evaluate(rect), await frame.locator('html').evaluate(pad)
+        await box_in.evaluate('t => t.blur()')
+        await pg.evaluate("(() => { const vv = window.visualViewport; delete vv.height; delete vv.offsetTop; })()")
+        try:
+            await pg.wait_for_function(rect + '[1] === 560', timeout=2500); down = True
+        except Exception:
+            pass
+        pad_down = await frame.locator('html').evaluate(pad)
+        ui.check('手机：点天启的输入框、键盘弹出时就算 iOS 不发 visualViewport 事件，面板也自己缩到键盘上面；收起后铺回整屏；键盘弹起时底下不再给横条留白',
+                 up and up_rect == [0, 300] and down and pad_before == '34px' and pad_up == '0px' and pad_down == '34px',
+                 (up, up_rect, down, pad_before, pad_up, pad_down))
+        await pg.context.close()
+
+        # 6d. 站长 11-20：手机上左栏要点两下才切换对话。iOS 手指一点先算悬停，悬停让「⋯」从看不见变看得见，
+        #     WebKit 就把第一下只当悬停（content change observer）。触屏上「⋯」一直显示（照小芯 chat.css 的 hover:none），悬停不改它
+        pg = await ui.page(browser, 390, 844, mobile=True)
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        st['sessions'] = [{'sid': 'stqa00001', 'agent': 'harness', 'title': 'LED 快闪', 'turns': 2, 'updated': 1763600000000},
+                          {'sid': 'stqb00001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1763500000000}]
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.locator('.tq-menu').tap()
+        row = pg.locator('.tq-side .xc-sli', has_text='天启旧对话')
+        await row.wait_for()
+        await pg.wait_for_timeout(300)
+        more = "e => getComputedStyle(e.querySelector('.xc-si-more')).opacity"
+        touch = await pg.evaluate("matchMedia('(hover: none)').matches")
+        o_before = await row.evaluate(more)
+        await row.hover()
+        await pg.wait_for_timeout(300)
+        o_after = await row.evaluate(more)
+        ui.check('手机：左栏每一行的「⋯」一直看得见，悬停不改它（不然 iOS 第一下点只算悬停，要点两下才切换对话）',
+                 touch and o_before == o_after and float(o_before) > 0, (touch, o_before, o_after))
+        # 6e. 站长 11-20：有时候对话里的字能左右滑。新回答出来时扫过的那道微光（.xc-ai.enter > .xc-bub::after）左右各宽出气泡 8px，
+        #     手机上气泡占满整列、天启的对话区左右只留 4px，微光就把对话区撑宽了 4px；它在动画放完后还在（只是透明），所以每条新回答都留下这 4px
+        await pg.locator('.tq-side .xc-si', has_text='LED 快闪').tap()
+        await pg.get_by_text('老回答', exact=True).wait_for()
+        # 6f. 站长 11-20：每次回答完界面抖一下。输入框下面那一行用量答完才出现（或换数字），手机上还折成两行，把输入框整块顶上去 48px
+        st['done_usage'] = {'ctx': 351417, 'win': 1000000, 'input': 1051027, 'cached': 1045888, 'output': 1513, 'total': 1052540}
+        dock = "(() => { const r = document.querySelector('.tq-dock').getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)]; })()"
+        dock_before = await pg.evaluate(dock)
+        await pg.locator('.xc-row textarea').fill('你好')
+        await pg.locator('.xc-send').tap()
+        await pg.wait_for_function(ui.CHAT_DONE)
+        await pg.wait_for_timeout(1500)   # 等回答的动画放完
+        dock_after = await pg.evaluate(dock)
+        use = await pg.evaluate("(() => { const u = document.querySelector('.xc-use-b'); return u ? [u.textContent.includes('35%'), Math.round(u.getBoundingClientRect().height)] : null; })()")
+        ui.check('手机：回答完输入框整块不挪位置（用量那一行一直占着一行、不折行），用量数字照常出来',
+                 dock_before == dock_after and use is not None and use[0] and use[1] <= 24, (dock_before, dock_after, use))
+        sx = await pg.evaluate("""(() => { const b = document.querySelector('.xc-body');
+          return { sw: b.scrollWidth, cw: b.clientWidth, ox: getComputedStyle(b).overflowX, enter: document.querySelectorAll('.xc-ai.enter').length }; })()""")
+        ui.check('手机：新回答出来以后对话区不比屏幕宽、也不能左右滑（回答出现时的微光不再宽出气泡）',
+                 sx['enter'] > 0 and sx['sw'] <= sx['cw'] and sx['ox'] == 'hidden', sx)
         await pg.context.close()
 
         # 手机双区上下排列，返回键与天启品牌、操作键分开。

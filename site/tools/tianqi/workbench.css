@@ -152,9 +152,6 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 .tianqi .xc.wb.tq-mode { display: block; box-shadow: none; }
 .tq-sky { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; z-index: 0; }
 .tq-sky.tq-fx { z-index: 6; }
-.tianqi .xc.tq-mode > .tq-sky:not(.tq-fx) { transition: opacity .6s var(--ease); }
-.tianqi .xc.tq-mode.tq-in-conv > .tq-sky:not(.tq-fx) { opacity: .55; }   /* 进了对话夜空暗一点，字更清楚 */
-@media (prefers-reduced-motion: reduce) { .tianqi .xc.tq-mode > .tq-sky:not(.tq-fx) { transition: none; } }
 
 /* ---------- 三栏 ---------- */
 .tq-frame {
@@ -178,6 +175,7 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 .tq-frame[data-mode="mid"] { grid-template-columns: var(--lw) var(--gl) minmax(0, 1fr); }
 .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) { grid-template-columns: minmax(0, 1fr); }
 .tq-frame[data-mode="phone"] { padding-block: var(--st, 0px) var(--sb, 0px); }
+html.kb-up { --sb: 0px; }   /* 键盘弹起时外壳给的标记：键盘盖住了 iPhone 底下的横条，不再给它留白 */
 
 .tq-side { grid-column: 1; position: relative; z-index: 3; min-width: 0; min-height: 0; overflow: hidden; --rad: 12px; }
 .tq-mid { grid-column: 3; position: relative; z-index: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -314,7 +312,7 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 .tianqi .xc.tq-mode .tq-side .xc-sli,
 .tianqi .xc.tq-mode .tq-side .xc-sli:hover,
 .tianqi .xc.tq-mode .tq-side .xc-sli:has(.xc-si.cur) { background: none; box-shadow: none; }
-.tianqi .xc.tq-mode .tq-side .xc-si:hover { background: var(--hover); color: var(--ink); }
+@media (hover: hover) { .tianqi .xc.tq-mode .tq-side .xc-si:hover { background: var(--hover); color: var(--ink); } }
 .tianqi .xc.tq-mode .tq-side .xc-si.cur { background: var(--press); color: var(--ink); }
 /* 行首的星：16px 的格子、不垫底色、不闪；只有选中的那一行是金色 */
 .tianqi .xc.tq-mode .tq-side .xc-si .xc-si-tq.xc-tq { width: 16px; height: 16px; background: none; }
@@ -332,10 +330,15 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 .tianqi .xc.tq-mode .tq-side .xc-si-m { flex: none; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; transition: opacity .12s var(--ease); }
 .tianqi .xc.tq-mode .tq-side .xc-si-m .on { background: var(--star); box-shadow: none; }
 .tianqi .xc.tq-mode .tq-side .xc-si-more { position: absolute; right: 4px; width: 24px; height: 24px; --rad: 6px; opacity: 0; color: var(--ink-3); transition: opacity .12s var(--ease); }
-.tianqi .xc.tq-mode .tq-side .xc-si-more:hover { background: var(--hover); color: var(--ink); }
-.tianqi .xc.tq-mode .tq-side .xc-sli:hover .xc-si-more,
 .tianqi .xc.tq-mode .tq-side .xc-si-more:focus-visible,
 .tianqi .xc.tq-mode .tq-side .xc-si-more[aria-expanded="true"] { opacity: 1; }
+/* 悬停才出现「⋯」、换底色只给有鼠标的设备。触屏上「⋯」一直显示（照小芯 chat.css 的 hover:none）：
+   悬停让它从看不见变看得见的话，iOS 第一下点只算悬停（WebKit 的 content change observer），要点两下才切换对话（站长 11-20） */
+@media (hover: hover) {
+  .tianqi .xc.tq-mode .tq-side .xc-sli:hover .xc-si-more { opacity: 1; }
+  .tianqi .xc.tq-mode .tq-side .xc-si-more:hover { background: var(--hover); color: var(--ink); }
+}
+@media (hover: none) { .tianqi .xc.tq-mode .tq-side .xc-si-more { opacity: .7; } }
 .tianqi .xc.tq-mode .tq-side .xc-sli.tq-new { animation: tq-row-in .7s var(--ease) both; }
 @keyframes tq-row-in { 0% { opacity: 0; transform: translateY(-8px); background: var(--star-soft); } 60% { opacity: 1; transform: none; background: var(--star-soft); } 100% { background: transparent; } }
 
@@ -369,6 +372,11 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .xc.tq-mode .xc-st { margin: 0 auto 6px; max-width: 720px; width: 100%; }
 .tianqi .xc.wb.tq-mode .tq-mid .xc-body { flex: 1; min-height: 0; padding: 0 4px; background: none; }
 .tianqi .tq-mid .xc-msgs { max-width: 720px; margin: 0 auto; padding: 14px 0 26px; gap: 22px; }
+/* 站长 11-20：有时候对话里的字能左右滑。新回答出来时扫过的微光（chat.css 的 .xc-ai.enter > .xc-bub::after）左右各宽出气泡 8px，
+   手机上气泡占满整列、天启对话区左右只留 4px，就把对话区撑宽了；它在动画放完后还在（透明），所以每条新回答都留下这一截。
+   微光收在气泡里；对话区本身也不横向滚动（宽的代码块、表格在自己的框里滚） */
+.tianqi .xc.tq-mode .xc-ai.enter > .xc-bub::after { left: 0; right: 0; }
+.tianqi .xc.tq-mode .xc-body { overflow-x: hidden; }
 .tianqi .tq-mid .xc-msgs > .xc-m { max-width: none; }
 .tianqi .tq-mid .xc-msgs > .xc-me { align-self: flex-end; max-width: min(78%, 560px); }
 .tianqi .tq-mid .xc-me .xc-bub {
@@ -452,6 +460,12 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .tq-instruments :is(.xc-plus, .xc-mdl):hover,
 .tianqi .tq-instruments :is(.xc-plus, .xc-mdl)[aria-expanded="true"] { background: var(--hover); color: var(--ink); transform: none; }
 .tianqi .tq-instruments .xc-mdl span { overflow: hidden; text-overflow: ellipsis; }
+/* 思考强度：天启用一排四角星（站长 11-20：信号格不符合星空），一档一颗、一样大，亮到当前那一档；小芯照旧是格子 */
+.tianqi .xc.tq-mode .xc-em { align-items: center; gap: 2px; height: 12px; }
+.tianqi .xc.tq-mode .xc-em b { width: 9px; height: 9px; --rad: 0; clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); background: color-mix(in srgb, var(--ink-3) 45%, transparent); }
+.tianqi .xc.tq-mode .xc-em b.on { background: var(--star); }
+.tianqi .xc.tq-mode .xc-em.big { height: 16px; gap: 3px; }
+.tianqi .xc.tq-mode .xc-em.big b { width: 13px; height: 13px; }
 /* 输入框一行放不下（手机上多了权限、计划两个按钮）时，模型名先收窄成省略号，发送键不出框 */
 .tianqi .tq-instruments .xc-mdl { flex: 0 1 auto; min-width: 0; }
 .tianqi .tq-instruments .xc-send {
@@ -500,6 +514,19 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .xc.wb.tq-mode .xc-pick.tq-pick-up { top: auto; bottom: calc(100% + 8px); }
 .tianqi .tq-mid .xc-pk-agent { display: none; }
 .tianqi .xc.tq-mode .xc-use { max-width: 720px; margin: 4px auto 0; }
+/* 站长 11-20：每次回答完界面抖一下。这一行用量答完才出现（或换数字），手机上折成两行，把输入框整块顶上去 48px。
+   一直占着一行（没数据时也留位置）、不折行；手机上间距、进度条收紧，万一还放不下就截掉，不折行 */
+.tianqi .xc.tq-mode .xc-use { min-height: 24px; }
+.tianqi .xc.tq-mode .xc-use[hidden] { display: block !important; visibility: hidden; }
+.tianqi .xc.tq-mode .xc-use-b { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
+@media (max-width: 599.98px) {
+  .tianqi .xc.tq-mode .xc-use-b { gap: 2px 10px; font-size: 11.5px; }
+  .tianqi .xc.tq-mode .xc-use-bar { width: 28px; margin: 0 5px 0 3px; }
+}
+@media (max-width: 379.98px) {
+  .tianqi .xc.tq-mode .xc-use-b { gap: 2px 7px; }
+  .tianqi .xc.tq-mode .xc-use-bar { width: 22px; }
+}
 
 /* ---------- 右栏 ---------- */
 .tq-right-in { display: flex; flex-direction: column; overflow: hidden; }
@@ -800,14 +827,6 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-plan-doc .tq-acts { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 
 /* ---------- 设置：默认权限 ---------- */
-.tq-perms { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 0; }
-.tq-permopt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 12px 14px; border: 1px solid var(--line); --rad: 12px; background: none; color: var(--ink); text-align: left; transition: border-color .2s var(--ease), background-color .2s var(--ease); }
-.tq-permopt:hover { background: var(--hover); }
-.tq-permopt b { font-size: 14px; font-weight: 500; }
-.tq-permopt span { color: var(--ink-3); font-size: 13px; }
-.tq-permopt[aria-checked="true"] { border-color: var(--star); box-shadow: 0 0 0 1px var(--star); }
-.tq-permopt.risk b { color: var(--risk); }
-.tq-set-note { margin: 16px 0 0; color: var(--ink-3); font-size: 13px; line-height: 1.7; }
 
 /* ---------- 中屏：左栏窄条，右栏浮在聊天上 ---------- */
 .tq-frame[data-mode="mid"] .tq-right { position: absolute; z-index: 7; top: calc(12px + var(--st, 0px)); bottom: calc(12px + var(--sb, 0px)); right: max(16px, var(--sr, 0px)); width: min(400px, calc(100% - 140px)); grid-column: auto; overflow: visible; transform: translateX(calc(100% + 32px)); transition: transform .42s var(--ease), visibility 0s .42s; }

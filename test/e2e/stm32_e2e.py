@@ -1617,8 +1617,8 @@ async def main():
         await open_legacy_harness(pg)
         await pg.click('.xc-mdl'); await pg.wait_for_selector('.xc-pick:not([hidden])')
         st = await pg.evaluate(PK)
-        check('打开旧天启对话：Harness 模型面板直接显示三个模型，当前 DeepSeek V4.1 Flash；分段按钮写出四档名称，默认高',
-              st == ['DeepSeek V4.1 Flash', '高', True, ['关', '低', '高*', '最高'], 'DeepSeek V4.1 Flash', '高', ['DeepSeek V4.1 Flash*', 'GLM-5.3', 'GLM-5.3 Flash'], False], st)
+        check('打开旧天启对话：Harness 模型面板直接显示四个模型（站长 11-20 加了 Kimi K3.1 Pro），当前 DeepSeek V4.1 Flash；分段按钮写出四档名称，默认高',
+              st == ['DeepSeek V4.1 Flash', '高', True, ['关', '低', '高*', '最高'], 'DeepSeek V4.1 Flash', '高', ['DeepSeek V4.1 Flash*', 'GLM-5.3', 'GLM-5.3 Flash', 'Kimi K3.1 Pro'], False], st)
         await pg.click('.xc-eff-d[data-v=off]'); await pg.wait_for_timeout(100)
         st = await pg.evaluate(PK)
         bo = await pg.locator('.xc-eff-d[data-v=off]').bounding_box(); bm = await pg.locator('.xc-eff-d[data-v=max]').bounding_box()

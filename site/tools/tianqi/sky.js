@@ -44,13 +44,13 @@
     try { gl = starCv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false }); } catch (e) { gl = null; }
     var VS = 'attribute vec2 aPos;attribute vec4 aStar;attribute vec3 aCol;uniform vec2 uPar;uniform float uTime;uniform float uDpr;uniform float uTw;varying vec3 vCol;varying float vA;varying float vS;' +
       'void main(){vec2 p=fract(aPos+uPar*aStar.y);gl_Position=vec4(p.x*2.0-1.0,1.0-p.y*2.0,0.0,1.0);' +
-      'float amp=uTw*(aStar.x>1.7?0.55:0.3);vA=1.0-amp*(0.5+0.5*sin(uTime*aStar.z+aStar.w));vCol=aCol;vS=aStar.x;gl_PointSize=aStar.x*uDpr*4.0;}';
+      'float amp=uTw*(aStar.x>1.7?0.55:0.3);vA=1.0-amp*(0.5+0.5*sin(uTime*aStar.z+aStar.w));vCol=aCol;vS=aStar.x;gl_PointSize=aStar.x*uDpr*5.5;}';
     var FS = 'precision mediump float;varying vec3 vCol;varying float vA;varying float vS;uniform float uInk;' +
       'void main(){vec2 u=gl_PointCoord*2.0-1.0;float d=length(u);float edge=smoothstep(1.0,0.72,d);' +
       'if(uInk>0.5){float b=max(max(vCol.r,vCol.g),vCol.b);if(b<0.6)discard;float core=exp(-d*d*30.0);float rays=0.0;' +
       'if(vS>1.9){rays=(exp(-abs(u.y)*60.0)*exp(-abs(u.x)*3.0)+exp(-abs(u.x)*60.0)*exp(-abs(u.y)*3.0))*0.4;}' +
       'float a=(core+rays)*(0.6+0.4*vA)*b*0.78*edge;gl_FragColor=vec4(vec3(0.11,0.16,0.28)*a,a);return;}' +
-      'float core=exp(-d*d*22.0);float halo=exp(-d*5.0)*0.28;float rays=0.0;' +
+      'float core=exp(-d*d*16.0);float halo=exp(-d*4.5)*0.3;float rays=0.0;' +
       'if(vS>1.9){rays=(exp(-abs(u.y)*46.0)*exp(-abs(u.x)*2.6)+exp(-abs(u.x)*46.0)*exp(-abs(u.y)*2.6))*0.5;}' +
       'float a=(core+halo+rays)*vA*edge;gl_FragColor=vec4(vCol*a,a);}';
     var uPar, uTime, uDpr, uTw, uInk, nStars = 0, buf;
@@ -60,7 +60,7 @@
       var r = rng(19), n = Math.max(700, Math.min(3000, Math.round(W * H / 560))), data = new Float32Array(n * 9);
       for (var i = 0; i < n; i++) {
         var m = r(), size = m < .82 ? .55 + r() * .45 : m < .975 ? 1.0 + r() * .7 : 1.95 + r() * .8;
-        var bright = m < .82 ? .32 + r() * .4 : m < .975 ? .6 + r() * .35 : .9 + r() * .1, c = tint(r), o = i * 9;
+        var bright = m < .82 ? .4 + r() * .42 : m < .975 ? .6 + r() * .35 : .9 + r() * .1, c = tint(r), o = i * 9;
         data[o] = r(); data[o + 1] = r(); data[o + 2] = size; data[o + 3] = .25 + r() * .75; data[o + 4] = .6 + r() * 2.6; data[o + 5] = r() * 6.283;
         data[o + 6] = c[0] * bright; data[o + 7] = c[1] * bright; data[o + 8] = c[2] * bright;
       }
@@ -90,7 +90,7 @@
     function fallbackStars() {
       var c = starCv.getContext('2d'); if (!c) return; var r = rng(19);
       c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, W, H);
-      for (var i = 0; i < W * H / 900; i++) { var s = r() < .95 ? .4 + r() * .6 : 1.2 + r(); c.fillStyle = INK ? 'rgba(28,40,72,' + (.2 + r() * .45) + ')' : 'rgba(230,236,255,' + (.25 + r() * .6) + ')'; c.beginPath(); c.arc(r() * W, r() * H, s * .6, 0, 7); c.fill(); }
+      for (var i = 0; i < W * H / 900; i++) { var s = r() < .95 ? .4 + r() * .6 : 1.2 + r(); c.fillStyle = INK ? 'rgba(28,40,72,' + (.2 + r() * .45) + ')' : 'rgba(230,236,255,' + (.25 + r() * .6) + ')'; c.beginPath(); c.arc(r() * W, r() * H, s * .85, 0, 7); c.fill(); }
     }
     var ctx = fx.getContext('2d'), bctx = back.getContext('2d'), meteors = [], dust = [], skyDust = [], fxRaf = 0, meteorsOn = store.get('meteor') !== 'off';
     function size() {
@@ -423,15 +423,6 @@
           [['dark', '夜空', 'tq-th-dark'], ['light', '星图', 'tq-th-light'], ['auto', '跟随系统', 'tq-th-auto']].map(function (t) { return '<button class="tq-theme" type="button" role="radio" aria-checked="' + (themePref() === t[0]) + '" data-theme-set="' + t[0] + '"><i class="' + t[2] + '"></i>' + t[1] + '</button>'; }).join('') +
           '</div><h3>动态</h3><p>系统开了「减少动态」时，星不闪、流星不出现。</p><div class="tq-set-row"><div><b>流星</b><p>偶尔划过一颗；天启答完时也会有一颗。</p></div><button class="tq-sw" type="button" role="switch" aria-checked="' + meteorsOn + '" data-sw="meteor" aria-label="流星"></button></div>';
       },
-      perm: function () {
-        var d = defPerm();
-        return '<h3>默认权限</h3><p>新对话用这一档。对话里点输入框旁边的权限按钮可以换，只管那一个对话。</p><div class="tq-perms" role="radiogroup" aria-label="默认权限">' +
-          PERMS.map(function (p) { return '<button class="tq-permopt' + (p[0] === FULL ? ' risk' : '') + '" type="button" role="radio" aria-checked="' + (d === p[0]) + '" data-perm-def="' + p[0] + '"><b>' + p[1] + '</b><span>' + p[3] + '</span></button>'; }).join('') +
-          '</div><p class="tq-set-note">计划模式那一轮总是只读。沙箱用 li2 内核的 Landlock：只读时什么文件都写不了，工作区内修改时只能写工作目录 ' + WORK + '。没人能当场批准，越过沙箱的操作直接被拒。</p>';
-      },
-      plug: function () {
-        return '<h3>插件</h3><p>装在 li2 上的 Harness 插件。开关存在 li2 上，下一轮就生效。</p><button class="tq-btn" type="button" data-act="plugins">打开插件开关</button>';
-      },
       pc: function () {
         var s = state(), st = !s.enabled ? '天启还没配好' : !s.authed ? '没登录' : s.tqNoGw ? '在线，但网关还没配好' : '在线';
         return '<h3>li2</h3><p>天启住在这台云电脑上。</p><dl class="tq-kv"><dt>状态</dt><dd>' + esc(st) + '</dd><dt>工作目录</dt><dd class="tq-mono">' + WORK + '</dd><dt>每天唤醒</dt><dd>北京时间 8:55</dd></dl>' +
@@ -469,14 +460,8 @@
         setTimeout(function () { showSec('look'); var f = $('.tq-theme[aria-checked="true"]', modal); if (f) f.focus(); }, 0);
       } else if (b.dataset.sw === 'meteor') {
         meteorsOn = !meteorsOn; store.set('meteor', meteorsOn ? null : 'off'); b.setAttribute('aria-checked', String(meteorsOn)); if (meteorsOn) spawnMeteor();
-      } else if (b.dataset.permDef) {
-        store.set('perm', b.dataset.permDef === FULL ? null : b.dataset.permDef);
-        if (!state().sid) { cfg.perm = b.dataset.permDef; syncChips(); }   // 还没发第一句的新对话也跟着换
-        setTimeout(function () { showSec('perm'); var f = $('.tq-permopt[aria-checked="true"]', modal); if (f) f.focus(); }, 0);
       } else if (b.dataset.act === 'logout') {
         closeSettings(); var o = $('.xc-dr-out'); if (o) o.click();   // chat.js 的退出登录（左栏里藏着）
-      } else if (b.dataset.act === 'plugins') {
-        closeSettings(); var p = $('.tq-plug-b'); if (p && !p.hidden) setTimeout(function () { p.click(); }, REDUCE ? 0 : 230);
       }
     });
     modal.addEventListener('keydown', function (e) {
@@ -547,6 +532,7 @@
       var v = b.dataset.perm; if (!permOf(v)) return;
       if (v === FULL && cfg.perm !== FULL && !b.dataset.sure) { permMenu(true); placePop(); $('[data-cancel]', pop).focus(); return; }
       cfg.perm = v; syncChips(); closePop(true);
+      if (fresh()) store.set('perm', v === FULL ? null : v);   // 新对话里选的，之后的新对话沿用（原来在设置里改默认，站长 11-20 说多余）
     });
     pop.addEventListener('keydown', function (e) {
       if (['ArrowDown', 'ArrowUp', 'Home', 'End'].indexOf(e.key) < 0) return;
@@ -649,7 +635,6 @@
     function fresh() { return !ws.sid && !msgs.querySelector('.xc-me'); }   // 还没发第一句
     function curWork() { return ws.sid ? ws.work : ws.pick; }
     function syncWork() {
-      root.classList.toggle('tq-in-conv', !fresh());   // 进了对话夜空暗一点（照 Linear 的内容优先），新对话亮回来
       var w = curWork(), name = w || ROOT_W;
       workHead.innerHTML = FOLDER + '<span></span>'; workHead.lastChild.textContent = name;
       workHead.title = WORK_DIR + (w ? '/' + w : ''); workHead.setAttribute('aria-label', '工作区：' + name);
