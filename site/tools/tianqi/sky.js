@@ -95,8 +95,9 @@
     var ctx = fx.getContext('2d'), bctx = back.getContext('2d'), meteors = [], dust = [], skyDust = [], fxRaf = 0, meteorsOn = store.get('meteor') !== 'off';
     function size() {
       W = innerWidth; H = innerHeight; DPR = Math.min(2, window.devicePixelRatio || 1);
-      [starCv, back, fx].forEach(function (c) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); });
-      if (gl) buildStars(); else fallbackStars();
+      // 高度写成固定像素、从顶上量：页面变矮（键盘）时夜空不跟着压扁
+      [starCv, back, fx].forEach(function (c) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); c.style.height = H + 'px'; });
+      if (gl) { buildStars(); drawStars(performance.now()); } else fallbackStars();   // 改了画布尺寸画面会被清空，当场重画，不留一帧黑
     }
     function rgba(c, a) { return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
     function spawnMeteor(opt) {
@@ -264,7 +265,16 @@
     $('.tq-r-x').addEventListener('click', function () { L.touched = true; toggleRight(false); });
     scrim2.addEventListener('click', function () { toggleRight(false); });
     var rs = 0;
-    addEventListener('resize', function () { clearTimeout(rs); rs = setTimeout(function () { size(); if (REDUCE) drawStars(performance.now()); moveInk(); }, 120); });
+    /* 站长 11-20 iPad 截图：每次点输入框屏幕闪一下。键盘弹出时外壳把 iframe 缩到可见区域（shell.js 的 fitStage），这里跟着 resize
+       重设画布尺寸——画布被清空、星星按新高度重排，就是那一闪。照 Element / Discord 网页版的做法：只变矮、宽度没变（键盘）时夜空不动，
+       画布按原来的高度留着，被键盘盖住的部分本来就看不见；宽度变了（转屏、拉窗口）或变高了才重画。 */
+    addEventListener('resize', function () {
+      clearTimeout(rs);
+      rs = setTimeout(function () {
+        if (innerWidth !== W || innerHeight > H || Math.min(2, window.devicePixelRatio || 1) !== DPR) { size(); if (REDUCE) drawStars(performance.now()); }
+        moveInk();
+      }, 120);
+    });
     /* 手机：按住标签那一行往下拖就收起（照 Vaul 的抽屉：拖过一段或甩得快就收） */
     (function () {
       var head = $('.tq-r-head'), y0 = 0, dy = 0, dragging = false, ts = 0;

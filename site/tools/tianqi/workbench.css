@@ -243,6 +243,9 @@ html.kb-up { --sb: 0px; }   /* 键盘弹起时外壳给的标记：键盘盖住�
 .tq-frame[data-left="rail"] :is(.tq-brand h1, .tq-brand .xc-sw-w, .tq-fold, .xc-drawer, .tq-row span, .tq-li2) { opacity: 0; pointer-events: none; }
 .tq-frame[data-left="rail"] .tq-side-foot { flex-direction: column; align-items: center; }
 .tq-frame[data-left="rail"] .tq-row { flex: none; width: 38px; padding: 0; justify-content: center; }
+/* 窄条里文字只是看不见（透明度过渡），仍占着宽度，把图标挤到左边；收成 0 宽，图标才居中（站长 11-20 iPad 截图：设置、插件歪在左边） */
+.tq-frame[data-left="rail"] .tq-row { gap: 0; }
+.tq-frame[data-left="rail"] .tq-row span { width: 0; overflow: hidden; }
 :is(.tq-brand h1, .tq-brand .xc-sw-w, .tq-fold, .tq-row span, .tq-li2) { transition: opacity .2s var(--ease); }
 
 .tianqi .xc.tq-mode .tq-side .xc-drawer {
@@ -862,6 +865,8 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-frame[data-mode="phone"] .tq-instruments { padding: 6px 8px 8px; }
 .tq-frame[data-mode="phone"] .tq-dock { padding-bottom: 8px; }
 html.embed .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) .tq-mid-head { padding-left: 52px; }
+/* 嵌在首页、左栏常驻（平板横屏、电脑）时，首页的返回键压在左栏左上角：左栏顶上让出返回键的高度，星星和「天启」挪到它下面 */
+html.embed .tq-frame:is([data-mode="wide"], [data-mode="mid"]) .tq-side-in { padding-top: 52px; }
 
 @media (max-width: 640px) {
   .tq-sheet { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
