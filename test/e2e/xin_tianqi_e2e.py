@@ -990,6 +990,39 @@ async def main():
         ui.check('平板转成竖屏：夜空按新尺寸重画', await tf.evaluate('window.__skyResets') > 0, await tf.evaluate('window.__skyResets'))
         await pg.context.close()
 
+        # 手机竖屏（390×844，首页浅色主题）从首页打开天启。站长 11-21：点输入框还是闪一下。
+        # 查到两处：面板、iframe、整页的底是首页的浅色，iOS 改 iframe 高度时露出来；空对话的输入框在面板变矮那一帧往上跳 232px
+        pg = await ui.page(browser, 390, 844, mobile=True, theme='light')
+        st = await tianqi_mock(pg)
+        await pg.goto(ui.BASE + '/tianqi')
+        frame = pg.frame_locator('.panel[data-id=tianqi] iframe')
+        await frame.locator('.tq-box').wait_for()
+        await pg.wait_for_timeout(1500)
+        tf = next(f for f in pg.frames if '/tools/tianqi/' in f.url)
+        bg = """(() => { const g = e => getComputedStyle(e).backgroundColor, p = document.querySelector('.panel[data-id=tianqi]'); return [g(document.documentElement), g(p), g(p.querySelector('iframe'))]; })()"""
+        idle = await pg.evaluate(bg)
+        await frame.locator('.xc-row textarea').tap()
+        await pg.wait_for_timeout(100)
+        focus_bg = await pg.evaluate(bg)
+        sky = 'rgb(2, 4, 10)'
+        ui.check('手机天启：面板和 iframe 的底是天启自己的深色；点输入框（键盘还没出来）整页底色就先换成深色，不露首页的浅色',
+                 idle[1:] == [sky, sky] and focus_bg == [sky, sky, sky], (idle, focus_bg))
+        await pg.wait_for_timeout(1100)   # 获得焦点后外壳逐帧跟 1 秒（settleStage），等它走完再模拟键盘
+        top0 = await tf.evaluate("Math.round(document.querySelector('.tq-dock').getBoundingClientRect().top)")
+        # 键盘弹起：外壳把面板缩到可见区域（shell.js fitStage），一次到位
+        await pg.evaluate("const s = document.getElementById('stage').style; s.top = '0px'; s.height = '450px'; s.bottom = 'auto'")
+        await pg.wait_for_timeout(30)
+        anim = await tf.evaluate("""(() => { const d = document.querySelector('.tq-dock'), a = d.getAnimations().filter(x => x.playState === 'running'); return { n: a.length, top: Math.round(d.getBoundingClientRect().top) }; })()""")
+        await pg.wait_for_timeout(500)
+        top1 = await tf.evaluate("Math.round(document.querySelector('.tq-dock').getBoundingClientRect().top)")
+        ui.check('手机空对话点输入框、键盘弹起：输入框跟着滑上去，不一帧跳过去',
+                 top1 < top0 - 100 and anim['n'] >= 1 and anim['top'] > top1 + 20, (top0, anim, top1))
+        await pg.evaluate("const s = document.getElementById('stage').style; s.top = s.height = s.bottom = ''")
+        await tf.evaluate('document.activeElement.blur()')
+        await pg.wait_for_timeout(1300)
+        ui.check('手机键盘收起、离开输入框：整页底色还原成首页的浅色', (await pg.evaluate(bg))[0] == idle[0], await pg.evaluate(bg))
+        await pg.context.close()
+
         # 7. 深链：只启动天启；返回首页后再启动小芯。
         pg = await ui.page(browser, 1280, 860)
         st = await tianqi_mock(pg, xin_enabled=True)

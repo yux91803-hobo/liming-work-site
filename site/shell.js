@@ -256,15 +256,28 @@
   /* iOS 的键盘和状态栏是半透明的，后面透出来的是整页的底（站长 11-20 第二次截图：面板缩到键盘上面了，键盘后面还是白的首页）。
      照 Vaul 抽屉下面那层同色遮罩：跟着键盘的这段时间，整页底色换成工具自己的 theme-color、首页藏起来；键盘收起就复原
      （平时首页不藏：左缘滑动返回时要露出它）。 */
-  function toolColor() {
-    var p = current && panels[current], c = '';
+  function frameColor(p) {
+    var c = '';
     try { var m = p && p._frame.contentDocument.querySelector('meta[name="theme-color"]'); c = m ? (m.getAttribute('content') || '').trim() : ''; } catch (e) { /* 别的源 */ }
     return /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/i.test(c) ? c : '';
+  }
+  function toolColor() { return frameColor(current && panels[current]); }
+  /* 站长 11-21：手机上点天启的输入框还是闪一下。天启是深色（#02040a），可面板和 iframe 自己的底、整页的底都是首页的浅色（#faf9f5）。
+     iOS 弹键盘时会先挪可见区域、再改 iframe 的高度，iframe 还没按新尺寸画好的那一下露出来的就是这层浅色底——深色页面上一道白闪。
+     做法同 kbCover 照的 Vaul：面板和 iframe 的底一开始就换成工具自己的 theme-color；输入框一获得焦点（键盘还没出来）整页底色就先换好。 */
+  function paintFrameBg(p) {
+    var c = frameColor(p);
+    p.style.background = c; p._frame.style.background = c;
+  }
+  function kbPre(on) {
+    var c = on ? toolColor() : '';
+    html.classList.toggle('kb-pre', !!c);
+    if (c) html.style.setProperty('--kb-bg', c); else if (!html.classList.contains('kb-up')) html.style.removeProperty('--kb-bg');
   }
   function kbCover(on) {
     var c = on ? toolColor() : '';
     html.classList.toggle('kb-up', !!on);
-    if (c) html.style.setProperty('--kb-bg', c); else html.style.removeProperty('--kb-bg');
+    if (c) html.style.setProperty('--kb-bg', c); else if (!html.classList.contains('kb-pre')) html.style.removeProperty('--kb-bg');
     // 工具里也知道键盘在不在：键盘盖住了 iPhone 底下那条横条，工具不用再给它留白（天启的 --sb）
     try { var p = current && panels[current]; if (p) p._frame.contentDocument.documentElement.classList.toggle('kb-up', !!on); } catch (e) { /* 别的源 */ }
   }
@@ -281,13 +294,19 @@
   function settleStage() {
     settleUntil = performance.now() + 1000;
     if (settleRaf) return;
-    (function tick() { fitStage(); settleRaf = performance.now() < settleUntil ? requestAnimationFrame(tick) : 0; })();
+    (function tick() {
+      fitStage();
+      settleRaf = performance.now() < settleUntil ? requestAnimationFrame(tick) : 0;
+      // 键盘收起、动画走完、焦点也不在输入框上了，才把预先换好的整页底色还回去
+      if (!settleRaf && !html.classList.contains('kb-up') && !typingNow()) kbPre(false);
+    })();
   }
+  function typingNow() { try { var p = current && panels[current]; return !!p && typingEl(p._frame.contentDocument.activeElement); } catch (e) { return false; } }
   function typingEl(el) { return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); }
   function watchFrame(f) {
     try {
       var d = f.contentDocument; if (!d || d.__kbWatch) return; d.__kbWatch = true;
-      var on = function (e) { if (typingEl(e.target)) settleStage(); };
+      var on = function (e) { if (!typingEl(e.target)) return; if (e.type === 'focusin' && lite) kbPre(true); settleStage(); };
       d.addEventListener('focusin', on, true); d.addEventListener('focusout', on, true);
     } catch (e) { /* 别的源：没法跟，只靠 visualViewport 的事件 */ }
   }
@@ -329,7 +348,7 @@
     bk.addEventListener('click', back);
     hb.addEventListener('click', goHome);
     var readyTimer = setTimeout(function () { p.classList.add('ready'); }, 6000);
-    f.addEventListener('load', function () { p._depth = 0; p.classList.remove('deep'); watchFrame(f); setTimeout(function () { p.classList.add('ready'); clearTimeout(readyTimer); }, 2500); });
+    f.addEventListener('load', function () { p._depth = 0; p.classList.remove('deep'); watchFrame(f); paintFrameBg(p); setTimeout(function () { p.classList.add('ready'); clearTimeout(readyTimer); }, 2500); });
     p._frame = f; p._ready = function () { clearTimeout(readyTimer); p.classList.add('ready'); };
     edgeSwipe(p);
     stage.appendChild(p); panels[t.id] = p;

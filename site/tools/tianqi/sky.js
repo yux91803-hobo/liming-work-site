@@ -275,6 +275,26 @@
         moveInk();
       }, 120);
     });
+    /* 站长 11-21 手机：点输入框还是闪一下。空对话时输入框摆在中间偏下，键盘一出来面板变矮，输入框和上面那行字一帧里往上跳两百多像素
+       （手机 844→450 实测 230px），键盘收起又一下跳回去。照上面「发出第一句」的做法（FLIP）：resize 事件在这一帧画出来之前到，
+       记下变之前的位置，用位移从旧位置滑到新位置，时长、曲线跟 iOS 键盘差不多，看起来是跟着键盘走，不再一跳。 */
+    var startTop = null;
+    function startNow() { return frame.hasAttribute('data-start') ? $('.tq-dock').getBoundingClientRect().top : null; }
+    // 用 ResizeObserver 而不是 resize 事件：它在排版之后、这一帧画出来之前回调（Chrome、Safari 都是）；
+    // Safari 里 iframe 的 resize 事件常常晚一帧，先画出跳过去的那一帧再开始滑（WebKit 实测）
+    function onStartResize() {
+      var was = startTop; startTop = startNow();
+      if (was == null || startTop == null || REDUCE) return;
+      var dy = was - startTop;
+      // 标题栏不动，只有中间那段字和输入框会跳
+      if (Math.abs(dy) > 8) $$('.tq-mid > .xc-body, .tq-mid > .tq-dock').forEach(function (el) { if (el.animate) el.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }], { duration: 300, easing: 'cubic-bezier(.25,.1,.25,1)' }); });
+    }
+    if (window.ResizeObserver) new ResizeObserver(onStartResize).observe(frame); else addEventListener('resize', onStartResize);
+    requestAnimationFrame(function () { startTop = startNow(); });
+    // 键盘出来之前最后量一次（字体、提示条可能让位置在加载后又变过）
+    ['pointerdown', 'focusin'].forEach(function (t) { document.addEventListener(t, function () { if (!html.classList.contains('kb-up')) startTop = startNow(); }, true); });
+    new MutationObserver(function () { startTop = startNow(); }).observe(frame, { attributes: true, attributeFilter: ['data-start', 'data-mode'] });
+
     /* 手机：按住标签那一行往下拖就收起（照 Vaul 的抽屉：拖过一段或甩得快就收） */
     (function () {
       var head = $('.tq-r-head'), y0 = 0, dy = 0, dragging = false, ts = 0;
