@@ -59,7 +59,7 @@ import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
 import { fromClaude, fromCodex, fromHarness, stepActivity } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
 import { resolveEffort, HARNESS_WIN, harnessModel, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route, backgroundRoute } from './vm-models.mjs';
-import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, harnessPerm, harnessTurn, permError, workError, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch } from './vm-persona.mjs';import { termOps } from './vm-term.mjs';
+import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, harnessPerm, harnessTurn, permError, workError, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch } from './vm-persona.mjs';import { termOps } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
 export * from './vm-screen.mjs';
@@ -2073,7 +2073,7 @@ function bgInfo(all) {
   const glow = glowLevel(quotaReadings().map(q => q.quota));   // 头像光环：额度用得最多的那项
   return lease ? { bg, lease, version, glow } : { bg, version, glow };
 }
-const ops = { ...termOps,   // 天启终端里自己输命令（vm-term.mjs）
+const ops = { ...termOps,   // 天启终端里自己输命令（vm-persona.mjs 的 termOps）
   // 网站发现控制器脚本被改过并已重传（src/xin.js 的 verifyAgent）：记下来
   integrity_event(a){const files=(Array.isArray(a.files)?a.files:[]).filter(f=>/^vm-[a-z0-9-]+\.mjs$/.test(f)).slice(0,32);if(files.length)logLine(INTEGRITY_F(),{files});return {ok:true};},
   // 记忆的可读导出（条目、依据、出处）；整份状态库的每日副本在 exports/
