@@ -34,6 +34,17 @@ function fakeDsh(dir) {
     'echo \'{"type":"final","text":"好"}\'\n', { mode: 0o755 });
   return { dsh, log };
 }
+// 假的 dsh：会话号 sid，每一步按给的用量吐一条 step_end（真 dsh 的字段：inputTokens 是没命中缓存的输入，cacheReadTokens 是命中缓存的输入）
+function fakeDshUsage(dir, sid, steps) {
+  const dsh = path.join(dir, 'dsh-use');
+  fs.writeFileSync(dsh, '#!/bin/sh\n' +
+    'echo \'{"type":"session","sessionId":"' + sid + '","cwd":"/w"}\'\n' +
+    'echo \'{"type":"text","text":"好"}\'\n' +
+    steps.map((u, i) => 'echo \'{"type":"status","phase":"step_end","turn":1,"step":' + (i + 1) + ',"usage":' + JSON.stringify(u) + '}\'\n').join('') +
+    'echo \'{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}\'\n' +
+    'echo \'{"type":"final","text":"好"}\'\n', { mode: 0o755 });
+  return dsh;
+}
 async function poll(op, run) {
   let p;
   for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) {
@@ -276,4 +287,41 @@ test('小芯身份：ping 说自己是小芯，greet 照常', t => {
   assert.equal('ready' in p, false);
   const g = op('greet', {});
   assert.equal(g.error, undefined, JSON.stringify(g));
+});
+
+// 站长 11-20：聊天框底下「上下文 1% · 消耗 50.7万 token」不准。li2 上那个对话的 Harness 记录里，每次请求的用量是
+// { inputTokens: 没命中缓存的输入, cacheReadTokens: 命中缓存的输入, outputTokens, totalTokens: 三项之和 }，以前只算了 inputTokens：
+// 上下文算成 5 千（实际 35 万），消耗也漏了缓存命中。照 claudeUsage、codexUsage：从 Harness 自己的会话记录算整个对话，读不到再用这一轮流里的数。
+test('天启的用量：输入算上缓存命中、上下文取最后一次请求的 totalTokens；有 Harness 的会话记录时按记录算整个对话', async t => {
+  const zlib = require('node:zlib');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-tq-use-'));
+  // 没有会话记录：按流里每一步的用量
+  const SID1 = 'session-2b6d1a40-7c11-4e2a-9f3e-0a1b2c3d4e5f';
+  const dsh1 = fakeDshUsage(dir, SID1, [
+    { inputTokens: 300, outputTokens: 50, totalTokens: 10050, cacheReadTokens: 9700 },
+    { inputTokens: 200, outputTokens: 80, totalTokens: 10330, cacheReadTokens: 10050 }]);
+  const a = agentEnv(t, { XIN_ROLE: 'tianqi', XIN_DSH: dsh1 });
+  fs.writeFileSync(path.join(a.xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
+  const r1 = a.op('send', { text: '看看' });
+  const p1 = await poll(a.op, r1.run);
+  assert.deepStrictEqual(p1.events.at(-1).usage, { ctx: 10330, win: 1000000, input: 20250, cached: 19750, output: 130, total: 20380 });
+  // 有会话记录（zstd 压缩的 JSONL，每次请求一条 assistant/message）：整个对话按记录算，流里的数不用
+  const SID2 = 'session-906b7cf0-69b5-43a2-a52e-9e647a57621b';
+  const dsh2 = fakeDshUsage(dir, SID2, [{ inputTokens: 1, outputTokens: 1, totalTokens: 2 }]);
+  const b = agentEnv(t, { XIN_ROLE: 'tianqi', XIN_DSH: dsh2 });
+  fs.writeFileSync(path.join(b.xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
+  const logDir = path.join(path.dirname(b.xin), 'dsh', 'sessions', '--data-workspace--', SID2);
+  fs.mkdirSync(logDir, { recursive: true });
+  const call = u => JSON.stringify({ type: 'assistant/message', seq: 1, time: 1, data: { turn: 1, step: 1, message: { role: 'assistant', content: [] }, usage: u } });
+  const lines = [JSON.stringify({ type: 'turn/start', seq: 0, time: 0, data: { turn: 1 } }),
+    call({ inputTokens: 4733, outputTokens: 337, totalTokens: 350158, cacheReadTokens: 345088 }),
+    JSON.stringify({ type: 'step/end', seq: 2, time: 2, data: { turn: 1, step: 1 } }),
+    call({ inputTokens: 217, outputTokens: 796, totalTokens: 350965, cacheReadTokens: 349952 }),
+    call({ inputTokens: 189, outputTokens: 380, totalTokens: 351417, cacheReadTokens: 350848 })];
+  fs.writeFileSync(path.join(logDir, 'session.v4.jsonl.zstd'), zlib.zstdCompressSync(Buffer.from(lines.join('\n') + '\n')));
+  const r2 = b.op('send', { text: '看看' });
+  const p2 = await poll(b.op, r2.run);
+  const want = { ctx: 351417, win: 1000000, input: 1051027, cached: 1045888, output: 1513, total: 1052540 };
+  assert.deepStrictEqual(p2.events.at(-1).usage, want);
+  assert.deepStrictEqual(b.op('history', { sid: r2.sid }).usage, want);
 });

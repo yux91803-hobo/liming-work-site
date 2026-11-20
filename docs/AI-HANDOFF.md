@@ -1,3 +1,10 @@
+## 2026-11-20 · 天启：键盘后面不透首页、用量按 Harness 记录算（Claude Code）
+
+- 改了什么见 CHANGES 最新一条。
+- **Harness 的用量**：`inputTokens` 不含缓存命中，`cacheReadTokens` 才是命中缓存的那部分；算上下文、消耗都要加上。以 Harness 自己的会话记录为准（`vm-persona.mjs` 的 `harnessUsage`，zstd 用 Node 自带的 `zlib.zstdDecompressSync`，Node 22.15 起有）。`vm-agent.mjs` 正好在行数上限，这次只改原有的行。
+- **手机键盘**：键盘弹出时外壳把整页底色换成工具 iframe 里 `meta[name=theme-color]` 的颜色。新工具要在页面里写好 theme-color，换外观时一起改。
+- **接下来**：照站长看过的模板，把天启的界面改成 Linear 那样的克制风格，重做插件页，Ctrl K 做成命令面板。
+
 ## 2026-11-20 · 资料改 Hydrogen High，天启 REA 的 allOf 兼容（Codex）
 
 - 分支 `codex/xin-research-rea-20261120` 从 `ff6d41d`（#189）开出。Codex 实现并自查，Claude Code 未参与此次新增代码的复核。 [本次实施记录](superpowers/plans/2026-11-20-xin-research-rea.md)

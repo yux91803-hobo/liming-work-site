@@ -3,13 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import zlib from 'node:zlib';
 import { BASE, WORK, TEMPLATE, bjNow, bjWeek, readText, UPLOADS, TIANQI, HARNESS_KEY, mk, readJ, rid } from './vm-base.mjs';
 import { ACTS, readMoves } from './vm-companion.mjs';
 import { screenDisplay } from './vm-screen.mjs';
 import { addMemory, coreMemory } from './vm-memory.mjs';
 import {taskMemory} from './vm-context.mjs';
 import {dailyContext} from './vm-daily.mjs';
-import { resolveEffort, harnessModel, HARNESS_MODELS, HARNESS_ROUTE } from './vm-models.mjs';
+import { resolveEffort, harnessModel, HARNESS_MODELS, HARNESS_ROUTE, HARNESS_WIN } from './vm-models.mjs';
 
 export const CTX_MAX = 12000;
 export function withContext(text, context) {
@@ -326,6 +327,41 @@ export function taskSystemPrompt(t) {
 }
 
 export const DSH_HOME = () => process.env.XIN_DSH_HOME || path.join(os.homedir(), '.dsh');
+
+/* 天启一个对话的用量，按 Harness 自己的会话记录算（照 vm-agent.mjs 的 claudeUsage、codexUsage 从各自的记录里读）。
+   记录在 ~/.dsh/sessions/<工作目录>/<会话号>/session.v4.jsonl.zstd（zstd 压缩的 JSONL），每次请求一条 assistant/message，
+   data.usage = { inputTokens：没命中缓存的输入, cacheReadTokens：命中缓存的输入, outputTokens, totalTokens：三项之和 }。
+   站长 11-20：聊天框底下「上下文 1% · 消耗 50.7万」不准——以前只算 inputTokens，上下文算成 5 千（实际 35 万），消耗漏了缓存命中。
+   读不到记录（旧版 Harness、记录删了、这一轮还在写）返回 null，调用的地方退回流里攒的数。常驻进程里按大小和修改时间缓存，打开对话不用每次都解压。 */
+const hUse = new Map();
+export function harnessUsage(id) {
+  if (typeof id !== 'string' || !/^session-[0-9a-f-]{36}$/i.test(id) || typeof zlib.zstdDecompressSync !== 'function') return null;
+  const root = path.join(DSH_HOME(), 'sessions');
+  let f = null, st = null;
+  try {
+    for (const d of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue;
+      const p = path.join(root, d.name, id, 'session.v4.jsonl.zstd');
+      try { st = fs.statSync(p); f = p; break; } catch { /* 不在这个工作目录下 */ }
+    }
+  } catch { return null; }
+  if (!f || st.size > 64 * 1024 * 1024) return null;
+  const key = st.size + ':' + st.mtimeMs, seen = hUse.get(f);
+  if (seen && seen.key === key) return seen.u;
+  let text; try { text = zlib.zstdDecompressSync(fs.readFileSync(f)).toString('utf8'); } catch { return null; }
+  let input = 0, cached = 0, output = 0, last = null;
+  for (const s of text.split('\n')) {
+    if (!s.includes('"assistant/message"') || !s.includes('"usage"')) continue;
+    let o; try { o = JSON.parse(s); } catch { continue; }
+    const u = o && o.type === 'assistant/message' && o.data && o.data.usage;
+    if (!u || typeof u !== 'object') continue;
+    input += (u.inputTokens || 0) + (u.cacheReadTokens || 0); cached += u.cacheReadTokens || 0; output += u.outputTokens || 0; last = u;
+  }
+  if (!last) return null;
+  const u = { ctx: last.totalTokens || (last.inputTokens || 0) + (last.cacheReadTokens || 0) + (last.outputTokens || 0), win: HARNESS_WIN, input, cached, output, total: input + output };
+  hUse.set(f, { key, u }); if (hUse.size > 32) hUse.delete(hUse.keys().next().value);
+  return u;
+}
 
 export function harnessPurgeInstalled() {
   const p = readJ(path.join(DSH_HOME(), 'profiles', 'headless', 'package.json'), {});

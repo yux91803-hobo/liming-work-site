@@ -59,7 +59,7 @@ import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
 import { fromClaude, fromCodex, fromHarness, stepActivity } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
 import { resolveEffort, HARNESS_WIN, harnessModel, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route, backgroundRoute } from './vm-models.mjs';
-import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, harnessPerm, harnessTurn, permError, workError, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch } from './vm-persona.mjs';import { termOps } from './vm-persona.mjs';
+import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, harnessPerm, harnessTurn, permError, workError, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch, harnessUsage } from './vm-persona.mjs';import { termOps } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
 export * from './vm-screen.mjs';
@@ -663,8 +663,8 @@ function runner(run) {
     // Harness 的用量：这个对话以前的加上这一轮的（只在做完时加一次）
     if (meta.agent === 'harness' && state.hu) {
       const prev = (readJ(sessF(meta.sid), sess) || {}).hUsage || { input: 0, output: 0 };
-      const input = (prev.input || 0) + state.hu.input, output = (prev.output || 0) + state.hu.output;
-      state.hUsage = { ctx: state.hu.last, win: HARNESS_WIN, input, output, total: input + output };
+      const input = (prev.input || 0) + state.hu.input, output = (prev.output || 0) + state.hu.output, hit = state.hu.hit || typeof prev.cached === 'number';
+      state.hUsage = { ctx: state.hu.last, win: HARNESS_WIN, input, ...(hit ? { cached: (prev.cached || 0) + (state.hu.cached || 0) } : {}), output, total: input + output };
     }
     const modelOK = () => code === 0 && !state.failed && !state.timeout;
     const active = () => modelOK() && !readJ(metaF(run),meta).stopped;
@@ -1346,7 +1346,7 @@ export function sessionUsage(s) {
     if(isTask(s)){const b=readJ(path.join(BASE,'budgets',s.sid+'.json'));if(b?.total&&(s.antigravityConversation||runtime.isAgyModel(s.model)||Object.keys(b.providerUsage||{}).some(k=>k.startsWith('antigravity:'))))return agyUsage(b,s.frontUsage?.ctx||0);}
     if (s?.agent === 'codex' && s.frontUsage) return s.frontUsage;
     if (!s || !okAgentSid(s.agent, s.agentSid) || !s.started) return null;
-    if (s.agent === 'harness') return s.hUsage && s.hUsage.total ? s.hUsage : null;
+    if (s.agent === 'harness') return harnessUsage(s.agentSid) || (s.hUsage && s.hUsage.total ? s.hUsage : null);   // 先按 Harness 自己的记录算
     const id = s.agentSid.toLowerCase();
     return s.agent === 'claude' ? claudeUsage(id, s.ctxWin) : s.agent === 'codex' ? codexUsage(id, s.workspace ? path.join(s.workspace.home,'.codex') : undefined) : null;
   } catch { return null; }
