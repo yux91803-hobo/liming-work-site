@@ -539,7 +539,7 @@
     S.toMain = !TQ && !!toMain; S.more = false; S.title = '';
     if (!stay) { S.view = 'chat'; setDrawer(false); }
     clearList(); S.histFor = ''; welcome(); render(); refreshSide();
-    if (TQ) { S.tqPerm = ''; document.dispatchEvent(new CustomEvent('tq:session', { detail: { sid: '', perm: '' } })); }   // 新对话用默认权限
+    if (TQ) { S.tqPerm = ''; document.dispatchEvent(new CustomEvent('tq:session', { detail: { sid: '', perm: '', work: '' } })); }   // 新对话用默认权限、重新选工作区
   }
   // 回到主对话：有就打开，还没有就是一张空白页，第一句发出去才有
   function goMain() {
@@ -594,7 +594,7 @@
       S.sid = sid; S.sessAgent = d.session.agent; ls(LS_SID, sid); S.histFor = sid; S.toMain = false; S.title = d.session.title || '';
       if (!TQ) { if (d.session.main) setMain(sid); else if (sid === S.main) setMain(''); }
       // 天启：这个对话记下的权限（输入框旁边的按钮跟着换），先于画历史（历史里的计划卡片按它显示按钮）
-      if (TQ) { S.tqPerm = d.session.perm || ''; document.dispatchEvent(new CustomEvent('tq:session', { detail: { sid: sid, perm: S.tqPerm } })); }
+      if (TQ) { S.tqPerm = d.session.perm || ''; document.dispatchEvent(new CustomEvent('tq:session', { detail: { sid: sid, perm: S.tqPerm, work: d.session.work || '' } })); }
       refreshSide();
       S.more = !!d.more; S.first = d.runs.length ? d.runs[0].run : '';
       if (S.more) list.appendChild(earlierBtn());
@@ -835,7 +835,24 @@
     var list = (S.sessList || []).filter(function (s) { return !s.main; }), main = list.filter(function (s) { return !s.archived; }), arch = list.filter(function (s) { return s.archived; });
     ul.innerHTML = ''; aul.innerHTML = '';
     if (dh) { dh.textContent = '对话'; if (main.length > SESS_SHOW) dh.appendChild(h('i', '', String(main.length))); dh.hidden = !main.length; }
-    main.forEach(function (s) { ul.appendChild(sessItem(s)); });
+    // 天启（第 3 个 PR）：有对话不在工作目录本身时按工作区分组。最近有动静的组在前，组里照旧按时间；组标题能收起
+    if (TQ && main.some(function (s) { return s.work; })) {
+      var groups = {}, order = [];
+      S.tqGrpOff = S.tqGrpOff || {};
+      main.slice().sort(function (a, b) { return (b.updated || 0) - (a.updated || 0); }).forEach(function (s) { var k = s.work || ''; if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(s); });
+      order.forEach(function (k) {
+        var off = !!S.tqGrpOff[k], li = h('li', 'xc-sgrp'), b = h('button', 'xc-sgrp-b'); b.type = 'button'; b.dataset.k = k;
+        b.setAttribute('aria-expanded', off ? 'false' : 'true');
+        b.innerHTML = svgIcon('chev') + '<span></span><i></i>';
+        b.querySelector('span').textContent = k || '工作目录'; b.querySelector('i').textContent = String(groups[k].length);
+        b.addEventListener('click', function () {
+          S.tqGrpOff[k] = !off; renderSess();
+          var nb = [].filter.call(ul.querySelectorAll('.xc-sgrp-b'), function (x) { return x.dataset.k === k; })[0]; if (nb) nb.focus();
+        });
+        li.appendChild(b); ul.appendChild(li);
+        if (!off) groups[k].forEach(function (s) { ul.appendChild(sessItem(s)); });
+      });
+    } else main.forEach(function (s) { ul.appendChild(sessItem(s)); });
     arch.forEach(function (s) { aul.appendChild(sessItem(s)); });
     ab.hidden = !arch.length; aul.hidden = !arch.length || !S.archOpen;
     ab.setAttribute('aria-expanded', S.archOpen ? 'true' : 'false');
@@ -849,6 +866,7 @@
     var ul = drawerEl && drawerEl.querySelector('.xc-sl-main'), fold = drawerEl && drawerEl.querySelector('.xc-more-b');
     if (!ul || !fold) return;
     var items = ul.querySelectorAll('.xc-sli'), extra = 0;
+    if (ul.querySelector('.xc-sgrp')) { [].forEach.call(items, function (x) { x.hidden = false; }); fold.hidden = true; return; }   // 天启按工作区分组时靠收起组来省地方
     for (var i = 0; i < items.length; i++) {
       var keep = i < SESS_SHOW || !!items[i].querySelector('.xc-si.cur');
       if (!keep) extra++;
@@ -3224,7 +3242,7 @@
     S.lastText = ''; S.doing = 'think'; S.act = ''; S.thinkS = ''; S.thinkFixed = false; S.note = null; S.waitSend = '';
     typing(true); renderHead(); toBottom(true); if (!TQ) flyFromComposer(pending);
     var x = xin(); if (x) x.ai('think');
-    flight.payload=retry&&retry.payload||{ sid: flight.sid || undefined, main: !TQ && !flight.sid && mainDraft() || undefined, clientId: flight.id, agent: flight.sid ? undefined : (TQ ? 'harness' : S.agent), text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,files:files.length?files.map(function(f){return {path:f.path,name:f.name};}):undefined,perm:tqo?tqo.perm:undefined,plan:tqo&&tqo.plan?true:undefined};
+    flight.payload=retry&&retry.payload||{ sid: flight.sid || undefined, main: !TQ && !flight.sid && mainDraft() || undefined, clientId: flight.id, agent: flight.sid ? undefined : (TQ ? 'harness' : S.agent), text: text, effort: curEffort(), model: curModel(), context: c ? ctxText(c) : undefined, ctxLabel: c ? ctxLabel(c) : undefined,files:files.length?files.map(function(f){return {path:f.path,name:f.name};}):undefined,perm:tqo?tqo.perm:undefined,plan:tqo&&tqo.plan?true:undefined,work:tqo&&tqo.work?tqo.work:undefined};
     call('send', flight.payload, 90000, function (w) { if(generation===S.convSeq){S.waitSend = w.state; progress();} },function(){return generation===S.convSeq;}).then(function (d) {
       if (d && d._accepted) return waitDelivery(d.delivery, d, function () { return generation === S.convSeq; }, function (w) { if (generation === S.convSeq) { S.waitSend = w; progress(); } });
       return d;
@@ -4299,6 +4317,8 @@
   window.LimingXinChat = { open: open, close: close, work: work, ask: quick, played: played, page: page, tasks: function () { pollTasks(); }, get state() { return S; },
     tqFiles: function (p) { if (TQ && root) loadFiles(p || WORK); },
     // 天启：sky.js 的「按计划执行」代发一句；右栏「计划」用同一套 markdown 渲染
-    tqSend: function (t) { return TQ && root ? send(t) : false; }, md: function (t) { return md(t); } };
+    tqSend: function (t) { return TQ && root ? send(t) : false; }, md: function (t) { return md(t); },
+    // 天启：sky.js 读工作区的文件夹、终端里跑命令（第 3 个 PR）
+    tqCall: function (op, args, ms) { return TQ ? call(op, args || {}, ms || 30000) : Promise.reject(new Error('只在天启里能用')); } };
   boot();
 })();

@@ -56,6 +56,8 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
         'files_reqs': [],
         'hist_perm': None,     # 旧对话记下的权限（history 的 session.perm）
         'hist_plan': False,    # 旧对话里有一轮计划、后面又按计划执行过
+        'hist_work': None,     # 旧对话的工作区（history 的 session.work）
+        'files_uploads': False,  # 工作目录根下多一个 uploads 文件夹（工作区选择里不该列它）
         'sessions': [
             {'sid': 'stq000001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1762214400000},
         ],
@@ -120,6 +122,8 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             sess = {'sid': args.get('sid'), 'agent': 'harness', 'title': '天启旧对话', 'model': 'deepseek-v4.1-flash'}
             if st['hist_perm']:
                 sess['perm'] = st['hist_perm']
+            if st['hist_work'] is not None:
+                sess['work'] = st['hist_work']
             runs = [{'run': 'rhist0001', 'events': [{'t': 'user', 'text': '老问题'}, {'t': 'text', 'text': '老回答'}, {'t': 'done', 'ok': True, 'code': 0, 'ms': 800, 'model': 'deepseek-v4.1-flash'}], 'done': True}]
             if st['hist_plan']:
                 runs += [
@@ -135,7 +139,7 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             return await ok({'ok': True, 'data': {'dir': True, 'path': p, 'work': '/data/workspace', 'entries': [
                 {'name': 'stm32-blink', 'dir': True, 'mtime': 1763520000000},
                 {'name': 'notes.md', 'dir': False, 'size': 64, 'mtime': 1763520000000},
-            ]}})
+            ] + ([{'name': 'uploads', 'dir': True, 'mtime': 1763520000000}] if st['files_uploads'] and p == '/data/workspace' else [])}})
         if op == 'usage':
             return await ok({'ok': True, 'data': {'quotas': [], 'days': [], 'totals': {}, 'names': {}, 'sources': {}}})
         if op == 'send':
@@ -431,6 +435,87 @@ async def main():
         await pg.wait_for_timeout(200)
         fits.append(await pg.evaluate(fit_js))
         ui.check('手机：计划模式的提示语一行放得下（390、360 宽都不折行、不被切掉）', all('计划' in f[0] and f[1] <= f[2] for f in fits), fits)
+        await pg.context.close()
+
+        # 2c. 工作区（第 3 个 PR）：新对话时输入框上面选工作区（列 /data/workspace 下的文件夹，不列 uploads 和文件，能新建），
+        #     发出去带 work；标题旁显示工作区；左栏按工作区分组、组能收起；打开旧对话时不再让选，标题旁是它的工作区
+        pg = await ui.page(browser, 1280, 860)
+        await pg.add_init_script("try{localStorage.removeItem('lm.tq.work')}catch(e){}")
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        st['files_uploads'] = True
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        seen = """(() => { const p = document.querySelector('#tq-work-pick'), w = document.querySelector('#tq-work');
+          return { pick: !!p && p.offsetParent !== null, label: p ? p.textContent.trim() : '', head: w ? w.textContent.trim() : '' }; })()"""
+        first = await pg.evaluate(seen)
+        await pg.locator('#tq-work-pick').click()
+        await pg.wait_for_selector('#tq-work-pop:not([hidden]) [role=menuitemradio]')
+        items = await pg.evaluate("[...document.querySelectorAll('#tq-work-pop [role^=menuitem]')].map(b => b.textContent.trim())")
+        await pg.locator('#tq-work-pop [role=menuitemradio]', has_text='stm32-blink').click()
+        chosen = await pg.evaluate(seen)
+        popped = await pg.evaluate("document.querySelector('#tq-work-pop').hidden")
+        ui.check('新对话：输入框上面选工作区，列出文件夹、「工作目录」和「新建文件夹…」，不列 uploads 和文件；选了标题旁跟着换',
+                 first['pick'] and '工作目录' in first['label'] and '工作目录' in first['head'] and popped
+                 and any('stm32-blink' in t for t in items) and any('工作目录' in t for t in items) and any('新建文件夹' in t for t in items)
+                 and not any('uploads' in t or 'notes.md' in t for t in items) and 'stm32-blink' in chosen['label'] and 'stm32-blink' in chosen['head'], (first, items, chosen))
+        await pg.fill('.xc-row textarea', '看看工程')
+        await pg.press('.xc-row textarea', 'Enter')
+        await pg.wait_for_function(ui.CHAT_DONE)
+        after = await pg.evaluate(seen)
+        ui.check('发出去的这句带 work；对话开始后不再让选，标题旁还是这个工作区', st['sends'][-1].get('work') == 'stm32-blink' and not after['pick'] and 'stm32-blink' in after['head'], (st['sends'][-1].get('work'), after))
+        # 左栏按工作区分组：最近有动静的组在前，组里照旧按时间；组标题能收起
+        st['sessions'] = [
+            {'sid': 'stqa00001', 'agent': 'harness', 'title': 'LED 快闪', 'turns': 2, 'updated': 1763600000000, 'work': 'stm32-blink'},
+            {'sid': 'stqb00001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1763500000000, 'work': ''},
+            {'sid': 'stqc00001', 'agent': 'harness', 'title': '串口调试', 'turns': 3, 'updated': 1763400000000, 'work': 'stm32-blink'},
+        ]
+        await pg.reload()
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-sgrp')
+        rows_js = "[...document.querySelectorAll('.xc-sl-main > li')].filter(li => !li.hidden).map(li => li.classList.contains('xc-sgrp') ? 'G:' + li.textContent.trim() : 'S:' + li.querySelector('.xc-si-t').textContent)"
+        rows = await pg.evaluate(rows_js)
+        await pg.locator('.xc-sgrp-b', has_text='stm32-blink').click()
+        folded = await pg.evaluate(rows_js)
+        exp = await pg.evaluate("document.querySelector('.xc-sgrp-b').getAttribute('aria-expanded')")
+        ui.check('左栏按工作区分组：最近的组在前、组里按时间；点组标题收起，读屏知道收起了',
+                 len(rows) == 5 and rows[0].startswith('G:stm32-blink') and rows[1:3] == ['S:LED 快闪', 'S:串口调试'] and rows[3].startswith('G:工作目录') and rows[4] == 'S:天启旧对话'
+                 and folded == [rows[0], rows[3], rows[4]] and exp == 'false', (rows, folded, exp))
+        # 打开旧对话：不再让选，标题旁是它的工作区
+        st['hist_work'] = 'stm32-blink'
+        await pg.locator('.xc-si', has_text='天启旧对话').click()
+        await pg.wait_for_function("document.querySelector('.xc-msgs').textContent.includes('老回答')")
+        old = await pg.evaluate(seen)
+        ui.check('打开旧对话：不出工作区选择，标题旁是它记下的工作区', not old['pick'] and 'stm32-blink' in old['head'], old)
+        await pg.context.close()
+        # 新建文件夹：名字不合规矩说清楚、不收；合规矩的记下来，发出去带上
+        pg = await ui.page(browser, 1280, 860)
+        await pg.add_init_script("try{localStorage.removeItem('lm.tq.work')}catch(e){}")
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.locator('#tq-work-pick').click()
+        await pg.locator('#tq-work-pop [role=menuitem]', has_text='新建文件夹').click()
+        box_in = pg.locator('#tq-work-pop input')
+        await box_in.fill('a/b')
+        await box_in.press('Enter')
+        bad = await pg.evaluate("[!document.querySelector('#tq-work-pop').hidden, (document.querySelector('#tq-work-pop .tq-work-err') || {}).textContent || '']")
+        await box_in.fill('led-fast')
+        await box_in.press('Enter')
+        good = await pg.evaluate(seen)
+        saved = await pg.evaluate("localStorage.getItem('lm.tq.work')")
+        await pg.fill('.xc-row textarea', '把 LED 改快一点')
+        await pg.press('.xc-row textarea', 'Enter')
+        await pg.wait_for_function(ui.CHAT_DONE)
+        ui.check('新建文件夹：名字不合规矩时说清楚、不收；合规矩的选上、记住，发出去带 work',
+                 bad[0] and '字母' in bad[1] and 'led-fast' in good['label'] and saved == 'led-fast' and st['sends'][-1].get('work') == 'led-fast', (bad, good, saved, st['sends'][-1].get('work')))
+        await pg.context.close()
+        # 手机：工作区选择和输入框都在屏幕里
+        pg = await ui.page(browser, 390, 844)
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        fit = await pg.evaluate("""(() => { const r = e => document.querySelector(e).getBoundingClientRect();
+          return { pick: [Math.round(r('#tq-work-pick').left), Math.round(r('#tq-work-pick').right)], box: Math.round(r('.tq-box').right), iw: innerWidth, sw: document.documentElement.scrollWidth }; })()""")
+        ui.check('手机：工作区选择和输入框都在屏幕里，没有横向滚动', fit['pick'][0] >= 0 and fit['pick'][1] <= fit['iw'] and fit['box'] <= fit['iw'] and fit['sw'] <= fit['iw'], fit)
         await pg.context.close()
 
         # 3. 没登录

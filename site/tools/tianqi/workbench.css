@@ -662,6 +662,34 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-confirm .tq-btn { height: 30px; padding: 0 12px; font-size: 13px; }
 .tq-confirm .tq-btn.go-risk { border-color: transparent; background: var(--risk); color: var(--go-ink); }
 
+/* ---------- 工作区（第 3 个 PR）：标题旁的工作区、新对话时输入框上面的选择、新建文件夹、左栏的分组 ---------- */
+.tq-work { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; max-width: 42%; height: 24px; padding: 0 9px; border: 1px solid var(--line); --rad: 999px; color: var(--ink-3); font-size: 12.5px; }
+.tq-work svg, .tq-work-pick svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.tq-work span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tq-work-row { display: flex; justify-content: center; margin: 0 0 10px; }
+.tq-work-row[hidden] { display: none; }
+.tq-work-pick { max-width: 100%; border: 1px solid var(--line); --rad: 999px; }
+.tq-work-pick span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tq-work-pick:hover, .tq-work-pick[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
+.tq-work-pick .tq-chev { width: 12px; height: 12px; stroke-width: 2; stroke-linecap: round; }
+.tq-work-new { display: flex; flex-direction: column; gap: 8px; padding: 4px; }
+.tq-work-new input { height: 36px; padding: 0 10px; border: 1px solid var(--line-2); --rad: 10px; background: none; color: var(--ink); font: inherit; font-size: 16px; }   /* 16px：iOS 聚焦时不放大 */
+.tq-work-new input:focus-visible { outline: 2px solid var(--star); outline-offset: 1px; }
+.tq-work-err { min-height: 0; margin: 0; color: var(--risk); font-size: 12.5px; line-height: 1.5; }
+.tq-work-err:empty { display: none; }
+.tq-work-new .tq-acts { display: flex; justify-content: flex-end; gap: 8px; }
+.tq-work-new .tq-btn { height: 32px; font-size: 13px; }
+.tq-work-new .tq-btn.go { border-color: transparent; background: var(--go); color: var(--go-ink); }
+.tianqi .xc.tq-mode .tq-side .xc-sgrp { list-style: none; margin: 10px 0 2px; }
+.tianqi .xc.tq-mode .tq-side .xc-sgrp:first-child { margin-top: 0; }
+.xc-sgrp-b { display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; padding: 0 8px; border: 0; --rad: 8px; background: none; color: var(--ink-3); font-size: 12.5px; text-align: left; }
+.xc-sgrp-b:hover { background: var(--hover); color: var(--ink-2); }
+.xc-sgrp-b svg { flex: none; width: 12px; height: 12px; transition: transform .2s var(--ease); }
+.xc-sgrp-b[aria-expanded="true"] svg { transform: rotate(90deg); }   /* 箭头默认朝右（›），展开朝下，和侧栏别的折叠一样 */
+.xc-sgrp-b span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.xc-sgrp-b i { font-style: normal; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .xc-sgrp-b svg { transition: none; } }
+
 /* ---------- 计划：对话里的卡片、用户那句上的标签、右栏的计划 ---------- */
 .tq-plan-tag { display: inline-flex; align-items: center; gap: 4px; align-self: flex-end; margin: 0 2px 4px 0; padding: 1px 8px; --rad: 999px; background: var(--plan-soft); color: var(--plan); font-size: 12px; }
 .tianqi .xc-m.tq-planned > .xc-bub { display: none; }
