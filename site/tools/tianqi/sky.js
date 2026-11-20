@@ -187,7 +187,7 @@
     if (gl) initGL();
     size();
     if (REDUCE) drawStars(performance.now());
-    else { wake(); (function clock() { setTimeout(function () { spawnMeteor(); clock(); }, 9000 + Math.random() * 13000); })(); setTimeout(function () { spawnMeteor(); }, 2200); }
+    else { wake(); (function clock() { setTimeout(function () { spawnMeteor(); clock(); }, 18000 + Math.random() * 24000); })(); setTimeout(function () { spawnMeteor(); }, 2200); }
     new MutationObserver(function () { INK = html.dataset.theme === 'light'; setPalette(); if (!gl) fallbackStars(); if (REDUCE) drawStars(performance.now()); }).observe(html, { attributes: true, attributeFilter: ['data-theme'] });
 
     /* 发出去的字化成星尘：先把字画到离屏画布，再按像素取样成粒子 */
@@ -649,6 +649,7 @@
     function fresh() { return !ws.sid && !msgs.querySelector('.xc-me'); }   // 还没发第一句
     function curWork() { return ws.sid ? ws.work : ws.pick; }
     function syncWork() {
+      root.classList.toggle('tq-in-conv', !fresh());   // 进了对话夜空暗一点（照 Linear 的内容优先），新对话亮回来
       var w = curWork(), name = w || ROOT_W;
       workHead.innerHTML = FOLDER + '<span></span>'; workHead.lastChild.textContent = name;
       workHead.title = WORK_DIR + (w ? '/' + w : ''); workHead.setAttribute('aria-label', '工作区：' + name);

@@ -152,6 +152,9 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 .tianqi .xc.wb.tq-mode { display: block; box-shadow: none; }
 .tq-sky { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; z-index: 0; }
 .tq-sky.tq-fx { z-index: 6; }
+.tianqi .xc.tq-mode > .tq-sky:not(.tq-fx) { transition: opacity .6s var(--ease); }
+.tianqi .xc.tq-mode.tq-in-conv > .tq-sky:not(.tq-fx) { opacity: .55; }   /* 进了对话夜空暗一点，字更清楚 */
+@media (prefers-reduced-motion: reduce) { .tianqi .xc.tq-mode > .tq-sky:not(.tq-fx) { transition: none; } }
 
 /* ---------- 三栏 ---------- */
 .tq-frame {
