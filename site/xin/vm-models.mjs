@@ -16,11 +16,13 @@ export function resolveEffort(agent, model, effort) {
   return m.efforts.includes(effort) ? effort : m.def;
 }
 
-export const HARNESS_WIN = 1000000;   // 网关 /v1/models 的真实 context_length，三种模型均为 100 万
+export const HARNESS_WIN = 1000000;   // 网关 /v1/models 的真实 context_length，这几种模型都是 100 万
 export const HARNESS_MODELS = [
   { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', win: HARNESS_WIN, image: true, efforts: ['off', 'low', 'high', 'max'], def: 'high' },
   { id: 'glm-5.3', name: 'GLM-5.3', win: HARNESS_WIN, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
-  { id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', win: HARNESS_WIN, image: false, efforts: ['low', 'high', 'max'], def: 'high' }
+  { id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', win: HARNESS_WIN, image: false, efforts: ['low', 'high', 'max'], def: 'high' },
+  // 站长 11-20：天启也要能用 Kimi K3.1 Pro（小芯那边 Codex 已经在用，资料照抄 CODEX_MODELS 那条）
+  { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', win: HARNESS_WIN, image: true, efforts: ['low', 'high', 'max'], def: 'high' }
 ];
 export function harnessModel(id) { return HARNESS_MODELS.find(m => m.id === id) || HARNESS_MODELS[0]; }
 
