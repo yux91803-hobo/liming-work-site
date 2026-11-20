@@ -806,14 +806,6 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-plan-doc .tq-acts { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 
 /* ---------- 设置：默认权限 ---------- */
-.tq-perms { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 0; }
-.tq-permopt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 12px 14px; border: 1px solid var(--line); --rad: 12px; background: none; color: var(--ink); text-align: left; transition: border-color .2s var(--ease), background-color .2s var(--ease); }
-.tq-permopt:hover { background: var(--hover); }
-.tq-permopt b { font-size: 14px; font-weight: 500; }
-.tq-permopt span { color: var(--ink-3); font-size: 13px; }
-.tq-permopt[aria-checked="true"] { border-color: var(--star); box-shadow: 0 0 0 1px var(--star); }
-.tq-permopt.risk b { color: var(--risk); }
-.tq-set-note { margin: 16px 0 0; color: var(--ink-3); font-size: 13px; line-height: 1.7; }
 
 /* ---------- 中屏：左栏窄条，右栏浮在聊天上 ---------- */
 .tq-frame[data-mode="mid"] .tq-right { position: absolute; z-index: 7; top: calc(12px + var(--st, 0px)); bottom: calc(12px + var(--sb, 0px)); right: max(16px, var(--sr, 0px)); width: min(400px, calc(100% - 140px)); grid-column: auto; overflow: visible; transform: translateX(calc(100% + 32px)); transition: transform .42s var(--ease), visibility 0s .42s; }

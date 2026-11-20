@@ -423,15 +423,6 @@
           [['dark', '夜空', 'tq-th-dark'], ['light', '星图', 'tq-th-light'], ['auto', '跟随系统', 'tq-th-auto']].map(function (t) { return '<button class="tq-theme" type="button" role="radio" aria-checked="' + (themePref() === t[0]) + '" data-theme-set="' + t[0] + '"><i class="' + t[2] + '"></i>' + t[1] + '</button>'; }).join('') +
           '</div><h3>动态</h3><p>系统开了「减少动态」时，星不闪、流星不出现。</p><div class="tq-set-row"><div><b>流星</b><p>偶尔划过一颗；天启答完时也会有一颗。</p></div><button class="tq-sw" type="button" role="switch" aria-checked="' + meteorsOn + '" data-sw="meteor" aria-label="流星"></button></div>';
       },
-      perm: function () {
-        var d = defPerm();
-        return '<h3>默认权限</h3><p>新对话用这一档。对话里点输入框旁边的权限按钮可以换，只管那一个对话。</p><div class="tq-perms" role="radiogroup" aria-label="默认权限">' +
-          PERMS.map(function (p) { return '<button class="tq-permopt' + (p[0] === FULL ? ' risk' : '') + '" type="button" role="radio" aria-checked="' + (d === p[0]) + '" data-perm-def="' + p[0] + '"><b>' + p[1] + '</b><span>' + p[3] + '</span></button>'; }).join('') +
-          '</div><p class="tq-set-note">计划模式那一轮总是只读。沙箱用 li2 内核的 Landlock：只读时什么文件都写不了，工作区内修改时只能写工作目录 ' + WORK + '。没人能当场批准，越过沙箱的操作直接被拒。</p>';
-      },
-      plug: function () {
-        return '<h3>插件</h3><p>装在 li2 上的 Harness 插件。开关存在 li2 上，下一轮就生效。</p><button class="tq-btn" type="button" data-act="plugins">打开插件开关</button>';
-      },
       pc: function () {
         var s = state(), st = !s.enabled ? '天启还没配好' : !s.authed ? '没登录' : s.tqNoGw ? '在线，但网关还没配好' : '在线';
         return '<h3>li2</h3><p>天启住在这台云电脑上。</p><dl class="tq-kv"><dt>状态</dt><dd>' + esc(st) + '</dd><dt>工作目录</dt><dd class="tq-mono">' + WORK + '</dd><dt>每天唤醒</dt><dd>北京时间 8:55</dd></dl>' +
@@ -469,14 +460,8 @@
         setTimeout(function () { showSec('look'); var f = $('.tq-theme[aria-checked="true"]', modal); if (f) f.focus(); }, 0);
       } else if (b.dataset.sw === 'meteor') {
         meteorsOn = !meteorsOn; store.set('meteor', meteorsOn ? null : 'off'); b.setAttribute('aria-checked', String(meteorsOn)); if (meteorsOn) spawnMeteor();
-      } else if (b.dataset.permDef) {
-        store.set('perm', b.dataset.permDef === FULL ? null : b.dataset.permDef);
-        if (!state().sid) { cfg.perm = b.dataset.permDef; syncChips(); }   // 还没发第一句的新对话也跟着换
-        setTimeout(function () { showSec('perm'); var f = $('.tq-permopt[aria-checked="true"]', modal); if (f) f.focus(); }, 0);
       } else if (b.dataset.act === 'logout') {
         closeSettings(); var o = $('.xc-dr-out'); if (o) o.click();   // chat.js 的退出登录（左栏里藏着）
-      } else if (b.dataset.act === 'plugins') {
-        closeSettings(); var p = $('.tq-plug-b'); if (p && !p.hidden) setTimeout(function () { p.click(); }, REDUCE ? 0 : 230);
       }
     });
     modal.addEventListener('keydown', function (e) {
@@ -547,6 +532,7 @@
       var v = b.dataset.perm; if (!permOf(v)) return;
       if (v === FULL && cfg.perm !== FULL && !b.dataset.sure) { permMenu(true); placePop(); $('[data-cancel]', pop).focus(); return; }
       cfg.perm = v; syncChips(); closePop(true);
+      if (fresh()) store.set('perm', v === FULL ? null : v);   // 新对话里选的，之后的新对话沿用（原来在设置里改默认，站长 11-20 说多余）
     });
     pop.addEventListener('keydown', function (e) {
       if (['ArrowDown', 'ArrowUp', 'Home', 'End'].indexOf(e.key) < 0) return;

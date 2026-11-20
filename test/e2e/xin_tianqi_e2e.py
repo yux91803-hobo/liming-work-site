@@ -444,13 +444,18 @@ async def main():
         ui.check('只读时「按计划执行」不能点并说明；换回工作区内修改后点它：发「按计划执行」、不带 plan、权限是对话的；计划模式关掉，旧卡片只剩「看计划」',
                  ro_card[0] is True and '只读' in ro_card[1] and run_sent.get('text') == '按计划执行' and not run_sent.get('plan')
                  and run_sent.get('perm') == 'workspace-write' and after == {'pressed': 'false', 'acts': ['看计划'], 'ph': '给天启发消息'}, (ro_card, run_sent, after))
+        # 站长 11-20：设置里的「权限」「插件」两页多余（输入框旁边有权限按钮、左栏有插件），去掉；
+        # 新对话沿用上次在新对话里选的权限（存在 lm.tq.perm，代替原来设置里的默认权限，和模型一样记着上次的）
         await pg.get_by_role('button', name='设置', exact=True).click()
         await pg.wait_for_selector('#tq-settings.on')
-        await pg.locator('.tq-set-tab', has_text='权限').click()
-        await pg.get_by_role('radio', name=re.compile('^只读')).click()
-        saved = await pg.evaluate("localStorage.getItem('lm.tq.perm')")
+        tabs = await pg.evaluate("[...document.querySelectorAll('.tq-set-tab')].map(b => b.textContent.trim())")
         await pg.keyboard.press('Escape')
         await pg.wait_for_selector('#tq-settings', state='hidden')
+        await pg.get_by_role('button', name='新建对话').click()
+        await pg.get_by_text('从一个问题开始探索').wait_for()
+        await perm.click()
+        await pg.get_by_role('menuitemradio', name=re.compile('^只读')).click()
+        saved = await pg.evaluate("localStorage.getItem('lm.tq.perm')")
         await pg.get_by_role('button', name='新建对话').click()
         await pg.get_by_text('从一个问题开始探索').wait_for()
         new_label = await perm.text_content()
@@ -461,8 +466,9 @@ async def main():
         hist = await pg.evaluate("""(() => ({ label: document.querySelector('#tq-perm .tq-perm-n').textContent,
           cards: [...document.querySelectorAll('.tq-plan-card')].map(c => [...c.querySelectorAll('.tq-acts button')].map(b => b.textContent)),
           tab: !document.querySelector('#tq-tab-plan').hidden }))()""")
-        ui.check('设置里把默认权限改成只读（存在 lm.tq.perm），新对话用它；打开记着工作区内修改的旧对话，按钮跟着换；旧计划刷新后还在、只能看',
-                 saved == 'read-only' and new_label == '只读' and hist == {'label': '工作区', 'cards': [['看计划']], 'tab': True}, (saved, new_label, hist))
+        ui.check('设置里只剩外观和电脑两页；新对话里选了只读，下一个新对话沿用（存在 lm.tq.perm）；打开记着工作区内修改的旧对话，按钮跟着换；旧计划刷新后还在、只能看',
+                 tabs == ['外观', '电脑'] and saved == 'read-only' and new_label == '只读' and hist == {'label': '工作区', 'cards': [['看计划']], 'tab': True},
+                 (tabs, saved, new_label, hist))
         await pg.context.close()
         # 手机：计划卡片和正文一样占满整行（回答是两栏网格，没指定的话会掉进头像那一栏，挤成一条竖线）；右栏不自动升起，「计划」亮个小点
         pg = await ui.page(browser, 390, 844)
