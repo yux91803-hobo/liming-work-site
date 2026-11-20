@@ -265,12 +265,31 @@
     var c = on ? toolColor() : '';
     html.classList.toggle('kb-up', !!on);
     if (c) html.style.setProperty('--kb-bg', c); else html.style.removeProperty('--kb-bg');
+    // 工具里也知道键盘在不在：键盘盖住了 iPhone 底下那条横条，工具不用再给它留白（天启的 --sb）
+    try { var p = current && panels[current]; if (p) p._frame.contentDocument.documentElement.classList.toggle('kb-up', !!on); } catch (e) { /* 别的源 */ }
   }
   function fitStage() {
     var vv = window.visualViewport, s = stage.style;
     // 只在触屏、工具开着、没在放大、可见区域确实比窗口矮（键盘）的时候跟；别的时候回到铺满
     if (!vv || !lite || !current || Math.abs((vv.scale || 1) - 1) > 0.01 || vv.height >= innerHeight - 1) { s.top = s.height = s.bottom = ''; kbCover(false); return; }
     s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = vv.height + 'px'; s.bottom = 'auto'; kbCover(true);
+  }
+  /* iOS 键盘弹出、收起时 visualViewport 不一定发事件（WebKit 198347、WICG visual-viewport #79；iOS 26 收起后 offsetTop 不归零，WebKit 297779）。
+     站长 11-20 第三次截图：点天启的输入框，键盘出来了输入框却被挡住，打一个字（iOS 为了露出光标挪了一下可见区域）才跳上来。
+     照 Element（hydrogen-web #181）按 visualViewport 的值自己定高度：工具里的输入框获得、失去焦点后，逐帧跟 1 秒，键盘动画在这段时间里走完。 */
+  var settleUntil = 0, settleRaf = 0;
+  function settleStage() {
+    settleUntil = performance.now() + 1000;
+    if (settleRaf) return;
+    (function tick() { fitStage(); settleRaf = performance.now() < settleUntil ? requestAnimationFrame(tick) : 0; })();
+  }
+  function typingEl(el) { return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); }
+  function watchFrame(f) {
+    try {
+      var d = f.contentDocument; if (!d || d.__kbWatch) return; d.__kbWatch = true;
+      var on = function (e) { if (typingEl(e.target)) settleStage(); };
+      d.addEventListener('focusin', on, true); d.addEventListener('focusout', on, true);
+    } catch (e) { /* 别的源：没法跟，只靠 visualViewport 的事件 */ }
   }
   new MutationObserver(function () { pinHome(body.classList.contains('locked')); fitStage(); }).observe(body, { attributes: true, attributeFilter: ['class'] });
   addEventListener('scroll', function () { if (html.classList.contains('home-pin') && window.scrollY) window.scrollTo(0, 0); }, { passive: true });
@@ -310,7 +329,7 @@
     bk.addEventListener('click', back);
     hb.addEventListener('click', goHome);
     var readyTimer = setTimeout(function () { p.classList.add('ready'); }, 6000);
-    f.addEventListener('load', function () { p._depth = 0; p.classList.remove('deep'); setTimeout(function () { p.classList.add('ready'); clearTimeout(readyTimer); }, 2500); });
+    f.addEventListener('load', function () { p._depth = 0; p.classList.remove('deep'); watchFrame(f); setTimeout(function () { p.classList.add('ready'); clearTimeout(readyTimer); }, 2500); });
     p._frame = f; p._ready = function () { clearTimeout(readyTimer); p.classList.add('ready'); };
     edgeSwipe(p);
     stage.appendChild(p); panels[t.id] = p;

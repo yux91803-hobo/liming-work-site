@@ -839,6 +839,46 @@ async def main():
                  (kb_cover, off_cover))
         await pg.context.close()
 
+        # 6c. 站长 11-20 第三次截图（iOS 26）：点天启的输入框，键盘出来了，输入框却被键盘挡住；打一个字才跳到键盘上面。
+        #     iOS 键盘弹出、收起时 visualViewport 不一定发事件（WebKit 198347、WICG visual-viewport #79、iOS 26 的 WebKit 297779），
+        #     外壳只靠事件就跟不上。模拟：点进输入框以后把可见区域改小、不发任何事件，面板要自己跟上；失焦后改回、也不发事件，面板要自己铺回整屏。
+        #     键盘弹起时天启底下给 iPhone 横条留的安全区（--sb）不再留白：键盘已经把那条盖住了（用 34px 模拟 iPhone 的值）。
+        pg = await ui.page(browser, 390, 560, mobile=True)
+        st = await tianqi_mock(pg, xin_enabled=True)
+        await pg.goto(ui.BASE + '/')
+        await pg.wait_for_selector('.card[data-id="tianqi"]')
+        await pg.click('.card[data-id="tianqi"]')
+        await pg.wait_for_selector('.panel[data-id="tianqi"].show iframe')
+        frame = pg.frame_locator('.panel[data-id=tianqi] iframe')
+        box_in = frame.locator('.xc-row textarea')
+        await box_in.wait_for()
+        await frame.locator('html').evaluate("h => { const s = h.ownerDocument.createElement('style'); s.textContent = ':root{--sb:34px}'; h.ownerDocument.head.appendChild(s); }")
+        await pg.wait_for_timeout(500)
+        rect = "(() => { const r = document.getElementById('stage').getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)]; })()"
+        pad = "h => getComputedStyle(h.ownerDocument.querySelector('.tq-frame')).paddingBottom"
+        pad_before = await frame.locator('html').evaluate(pad)
+        await box_in.tap()
+        await pg.evaluate("""(() => { const vv = window.visualViewport;
+          Object.defineProperty(vv, 'height', { configurable: true, get: () => 300 });
+          Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 }); })()""")
+        up = down = False
+        try:
+            await pg.wait_for_function(rect + '[1] === 300', timeout=2500); up = True
+        except Exception:
+            pass
+        up_rect, pad_up = await pg.evaluate(rect), await frame.locator('html').evaluate(pad)
+        await box_in.evaluate('t => t.blur()')
+        await pg.evaluate("(() => { const vv = window.visualViewport; delete vv.height; delete vv.offsetTop; })()")
+        try:
+            await pg.wait_for_function(rect + '[1] === 560', timeout=2500); down = True
+        except Exception:
+            pass
+        pad_down = await frame.locator('html').evaluate(pad)
+        ui.check('手机：点天启的输入框、键盘弹出时就算 iOS 不发 visualViewport 事件，面板也自己缩到键盘上面；收起后铺回整屏；键盘弹起时底下不再给横条留白',
+                 up and up_rect == [0, 300] and down and pad_before == '34px' and pad_up == '0px' and pad_down == '34px',
+                 (up, up_rect, down, pad_before, pad_up, pad_down))
+        await pg.context.close()
+
         # 手机双区上下排列，返回键与天启品牌、操作键分开。
         pg = await ui.page(browser, 390, 844, mobile=True)
         st = await tianqi_mock(pg)
