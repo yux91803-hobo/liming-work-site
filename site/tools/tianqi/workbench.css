@@ -605,8 +605,8 @@ html.tianqi[data-theme="light"] .tm-win {
 
 /* ---------- 浮层：插件、命令面板、登录 ---------- */
 .tianqi .xc.tq-mode .xc-scrim { background: var(--scrim-c); }
+/* 插件页这类小面板：电脑上居中、实心、12px 圆角；手机上从底部升起（见下面的 599px 规则） */
 .tianqi .xc.wb.tq-mode .xc-sheet {
-  --rad: 20px;
   position: absolute;
   inset: 50% auto auto 50%;
   z-index: 33;
@@ -614,10 +614,10 @@ html.tianqi[data-theme="light"] .tm-win {
   max-height: min(78dvh, 640px);
   padding-top: 0;
   transform: translate(-50%, -50%);
-  border: 1px solid var(--line);
-  --rad: 20px;
+  border: 1px solid var(--line-2);
+  --rad: 12px;
   background: var(--pop);
-  box-shadow: var(--shadow), var(--rim);
+  box-shadow: var(--shadow);
   animation: none;
 }
 .tianqi .xc.wb.tq-mode.sheet-open .xc-scrim,
@@ -626,6 +626,25 @@ html.tianqi[data-theme="light"] .tm-win {
 .tianqi .xc.tq-mode .xc-sh-grip { display: none; }
 .tianqi .xc.tq-mode .xc-sh-list { padding: 5px 18px 12px; }
 .tianqi .xc.tq-mode .xc-sw[aria-disabled="true"] { cursor: progress; opacity: .62; }
+.tianqi .xc.tq-mode .xc-sw[aria-checked="true"] { background: var(--star); }   /* 开着是天启的金色，不用小芯的绿 */
+.tianqi .xc.tq-mode .xc-sheet .xc-sh-list > .xc-tg:last-child { box-shadow: none; }
+/* 手机：照 iOS 的底部面板（Vaul 那种）——贴底、左右贴边、只有上面两个角圆，顶上一条拖动条（往下拖能关）；高度跟着内容走 */
+@media (max-width: 599.98px) {
+  .tianqi .xc.wb.tq-mode .xc-sheet {
+    inset: auto 0 0 0;
+    width: auto;
+    max-height: min(86dvh, 640px);
+    transform: none;
+    border: 0;
+    border-top: 1px solid var(--line-2);
+    --rad: 14px 14px 0 0;
+    animation: tq-sheet-up .22s var(--ease);
+  }
+  .tianqi .xc.tq-mode .xc-sh-grip { display: block; top: 6px; width: 36px; height: 4px; margin-left: -18px; background: var(--line-2); }
+  .tianqi .xc.tq-mode .xc-sh-hd { padding-top: 16px; touch-action: none; }
+}
+@keyframes tq-sheet-up { from { transform: translateY(24px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .tianqi .xc.wb.tq-mode .xc-sheet { animation: none; } }
 .tianqi .xc.tq-mode .xc-pal { z-index: 40; }
 .tianqi .xc.tq-mode .xc-toast { z-index: 45; }
 .tianqi .xc.tq-mode.locked :is(.tq-side, .tq-right, .tq-mid-head .tq-panel-b) { display: none; }

@@ -38,6 +38,21 @@ TQ_OPS = load_tq_ops()
 PLAN_MD = '# 把 LED 闪烁改成 200 ms\n\n现在主循环里是 `HAL_Delay(500)`，亮灭各半秒。\n\n1. 把 `main.c` 里的延时改成 200\n2. 编译，确认没有新警告\n3. 核对固件大小没有异常\n\n不做：烧录到板子（li2 没接开发板）。'
 
 
+PLUG_DESC = {'purge': '提示词与规则管理', 'rea': 'Ghidra 本地分析工具'}
+PLUG_LOOK = """(() => { const s = document.querySelector('.xc-sheet'), r = s.getBoundingClientRect(), cs = getComputedStyle(s);
+  const alpha = c => { const m = /rgba?\\(([^)]+)\\)/.exec(c); if (!m) return null; const p = m[1].split(/[\\s,\\/]+/).filter(Boolean); return p.length > 3 ? parseFloat(p[3]) : 1; };
+  const px = (e, k) => parseFloat(getComputedStyle(e)[k]) || 0, hd = s.querySelector('.xc-sh-hd'), list = s.querySelector('.xc-sh-list');
+  const kids = [...list.children], content = kids.length ? kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top : 0;
+  const need = hd.getBoundingClientRect().height + px(hd, 'marginTop') + px(hd, 'marginBottom') + content + px(list, 'paddingTop') + px(list, 'paddingBottom')
+    + px(s, 'paddingTop') + px(s, 'paddingBottom') + px(s, 'borderTopWidth') + px(s, 'borderBottomWidth');
+  const grip = s.querySelector('.xc-sh-grip'), on = s.querySelector('.xc-sw[aria-checked=true]');
+  const probe = document.createElement('i'); probe.style.background = 'var(--star)'; s.appendChild(probe); const star = getComputedStyle(probe).backgroundColor; probe.remove();
+  return { w: Math.round(r.width), cx: Math.round((r.left + r.right) / 2), left: Math.round(r.left), right: Math.round(r.right), bottom: Math.round(r.bottom),
+    iw: innerWidth, ih: innerHeight, h: Math.round(r.height), need: Math.round(need), alpha: alpha(cs.backgroundColor),
+    grip: !!grip && getComputedStyle(grip).display !== 'none' && grip.getBoundingClientRect().height > 0,
+    desc: [...s.querySelectorAll('.xc-tg-t span')].map(e => e.textContent), onBg: on ? getComputedStyle(on).backgroundColor : null, star }; })()"""
+
+
 async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=False, xin_enabled=False):
     st = {
         'enabled': enabled,
@@ -113,9 +128,9 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             return await ok({'ok': True, 'data': {'rows': []}})
         if op == 'sessions':
             return await ok({'ok': True, 'data': {'sessions': st['sessions']}})
-        if op == 'plugins':
+        if op == 'plugins':  # 每个插件带一句说明，和控制器回的一样（PLUG_DESC）
             return await ok({'ok': True, 'data': {'plugins': [
-                {'name': name, 'on': on, 'agent': 'harness'} for name, on in st['plugins'].items()
+                {'name': name, 'on': on, 'agent': 'harness', 'desc': PLUG_DESC.get(name, '')} for name, on in st['plugins'].items()
             ]}})
         if op == 'plugin_set':
             st['plugin_updates'].append(args)
@@ -324,6 +339,10 @@ async def main():
         focus_restored = await trigger.evaluate('e => document.activeElement === e')
         await trigger.click()
         await rea.wait_for()
+        plug = await pg.evaluate(PLUG_LOOK)
+        ui.check('照 Linear：电脑上插件页居中、宽不超过 440；每个插件下面一行说明；开着的开关是金色（天启的星）',
+                 plug['w'] <= 440 and abs(plug['cx'] - plug['iw'] / 2) < 2 and plug['desc'] == ['提示词与规则管理', 'Ghidra 本地分析工具']
+                 and plug['onBg'] == plug['star'] and plug['alpha'] == 1, plug)
         ui.check('天启插件面板向 li2 保存开关，关闭后恢复键盘焦点', initial == ('true', 'false') and focus_restored
                  and await rea.get_attribute('aria-checked') == 'true'
                  and st['plugin_updates'] == [{'agent': 'harness', 'name': 'rea', 'on': True}]
@@ -568,6 +587,14 @@ async def main():
         fit = await pg.evaluate("""(() => { const r = e => document.querySelector(e).getBoundingClientRect();
           return { pick: [Math.round(r('#tq-work-pick').left), Math.round(r('#tq-work-pick').right)], box: Math.round(r('.tq-box').right), iw: innerWidth, sw: document.documentElement.scrollWidth }; })()""")
         ui.check('手机：工作区选择和输入框都在屏幕里，没有横向滚动', fit['pick'][0] >= 0 and fit['pick'][1] <= fit['iw'] and fit['box'] <= fit['iw'] and fit['sw'] <= fit['iw'], fit)
+        await pg.locator('.tq-menu').click()
+        await pg.locator('.tq-plug-b').click()
+        await pg.wait_for_selector('.xc-sheet .xc-plug-rea .xc-sw')
+        await pg.wait_for_timeout(350)   # 等升起的动画走完再量
+        plug = await pg.evaluate(PLUG_LOOK)
+        ui.check('照 Linear：手机上插件页从底部升起——贴底、左右贴边、不透明、顶上一条拖动条，高度跟着内容走（底下没有空白）',
+                 abs(plug['bottom'] - plug['ih']) <= 1 and plug['left'] == 0 and plug['right'] == plug['iw'] and plug['alpha'] == 1
+                 and plug['grip'] and plug['h'] <= plug['need'] + 2 and plug['desc'] == ['提示词与规则管理', 'Ghidra 本地分析工具'], plug)
         await pg.context.close()
 
         # 2d. 终端里自己输命令（第 3 个 PR）：右栏「终端」底下一个输入框，在这个对话（或新对话选的）工作区里跑；
