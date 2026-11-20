@@ -727,6 +727,50 @@
     new MutationObserver(syncWork).observe(msgs, { childList: true });
     syncWork();
 
+    /* ================= 终端里自己输命令（第 3 个 PR） =================
+       右栏「终端」底下一个输入框，在这个对话（新对话就是选的）工作区里跑，最多 60 秒、输出最多 64 KB。
+       控制器把命令放后台跑（term_run 回编号），这里每 400 毫秒取一次新输出（term_poll），网页藏起来时停。输出当文字画，不当 HTML */
+    var cli = document.createElement('div'); cli.className = 'tq-cli';
+    cli.innerHTML = '<div class="tq-cli-log" aria-live="polite"></div>' +
+      '<form class="tq-cli-form" id="tq-term-form"><span class="tq-cli-ps" aria-hidden="true">$</span>' +
+      '<input aria-label="在工作区里运行命令" placeholder="在工作区里运行命令，最多 60 秒" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go">' +
+      '<button type="submit" class="tq-ib" aria-label="运行"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button></form>';
+    $('#tq-p-term').appendChild(cli);
+    var cliLog = $('.tq-cli-log', cli), cliForm = $('form', cli), cliIn = $('input', cliForm), cliBtn = $('button', cliForm), cliBusy = false;
+    function cliDur(ms) { var s = (ms || 0) / 1000; return (s < 10 ? Math.round(s * 10) / 10 : Math.round(s)) + ' 秒'; }
+    function cliBlock(cmd) {
+      var b = document.createElement('div'); b.className = 'tq-cli-run';
+      b.innerHTML = '<div class="tq-cli-cmd"><span aria-hidden="true">$ </span><span></span></div><pre class="tq-cli-out"></pre><div class="tq-cli-end"></div>';
+      b.querySelector('.tq-cli-cmd span:last-child').textContent = cmd;
+      cliLog.appendChild(b); cliLog.scrollTop = cliLog.scrollHeight;
+      return b;
+    }
+    function cliEnd(b, p, err) {
+      var t = err ? '没跑成：' + err : p.timedOut ? '超过 60 秒，停了' : '退出码 ' + p.code + ' · 用时 ' + cliDur(p.ms);
+      if (!err && p.truncated) t += ' · 输出超过 64 KB，后面的没显示';
+      $('.tq-cli-end', b).textContent = t; b.classList.toggle('bad', !!err || p.code !== 0);
+      cliBusy = false; cliIn.disabled = cliBtn.disabled = false; cliIn.focus();
+    }
+    cliForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var cmd = cliIn.value.trim(), c = chat();
+      if (!cmd || cliBusy || !c || typeof c.tqCall !== 'function') return;
+      var b = cliBlock(cmd), out = $('.tq-cli-out', b), off = 0, fail = function (x) { cliEnd(b, null, x && (x.msg || x.message) || '出错了'); };
+      cliIn.value = ''; cliBusy = true; cliIn.disabled = cliBtn.disabled = true;
+      c.tqCall('term_run', { work: curWork(), cmd: cmd }, 30000).then(function (r) {
+        if (!r || r.error || !r.id) { fail(r); return; }
+        (function next() {
+          if (document.hidden) { setTimeout(next, 1000); return; }
+          c.tqCall('term_poll', { id: r.id, off: off }, 30000).then(function (p) {
+            if (!p || p.error) { fail(p); return; }
+            if (p.out) { out.textContent += p.out; cliLog.scrollTop = cliLog.scrollHeight; }
+            off = p.off;
+            if (p.done) cliEnd(b, p); else setTimeout(next, 400);
+          }, fail);
+        })();
+      }, fail);
+    });
+
     /* ================= 快捷键 =================
        在 window 的捕获阶段最先处理：chat.js 在没有弹层时按 Esc 会关掉整个天启，设置和手机上的面板要先把 Esc 接住 */
     window.addEventListener('keydown', function (e) {

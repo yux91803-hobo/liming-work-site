@@ -58,6 +58,8 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
         'hist_plan': False,    # 旧对话里有一轮计划、后面又按计划执行过
         'hist_work': None,     # 旧对话的工作区（history 的 session.work）
         'files_uploads': False,  # 工作目录根下多一个 uploads 文件夹（工作区选择里不该列它）
+        'term_runs': [],       # 终端里输的命令（term_run 的参数）
+        'term_polls': {},      # 每条命令取了几次输出
         'sessions': [
             {'sid': 'stq000001', 'agent': 'harness', 'title': '天启旧对话', 'turns': 1, 'updated': 1762214400000},
         ],
@@ -140,6 +142,21 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
                 {'name': 'stm32-blink', 'dir': True, 'mtime': 1763520000000},
                 {'name': 'notes.md', 'dir': False, 'size': 64, 'mtime': 1763520000000},
             ] + ([{'name': 'uploads', 'dir': True, 'mtime': 1763520000000}] if st['files_uploads'] and p == '/data/workspace' else [])}})
+        if op == 'term_run':
+            st['term_runs'].append(args)
+            return await ok({'ok': True, 'data': {'id': 't%07d' % len(st['term_runs'])}})
+        if op == 'term_poll':
+            tid = args.get('id', '')
+            cmd = st['term_runs'][int(tid[1:]) - 1]['cmd']
+            k = st['term_polls'][tid] = st['term_polls'].get(tid, 0) + 1
+            end = {'done': True, 'code': 0, 'timedOut': False, 'truncated': False, 'ms': 1200}
+            if cmd == 'sleep 99':
+                steps = [{'out': '', 'off': 0, **end, 'code': 124, 'timedOut': True, 'ms': 60000}]
+            elif cmd == 'yes':
+                steps = [{'out': 'y\n' * 5, 'off': 10, **end, 'truncated': True, 'ms': 300}]
+            else:   # 输出分两次给：先给一段、没跑完，再给剩下的
+                steps = [{'out': 'total 8\n', 'off': 8, 'done': False}, {'out': 'drwxr-xr-x stm32-blink\n', 'off': 31, **end}]
+            return await ok({'ok': True, 'data': steps[min(k, len(steps)) - 1]})
         if op == 'usage':
             return await ok({'ok': True, 'data': {'quotas': [], 'days': [], 'totals': {}, 'names': {}, 'sources': {}}})
         if op == 'send':
@@ -516,6 +533,54 @@ async def main():
         fit = await pg.evaluate("""(() => { const r = e => document.querySelector(e).getBoundingClientRect();
           return { pick: [Math.round(r('#tq-work-pick').left), Math.round(r('#tq-work-pick').right)], box: Math.round(r('.tq-box').right), iw: innerWidth, sw: document.documentElement.scrollWidth }; })()""")
         ui.check('手机：工作区选择和输入框都在屏幕里，没有横向滚动', fit['pick'][0] >= 0 and fit['pick'][1] <= fit['iw'] and fit['box'] <= fit['iw'] and fit['sw'] <= fit['iw'], fit)
+        await pg.context.close()
+
+        # 2d. 终端里自己输命令（第 3 个 PR）：右栏「终端」底下一个输入框，在这个对话（或新对话选的）工作区里跑；
+        #     命令后台跑、分几次取输出；跑的时候不能再发；结尾写退出码和用时，超时、输出太多各有一句话
+        pg = await ui.page(browser, 1280, 860)
+        await pg.add_init_script("try{localStorage.removeItem('lm.tq.work')}catch(e){}")
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.locator('#tq-tab-term').click()
+        cli = pg.locator('#tq-term-form input')
+        await cli.fill('ls')
+        await cli.press('Enter')
+        busy = await pg.evaluate("document.querySelector('#tq-term-form input').disabled")
+        ended = lambda n: "document.querySelectorAll('.tq-cli-run').length === %d && document.querySelectorAll('.tq-cli-run')[%d].querySelector('.tq-cli-end').textContent" % (n, n - 1)
+        await pg.wait_for_function(ended(1))
+        r1 = await pg.evaluate("""(() => { const b = document.querySelector('.tq-cli-run');
+          return { cmd: b.querySelector('.tq-cli-cmd').textContent, out: b.querySelector('.tq-cli-out').textContent, end: b.querySelector('.tq-cli-end').textContent,
+            live: document.querySelector('.tq-cli-log').getAttribute('aria-live'), dis: document.querySelector('#tq-term-form input').disabled, focus: document.activeElement === document.querySelector('#tq-term-form input') }; })()""")
+        ui.check('右栏「终端」底下能自己输命令：带上工作区跑，跑的时候不能再发；输出分两次拼起来，结尾写退出码和用时；跑完焦点回输入框',
+                 st['term_runs'][-1] == {'work': '', 'cmd': 'ls'} and busy and r1['cmd'] == '$ ls' and r1['out'] == 'total 8\ndrwxr-xr-x stm32-blink\n'
+                 and '退出码 0' in r1['end'] and '1.2 秒' in r1['end'] and r1['live'] == 'polite' and not r1['dis'] and r1['focus'], (st['term_runs'], busy, r1))
+        await cli.fill('sleep 99')
+        await cli.press('Enter')
+        await pg.wait_for_function(ended(2))
+        await cli.fill('yes')
+        await cli.press('Enter')
+        await pg.wait_for_function(ended(3))
+        ends = await pg.evaluate("[...document.querySelectorAll('.tq-cli-run .tq-cli-end')].map(e => e.textContent)")
+        ui.check('超时、输出太多各有一句话说清楚', '超过 60 秒' in ends[1] and '64 KB' in ends[2], ends)
+        await pg.locator('#tq-work-pick').click()
+        await pg.locator('#tq-work-pop [role=menuitemradio]', has_text='stm32-blink').click()
+        await cli.fill('ls')
+        await cli.press('Enter')
+        await pg.wait_for_function(ended(4))
+        ui.check('终端跟着工作区走：新对话选了 stm32-blink，命令就在那里跑', st['term_runs'][-1] == {'work': 'stm32-blink', 'cmd': 'ls'}, st['term_runs'][-1])
+        await pg.context.close()
+        # 手机：右栏从底下升起，终端的输入框在屏幕里
+        pg = await ui.page(browser, 390, 844)
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        await pg.locator('.tq-panel-b').click()
+        await pg.locator('#tq-tab-term').click()
+        await pg.wait_for_timeout(600)
+        tfit = await pg.evaluate("""(() => { const r = document.querySelector('#tq-term-form').getBoundingClientRect();
+          return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom), iw: innerWidth, ih: innerHeight }; })()""")
+        ui.check('手机：终端的输入框在屏幕里', tfit['l'] >= 0 and tfit['r'] <= tfit['iw'] and tfit['t'] >= 0 and tfit['b'] <= tfit['ih'], tfit)
         await pg.context.close()
 
         # 3. 没登录
