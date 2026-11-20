@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Read failure metadata and REA patch without messages or credentials
+      - name: Reproduce REA startup in an isolated workspace and session store
         env:
           LI2_API_KEY: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
         run: |
@@ -27,40 +27,16 @@ jobs:
               with opener.open(Request(url,headers=headers),timeout=30) as r: b=r.read(limit+1)
               if len(b)>limit: raise ValueError('Read bound exceeded')
               return b
+          
           try:
               machines=json.loads(read(base))['machines']
-              m=[m for m in machines if m.get('name')=='li2']
-              if len(m)!=1 or m[0].get('state')!='running': raise ValueError('Target is not running')
-              base+='/'+quote(m[0]['id'],safe='')
-              def file(path): return read(base+'/files/content?'+urlencode({'path':path}))
-              def listing(path):
-                  data=json.loads(read(base+'/files?'+urlencode({'path':path})))
-                  if data.get('truncated'): raise ValueError('Listing truncated')
-                  return data.get('entries',[])
-              entries=[e for e in listing('/data/home/.xin/runs') if re.fullmatch(r'r[a-z0-9]{6,30}\.json',e.get('name',''))]
-              runs=[]
-              for e in sorted(entries,key=lambda e:e.get('modTime',''),reverse=True)[:12]:
-                  meta=json.loads(file('/data/home/.xin/runs/'+e['name']))
-                  if meta.get('agent')!='harness': continue
-                  events=[]
-                  for line in file('/data/home/.xin/runs/'+e['name'][:-5]+'.jsonl').decode().splitlines():
-                      try: v=json.loads(line);events.append(v.get('ev',v))
-                      except ValueError: pass
-                  errors=[v.get('text') for v in events if v.get('t')=='err']
-                  kinds=[]
-                  for raw in errors:
-                      text=str(raw)
-                      kinds.extend(k for k in ['[object Object]','Invalid schema','invalid_request','too many tools','maximum','timeout','MCP','rea','429','400','schema'] if k.lower() in text.lower())
-                  runs.append({'started':meta.get('started'),'perm':meta.get('perm'),'ended':bool(meta.get('ended')),
-                               'error_count':len(errors),'error_types':sorted(set(kinds)),
-                               'error_object_keys':[list(v) if isinstance(v,dict) else [] for v in errors],
-                               'success':any(v.get('t')=='done' and v.get('ok') is True for v in events)})
-              patches=[e['name'] for e in listing('/data/home/.xin') if re.fullmatch(r'harness-persona\.[a-zA-Z0-9_.-]+\.rea-on\.yml',e.get('name',''))]
-              configs=[]
-              for name in patches[:3]:
-                  raw=file('/data/home/.xin/'+name).decode()
-                  configs.append({'patch':name,'rea_config':'serverName: rea' in raw,'command_local':'tianqi-rea-mcp' in raw,'all_tools':not re.search(r'(?m)^\s+tools:',raw)})
-              print('REA_DIAGNOSTIC '+json.dumps({'runs':runs,'patches':configs}),flush=True)
+              matches=[m for m in machines if m.get('name')=='li2']
+              if len(matches)!=1 or matches[0].get('state')!='running': raise ValueError('Expected running li2')
+              url=base+'/'+quote(matches[0]['id'],safe='')+'/exec'
+              payload={'argv':['python3','-c',"import json,os,signal,subprocess,tempfile\nfrom pathlib import Path\nhome=Path('/data/home')\nplugins=home/'.dsh/profiles/headless'\nkey=(home/'.xin/harness.key').read_text().strip()\npatch=home/'.xin/harness-persona.deepseek-v4.1-flash.max.purge-on.rea-on.yml'\nwith tempfile.TemporaryDirectory(prefix='tianqi-rea-check-',dir='/data/tmp') as d:\n    root=Path(d);(root/'dsh/profiles').mkdir(parents=True)\n    (root/'dsh/profiles/headless').symlink_to(plugins,target_is_directory=True)\n    env=os.environ.copy()\n    env.update({'DSH_HOME':str(root/'dsh'),'XIN_HARNESS_KEY':key,'DSH_PERMISSION_MODE':'danger-full-access'})\n    args=[str(home/'.local/bin/dsh'),'--profile','headless','--patch',str(patch),'--permission-mode','danger-full-access','--approval-policy','never','--json','Only reply REA_READY. Do not call tools or change files. This is an isolated plugin connection test.']\n    child=subprocess.Popen(args,cwd=root,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)\n    expired=False\n    try: out,err=child.communicate(timeout=80)\n    except subprocess.TimeoutExpired:\n        expired=True;os.killpg(child.pid,signal.SIGKILL);out,err=child.communicate(timeout=5)\n    finally:\n        try:os.killpg(child.pid,signal.SIGKILL)\n        except ProcessLookupError:pass\n    errors=[];types=[];ready=False\n    for line in out.splitlines():\n        try:event=json.loads(line)\n        except ValueError:continue\n        types.append(event.get('type'))\n        if event.get('type')=='error':errors.append(event)\n        if event.get('type')=='status' and event.get('phase')=='turn_end':errors.append({'turn_end':event.get('reason')})\n        if event.get('type') in ['text','final'] and 'REA_READY' in str(event.get('text','')):ready=True\n    raw=json.dumps({'code':child.returncode,'expired':expired,'ready':ready,'types':types,'errors':errors,'stderr_tail':err[-3500:]},ensure_ascii=False)\n    if key:raw=raw.replace(key,'[REDACTED]')\n    print('REA_NATIVE '+raw[:11000],flush=True)\n"],'timeoutSeconds':100,'noHistory':True}
+              with opener.open(Request(url,headers={**headers,'Content-Type':'application/json'},data=json.dumps(payload).encode()),timeout=115) as r: result=json.load(r)
+              for line in result.get('stdout','').splitlines():
+                  if line.startswith('REA_NATIVE '):print(line,flush=True)
+              print('REMOTE_EXIT '+json.dumps({'exitCode':result.get('exitCode',result.get('exit_code')),'truncated':result.get('truncated')}))
           except HTTPError as e: raise SystemExit('Diagnostic HTTP '+str(e.code)) from None
-          except (OSError,ValueError,KeyError,TypeError) as e: raise SystemExit('Diagnostic '+type(e).__name__) from None
           PY_DIAG
