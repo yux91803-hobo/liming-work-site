@@ -98,11 +98,33 @@ def front_lookup_verdict(events):
     steps = [e for e in events if e.get('t') == 'tool' and e.get('name') in ('WebSearch', 'WebFetch')]
     if not steps:
         return 'no web step recorded'
+    done = next((e for e in events if e.get('t') == 'done'), {})
+    # 先看这一轮有没有正常结束：报错结束的一轮通常也没有字，以前一律记成 empty reply，看不出是哪种（2026-11-20 #195 正式站联调）
+    if not done.get('ok'):
+        why = done.get('why') or done.get('error')
+        return 'turn did not finish ok' + (' (why=%s)' % why if why else '')
     if not '\n'.join(e.get('text', '') for e in events if e.get('t') == 'text').strip():
         return 'empty reply'
-    if not next((e for e in events if e.get('t') == 'done'), {}).get('ok'):
-        return 'turn did not finish ok'
     return ''
+
+
+def event_digest(events, text_chars=300):
+    """联调失败时打印的事件摘要：每个事件的类型、工具名、done 的 ok/why/model，文字只留前几百字。不含密码、令牌。"""
+    out = []
+    for e in events or []:
+        t = e.get('t')
+        row = {'t': t}
+        for k in ('name', 'ok', 'why', 'model', 'error'):
+            if e.get(k) is not None:
+                row[k] = e.get(k)
+        if t == 'text':
+            txt = str(e.get('text', ''))
+            row['len'] = len(txt)
+            row['text'] = txt[:text_chars]
+        elif t in ('tool', 'tool_end') and e.get('detail') is not None:
+            row['detail'] = str(e.get('detail'))[:120]
+        out.append(row)
+    return out
 
 
 def front_lookup_during_outage(events, plain_done=None):
