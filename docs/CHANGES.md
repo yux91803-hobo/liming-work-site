@@ -1,3 +1,10 @@
+# 修改清单 · 2026-11-21（天启：首次弹键盘和系统收起时输入框跳动）
+
+- **谁做的**：ChatGPT（Codex）实现并自查，无独立复核。分支 `codex/tianqi-keyboard-continuity`，从 #204 的 `12e56b9` 接手。
+- **复现**：Chromium 模拟 iPhone 390×844，在 #204 上测得，首次打开输入框收到迟来的视口 resize 时，面板立即跳约 131px。系统直接收键盘而输入框保留焦点时，面板跳约 141px，底部安全区最后一帧又把输入框推回 34px。再点同一个有焦点的输入框没有新的 focusin，面板等到 resize 才一下跳完 336px。
+- **改法**：天启的 iOS 外壳从当前已绘制的高度接上键盘动画。视口通知迟到时用剩下的曲线走到终点；系统收起后再点仍有焦点的输入框时，从这次触摸开始跟随。底部安全区按键盘覆盖高度逐步恢复。消息列表继续沿用已有的离底距离处理。参考 [React Aria 对 Safari 单次视口 resize 的实测](https://github.com/adobe/react-spectrum/issues/10485) 和 [assistant-ui 的底部输入区与消息视口协作](https://github.com/assistant-ui/assistant-ui/blob/main/apps/docs/content/docs/primitives/thread.mdx)。
+- **验证**：上面的三项回归检查在旧版全部失败，修改后全部通过。首次弹起和系统收起收到 resize 时，面板高度变化都小于 1px；安全区恢复时没有反向位移；保留焦点再次点击时，面板在收到 resize 之前已开始移动。iOS 键盘由测试模型模拟，真机有待验证。CI 与发布结果见对应 PR。
+
 # 修改清单 · 2026-11-21（天启：键盘弹起/收起时输入框不跟键盘走，一帧跳完）
 
 - **谁做的**：Muse 实现并自查（没有另一位审核）。站长 15:27 拍板这次不走 Hark、由 Muse 直接修（原实现 #203 是 Hark 做的，这次改的是外壳，不是 #203 改过的 sky.js）。

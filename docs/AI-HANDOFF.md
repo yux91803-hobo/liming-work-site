@@ -1,3 +1,9 @@
+## 2026-11-21 · 天启 iOS 键盘首次弹起、系统收起与原焦点重开（ChatGPT）
+
+- 分支 `codex/tianqi-keyboard-continuity`，从 #204（`12e56b9`）接手。ChatGPT（Codex）实现并自查，无独立复核。修改、开源参考和对照数据见 CHANGES 最新一条。
+- `site/shell.js` 中的 `kbStartLate` 从天启当前画出的高度使用键盘曲线剩余部分。系统按钮收起键盘时 textarea 可以保留焦点，重开时从触摸事件通知外壳。安全区按实际用于排版的键盘覆盖量变化；对话滚动逻辑仍在 `sky.js`。
+- 三项回归检查在旧版失败、修改后通过。真实 iPhone 键盘与 Safari 合成帧还未实测；CI 与正式发布以对应 PR 和部署运行记录为准。
+
 ## 2026-11-21 · 天启键盘跟随改到外壳层（Muse）
 
 - 改了什么见 CHANGES 最新一条。分支 `claude/tianqi-kb-follow`，Muse 实现并自查，无独立复核；站长明确这次不走 Hark、由 Muse 直接修。

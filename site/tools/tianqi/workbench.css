@@ -175,7 +175,9 @@ html.tianqi[data-theme="light"] .xc.tq-mode {
 .tq-frame[data-mode="mid"] { grid-template-columns: var(--lw) var(--gl) minmax(0, 1fr); }
 .tq-frame:is([data-mode="narrow"], [data-mode="phone"]) { grid-template-columns: minmax(0, 1fr); }
 .tq-frame[data-mode="phone"] { padding-block: var(--st, 0px) var(--sb, 0px); }
-html.kb-up { --sb: 0px; }   /* 键盘弹起时外壳给的标记：键盘盖住了 iPhone 底下的横条，不再给它留白 */
+/* 键盘滑过底部安全区时逐步消掉留白，避免收起的最后一帧把输入框推回去。 */
+html { --tq-safe-bottom: env(safe-area-inset-bottom, 0px); }
+html.kb-up { --sb: max(0px, calc(var(--tq-safe-bottom) - var(--tq-kb-overlap, 100vh))); }
 
 .tq-side { grid-column: 1; position: relative; z-index: 3; min-width: 0; min-height: 0; overflow: hidden; --rad: 12px; }
 .tq-mid { grid-column: 3; position: relative; z-index: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
