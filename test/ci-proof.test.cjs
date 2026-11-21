@@ -28,9 +28,12 @@ test('正式发布只选对应合并的同仓库 PR 成功运行；失败运行�
   const head='a'.repeat(40),merged='b'.repeat(40);
   async function run(changes={}){
     const outputs={},p={merged:true,merge_commit_sha:merged,number:94,base:{ref:'main'},head:{sha:head,repo:{full_name:'owner/site'}},...changes.pr};
-    const source={id:77,conclusion:'success',head_sha:head,...changes.run};
+    const source={id:77,status:'completed',conclusion:'success',head_sha:head,...changes.run};
     const artifacts=changes.artifacts||['tested-tree-check','tested-tree-e2e'].map(name=>({name,expired:false}));
-    const rest={repos:{listPullRequestsAssociatedWithCommit:()=>{}},pulls:{get:async()=>({data:p})},actions:{listWorkflowRunArtifacts:()=>{},listWorkflowRuns:async()=>({data:{workflow_runs:[{...source,id:76,conclusion:'failure'},source]}})}};
+    const rest={repos:{listPullRequestsAssociatedWithCommit:()=>{}},pulls:{get:async()=>({data:p})},actions:{listWorkflowRunArtifacts:()=>{},listWorkflowRuns:async({status})=>({data:{
+      // #205 的成功重跑在指定 status 时查不到，不指定则返回最终结论。
+      workflow_runs:status?[]:[{...source,id:76,conclusion:'failure'},source]
+    }})}};
     const github={rest,paginate:async(fn,args)=>fn===rest.repos.listPullRequestsAssociatedWithCommit?[{number:94}]:
       fn===rest.actions.listWorkflowRunArtifacts?(assert.equal(args.run_id,77),artifacts):assert.fail('unexpected endpoint')};
     await execute(github,{repo:{owner:'owner',repo:'site'},sha:merged},{setOutput:(k,v)=>{outputs[k]=v;},info:()=>{}});return outputs;
@@ -38,6 +41,7 @@ test('正式发布只选对应合并的同仓库 PR 成功运行；失败运行�
   assert.deepEqual(await run(),{run:'77',head});
   await assert.rejects(run({run:{head_sha:'c'.repeat(40)}}));
   await assert.rejects(run({run:{conclusion:'failure'}}));
+  await assert.rejects(run({run:{status:'in_progress'}}));
   await assert.rejects(run({artifacts:[{name:'tested-tree-check',expired:false},{name:'tested-tree-e2e',expired:true}]}));
   await assert.rejects(run({pr:{merge_commit_sha:'c'.repeat(40)}}));
   await assert.rejects(run({pr:{head:{sha:head,repo:{full_name:'outsider/fork'}}}}));

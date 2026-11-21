@@ -1,3 +1,8 @@
+# 修改清单 · 2026-11-21（正式站能读取重跑通过的 PR 记录）
+
+- ChatGPT（Codex）实现并自查，无独立复核。#205 的第一次自动发布因 GitHub 按 `status` 筛选时未返回重跑通过的 PR 运行而停止。直接读取运行或按 PR 提交查询可看到第二次尝试已成功。
+- 按 [GitHub Actions REST API](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow) 用提交和事件查询，然后检查返回运行确已结束且成功。继续要求同仓库 PR、正确的 head、两份有效证据以及与正式站完全相同的 Git 树。回归测试模拟 GitHub 在传 `status` 时漏掉该运行，同时验证仍在执行的运行不算成功。
+
 # 修改清单 · 2026-11-21（天启：首次弹键盘和系统收起时输入框跳动）
 
 - **谁做的**：ChatGPT（Codex）实现并自查，无独立复核。分支 `codex/tianqi-keyboard-continuity`，从 #204 的 `12e56b9` 接手。
