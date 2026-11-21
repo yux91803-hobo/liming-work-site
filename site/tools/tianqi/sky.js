@@ -275,13 +275,8 @@
         moveInk();
       }, 120);
     });
-    /* 站长 11-21 手机：点输入框还是闪一下。空对话时输入框摆在中间偏下，键盘一出来面板变矮，输入框和上面那行字一帧里往上跳两百多像素
-       （手机 844→450 实测 230px），键盘收起又一下跳回去。照上面「发出第一句」的做法（FLIP）：resize 事件在这一帧画出来之前到，
-       记下变之前的位置，用位移从旧位置滑到新位置，时长、曲线跟 iOS 键盘差不多，看起来是跟着键盘走，不再一跳。 */
-    /* 站长 11-21 早上（上面修好以后）：键盘放下的时候像抽帧。对话里有字时输入框贴在面板底下，键盘一收、面板一变高，
-       输入框一帧里往下跳 394px（手机 450→844 实测），键盘自己还在往下滑——看着就是掉了几帧。弹起时同样一帧往上跳。
-       所以不只空对话：只要面板高度变了（宽度没变，就是键盘），输入框都从旧位置滑到新位置。空对话时中间那段字也跟着一起挪。
-       iOS 要是一帧一帧地改可见区域（面板连着变几次），下一次接着从输入框眼下所在的位置滑，不会倒回去重来。 */
+    /* 键盘弹起、收起时面板只变高度。#199 / #200 曾经让输入框（空对话时连中间那段字）用 300ms FLIP 从旧位置滑到新位置，
+       #201 让列表下沿跟着一起滑；真机录屏证明这样反而落在键盘后面（见下面 11:56 那条），已经去掉，只留「列表离底距离不变」。 */
     /* 站长 11-21 上午：有几句话的对话，点输入框、键盘弹起来，最后一条回复被挡住，要自己往下拉才看得到。
        查到：消息列表（.xc-body）是输入框上面那块会滚的区域，键盘一出来面板变矮，它跟着变矮（390×844 实测 644→250），
        浏览器滚动条按「顶上不动」保留（scrollTop 还是 0），原来离底 0 的列表一下离底 279px，最后一条整个落在列表下沿外面。
@@ -289,44 +284,26 @@
        照 Element 网页版消息列表的做法（element-hq/element-web 的 ScrollPanel.tsx：滚动时记下 stuckAtBottom 或离底的 bottomOffset，
        onResize 时按它恢复，resize 引起的 scroll 事件不算数）：记住列表离底多远，面板变高变矮以后还离底那么远——
        原来在最底下就一直贴着底，最新那条留在输入框上面；往上翻着看旧消息的，看着的内容跟着底边走，不会被拽回最底下。
-       跟上面输入框的滑动一起走：列表下沿先留在输入框眼下的位置（负的 margin-bottom，跟输入框同样的 300ms 和曲线收回去），
-       每一帧按离底多远重设滚动位置，内容跟着输入框一起往上（往下）滑，不会先被切掉一截再冒出来。 */
-    var dock = $('.tq-dock'), kbTop = null, kbW = 0, kbH = 0, kbEnd = 0, kbGap = 0, kbPin = false;
-    function liftOf(el) {   // 动画眼下把它挪了多少（getBoundingClientRect 量到的是挪过以后的位置）
-      var m = getComputedStyle(el).transform; if (!m || m === 'none') return 0;
-      var v = m.match(/^matrix(3d)?\((.+)\)$/); if (!v) return 0;
-      var n = v[2].split(',').map(parseFloat); return v[1] ? n[13] : n[5];
-    }
-    function kbMovers() { return frame.hasAttribute('data-start') ? $$('.tq-mid > .xc-body, .tq-mid > .tq-dock') : [dock]; }
-    function kbBody() { return frame.hasAttribute('data-start') ? null : $('.tq-mid > .xc-body'); }   // 空对话时整段跟着输入框挪（上面），不用管滚动
+       （原来还让列表下沿跟着输入框的 FLIP 一起滑，现在面板变高度那一帧就摆好，不再滑。） */
+    /* 站长 11-21 11:56 真 iPhone 录屏（#202 之后，标题栏已经不动）：还是「一点也不丝滑，上去的时候会弹一下」。逐帧量（60 帧/秒）：
+       键盘一开始动，visualViewport 要过 40~80ms 才变（外壳这时才把面板缩矮），那时键盘已经走了 40%~55%；
+       弹起时键盘再过约 220ms 基本到位，#200 / #201 的 300ms FLIP 这时才从旧位置起步，输入框从键盘后面慢慢钻出来，
+       键盘停稳以后还要再追 60ms，前 5 帧整块输入框都看不见；收起时键盘约 170ms 滑出屏幕，输入框还在后面往下追，
+       中间露出一截近 100px 的空当。键盘比任何一段固定时长的动画都快，而且起步早于我们收到消息，FLIP 怎么调都是跟在后面。
+       所以不做动画：面板一变高度（ResizeObserver 在这一帧画出来之前回调），输入框靠排版直接落在新位置，列表在同一帧按离底距离摆好——
+       弹起时输入框先到位、键盘从下面补上来；收起时输入框已经在底下，被还没落下去的键盘盖着、跟着露出来。
+       列表照旧按 element-web ScrollPanel 的做法（stuckAtBottom / bottomOffset）：在最底下的贴着底，往上翻着看的离底一样远；
+       resize 引起的那一下 scroll 不算数。 */
+    var dock = $('.tq-dock'), kbW = 0, kbH = 0, kbAt = 0, kbGap = 0, kbSet = false;
+    function kbBody() { return frame.hasAttribute('data-start') ? null : $('.tq-mid > .xc-body'); }   // 空对话：整段靠排版跟着输入框，不用管滚动
     function gapOf(b) { return Math.max(0, b.scrollHeight - b.scrollTop - b.clientHeight); }
     function keepGap(b) { b.scrollTop = b.scrollHeight - b.clientHeight - kbGap; }
-    function kbMark() { var b = kbBody(); kbTop = dock.getBoundingClientRect().top - liftOf(dock); kbW = frame.clientWidth; kbH = frame.clientHeight; if (b) kbGap = gapOf(b); }
-    // 用 ResizeObserver 而不是 resize 事件：它在排版之后、这一帧画出来之前回调（Chrome、Safari 都是）；
-    // Safari 里 iframe 的 resize 事件常常晚一帧，先画出跳过去的那一帧再开始滑（WebKit 实测）
+    function kbMark() { var b = kbBody(); kbW = frame.clientWidth; kbH = frame.clientHeight; kbSet = true; if (b) kbGap = gapOf(b); }
     function onKbResize() {
       var w = frame.clientWidth, h = frame.clientHeight, b = kbBody(), gap = kbGap;
-      if (kbTop == null || w !== kbW || h === kbH) { kbMark(); return; }
-      if (REDUCE || !dock.animate) { kbMark(); if (b) { kbGap = gap; keepGap(b); } return; }   // 不做动画也照样贴着底
-      var lift = liftOf(dock), was = kbTop + lift, movers = kbMovers(), left = 0, now = performance.now();
-      movers.concat(b ? [b] : []).forEach(function (el) { el.getAnimations().forEach(function (a) { if (a.id === 'kb') { left = Math.max(left, kbEnd - now); a.cancel(); } }); });
-      kbMark(); kbGap = gap;   // 排版已经按新高度走了一遍（变高时滚动位置可能被浏览器截短），离底多远用变之前记下的
-      var dy = was - kbTop;
-      // 还在滑的时候又变了：照原来的结束时间收尾，不重新从头算 300ms（不然一直落在键盘后面追）
-      var ms = left > 0 ? Math.max(120, left) : 300, ease = left > 0 ? 'ease-out' : 'cubic-bezier(.25,.1,.25,1)';
-      if (Math.abs(dy) > 8) {
-        kbEnd = now + ms;
-        movers.forEach(function (el) { var a = el.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }], { duration: ms, easing: ease }); a.id = 'kb'; });
-        if (b) {
-          // 列表下沿跟着输入框走：一开始还在输入框眼下的位置（弹起时往下多伸 dy，收起时先短 dy），一起收回去
-          var mb = b.animate([{ marginBottom: -dy + 'px' }, { marginBottom: '0px' }], { duration: ms, easing: ease }); mb.id = 'kb';
-          kbPin = true;
-          mb.onfinish = function () { if (kbPin) keepGap(b); kbPin = false; };
-          mb.oncancel = function () { kbPin = false; };
-          requestAnimationFrame(function step() { if (!kbPin || mb.playState === 'finished' || mb.playState === 'idle') return; keepGap(b); requestAnimationFrame(step); });
-        }
-      }
-      if (b) keepGap(b);   // 这一帧画出来之前就摆好，不先画一帧被切掉的
+      if (!kbSet || w !== kbW || h === kbH) { kbMark(); return; }
+      kbMark(); kbAt = performance.now();
+      if (b) { kbGap = gap; keepGap(b); }   // 排版已经按新高度走过（变高时滚动位置可能被截短），离底多远用变之前记下的；这一帧画出来之前就摆好
     }
     if (window.ResizeObserver) new ResizeObserver(onKbResize).observe(frame); else addEventListener('resize', onKbResize);
     requestAnimationFrame(kbMark);
@@ -335,13 +312,12 @@
     // 输入框变高（打字换行、用量那行出来）列表跟着变矮：原来贴着底的继续贴着底；往上翻着看的不动
     if (window.ResizeObserver) new ResizeObserver(function () {
       if (frame.clientHeight !== kbH || frame.clientWidth !== kbW) return;
-      var b = kbBody(); if (b && kbGap <= 4 && performance.now() > kbEnd) keepGap(b);
+      var b = kbBody(); if (b && kbGap <= 4) keepGap(b);
       kbMark();
     }).observe(dock);
     new MutationObserver(function () { requestAnimationFrame(kbMark); }).observe(frame, { attributes: true, attributeFilter: ['data-start', 'data-mode'] });
-    // 自己滚了：重新记离底多远（贴着底的动画里自己设的滚动不算）；手一碰列表就不再替他贴着底
-    document.addEventListener('scroll', function (e) { var b = kbBody(); if (b && e.target === b && !kbPin && performance.now() > kbEnd + 60 && frame.clientHeight === kbH) kbGap = gapOf(b); }, true);
-    ['touchstart', 'wheel'].forEach(function (t) { document.addEventListener(t, function (e) { if (kbPin && e.target.closest && e.target.closest('.tq-mid > .xc-body')) kbPin = false; }, { capture: true, passive: true }); });
+    // 自己滚了：重新记离底多远（面板刚变完高度那一下浏览器发的 scroll 不算）
+    document.addEventListener('scroll', function (e) { var b = kbBody(); if (b && e.target === b && performance.now() > kbAt + 100 && frame.clientHeight === kbH) kbGap = gapOf(b); }, true);
 
     /* 手机：按住标签那一行往下拖就收起（照 Vaul 的抽屉：拖过一段或甩得快就收） */
     (function () {

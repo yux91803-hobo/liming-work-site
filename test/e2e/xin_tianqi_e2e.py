@@ -1015,8 +1015,10 @@ async def main():
         anim = await tf.evaluate("""(() => { const d = document.querySelector('.tq-dock'), a = d.getAnimations().filter(x => x.playState === 'running'); return { n: a.length, top: Math.round(d.getBoundingClientRect().top) }; })()""")
         await pg.wait_for_timeout(500)
         top1 = await tf.evaluate("Math.round(document.querySelector('.tq-dock').getBoundingClientRect().top)")
-        ui.check('手机空对话点输入框、键盘弹起：输入框跟着滑上去，不一帧跳过去',
-                 top1 < top0 - 100 and anim['n'] >= 1 and anim['top'] > top1 + 20, (top0, anim, top1))
+        # 11-21 11:56 真 iPhone 录屏：键盘比我们收到 resize 早 40~80ms 开始动、跑得也比 300ms 的滑动快，滑动只会落在键盘后面。
+        # 改成面板变矮那一帧输入框就到位，不再有追键盘的动画
+        ui.check('手机空对话点输入框、键盘弹起：面板变矮那一帧输入框就到位，没有追在键盘后面的动画',
+                 top1 < top0 - 100 and anim['n'] == 0 and anim['top'] == top1, (top0, anim, top1))
         await pg.evaluate("const s = document.getElementById('stage').style; s.top = s.height = s.bottom = ''")
         await tf.evaluate('document.activeElement.blur()')
         await pg.wait_for_timeout(1300)
@@ -1038,8 +1040,8 @@ async def main():
         mid = await tf.evaluate("""(() => { const d = document.querySelector('.tq-dock'); return { n: d.getAnimations().filter(a => a.id === 'kb' && a.playState === 'running').length, top: Math.round(d.getBoundingClientRect().top) }; })()""")
         await pg.wait_for_timeout(500)
         down_y = await tf.evaluate(dock_y)
-        ui.check('手机有字的对话、键盘收起：输入框跟着键盘滑下去，不一帧跳到底',
-                 down_y > up_y + 300 and mid['n'] == 1 and up_y - 5 <= mid['top'] < down_y - 100, (up_y, mid, down_y))
+        ui.check('手机有字的对话、键盘收起：面板变高那一帧输入框就回到底下（被还没落下的键盘盖着），不在键盘上面慢慢往下追',
+                 down_y > up_y + 300 and mid['n'] == 0 and mid['top'] == down_y, (up_y, mid, down_y))
         await pg.context.close()
 
         # 站长 11-21 上午 iPhone 截图：「你好 / 回话 / 你是什么模？/ 回话」四句的对话（不满一屏、不能滚），点输入框键盘弹起来，
@@ -1088,9 +1090,9 @@ async def main():
         s_, l_, rd = kb_scroll['short'], kb_scroll['long'], kb_scroll['reading']
         ui.check('手机几句话的对话（不满一屏）点输入框、键盘弹起：最后一条回复留在输入框上面看得见，不被挡住',
                  s_['before']['gap'] == 0 and s_['up']['gap'] <= 1 and s_['up']['dock'] - 60 <= s_['up']['last'] <= s_['up']['dock'] and s_['up']['body'] == s_['up']['dock'], s_)
-        ui.check('手机长对话在最底下、键盘弹起：一直贴着底，滑的过程中列表下沿跟着输入框走，最后一条始终在输入框上面',
+        ui.check('手机长对话在最底下、键盘弹起：一直贴着底，150ms 时列表和输入框已经到位（不再滑），最后一条在输入框上面',
                  l_['before']['gap'] <= 1 and l_['up']['gap'] <= 1 and l_['up']['last'] <= l_['up']['dock']
-                 and abs(l_['sliding']['body'] - l_['sliding']['dock']) <= 2 and l_['sliding']['dock'] > l_['up']['dock'] + 20 and l_['sliding']['last'] <= l_['sliding']['dock'], l_)
+                 and l_['sliding'] == l_['up'] and l_['sliding']['body'] == l_['sliding']['dock'], l_)
         ui.check('手机往上翻着看旧消息时键盘弹起、收起：看着的内容跟着底边走（离底一样远），不被拽回最底下',
                  all(abs(rd[k]['gap'] - up) <= 2 for k in ('before', 'up', 'down')) and abs((rd['up']['dock'] - rd['up']['last']) - (rd['before']['dock'] - rd['before']['last'])) <= 2, rd)
         ui.check('手机键盘收起：列表和输入框回到原位，最后一条回到弹起之前的位置，中间不留空当',
@@ -1143,8 +1145,37 @@ async def main():
             down = await job
             ios_kb[name] = {'up': up, 'down': down, 'typed': typed, 'log': await pg.evaluate('__iosKb.st.log')}
             await pg.context.close()
+        # 11-21 11:56 真 iPhone 录屏逐帧量的（docs/CHANGES.md「输入框慢半拍」）：resize 落到画面上时键盘已经走了 40%~55%，
+        # #200 / #201 的 300ms 滑动这时才起步，弹起时输入框在键盘后面追到键盘停稳以后 60ms，收起时在键盘上面落后近 100px，
+        # 列表分十几帧挪、中间一帧步子突然变小（150→60→150）。ios_kb_model.js 按录屏的键盘曲线和 resize 晚到的时间扮演。
+        def kb_follow(tr, opening):
+            r = next((i for i, s_ in enumerate(tr) if s_['stageH'] != tr[0]['stageH']), None)
+            if r is None: return {'resize': None}
+            fin, H0 = tr[-1], max(s_['kb'] for s_ in tr)
+            to_fin = next((i - r for i in range(r, len(tr)) if all(abs(s_['dock'] - fin['dock']) <= 1 for s_ in tr[i:])), None)
+            after = tr[r + 1:]
+            if opening:   # 输入框应该在键盘上面：比到位以后多压进键盘里多少
+                lag = max([0] + [(s_['dockB'] - s_['kb']) - (fin['dockB'] - fin['kb']) for s_ in after])
+            else:         # 键盘还在屏幕上时，输入框底边和键盘顶之间比放下以后多空出多少
+                lag = max([0] + [(s_['kb'] - s_['dockB']) - (H0 - fin['dockB']) for s_ in after if s_['kb'] < H0])
+            def moves(key):
+                v = [s_[key] for s_ in tr if s_[key] is not None]
+                return sum(1 for a_, b_ in zip(v, v[1:]) if abs(b_ - a_) > 1)
+            return {'resize_t': tr[r]['t'], 'kb_at_resize': H0 - tr[r]['kb'] if opening else tr[r]['kb'] - min(s_['kb'] for s_ in tr),
+                    'frames_to_final': to_fin, 'lag': lag, 'dock_moves': moves('dock'), 'last_moves': moves('last')}
+
         for name, r in ios_kb.items():
             up, down = r['up'], r['down']
+            fu, fd = kb_follow(up, True), kb_follow(down, False)
+            label = '有字的对话' if name == 'chat' else '空对话'
+            ui.check('iPhone%s键盘弹起（resize 比键盘晚 48ms）：面板变矮后一帧内输入框到位，之后不比键盘慢（压进键盘 ≤4px），只挪一次' % label,
+                     fu.get('frames_to_final') is not None and fu['frames_to_final'] <= 1 and fu['lag'] <= 4 and fu['dock_moves'] <= 1
+                     and fu['kb_at_resize'] > 60, fu)
+            ui.check('iPhone%s键盘收起（resize 比键盘晚 55ms）：面板变高后一帧内输入框回到底下，不在键盘上面拖着空当（多空 ≤4px），只挪一次' % label,
+                     fd.get('frames_to_final') is not None and fd['frames_to_final'] <= 1 and fd['lag'] <= 4 and fd['dock_moves'] <= 1, fd)
+            if name == 'chat':
+                ui.check('iPhone有字的对话键盘弹起、收起：最后一条消息各只挪一次（同一帧跟输入框一起到位），不分几步、不回头',
+                         fu['last_moves'] <= 1 and fd['last_moves'] <= 1, (fu, fd))
             heads = [s['head'] for s in up + down]
             summary = {'log': r['log'], 'typed': r['typed'], 'head': (min(heads), max(heads)), 'gap': max(s['stage'] for s in up + down),
                        'dock_up': (up[0]['dock'], up[-1]['dock'], kb_moves(up, 'dock', False)), 'dock_down': (down[0]['dock'], down[-1]['dock'], kb_moves(down, 'dock', True)),
