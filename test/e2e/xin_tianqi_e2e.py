@@ -1042,6 +1042,60 @@ async def main():
                  down_y > up_y + 300 and mid['n'] == 1 and up_y - 5 <= mid['top'] < down_y - 100, (up_y, mid, down_y))
         await pg.context.close()
 
+        # 站长 11-21 上午 iPhone 截图：「你好 / 回话 / 你是什么模？/ 回话」四句的对话（不满一屏、不能滚），点输入框键盘弹起来，
+        # 面板变矮、输入框上去了，消息列表还停在顶上，最后一条回复落在列表下沿外面、看不见（修之前实测：列表 644→250 高，scrollTop 一直 0，
+        # 最后一条底边 553、输入框顶 300）。要跟聊天应用一样贴着底：最后一条留在输入框上面；往上翻着看的，看着的内容跟着底边走
+        last_y = """(() => { const b = document.querySelector('.tq-mid > .xc-body'), ms = b.querySelectorAll('.xc-msgs > .xc-m'), l = ms[ms.length - 1].getBoundingClientRect();
+          return { last: Math.round(l.bottom), dock: Math.round(document.querySelector('.tq-dock').getBoundingClientRect().top),
+                   body: Math.round(b.getBoundingClientRect().bottom), gap: Math.round(b.scrollHeight - b.scrollTop - b.clientHeight) }; })()"""
+        kb_on = "const s = document.getElementById('stage').style; s.top = '0px'; s.height = '450px'; s.bottom = 'auto'"
+        kb_off = "const s = document.getElementById('stage').style; s.top = s.height = s.bottom = ''"
+        short = [{'run': 'rhist0009', 'events': [{'t': 'user', 'text': '你是什么模？'}, {'t': 'text', 'text': '我是 Kimi，由 Moonshot AI（月之暗面）开发的 AI 助手。'},
+                                                {'t': 'done', 'ok': True, 'code': 0, 'ms': 800}], 'done': True}]
+        long_ = [{'run': 'rlong%04d' % i, 'events': [{'t': 'user', 'text': '问题 %d' % i}, {'t': 'text', 'text': '回答 %d，' % i + '这一段写长一点，' * 12},
+                                                    {'t': 'done', 'ok': True, 'code': 0, 'ms': 800}], 'done': True} for i in range(8)]
+        kb_scroll = {}
+        for name, extra, up in (('short', short, 0), ('long', long_, 0), ('reading', long_, 300)):
+            pg = await ui.page(browser, 390, 844, mobile=True, theme='dark')
+            st = await tianqi_mock(pg)
+            st['hist_extra'] = extra
+            await pg.goto(ui.BASE + '/tianqi')
+            frame = pg.frame_locator('.panel[data-id=tianqi] iframe')
+            await frame.locator('.tq-box').wait_for()
+            await pg.wait_for_timeout(1200)
+            await frame.locator('.tq-menu').tap()
+            await frame.locator('.tq-side .xc-si', has_text='天启旧对话').tap()
+            await frame.locator('.xc-bub').first.wait_for()
+            await pg.wait_for_timeout(800)
+            tf = next(f for f in pg.frames if '/tools/tianqi/' in f.url)
+            if up:   # 往上翻了 300px 在看旧消息
+                await tf.evaluate("(() => { const b = document.querySelector('.tq-mid > .xc-body'); b.scrollTop = b.scrollHeight - b.clientHeight - %d; })()" % up)
+                await pg.wait_for_timeout(200)
+            await frame.locator('.xc-row textarea').tap()
+            await pg.wait_for_timeout(1100)
+            r = {'before': await tf.evaluate(last_y)}
+            await pg.evaluate(kb_on)
+            await pg.wait_for_timeout(150)
+            r['sliding'] = await tf.evaluate(last_y)
+            await pg.wait_for_timeout(500)
+            r['up'] = await tf.evaluate(last_y)
+            await tf.evaluate('document.activeElement.blur()')
+            await pg.evaluate(kb_off)
+            await pg.wait_for_timeout(700)
+            r['down'] = await tf.evaluate(last_y)
+            kb_scroll[name] = r
+            await pg.context.close()
+        s_, l_, rd = kb_scroll['short'], kb_scroll['long'], kb_scroll['reading']
+        ui.check('手机几句话的对话（不满一屏）点输入框、键盘弹起：最后一条回复留在输入框上面看得见，不被挡住',
+                 s_['before']['gap'] == 0 and s_['up']['gap'] <= 1 and s_['up']['dock'] - 60 <= s_['up']['last'] <= s_['up']['dock'] and s_['up']['body'] == s_['up']['dock'], s_)
+        ui.check('手机长对话在最底下、键盘弹起：一直贴着底，滑的过程中列表下沿跟着输入框走，最后一条始终在输入框上面',
+                 l_['before']['gap'] <= 1 and l_['up']['gap'] <= 1 and l_['up']['last'] <= l_['up']['dock']
+                 and abs(l_['sliding']['body'] - l_['sliding']['dock']) <= 2 and l_['sliding']['dock'] > l_['up']['dock'] + 20 and l_['sliding']['last'] <= l_['sliding']['dock'], l_)
+        ui.check('手机往上翻着看旧消息时键盘弹起、收起：看着的内容跟着底边走（离底一样远），不被拽回最底下',
+                 all(abs(rd[k]['gap'] - up) <= 2 for k in ('before', 'up', 'down')) and abs((rd['up']['dock'] - rd['up']['last']) - (rd['before']['dock'] - rd['before']['last'])) <= 2, rd)
+        ui.check('手机键盘收起：列表和输入框回到原位，最后一条回到弹起之前的位置，中间不留空当',
+                 all(abs(x['down']['last'] - x['before']['last']) <= 2 and x['down']['body'] == x['down']['dock'] == x['before']['dock'] for x in (s_, l_, rd)), (s_['down'], l_['down'], rd['down']))
+
         # 7. 深链：只启动天启；返回首页后再启动小芯。
         pg = await ui.page(browser, 1280, 860)
         st = await tianqi_mock(pg, xin_enabled=True)
