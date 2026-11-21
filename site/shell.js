@@ -281,11 +281,97 @@
     // 工具里也知道键盘在不在：键盘盖住了 iPhone 底下那条横条，工具不用再给它留白（天启的 --sb）
     try { var p = current && panels[current]; if (p) p._frame.contentDocument.documentElement.classList.toggle('kb-up', !!on); } catch (e) { /* 别的源 */ }
   }
+  /* 站长 11-21 15:08 真 iPhone 录屏（#203 上线后复测）：收起键盘时输入框还是一格一格跳。逐帧量（30 帧/秒，键盘面板顶边
+     和输入框上下边分开量）：键盘自己是连续滑的——弹起 11 个位置、约 333ms 走完，收起约 200ms；输入框却只有一步，
+     整个行程约 395pt 在一帧里跳完。收起时键盘先动约 67ms、已经落了约 120pt，输入框还停在原处，底下空当先涨到
+     约 130pt 才一跳落地；弹起时反过来，输入框一帧先跳到位，键盘再用 300ms 慢慢追上来。
+     根子在这一层，不在 iframe 里：#203 让输入框在面板变高度的那一帧靠排版到位，可 visualViewport 的高度本身就是
+     台阶——键盘动起来以后 48~104ms 才变、而且一次变到底（见 ios_kb_model.js 的建模），面板高度跟着一步到位，
+     输入框自然一步跳完。#200 那种在 iframe 里做的 FLIP 也不行：它等 resize 到了才起步，时长又是拍的 300ms，
+     怎么调都跟在键盘后面。
+     这一回在外壳这一层跟：键盘的起点不是 resize，是焦点——点输入框（focusin）键盘就开始升、离开（focusout）
+     就开始落，比 resize 早 40~100ms。从焦点那一刻起，照真机录屏量出的键盘曲线（下面 KB_OPEN / KB_CLOSE，
+     和 test/e2e/ios_kb_model.js 里同一份数据）逐帧把面板高度从起点推到终点；settleStage 本来就在焦点后逐帧调
+     fitStage 一秒钟，节奏现成。终点：弹起用上一次键盘升起时 visualViewport 的高度（同一台机器键盘高度基本不变，
+     记在 kbOpenH 里）；第一次还没记下就等 visualViewport 给值再走，起点按它迟到的 48ms 往前推，落点和键盘对齐；
+     收起的终点就是整屏高，不用等。visualViewport 中途报出中间高度（跟手收起那种系统自己连续给值的场合）就停掉
+     跟随、照它给的值走；报出的终点和记住的不一样（键盘高度变了），就接着眼下的高度改奔新终点、到点时间不变。
+     iframe 里的 sky.js 不用动：面板高度现在每帧都在变，它「变高度那一帧靠排版到位、列表按离底距离摆好」正好逐帧生效。 */
+  var KB_OPEN = [[0, 0], [15, .116], [32, .244], [48, .391], [65, .513], [82, .619], [98, .712], [115, .783], [132, .842], [148, .882], [165, .914],
+    [182, .937], [198, .954], [215, .967], [232, .977], [248, .983], [265, .988], [282, .992], [298, .994], [332, .997], [382, 1]];
+  var KB_CLOSE = [[0, 0], [3, .017], [20, .115], [36, .265], [53, .404], [70, .534], [86, .637], [103, .722], [120, .793], [136, .847], [153, .889],
+    [170, .916], [186, .94], [210, 1]];
+  var KB_LATE_OPEN = 48, KB_LATE_CLOSE = 55;   // visualViewport 比键盘晚到多少 ms（11:56 与 15:08 两段录屏量到 40~104ms，取模型值）
+  var kbAnim = null, kbOpenH = 0, kbSession = false, kbPending = false;
+  function kbCurve(tab, ms) {
+    if (ms <= 0) return 0;
+    for (var i = 1; i < tab.length; i++) if (ms <= tab[i][0]) { var a = tab[i - 1], b = tab[i]; return a[1] + (b[1] - a[1]) * (ms - a[0]) / (b[0] - a[0]); }
+    return 1;
+  }
+  function kbAnimAt(a, now) {
+    var tab = a.dir === 'open' ? KB_OPEN : KB_CLOSE, el = now - a.t0;
+    return { h: a.fromH + (a.toH - a.fromH) * kbCurve(tab, el), done: el >= tab[tab.length - 1][0] };
+  }
+  function stageH() { return stage.getBoundingClientRect().height; }
+  function kbStart(dir, fromH, toH, t0) { kbAnim = { dir: dir, fromH: fromH, toH: toH, t0: t0 }; settleStage(); }
+  function kbFocus(opening, e) {
+    if (!lite) return;
+    var now = performance.now();
+    if (opening) {
+      kbSession = true;
+      if (kbAnim && kbAnim.dir === 'open') return;
+      if (kbAnim && kbAnim.dir === 'close') {   // 收起一半又点回来：从眼下的高度转头往上走
+        if (kbOpenH) kbStart('open', kbAnimAt(kbAnim, now).h, kbOpenH, now); else kbPending = true;
+        return;
+      }
+      if (html.classList.contains('kb-up')) return;   // 键盘已经升着（只是换了个输入框），不用重走一遍
+      if (kbOpenH) kbStart('open', stageH(), kbOpenH, now);
+      else kbPending = true;   // 还不知道这台机器的键盘多高，等 visualViewport 给值
+    } else {
+      kbPending = false;
+      if (e && e.relatedTarget && typingEl(e.relatedTarget)) return;   // 只是换了个输入框，键盘不收
+      kbSession = false;
+      var h = kbAnim ? kbAnimAt(kbAnim, now).h : stageH();
+      if (h < innerHeight - 2) kbStart('close', h, innerHeight, now);
+      else kbAnim = null;
+    }
+  }
   function fitStage() {
     var vv = window.visualViewport, s = stage.style;
+    if (!vv || !lite || !current || Math.abs((vv.scale || 1) - 1) > 0.01) { kbAnim = null; s.top = s.height = s.bottom = ''; kbCover(false); return; }
+    var full = innerHeight, target = vv.height, now = performance.now();
+    if (kbAnim) {
+      var lo = Math.min(kbAnim.fromH, kbAnim.toH), hi = Math.max(kbAnim.fromH, kbAnim.toH);
+      if (target > lo + 2 && target < hi - 2) kbAnim = null;   // 系统自己在连续给中间高度（跟手收起之类）：让位给它，下面照它的值走
+      else if (kbAnim.dir === 'open' && target < full - 1 && target !== kbAnim.toH) {
+        // visualViewport 报出的键盘高度和记下的不一样：接着眼下的高度改奔新终点，到点的时间不变
+        var p = kbCurve(KB_OPEN, now - kbAnim.t0), at = kbAnimAt(kbAnim, now);
+        if (p < .95) { kbAnim.fromH = (at.h - target * p) / (1 - p); kbAnim.toH = target; at = kbAnimAt(kbAnim, now); }
+        else kbAnim = null;
+        if (kbAnim) {
+          if (at.done) kbAnim = null;
+          else { s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = at.h + 'px'; s.bottom = 'auto'; kbCover(true); return; }
+        }
+      } else {
+        var at2 = kbAnimAt(kbAnim, now);
+        if (!at2.done) { s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = at2.h + 'px'; s.bottom = 'auto'; kbCover(true); return; }
+        kbAnim = null;   // 跟随走完了，下面按 visualViewport 的现值对齐
+      }
+    }
     // 只在触屏、工具开着、没在放大、可见区域确实比窗口矮（键盘）的时候跟；别的时候回到铺满
-    if (!vv || !lite || !current || Math.abs((vv.scale || 1) - 1) > 0.01 || vv.height >= innerHeight - 1) { s.top = s.height = s.bottom = ''; kbCover(false); return; }
-    s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = vv.height + 'px'; s.bottom = 'auto'; kbCover(true);
+    if (target >= full - 1) {
+      if (kbSession) {
+        var h0 = stageH();
+        if (h0 < full - 2) { kbSession = false; kbStart('close', h0, full, now - KB_LATE_CLOSE); fitStage(); return; }   // 焦点那边的收起没接到（blur 没触发之类）：按 visualViewport 变回整屏补一个收起跟随；会话就此销掉，不然跟随走完还会再触发一次
+      }
+      s.top = s.height = s.bottom = ''; kbCover(false);
+      if (!typingNow()) kbSession = false;
+      return;
+    }
+    kbOpenH = target;
+    if (typingNow()) kbSession = true;
+    if (kbPending) { kbPending = false; kbStart('open', full, target, now - KB_LATE_OPEN); fitStage(); return; }
+    s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = target + 'px'; s.bottom = 'auto'; kbCover(true);
   }
   /* iOS 键盘弹出、收起时 visualViewport 不一定发事件（WebKit 198347、WICG visual-viewport #79；iOS 26 收起后 offsetTop 不归零，WebKit 297779）。
      站长 11-20 第三次截图：点天启的输入框，键盘出来了输入框却被挡住，打一个字（iOS 为了露出光标挪了一下可见区域）才跳上来。
@@ -306,7 +392,7 @@
   function watchFrame(f) {
     try {
       var d = f.contentDocument; if (!d || d.__kbWatch) return; d.__kbWatch = true;
-      var on = function (e) { if (!typingEl(e.target)) return; if (e.type === 'focusin' && lite) kbPre(true); settleStage(); };
+      var on = function (e) { if (!typingEl(e.target)) return; if (e.type === 'focusin') { if (lite) kbPre(true); kbFocus(true, e); } else kbFocus(false, e); settleStage(); };
       d.addEventListener('focusin', on, true); d.addEventListener('focusout', on, true);
       if (isIOS) focusInPlace(d);
     } catch (e) { /* 别的源：没法跟，只靠 visualViewport 的事件 */ }

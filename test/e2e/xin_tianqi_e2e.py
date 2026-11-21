@@ -1023,7 +1023,9 @@ async def main():
         await tf.evaluate('document.activeElement.blur()')
         await pg.wait_for_timeout(1300)
         ui.check('手机键盘收起、离开输入框：整页底色还原成首页的浅色', (await pg.evaluate(bg))[0] == idle[0], await pg.evaluate(bg))
-        # 站长 11-21 早上：键盘放下的时候像抽帧。对话里有字时输入框贴在面板底下，面板一变高它一帧往下跳 394px。要跟着键盘滑下去
+        # 站长 11-21 早上：键盘放下的时候像抽帧。对话里有字时输入框贴在面板底下，面板一变高它一帧往下跳 394px。
+        # 15:08 复测（#203 后）还是一帧跳完：外壳现在从失焦那一刻起照键盘曲线逐帧把面板放下来（这里手动把面板摆成
+        # 键盘升起的样子再 blur，面板的样式随后被清掉也没关系，外壳会按曲线接着放），输入框要跟着往下走、不许一帧到底
         await frame.locator('.tq-menu').tap()
         await frame.locator('.tq-side .xc-si', has_text='天启旧对话').tap()
         await frame.locator('.xc-bub').first.wait_for()
@@ -1040,8 +1042,8 @@ async def main():
         mid = await tf.evaluate("""(() => { const d = document.querySelector('.tq-dock'); return { n: d.getAnimations().filter(a => a.id === 'kb' && a.playState === 'running').length, top: Math.round(d.getBoundingClientRect().top) }; })()""")
         await pg.wait_for_timeout(500)
         down_y = await tf.evaluate(dock_y)
-        ui.check('手机有字的对话、键盘收起：面板变高那一帧输入框就回到底下（被还没落下的键盘盖着），不在键盘上面慢慢往下追',
-                 down_y > up_y + 300 and mid['n'] == 0 and mid['top'] == down_y, (up_y, mid, down_y))
+        ui.check('手机有字的对话、键盘收起：输入框跟着键盘往下走（失焦 30ms 时已经在半路、还没到底），约 210ms 后和键盘一起落到底',
+                 down_y > up_y + 300 and mid['n'] == 0 and up_y + 40 < mid['top'] < down_y - 40, (up_y, mid, down_y))
         await pg.context.close()
 
         # 站长 11-21 上午 iPhone 截图：「你好 / 回话 / 你是什么模？/ 回话」四句的对话（不满一屏、不能滚），点输入框键盘弹起来，
@@ -1131,6 +1133,14 @@ async def main():
                 await pg.wait_for_timeout(800)
             tf = next(f for f in pg.frames if '/tools/tianqi/' in f.url)
             await pg.evaluate("__iosKb.install(); __iosKbHook(document.querySelector('.panel[data-id=tianqi] iframe').contentWindow)")
+            # 先热身一次：第一次弹起时外壳还不知道这台机器的键盘多高，只能等 visualViewport 给值才起步（那一下输入框
+            # 还躲在键盘后面，看不见）；记住高度以后，后面每次都从点下去那一刻跟着走——站长平时用的就是这条路，
+            # 下面量的就是它。热身的 focus 记录清掉，不算进后面的 preventScroll 检查。
+            await frame.locator('.xc-row textarea').tap()
+            await pg.wait_for_timeout(700)
+            await tf.evaluate('document.activeElement.blur()')
+            await pg.wait_for_timeout(700)
+            await pg.evaluate('__iosKb.st.log.length = 0')
             trace = "__iosKbTrace(document.querySelector('.panel[data-id=tianqi] iframe'), 900)"
             job = asyncio.ensure_future(pg.evaluate(trace))
             await asyncio.sleep(.1)
@@ -1146,36 +1156,45 @@ async def main():
             ios_kb[name] = {'up': up, 'down': down, 'typed': typed, 'log': await pg.evaluate('__iosKb.st.log')}
             await pg.context.close()
         # 11-21 11:56 真 iPhone 录屏逐帧量的（docs/CHANGES.md「输入框慢半拍」）：resize 落到画面上时键盘已经走了 40%~55%，
-        # #200 / #201 的 300ms 滑动这时才起步，弹起时输入框在键盘后面追到键盘停稳以后 60ms，收起时在键盘上面落后近 100px，
-        # 列表分十几帧挪、中间一帧步子突然变小（150→60→150）。ios_kb_model.js 按录屏的键盘曲线和 resize 晚到的时间扮演。
-        def kb_follow(tr, opening):
-            r = next((i for i, s_ in enumerate(tr) if s_['stageH'] != tr[0]['stageH']), None)
-            if r is None: return {'resize': None}
-            fin, H0 = tr[-1], max(s_['kb'] for s_ in tr)
-            to_fin = next((i - r for i in range(r, len(tr)) if all(abs(s_['dock'] - fin['dock']) <= 1 for s_ in tr[i:])), None)
-            after = tr[r + 1:]
-            if opening:   # 输入框应该在键盘上面：比到位以后多压进键盘里多少
-                lag = max([0] + [(s_['dockB'] - s_['kb']) - (fin['dockB'] - fin['kb']) for s_ in after])
-            else:         # 键盘还在屏幕上时，输入框底边和键盘顶之间比放下以后多空出多少
-                lag = max([0] + [(s_['kb'] - s_['dockB']) - (H0 - fin['dockB']) for s_ in after if s_['kb'] < H0])
-            def moves(key):
-                v = [s_[key] for s_ in tr if s_[key] is not None]
-                return sum(1 for a_, b_ in zip(v, v[1:]) if abs(b_ - a_) > 1)
-            return {'resize_t': tr[r]['t'], 'kb_at_resize': H0 - tr[r]['kb'] if opening else tr[r]['kb'] - min(s_['kb'] for s_ in tr),
-                    'frames_to_final': to_fin, 'lag': lag, 'dock_moves': moves('dock'), 'last_moves': moves('last')}
+        # #200 / #201 的 300ms 滑动这时才起步，弹起时输入框在键盘后面追到键盘停稳以后 60ms，收起时在键盘上面落后近 100px。
+        # #203 改成面板变高度那一帧靠排版到位，11-21 15:08 复测录屏里输入框整个行程（约 395pt）还是一帧跳完：
+        # visualViewport 的高度是一次变到底的台阶，跟着台阶走就是一步。这回外壳从焦点那一刻起照键盘曲线逐帧改面板
+        # 高度（shell.js 的 kbFocus / fitStage），这里改看「跟得紧不紧」：键盘在动时输入框底边和键盘顶的距离要一直
+        # 和升稳以后一样、输入框要分很多小步走、和键盘差不多同时到位；最后一条跟着输入框一起走。
+        def kb_follow(tr, opening, open_gap=None):
+            fin = tr[-1]
+            H0, lo_kb = max(s_['kb'] for s_ in tr), min(s_['kb'] for s_ in tr)
+            if opening: open_gap = fin['dockB'] - fin['kb']   # 升稳以后输入框底边和键盘顶的距离（这段轨迹里不变）
+            def series(key):
+                return [s_[key] for s_ in tr if s_[key] is not None]
+            def steps_of(v):
+                return [abs(b_ - a_) for a_, b_ in zip(v, v[1:])]
+            errs = [abs((s_['dockB'] - s_['kb']) - open_gap) for s_ in tr if lo_kb + 4 < s_['kb'] < H0 - 4]
+            def settle_idx(key, target):   # 最后一次离终值超过 2px 的下一帧 = 到位帧
+                idx = 0
+                for i, s_ in enumerate(tr):
+                    if s_[key] is not None and abs(s_[key] - target) > 2: idx = i + 1
+                return idx
+            dst, lst = steps_of(series('dock')), steps_of(series('last'))
+            return {'max_err': max(errs or [0]), 'mean_err': round(sum(errs) / len(errs), 1) if errs else 0,
+                    'max_step': max(dst or [0]), 'dock_moves': sum(1 for d in dst if d > 1),
+                    'last_step': max(lst or [0]), 'last_moves': sum(1 for d in lst if d > 1),
+                    'arrive_diff': abs(settle_idx('dock', fin['dock']) - settle_idx('kb', fin['kb'])), 'open_gap': open_gap}
 
         for name, r in ios_kb.items():
             up, down = r['up'], r['down']
-            fu, fd = kb_follow(up, True), kb_follow(down, False)
+            fu = kb_follow(up, True)
+            fd = kb_follow(down, False, fu['open_gap'])
             label = '有字的对话' if name == 'chat' else '空对话'
-            ui.check('iPhone%s键盘弹起（resize 比键盘晚 48ms）：面板变矮后一帧内输入框到位，之后不比键盘慢（压进键盘 ≤4px），只挪一次' % label,
-                     fu.get('frames_to_final') is not None and fu['frames_to_final'] <= 1 and fu['lag'] <= 4 and fu['dock_moves'] <= 1
-                     and fu['kb_at_resize'] > 60, fu)
-            ui.check('iPhone%s键盘收起（resize 比键盘晚 55ms）：面板变高后一帧内输入框回到底下，不在键盘上面拖着空当（多空 ≤4px），只挪一次' % label,
-                     fd.get('frames_to_final') is not None and fd['frames_to_final'] <= 1 and fd['lag'] <= 4 and fd['dock_moves'] <= 1, fd)
+            # 有字的对话里输入框贴在面板底下，和键盘顶的距离该全程不变（误差就是跟得紧不紧）；空对话的输入框不在
+            # 面板底边上（在画面中段），只看它是不是分小步平滑地走、有没有和键盘同时到位
+            ui.check('iPhone%s键盘弹起（resize 比键盘晚 48ms）：输入框逐帧跟着键盘走（与键盘顶的距离误差最大 ≤56px、平均 ≤20px），分小步走（单步 ≤90px、至少 5 步），和键盘同时到位（差 ≤2 帧）' % label,
+                     (name == 'empty' or (fu['max_err'] <= 56 and fu['mean_err'] <= 20)) and fu['max_step'] <= 90 and fu['dock_moves'] >= 5 and fu['arrive_diff'] <= 2, fu)
+            ui.check('iPhone%s键盘收起（resize 比键盘晚 55ms）：输入框逐帧跟着键盘落下（与键盘顶的距离误差最大 ≤56px、平均 ≤20px），分小步走（单步 ≤90px、至少 5 步），和键盘同时到位（差 ≤2 帧）' % label,
+                     (name == 'empty' or (fd['max_err'] <= 56 and fd['mean_err'] <= 20)) and fd['max_step'] <= 90 and fd['dock_moves'] >= 5 and fd['arrive_diff'] <= 2, fd)
             if name == 'chat':
-                ui.check('iPhone有字的对话键盘弹起、收起：最后一条消息各只挪一次（同一帧跟输入框一起到位），不分几步、不回头',
-                         fu['last_moves'] <= 1 and fd['last_moves'] <= 1, (fu, fd))
+                ui.check('iPhone有字的对话键盘弹起、收起：最后一条消息跟着输入框一起逐帧走（至少 5 步、单步 ≤90px），不一步到位',
+                         fu['last_moves'] >= 5 and fd['last_moves'] >= 5 and fu['last_step'] <= 90 and fd['last_step'] <= 90, (fu, fd))
             heads = [s['head'] for s in up + down]
             summary = {'log': r['log'], 'typed': r['typed'], 'head': (min(heads), max(heads)), 'gap': max(s['stage'] for s in up + down),
                        'dock_up': (up[0]['dock'], up[-1]['dock'], kb_moves(up, 'dock', False)), 'dock_down': (down[0]['dock'], down[-1]['dock'], kb_moves(down, 'dock', True)),
