@@ -308,7 +308,31 @@
       var d = f.contentDocument; if (!d || d.__kbWatch) return; d.__kbWatch = true;
       var on = function (e) { if (!typingEl(e.target)) return; if (e.type === 'focusin' && lite) kbPre(true); settleStage(); };
       d.addEventListener('focusin', on, true); d.addEventListener('focusout', on, true);
+      if (isIOS) focusInPlace(d);
     } catch (e) { /* 别的源：没法跟，只靠 visualViewport 的事件 */ }
+  }
+  /* 站长 11-21 10:07 iPhone（4G）：有字的对话点输入框，「一点也不丝滑，上去的时候会弹一下」；键盘升起那一下截的图里整块面板连标题栏
+     被往下推了三分之一屏，上面一片黑，输入框在键盘后面。
+     原因：iOS Safari 手指点输入框获得焦点时，会把整页往上挪、让输入框露在键盘上面（WebKit _zoomToFocusRect，跟着键盘动画一起挪），
+     固定定位的面板也被带着走；visualViewport 的 offsetTop 直接报挪完的值、scroll 事件要等挪完才发（WebKit bug 218465），
+     fitStage 把面板 top 设成 offsetTop，于是挪的过程中面板比屏幕实际挪到的位置低一截（截图里那片黑），挪完才对上——整页弹一下；
+     收起时反过来，标题栏先被带出屏幕上沿再落回来。#200 / #201 在 iframe 里的滑动又从被挪过的位置起步，输入框先往下再往上。
+     做法照 frizynn/nenu #173（useFocusInPlace）和 React Aria #8888：WebKit 对带 preventScroll 的 focus 不做这次挪动（bug 236584 修好以后）。
+     手指点没获得焦点的输入框，这一下由我们自己 focus({ preventScroll: true })，页面一点不挪；面板本来就跟着 visualViewport 变高变矮，
+     输入框靠排版落到键盘上面，只剩 iframe 里那一段滑动。手指一滑（滚列表）不算点；已经在打字时点它是挪光标，照系统的来。 */
+  function focusInPlace(d) {
+    var start = null;
+    function editable(el) { return !!el && !el.disabled && !el.readOnly && (el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|tel|password|number|)$/.test(el.type || ''))); }
+    d.addEventListener('touchstart', function (e) { var t = e.touches[0]; start = e.touches.length === 1 ? [t.clientX, t.clientY] : null; }, { capture: true, passive: true });
+    d.addEventListener('touchmove', function (e) { var t = e.touches[0]; if (start && (Math.abs(t.clientX - start[0]) > 10 || Math.abs(t.clientY - start[1]) > 10)) start = null; }, { capture: true, passive: true });
+    d.addEventListener('touchend', function (e) {
+      var el = e.target, tap = start; start = null;
+      if (!tap || e.touches.length || !editable(el) || el === d.activeElement) return;
+      e.preventDefault();   // 不让系统自己 focus（它会挪整页）；也就没有后面的 click，这个输入框上本来也没挂 click
+      el.focus({ preventScroll: true });
+      // 系统那一下没了，光标不会落在手指的位置：天启的输入框点开时一般是空的或接着写，放到末尾
+      if (!el.isContentEditable) try { var n = el.value.length; el.setSelectionRange(n, n); } catch (err) { /* number 之类不支持 */ }
+    }, { capture: true, passive: false });
   }
   new MutationObserver(function () { pinHome(body.classList.contains('locked')); fitStage(); }).observe(body, { attributes: true, attributeFilter: ['class'] });
   addEventListener('scroll', function () { if (html.classList.contains('home-pin') && window.scrollY) window.scrollTo(0, 0); }, { passive: true });
