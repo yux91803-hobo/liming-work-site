@@ -1,3 +1,17 @@
+# 修改清单 · 2026-11-21（天启：手机弹键盘时整页弹一下）
+
+- **谁做的**：Hark 实现并自查（没有另一位审核）。
+- **起因**：站长 11-21 10:07 iPhone Safari（4G）：有字的对话点输入框，「一点也不丝滑，上去的时候会弹一下」。键盘升起那一下的截图：整块面板连标题栏被往下推了约三分之一屏（标题栏在屏幕 40% 处），上面一片黑，输入框藏在键盘的工具条后面，下面露出一截旧的「你好」气泡。动的是整块面板，不只是列表。
+- **查到的**：
+  - 外壳 `shell.js` 的 `fitStage` 在键盘弹出时把面板 `top` 设成 `visualViewport.offsetTop`、高度设成 `visualViewport.height`，输入框获得焦点后还逐帧跟 1 秒（`settleStage`）。
+  - iOS Safari 手指点输入框获得焦点（focus 没带 preventScroll）时，会把整页往上挪、让输入框露在键盘上面，挪的过程跟着键盘动画走，固定定位的层也被带着走（React Aria `usePreventScroll.ts` 的说明：「When tapping on an input, the page always scrolls so that the input is centered in the visual viewport. This may cause even fixed position elements to scroll off the screen」；frizynn/nenu #173 引 WebKit `_zoomToFocusRect`）。`visualViewport` 的事件和数值跟实际画面不同步：scroll 事件要等挪完才发（WebKit bug 218465），WebKit 打开键盘时只在开头发一次 resize（React Aria `runAfterKeyboard.ts`）。
+  - 于是挪的过程中面板按「挪完以后」的 offsetTop 摆，屏幕实际只挪了一部分，面板就比屏幕低一截（截图里上面那片黑，三分之一屏 ≈ 键盘高），挪完才对上——整页弹一下；收起时反过来，标题栏先被带出屏幕上沿再落回来。#200 / #201 在 iframe 里的滑动又叠在被挪动的面板上，输入框看上去先往下、再往上。
+  - Chromium 里按这个模型复现（`test/e2e/ios_kb_model.js`：390×844，键盘 336px、300ms，点输入框时 focus 没带 preventScroll 就按 WebKit 的做法挪整页；每帧在绘制之后量屏幕上的位置）。修改前：弹起时标题栏最多被推下 247px（上面露黑 247px），输入框和最后一条先往下 247px 再上去；收起时标题栏被带出上沿 282px，输入框先往上 282px 再下去。空对话同样（249 / 287）。
+- **改法**（`shell.js` 新加 `focusInPlace`，只在 iOS）：照 frizynn/nenu #173（useFocusInPlace）和 React Aria #8888——WebKit 对带 preventScroll 的 focus 不做这次挪动（WebKit bug 236584「focus({preventScroll: true}) does not prevent scrolling on iOS」已修）。手指点一个还没获得焦点的输入框（没滑动、单指），在 touchend 里拦下系统自己的 focus，改成 `focus({ preventScroll: true })`，光标放到末尾；整页不挪、offsetTop 保持 0，面板只按 visualViewport 变矮，输入框靠排版落到键盘上面，只剩 iframe 里 #200 / #201 那一段滑动。已经在打字时点输入框（挪光标）、手指滑动（滚列表）、下拉框都照系统原来的走。`fitStage`、#199 / #200 / #201 不改。外壳资源版本 `shell.js?v=tqkb2-20261121`（这次没改 `sky.js`，它的版本不用动）。
+- **测试**：`xin_tianqi_e2e.py` 新加 6 项（iPhone 有字的对话 / 空对话各 3 项：用 preventScroll 获得焦点且字打得进去；弹起、收起时标题栏一直在 0、上面不露黑；输入框和最后一条只朝一个方向走一趟、不回头，弹起后在键盘上面、收起后回原位），70 项全过；这 6 项在修改前的 `shell.js` 上全部失败。修改后：标题栏 0 / 0，输入框 694→358（弹起）、358→694（收起），往回走 0px。
+  - **没在真 iPhone 上验证**：iOS 键盘、Safari 的挪动和 visualViewport 的时序都是按上面的资料建的模型，Playwright WebKit 也不会弹键盘。键盘上的 ∧ ∨ 在输入框之间跳时系统照样会挪整页（这次没管）。
+  - `npm run check` 在本机有 2 项每日任务测试失败（本机没有 codex：`no_agent`），跟这次改动无关，以 CI 为准。
+
 # 修改清单 · 2026-11-21（天启：手机键盘弹起后最后一条回复被挡住）
 
 - **谁做的**：Hark 实现并自查（没有另一位审核）。

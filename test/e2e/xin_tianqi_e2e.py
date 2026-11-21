@@ -1096,6 +1096,69 @@ async def main():
         ui.check('手机键盘收起：列表和输入框回到原位，最后一条回到弹起之前的位置，中间不留空当',
                  all(abs(x['down']['last'] - x['before']['last']) <= 2 and x['down']['body'] == x['down']['dock'] == x['before']['dock'] for x in (s_, l_, rd)), (s_['down'], l_['down'], rd['down']))
 
+        # 站长 11-21 10:07 iPhone（4G）：有字的对话点输入框「一点也不丝滑，上去的时候会弹一下」。键盘升起那一下的截图里整块面板连标题栏
+        # 被往下推了三分之一屏、上面一片黑。原因是 iOS 手指点输入框时把整页挪上去露出输入框（跟着键盘动画挪），visualViewport.offsetTop
+        # 直接报挪完的值，外壳的 fitStage 按它设面板 top，挪的过程中面板就比屏幕低一截，挪完才对上；收起时标题栏先被带出屏幕上沿。
+        # Chromium 没有软键盘、也不会挪，用 ios_kb_model.js 按 WebKit 的行为扮演（说明在那个文件开头）；每帧记屏幕上标题栏、输入框、
+        # 最后一条消息的位置。要求：标题栏不动、上面不露黑；输入框和最后一条只朝一个方向走一趟，不回头。修之前实测：弹起时标题栏被推下 247px、
+        # 输入框先往下 247px 再上去；收起时标题栏被带上去 282px。
+        ios_ua = ("Object.defineProperty(Navigator.prototype, 'userAgent', { get: () => 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) "
+                  "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1' });")
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ios_kb_model.js'), encoding='utf-8') as fh:
+            ios_model = fh.read()
+
+        def kb_moves(tr, key, down):   # 往回走得最多的一步（像素）；down=True 时应该一路往下（数变大）
+            v = [s[key] for s in tr if s[key] is not None]
+            return max([0] + [(a - b) if down else (b - a) for a, b in zip(v, v[1:])])
+
+        ios_kb = {}
+        for name, extra in (('chat', short), ('empty', None)):
+            pg = await ui.page(browser, 390, 844, mobile=True, theme='dark')
+            await pg.context.add_init_script(ios_ua)
+            await pg.context.add_init_script(ios_model)
+            st = await tianqi_mock(pg)
+            if extra: st['hist_extra'] = extra
+            await pg.goto(ui.BASE + '/tianqi')
+            frame = pg.frame_locator('.panel[data-id=tianqi] iframe')
+            await frame.locator('.tq-box').wait_for()
+            await pg.wait_for_timeout(1200)
+            if extra:
+                await frame.locator('.tq-menu').tap()
+                await frame.locator('.tq-side .xc-si', has_text='天启旧对话').tap()
+                await frame.locator('.xc-bub').first.wait_for()
+                await pg.wait_for_timeout(800)
+            tf = next(f for f in pg.frames if '/tools/tianqi/' in f.url)
+            await pg.evaluate("__iosKb.install(); __iosKbHook(document.querySelector('.panel[data-id=tianqi] iframe').contentWindow)")
+            trace = "__iosKbTrace(document.querySelector('.panel[data-id=tianqi] iframe'), 900)"
+            job = asyncio.ensure_future(pg.evaluate(trace))
+            await asyncio.sleep(.1)
+            await frame.locator('.xc-row textarea').tap()
+            up = await job
+            await pg.keyboard.type('好')
+            typed = await tf.evaluate("[document.activeElement.tagName, document.activeElement.value]")
+            await pg.wait_for_timeout(1200)
+            job = asyncio.ensure_future(pg.evaluate(trace))
+            await asyncio.sleep(.1)
+            await tf.evaluate('document.activeElement.blur()')
+            down = await job
+            ios_kb[name] = {'up': up, 'down': down, 'typed': typed, 'log': await pg.evaluate('__iosKb.st.log')}
+            await pg.context.close()
+        for name, r in ios_kb.items():
+            up, down = r['up'], r['down']
+            heads = [s['head'] for s in up + down]
+            summary = {'log': r['log'], 'typed': r['typed'], 'head': (min(heads), max(heads)), 'gap': max(s['stage'] for s in up + down),
+                       'dock_up': (up[0]['dock'], up[-1]['dock'], kb_moves(up, 'dock', False)), 'dock_down': (down[0]['dock'], down[-1]['dock'], kb_moves(down, 'dock', True)),
+                       'last_up': kb_moves(up, 'last', False), 'last_down': kb_moves(down, 'last', True), 'kb_top': up[-1]['kb']}
+            ui.check('iPhone%s点输入框：用 focus({preventScroll}) 获得焦点，Safari 不挪整页；字打进输入框' % ('有字的对话' if name == 'chat' else '空对话'),
+                     r['log'] == [{'preventScroll': True}] and r['typed'][0] == 'TEXTAREA' and r['typed'][1].endswith('好'), summary)
+            ui.check('iPhone%s键盘弹起、收起：标题栏一直不动，上面不露黑' % ('有字的对话' if name == 'chat' else '空对话'),
+                     summary['head'] == (0, 0) and summary['gap'] <= 0, summary)
+            ui.check('iPhone%s键盘弹起、收起：输入框和最后一条只朝一个方向走一趟，不回头；弹起后输入框在键盘上面、收起后回原位' % ('有字的对话' if name == 'chat' else '空对话'),
+                     summary['dock_up'][2] <= 1 and summary['dock_down'][2] <= 1 and summary['last_up'] <= 1 and summary['last_down'] <= 1
+                     and summary['dock_up'][1] < summary['dock_up'][0] - 100 and up[-1]['dock'] < summary['kb_top']
+                     and summary['dock_down'][1] == summary['dock_up'][0]
+                     and (name == 'empty' or all(s['last'] <= s['dock'] for s in up + down)), summary)
+
         # 7. 深链：只启动天启；返回首页后再启动小芯。
         pg = await ui.page(browser, 1280, 860)
         st = await tianqi_mock(pg, xin_enabled=True)
