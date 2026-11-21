@@ -278,22 +278,37 @@
     /* 站长 11-21 手机：点输入框还是闪一下。空对话时输入框摆在中间偏下，键盘一出来面板变矮，输入框和上面那行字一帧里往上跳两百多像素
        （手机 844→450 实测 230px），键盘收起又一下跳回去。照上面「发出第一句」的做法（FLIP）：resize 事件在这一帧画出来之前到，
        记下变之前的位置，用位移从旧位置滑到新位置，时长、曲线跟 iOS 键盘差不多，看起来是跟着键盘走，不再一跳。 */
-    var startTop = null;
-    function startNow() { return frame.hasAttribute('data-start') ? $('.tq-dock').getBoundingClientRect().top : null; }
+    /* 站长 11-21 早上（上面修好以后）：键盘放下的时候像抽帧。对话里有字时输入框贴在面板底下，键盘一收、面板一变高，
+       输入框一帧里往下跳 394px（手机 450→844 实测），键盘自己还在往下滑——看着就是掉了几帧。弹起时同样一帧往上跳。
+       所以不只空对话：只要面板高度变了（宽度没变，就是键盘），输入框都从旧位置滑到新位置。空对话时中间那段字也跟着一起挪。
+       iOS 要是一帧一帧地改可见区域（面板连着变几次），下一次接着从输入框眼下所在的位置滑，不会倒回去重来。 */
+    var dock = $('.tq-dock'), kbTop = null, kbW = 0, kbH = 0, kbEnd = 0;
+    function liftOf(el) {   // 动画眼下把它挪了多少（getBoundingClientRect 量到的是挪过以后的位置）
+      var m = getComputedStyle(el).transform; if (!m || m === 'none') return 0;
+      var v = m.match(/^matrix(3d)?\((.+)\)$/); if (!v) return 0;
+      var n = v[2].split(',').map(parseFloat); return v[1] ? n[13] : n[5];
+    }
+    function kbMovers() { return frame.hasAttribute('data-start') ? $$('.tq-mid > .xc-body, .tq-mid > .tq-dock') : [dock]; }
+    function kbMark() { kbTop = dock.getBoundingClientRect().top - liftOf(dock); kbW = frame.clientWidth; kbH = frame.clientHeight; }
     // 用 ResizeObserver 而不是 resize 事件：它在排版之后、这一帧画出来之前回调（Chrome、Safari 都是）；
     // Safari 里 iframe 的 resize 事件常常晚一帧，先画出跳过去的那一帧再开始滑（WebKit 实测）
-    function onStartResize() {
-      var was = startTop; startTop = startNow();
-      if (was == null || startTop == null || REDUCE) return;
-      var dy = was - startTop;
-      // 标题栏不动，只有中间那段字和输入框会跳
-      if (Math.abs(dy) > 8) $$('.tq-mid > .xc-body, .tq-mid > .tq-dock').forEach(function (el) { if (el.animate) el.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }], { duration: 300, easing: 'cubic-bezier(.25,.1,.25,1)' }); });
+    function onKbResize() {
+      var w = frame.clientWidth, h = frame.clientHeight;
+      if (kbTop == null || w !== kbW || h === kbH || REDUCE || !dock.animate) { kbMark(); return; }
+      var lift = liftOf(dock), was = kbTop + lift, movers = kbMovers(), left = 0, now = performance.now();
+      movers.forEach(function (el) { el.getAnimations().forEach(function (a) { if (a.id === 'kb') { left = Math.max(left, kbEnd - now); a.cancel(); } }); });
+      kbMark();
+      var dy = was - kbTop;
+      // 还在滑的时候又变了：照原来的结束时间收尾，不重新从头算 300ms（不然一直落在键盘后面追）
+      var ms = left > 0 ? Math.max(120, left) : 300;
+      if (Math.abs(dy) > 8) { kbEnd = now + ms; movers.forEach(function (el) { var a = el.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }], { duration: ms, easing: left > 0 ? 'ease-out' : 'cubic-bezier(.25,.1,.25,1)' }); a.id = 'kb'; }); }
     }
-    if (window.ResizeObserver) new ResizeObserver(onStartResize).observe(frame); else addEventListener('resize', onStartResize);
-    requestAnimationFrame(function () { startTop = startNow(); });
-    // 键盘出来之前最后量一次（字体、提示条可能让位置在加载后又变过）
-    ['pointerdown', 'focusin'].forEach(function (t) { document.addEventListener(t, function () { if (!html.classList.contains('kb-up')) startTop = startNow(); }, true); });
-    new MutationObserver(function () { startTop = startNow(); }).observe(frame, { attributes: true, attributeFilter: ['data-start', 'data-mode'] });
+    if (window.ResizeObserver) new ResizeObserver(onKbResize).observe(frame); else addEventListener('resize', onKbResize);
+    requestAnimationFrame(kbMark);
+    // 输入框位置也会因为别的事变（打字长高、用量那行、空对话变成有字），键盘出来之前、面板没变时都重新记一下
+    ['pointerdown', 'focusin'].forEach(function (t) { document.addEventListener(t, function () { if (!html.classList.contains('kb-up')) kbMark(); }, true); });
+    if (window.ResizeObserver) new ResizeObserver(function () { if (frame.clientHeight === kbH && frame.clientWidth === kbW) kbMark(); }).observe(dock);
+    new MutationObserver(function () { requestAnimationFrame(kbMark); }).observe(frame, { attributes: true, attributeFilter: ['data-start', 'data-mode'] });
 
     /* 手机：按住标签那一行往下拖就收起（照 Vaul 的抽屉：拖过一段或甩得快就收） */
     (function () {

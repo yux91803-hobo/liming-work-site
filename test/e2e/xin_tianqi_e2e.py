@@ -1021,6 +1021,25 @@ async def main():
         await tf.evaluate('document.activeElement.blur()')
         await pg.wait_for_timeout(1300)
         ui.check('手机键盘收起、离开输入框：整页底色还原成首页的浅色', (await pg.evaluate(bg))[0] == idle[0], await pg.evaluate(bg))
+        # 站长 11-21 早上：键盘放下的时候像抽帧。对话里有字时输入框贴在面板底下，面板一变高它一帧往下跳 394px。要跟着键盘滑下去
+        await frame.locator('.tq-menu').tap()
+        await frame.locator('.tq-side .xc-si', has_text='天启旧对话').tap()
+        await frame.locator('.xc-bub').first.wait_for()
+        await pg.wait_for_timeout(800)
+        await frame.locator('.xc-row textarea').tap()
+        await pg.wait_for_timeout(1100)
+        await pg.evaluate("const s = document.getElementById('stage').style; s.top = '0px'; s.height = '450px'; s.bottom = 'auto'")
+        await pg.wait_for_timeout(600)
+        dock_y = "Math.round(document.querySelector('.tq-dock').getBoundingClientRect().top)"
+        up_y = await tf.evaluate(dock_y)
+        await tf.evaluate('document.activeElement.blur()')
+        await pg.evaluate("const s = document.getElementById('stage').style; s.top = s.height = s.bottom = ''")
+        await pg.wait_for_timeout(30)
+        mid = await tf.evaluate("""(() => { const d = document.querySelector('.tq-dock'); return { n: d.getAnimations().filter(a => a.id === 'kb' && a.playState === 'running').length, top: Math.round(d.getBoundingClientRect().top) }; })()""")
+        await pg.wait_for_timeout(500)
+        down_y = await tf.evaluate(dock_y)
+        ui.check('手机有字的对话、键盘收起：输入框跟着键盘滑下去，不一帧跳到底',
+                 down_y > up_y + 300 and mid['n'] == 1 and up_y - 5 <= mid['top'] < down_y - 100, (up_y, mid, down_y))
         await pg.context.close()
 
         # 7. 深链：只启动天启；返回首页后再启动小芯。
