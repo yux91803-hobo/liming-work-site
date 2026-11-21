@@ -274,12 +274,24 @@
     html.classList.toggle('kb-pre', !!c);
     if (c) html.style.setProperty('--kb-bg', c); else if (!html.classList.contains('kb-up')) html.style.removeProperty('--kb-bg');
   }
-  function kbCover(on) {
+  var tqSafeBottom = 0;
+  function kbCover(on, overlap) {
     var c = on ? toolColor() : '';
     html.classList.toggle('kb-up', !!on);
     if (c) html.style.setProperty('--kb-bg', c); else if (!html.classList.contains('kb-pre')) html.style.removeProperty('--kb-bg');
     // 工具里也知道键盘在不在：键盘盖住了 iPhone 底下那条横条，工具不用再给它留白（天启的 --sb）
-    try { var p = current && panels[current]; if (p) p._frame.contentDocument.documentElement.classList.toggle('kb-up', !!on); } catch (e) { /* 别的源 */ }
+    try {
+      var p = current && panels[current];
+      if (!p) return;
+      var root = p._frame.contentDocument.documentElement;
+      if (tqIOSKeyboard()) {
+        if (on && !root.classList.contains('kb-up')) tqSafeBottom = parseFloat(getComputedStyle(root).getPropertyValue('--tq-safe-bottom')) || 0;
+        // 覆盖整个安全区以后保持 0px 留白，免得每帧改 iframe 里的 CSS 变量。
+        if (on && overlap < tqSafeBottom) root.style.setProperty('--tq-kb-overlap', overlap + 'px');
+        else root.style.removeProperty('--tq-kb-overlap');
+      }
+      root.classList.toggle('kb-up', !!on);
+    } catch (e) { /* 别的源 */ }
   }
   /* 站长 11-21 15:08 真 iPhone 录屏（#203 上线后复测）：收起键盘时输入框还是一格一格跳。逐帧量（30 帧/秒，键盘面板顶边
      和输入框上下边分开量）：键盘自己是连续滑的——弹起 11 个位置、约 333ms 走完，收起约 200ms；输入框却只有一步，
@@ -293,7 +305,7 @@
      就开始落，比 resize 早 40~100ms。从焦点那一刻起，照真机录屏量出的键盘曲线（下面 KB_OPEN / KB_CLOSE，
      和 test/e2e/ios_kb_model.js 里同一份数据）逐帧把面板高度从起点推到终点；settleStage 本来就在焦点后逐帧调
      fitStage 一秒钟，节奏现成。终点：弹起用上一次键盘升起时 visualViewport 的高度（同一台机器键盘高度基本不变，
-     记在 kbOpenH 里）；第一次还没记下就等 visualViewport 给值再走，起点按它迟到的 48ms 往前推，落点和键盘对齐；
+     记在 kbOpenH 里）；第一次还没记下就等 visualViewport 给值再走，天启用剩余的曲线从面板当前位置滑到终点；
      收起的终点就是整屏高，不用等。visualViewport 中途报出中间高度（跟手收起那种系统自己连续给值的场合）就停掉
      跟随、照它给的值走；报出的终点和记住的不一样（键盘高度变了），就接着眼下的高度改奔新终点、到点时间不变。
      iframe 里的 sky.js 不用动：面板高度现在每帧都在变，它「变高度那一帧靠排版到位、列表按离底距离摆好」正好逐帧生效。 */
@@ -309,11 +321,27 @@
     return 1;
   }
   function kbAnimAt(a, now) {
-    var tab = a.dir === 'open' ? KB_OPEN : KB_CLOSE, el = now - a.t0;
-    return { h: a.fromH + (a.toH - a.fromH) * kbCurve(tab, el), done: el >= tab[tab.length - 1][0] };
+    var tab = a.dir === 'open' ? KB_OPEN : KB_CLOSE;
+    var elapsed = now - a.t0 + a.phase, start = kbCurve(tab, a.phase);
+    var progress = (kbCurve(tab, elapsed) - start) / (1 - start);
+    return { h: a.fromH + (a.toH - a.fromH) * progress, progress: progress, done: elapsed >= tab[tab.length - 1][0] };
   }
   function stageH() { return stage.getBoundingClientRect().height; }
-  function kbStart(dir, fromH, toH, t0) { kbAnim = { dir: dir, fromH: fromH, toH: toH, t0: t0 }; settleStage(); }
+  function kbStart(dir, fromH, toH, t0, phase) {
+    kbAnim = { dir: dir, fromH: fromH, toH: toH, t0: t0, phase: phase || 0 };
+    settleStage();
+  }
+  function tqIOSKeyboard() { return isIOS && current === 'tianqi'; }
+  function kbStartLate(dir, fromH, toH, now, delay) {
+    // Safari 可能只在键盘移动后报告一次高度。从此刻画出来的高度走完剩下的曲线，避免把已过去的那段位移补成一跳。
+    if (tqIOSKeyboard()) kbStart(dir, fromH, toH, now, delay);
+    else kbStart(dir, fromH, toH, now - delay);
+  }
+  function kbPlace(vv, h, full) {
+    var s = stage.style;
+    s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = h + 'px'; s.bottom = 'auto';
+    kbCover(true, Math.max(0, full - h));
+  }
   function kbFocus(opening, e) {
     if (!lite) return;
     var now = performance.now();
@@ -321,7 +349,7 @@
       kbSession = true;
       if (kbAnim && kbAnim.dir === 'open') return;
       if (kbAnim && kbAnim.dir === 'close') {   // 收起一半又点回来：从眼下的高度转头往上走
-        if (kbOpenH) kbStart('open', kbAnimAt(kbAnim, now).h, kbOpenH, now); else kbPending = true;
+        if (kbOpenH) kbStart('open', tqIOSKeyboard() ? stageH() : kbAnimAt(kbAnim, now).h, kbOpenH, now); else kbPending = true;
         return;
       }
       if (html.classList.contains('kb-up')) return;   // 键盘已经升着（只是换了个输入框），不用重走一遍
@@ -331,7 +359,7 @@
       kbPending = false;
       if (e && e.relatedTarget && typingEl(e.relatedTarget)) return;   // 只是换了个输入框，键盘不收
       kbSession = false;
-      var h = kbAnim ? kbAnimAt(kbAnim, now).h : stageH();
+      var h = kbAnim && !tqIOSKeyboard() ? kbAnimAt(kbAnim, now).h : stageH();
       if (h < innerHeight - 2) kbStart('close', h, innerHeight, now);
       else kbAnim = null;
     }
@@ -345,16 +373,16 @@
       if (target > lo + 2 && target < hi - 2) kbAnim = null;   // 系统自己在连续给中间高度（跟手收起之类）：让位给它，下面照它的值走
       else if (kbAnim.dir === 'open' && target < full - 1 && target !== kbAnim.toH) {
         // visualViewport 报出的键盘高度和记下的不一样：接着眼下的高度改奔新终点，到点的时间不变
-        var p = kbCurve(KB_OPEN, now - kbAnim.t0), at = kbAnimAt(kbAnim, now);
+        var at = kbAnimAt(kbAnim, now), p = at.progress;
         if (p < .95) { kbAnim.fromH = (at.h - target * p) / (1 - p); kbAnim.toH = target; at = kbAnimAt(kbAnim, now); }
         else kbAnim = null;
         if (kbAnim) {
           if (at.done) kbAnim = null;
-          else { s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = at.h + 'px'; s.bottom = 'auto'; kbCover(true); return; }
+          else { kbPlace(vv, at.h, full); return; }
         }
       } else {
         var at2 = kbAnimAt(kbAnim, now);
-        if (!at2.done) { s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = at2.h + 'px'; s.bottom = 'auto'; kbCover(true); return; }
+        if (!at2.done) { kbPlace(vv, at2.h, full); return; }
         kbAnim = null;   // 跟随走完了，下面按 visualViewport 的现值对齐
       }
     }
@@ -362,7 +390,10 @@
     if (target >= full - 1) {
       if (kbSession) {
         var h0 = stageH();
-        if (h0 < full - 2) { kbSession = false; kbStart('close', h0, full, now - KB_LATE_CLOSE); fitStage(); return; }   // 焦点那边的收起没接到（blur 没触发之类）：按 visualViewport 变回整屏补一个收起跟随；会话就此销掉，不然跟随走完还会再触发一次
+        if (h0 < full - 2) {
+          // 系统可以收起键盘而让 textarea 保留焦点。用视口恢复作为收起信号，并结束这次键盘会话。
+          kbSession = false; kbStartLate('close', h0, full, now, KB_LATE_CLOSE); fitStage(); return;
+        }
       }
       s.top = s.height = s.bottom = ''; kbCover(false);
       if (!typingNow()) kbSession = false;
@@ -370,8 +401,10 @@
     }
     kbOpenH = target;
     if (typingNow()) kbSession = true;
-    if (kbPending) { kbPending = false; kbStart('open', full, target, now - KB_LATE_OPEN); fitStage(); return; }
-    s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = target + 'px'; s.bottom = 'auto'; kbCover(true);
+    if (kbPending) {
+      kbPending = false; kbStartLate('open', tqIOSKeyboard() ? stageH() : full, target, now, KB_LATE_OPEN); fitStage(); return;
+    }
+    kbPlace(vv, target, full);
   }
   /* iOS 键盘弹出、收起时 visualViewport 不一定发事件（WebKit 198347、WICG visual-viewport #79；iOS 26 收起后 offsetTop 不归零，WebKit 297779）。
      站长 11-20 第三次截图：点天启的输入框，键盘出来了输入框却被挡住，打一个字（iOS 为了露出光标挪了一下可见区域）才跳上来。
@@ -413,7 +446,14 @@
     d.addEventListener('touchmove', function (e) { var t = e.touches[0]; if (start && (Math.abs(t.clientX - start[0]) > 10 || Math.abs(t.clientY - start[1]) > 10)) start = null; }, { capture: true, passive: true });
     d.addEventListener('touchend', function (e) {
       var el = e.target, tap = start; start = null;
-      if (!tap || e.touches.length || !editable(el) || el === d.activeElement) return;
+      if (!tap || e.touches.length || !editable(el)) return;
+      if (el === d.activeElement) {
+        // 系统收键盘后，原输入框可能仍有焦点；再点它时不会收到 focusin。
+        if (tqIOSKeyboard() && (!html.classList.contains('kb-up') || (kbAnim && kbAnim.dir === 'close'))) {
+          kbFocus(true, e); settleStage();
+        }
+        return;
+      }
       e.preventDefault();   // 不让系统自己 focus（它会挪整页）；也就没有后面的 click，这个输入框上本来也没挂 click
       el.focus({ preventScroll: true });
       // 系统那一下没了，光标不会落在手指的位置：天启的输入框点开时一般是空的或接着写，放到末尾

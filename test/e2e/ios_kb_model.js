@@ -17,7 +17,7 @@
   var CLOSE = [[0, 0], [3, .017], [20, .115], [36, .265], [53, .404], [70, .534], [86, .637], [103, .722], [120, .793], [136, .847], [153, .889],
     [170, .916], [186, .94], [210, 1]];
   var LATE_OPEN = 48, LATE_CLOSE = 55, MS = 400;
-  var st = { open: false, vvOpen: false, pan: false, t0: -1, from: 0, log: [], resizeAt: [] };
+  var st = { open: false, vvOpen: false, pan: false, t0: -1, from: 0, log: [], resizeAt: [], resizeHeights: [] };
   function curve(tab, ms) {
     if (ms <= 0) return 0;
     for (var i = 1; i < tab.length; i++) if (ms <= tab[i][0]) { var a = tab[i - 1], b = tab[i]; return a[1] + (b[1] - a[1]) * (ms - a[0]) / (b[0] - a[0]); }
@@ -44,7 +44,9 @@
     timer = setTimeout(function () {
       st.vvOpen = open;
       st.resizeAt.push(Math.round(performance.now() - st.t0));
+      var stage = document.getElementById('stage'), before = stage.getBoundingClientRect().height;
       vv.dispatchEvent(new Event('resize'));
+      st.resizeHeights.push([before, stage.getBoundingClientRect().height]);
       setTimeout(function () { vv.dispatchEvent(new Event('scroll')); }, MS);   // scroll 等挪完才发
     }, open ? LATE_OPEN : LATE_CLOSE);
   }
@@ -59,6 +61,10 @@
       st.log.push({ preventScroll: ps });
       if (!st.open) start(true, !ps);
     }, true);
+    w.document.addEventListener('touchend', function (e) {
+      // 系统收起键盘可以保留焦点；再点原输入框不会收到新的 focusin。
+      if (!e.defaultPrevented && !st.open && e.target === w.document.activeElement && e.target.tagName === 'TEXTAREA') start(true, false);
+    });
     w.document.addEventListener('focusout', function (e) {
       var t = e.target; if (!t || !/^(TEXTAREA|INPUT)$/.test(t.tagName)) return;
       if (st.open) start(false, false);

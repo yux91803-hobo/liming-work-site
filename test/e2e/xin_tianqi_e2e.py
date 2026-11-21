@@ -1209,6 +1209,42 @@ async def main():
                      and summary['dock_down'][1] == summary['dock_up'][0]
                      and (name == 'empty' or all(s['last'] <= s['dock'] for s in up + down)), summary)
 
+        # 模拟系统自己收起键盘，textarea 仍有焦点。首次弹出和系统收起只能等迟到的视口事件，
+        # 重开要从同一输入框的点击起步。模拟 iPhone 底部安全区，量收起末尾有没有反向跳动。
+        pg = await ui.page(browser, 390, 844, mobile=True, theme='dark')
+        await pg.context.add_init_script(ios_ua)
+        await pg.context.add_init_script(ios_model)
+        st = await tianqi_mock(pg)
+        st['hist_extra'] = short
+        await pg.goto(ui.BASE + '/tianqi')
+        frame = pg.frame_locator('.panel[data-id=tianqi] iframe')
+        await frame.locator('.tq-menu').tap()
+        await frame.locator('.tq-side .xc-si', has_text='天启旧对话').tap()
+        await frame.locator('.xc-bub').first.wait_for()
+        await frame.locator('html').evaluate("""h => {
+          const s = h.ownerDocument.createElement('style');
+          s.textContent = ':root{--tq-safe-bottom:34px} html:not(.kb-up){--sb:34px}';
+          h.ownerDocument.head.appendChild(s);
+        }""")
+        await pg.evaluate("__iosKb.install(); __iosKbHook(document.querySelector('.panel[data-id=tianqi] iframe').contentWindow)")
+        box_in = frame.locator('.xc-row textarea')
+        await box_in.tap()
+        await pg.wait_for_function("__iosKb.st.resizeHeights.length === 1 && document.querySelector('#stage').clientHeight === innerHeight - __iosKb.K")
+        close_trace = asyncio.ensure_future(pg.evaluate(trace))
+        await asyncio.sleep(.07)
+        await pg.evaluate('__iosKb.close()')
+        closed = await close_trace
+        await box_in.tap()
+        await pg.wait_for_function("__iosKb.st.resizeHeights.length === 3 && document.querySelector('#stage').clientHeight === innerHeight - __iosKb.K")
+        changes = await pg.evaluate('__iosKb.st.resizeHeights')
+        ui.check('iPhone 天启：首次弹起、保留焦点的系统收起，收到迟到的 resize 时不会一次跳完已过去的距离',
+                 all(abs(a - b) <= 8 for a, b in changes[:2]), changes)
+        ui.check('iPhone 天启：系统收键盘时自然恢复底部安全区，输入框全程向下、最终恢复整屏',
+                 closed[-1]['stageH'] == 844 and kb_moves(closed, 'dock', True) <= 2, kb_moves(closed, 'dock', True))
+        ui.check('iPhone 天启：键盘收起但输入框仍有焦点，点原输入框能在收到 resize 前开始上滑',
+                 changes[2][0] < 834 and await pg.evaluate('__iosKb.st.log.length') == 1, changes)
+        await pg.context.close()
+
         # 7. 深链：只启动天启；返回首页后再启动小芯。
         pg = await ui.page(browser, 1280, 860)
         st = await tianqi_mock(pg, xin_enabled=True)
