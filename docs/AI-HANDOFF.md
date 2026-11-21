@@ -1,3 +1,9 @@
+## 2026-11-21 · 天启键盘跟随改到外壳层（Muse）
+
+- 改了什么见 CHANGES 最新一条。分支 `claude/tianqi-kb-follow`，Muse 实现并自查，无独立复核；站长明确这次不走 Hark、由 Muse 直接修。
+- **改外壳跟键盘的人注意**：`site/shell.js` 现在是「焦点起步 + 录屏曲线逐帧推面板高度」（`kbFocus` / `fitStage` / `kbOpenH`），不再是 visualViewport 变多少就一步定多少。曲线 KB_OPEN / KB_CLOSE 和 `test/e2e/ios_kb_model.js` 是同一份数据，改一处要同步另一处。`sky.js` 的同帧排版 + 离底距离逻辑没动，靠面板高度逐帧变才生效，别再往 iframe 里加键盘动画。
+- **未验证**：真 iPhone 改后效果，等站长复测录屏。已知近似：visualViewport 迟到按 48/55ms 建模，偏离会按约 3px/ms 变成跟随误差；每个新页面第一次弹起走「等 visualViewport 给值」的后备路（输入框躲在键盘后直接出现在位子上）。
+
 ## 2026-11-20 · 天启第三批修复（Claude Code）
 
 - 改了什么见 CHANGES 最新一条。
