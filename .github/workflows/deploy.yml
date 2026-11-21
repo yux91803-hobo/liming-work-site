@@ -194,10 +194,11 @@ jobs:
               if(p.merged && p.merge_commit_sha===context.sha && p.base.ref==='main' && p.head.repo?.full_name===`${owner}/${repo}`){source=p;break;}
             }
             if(!source)throw Error('没有对应的已合并同仓库 PR；请走 PR 或手动完整验证，停止部署');
-            const {data}=await github.rest.actions.listWorkflowRuns({owner,repo,workflow_id:'deploy.yml',head_sha:source.head.sha,event:'pull_request',status:'success',per_page:20});
+            // GitHub 的状态筛选可能漏掉重跑后成功的运行，按 PR 提交查找后检查实际结果。
+            const {data}=await github.rest.actions.listWorkflowRuns({owner,repo,workflow_id:'deploy.yml',head_sha:source.head.sha,event:'pull_request',per_page:20});
             let checked=null;
             for(const run of data.workflow_runs){
-              if(run.conclusion!=='success'||run.head_sha!==source.head.sha)continue;
+              if(run.status!=='completed'||run.conclusion!=='success'||run.head_sha!==source.head.sha)continue;
               const artifacts=await github.paginate(github.rest.actions.listWorkflowRunArtifacts,{owner,repo,run_id:run.id,per_page:100});
               if(['tested-tree-check','tested-tree-e2e'].every(name=>artifacts.some(a=>a.name===name&&!a.expired))){checked=run;break;}
             }

@@ -1,3 +1,8 @@
+## 2026-11-21 · 正式发布找不到重跑成功的 PR（ChatGPT）
+
+- ChatGPT（Codex）实现并自查，无独立复核。天启 #205 已合入 `main`（`e8338c0`）。运行 [44904440846](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44904440846) 在正式发布查找证据时停止，线上仍服务上一版。
+- PR 运行 `44902661917` 第二次尝试最终成功，但指定 `status` 的列表查询漏掉该运行。部署工作流改为查到运行后逐项核对状态与证据。回归测试和完整上线进度见此修复对应的 PR 与 CI。
+
 ## 2026-11-21 · 天启 iOS 键盘首次弹起、系统收起与原焦点重开（ChatGPT）
 
 - 分支 `codex/tianqi-keyboard-continuity`，从 #204（`12e56b9`）接手。ChatGPT（Codex）实现并自查，无独立复核。修改、开源参考和对照数据见 CHANGES 最新一条。
