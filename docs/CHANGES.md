@@ -1,6 +1,27 @@
+# 修改清单 · 2026-11-24（全站 UI 与复杂交互动画升级：工具箱首页、小芯工作台、天启与学习台微交互）
+
+- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/site-ui-motion-20261124`（基于 `main` `0b818a1`）。
+- **原实现与优化空间**：
+  1. **工具箱首页视觉密度不均与静态插画**：`site/tools.js` 里 `天启` 原先未配置专属 `art`，回退为普通浅底细线四角星，夹在「小芯工作台」与「世界地图 / STM32」之间显得单薄；`世界地图` 点阵与 `STM32` 芯片插画无脉冲细节、悬停无层次响应；卡片无指针追光；标题栏搜索框过滤时剩余卡片瞬间跳位。
+  2. **小芯工作台空状态与输入区缺少细腻反馈**：`site/xin/chat.js` / `chat.css` 空对话页（`.xc-hello`）只有静态圆盘头像，缺少与指针、点击呼应的生命感；输入框（`.xc-row`）悬停缺少追光细边；消息/代码块复制成功勾号与新建按钮缺少微动效。
+  3. **天启空状态星盘与夜空互动、收起 1 帧边界**：天启空状态星盘（`.tq-empty-orbit`）原为 `pointer-events: none` 纯静态旋转，空夜空点击无互动；另在复跑 `xin_tianqi_e2e.py` 时发现 `site/shell.js` 的 `KB_CLOSE` 在距满屏 `< 0.5px`（`Math.round` 已到满屏高）与 `210ms` 终点之间的 ~2ms 窗口内，可能出现面板已满屏而 `kb-up` 晚 1 帧移除的边界竞态。
+- **改法、开源参考与行为保证**（更新资源版本 `uipolish-20261124` / `sd6-20261124`）：
+  - **工具箱首页（`site/tools.js`、`site/shell.js`、`site/shell.css`）**：
+    - **天启深空星盘像素卡（`.card.art-sky`）**：参考 [`magicuidesign/magicui`](https://github.com/magicuidesign/magicui) `OrbitingCircles` 与 [`DavidHDev/react-bits`](https://github.com/DavidHDev/react-bits) `PixelCard`，为天启补齐深夜蓝底双轨星盘、公转像素行星、闪烁星群、流星掠影及悬停逐段连线的北斗七星网络（`stroke-dashoffset` 描边），与首页 2px 像素边框和硬阴影体系对齐。
+    - **世界地图信标雷达与 STM32 PCB 铜箔脉冲**：参考 `magicui` `InteractiveGridPattern`，为世界地图叠加 4 处地理坐标信标扩散环（`.w-beacons`）及悬停经线扫描带（`.w-scan`）；为 STM32 LQFP144 芯片左侧补齐 8 条 45° 折线 PCB 铜箔走线与流动电信号包（`.traces .tr-sig`）。
+    - **卡片指针追光、斜向光泽、像素迸发火花与搜索 FLIP 补位**：参考 [`ibelick/motion-primitives`](https://github.com/ibelick/motion-primitives) `Spotlight` / `AnimatedGroup`、`react-bits` `GlareHover` / `ClickSpark` 及 Paul Lewis 的 FLIP 技术，桌面指针移过卡片与小芯入口卡时以 `rAF` 节流写入 `--mx`/`--my` 驱动柔和追光与光泽扫掠；点击标题栏 `✻` 或搜索键迸发 8 颗像素火花（`.hm-spark`）；搜索过滤时对保留卡片做 220ms WAAPI FLIP 平滑补位。
+  - **小芯工作台（`site/xin/chat.js`、`site/xin/chat.css`）**：
+    - **空状态双轨暖星环、3D 磁吸倾角、眼神跟随与点击欢跳**：参考 `motion-primitives` `Tilt` / `Magnetic` 与 `magicui` `OrbitingCircles`，在 `.xc-hello-mk` 外围绘制正反双轨琥珀色虚实星环（`.xc-hello-orb`，不在其内放 `<button>` 或 `.xc-as`，保持欢迎页纯净约束）；桌面指针移动时头像圆盘做轻量 3D 磁吸倾角且像素眼睛朝指针方向微移；点击小芯头像切换开心笑脸、弹簧欢跳（`.hop`）并迸出 8 颗暖金火花（`.xc-hspark`）。
+    - **输入框追光细边与微交互**：参考 `react-bits` `SpotlightCard` 与 [`raunofreiberg/interfaces`](https://github.com/raunofreiberg/interfaces)，为小芯 `.xc-row` 增加 1.5px 遮罩追光细边、聚焦顶边暖光展开线及发送键就绪扫光；消息/代码复制成功勾号做 `stroke-dashoffset` 描边动画，新建对话 `+` 悬停旋转 90°。
+  - **天启工作台、学习台与外壳边界（`site/tools/tianqi/sky.js`、`workbench.css`、`site/tools/stm32/app.css`、`site/shell.js`）**：
+    - 天启空状态星盘支持桌面 3D 陀螺仪倾角（`--ax`/`--ay`）与点击加速脉冲迸发，空夜空点击空白处触发许愿流星（`spawnMeteor` + `spawnSpark`，键盘弹起或运动期间自动停用，严格不破 Linear 实心无毛玻璃与零大阴影约束）；STM32 学习台补齐胶囊/外设行/模块行的轻按压与悬停微位移；`site/shell.js` 在收起动画距满屏 `< 0.5px` 时同帧完成 `kbRestore()`，消除安全区晚 1 帧恢复的竞态。全站新增动效均接入 `@media (prefers-reduced-motion: reduce)` 自动静止。
+- **验证证据**：
+  - `test/e2e/xin_motion_e2e.py` 新增首页三卡插画结构、指针追光与 8 颗像素火花、小芯空状态星环/眼神倾角/点击笑脸火花及减少动态降级检查，**27/27 全部通过**；`xin_tianqi_e2e.py` **82/82 全部通过**；`xin_main_e2e.py` **19/19**、`xin_work_e2e.py` **43/43**、`stm32_e2e.py` 全量通过；语法与本地资源引用检查（303 个文件、231 个资源引用）通过。
+  - Playwright 截图逐张复核 `1280`、`1024`、`768`、`390` 浅色与深色模式下的工具箱首页、小芯工作台与天启界面（并根据截图微调了 `.xc-hello-mk` 下边距，使外圈星环与「小芯」像素标题保持清爽呼吸间距）。
+
 # 修改清单 · 2026-11-24（天启：修复输入框抬起/下放卡顿，并升级星空动效与细节质感）
 
-- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/tianqi-ui-polish-20261123`（基于 `main` `733bcdd`）。
+- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/tianqi-ui-polish-20261123`（基于 `main` `733bcdd`，PR [#207](https://github.com/yux91803-hobo/liming-work-site/pull/207) 合入 `main` `0b818a1`）。
 - **原实现与问题定位**：
   - 原实现由 `site/shell.js`（#204 Muse 的外壳焦点曲线跟随、#205 Codex 的迟到续接与原焦点重开）配合 `site/tools/tianqi/sky.js`、`workbench.css`（#192 Claude Code 的 Linear 实心三栏与三层夜空画布、#203 Hark 的同帧离底保持）完成。
   - 在 `test/e2e/ios_kb_model.js` 与 `xin_tianqi_e2e.py` 中建模复现出五处造成输入框抬起/下放卡顿的根因：
@@ -18,7 +39,7 @@
     - **夜空指针星座连线、追光细边、双彗星环绕与星芒迸发**：参考 `react-bits` 的 `Particles`、`SpotlightCard`、`ClickSpark` 与 `magicui` 的 `BorderBeam`，桌面端鼠标划过夜空时邻近亮星浮现细星座连线；悬停输入框时 1px 边框随指针追光，聚焦时顶边星芒细线自中心展开；发送消息、点击品牌星或切换「计划」模式时触发星芒粒子迸发与双彗星环绕流光；另补齐模型面板思考强度四角星错峰弹入、`li2` 在线脉冲环、发送键就绪扫光。开启系统「减少动态效果」（`prefers-reduced-motion: reduce`）时全部动画自动静止。
 - **验证证据**：
   - 先写红灯回归再改实现：新增的迟到 290ms 收起检查（改前反向弹回 `353px` → 改后 `0px`）与 360→310 矮键盘切换检查（改前单帧跳 `170px`、误差 `147px` → 改后单步 `≤52px`、最大误差 `18px`、到位帧差 `0`）在原代码失败、新代码全过。
-  - `test/e2e/xin_tianqi_e2e.py` **82/82 全部通过**；`xin_motion_e2e.py`、`xin_main_e2e.py`、`xin_work_e2e.py`、`stm32_e2e.py` 全部通过；全站语法与资源检查通过（303 个文件、231 个资源引用），天启及前端相关单元测试全部通过（容器内仅无 `codex` 二进制的 2 项本地环境测试及受沙盒出网域名限制的高德瓦片 `map_e2e` 在 CI 全量跑通）。
+  - `test/e2e/xin_tianqi_e2e.py` **82/82 全部通过**；PR Actions 运行 [`45300823249`](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45300823249) 与正式站部署及真机模型联调运行 [`45302851308`](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45302851308) 全部绿灯通过。
   - Playwright 截图逐张核对 `1280×860`、`1024×768`、`768×1024`、`390×844` 在夜空（深色）与星图（浅色）下的空状态与对话态，排版、对比度、星盘与输入框细节均正常无遮挡。真机 iOS Safari 合成帧手感待站长实机使用确认。
 
 # 修改清单 · 2026-11-21（正式站能读取重跑通过的 PR 记录）

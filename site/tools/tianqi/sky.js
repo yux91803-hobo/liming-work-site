@@ -306,19 +306,51 @@
     else { wake(); (function clock() { setTimeout(function () { spawnMeteor(); clock(); }, 18000 + Math.random() * 24000); })(); setTimeout(function () { spawnMeteor(); }, 2200); }
     new MutationObserver(function () { INK = html.dataset.theme === 'light'; setPalette(); if (!gl) fallbackStars(); if (REDUCE) drawStars(performance.now()); }).observe(html, { attributes: true, attributeFilter: ['data-theme'] });
 
-    /* 输入框边框微光跟随（参考 React Bits SpotlightCard）：只在桌面鼠标移动时生效，零阴影、零重排 */
+    /* 输入框边框微光跟随（SpotlightCard）+ 空状态星盘 3D 陀螺仪倾角（Tilt）+ 点夜空许愿流星（Meteors + ClickSpark） */
     var spotRaf = 0, spotEv = null;
-    box.addEventListener('pointermove', function (e) {
+    document.addEventListener('pointermove', function (e) {
       if (REDUCE || e.pointerType !== 'mouse') return;
       spotEv = e;
       if (spotRaf) return;
       spotRaf = requestAnimationFrame(function () {
         spotRaf = 0;
         if (!spotEv) return;
-        var r = box.getBoundingClientRect();
-        box.style.setProperty('--mx', Math.round(spotEv.clientX - r.left) + 'px');
-        box.style.setProperty('--my', Math.round(spotEv.clientY - r.top) + 'px');
+        if (box.contains(spotEv.target)) {
+          var r = box.getBoundingClientRect();
+          box.style.setProperty('--mx', Math.round(spotEv.clientX - r.left) + 'px');
+          box.style.setProperty('--my', Math.round(spotEv.clientY - r.top) + 'px');
+        }
+        var eo = frame.hasAttribute('data-start') ? $('.tq-empty-orbit') : null;
+        if (eo) {
+          var er = eo.getBoundingClientRect(), ecx = er.left + er.width / 2, ecy = er.top + er.height / 2;
+          var enx = Math.max(-1, Math.min(1, (spotEv.clientX - ecx) / 260)), eny = Math.max(-1, Math.min(1, (spotEv.clientY - ecy) / 220));
+          eo.style.setProperty('--ax', (-eny * 14).toFixed(2) + 'deg');
+          eo.style.setProperty('--ay', (enx * 14).toFixed(2) + 'deg');
+        }
       });
+    }, { passive: true });
+    document.addEventListener('pointerleave', function () {
+      var eo = $('.tq-empty-orbit');
+      if (eo) { eo.style.removeProperty('--ax'); eo.style.removeProperty('--ay'); }
+    });
+    $('.tq-mid').addEventListener('click', function (e) {
+      if (REDUCE || html.classList.contains('kb-up') || html.classList.contains('kb-anim')) return;
+      var eo = e.target.closest && e.target.closest('.tq-empty-orbit');
+      if (eo) {
+        var r = eo.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        spawnRing(cx, cy, PAL.trail, 56);
+        spawnSpark(cx, cy, PAL.trail, 12);
+        eo.classList.remove('surge'); void eo.offsetWidth; eo.classList.add('surge');
+        clearTimeout(eo._st); eo._st = setTimeout(function () { eo.classList.remove('surge'); }, 900);
+        return;
+      }
+      if (e.target.closest && e.target.closest('button, a, input, textarea, select, label, .xc-bub, .tq-box, .tq-plan-card, .xc-pick, .xc-menu, .tq-mid-head')) return;
+      var sel = window.getSelection && window.getSelection();
+      if (sel && String(sel).trim()) return;
+      if (e.target.closest && e.target.closest('.xc-body')) {
+        spawnSpark(e.clientX, e.clientY, PAL.trail, 7);
+        spawnMeteor({ x: Math.max(24, Math.min(W - 24, e.clientX - 70)), y: Math.max(16, e.clientY - 42) });
+      }
     });
 
     /* 发出去的字化成星尘：先把字画到离屏画布，再按像素取样成粒子 */

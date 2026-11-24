@@ -114,12 +114,26 @@
     return null;
   }
 
-  /* 插画 */
-  // LQFP144：每边 36 个脚，1 脚在左上，逆时针编号；on 里的脚号点亮
+  /* 插画（参考 DavidHDev/react-bits PixelCard/GlareHover/ClickSpark、magicuidesign/magicui OrbitingCircles/InteractiveGridPattern、ibelick/motion-primitives Spotlight/AnimatedGroup） */
+  // LQFP144：每边 36 个脚，1 脚在左上，逆时针编号；on 里的脚号点亮，外圈附 45° PCB 走线与脉冲信号包
+  var CHIP_TRACES = [
+    'M4 78h20l11 11h10', 'M0 108h18l10 10h17', 'M6 146h22l9-9h8', 'M2 178h19l12-12h12',
+    'M92 6v16l10 10v13', 'M156 4v18l-10 10v13', 'M96 254v-16l11-11v-12', 'M166 256v-18l-11-11v-12'
+  ];
   function artChip(on) {
-    var s = sv('svg', { viewBox: '0 0 260 260', 'class': 'art art-chip', 'aria-hidden': 'true' }), g = sv('g', { 'class': 'pins' });
+    var s = sv('svg', { viewBox: '0 0 260 260', 'class': 'art art-chip', 'aria-hidden': 'true' });
+    var tr = sv('g', { 'class': 'traces' });
+    CHIP_TRACES.forEach(function (d, i) {
+      tr.appendChild(sv('path', { d: d, 'class': 'tr' }));
+      var sig = sv('path', { d: d, 'class': 'tr-sig' });
+      sig.style.setProperty('--d', (i * 0.16).toFixed(2) + 's');
+      tr.appendChild(sig);
+    });
+    s.appendChild(tr);
+    var g = sv('g', { 'class': 'pins' });
     var B = 50, W = 160, step = W / 36, L = 15, lit = {};
-    (on || []).forEach(function (n, k) { lit[n] = k + 1; });
+    var active = (on && on.length) ? on : [8, 9, 23, 24, 69, 70, 101, 102];
+    active.forEach(function (n, k) { lit[n] = k + 1; });
     for (var n = 1; n <= 144; n++) {
       var side = Math.floor((n - 1) / 36), k = (n - 1) % 36, x, y, w, h, c = B + step * (k + 0.5);
       if (side === 0) { x = B - L; y = c - 1.1; w = L; h = 2.2; }
@@ -139,15 +153,68 @@
     s.appendChild(t1); s.appendChild(t2);
     return s;
   }
-  // 点阵世界地图：64 × 28，由 data/countries.json 预先算好（每行 16 位十六进制）
+  // 点阵世界地图：64 × 28，由 data/countries.json 预先算好（每行 16 位十六进制），附坐标信标脉冲与经度扫描带
   var WORLD = ["001343f00020f0c0", "081de3f0080ffff0", "ffff9bc83dffffff", "1ffe21006ffffffe", "00ff38016fffff88", "007ffc017fffff80", "003ff200ffffffc0", "003fe003b9fffe00", "003fe00327bffe00", "001fc003e3fffc00", "000e4003fffff800", "000e4007fdeffc00", "00030007ffc66400", "00008007ff046400", "00007803ff804000", "00003e003f004800", "00003f003e001900", "00003fc03e000070", "00003fc03e000000", "00001f803e800340", "00000f803c8007c0", "00001f001c000fe0", "00001e001c000fe0", "00001c00100000e0", "0000180000000000", "0000100000000002", "0000100000000000", "0000100000000000"];
+  var WORLD_BEACONS = [[51, 9], [33, 6], [14, 8], [55, 20]];
   function artWorld() {
     var s = sv('svg', { viewBox: '0 0 384 168', 'class': 'art art-world', 'aria-hidden': 'true' });
+    var dots = sv('g', { 'class': 'w-dots' });
     WORLD.forEach(function (row, r) {
       for (var c = 0; c < 64; c++) {
-        if ((parseInt(row[c >> 2], 16) >> (3 - (c & 3))) & 1) s.appendChild(sv('rect', { x: c * 6 + 1, y: r * 6 + 1, width: 4, height: 4 }));
+        if ((parseInt(row[c >> 2], 16) >> (3 - (c & 3))) & 1) dots.appendChild(sv('rect', { x: c * 6 + 1, y: r * 6 + 1, width: 4, height: 4 }));
       }
     });
+    s.appendChild(dots);
+    s.appendChild(sv('rect', { x: -36, y: 0, width: 32, height: 168, 'class': 'w-scan' }));
+    var bc = sv('g', { 'class': 'w-beacons' });
+    WORLD_BEACONS.forEach(function (pt, i) {
+      var bx = pt[0] * 6 + 1, by = pt[1] * 6 + 1;
+      var ring = sv('rect', { x: bx - 4, y: by - 4, width: 12, height: 12, 'class': 'b-ring' });
+      ring.style.setProperty('--d', (i * 0.65).toFixed(2) + 's');
+      bc.appendChild(ring);
+      bc.appendChild(sv('rect', { x: bx, y: by, width: 4, height: 4, 'class': 'b-dot' }));
+    });
+    s.appendChild(bc);
+    return s;
+  }
+  // 天启夜空星盘：错峰闪烁像素星、悬停连亮的北斗星群、正反双轨星盘与划空流星
+  var SKY_STARS = [
+    [18, 22, 2], [44, 14, 2], [72, 34, 3], [98, 18, 2], [134, 28, 2], [166, 16, 3], [202, 24, 2], [308, 20, 2], [326, 44, 3],
+    [28, 74, 2], [62, 96, 2], [92, 126, 3], [128, 114, 2], [160, 142, 2], [194, 132, 3], [216, 56, 2], [318, 118, 2], [298, 146, 3]
+  ];
+  var SKY_NODES = [[38, 52], [68, 44], [98, 58], [124, 78], [132, 108], [168, 114], [182, 84]];
+  function artSky() {
+    var s = sv('svg', { viewBox: '0 0 340 168', 'class': 'art art-sky', 'aria-hidden': 'true' });
+    var st = sv('g', { 'class': 'sky-stars' });
+    SKY_STARS.forEach(function (p, i) {
+      var r = sv('rect', { x: p[0], y: p[1], width: p[2], height: p[2], 'class': 'st' });
+      r.style.setProperty('--d', ((i % 7) * 0.37).toFixed(2) + 's');
+      st.appendChild(r);
+    });
+    s.appendChild(st);
+    var cs = sv('g', { 'class': 'sky-const' });
+    cs.appendChild(sv('path', { d: 'M38 52L68 44L98 58L124 78L132 108L168 114L182 84L124 78', 'class': 'c-line' }));
+    SKY_NODES.forEach(function (p, i) {
+      var nd = sv('rect', { x: p[0] - 2, y: p[1] - 2, width: 4, height: 4, 'class': 'c-node' });
+      nd.style.setProperty('--d', (i * 0.08).toFixed(2) + 's');
+      cs.appendChild(nd);
+    });
+    s.appendChild(cs);
+    var mt = sv('g', { 'class': 'sky-meteor' });
+    mt.appendChild(sv('path', { d: 'M176 22L134 46', 'class': 'm-tail' }));
+    mt.appendChild(sv('rect', { x: 132, y: 45, width: 3, height: 3, 'class': 'm-head' }));
+    s.appendChild(mt);
+    var ob = sv('g', { 'class': 'sky-orb' });
+    ob.appendChild(sv('circle', { cx: 254, cy: 84, r: 54, 'class': 'orb-outer' }));
+    ob.appendChild(sv('circle', { cx: 254, cy: 84, r: 36, 'class': 'orb-inner' }));
+    ob.appendChild(sv('path', { d: 'M254 18v12M254 138v12M188 84h12M308 84h12', 'class': 'orb-ticks' }));
+    var sat = sv('g', { 'class': 'orb-sat' });
+    sat.appendChild(sv('rect', { x: 251, y: 27, width: 6, height: 6, 'class': 'orb-planet' }));
+    sat.appendChild(sv('rect', { x: 288, y: 82, width: 4, height: 4, 'class': 'orb-moon' }));
+    ob.appendChild(sat);
+    ob.appendChild(sv('path', { d: 'M254 66l4 14 14 4-14 4-4 14-4-14-14-4 14-4Z', 'class': 'orb-core' }));
+    ob.appendChild(sv('rect', { x: 252.5, y: 82.5, width: 3, height: 3, 'class': 'orb-heart' }));
+    s.appendChild(ob);
     return s;
   }
   function artIcon(t) { var s = svg(t.icon); s.setAttribute('class', 'art art-icon'); return s; }
@@ -158,6 +225,7 @@
     var where = t.id === 'stm32' ? stmWhere(ls('lm.shell.stm32')) : null;
     if (t.art === 'chip') a.appendChild(artChip(where && where.t ? TOPIC_PINS[where.t] : []));
     else if (t.art === 'world') a.appendChild(artWorld());
+    else if (t.art === 'sky') a.appendChild(artSky());
     else a.appendChild(artIcon(t));
     var tx = el('span', 'tx');
     tx.appendChild(iconBox(t));
@@ -198,19 +266,65 @@
 
   pressable(grid, '.card');
   pressable($('#cmd'));
+
+  /* 桌面指针追光（Spotlight）与标题栏像素迸发火花（ClickSpark） */
+  var spotRaf = 0, spotEl = null, spotX = 0, spotY = 0;
+  home.addEventListener('pointermove', function (e) {
+    if (e.pointerType === 'touch') return;
+    var t = e.target && e.target.closest ? e.target.closest('.card, .xw-card') : null;
+    if (!t) return;
+    spotEl = t; spotX = e.clientX; spotY = e.clientY;
+    if (spotRaf) return;
+    spotRaf = requestAnimationFrame(function () {
+      spotRaf = 0;
+      if (!spotEl) return;
+      var r = spotEl.getBoundingClientRect();
+      spotEl.style.setProperty('--mx', (spotX - r.left).toFixed(1) + 'px');
+      spotEl.style.setProperty('--my', (spotY - r.top).toFixed(1) + 'px');
+    });
+  }, { passive: true });
+  function spawnHomeSpark(x, y) {
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    for (var i = 0; i < 8; i++) {
+      var a = (Math.PI * 2 * i) / 8 + (i % 2 ? 0.18 : -0.12), dist = 16 + (i % 3) * 7;
+      var sp = el('span', 'hm-spark');
+      sp.style.left = x + 'px'; sp.style.top = y + 'px';
+      sp.style.setProperty('--dx', Math.round(Math.cos(a) * dist) + 'px');
+      sp.style.setProperty('--dy', Math.round(Math.sin(a) * dist) + 'px');
+      body.appendChild(sp);
+      setTimeout(function (n) { if (n.parentNode) n.parentNode.removeChild(n); }, 520, sp);
+    }
+  }
+  var brandSpark = home.querySelector('.hd .spark');
+  if (brandSpark) brandSpark.addEventListener('click', function (e) {
+    var r = brandSpark.getBoundingClientRect();
+    brandSpark.classList.remove('spin'); void brandSpark.offsetWidth; brandSpark.classList.add('spin');
+    spawnHomeSpark(e.clientX || (r.left + r.width / 2), e.clientY || (r.top + r.height / 2));
+  });
+
   document.addEventListener('click', function (e) {
     var a = e.target.closest('a[data-id]'); if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
     e.preventDefault(); open(a.dataset.id, { from: a, push: true, route: a.dataset.route });
   });
 
-  /* 搜索：标题栏的放大镜打开搜索框，找不到的卡片和空了的分类藏起来 */
+  /* 搜索：标题栏的放大镜打开搜索框，找不到的卡片和空了的分类藏起来；剩余卡片做 FLIP 平滑补位 */
   var q = $('#q'), searchBtn = $('#searchBtn');
   function match(t, s) { return (t.name + ' ' + (t.keywords || '') + ' ' + t.id).toLowerCase().indexOf(s) > -1; }
   function filter() {
     var s = q.value.trim().toLowerCase(), n = 0;
+    var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var before = new Map();
+    if (!still) grid.querySelectorAll('.card[data-id]:not(.hide)').forEach(function (c) { before.set(c, c.getBoundingClientRect()); });
     grid.querySelectorAll('.card[data-id]').forEach(function (c) { var ok = !s || match(byId[c.dataset.id], s); c.classList.toggle('hide', !ok); if (ok) n++; });
     grid.querySelectorAll('.cat').forEach(function (sec) { sec.hidden = !sec.querySelector('.card:not(.hide)'); });
     $('#empty').hidden = n > 0;
+    if (!still && before.size) {
+      grid.querySelectorAll('.card[data-id]:not(.hide)').forEach(function (c) {
+        var r0 = before.get(c); if (!r0 || !c.animate) return;
+        var r1 = c.getBoundingClientRect(), dx = r0.left - r1.left, dy = r0.top - r1.top;
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) c.animate([{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }], { duration: 220, easing: 'cubic-bezier(.22,1,.36,1)' });
+      });
+    }
   }
   function searching(on) {
     home.classList.toggle('searching', on);
@@ -219,7 +333,11 @@
     q.value = ''; filter(); q.blur();
   }
   pressable(searchBtn);
-  searchBtn.addEventListener('click', function () { searching(!home.classList.contains('searching')); });
+  searchBtn.addEventListener('click', function (ev) {
+    var r = searchBtn.getBoundingClientRect();
+    spawnHomeSpark(ev.clientX || (r.left + r.width / 2), ev.clientY || (r.top + r.height / 2));
+    searching(!home.classList.contains('searching'));
+  });
   q.addEventListener('input', filter);
   q.addEventListener('blur', function () { if (!q.value.trim()) setTimeout(function () { if (document.activeElement !== q && !q.value.trim()) home.classList.remove('searching'), searchBtn.setAttribute('aria-expanded', 'false'); }, 120); });
   q.addEventListener('keydown', function (e) {
@@ -443,7 +561,7 @@
         }
       } else {
         var at2 = kbAnimAt(kbAnim, now);
-        if (!at2.done) { kbPlace(vv, at2.h, full); return; }
+        if (!at2.done && !(kbAnim.dir === 'close' && full - at2.h < 0.5)) { kbPlace(vv, at2.h, full); return; }
         var finishedClose = kbAnim.dir === 'close';
         kbAnim = null; kbSyncAnim(false);   // 跟随走完了，下面按 visualViewport 的现值对齐
         // 收起动画走完但 Safari 还没更新 visualViewport.height：保持满屏，不被旧高度拽回半空
