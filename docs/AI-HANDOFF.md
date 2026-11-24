@@ -1,3 +1,11 @@
+## 2026-11-25 · 天启星空宇宙主题大改版：天枢星象舱布局、宇宙星表模型选择器、Codex 式思考强度、实时思考星链与 1:1 Claude Code 终端（Antigravity 实现，Muse 驱动监督）
+
+- **谁做的**：Antigravity 实现并自查——第 1–3 步（布局、样式、交互引擎、e2e 调整）由 Gemini 4 Carbon High 完成；Gemini 额度用完后同一 agy 会话切 Claude Opus 5.5 High 完成第 4–5 步（截图核验修复、全量检查、本条所据的变更记录）；两个池额度均用尽后，最终总结未及输出。Muse 负责驱动监督、补填 `docs/CHANGES.md` 的 check 结果、随附下方账号数纠正与本条交接；本地全量复核按站长指示略过，以 CI 结果为准。分支 `antigravity/tianqi-cosmos-rework-20261124`（基于 `main` `4d62222`，即 PR #209）。完整改法、开源参考与验证记录见 [docs/CHANGES.md](CHANGES.md) 最新一条。
+- **已完成**：只改天启自己的 3 个文件（`site/tools/tianqi/index.html`、`workbench.css`、`sky.js`）与 `test/e2e/xin_tianqi_e2e.py`：悬浮遥测顶栏＋左栏默认收起的「天枢星象舱」布局、宇宙星表模型选择器（修复空状态弹层只显示 3 张卡片）、参考 Codex 桌面端的独立思考强度选择器、参考 OpenCode/Cline/assistant-ui 的实时思考星链、1:1 复刻 Claude Code 终端（仅吉祥物换成天启星徽）。小芯共用的 `site/xin/*` 与 `site/shell.js` 零改动；资源版本号 `?v=cosmos-rework-20261124`。
+- **测试结果（Antigravity 本机自查）**：`xin_tianqi_e2e.py` 88/88（新增场景 2e，检查数 84→88；旧断言调整均因旧布局写死，逐条理由见 CHANGES.md，无跳过/删除）、`xin_term_e2e.py` 75/75、`xin_motion_e2e.py` 27/27、天启单测 40/40、隔离环境 `npm run check` 退出码 0。CI 结果以本 PR 的 Actions 运行为准。
+- **顺带纠正**：本文件 2026-11-19 那条交接里 li2 网关账号数「3 个」更正为 1 个（按文件数误计，站长 2026-11-19 已同意随代码 PR 捎带更正，依据见该条内注）。
+- **接手注意**：真机 iOS Safari 手感（键盘让帧、终端触屏展开）与桌面 WebGL 合成需站长实机确认；截图核验时出现过一次与模型弹层同尺寸的暗色矩形，同条件重跑 3 次未复现，疑为无头 SwiftShader 合成残影（详见 CHANGES.md），真机上留意模型星表弹层下方区域。
+
 ## 2026-11-24 · 天启深空星象台背景、侧边栏像素级对齐与真机 iOS 输入框丝滑度根治（Antigravity）
 
 - **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/tianqi-cosmos-sidebar-ios-20261124`（从已上线 `main` `1aba37b` 切出）。完整根因量化、开源参考与验证记录见 [docs/CHANGES.md](CHANGES.md) 最新一条。
@@ -203,7 +211,7 @@
 - **怎么核对的**：用 li2 的 key 经 InstaBox 只读地看，只看数量、状态和关键字。没看对话内容，没打印 key。
 - **核对结果**：
   - 正式站：联调里 `/api/tq/me` 是 `enabled=true`，`XIN_TQ_INSTABOX_API_KEY` 已经写进 Worker。
-  - li2 网关：`workbuddy-gateway.service` 开机自启、在跑，只听 `127.0.0.1:8788`；`/data/workbuddy-gateway/accounts` 里有 3 个账号（站长加的）；线路配置见下一条（#180）。
+  - li2 网关：`workbuddy-gateway.service` 开机自启、在跑，只听 `127.0.0.1:8788`；`/data/workbuddy-gateway/accounts` 里实际只有 1 个账号（尾号 3750 的国内号，站长 11-18 让 Muse 经网关导入接口加的；同目录的 `settings.json`、`model.json` 不是账号，原记录「3 个」系按文件数误计，Muse 于 11-19 实测更正）；线路配置见下一条（#180）。
   - `~/.xin/harness.key`：权限 600。拿它调本机网关 `/v1/models` 回 200（22 个模型），错的 key 回 401。
   - 身份：Harness 人设里是「你叫天启」，没有「小芯」；常驻进程 `XIN_ROLE=tianqi`。
   - 真对话：li2 上留着的一轮（11-18 23:59 北京时间）成功，用时 5.3 秒。
