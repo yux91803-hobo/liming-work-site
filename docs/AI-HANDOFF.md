@@ -1,6 +1,17 @@
+## 2026-11-24 · 天启深空星象台背景、侧边栏像素级对齐与真机 iOS 输入框丝滑度根治（Antigravity）
+
+- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/tianqi-cosmos-sidebar-ios-20261124`（从已上线 `main` `1aba37b` 切出）。完整根因量化、开源参考与验证记录见 [docs/CHANGES.md](CHANGES.md) 最新一条。
+- **已完成**：
+  - **天启深空星象台背景与中栏质感（`site/tools/tianqi/sky.js`、`workbench.css`）**：`starCv` 升级为双遍 WebGL 渲染（第 1 遍 `highp` 6 阶 Domain-Warped FBM + 4 阶脊状湍流合成 ~32° S 形银河亮带、大裂谷暗尘埃脉络、蓝青极光反射星云、香槟金恒星孕育结、中央阅读暗场净空与底部行星大气弧光；第 2 遍银道面高斯富集星群 + 全天球多光谱恒星 + 五星座主星十字衍射星芒），配合离屏缓存 `chartCv` 预绘黄道/赤道大圆刻度弧与北斗/仙后/猎户/天鹅/天琴五组星座线；空状态升级为 `80×80` 三轨浑天星仪徽章，输入框升级为冷曜石仪器台，100% 守住 Linear 实心无毛玻璃、零 80px 阴影、无紫色及 `prefers-reduced-motion` 静默降级约束。
+  - **侧边栏全档位对齐（`site/shell.css`、`site/shell.js`、`workbench.css`、`site/index.html`、`site/tools/tianqi/index.html`）**：修正 `≥900px` 下 `.panel[data-id=tianqi] .back` 偏移 16px 与 `.tq-brand .xc-tq` 内部 32px 圆底溢出 12px 的两处错位，窄条增补命令面板键，实测 `<`、`✦`、`✎`、`⌕`、`⚙`、`🔌` 六枚 `38×38` 按钮全部严格共线于 `X = 46.0px`（误差 `0.0px`）；展开态与窄屏/手机全高贴边抽屉均与返回键同行对齐、清除 `.xc-drawer` 继承圆角，并自动跟随天启「夜空/星图」切换返回键浅色外观。
+  - **真机 iOS 输入框卡顿根治（`site/shell.js`、`site/shell.css`、`site/xin/chat.js`、`sky.js`、`workbench.css`）**：将手机 `.tq-right` 从 `height: min(80%, 680px)` 改为 `min(80dvh, 680px)` 并为关闭态抽屉加 `contain: layout style paint`，消除键盘逐帧缩放时连环触发的 30+ 次 `.45s` 抽屉过渡；`chat.js` 高度变化不再空跑 `layout()`；`kbHeight` 跨会话写入 `localStorage`、`kbPlace` 整像素量化、`touchend` 增加 Searls 屏外位移聚焦护栏与 `kb-up` 外层防橡皮筋拖动、触屏键盘静置暂停 WebGL 刷帧。
+- **测试结果与接手注意**：
+  - 本地 `xin_tianqi_e2e.py`（84 项，含新增 2 项回归）、`xin_motion_e2e.py`、`xin_main_e2e.py`、`xin_work_e2e.py`、`stm32_e2e.py` 与静态语法/资源检查全部通过；`1180/1280/390` 深浅色截图逐张核对；CI、预发与正式站部署记录以对应 PR 及 Actions 运行为准。
+  - **接手注意**：天球星图画在离屏 `chartCv` 再 `drawImage` 到 `back` 画布上，不要给 `chartCv` 加 `tq-sky` 类名（E2E 约束页面中 `canvas.tq-sky` 数量固定为 3 且键盘缩放时 `__skyResets === 0`）；手机底部或侧边抽屉在隐藏位用 `translateY/X(>100%)` 时，切勿使用依赖父容器高度的 `%` 高度，否则键盘逐帧改视口高度会反复重触发 CSS `transform` 过渡。
+
 ## 2026-11-24 · 全站 UI 与复杂交互动画升级（Antigravity）
 
-- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/site-ui-motion-20261124`（从已上线 `main` `0b818a1` 切出）。详细原因、开源参考与验证数据见 [docs/CHANGES.md](CHANGES.md) 最新一条。
+- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/site-ui-motion-20261124`（从已上线 `main` `0b818a1` 切出，PR [#208](https://github.com/yux91803-hobo/liming-work-site/pull/208) 已合入 `main` `1aba37b`，部署运行 [`45314501321`](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45314501321) 全绿）。详细原因、开源参考与验证数据见 [docs/CHANGES.md](CHANGES.md)。
 - **已完成**：
   - **工具箱首页（`site/tools.js`、`site/shell.js`、`site/shell.css`）**：新增 `天启` 深空星盘像素卡（`.card.art-sky`，含双轨星盘、公转行星、闪烁像素星与悬停北斗连线）；为 `世界地图` 增加 4 处地理坐标信标脉冲环（`.w-beacons`）与悬停经线扫描；为 `STM32` 增加 8 条 45° PCB 铜箔走线与流动电信号包（`.traces .tr-sig`）；补齐卡片 `rAF` 指针追光（`--mx`/`--my`）与光泽扫掠、点击 `✻`/搜索键 8 颗像素火花迸发（`.hm-spark`）、搜索过滤时的 WAAPI FLIP 平滑补位。
   - **小芯工作台（`site/xin/chat.js`、`site/xin/chat.css`）**：空对话 `.xc-hello-mk` 增加正反双轨琥珀色星环（`.xc-hello-orb`，纯 `<i aria-hidden="true">` 不含按钮以守住欢迎页纯净约束）、桌面指针 3D 磁吸倾角与像素眼神跟随、点击笑脸弹簧欢跳（`.hop`）并迸发 8 颗暖金火花（`.xc-hspark`）；输入框 `.xc-row` 增加 1.5px 遮罩追光细边、聚焦顶边暖光展开线与发送键就绪扫光；复制勾号增加描边动画、新建 `+` 悬停旋转 90°。

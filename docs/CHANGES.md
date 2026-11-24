@@ -1,6 +1,33 @@
+# 修改清单 · 2026-11-24（天启：深空星象台背景改造、全档位侧边栏像素级对齐与真机 iOS 输入框卡顿根治）
+
+- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/tianqi-cosmos-sidebar-ios-20261124`（基于 `main` `1aba37b`）。
+- **原实现与问题定位**：
+  1. **侧边栏多轴错位（站长截图 `/tianqi` 窄条态）**：
+     - 外层返回键 `.panel[data-id=tianqi] .back`（`site/shell.css`）原设 `left: 10px, width: 40px`（中轴 `X = 30px`），而天启窄条 `.tq-side` 位于 `left: 16px, width: 60px`（中轴 `X = 46px`），返回键向左偏出 **16px** 并悬出侧栏左边界 6px；且天启切成「星图」浅色时返回键仍固定深色。
+     - `.tq-brand-mark`（`20×20`）内部的 `.xc-isle .xc-tq` 被 `site/xin/chat.css` 设为 `32×32` 圆底，向右下溢出 **+12px**，导致真实星徽中轴右偏至 `X = 52px`（旧测试只量外层 `20×20` 容器而漏检）；窄轨按钮混用 `40/38/36/32px` 四种尺寸，`h1`/`.tq-fold`/`.tq-li2` 仅 `opacity: 0` 仍占 flex 排布空间；窄屏/手机抽屉未清掉 `.xc-drawer` 的 `--rad: 0 24px 24px 0` 导致「新建对话」右上角被斜切，且抽屉滑出时左上角被外层返回键遮压。
+  2. **真机 iOS 输入框抬起/下放残留卡顿（PR #207 之后的深层合成与重排瓶颈）**：
+     - **关闭态底部面板连环过渡风暴**：`workbench.css` 中手机态 `.tq-right` 原写 `height: min(80%, 680px); transform: translateY(103%); transition: transform .45s`。键盘逐帧缩放 iframe 高度时，`80%` 与基于自身高度的 `translateY(103%)` 每帧变值，连续重触发 **30+ 次** 带大阴影底栏的 `.45s` CoreAnimation 过渡动画。
+     - **纯高度变化触发 `chat.js` 全量重绘**：`site/xin/chat.js` 在 `window.resize` 无条件跑 `layout()`（含 `renderWork()`、`renderHead()`），在宽度不变的 30–45 帧键盘动画中每帧空转。
+     - **跨会话首次冷启动、`0.5px` 尾部抖动与 iframe 异步滚屏**：`kbHeight` 仅存 `sessionStorage`，新开页面首次点输入框仍需干等迟到的 `visualViewport`；`kbPlace` 用 `0.5px` 步进在减速尾段多触发约 65% 的跨 iframe 重排；iOS Safari 在 `<iframe>` 内仅靠 `preventScroll` 偶发异步视口平移或手势外拖；触屏键盘静置（`kb-up`）时 WebGL 仍在空转刷帧。
+  3. **天启背景单调**：原 `sky.js` 仅在纯深蓝渐变上画均匀离散点精灵，缺少星云层次、银河尘埃结构与天文台星盘坐标感。
+- **改法、开源参考与行为保证**（更新资源版本 `cosmos-20261124`）：
+  - **深空星象台双遍 WebGL 着色器与离屏天球星图（`site/tools/tianqi/sky.js`、`workbench.css`）**：
+    - 参考 [`xemantic/shader-web-background`](https://github.com/xemantic/shader-web-background)（`highp` 精度防移动端 fp16 条带）、Inigo Quilez 的 [Domain Warping FBM](https://iquilezles.org/articles/warp/)、Shadcn `NebulaShader` 与 [`Stellarium Web`](https://github.com/Stellarium/stellarium-web-engine)，在 `starCv` 第一遍合成 6 阶分形 FBM + 4 阶脊状湍流（Ridged Multifractal）的 ~32° S 形银河亮带、大裂谷暗尘埃脉络、蓝宝石/青极光反射星云、香槟金恒星孕育结与底部行星大气弧光，并在中央对话区留出柔和暗场阅读净空（浅色「星图」切换为古铜青金星表水彩底纹，绝不用紫色）；星云在初始化与换尺寸/换外观时一次性烘焙至离屏 `gl.LINEAR` 帧缓冲纹理（`nebFbo`/`nebTex`），日常闪烁帧仅做单次纹理采样（省去 99.8% 像素运算，兼顾真机 iPhone 功耗发热与无头浏览器 SwiftShader 软件渲染性能）；第二遍全分辨率注入 45% 银道面高斯富集星群 + 55% 全天球多光谱恒星 + 五组真实星座主星艾里十字衍射星芒。
+    - 离屏 `chartCv` 预绘锁定顶点的黄道实线大圆弧（含 2°/8° 天文刻度与 `RA 18h~20h · +23°` 标注）、天赤道虚线弧及北斗、仙后、猎户、天鹅、天琴五组真实星座连线与主星寻星环，平时 0ms 帧开销、有流星或指针连线时单次 `drawImage` 复原（保持页面 DOM 中 `canvas.tq-sky` 仍为 3 张，`__skyResets` 零影响）。
+    - 空状态升级为 `80×80`（手机 `66×66`）三轨浑天星仪徽章（含内圈反向虚线赤道环与双公转伴星），严格遵守 Linear 实心无 `backdrop-filter`（`.tq-glass` 不透明度 = 1）、输入框零 80px 大阴影与 `prefers-reduced-motion` 自动静止约束。
+  - **全档位侧边栏中轴对齐（`site/shell.css`、`site/shell.js`、`workbench.css`、`index.html`、`tools/tianqi/index.html`）**：
+    - `≥900px` 下 `.panel[data-id=tianqi] .back` 精确定位至 `left: calc(max(16px, var(--sl)) + 11px); top: calc(22px + var(--st)); width: 38px; height: 38px`，窄条态增补 `.tq-rail-cmd` 命令面板键，隐藏项彻底 `display: none`，重设 `.tq-brand .xc-tq` 为无圆底 `20×20`：实测返回键、品牌星、新对话、命令面板、设置、插件全部 `38×38` 严格共线于 `X = 46.0px`（误差 `0.0px`）。
+    - 展开态（`open`）与窄屏/手机贴边全高抽屉（`narrow`/`phone`）统一清除 `.xc-drawer` 继承圆角并通过 `.tq-side-top { padding-left: 44px }` 与返回键同行对齐；`shell.js` 监听 iframe `data-theme` 同步切换浅色「星图」返回键样式。
+  - **真机 iOS 输入框丝滑度根治（`site/shell.js`、`site/shell.css`、`site/xin/chat.js`、`sky.js`、`workbench.css`）**：
+    - 手机 `.tq-right` 改为固定视口单位 `height: min(80dvh, 680px)` 并对关闭态抽屉设 `contain: layout style paint`、`.tq-mid` 设 `contain: layout style`、`html.kb-anim` 期间禁掉面板过渡，彻底消灭键盘缩放时的 30+ 次抽屉过渡风暴；`html.home-pin` 禁掉底层隐藏首页的无意义 300ms 背景色过渡。
+    - `chat.js` 的 `window.resize` 仅在 `innerWidth` 变化时跑 `layout()`；`shell.js` 将 `kbHeight` 同步持久化到 `localStorage`（消除跨会话首次点按冷启动延迟）、`kbPlace` 改为 `1px` 整像素步进，并参考 [`caelinsutch/keyboard-playground.html`](https://gist.github.com/caelinsutch/f95a4cbd667fb819ca8968f1f0ebf4d4) 与 Justin Searls 的方案在 `touchend` 聚焦瞬间做屏外位移护栏 + `kb-up` 非滚动区 `touchmove` 防外拖；触屏 `kb-up` 空闲期自动暂停 WebGL 夜空循环，独立页 `/tools/tianqi/` 同步补齐 `visualViewport` 与 `preventScroll` 守护。
+- **验证证据**：
+  - `test/e2e/xin_tianqi_e2e.py` 新增窄条返回键/内部星徽/命令面板键 `≤1px` 中轴对齐检查及 `localStorage` 键盘高度持久化与关闭态底栏零过渡动画检查，全套 E2E（`xin_tianqi_e2e.py`、`xin_motion_e2e.py`、`xin_main_e2e.py`、`xin_work_e2e.py`、`stm32_e2e.py`）与 303 文件语法/资源引用检查全部通过。
+  - Playwright 截图逐张核对 `1180×820`（对照站长原图窄条深浅色）、`1280×860`（展开与三栏深浅色）、`390×844`（手机空状态与侧栏抽屉展开），侧栏六键中轴实测均为 `46.0px`、银河星云与天球刻度清晰自然。
+
 # 修改清单 · 2026-11-24（全站 UI 与复杂交互动画升级：工具箱首页、小芯工作台、天启与学习台微交互）
 
-- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/site-ui-motion-20261124`（基于 `main` `0b818a1`）。
+- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/site-ui-motion-20261124`（基于 `main` `0b818a1`，PR [#208](https://github.com/yux91803-hobo/liming-work-site/pull/208) 合入 `main` `1aba37b`，PR 运行 [`45312635147`](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45312635147)、正式站部署运行 [`45314501321`](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45314501321) 全绿）。
 - **原实现与优化空间**：
   1. **工具箱首页视觉密度不均与静态插画**：`site/tools.js` 里 `天启` 原先未配置专属 `art`，回退为普通浅底细线四角星，夹在「小芯工作台」与「世界地图 / STM32」之间显得单薄；`世界地图` 点阵与 `STM32` 芯片插画无脉冲细节、悬停无层次响应；卡片无指针追光；标题栏搜索框过滤时剩余卡片瞬间跳位。
   2. **小芯工作台空状态与输入区缺少细腻反馈**：`site/xin/chat.js` / `chat.css` 空对话页（`.xc-hello`）只有静态圆盘头像，缺少与指针、点击呼应的生命感；输入框（`.xc-row`）悬停缺少追光细边；消息/代码块复制成功勾号与新建按钮缺少微动效。
