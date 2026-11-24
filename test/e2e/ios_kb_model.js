@@ -50,7 +50,7 @@
       setTimeout(function () { vv.dispatchEvent(new Event('scroll')); }, MS);   // scroll 等挪完才发
     }, open ? LATE_OPEN : LATE_CLOSE);
   }
-  window.__iosKb = { st: st, P: P, K: K, kbUp: kbUp, install: install,
+  window.__iosKb = { st: st, P: P, get K() { return K; }, setK: function (v) { K = v; }, setLateClose: function (v) { LATE_CLOSE = v; }, kbUp: kbUp, install: install,
     open: function (pan) { start(true, pan); }, close: function () { start(false, false); } };
   window.__iosKbHook = function (w) {
     if (w.__iosKbHooked) return; w.__iosKbHooked = true;

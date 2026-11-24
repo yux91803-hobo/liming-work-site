@@ -1245,6 +1245,89 @@ async def main():
                  changes[2][0] < 834 and await pg.evaluate('__iosKb.st.log.length') == 1, changes)
         await pg.context.close()
 
+        # 6g. 站长反馈输入框抬起和下放卡顿：复现并锁定三处真实 bug + 动画期间让路机制
+        # (1) 键盘收起时 Safari 晚于 210ms 才发 visualViewport resize：不能在动画结束时被旧视口高度拽回半空再砸回底部
+        # (2) 键盘高度变矮（如切换中英/隐藏预测栏 360→310）：不能把进行中的跟随直接掐断导致单帧大跳
+        # (3) 手指点到输入框外框 .tq-entry 留白区（而非 textarea 文字区）：同样走 focus({preventScroll:true})，不触发整页弹跳
+        pg = await ui.page(browser, 390, 844, mobile=True, theme='dark')
+        await pg.context.add_init_script(ios_ua)
+        await pg.context.add_init_script(ios_model)
+        st = await tianqi_mock(pg)
+        st['hist_extra'] = short
+        await pg.goto(ui.BASE + '/tianqi')
+        frame = pg.frame_locator('.panel[data-id=tianqi] iframe')
+        await frame.locator('.tq-menu').tap()
+        await frame.locator('.tq-side .xc-si', has_text='天启旧对话').tap()
+        await frame.locator('.xc-bub').first.wait_for()
+        await pg.wait_for_timeout(400)
+        tf = next(f for f in pg.frames if '/tools/tianqi/' in f.url)
+        await pg.evaluate("__iosKb.install(); __iosKbHook(document.querySelector('.panel[data-id=tianqi] iframe').contentWindow); __iosKb.setK(360);")
+        # 热身一次（记住高键盘 360）
+        await frame.locator('.xc-row textarea').tap()
+        await pg.wait_for_timeout(550)
+        # 模拟收起时 visualViewport 迟到 290ms（晚于 210ms 动画）
+        await pg.evaluate('__iosKb.setLateClose(290)')
+        job = asyncio.ensure_future(pg.evaluate(trace))
+        await asyncio.sleep(.05)
+        await tf.evaluate('document.activeElement.blur()')
+        late_close = await job
+        late_back = kb_moves(late_close, 'dock', True)
+        # 键盘换成较矮的 310，再次打开：不应在收到 resize 那一帧大跳
+        await pg.evaluate('__iosKb.setK(310); __iosKb.st.resizeHeights.length = 0; __iosKb.st.log.length = 0;')
+        job2 = asyncio.ensure_future(pg.evaluate(trace))
+        await asyncio.sleep(.05)
+        await frame.locator('.xc-row textarea').tap()
+        short_open = await job2
+        short_jump = await pg.evaluate('__iosKb.st.resizeHeights')
+        short_fu = kb_follow(short_open, True)
+        await tf.evaluate('document.activeElement.blur()')
+        await pg.wait_for_timeout(600)
+        # 在 520px 宽屏（工具栏 .tq-grow 留白区宽约 90px，远离相邻按钮，高度保持 844 与 __iosKb 一致）点留白区：
+        # 走 focus({preventScroll:true}) 聚焦 textarea，运动期间挂 kb-anim 让路、结束清掉，消息区隔离滚动
+        await pg.set_viewport_size({'width': 520, 'height': 844})
+        await pg.wait_for_timeout(120)
+        await pg.evaluate('__iosKb.st.log.length = 0;')
+        grow_box = await frame.locator('.tq-instruments .tq-grow').bounding_box()
+        tap_x, tap_y = grow_box['x'] + grow_box['width'] / 2, grow_box['y'] + grow_box['height'] / 2
+        hit_tag = await tf.evaluate('([x,y]) => { const e = document.elementFromPoint(x,y); return e ? e.tagName + "." + e.className : ""; }', [tap_x, tap_y])
+        await pg.touchscreen.tap(tap_x, tap_y)
+        await pg.wait_for_timeout(40)
+        kb_anim_mid = await tf.evaluate("document.documentElement.classList.contains('kb-anim')")
+        await pg.wait_for_timeout(80)
+        pad_log = await pg.evaluate('__iosKb.st.log')
+        pad_focus = await tf.evaluate('document.activeElement && document.activeElement.tagName')
+        # 动画结束后 kb-anim 自动移除；列表有 overscroll-behavior-y: contain
+        await pg.wait_for_timeout(500)
+        anim_clean = await tf.evaluate("[document.documentElement.classList.contains('kb-anim'), getComputedStyle(document.querySelector('.tq-mid > .xc-body')).overscrollBehaviorY]")
+        ui.check('iPhone 天启：键盘收起后 visualViewport 迟到 290ms 时，输入框单调落到底、不被旧高度拽回半空',
+                 late_back <= 2 and late_close[-1]['stageH'] == 844, (late_back, [s['stageH'] for s in late_close[-10:]]))
+        ui.check('iPhone 天启：切换成更矮的键盘（360→310）时平滑改目标，收到 resize 那一帧不突然跳变',
+                 bool(short_jump) and abs(short_jump[0][1] - short_jump[0][0]) <= 24 and short_fu['max_step'] <= 90 and short_open[-1]['stageH'] == 844 - 310,
+                 (short_jump, short_fu, short_open[-1]['stageH']))
+        ui.check('iPhone 天启：点输入框工具栏留白区（非 textarea、非按钮）也走 preventScroll 聚焦；键盘运动中挂 kb-anim 让路、结束清掉且消息区隔离滚动',
+                 'SPAN.tq-grow' in hit_tag and pad_focus == 'TEXTAREA' and pad_log == [{'preventScroll': True}] and kb_anim_mid and anim_clean == [False, 'contain'],
+                 (hit_tag, grow_box, pad_focus, pad_log, kb_anim_mid, anim_clean))
+        await pg.context.close()
+
+        # 6h. 空状态星盘徽章（OrbitingCircles + ShinyText）可见，并在 prefers-reduced-motion 下停掉全部动画
+        pg = await ui.page(browser, 1280, 860, theme='dark')
+        await tianqi_mock(pg)
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.locator('.tq-empty-orbit').wait_for()
+        orb_on = await pg.evaluate("""(() => {
+          const o = document.querySelector('.tq-empty-orbit'), r = o.getBoundingClientRect();
+          return { w: Math.round(r.width), h: Math.round(r.height), anim: getComputedStyle(document.querySelector('.tq-empty-ring')).animationName };
+        })()""")
+        await pg.emulate_media(reduced_motion='reduce')
+        orb_red = await pg.evaluate("""(() => ({
+          ring: getComputedStyle(document.querySelector('.tq-empty-ring')).animationName,
+          text: getComputedStyle(document.querySelector('.tq-empty-text')).animationName,
+        }))()""")
+        ui.check('天启空状态星盘徽章正常显示并旋转，开启减少动态效果后自动静止',
+                 orb_on['w'] >= 48 and orb_on['h'] >= 48 and orb_on['anim'] != 'none' and orb_red['ring'] == 'none' and orb_red['text'] == 'none',
+                 (orb_on, orb_red))
+        await pg.context.close()
+
         # 7. 深链：只启动天启；返回首页后再启动小芯。
         pg = await ui.page(browser, 1280, 860)
         st = await tianqi_mock(pg, xin_enabled=True)

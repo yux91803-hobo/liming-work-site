@@ -1,3 +1,26 @@
+# 修改清单 · 2026-11-24（天启：修复输入框抬起/下放卡顿，并升级星空动效与细节质感）
+
+- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/tianqi-ui-polish-20261123`（基于 `main` `733bcdd`）。
+- **原实现与问题定位**：
+  - 原实现由 `site/shell.js`（#204 Muse 的外壳焦点曲线跟随、#205 Codex 的迟到续接与原焦点重开）配合 `site/tools/tianqi/sky.js`、`workbench.css`（#192 Claude Code 的 Linear 实心三栏与三层夜空画布、#203 Hark 的同帧离底保持）完成。
+  - 在 `test/e2e/ios_kb_model.js` 与 `xin_tianqi_e2e.py` 中建模复现出五处造成输入框抬起/下放卡顿的根因：
+    1. **收起迟到反向弹跳**：`KB_CLOSE`（210ms）走完时，若 iOS Safari 的 `visualViewport.resize` 晚于 210ms 才到达（实测模拟 290ms），`fitStage` 回退读取尚未更新的旧视口高度，把刚落到底部的输入框猛拽回半空 **353px**，等 resize 到了再砸回底部。
+    2. **切换较矮键盘时单帧断跳**：切换中英输入法或收起候选词栏使键盘变矮（如 360px → 310px）时，单次离散 `vv.height` 落在旧终点与整屏之间，原判断误当成跟手下拉收起直接清空 `kbAnim`，导致面板在一帧内突变 **170px**（与键盘顶距离误差达 147px、晚到位 13 帧）。
+    3. **动画期间主线程争抢与空转清屏**：面板逐帧改高度触发布局时，`sky.js` 仍在每帧重绘 3000 颗星的 WebGL 夜空，并对两张 DPR=2 全屏 2D 画布无条件执行 `clearRect`（即使空闲也在 60fps 清屏）；外壳每帧重复写入未变化的样式并触发同步布局读取。
+    4. **折线速度折角与绝对高度漂移**：`KB_OPEN`/`KB_CLOSE` 原用分段线性插值，采样节点处速度突变，在高刷屏上呈顿挫感；且只记绝对 `kbOpenH`，未按相对键盘高度 `kbHeight = full - target` 存储。
+    5. **输入框留白区点击漏拦**：手指点在 `.tq-box` / `.tq-entry` 外框或工具栏 `.tq-grow` 留白处（非 `<textarea>` 文本区）时未走 `focusInPlace`，退回不带 `preventScroll: true` 的聚焦而引起 Safari 整页挪动。
+- **改法与行为保证**（`site/shell.js`、`site/tools/tianqi/sky.js`、`site/tools/tianqi/workbench.css`，资源版本更新至 `tqkb7-20261123` / `tqpolish-20261123`）：
+  - **单调收起护栏与滚动隔离**：参考 [`caelinsutch/keyboard-playground.html`](https://gist.github.com/caelinsutch/f95a4cbd667fb819ca8968f1f0ebf4d4) 与 [`joe-bell/skills` `overlays-and-keyboard.md`](https://github.com/joe-bell/skills/blob/main/skills/apple-web-app/references/overlays-and-keyboard.md)（React Spectrum 方案），收起阶段设 `kbClosingUntil` 单调保护窗口，忽略迟到的旧小视口高度（重获焦点、转屏或视口回满屏时立即解除）；消息区 `.tq-mid > .xc-body` 设 `overscroll-behavior-y: contain`；`focusInPlace` 扩展覆盖整个 `.tq-box` / `.tq-entry` 的非按钮留白区，统一走 `focus({ preventScroll: true })`。
+  - **平滑改目标与保单调三次样条**：仅在收起方向或连续出现 ≥2 个不同中间视口高度（真跟手拖拽）时停掉曲线跟随；弹起阶段遇到单个新键盘高度时平滑改写 `kbAnim.toH` 续接剩余曲线。`KB_OPEN` / `KB_CLOSE` 改用 Fritsch-Carlson 保单调三次 Hermite 样条插值（严格过采样点、零过冲、一阶导数连续），并按屏幕尺寸在 `sessionStorage` 记住相对键盘高度 `kbHeight`。
+  - **动画期间渲染让路与脏标记节流**：键盘运动期间在天启 `<html>` 上挂 `kb-anim`，暂停夜空 WebGL/2D 重绘（保留当前星空画面，零黑屏零闪烁）与循环装饰 CSS 动画，把帧预算全部让给输入框跟随；平时两张 2D 叠加画布在无星座连线、无流星/粒子时完全停掉 `clearRect`；外壳缓存 `kbLast` 差值并优先从 `stage.style.height` 读取高度，消除强制回流。
+  - **界面美化与星空主题复杂动效**（严格保持 Linear 改版约束：实心面板无 `backdrop-filter`、输入框无大阴影、品牌星与标签下划线无发光阴影、左栏 32px 行高、系统字体、对话区 `overflow-x: hidden`、用量行固定单行）：
+    - **空状态双轨星盘徽章与微光问候**：参考 [`magicuidesign/magicui`](https://github.com/magicuidesign/magicui) `OrbitingCircles` 与 [`DavidHDev/react-bits`](https://github.com/DavidHDev/react-bits) `ShinyText`，在「从一个问题开始探索」上方绘制正反双轨星盘（锥形微光外环、反向虚线内轨、公转星点与呼吸四角星）及柔和扫光文字。
+    - **夜空指针星座连线、追光细边、双彗星环绕与星芒迸发**：参考 `react-bits` 的 `Particles`、`SpotlightCard`、`ClickSpark` 与 `magicui` 的 `BorderBeam`，桌面端鼠标划过夜空时邻近亮星浮现细星座连线；悬停输入框时 1px 边框随指针追光，聚焦时顶边星芒细线自中心展开；发送消息、点击品牌星或切换「计划」模式时触发星芒粒子迸发与双彗星环绕流光；另补齐模型面板思考强度四角星错峰弹入、`li2` 在线脉冲环、发送键就绪扫光。开启系统「减少动态效果」（`prefers-reduced-motion: reduce`）时全部动画自动静止。
+- **验证证据**：
+  - 先写红灯回归再改实现：新增的迟到 290ms 收起检查（改前反向弹回 `353px` → 改后 `0px`）与 360→310 矮键盘切换检查（改前单帧跳 `170px`、误差 `147px` → 改后单步 `≤52px`、最大误差 `18px`、到位帧差 `0`）在原代码失败、新代码全过。
+  - `test/e2e/xin_tianqi_e2e.py` **82/82 全部通过**；`xin_motion_e2e.py`、`xin_main_e2e.py`、`xin_work_e2e.py`、`stm32_e2e.py` 全部通过；全站语法与资源检查通过（303 个文件、231 个资源引用），天启及前端相关单元测试全部通过（容器内仅无 `codex` 二进制的 2 项本地环境测试及受沙盒出网域名限制的高德瓦片 `map_e2e` 在 CI 全量跑通）。
+  - Playwright 截图逐张核对 `1280×860`、`1024×768`、`768×1024`、`390×844` 在夜空（深色）与星图（浅色）下的空状态与对话态，排版、对比度、星盘与输入框细节均正常无遮挡。真机 iOS Safari 合成帧手感待站长实机使用确认。
+
 # 修改清单 · 2026-11-21（正式站能读取重跑通过的 PR 记录）
 
 - ChatGPT（Codex）实现并自查，无独立复核。#205 的第一次自动发布因 GitHub 按 `status` 筛选时未返回重跑通过的 PR 运行而停止。直接读取运行或按 PR 提交查询可看到第二次尝试已成功。
