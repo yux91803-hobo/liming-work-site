@@ -228,9 +228,11 @@ html.kb-up { --sb: max(0px, calc(var(--tq-safe-bottom) - var(--tq-kb-overlap, 10
   background: none;
   box-shadow: none;
 }
-.tq-brand-key { flex: none; width: 38px; height: 38px; display: grid; place-items: center; --rad: 11px; }
+.tq-brand-key { flex: none; width: 38px; height: 38px; display: grid; place-items: center; --rad: 11px; transition: background-color .16s var(--ease); }
 .tq-brand-key:hover { background: var(--hover); }
-.tq-brand-mark { display: grid; place-items: center; width: 22px; height: 22px; color: var(--star); }
+.tq-brand-mark { display: grid; place-items: center; width: 22px; height: 22px; color: var(--star); transition: transform .42s cubic-bezier(.22, 1, .36, 1); }
+@media (hover: hover) { .tq-brand-key:hover .tq-brand-mark { transform: rotate(45deg) scale(1.06); } }
+.tq-brand-key:active .tq-brand-mark { transform: rotate(90deg) scale(.92); }
 .tq-brand .xc-tq svg { width: 20px; height: 20px; }
 .tq-brand h1 { margin: 0; font: 600 17px/1 var(--serif); letter-spacing: .42em; white-space: nowrap; }
 .tq-brand .xc-sw-w { min-width: 0; overflow: hidden; }
@@ -293,7 +295,8 @@ html.kb-up { --sb: max(0px, calc(var(--tq-safe-bottom) - var(--tq-kb-overlap, 10
 .tianqi .xc.tq-mode .tq-side :is(.xc-dr-out, .xc-dr-ft) { display: none; }   /* 退出登录搬到设置的「电脑」里 */
 .tianqi .tq-mid .tq-me-name { display: none; }
 .tianqi .xc.tq-mode .tq-side :is(.xc-dr-new, .xc-dr-q):hover { background: var(--hover); color: var(--ink); }
-.tianqi .xc.tq-mode .tq-side .xc-dr-new .xc-tq svg { width: 16px; height: 16px; }
+.tianqi .xc.tq-mode .tq-side .xc-dr-new .xc-tq svg { width: 16px; height: 16px; transition: transform .36s cubic-bezier(.22, 1, .36, 1); }
+@media (hover: hover) { .tianqi .xc.tq-mode .tq-side .xc-dr-new:hover .xc-tq svg { transform: rotate(45deg); } }
 .tianqi .xc.tq-mode .tq-side .xc-dr-q svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .tianqi .xc.tq-mode .tq-side .xc-dr-q kbd { margin-left: auto; color: var(--ink-3); font: 11px/1 var(--mono, monospace); background: none; border: 0; }
 .tianqi .xc.tq-mode .tq-side .xc-dr-h { margin: 16px 10px 4px; color: var(--ink-3); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
@@ -312,7 +315,7 @@ html.kb-up { --sb: max(0px, calc(var(--tq-safe-bottom) - var(--tq-kb-overlap, 10
   background: none;
   color: var(--ink-2);
   font-size: 13.5px;
-  transition: background-color .12s var(--ease), color .12s var(--ease);
+  transition: background-color .14s var(--ease), color .14s var(--ease);
 }
 .tianqi .xc.tq-mode .tq-side .xc-sli,
 .tianqi .xc.tq-mode .tq-side .xc-sli:hover,
@@ -321,10 +324,11 @@ html.kb-up { --sb: max(0px, calc(var(--tq-safe-bottom) - var(--tq-kb-overlap, 10
 .tianqi .xc.tq-mode .tq-side .xc-si.cur { background: var(--press); color: var(--ink); }
 /* 行首的星：16px 的格子、不垫底色、不闪；只有选中的那一行是金色 */
 .tianqi .xc.tq-mode .tq-side .xc-si .xc-si-tq.xc-tq { width: 16px; height: 16px; background: none; }
-.tianqi .xc.tq-mode .tq-side .xc-si-tq svg { width: 13px; height: 13px; }
-.tianqi .xc.tq-mode .tq-side .xc-si .xc-tq .tq-s { fill: var(--ink-3); }
+.tianqi .xc.tq-mode .tq-side .xc-si-tq svg { width: 13px; height: 13px; transition: transform .24s var(--ease); }
+.tianqi .xc.tq-mode .tq-side .xc-si .xc-tq .tq-s { fill: var(--ink-3); transition: fill .18s var(--ease); }
 .tianqi .xc.tq-mode .tq-side .xc-si .xc-tq :is(.tq-c, .tq-g) { display: none; }
 .tianqi .xc.tq-mode .tq-side .xc-si.cur .xc-tq .tq-s { fill: var(--star); }
+.tianqi .xc.tq-mode .tq-side .xc-si.cur .xc-si-tq svg { transform: rotate(45deg); }
 /* 有鼠标的电脑：日期贴右边，鼠标移上去换成「⋯」；手机上照旧给「⋯」留位置 */
 @media (hover: hover) and (pointer: fine) {
   .tianqi .xc.tq-mode .tq-side .xc-si { padding-right: 10px; }
@@ -351,10 +355,12 @@ html.kb-up { --sb: max(0px, calc(var(--tq-safe-bottom) - var(--tq-kb-overlap, 10
 .tq-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; --rad: 8px; color: var(--ink-2); font-size: 13.5px; white-space: nowrap; transition: background-color .12s var(--ease), color .12s var(--ease); }
 .tq-row:hover, .tq-row[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
 .tq-row svg { flex: none; width: 16px; height: 16px; }
-.tq-li2 { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px; border: 1px solid transparent; --rad: 6px; color: var(--ink-3); font: 12px/1 ui-monospace, Menlo, Consolas, monospace; }
+.tq-li2 { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px; border: 1px solid transparent; --rad: 6px; color: var(--ink-3); font: 12px/1 ui-monospace, Menlo, Consolas, monospace; transition: background-color .14s var(--ease), color .14s var(--ease); }
 .tq-li2:hover { color: var(--ink); background: var(--hover); }
-.tq-li2 i { width: 6px; height: 6px; --rad: 50%; background: var(--ink-3); }
+.tq-li2 i { position: relative; width: 6px; height: 6px; --rad: 50%; background: var(--ink-3); }
 .tq-li2.ok i { background: var(--ok); }
+.tq-li2.ok i::after { content: ""; position: absolute; inset: -1px; --rad: 50%; border: 1px solid var(--ok); opacity: 0; animation: tq-radar 3.6s cubic-bezier(.16, 1, .3, 1) infinite; }
+@keyframes tq-radar { 0% { transform: scale(1); opacity: .7; } 65%, 100% { transform: scale(2.8); opacity: 0; } }
 .tq-li2.warn i { background: var(--wait); }
 
 /* ---------- 中栏 ---------- */
@@ -375,7 +381,7 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 @keyframes tq-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.6); opacity: .55; } }
 
 .tianqi .xc.tq-mode .xc-st { margin: 0 auto 6px; max-width: 720px; width: 100%; }
-.tianqi .xc.wb.tq-mode .tq-mid .xc-body { flex: 1; min-height: 0; padding: 0 4px; background: none; }
+.tianqi .xc.wb.tq-mode .tq-mid .xc-body { flex: 1; min-height: 0; padding: 0 4px; background: none; overscroll-behavior-y: contain; }
 .tianqi .tq-mid .xc-msgs { max-width: 720px; margin: 0 auto; padding: 14px 0 26px; gap: 22px; }
 /* 站长 11-20：有时候对话里的字能左右滑。新回答出来时扫过的微光（chat.css 的 .xc-ai.enter > .xc-bub::after）左右各宽出气泡 8px，
    手机上气泡占满整列、天启对话区左右只留 4px，就把对话区撑宽了；它在动画放完后还在（透明），所以每条新回答都留下这一截。
@@ -399,29 +405,130 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .tq-mid .xc-ai.bad > .xc-bub { color: var(--bad-ink); }
 .tianqi .tq-mid .xc-bub :is(pre, code) { background: var(--code); }
 .tianqi .tq-mid .xc-bub pre { border: 1px solid var(--line); --rad: 10px; }
-.tq-ref { cursor: pointer; text-decoration: underline; text-decoration-color: var(--star); text-decoration-thickness: 1.5px; text-underline-offset: 4px; }
+.tq-ref { cursor: pointer; text-decoration: underline; text-decoration-color: var(--star); text-decoration-thickness: 1.5px; text-underline-offset: 4px; transition: background-color .16s var(--ease); }
 .tq-ref:hover { background: var(--star-soft); }
 
-/* 新对话：输入框在中间，发出去后滑到底（sky.js 用 FLIP 做那一下） */
-.tianqi .tq-mid .xc-msgs > .tq-empty { display: flex; flex-direction: column; align-items: center; gap: 0; padding: 0; }
-.tq-empty-orbit { display: none; }
-.tq-empty-text { margin: 0; color: var(--ink-3); font-size: 14px; letter-spacing: .04em; }
+/* 新对话：星仪双轨徽章 + 扫光问候语（参考 Magic UI OrbitingCircles / React Bits ShinyText） */
+.tianqi .tq-mid .xc-msgs > .tq-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 0; animation: tq-empty-in .45s cubic-bezier(.16, 1, .3, 1) both; }
+@keyframes tq-empty-in { from { opacity: 0; transform: translateY(8px) scale(.97); } }
+.tq-empty-orbit {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  pointer-events: none;
+}
+/* 外轨：极细星仪同心圆 + 反向缓慢旋转的内虚环，纯 GPU transform */
+.tq-empty-ring {
+  position: absolute;
+  inset: 0;
+  --rad: 50%;
+  border: 1px solid var(--line-2);
+  background: conic-gradient(from 0deg, transparent 0deg 260deg, color-mix(in srgb, var(--star) 45%, transparent) 345deg, transparent 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1px));
+  animation: tq-orbit-spin 18s linear infinite;
+}
+.tq-empty-orbit::before {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  --rad: 50%;
+  border: 1px dashed color-mix(in srgb, var(--ink-3) 36%, transparent);
+  animation: tq-orbit-spin 28s linear infinite reverse;
+}
+/* 中心四角星：呼吸律动 */
+.tq-empty-star {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  --rad: 0;
+  background: var(--star);
+  clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%);
+  animation: tq-star-breathe 4.4s ease-in-out infinite;
+}
+/* 轨道行星节点：沿外环匀速公转 */
+.tq-empty-planet {
+  position: absolute;
+  inset: 0;
+  animation: tq-orbit-spin 11s linear infinite;
+}
+.tq-empty-planet::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  --rad: 50%;
+  background: var(--star);
+}
+@keyframes tq-orbit-spin { to { transform: rotate(360deg); } }
+@keyframes tq-star-breathe { 0%, 100% { transform: scale(1) rotate(0deg); opacity: .92; } 50% { transform: scale(.86) rotate(12deg); opacity: 1; } }
+.tq-empty-text {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: .06em;
+  color: var(--ink-3);
+  background: linear-gradient(110deg, var(--ink-3) 36%, var(--ink) 50%, var(--ink-3) 64%);
+  background-size: 240% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: tq-shine 5.6s ease-in-out infinite;
+}
+@keyframes tq-shine { 0%, 18% { background-position: 100% 50%; } 68%, 100% { background-position: 0% 50%; } }
 .tianqi .xc.wb.tq-mode .tq-frame[data-start] .tq-mid .xc-body { flex: 1 1 0; display: flex; flex-direction: column; justify-content: flex-end; }
 .tianqi .tq-frame[data-start] .tq-mid .xc-msgs { flex: none; width: 100%; padding: 0 0 16px; }
 .tq-frame[data-start] .tq-mid::after { content: ""; flex: .7 1 0; }
 
 .tq-dock { flex: none; position: relative; width: 100%; max-width: 720px; margin: 0 auto; padding: 0 0 4px; background: none; border: 0; }
-/* 输入框：实心面板加细线，没有阴影；聚焦时线亮一点（照模板） */
+/* 输入框：实心面板加细线，零大阴影；桌面悬停边框微光跟随（SpotlightCard），聚焦时顶边星芒细线从中间展开 */
 .tq-box {
   position: relative;
   border: 1px solid var(--line-2);
   --rad: 12px;
   background: var(--pane);
   box-shadow: none;
-  transition: border-color .12s var(--ease), box-shadow .12s var(--ease);
+  transition: border-color .18s var(--ease), box-shadow .18s var(--ease);
 }
+.tq-box::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  --rad: inherit;
+  padding: 1px;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(220px circle at var(--mx, 50%) var(--my, 50%), color-mix(in srgb, var(--star) 58%, transparent), transparent 68%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  transition: opacity .22s var(--ease);
+}
+.tq-box.plan::before { background: radial-gradient(220px circle at var(--mx, 50%) var(--my, 50%), color-mix(in srgb, var(--plan) 62%, transparent), transparent 68%); }
+@media (hover: hover) { .tq-box:hover::before { opacity: 1; } }
+.tq-box::after {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 14%;
+  right: 14%;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--star) 50%, transparent);
+  transform: scaleX(0);
+  opacity: 0;
+  transition: transform .28s cubic-bezier(.22, 1, .36, 1), opacity .22s var(--ease);
+}
+.tq-box.plan::after { background: linear-gradient(90deg, transparent, var(--plan) 50%, transparent); }
 .tq-box:focus-within { border-color: color-mix(in srgb, var(--star) 50%, transparent); }
+.tq-box:focus-within::after { transform: scaleX(1); opacity: .9; }
 .tq-box.plan { border-color: var(--plan-line); box-shadow: 0 0 0 3px var(--plan-soft); }
+.tq-box.plan:focus-within { border-color: var(--plan-line); }
 .tianqi .xc.tq-mode .tq-entry { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; background: none; border: 0; box-shadow: none; }
 .tianqi .tq-entry textarea {
   display: block;
@@ -441,6 +548,7 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
 .tianqi .tq-entry textarea::placeholder { color: var(--ink-3); }
 /* 外层 .tq-entry 是能换行的弹性布局，这一排的宽度会按里面最宽的算；限制在输入框以内，挤的时候让模型名收窄 */
 .tq-instruments { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 6px 10px 10px; }
+.tq-instruments .tq-grow { align-self: stretch; }
 .tianqi .tq-instruments :is(.xc-plus, .xc-mdl) {
   --rad: 10px;
   display: inline-flex;
@@ -459,21 +567,30 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
   font-size: 13px;
   white-space: nowrap;
   transform: none;
+  transition: background-color .14s var(--ease), color .14s var(--ease);
 }
 .tianqi .tq-instruments .xc-plus { padding: 0; width: 34px; justify-content: center; }
 .tianqi .tq-instruments .xc-plus svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
 .tianqi .tq-instruments :is(.xc-plus, .xc-mdl):hover,
 .tianqi .tq-instruments :is(.xc-plus, .xc-mdl)[aria-expanded="true"] { background: var(--hover); color: var(--ink); transform: none; }
 .tianqi .tq-instruments .xc-mdl span { overflow: hidden; text-overflow: ellipsis; }
-/* 思考强度：天启用一排四角星（站长 11-20：信号格不符合星空），一档一颗、一样大，亮到当前那一档；小芯照旧是格子 */
+/* 思考强度：天启用一排四角星（站长 11-20：信号格不符合星空），一档一颗、一样大，亮到当前那一档；切换时错峰轻闪 */
 .tianqi .xc.tq-mode .xc-em { align-items: center; gap: 2px; height: 12px; }
-.tianqi .xc.tq-mode .xc-em b { width: 9px; height: 9px; --rad: 0; clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); background: color-mix(in srgb, var(--ink-3) 45%, transparent); }
-.tianqi .xc.tq-mode .xc-em b.on { background: var(--star); }
+.tianqi .xc.tq-mode .xc-em b { width: 9px; height: 9px; --rad: 0; clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); background: color-mix(in srgb, var(--ink-3) 45%, transparent); transition: background-color .18s var(--ease), opacity .18s var(--ease); }
+.tianqi .xc.tq-mode .xc-em b.on { background: var(--star); animation: tq-star-lit .26s var(--ease) both; }
+.tianqi .xc.tq-mode .xc-em b:nth-child(2).on { animation-delay: 28ms; }
+.tianqi .xc.tq-mode .xc-em b:nth-child(3).on { animation-delay: 56ms; }
+.tianqi .xc.tq-mode .xc-em b:nth-child(4).on { animation-delay: 84ms; }
+.tianqi .xc.tq-mode .xc-pick .xc-em b.on { animation-name: tq-star-pop; }
+@keyframes tq-star-lit { 0% { opacity: .28; } 100% { opacity: 1; } }
+@keyframes tq-star-pop { 0% { transform: scale(.55) rotate(-35deg); opacity: .35; } 65% { transform: scale(1.14) rotate(4deg); opacity: 1; } 100% { transform: none; opacity: 1; } }
 .tianqi .xc.tq-mode .xc-em.big { height: 16px; gap: 3px; }
 .tianqi .xc.tq-mode .xc-em.big b { width: 13px; height: 13px; }
 /* 输入框一行放不下（手机上多了权限、计划两个按钮）时，模型名先收窄成省略号，发送键不出框 */
 .tianqi .tq-instruments .xc-mdl { flex: 0 1 auto; min-width: 0; }
 .tianqi .tq-instruments .xc-send {
+  position: relative;
+  overflow: hidden;
   flex: none;
   width: 32px;
   height: 32px;
@@ -486,17 +603,30 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
   background: var(--press);
   color: var(--ink-3);
   opacity: 1;
-  transition: background-color .12s var(--ease), color .12s var(--ease), transform .12s var(--ease);
+  transition: background-color .16s var(--ease), color .16s var(--ease), transform .14s var(--ease);
 }
 .tianqi .tq-instruments .xc-send.ready { background: var(--go); color: var(--go-ink); }
-.tianqi .tq-instruments .xc-send:active { transform: scale(.94); }
+.tianqi .tq-instruments .xc-send.ready::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 20%, rgb(255 255 255 / .36) 50%, transparent 80%);
+  transform: translateX(-130%);
+  animation: tq-send-glint .65s cubic-bezier(.22, 1, .36, 1) 1;
+  pointer-events: none;
+}
+@keyframes tq-send-glint { to { transform: translateX(130%); } }
+.tianqi .tq-instruments .xc-send:active { transform: scale(.93); }
 .tianqi .xc.running .tq-instruments .xc-send { animation: none; box-shadow: none; }
 .tianqi .tq-instruments .xc-send[data-k="stop"] { background: var(--press); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+.tianqi .tq-instruments .xc-send[data-k="stop"] svg { animation: tq-stop-breathe 1.6s ease-in-out infinite; }
+@keyframes tq-stop-breathe { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.84); opacity: .72; } }
 .tianqi .tq-instruments .xc-send svg { width: 16px; height: 16px; }
 @media (pointer: coarse) { .tianqi .tq-instruments .xc-send { width: 36px; height: 36px; --rad: 9px; } }
 .tq-box.plan .xc-send.ready:not([data-k="stop"]) { background: var(--plan); color: var(--plan-ink); }
 /* 权限、计划：输入框里的两个小按钮（照原型 v4 和 Harness 的 composer：权限在前，计划在它右边） */
-.tq-chip { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 32px; padding: 0 10px; border: 0; --rad: 8px; background: none; color: var(--ink-2); font-size: 13px; white-space: nowrap; transition: background-color .12s var(--ease), color .12s var(--ease); }
+.tq-chip { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 32px; padding: 0 10px; border: 0; --rad: 8px; background: none; color: var(--ink-2); font-size: 13px; white-space: nowrap; transition: background-color .14s var(--ease), color .14s var(--ease), transform .12s var(--ease); }
+.tq-chip:active { transform: scale(.97); }
 .tq-chip svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .tq-chip:hover, .tq-chip[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
 .tq-perm.full { color: var(--risk); background: none; }
@@ -875,6 +1005,11 @@ html.embed .tq-frame:is([data-mode="wide"], [data-mode="mid"]) .tq-side-in { pad
   .tq-set-nav { flex-direction: row; align-items: center; overflow-x: auto; padding: 12px 12px 10px; border-right: 0; border-bottom: 1px solid var(--line); }
   .tq-set-nav h2 { margin: 0 8px 0 4px; }
   .tq-set-body { padding: 22px 18px 28px; }
+}
+
+/* 键盘抬起/下放动画期间暂停无关循环装饰动画，把渲染预算全让给输入框跟随 */
+html.kb-anim :is(.tq-empty-ring, .tq-empty-star, .tq-empty-planet, .tq-empty-text, .tq-empty-orbit::before, .tq-li2.ok i::after, .xc-send[data-k="stop"] svg) {
+  animation-play-state: paused !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

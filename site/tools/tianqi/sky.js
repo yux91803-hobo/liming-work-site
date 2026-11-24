@@ -36,8 +36,8 @@
     var INK = html.dataset.theme === 'light', PAL;
     function setPalette() {
       PAL = INK
-        ? { trail: [168, 116, 30], head: [92, 60, 8], pTrail: [53, 88, 200], pHead: [24, 44, 120], meteor: [[30, 44, 78], [150, 104, 28]], op: 'source-over', glowA: .09, bloomA: .2 }
-        : { trail: [243, 223, 174], head: [255, 250, 238], pTrail: [157, 184, 255], pHead: [232, 238, 255], meteor: [[255, 248, 232], [196, 255, 222]], op: 'lighter', glowA: .16, bloomA: .42 };
+        ? { trail: [168, 116, 30], head: [92, 60, 8], pTrail: [53, 88, 200], pHead: [24, 44, 120], meteor: [[30, 44, 78], [150, 104, 28]], link: [44, 66, 118], op: 'source-over', glowA: .09, bloomA: .2 }
+        : { trail: [243, 223, 174], head: [255, 250, 238], pTrail: [157, 184, 255], pHead: [232, 238, 255], meteor: [[255, 248, 232], [196, 255, 222]], link: [240, 215, 156], op: 'lighter', glowA: .16, bloomA: .42 };
     }
     setPalette();
     var gl = null;
@@ -53,16 +53,18 @@
       'float core=exp(-d*d*16.0);float halo=exp(-d*4.5)*0.3;float rays=0.0;' +
       'if(vS>1.9){rays=(exp(-abs(u.y)*46.0)*exp(-abs(u.x)*2.6)+exp(-abs(u.x)*46.0)*exp(-abs(u.y)*2.6))*0.5;}' +
       'float a=(core+halo+rays)*vA*edge;gl_FragColor=vec4(vCol*a,a);}';
-    var uPar, uTime, uDpr, uTw, uInk, nStars = 0, buf;
+    var uPar, uTime, uDpr, uTw, uInk, nStars = 0, buf, anchors = [];
     function rng(seed) { return function () { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
     function tint(r) { var v = r(); return v < .46 ? [.80, .87, 1] : v < .78 ? [1, 1, 1] : v < .94 ? [1, .92, .80] : [1, .80, .64]; }
     function buildStars() {
       var r = rng(19), n = Math.max(700, Math.min(3000, Math.round(W * H / 560))), data = new Float32Array(n * 9);
+      anchors = [];
       for (var i = 0; i < n; i++) {
-        var m = r(), size = m < .82 ? .55 + r() * .45 : m < .975 ? 1.0 + r() * .7 : 1.95 + r() * .8;
-        var bright = m < .82 ? .4 + r() * .42 : m < .975 ? .6 + r() * .35 : .9 + r() * .1, c = tint(r), o = i * 9;
-        data[o] = r(); data[o + 1] = r(); data[o + 2] = size; data[o + 3] = .25 + r() * .75; data[o + 4] = .6 + r() * 2.6; data[o + 5] = r() * 6.283;
+        var x = r(), y = r(), m = r(), size = m < .82 ? .55 + r() * .45 : m < .975 ? 1.0 + r() * .7 : 1.95 + r() * .8;
+        var bright = m < .82 ? .4 + r() * .42 : m < .975 ? .6 + r() * .35 : .9 + r() * .1, depth = .25 + r() * .75, c = tint(r), o = i * 9;
+        data[o] = x; data[o + 1] = y; data[o + 2] = size; data[o + 3] = depth; data[o + 4] = .6 + r() * 2.6; data[o + 5] = r() * 6.283;
         data[o + 6] = c[0] * bright; data[o + 7] = c[1] * bright; data[o + 8] = c[2] * bright;
+        if (size > 1.35 && anchors.length < 56) anchors.push({ x: x, y: y, d: depth, s: size });
       }
       nStars = n; gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
     }
@@ -78,8 +80,15 @@
       uPar = gl.getUniformLocation(prog, 'uPar'); uTime = gl.getUniformLocation(prog, 'uTime'); uDpr = gl.getUniformLocation(prog, 'uDpr'); uTw = gl.getUniformLocation(prog, 'uTw'); uInk = gl.getUniformLocation(prog, 'uInk');
       gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     }
-    var par = { x: 0, y: 0, tx: 0, ty: 0 }, t0 = performance.now(), lastStar = 0;
-    addEventListener('pointermove', function (e) { if (e.pointerType === 'mouse') { par.tx = (e.clientX / W - .5) * -.010; par.ty = (e.clientY / H - .5) * -.010; } });
+    var par = { x: 0, y: 0, tx: 0, ty: 0 }, mouse = { x: -999, y: -999, on: false, a: 0 }, t0 = performance.now(), lastStar = 0;
+    addEventListener('pointermove', function (e) {
+      if (e.pointerType === 'mouse') {
+        par.tx = (e.clientX / W - .5) * -.010; par.ty = (e.clientY / H - .5) * -.010;
+        mouse.x = e.clientX; mouse.y = e.clientY; mouse.on = true;
+      }
+    });
+    document.addEventListener('pointerleave', function () { mouse.on = false; });
+    window.addEventListener('blur', function () { mouse.on = false; });
     function drawStars(now) {
       if (!gl) return;
       par.x += (par.tx - par.x) * .04; par.y += (par.ty - par.y) * .04;
@@ -92,11 +101,13 @@
       c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, W, H);
       for (var i = 0; i < W * H / 900; i++) { var s = r() < .95 ? .4 + r() * .6 : 1.2 + r(); c.fillStyle = INK ? 'rgba(28,40,72,' + (.2 + r() * .45) + ')' : 'rgba(230,236,255,' + (.25 + r() * .6) + ')'; c.beginPath(); c.arc(r() * W, r() * H, s * .85, 0, 7); c.fill(); }
     }
-    var ctx = fx.getContext('2d'), bctx = back.getContext('2d'), meteors = [], dust = [], skyDust = [], fxRaf = 0, meteorsOn = store.get('meteor') !== 'off';
+    var ctx = fx.getContext('2d'), bctx = back.getContext('2d'), meteors = [], dust = [], skyDust = [], sparks = [], rings = [], fxRaf = 0, meteorsOn = store.get('meteor') !== 'off';
+    var bctxDirty = false, ctxDirty = false;
     function size() {
       W = innerWidth; H = innerHeight; DPR = Math.min(2, window.devicePixelRatio || 1);
       // 高度写成固定像素、从顶上量：页面变矮（键盘）时夜空不跟着压扁
       [starCv, back, fx].forEach(function (c) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); c.style.height = H + 'px'; });
+      bctxDirty = ctxDirty = false;
       if (gl) { buildStars(); drawStars(performance.now()); } else fallbackStars();   // 改了画布尺寸画面会被清空，当场重画，不留一帧黑
     }
     function rgba(c, a) { return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
@@ -109,6 +120,26 @@
       meteors.push({ x: x, y: y, vx: Math.cos(ang) * speed * dir, vy: Math.sin(ang) * speed, age: 0, life: (opt.big ? 1.15 : .75) + Math.random() * .45, len: (opt.big ? 260 : 150) + Math.random() * 110, w: opt.big ? 1.6 : 1.1, k: Math.random() < .25 ? 1 : 0 });
       wake();
     }
+    /* 参考 React Bits ClickSpark：发送、新建、切计划等轻触反馈，8 根细金芒放射消散 */
+    function spawnSpark(x, y, col, n) {
+      if (REDUCE || document.hidden) return;
+      var count = n || 8, base = Math.random() * Math.PI * 2;
+      for (var i = 0; i < count; i++) {
+        var ang = base + (Math.PI * 2 * i) / count + (Math.random() - .5) * .22;
+        sparks.push({ x: x, y: y, ang: ang, r0: 6, r1: 20 + Math.random() * 14, age: 0, life: .34 + Math.random() * .08, c: col || PAL.trail });
+      }
+      wake();
+    }
+    function spawnRing(x, y, col, maxR) {
+      if (REDUCE || document.hidden) return;
+      rings.push({ x: x, y: y, r0: 8, r1: maxR || 46, age: 0, life: .48, c: col || PAL.pTrail });
+      wake();
+    }
+    function sparkFrom(el, col, n) {
+      if (!el || REDUCE) return;
+      var r = el.getBoundingClientRect();
+      if (r.width && r.height) spawnSpark(r.left + r.width / 2, r.top + r.height / 2, col, n);
+    }
     function drawMeteor(m, dt) {
       m.age += dt; m.x += m.vx * dt; m.y += m.vy * dt;
       var col = PAL.meteor[m.k], k = m.age / m.life, a = k < .15 ? k / .15 : 1 - Math.pow((k - .15) / .85, 1.6), sp = Math.hypot(m.vx, m.vy), ux = m.vx / sp, uy = m.vy / sp;
@@ -120,6 +151,37 @@
       if (Math.random() < .55) skyDust.push({ x: m.x - ux * Math.random() * 20, y: m.y - uy * Math.random() * 20, vx: ux * 20 + (Math.random() - .5) * 26, vy: uy * 20 + (Math.random() - .5) * 26 + 8, age: 0, life: .35 + Math.random() * .5, s: .5 + Math.random() * .8, c: col });
       return m.age < m.life;
     }
+    /* 参考 React Bits Particles 星座连线：桌面鼠标划过中栏夜空时，附近亮星之间浮现纤细星图连线 */
+    var nearPts = [];
+    function drawConstellation(dt) {
+      var target = mouse.on && W >= 760 ? 1 : 0;
+      mouse.a += (target - mouse.a) * Math.min(1, dt * 6);
+      if (mouse.a < .01 || !anchors.length) return false;
+      nearPts.length = 0;
+      var R = 175, R2 = R * R;
+      for (var i = 0; i < anchors.length; i++) {
+        var s = anchors[i];
+        var sx = (((s.x + par.x * s.d) % 1) + 1) % 1 * W, sy = (((s.y + par.y * s.d) % 1) + 1) % 1 * H;
+        var dx = sx - mouse.x, dy = sy - mouse.y, d2 = dx * dx + dy * dy;
+        if (d2 < R2) nearPts.push({ x: sx, y: sy, w: 1 - Math.sqrt(d2) / R });
+      }
+      if (!nearPts.length) return false;
+      var col = PAL.link, baseA = (INK ? .22 : .26) * mouse.a;
+      bctx.lineWidth = .75;
+      for (var a = 0; a < nearPts.length; a++) {
+        var p = nearPts[a];
+        bctx.fillStyle = rgba(col, baseA * 1.4 * p.w);
+        bctx.beginPath(); bctx.arc(p.x, p.y, 1.3 + p.w * 1.1, 0, 6.283); bctx.fill();
+        for (var b = a + 1; b < nearPts.length; b++) {
+          var q = nearPts[b], dist = Math.hypot(p.x - q.x, p.y - q.y);
+          if (dist < 135) {
+            bctx.strokeStyle = rgba(col, baseA * (1 - dist / 135) * Math.min(p.w, q.w));
+            bctx.beginPath(); bctx.moveTo(p.x, p.y); bctx.lineTo(q.x, q.y); bctx.stroke();
+          }
+        }
+      }
+      return true;
+    }
     function drawDust(dt, list, c) {
       for (var i = list.length - 1; i >= 0; i--) {
         var p = list[i]; p.age += dt; if (p.age >= p.life) { list.splice(i, 1); continue; }
@@ -129,8 +191,24 @@
         c.fillStyle = rgba(p.c, a); c.beginPath(); c.arc(p.x, p.y, p.s * (.5 + .5 * left), 0, 6.283); c.fill();
       }
     }
-    /* 输入框边上走的星：天启在想、在做事的时候才有；计划模式下是蓝的 */
-    var orbit = { on: false, d: 0, plan: false }, P = {}, Q = {};
+    function drawSparks(dt) {
+      for (var i = sparks.length - 1; i >= 0; i--) {
+        var s = sparks[i]; s.age += dt; if (s.age >= s.life) { sparks.splice(i, 1); continue; }
+        var k = s.age / s.life, e = 1 - Math.pow(1 - k, 3), tail = 1 - Math.pow(1 - Math.max(0, k - .22) / .78, 2);
+        var rA = s.r0 + (s.r1 - s.r0) * tail, rB = s.r0 + (s.r1 - s.r0) * e, alpha = (1 - k) * (INK ? .78 : .92);
+        var cx = Math.cos(s.ang), sy = Math.sin(s.ang);
+        ctx.strokeStyle = rgba(s.c, alpha); ctx.lineCap = 'round'; ctx.lineWidth = 1.4 * (1 - k * .5);
+        ctx.beginPath(); ctx.moveTo(s.x + cx * rA, s.y + sy * rA); ctx.lineTo(s.x + cx * rB, s.y + sy * rB); ctx.stroke();
+      }
+      for (var j = rings.length - 1; j >= 0; j--) {
+        var g = rings[j]; g.age += dt; if (g.age >= g.life) { rings.splice(j, 1); continue; }
+        var rk = g.age / g.life, re = 1 - Math.pow(1 - rk, 3), rad = g.r0 + (g.r1 - g.r0) * re;
+        ctx.strokeStyle = rgba(g.c, (1 - rk) * (1 - rk) * (INK ? .42 : .55)); ctx.lineWidth = 1.3 * (1 - rk * .5);
+        ctx.beginPath(); ctx.arc(g.x, g.y, rad, 0, 6.283); ctx.stroke();
+      }
+    }
+    /* 输入框边上走的星（参考 Magic UI BorderBeam / React Bits StarBorder）：主彗星 + 对向伴星，起止平滑淡入淡出 */
+    var orbit = { on: false, alpha: 0, d: 0, plan: false }, P = {}, Q = {};
     function rrPoint(x, y, w, h, r, dist, out) {
       var sw = w - 2 * r, sh = h - 2 * r, arc = Math.PI * r / 2, per = 2 * (sw + sh) + 4 * arc;
       dist = ((dist % per) + per) % per;
@@ -150,37 +228,74 @@
       return per;
     }
     function drawOrbit(dt) {
-      var b = box.getBoundingClientRect(); if (!b.width || !b.height) return;
-      var r = parseFloat(getComputedStyle(box).borderTopLeftRadius) || 22, trail = orbit.plan ? PAL.pTrail : PAL.trail, head = orbit.plan ? PAL.pHead : PAL.head;
-      var per = rrPoint(b.left, b.top, b.width, b.height, r, 0, P), L = 170, steps = 44;
+      orbit.alpha += ((orbit.on ? 1 : 0) - orbit.alpha) * Math.min(1, dt * (orbit.on ? 7 : 5));
+      if (orbit.alpha < .01) { orbit.alpha = 0; return false; }
+      var b = box.getBoundingClientRect(); if (!b.width || !b.height) return false;
+      var r = parseFloat(getComputedStyle(box).borderTopLeftRadius) || 12, trail = orbit.plan ? PAL.pTrail : PAL.trail, head = orbit.plan ? PAL.pHead : PAL.head, oa = orbit.alpha;
+      var per = rrPoint(b.left, b.top, b.width, b.height, r, 0, P), L = 175, steps = 40;
       orbit.d += per / 4.2 * dt;
+      // 主彗星
       rrPoint(b.left, b.top, b.width, b.height, r, orbit.d, P);
       var px = P.x, py = P.y;
       ctx.lineCap = 'round';
       for (var i = 1; i <= steps; i++) {
         rrPoint(b.left, b.top, b.width, b.height, r, orbit.d - L * i / steps, Q);
-        var u = 1 - (i - .5) / steps, f = u * u;
-        ctx.strokeStyle = rgba(trail, f * PAL.glowA); ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(Q.x, Q.y); ctx.stroke();
+        var u = 1 - (i - .5) / steps, f = u * u * oa;
+        ctx.strokeStyle = rgba(trail, f * PAL.glowA); ctx.lineWidth = 5.5; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(Q.x, Q.y); ctx.stroke();
         ctx.strokeStyle = rgba(i < 4 ? head : trail, f * .95); ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(Q.x, Q.y); ctx.stroke();
         px = Q.x; py = Q.y;
       }
-      var bloom = ctx.createRadialGradient(P.x, P.y, 0, P.x, P.y, 26); bloom.addColorStop(0, rgba(trail, PAL.bloomA)); bloom.addColorStop(.25, rgba(trail, PAL.bloomA / 3)); bloom.addColorStop(1, rgba(trail, 0));
-      ctx.fillStyle = bloom; ctx.fillRect(P.x - 26, P.y - 26, 52, 52);
-      ctx.fillStyle = rgba(head, 1); ctx.beginPath(); ctx.arc(P.x, P.y, 1.7, 0, 6.283); ctx.fill();
+      var bloom = ctx.createRadialGradient(P.x, P.y, 0, P.x, P.y, 24); bloom.addColorStop(0, rgba(trail, PAL.bloomA * oa)); bloom.addColorStop(.28, rgba(trail, PAL.bloomA * oa / 3)); bloom.addColorStop(1, rgba(trail, 0));
+      ctx.fillStyle = bloom; ctx.fillRect(P.x - 24, P.y - 24, 48, 48);
+      ctx.fillStyle = rgba(head, oa); ctx.beginPath(); ctx.arc(P.x, P.y, 1.7, 0, 6.283); ctx.fill();
       var sp = 5 + 2 * Math.sin(performance.now() / 160);
-      [[1, 0], [0, 1]].forEach(function (dd) { var g = ctx.createLinearGradient(P.x - dd[0] * sp, P.y - dd[1] * sp, P.x + dd[0] * sp, P.y + dd[1] * sp); g.addColorStop(0, rgba(head, 0)); g.addColorStop(.5, rgba(head, .9)); g.addColorStop(1, rgba(head, 0)); ctx.strokeStyle = g; ctx.lineWidth = .9; ctx.beginPath(); ctx.moveTo(P.x - dd[0] * sp, P.y - dd[1] * sp); ctx.lineTo(P.x + dd[0] * sp, P.y + dd[1] * sp); ctx.stroke(); });
-      if (Math.random() < .5) { var push = 8 + Math.random() * 18, drift = (Math.random() - .5) * 14; dust.push({ x: P.x, y: P.y, vx: P.nx * push - P.ny * drift, vy: P.ny * push + P.nx * drift, age: 0, life: .4 + Math.random() * .5, s: .45 + Math.random() * .7, c: trail, a: .9 }); }
+      [[1, 0], [0, 1]].forEach(function (dd) { var g = ctx.createLinearGradient(P.x - dd[0] * sp, P.y - dd[1] * sp, P.x + dd[0] * sp, P.y + dd[1] * sp); g.addColorStop(0, rgba(head, 0)); g.addColorStop(.5, rgba(head, .9 * oa)); g.addColorStop(1, rgba(head, 0)); ctx.strokeStyle = g; ctx.lineWidth = .9; ctx.beginPath(); ctx.moveTo(P.x - dd[0] * sp, P.y - dd[1] * sp); ctx.lineTo(P.x + dd[0] * sp, P.y + dd[1] * sp); ctx.stroke(); });
+      if (orbit.on && Math.random() < .45) { var push = 8 + Math.random() * 18, drift = (Math.random() - .5) * 14; dust.push({ x: P.x, y: P.y, vx: P.nx * push - P.ny * drift, vy: P.ny * push + P.nx * drift, age: 0, life: .4 + Math.random() * .5, s: .45 + Math.random() * .7, c: trail, a: .85 }); }
+      // 对向伴星（180° 处的轻盈流光，增强轨道动感）
+      var d2 = orbit.d + per * .5;
+      rrPoint(b.left, b.top, b.width, b.height, r, d2, P);
+      px = P.x; py = P.y;
+      for (var j = 1; j <= 16; j++) {
+        rrPoint(b.left, b.top, b.width, b.height, r, d2 - 72 * j / 16, Q);
+        var u2 = 1 - (j - .5) / 16;
+        ctx.strokeStyle = rgba(trail, u2 * u2 * .42 * oa); ctx.lineWidth = 1.05; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(Q.x, Q.y); ctx.stroke();
+        px = Q.x; py = Q.y;
+      }
+      ctx.fillStyle = rgba(head, .65 * oa); ctx.beginPath(); ctx.arc(P.x, P.y, 1.15, 0, 6.283); ctx.fill();
+      return true;
     }
-    var lastFx = performance.now();
+    var lastFx = performance.now(), kbAt = 0;
     function loop(now) {
       var dt = Math.min(.05, (now - lastFx) / 1000); lastFx = now;
-      if (now - lastStar > 33) { drawStars(now); lastStar = now; }
-      [ctx, bctx].forEach(function (c) { c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, W, H); c.globalCompositeOperation = PAL.op; });
-      for (var i = meteors.length - 1; i >= 0; i--) if (!drawMeteor(meteors[i], dt)) meteors.splice(i, 1);
-      drawDust(dt, skyDust, bctx);
-      if (orbit.on) drawOrbit(dt);
-      drawDust(dt, dust, ctx);
-      [ctx, bctx].forEach(function (c) { c.globalCompositeOperation = 'source-over'; });
+      // 手机键盘弹起/收起动画的 ~210–382ms 内暂停夜空和 2D 画布重绘，保留已有画面不闪，把主线程与 GPU 预算全部让给键盘跟随
+      var kbBusy = html.classList.contains('kb-anim') || (kbAt && now - kbAt < 75);
+      if (!kbBusy) {
+        if (now - lastStar > 33) { drawStars(now); lastStar = now; }
+        var needBack = meteors.length || skyDust.length || mouse.on || mouse.a > .01;
+        if (needBack || bctxDirty) {
+          bctx.setTransform(DPR, 0, 0, DPR, 0, 0); bctx.clearRect(0, 0, W, H);
+          if (needBack) {
+            bctx.globalCompositeOperation = PAL.op;
+            var drewLink = drawConstellation(dt);
+            for (var i = meteors.length - 1; i >= 0; i--) if (!drawMeteor(meteors[i], dt)) meteors.splice(i, 1);
+            drawDust(dt, skyDust, bctx);
+            bctx.globalCompositeOperation = 'source-over';
+            bctxDirty = !!(meteors.length || skyDust.length || drewLink);
+          } else bctxDirty = false;
+        }
+        var needFx = orbit.on || orbit.alpha > 0 || dust.length || sparks.length || rings.length;
+        if (needFx || ctxDirty) {
+          ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.clearRect(0, 0, W, H);
+          if (needFx) {
+            ctx.globalCompositeOperation = PAL.op;
+            var drewOrbit = drawOrbit(dt);
+            drawDust(dt, dust, ctx);
+            drawSparks(dt);
+            ctx.globalCompositeOperation = 'source-over';
+            ctxDirty = !!(drewOrbit || dust.length || sparks.length || rings.length);
+          } else ctxDirty = false;
+        }
+      }
       fxRaf = requestAnimationFrame(loop);
     }
     function wake() { if (!fxRaf && !document.hidden && !REDUCE) { lastFx = performance.now(); fxRaf = requestAnimationFrame(loop); } }
@@ -190,6 +305,21 @@
     if (REDUCE) drawStars(performance.now());
     else { wake(); (function clock() { setTimeout(function () { spawnMeteor(); clock(); }, 18000 + Math.random() * 24000); })(); setTimeout(function () { spawnMeteor(); }, 2200); }
     new MutationObserver(function () { INK = html.dataset.theme === 'light'; setPalette(); if (!gl) fallbackStars(); if (REDUCE) drawStars(performance.now()); }).observe(html, { attributes: true, attributeFilter: ['data-theme'] });
+
+    /* 输入框边框微光跟随（参考 React Bits SpotlightCard）：只在桌面鼠标移动时生效，零阴影、零重排 */
+    var spotRaf = 0, spotEv = null;
+    box.addEventListener('pointermove', function (e) {
+      if (REDUCE || e.pointerType !== 'mouse') return;
+      spotEv = e;
+      if (spotRaf) return;
+      spotRaf = requestAnimationFrame(function () {
+        spotRaf = 0;
+        if (!spotEv) return;
+        var r = box.getBoundingClientRect();
+        box.style.setProperty('--mx', Math.round(spotEv.clientX - r.left) + 'px');
+        box.style.setProperty('--my', Math.round(spotEv.clientY - r.top) + 'px');
+      });
+    });
 
     /* 发出去的字化成星尘：先把字画到离屏画布，再按像素取样成粒子 */
     function dissolve(text) {
@@ -214,6 +344,7 @@
     function sending() {
       var text = say.value.trim(); if (!text || sendBtn.dataset.k === 'stop' || sendBtn.disabled || say.disabled) return;
       dissolve(text);
+      sparkFrom(sendBtn, orbit.plan ? PAL.pTrail : PAL.trail, 10);
       if (frame.hasAttribute('data-start')) dockFrom = $('.tq-dock').getBoundingClientRect().top;
     }
     document.addEventListener('keydown', function (e) { if (e.target === say && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !(say.getAttribute('enterkeyhint') === 'enter')) sending(); }, true);
@@ -260,7 +391,7 @@
     var relayout = function () { layout(true); };
     Object.keys(MQ).forEach(function (k) { var q = MQ[k]; (q.addEventListener ? q.addEventListener('change', relayout) : q.addListener(relayout)); });
     $('.tq-fold').addEventListener('click', toggleLeft);
-    $('.tq-brand-key').addEventListener('click', function () { if (L.mode === 'wide' || L.mode === 'mid') toggleLeft(); });
+    $('.tq-brand-key').addEventListener('click', function () { sparkFrom($('.tq-brand-mark'), PAL.trail, 8); if (L.mode === 'wide' || L.mode === 'mid') toggleLeft(); });
     panelB.addEventListener('click', function () { L.touched = true; toggleRight(); });
     $('.tq-r-x').addEventListener('click', function () { L.touched = true; toggleRight(false); });
     scrim2.addEventListener('click', function () { toggleRight(false); });
@@ -272,38 +403,21 @@
       clearTimeout(rs);
       rs = setTimeout(function () {
         if (innerWidth !== W || innerHeight > H || Math.min(2, window.devicePixelRatio || 1) !== DPR) { size(); if (REDUCE) drawStars(performance.now()); }
-        moveInk();
+        if (L.right) moveInk();
       }, 120);
     });
-    /* 键盘弹起、收起时面板只变高度。#199 / #200 曾经让输入框（空对话时连中间那段字）用 300ms FLIP 从旧位置滑到新位置，
-       #201 让列表下沿跟着一起滑；真机录屏证明这样反而落在键盘后面（见下面 11:56 那条），已经去掉，只留「列表离底距离不变」。 */
-    /* 站长 11-21 上午：有几句话的对话，点输入框、键盘弹起来，最后一条回复被挡住，要自己往下拉才看得到。
-       查到：消息列表（.xc-body）是输入框上面那块会滚的区域，键盘一出来面板变矮，它跟着变矮（390×844 实测 644→250），
-       浏览器滚动条按「顶上不动」保留（scrollTop 还是 0），原来离底 0 的列表一下离底 279px，最后一条整个落在列表下沿外面。
-       原来没满一屏（不能滚）的对话最明显——变矮以后才能滚，可滚动位置还停在顶上。
-       照 Element 网页版消息列表的做法（element-hq/element-web 的 ScrollPanel.tsx：滚动时记下 stuckAtBottom 或离底的 bottomOffset，
-       onResize 时按它恢复，resize 引起的 scroll 事件不算数）：记住列表离底多远，面板变高变矮以后还离底那么远——
-       原来在最底下就一直贴着底，最新那条留在输入框上面；往上翻着看旧消息的，看着的内容跟着底边走，不会被拽回最底下。
-       （原来还让列表下沿跟着输入框的 FLIP 一起滑，现在面板变高度那一帧就摆好，不再滑。） */
-    /* 站长 11-21 11:56 真 iPhone 录屏（#202 之后，标题栏已经不动）：还是「一点也不丝滑，上去的时候会弹一下」。逐帧量（60 帧/秒）：
-       键盘一开始动，visualViewport 要过 40~80ms 才变（外壳这时才把面板缩矮），那时键盘已经走了 40%~55%；
-       弹起时键盘再过约 220ms 基本到位，#200 / #201 的 300ms FLIP 这时才从旧位置起步，输入框从键盘后面慢慢钻出来，
-       键盘停稳以后还要再追 60ms，前 5 帧整块输入框都看不见；收起时键盘约 170ms 滑出屏幕，输入框还在后面往下追，
-       中间露出一截近 100px 的空当。键盘比任何一段固定时长的动画都快，而且起步早于我们收到消息，FLIP 怎么调都是跟在后面。
-       所以不做动画：面板一变高度（ResizeObserver 在这一帧画出来之前回调），输入框靠排版直接落在新位置，列表在同一帧按离底距离摆好——
-       弹起时输入框先到位、键盘从下面补上来；收起时输入框已经在底下，被还没落下去的键盘盖着、跟着露出来。
-       列表照旧按 element-web ScrollPanel 的做法（stuckAtBottom / bottomOffset）：在最底下的贴着底，往上翻着看的离底一样远；
-       resize 引起的那一下 scroll 不算数。 */
-    var dock = $('.tq-dock'), kbW = 0, kbH = 0, kbAt = 0, kbGap = 0, kbSet = false;
+    /* 键盘弹起、收起时面板只变高度，只保留「列表离底距离不变」（参考 element-web ScrollPanel.tsx 的 stuckAtBottom / bottomOffset）。
+       每帧只做一次读+写，不在回调里重复读 scrollHeight/clientHeight。 */
+    var dock = $('.tq-dock'), kbW = 0, kbH = 0, kbGap = 0, kbSet = false;
     function kbBody() { return frame.hasAttribute('data-start') ? null : $('.tq-mid > .xc-body'); }   // 空对话：整段靠排版跟着输入框，不用管滚动
     function gapOf(b) { return Math.max(0, b.scrollHeight - b.scrollTop - b.clientHeight); }
     function keepGap(b) { b.scrollTop = b.scrollHeight - b.clientHeight - kbGap; }
     function kbMark() { var b = kbBody(); kbW = frame.clientWidth; kbH = frame.clientHeight; kbSet = true; if (b) kbGap = gapOf(b); }
     function onKbResize() {
-      var w = frame.clientWidth, h = frame.clientHeight, b = kbBody(), gap = kbGap;
+      var w = frame.clientWidth, h = frame.clientHeight, b = kbBody();
       if (!kbSet || w !== kbW || h === kbH) { kbMark(); return; }
-      kbMark(); kbAt = performance.now();
-      if (b) { kbGap = gap; keepGap(b); }   // 排版已经按新高度走过（变高时滚动位置可能被截短），离底多远用变之前记下的；这一帧画出来之前就摆好
+      kbW = w; kbH = h; kbSet = true; kbAt = performance.now();
+      if (b) keepGap(b);   // 排版已经按新高度走过，直接按变之前记下的离底距离摆好，不再多做一次同步布局读
     }
     if (window.ResizeObserver) new ResizeObserver(onKbResize).observe(frame); else addEventListener('resize', onKbResize);
     requestAnimationFrame(kbMark);
@@ -596,7 +710,13 @@
     });
     document.addEventListener('pointerdown', function (e) { if (!pop.hidden && !pop.contains(e.target) && !permBtn.contains(e.target)) closePop(false); }, true);
     addEventListener('resize', function () { if (!pop.hidden) placePop(); });
-    planBtn.addEventListener('click', function () { cfg.plan = !cfg.plan; syncChips(); });
+    planBtn.addEventListener('click', function () {
+      cfg.plan = !cfg.plan; syncChips();
+      if (cfg.plan && !REDUCE) {
+        var r = planBtn.getBoundingClientRect();
+        if (r.width && r.height) { spawnRing(r.left + r.width / 2, r.top + r.height / 2, PAL.pTrail, 42); spawnSpark(r.left + r.width / 2, r.top + r.height / 2, PAL.pTrail, 6); }
+      }
+    });
 
     // 计划：对话里一张卡片（标题、几步、按计划执行 / 继续改计划 / 看计划），右栏「计划」放全文
     var plans = {}, latest = '', shown = '', planBox = $('.tq-plan-box'), planTab = $('#tq-tab-plan');
@@ -666,7 +786,7 @@
       var b = e.target.closest('[data-plan-act]'); if (!b || b.disabled) return;
       var act = b.dataset.planAct, run = b.closest('[data-run]').dataset.run;
       if (act === 'open') openPlan(run, true);
-      else if (act === 'edit') { cfg.plan = true; syncChips(); if (L.mode === 'phone') toggleRight(false); say.focus(); }
+      else if (act === 'edit') { cfg.plan = true; syncChips(); if (L.mode === 'phone') toggleRight(false); say.focus({ preventScroll: true }); }
       else if (act === 'run') { cfg.plan = false; syncChips(); if (L.mode === 'phone') toggleRight(false); var c = chat(); if (c && c.tqSend) c.tqSend('按计划执行'); }
     });
     // 换对话：权限换成这个对话记下的（新对话用默认），计划模式关掉，右栏的计划清掉（读历史时会再画回来）

@@ -1,3 +1,14 @@
+## 2026-11-24 · 天启输入框抬起/下放卡顿修复与星空动效升级（Antigravity）
+
+- **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/tianqi-ui-polish-20261123`（从 `main` `733bcdd` 切出；旧未合并分支 `antigravity/tianqi-li2-20261118` 原样保留未动）。完整根因、开源参考与前后量化对比见 [docs/CHANGES.md](CHANGES.md) 最新一条。
+- **已完成**：
+  - 修复 `site/shell.js` 五处键盘抬起/下放卡顿隐患：`kbClosingUntil` 单调收起护栏（防迟到 `visualViewport.resize` 把已落底输入框拽回半空）、区分真跟手拖拽（≥2 个中间台阶）与单步矮键盘切换平滑改目标、Fritsch-Carlson 保单调三次样条插值、按屏幕尺寸 `sessionStorage` 记相对 `kbHeight`、`.tq-box`/`.tq-entry` 留白区统一 `focus({ preventScroll: true })`、DOM 样式差值缓存与 `html.kb-anim` 动画期让路标记。
+  - 升级 `site/tools/tianqi/sky.js` 与 `workbench.css`：键盘运动期间暂停夜空 WebGL/2D 重绘与循环 CSS 动画，空闲时停掉两张 2D 画布的每帧无效清屏；新增空状态双轨星盘徽章（`OrbitingCircles`）+ 扫光问候语（`ShinyText`）、桌面夜空指针星座连线（`Particles`）、输入框指针追光细边（`SpotlightCard`）+ 聚焦顶边星芒展开线、发送/激活时的双彗星环绕流光（`BorderBeam`）与星芒粒子迸发（`ClickSpark`），严格遵守 Linear 实心无毛玻璃、零大阴影、品牌星与下划线不发光、32px 行高等全部规范与 `prefers-reduced-motion` 静默降级。
+  - 更新 `site/index.html` 与 `site/tools/tianqi/index.html` 的 `?v=` 资源版本号；`test/e2e/ios_kb_model.js` 与 `test/e2e/xin_tianqi_e2e.py` 新增 4 项回归检查。
+- **测试结果与当前风险**：
+  - 本地 `xin_tianqi_e2e.py` 82/82 全过，`xin_motion_e2e.py`、`xin_main_e2e.py`、`xin_work_e2e.py`、`stm32_e2e.py` 及语法/资源/相关单元测试全过，1280/1024/768/390 深浅色截图已逐张复核；全量 CI、预发验证与正式站部署运行链接以对应 PR 和 Actions 记录为准。
+  - **接手注意**：`shell.js` 的键盘动画进行中会给工具 iframe 的 `<html>` 加 `kb-anim` 类，以后若在天启里新加常驻循环动画，记得一并放进 `workbench.css` 末尾的 `html.kb-anim` 暂停选择器里，避免抢占键盘跟随帧预算。真机 iOS Safari 手感仍以站长实机体验为准。
+
 ## 2026-11-21 · 正式发布找不到重跑成功的 PR（ChatGPT）
 
 - ChatGPT（Codex）实现并自查，无独立复核。天启 #205 已合入 `main`（`e8338c0`）。运行 [44904440846](https://github.com/yux91803-hobo/liming-work-site/actions/runs/44904440846) 在正式发布查找证据时停止，线上仍服务上一版。

@@ -274,61 +274,105 @@
     html.classList.toggle('kb-pre', !!c);
     if (c) html.style.setProperty('--kb-bg', c); else if (!html.classList.contains('kb-up')) html.style.removeProperty('--kb-bg');
   }
-  var tqSafeBottom = 0;
+  var tqSafeBottom = 0, kbToolCol = '', kbLast = { top: null, h: null, up: false, bg: '', overlap: null, anim: false };
+  function kbRoot() {
+    try { var p = current && panels[current]; return p ? p._frame.contentDocument.documentElement : null; } catch (e) { return null; }
+  }
+  function kbSyncAnim(on) {
+    on = !!on;
+    if (kbLast.anim === on) return;
+    kbLast.anim = on;
+    var root = kbRoot();
+    if (root) root.classList.toggle('kb-anim', on);
+  }
   function kbCover(on, overlap) {
-    var c = on ? toolColor() : '';
-    html.classList.toggle('kb-up', !!on);
-    if (c) html.style.setProperty('--kb-bg', c); else if (!html.classList.contains('kb-pre')) html.style.removeProperty('--kb-bg');
+    on = !!on;
+    var c = on ? (kbToolCol || (kbToolCol = toolColor())) : '';
+    if (kbLast.up !== on) {
+      kbLast.up = on;
+      html.classList.toggle('kb-up', on);
+    }
+    if (c) {
+      if (kbLast.bg !== c) { kbLast.bg = c; html.style.setProperty('--kb-bg', c); }
+    } else if (!html.classList.contains('kb-pre') && kbLast.bg) {
+      kbLast.bg = ''; html.style.removeProperty('--kb-bg');
+    }
+    if (!on) kbToolCol = '';
     // 工具里也知道键盘在不在：键盘盖住了 iPhone 底下那条横条，工具不用再给它留白（天启的 --sb）
-    try {
-      var p = current && panels[current];
-      if (!p) return;
-      var root = p._frame.contentDocument.documentElement;
-      if (tqIOSKeyboard()) {
-        if (on && !root.classList.contains('kb-up')) tqSafeBottom = parseFloat(getComputedStyle(root).getPropertyValue('--tq-safe-bottom')) || 0;
+    var root = kbRoot();
+    if (!root) return;
+    if (tqIOSKeyboard()) {
+      if (on && !root.classList.contains('kb-up')) tqSafeBottom = parseFloat(getComputedStyle(root).getPropertyValue('--tq-safe-bottom')) || 0;
+      var ov = on && overlap < tqSafeBottom ? Math.round(overlap * 2) / 2 : null;
+      if (kbLast.overlap !== ov) {
+        kbLast.overlap = ov;
         // 覆盖整个安全区以后保持 0px 留白，免得每帧改 iframe 里的 CSS 变量。
-        if (on && overlap < tqSafeBottom) root.style.setProperty('--tq-kb-overlap', overlap + 'px');
+        if (ov != null) root.style.setProperty('--tq-kb-overlap', ov + 'px');
         else root.style.removeProperty('--tq-kb-overlap');
       }
-      root.classList.toggle('kb-up', !!on);
-    } catch (e) { /* 别的源 */ }
+    }
+    if (root.classList.contains('kb-up') !== on) root.classList.toggle('kb-up', on);
   }
-  /* 站长 11-21 15:08 真 iPhone 录屏（#203 上线后复测）：收起键盘时输入框还是一格一格跳。逐帧量（30 帧/秒，键盘面板顶边
-     和输入框上下边分开量）：键盘自己是连续滑的——弹起 11 个位置、约 333ms 走完，收起约 200ms；输入框却只有一步，
-     整个行程约 395pt 在一帧里跳完。收起时键盘先动约 67ms、已经落了约 120pt，输入框还停在原处，底下空当先涨到
-     约 130pt 才一跳落地；弹起时反过来，输入框一帧先跳到位，键盘再用 300ms 慢慢追上来。
-     根子在这一层，不在 iframe 里：#203 让输入框在面板变高度的那一帧靠排版到位，可 visualViewport 的高度本身就是
-     台阶——键盘动起来以后 48~104ms 才变、而且一次变到底（见 ios_kb_model.js 的建模），面板高度跟着一步到位，
-     输入框自然一步跳完。#200 那种在 iframe 里做的 FLIP 也不行：它等 resize 到了才起步，时长又是拍的 300ms，
-     怎么调都跟在键盘后面。
-     这一回在外壳这一层跟：键盘的起点不是 resize，是焦点——点输入框（focusin）键盘就开始升、离开（focusout）
-     就开始落，比 resize 早 40~100ms。从焦点那一刻起，照真机录屏量出的键盘曲线（下面 KB_OPEN / KB_CLOSE，
-     和 test/e2e/ios_kb_model.js 里同一份数据）逐帧把面板高度从起点推到终点；settleStage 本来就在焦点后逐帧调
-     fitStage 一秒钟，节奏现成。终点：弹起用上一次键盘升起时 visualViewport 的高度（同一台机器键盘高度基本不变，
-     记在 kbOpenH 里）；第一次还没记下就等 visualViewport 给值再走，天启用剩余的曲线从面板当前位置滑到终点；
-     收起的终点就是整屏高，不用等。visualViewport 中途报出中间高度（跟手收起那种系统自己连续给值的场合）就停掉
-     跟随、照它给的值走；报出的终点和记住的不一样（键盘高度变了），就接着眼下的高度改奔新终点、到点时间不变。
-     iframe 里的 sky.js 不用动：面板高度现在每帧都在变，它「变高度那一帧靠排版到位、列表按离底距离摆好」正好逐帧生效。 */
+  /* 站长 11-21 15:08 真 iPhone 录屏（#203 上线后复测）及 11-23 卡顿排查：
+     1. 外壳从焦点起照真机录屏曲线（KB_OPEN / KB_CLOSE，Fritsch-Carlson 单调三次插值，消除 60/120Hz 折点速度突变）逐帧推进面板高度。
+     2. 记住相对键盘高度 kbHeight（full - target，同步到 sessionStorage），地址栏显隐变化时仍对准键盘顶，且同会话后续打开首次即跟随。
+     3. 只有系统连续报出 2 个以上中间高度才算跟手拖拽收起；键盘变矮（如收起预测栏）的单步 resize 走平滑改目标，不再一帧跳变。
+     4. 收起后加单调保护窗口（参考 caelinsutch/keyboard-playground.html）：若 Safari 晚于 210ms 才把 visualViewport 恢复满屏，不再把输入框拽回半空。
+     5. 缓存内联样式避免每帧重复写 DOM/CSS 变量，并通过 html.kb-anim 通知天启在动画的 210–382ms 内暂停夜空重绘，把帧预算全让给键盘跟随。 */
   var KB_OPEN = [[0, 0], [15, .116], [32, .244], [48, .391], [65, .513], [82, .619], [98, .712], [115, .783], [132, .842], [148, .882], [165, .914],
     [182, .937], [198, .954], [215, .967], [232, .977], [248, .983], [265, .988], [282, .992], [298, .994], [332, .997], [382, 1]];
   var KB_CLOSE = [[0, 0], [3, .017], [20, .115], [36, .265], [53, .404], [70, .534], [86, .637], [103, .722], [120, .793], [136, .847], [153, .889],
     [170, .916], [186, .94], [210, 1]];
+  // Fritsch-Carlson 单调三次样条切线：经过所有实测节点、严格单调无回弹、120Hz 高刷屏下无速度折点
+  function kbTangents(tab) {
+    var n = tab.length, d = [], m = new Array(n);
+    for (var i = 0; i < n - 1; i++) d[i] = (tab[i + 1][1] - tab[i][1]) / (tab[i + 1][0] - tab[i][0]);
+    m[0] = d[0]; m[n - 1] = d[n - 2];
+    for (var j = 1; j < n - 1; j++) m[j] = (d[j - 1] * d[j] <= 0) ? 0 : (d[j - 1] + d[j]) * .5;
+    for (var k = 0; k < n - 1; k++) {
+      if (!d[k]) { m[k] = m[k + 1] = 0; continue; }
+      var a = m[k] / d[k], b = m[k + 1] / d[k], s = a * a + b * b;
+      if (s > 9) { var t = 3 / Math.sqrt(s); m[k] = t * a * d[k]; m[k + 1] = t * b * d[k]; }
+    }
+    return m;
+  }
+  var KB_OPEN_M = kbTangents(KB_OPEN), KB_CLOSE_M = kbTangents(KB_CLOSE);
   var KB_LATE_OPEN = 48, KB_LATE_CLOSE = 55;   // visualViewport 比键盘晚到多少 ms（11:56 与 15:08 两段录屏量到 40~104ms，取模型值）
-  var kbAnim = null, kbOpenH = 0, kbSession = false, kbPending = false;
-  function kbCurve(tab, ms) {
+  var kbAnim = null, kbHeight = 0, kbSession = false, kbPending = false, kbClosingUntil = 0;
+  function kbHeightKey() { return 'lm.kb.h:' + screen.width + 'x' + screen.height + ':' + innerWidth; }
+  function loadKbHeight() {
+    if (kbHeight > 0) return kbHeight;
+    try { var v = parseFloat(sessionStorage.getItem(kbHeightKey()) || ''); if (v >= 120 && v < innerHeight - 120) kbHeight = v; } catch (e) {}
+    return kbHeight;
+  }
+  function saveKbHeight(h) {
+    if (!(h >= 120 && h < innerHeight - 120)) return;
+    kbHeight = h;
+    try { sessionStorage.setItem(kbHeightKey(), String(Math.round(h))); } catch (e) {}
+  }
+  function kbOpenTarget(full) { var kh = loadKbHeight(); return kh ? Math.max(180, full - kh) : 0; }
+  function kbCurve(tab, tan, ms) {
     if (ms <= 0) return 0;
-    for (var i = 1; i < tab.length; i++) if (ms <= tab[i][0]) { var a = tab[i - 1], b = tab[i]; return a[1] + (b[1] - a[1]) * (ms - a[0]) / (b[0] - a[0]); }
+    var last = tab.length - 1;
+    if (ms >= tab[last][0]) return 1;
+    for (var i = 1; i <= last; i++) if (ms <= tab[i][0]) {
+      var x0 = tab[i - 1][0], x1 = tab[i][0], h = x1 - x0, u = (ms - x0) / h, u2 = u * u, u3 = u2 * u;
+      return (2 * u3 - 3 * u2 + 1) * tab[i - 1][1] + (u3 - 2 * u2 + u) * h * tan[i - 1] + (-2 * u3 + 3 * u2) * tab[i][1] + (u3 - u2) * h * tan[i];
+    }
     return 1;
   }
   function kbAnimAt(a, now) {
-    var tab = a.dir === 'open' ? KB_OPEN : KB_CLOSE;
-    var elapsed = now - a.t0 + a.phase, start = kbCurve(tab, a.phase);
-    var progress = (kbCurve(tab, elapsed) - start) / (1 - start);
+    var open = a.dir === 'open', tab = open ? KB_OPEN : KB_CLOSE, tan = open ? KB_OPEN_M : KB_CLOSE_M;
+    var elapsed = now - a.t0 + a.phase, start = a.phase ? kbCurve(tab, tan, a.phase) : 0;
+    var progress = Math.max(0, Math.min(1, (kbCurve(tab, tan, elapsed) - start) / (1 - start)));
     return { h: a.fromH + (a.toH - a.fromH) * progress, progress: progress, done: elapsed >= tab[tab.length - 1][0] };
   }
-  function stageH() { return stage.getBoundingClientRect().height; }
+  function stageH() { var sh = parseFloat(stage.style.height); return sh > 0 ? sh : stage.getBoundingClientRect().height; }
   function kbStart(dir, fromH, toH, t0, phase) {
-    kbAnim = { dir: dir, fromH: fromH, toH: toH, t0: t0, phase: phase || 0 };
+    kbAnim = { dir: dir, fromH: fromH, toH: toH, t0: t0, phase: phase || 0, vvPrev: -1, vvSteps: 0 };
+    if (dir === 'open') kbClosingUntil = 0;
+    else kbClosingUntil = t0 + 480;
+    kbSyncAnim(true);
     settleStage();
   }
   function tqIOSKeyboard() { return isIOS && current === 'tianqi'; }
@@ -338,22 +382,32 @@
     else kbStart(dir, fromH, toH, now - delay);
   }
   function kbPlace(vv, h, full) {
+    var s = stage.style, top = Math.max(0, Math.round(vv.offsetTop)), rh = Math.round(h * 2) / 2;
+    if (kbLast.top !== top) { kbLast.top = top; s.top = top + 'px'; }
+    if (kbLast.h !== rh) { kbLast.h = rh; s.height = rh + 'px'; s.bottom = 'auto'; }
+    kbCover(true, Math.max(0, full - rh));
+  }
+  function kbRestore() {
     var s = stage.style;
-    s.top = Math.max(0, vv.offsetTop) + 'px'; s.height = h + 'px'; s.bottom = 'auto';
-    kbCover(true, Math.max(0, full - h));
+    if (kbLast.top !== null || kbLast.h !== null || s.height || s.top || s.bottom) {
+      kbLast.top = kbLast.h = null;
+      s.top = s.height = s.bottom = '';
+    }
+    kbCover(false);
+    kbSyncAnim(false);
   }
   function kbFocus(opening, e) {
     if (!lite) return;
-    var now = performance.now();
+    var now = performance.now(), openTo = kbOpenTarget(innerHeight);
     if (opening) {
-      kbSession = true;
+      kbSession = true; kbClosingUntil = 0;
       if (kbAnim && kbAnim.dir === 'open') return;
       if (kbAnim && kbAnim.dir === 'close') {   // 收起一半又点回来：从眼下的高度转头往上走
-        if (kbOpenH) kbStart('open', tqIOSKeyboard() ? stageH() : kbAnimAt(kbAnim, now).h, kbOpenH, now); else kbPending = true;
+        if (openTo) kbStart('open', tqIOSKeyboard() ? stageH() : kbAnimAt(kbAnim, now).h, openTo, now); else kbPending = true;
         return;
       }
       if (html.classList.contains('kb-up')) return;   // 键盘已经升着（只是换了个输入框），不用重走一遍
-      if (kbOpenH) kbStart('open', stageH(), kbOpenH, now);
+      if (openTo) kbStart('open', stageH(), openTo, now);
       else kbPending = true;   // 还不知道这台机器的键盘多高，等 visualViewport 给值
     } else {
       kbPending = false;
@@ -361,48 +415,65 @@
       kbSession = false;
       var h = kbAnim && !tqIOSKeyboard() ? kbAnimAt(kbAnim, now).h : stageH();
       if (h < innerHeight - 2) kbStart('close', h, innerHeight, now);
-      else kbAnim = null;
+      else { kbAnim = null; kbSyncAnim(false); }
     }
   }
-  function fitStage() {
-    var vv = window.visualViewport, s = stage.style;
-    if (!vv || !lite || !current || Math.abs((vv.scale || 1) - 1) > 0.01) { kbAnim = null; s.top = s.height = s.bottom = ''; kbCover(false); return; }
-    var full = innerHeight, target = vv.height, now = performance.now();
+  function fitStage(ts) {
+    var vv = window.visualViewport;
+    if (!vv || !lite || !current || Math.abs((vv.scale || 1) - 1) > 0.01) { kbAnim = null; kbClosingUntil = 0; kbRestore(); return; }
+    var full = innerHeight, target = vv.height, now = typeof ts === 'number' ? ts : performance.now();
     if (kbAnim) {
       var lo = Math.min(kbAnim.fromH, kbAnim.toH), hi = Math.max(kbAnim.fromH, kbAnim.toH);
-      if (target > lo + 2 && target < hi - 2) kbAnim = null;   // 系统自己在连续给中间高度（跟手收起之类）：让位给它，下面照它的值走
-      else if (kbAnim.dir === 'open' && target < full - 1 && target !== kbAnim.toH) {
+      // 只有系统连续报出 2 个以上不同的中间高度（真正的跟手拖拽收起）才让位；单步变化（如键盘高度改变 360→310）走下面的平滑改目标
+      var inMid = target > lo + 2 && target < hi - 2;
+      if (inMid) {
+        if (kbAnim.vvPrev >= 0 && Math.abs(target - kbAnim.vvPrev) > 2) kbAnim.vvSteps++;
+        kbAnim.vvPrev = target;
+      }
+      if (inMid && (kbAnim.dir === 'close' || kbAnim.vvSteps >= 2)) { kbAnim = null; kbSyncAnim(false); }
+      else if (kbAnim.dir === 'open' && target < full - 1 && Math.abs(target - kbAnim.toH) > 1) {
         // visualViewport 报出的键盘高度和记下的不一样：接着眼下的高度改奔新终点，到点的时间不变
+        saveKbHeight(full - target);
         var at = kbAnimAt(kbAnim, now), p = at.progress;
         if (p < .95) { kbAnim.fromH = (at.h - target * p) / (1 - p); kbAnim.toH = target; at = kbAnimAt(kbAnim, now); }
-        else kbAnim = null;
+        else { kbAnim = null; kbSyncAnim(false); }
         if (kbAnim) {
-          if (at.done) kbAnim = null;
+          if (at.done) { kbAnim = null; kbSyncAnim(false); }
           else { kbPlace(vv, at.h, full); return; }
         }
       } else {
         var at2 = kbAnimAt(kbAnim, now);
         if (!at2.done) { kbPlace(vv, at2.h, full); return; }
-        kbAnim = null;   // 跟随走完了，下面按 visualViewport 的现值对齐
+        var finishedClose = kbAnim.dir === 'close';
+        kbAnim = null; kbSyncAnim(false);   // 跟随走完了，下面按 visualViewport 的现值对齐
+        // 收起动画走完但 Safari 还没更新 visualViewport.height：保持满屏，不被旧高度拽回半空
+        if (finishedClose && target < full - 1 && !kbSession && !typingNow()) {
+          kbClosingUntil = now + 450;
+          kbRestore();
+          return;
+        }
       }
     }
     // 只在触屏、工具开着、没在放大、可见区域确实比窗口矮（键盘）的时候跟；别的时候回到铺满
     if (target >= full - 1) {
+      kbClosingUntil = 0;
       if (kbSession) {
         var h0 = stageH();
         if (h0 < full - 2) {
           // 系统可以收起键盘而让 textarea 保留焦点。用视口恢复作为收起信号，并结束这次键盘会话。
-          kbSession = false; kbStartLate('close', h0, full, now, KB_LATE_CLOSE); fitStage(); return;
+          kbSession = false; kbStartLate('close', h0, full, now, KB_LATE_CLOSE); fitStage(now); return;
         }
       }
-      s.top = s.height = s.bottom = ''; kbCover(false);
+      kbRestore();
       if (!typingNow()) kbSession = false;
       return;
     }
-    kbOpenH = target;
+    // 刚收起完等待 Safari 迟到的 visualViewport 恢复：单调保持满屏，不回弹
+    if (!kbSession && !typingNow() && now < kbClosingUntil) { kbRestore(); return; }
+    saveKbHeight(full - target);
     if (typingNow()) kbSession = true;
     if (kbPending) {
-      kbPending = false; kbStartLate('open', tqIOSKeyboard() ? stageH() : full, target, now, KB_LATE_OPEN); fitStage(); return;
+      kbPending = false; kbStartLate('open', tqIOSKeyboard() ? stageH() : full, target, now, KB_LATE_OPEN); fitStage(now); return;
     }
     kbPlace(vv, target, full);
   }
@@ -411,13 +482,18 @@
      照 Element（hydrogen-web #181）按 visualViewport 的值自己定高度：工具里的输入框获得、失去焦点后，逐帧跟 1 秒，键盘动画在这段时间里走完。 */
   var settleUntil = 0, settleRaf = 0;
   function settleStage() {
-    settleUntil = performance.now() + 1000;
+    settleUntil = Math.max(settleUntil, performance.now() + 1000);
     if (settleRaf) return;
-    (function tick() {
-      fitStage();
-      settleRaf = performance.now() < settleUntil ? requestAnimationFrame(tick) : 0;
+    (function tick(ts) {
+      var now = typeof ts === 'number' ? ts : performance.now();
+      fitStage(now);
+      if (kbAnim && now + 500 > settleUntil) settleUntil = now + 500;
+      settleRaf = now < settleUntil ? requestAnimationFrame(tick) : 0;
       // 键盘收起、动画走完、焦点也不在输入框上了，才把预先换好的整页底色还回去
-      if (!settleRaf && !html.classList.contains('kb-up') && !typingNow()) kbPre(false);
+      if (!settleRaf) {
+        kbSyncAnim(false);
+        if (!html.classList.contains('kb-up') && !typingNow()) kbPre(false);
+      }
     })();
   }
   function typingNow() { try { var p = current && panels[current]; return !!p && typingEl(p._frame.contentDocument.activeElement); } catch (e) { return false; } }
@@ -430,23 +506,27 @@
       if (isIOS) focusInPlace(d);
     } catch (e) { /* 别的源：没法跟，只靠 visualViewport 的事件 */ }
   }
-  /* 站长 11-21 10:07 iPhone（4G）：有字的对话点输入框，「一点也不丝滑，上去的时候会弹一下」；键盘升起那一下截的图里整块面板连标题栏
-     被往下推了三分之一屏，上面一片黑，输入框在键盘后面。
-     原因：iOS Safari 手指点输入框获得焦点时，会把整页往上挪、让输入框露在键盘上面（WebKit _zoomToFocusRect，跟着键盘动画一起挪），
-     固定定位的面板也被带着走；visualViewport 的 offsetTop 直接报挪完的值、scroll 事件要等挪完才发（WebKit bug 218465），
-     fitStage 把面板 top 设成 offsetTop，于是挪的过程中面板比屏幕实际挪到的位置低一截（截图里那片黑），挪完才对上——整页弹一下；
-     收起时反过来，标题栏先被带出屏幕上沿再落回来。#200 / #201 在 iframe 里的滑动又从被挪过的位置起步，输入框先往下再往上。
-     做法照 frizynn/nenu #173（useFocusInPlace）和 React Aria #8888：WebKit 对带 preventScroll 的 focus 不做这次挪动（bug 236584 修好以后）。
-     手指点没获得焦点的输入框，这一下由我们自己 focus({ preventScroll: true })，页面一点不挪；面板本来就跟着 visualViewport 变高变矮，
-     输入框靠排版落到键盘上面，只剩 iframe 里那一段滑动。手指一滑（滚列表）不算点；已经在打字时点它是挪光标，照系统的来。 */
+  /* 站长 11-21 10:07 iPhone（4G）：有字的对话点输入框，「一点也不丝滑，上去的时候会弹一下」。
+     做法照 frizynn/nenu #173（useFocusInPlace）和 React Aria #8888：WebKit 对带 preventScroll 的 focus 不做整页挪动。
+     手指点没获得焦点的输入框（或输入框外框 .tq-entry 的空白处），由我们自己 focus({ preventScroll: true })，页面一点不挪。 */
   function focusInPlace(d) {
     var start = null;
     function editable(el) { return !!el && !el.disabled && !el.readOnly && (el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|tel|password|number|)$/.test(el.type || ''))); }
+    function resolveTarget(t) {
+      if (editable(t)) return t;
+      if (!t || !t.closest || t.closest('button, a, select, input, label, [role=button]')) return null;
+      var entry = t.closest('.tq-entry, .tq-box');
+      if (!entry) return null;
+      var ta = entry.querySelector('textarea');
+      return editable(ta) ? ta : null;
+    }
     d.addEventListener('touchstart', function (e) { var t = e.touches[0]; start = e.touches.length === 1 ? [t.clientX, t.clientY] : null; }, { capture: true, passive: true });
     d.addEventListener('touchmove', function (e) { var t = e.touches[0]; if (start && (Math.abs(t.clientX - start[0]) > 10 || Math.abs(t.clientY - start[1]) > 10)) start = null; }, { capture: true, passive: true });
     d.addEventListener('touchend', function (e) {
-      var el = e.target, tap = start; start = null;
-      if (!tap || e.touches.length || !editable(el)) return;
+      var tap = start; start = null;
+      if (!tap || e.touches.length) return;
+      var el = resolveTarget(e.target);
+      if (!el) return;
       if (el === d.activeElement) {
         // 系统收键盘后，原输入框可能仍有焦点；再点它时不会收到 focusin。
         if (tqIOSKeyboard() && (!html.classList.contains('kb-up') || (kbAnim && kbAnim.dir === 'close'))) {
@@ -460,9 +540,10 @@
       if (!el.isContentEditable) try { var n = el.value.length; el.setSelectionRange(n, n); } catch (err) { /* number 之类不支持 */ }
     }, { capture: true, passive: false });
   }
+  addEventListener('orientationchange', function () { kbAnim = null; kbClosingUntil = 0; kbHeight = 0; kbSyncAnim(false); });
   new MutationObserver(function () { pinHome(body.classList.contains('locked')); fitStage(); }).observe(body, { attributes: true, attributeFilter: ['class'] });
   addEventListener('scroll', function () { if (html.classList.contains('home-pin') && window.scrollY) window.scrollTo(0, 0); }, { passive: true });
-  if (window.visualViewport) { visualViewport.addEventListener('resize', fitStage); visualViewport.addEventListener('scroll', fitStage); }
+  if (window.visualViewport) { visualViewport.addEventListener('resize', function () { fitStage(); }); visualViewport.addEventListener('scroll', function () { fitStage(); }); }
   function clip(r) {
     if (!r) return 'inset(0px 0px 0px 0px round 0px)';
     return 'inset(' + r.top + 'px ' + (innerWidth - r.right) + 'px ' + (innerHeight - r.bottom) + 'px ' + r.left + 'px round 12px)';
