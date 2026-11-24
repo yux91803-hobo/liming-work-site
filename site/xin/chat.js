@@ -253,7 +253,7 @@
     if (!TQ) isleEl.addEventListener('click', function () { if (trayDocked()) { workEl.querySelector('.xc-wk-sc').scrollTo({ top: 0, behavior: 'smooth' }); flash(workEl); return; } setTray(!S.tray); });
     var wkX = root.querySelector('.xc-wk-x'); if (wkX) wkX.addEventListener('click', function () { if (trayDocked()) setPin(false); else setTray(false, true); });
     var wkPin = root.querySelector('.xc-wk-pin'); if (wkPin) wkPin.addEventListener('click', function () { setPin(!S.pin); });
-    window.addEventListener('resize', layout);
+    window.addEventListener('resize', function () { if (window.innerWidth !== lastLayoutW) layout(); });
     window.addEventListener('resize', function () { if (S.tray) placeTray(); });
     root.querySelector('.xc-list-b').addEventListener('click', function () { setDrawer(!S.drawer); });
     loginEl.addEventListener('submit', function (e) { e.preventDefault(); login(loginEl.pw.value); });
@@ -2423,10 +2423,12 @@
   }
   // 钉住的面板：只有全屏工作台、而且够宽（≥900）才是右边一栏
   function trayDocked() { return !TQ && !!(root && S.pin && S.wb && window.innerWidth >= WORK_MIN); }
+  var lastLayoutW = 0;
   function layout() {
     if (!root) return;
     // 天启照 Harness 桌面端：≥900 对话记录常驻左栏（窄条也算），更窄才是抽屉
     var w = window.innerWidth, side = TQ ? w >= TQ_SIDE_MIN : !!S.wb && w >= SIDE_MIN, dock = trayDocked();
+    lastLayoutW = w;
     var was = root.classList.contains('wb-side');
     root.classList.toggle('wb-side', side); root.classList.toggle('wb-pin', dock);
     if (dock && S.tray) setTray(false, false, true);

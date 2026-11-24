@@ -970,7 +970,9 @@ async def main():
         rail = await tf.evaluate("""(() => { const g = document.querySelector('.tq-side .tq-glass').getBoundingClientRect(), mid = g.left + g.width / 2;
           const c = s => { const r = document.querySelector(s).getBoundingClientRect(); return Math.round((r.left + r.width / 2 - mid) * 10) / 10; };
           const k = document.querySelector('.tq-brand-key').getBoundingClientRect();
-          return { left: document.querySelector('.tq-frame').dataset.left, keyTop: k.top, off: [c('.tq-brand-mark'), c('.xc-new-b svg'), c('.tq-set-b svg'), c('.tq-plug-b svg')] }; })()""")
+          return { left: document.querySelector('.tq-frame').dataset.left, mid, keyTop: k.top,
+            off: [c('.tq-brand-mark'), c('.xc-new-b svg'), c('.tq-set-b svg'), c('.tq-plug-b svg')],
+            extraOff: [c('.tq-brand-mark .xc-tq'), c('.tq-rail-cmd svg')] }; })()""")
         ui.check('平板横屏天启：左栏窄条里星星、新对话、设置、插件的图标都在窄条正中，首页返回键不压在星星上',
                  rail['left'] == 'rail' and all(abs(x) <= 1 for x in rail['off']) and back['y'] + back['height'] <= rail['keyTop'], (rail, back))
         sky0 = await tf.evaluate("[...document.querySelectorAll('canvas.tq-sky')].map(c => [c.width, c.height])")
@@ -988,6 +990,14 @@ async def main():
         await pg.set_viewport_size({'width': 820, 'height': 1180})
         await pg.wait_for_timeout(500)
         ui.check('平板转成竖屏：夜空按新尺寸重画', await tf.evaluate('window.__skyResets') > 0, await tf.evaluate('window.__skyResets'))
+        await pg.set_viewport_size({'width': 1180, 'height': 820})
+        await pg.wait_for_timeout(200)
+        await frame.locator('.tq-rail-cmd').tap()
+        await frame.locator('.xc-pal.in .xc-pal-i').first.wait_for(timeout=3000)
+        rail_pal = await frame.locator('.xc-pal.in').count() == 1
+        ui.check('平板横屏天启窄条：外层返回键、内部星徽与命令面板键均严格落在窄条中轴（误差 ≤1px），点命令面板键可打开搜索',
+                 abs((back['x'] + back['width'] / 2) - rail['mid']) <= 1 and all(abs(x) <= 1 for x in rail['extraOff']) and rail_pal,
+                 (back, rail, rail_pal))
         await pg.context.close()
 
         # 手机竖屏（390×844，首页浅色主题）从首页打开天启。站长 11-21：点输入框还是闪一下。
@@ -1293,12 +1303,14 @@ async def main():
         await pg.touchscreen.tap(tap_x, tap_y)
         await pg.wait_for_timeout(40)
         kb_anim_mid = await tf.evaluate("document.documentElement.classList.contains('kb-anim')")
+        right_anims = await tf.evaluate("document.querySelector('.tq-right').getAnimations().filter(a => a.playState === 'running').length")
         await pg.wait_for_timeout(80)
         pad_log = await pg.evaluate('__iosKb.st.log')
         pad_focus = await tf.evaluate('document.activeElement && document.activeElement.tagName')
-        # 动画结束后 kb-anim 自动移除；列表有 overscroll-behavior-y: contain
+        # 动画结束后 kb-anim 自动移除；列表有 overscroll-behavior-y: contain；localStorage 记住键盘高度
         await pg.wait_for_timeout(500)
         anim_clean = await tf.evaluate("[document.documentElement.classList.contains('kb-anim'), getComputedStyle(document.querySelector('.tq-mid > .xc-body')).overscrollBehaviorY]")
+        kb_ls = await pg.evaluate("Object.keys(localStorage).some(k => k.startsWith('lm.kb.h:'))")
         ui.check('iPhone 天启：键盘收起后 visualViewport 迟到 290ms 时，输入框单调落到底、不被旧高度拽回半空',
                  late_back <= 2 and late_close[-1]['stageH'] == 844, (late_back, [s['stageH'] for s in late_close[-10:]]))
         ui.check('iPhone 天启：切换成更矮的键盘（360→310）时平滑改目标，收到 resize 那一帧不突然跳变',
@@ -1307,6 +1319,8 @@ async def main():
         ui.check('iPhone 天启：点输入框工具栏留白区（非 textarea、非按钮）也走 preventScroll 聚焦；键盘运动中挂 kb-anim 让路、结束清掉且消息区隔离滚动',
                  'SPAN.tq-grow' in hit_tag and pad_focus == 'TEXTAREA' and pad_log == [{'preventScroll': True}] and kb_anim_mid and anim_clean == [False, 'contain'],
                  (hit_tag, grow_box, pad_focus, pad_log, kb_anim_mid, anim_clean))
+        ui.check('iPhone 天启：跨会话将键盘高度写入 localStorage，且关闭态底部抽屉在键盘缩放期间零多余过渡动画',
+                 kb_ls and right_anims == 0, (kb_ls, right_anims))
         await pg.context.close()
 
         # 6h. 空状态星盘徽章（OrbitingCircles + ShinyText）可见，并在 prefers-reduced-motion 下停掉全部动画

@@ -28,57 +28,196 @@
     };
     var chat = function () { return window.LimingXinChat || null; }, state = function () { var c = chat(); return c ? c.state : {}; };
     var DPR = Math.min(2, window.devicePixelRatio || 1), W = innerWidth, H = innerHeight;
+    var COARSE = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
 
-    /* ================= 夜空 ================= */
+    /* ================= 深空星象台背景（WebGL 星云银河 + 多光谱星群 + 天球星盘坐标与星座图） =================
+       参考 xemantic/shader-web-background、Inigo Quilez Domain Warping FBM、Shadcn NebulaShader 与 Stellarium Web：
+       1. starCv 第 1 遍：全屏片段着色器实时合成 ~32° 倾斜银河亮带、大裂谷暗尘埃带、蓝宝石/青极光反射星云、香槟金恒星孕育区与底部行星大气弧光（星图浅色模式切换为古铜星表水彩底纹）。
+       2. starCv 第 2 遍：45% 沿银道面高斯富集的银河碎钻星 + 55% 全天球多光谱恒星 + 5 组真实星座主星（带十字艾里衍射星芒）。
+       3. back 画布：离屏缓存 chartCv 预绘黄道/赤道大圆刻度弧、天顶罗盘与北斗/仙后/猎户/天鹅/天琴五组星座连线，平时 0ms 开销，流星或指针连线时单次 drawImage 极速复原。 */
     function canvas(cls) { var c = document.createElement('canvas'); c.className = cls; c.setAttribute('aria-hidden', 'true'); return c; }
-    var starCv = canvas('tq-sky'), back = canvas('tq-sky'), fx = canvas('tq-sky tq-fx');
+    var starCv = canvas('tq-sky'), back = canvas('tq-sky'), fx = canvas('tq-sky tq-fx'), chartCv = document.createElement('canvas');
     root.insertBefore(back, root.firstChild); root.insertBefore(starCv, root.firstChild); frame.parentNode.insertBefore(fx, frame.nextSibling);
     var INK = html.dataset.theme === 'light', PAL;
     function setPalette() {
       PAL = INK
         ? { trail: [168, 116, 30], head: [92, 60, 8], pTrail: [53, 88, 200], pHead: [24, 44, 120], meteor: [[30, 44, 78], [150, 104, 28]], link: [44, 66, 118], op: 'source-over', glowA: .09, bloomA: .2 }
-        : { trail: [243, 223, 174], head: [255, 250, 238], pTrail: [157, 184, 255], pHead: [232, 238, 255], meteor: [[255, 248, 232], [196, 255, 222]], link: [240, 215, 156], op: 'lighter', glowA: .16, bloomA: .42 };
+        : { trail: [243, 223, 174], head: [255, 250, 238], pTrail: [157, 184, 255], pHead: [232, 238, 255], meteor: [[255, 248, 232], [184, 238, 248]], link: [240, 215, 156], op: 'lighter', glowA: .16, bloomA: .42 };
     }
     setPalette();
+    var CONSTELLATIONS = [
+      { code: 'UMa · 北斗', pts: [[.13, .17, 2.5], [.18, .15, 2.3], [.22, .18, 2.3], [.26, .21, 2.1], [.27, .27, 2.3], [.33, .28, 2.4], [.34, .22, 2.6]], edges: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 3]], alpha: 0 },
+      { code: 'Cas · 仙后', pts: [[.75, .13, 2.3], [.78, .18, 2.5], [.82, .15, 2.6], [.85, .20, 2.3], [.89, .16, 2.2]], edges: [[0, 1], [1, 2], [2, 3], [3, 4]], alpha: 2 },
+      { code: 'Ori · 猎户', pts: [[.15, .61, 2.8], [.22, .59, 2.4], [.17, .69, 2.3], [.19, .68, 2.4], [.21, .67, 2.3], [.15, .77, 2.2], [.23, .76, 2.85]], edges: [[0, 2], [1, 4], [0, 1], [2, 3], [3, 4], [2, 5], [4, 6], [5, 6]], alpha: 6 },
+      { code: 'Cyg · 天鹅', pts: [[.74, .41, 2.75], [.69, .47, 2.4], [.63, .54, 2.2], [.65, .42, 2.2], [.73, .52, 2.2]], edges: [[0, 1], [1, 2], [3, 1], [1, 4]], alpha: 0 },
+      { code: 'Lyr · 天琴', pts: [[.60, .14, 2.9], [.57, .18, 2.0], [.59, .22, 2.1], [.63, .21, 2.1], [.62, .17, 2.0]], edges: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 1], [0, 4]], alpha: 0 }
+    ];
     var gl = null;
     try { gl = starCv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false }); } catch (e) { gl = null; }
+    var PREC = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
+    var NEB_VS = 'attribute vec2 aQuad;varying vec2 vUv;void main(){vUv=vec2(aQuad.x*0.5+0.5,0.5-aQuad.y*0.5);gl_Position=vec4(aQuad,0.0,1.0);}';
+    var NEB_FS = PREC +
+      'varying vec2 vUv;uniform vec2 uRes;uniform vec2 uPar;uniform float uTime;uniform float uInk;' +
+      'float h21(vec2 p){p=mod(p,289.0);return fract(sin(dot(p,vec2(12.9898,78.233)))*437.5453);}' +
+      'float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);' +
+      'return mix(mix(h21(i),h21(i+vec2(1.0,0.0)),f.x),mix(h21(i+vec2(0.0,1.0)),h21(i+vec2(1.0,1.0)),f.x),f.y);}' +
+      'float fbm(vec2 p){float v=0.0,a=0.5;mat2 m=mat2(1.62,1.22,-1.22,1.62);' +
+      'for(int i=0;i<6;i++){v+=a*noise(p);p=m*p;a*=0.5;}return v;}' +
+      'float ridge(vec2 p){float v=0.0,a=0.52;mat2 m=mat2(1.68,-1.18,1.18,1.68);' +
+      'for(int i=0;i<4;i++){float n=1.0-abs(noise(p)*2.0-1.0);v+=a*n*n;p=m*p;a*=0.48;}return v;}' +
+      'void main(){' +
+      'vec2 uv=vUv+uPar*0.42;float asp=uRes.x/max(uRes.y,1.0);' +
+      'vec2 c=vec2((uv.x-0.5)*asp,uv.y-0.48);' +
+      'vec2 g=mat2(0.848,-0.530,0.530,0.848)*c;' +
+      'float gy=g.y+0.042*sin(g.x*3.1+0.4);' +
+      'float t=uTime*0.014;' +
+      'vec2 q=vec2(fbm(vec2(g.x,gy)*2.55+vec2(t,-t*0.6)),fbm(vec2(g.x,gy)*2.55+vec2(5.2,1.3)+vec2(-t*0.7,t*0.5)));' +
+      'float f=fbm(vec2(g.x,gy)*4.1+1.35*q);' +
+      'float fil=ridge(vec2(g.x,gy)*5.4-0.9*q+vec2(1.9,t*0.4));' +
+      'float dustN=fbm(vec2(g.x*4.6,gy*8.4)-q*0.95+vec2(2.7,t*0.4));' +
+      'float band=exp(-gy*gy*9.8);' +
+      'float halo=exp(-gy*gy*3.4);' +
+      'float core=exp(-gy*gy*26.0)*exp(-pow(g.x-0.14,2.0)*1.55);' +
+      'float rift=smoothstep(0.41,0.69,dustN)*exp(-pow(gy-0.012,2.0)*96.0)*0.78;' +
+      'float calm=1.0-0.32*exp(-dot(c*vec2(1.15,1.65),c*vec2(1.15,1.65))*5.2);' +
+      'if(uInk>0.5){' +
+      'float wash=(band*(0.035+f*0.055+fil*0.03)+core*0.045)*(1.0-rift*0.55)*calm;' +
+      'vec3 inkCol=mix(vec3(0.15,0.27,0.52),vec3(0.60,0.44,0.17),smoothstep(0.35,0.75,q.x));' +
+      'gl_FragColor=vec4(inkCol*wash,wash);return;}' +
+      'vec3 col=vec3(0.0);float a=0.0;' +
+      'float cloud=pow(smoothstep(0.22,0.86,f),1.25);' +
+      'float vein=pow(clamp(fil,0.0,1.0),2.4)*band;' +
+      'vec3 sap=mix(vec3(0.032,0.095,0.24),vec3(0.095,0.255,0.52),cloud);' +
+      'vec3 teal=vec3(0.07,0.34,0.46)*(vein*0.75+halo*0.18*smoothstep(0.48,0.86,q.y));' +
+      'vec3 gold=vec3(0.66,0.50,0.26)*(pow(cloud,1.7)*core*0.92+vein*0.42*smoothstep(0.42,0.82,q.x));' +
+      'float neb=(band*(0.16+0.68*cloud)+halo*0.10*cloud+core*0.34)*(1.0-rift)*calm;' +
+      'col+=(sap*neb+teal*0.62*(1.0-rift*0.6)+gold*(1.0-rift*0.75)*calm);' +
+      'a+=clamp(neb*0.68+vein*0.18,0.0,0.62);' +
+      'float kn1=exp(-dot(c-vec2(0.34,-0.14),c-vec2(0.34,-0.14))*11.0)*fil;' +
+      'float kn2=exp(-dot(c-vec2(-0.36,0.18),c-vec2(-0.36,0.18))*9.5)*cloud;' +
+      'col+=vec3(0.48,0.36,0.19)*kn1*0.26+vec3(0.07,0.24,0.45)*kn2*0.28;' +
+      'a+=kn1*0.14+kn2*0.15;' +
+      'float limbR=length(vec2(c.x*0.50,uv.y-1.64))-0.66;' +
+      'float limb=exp(-abs(limbR)*24.0)*smoothstep(0.62,1.01,uv.y);' +
+      'float atm=smoothstep(0.72,1.03,uv.y)*0.18;' +
+      'col+=vec3(0.07,0.22,0.46)*(limb*0.68+atm)+vec3(0.44,0.34,0.19)*limb*0.26;' +
+      'a=clamp(a+limb*0.44+atm*0.44,0.0,0.86);' +
+      'float dither=(h21(gl_FragCoord.xy)-0.5)/255.0;' +
+      'gl_FragColor=vec4(max(col+dither,0.0),a);}';
     var VS = 'attribute vec2 aPos;attribute vec4 aStar;attribute vec3 aCol;uniform vec2 uPar;uniform float uTime;uniform float uDpr;uniform float uTw;varying vec3 vCol;varying float vA;varying float vS;' +
       'void main(){vec2 p=fract(aPos+uPar*aStar.y);gl_Position=vec4(p.x*2.0-1.0,1.0-p.y*2.0,0.0,1.0);' +
-      'float amp=uTw*(aStar.x>1.7?0.55:0.3);vA=1.0-amp*(0.5+0.5*sin(uTime*aStar.z+aStar.w));vCol=aCol;vS=aStar.x;gl_PointSize=aStar.x*uDpr*5.5;}';
-    var FS = 'precision mediump float;varying vec3 vCol;varying float vA;varying float vS;uniform float uInk;' +
-      'void main(){vec2 u=gl_PointCoord*2.0-1.0;float d=length(u);float edge=smoothstep(1.0,0.72,d);' +
-      'if(uInk>0.5){float b=max(max(vCol.r,vCol.g),vCol.b);if(b<0.6)discard;float core=exp(-d*d*30.0);float rays=0.0;' +
-      'if(vS>1.9){rays=(exp(-abs(u.y)*60.0)*exp(-abs(u.x)*3.0)+exp(-abs(u.x)*60.0)*exp(-abs(u.y)*3.0))*0.4;}' +
-      'float a=(core+rays)*(0.6+0.4*vA)*b*0.78*edge;gl_FragColor=vec4(vec3(0.11,0.16,0.28)*a,a);return;}' +
-      'float core=exp(-d*d*16.0);float halo=exp(-d*4.5)*0.3;float rays=0.0;' +
-      'if(vS>1.9){rays=(exp(-abs(u.y)*46.0)*exp(-abs(u.x)*2.6)+exp(-abs(u.x)*46.0)*exp(-abs(u.y)*2.6))*0.5;}' +
+      'float amp=uTw*(aStar.x>1.7?0.48:0.28);vA=1.0-amp*(0.5+0.5*sin(uTime*aStar.z+aStar.w));vCol=aCol;vS=aStar.x;gl_PointSize=aStar.x*uDpr*5.8;}';
+    var FS = PREC + 'varying vec3 vCol;varying float vA;varying float vS;uniform float uInk;' +
+      'void main(){vec2 u=gl_PointCoord*2.0-1.0;float d=length(u);float edge=smoothstep(1.0,0.70,d);' +
+      'if(uInk>0.5){float b=max(max(vCol.r,vCol.g),vCol.b);if(b<0.56)discard;float core=exp(-d*d*28.0);float rays=0.0;' +
+      'if(vS>1.85){rays=(exp(-abs(u.y)*56.0)*exp(-abs(u.x)*2.8)+exp(-abs(u.x)*56.0)*exp(-abs(u.y)*2.8))*0.46;}' +
+      'float a=(core+rays)*(0.62+0.38*vA)*b*0.82*edge;gl_FragColor=vec4(vec3(0.11,0.17,0.31)*a,a);return;}' +
+      'float core=exp(-d*d*15.0);float halo=exp(-d*4.1)*0.34;float rays=0.0;' +
+      'if(vS>1.85){rays=(exp(-abs(u.y)*42.0)*exp(-abs(u.x)*2.3)+exp(-abs(u.x)*42.0)*exp(-abs(u.y)*2.3))*0.58;}' +
       'float a=(core+halo+rays)*vA*edge;gl_FragColor=vec4(vCol*a,a);}';
-    var uPar, uTime, uDpr, uTw, uInk, nStars = 0, buf, anchors = [];
+    var BLIT_FS = PREC + 'varying vec2 vUv;uniform sampler2D uTex;uniform vec2 uPar;void main(){gl_FragColor=texture2D(uTex,clamp(vec2(vUv.x,1.0-vUv.y)+vec2(uPar.x,-uPar.y)*0.42,0.0,1.0));}';
+    var prog = null, nebProg = null, blitProg = null, quadBuf = null, nebFbo = null, nebTex = null, nebW = 0, nebH = 0;
+    var aPosLoc = -1, aStarLoc = -1, aColLoc = -1, aQuadLoc = -1, aBlitLoc = -1;
+    var uPar, uTime, uDpr, uTw, uInk, uNebRes, uNebPar, uNebTime, uNebInk, uBlitTex, uBlitPar, nStars = 0, buf, anchors = [];
     function rng(seed) { return function () { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
-    function tint(r) { var v = r(); return v < .46 ? [.80, .87, 1] : v < .78 ? [1, 1, 1] : v < .94 ? [1, .92, .80] : [1, .80, .64]; }
+    function tint(r) { var v = r(); return v < .38 ? [.74, .86, 1] : v < .70 ? [.96, .98, 1] : v < .90 ? [1, .92, .77] : [1, .78, .56]; }
     function buildStars() {
-      var r = rng(19), n = Math.max(700, Math.min(3000, Math.round(W * H / 560))), data = new Float32Array(n * 9);
+      var r = rng(19), baseN = Math.max(850, Math.min(3200, Math.round(W * H / 500)));
+      var cCount = 0;
+      CONSTELLATIONS.forEach(function (cs) { cCount += cs.pts.length; });
+      var total = baseN + cCount, data = new Float32Array(total * 9), idx = 0;
       anchors = [];
-      for (var i = 0; i < n; i++) {
-        var x = r(), y = r(), m = r(), size = m < .82 ? .55 + r() * .45 : m < .975 ? 1.0 + r() * .7 : 1.95 + r() * .8;
-        var bright = m < .82 ? .4 + r() * .42 : m < .975 ? .6 + r() * .35 : .9 + r() * .1, depth = .25 + r() * .75, c = tint(r), o = i * 9;
-        data[o] = x; data[o + 1] = y; data[o + 2] = size; data[o + 3] = depth; data[o + 4] = .6 + r() * 2.6; data[o + 5] = r() * 6.283;
-        data[o + 6] = c[0] * bright; data[o + 7] = c[1] * bright; data[o + 8] = c[2] * bright;
-        if (size > 1.35 && anchors.length < 56) anchors.push({ x: x, y: y, d: depth, s: size });
+      var asp = W / Math.max(H, 1);
+      CONSTELLATIONS.forEach(function (cs, ci) {
+        cs.pts.forEach(function (pt, pi) {
+          var o = idx++ * 9, isA = pi === cs.alpha, col = isA ? [1, .91, .72] : [.86, .92, 1];
+          data[o] = pt[0]; data[o + 1] = pt[1]; data[o + 2] = pt[2]; data[o + 3] = .42;
+          data[o + 4] = .8 + ((ci * 7 + pi) % 5) * .28; data[o + 5] = (ci * 1.7 + pi * .9);
+          data[o + 6] = col[0]; data[o + 7] = col[1]; data[o + 8] = col[2];
+          anchors.push({ x: pt[0], y: pt[1], d: .42, s: pt[2] });
+        });
+      });
+      for (var i = 0; i < baseN; i++) {
+        var x, y, inGal = i < baseN * .45;
+        if (inGal) {
+          // 沿 32° 银道面高斯分布，形成真实的银河繁星带
+          var u = (r() - .5) * 1.45 * Math.max(1, asp * .82), v = ((r() + r() + r()) / 3 - .5) * .34 - .042 * Math.sin(u * 3.1 + .4);
+          var cx = .848 * u + .530 * v, cy = -.530 * u + .848 * v;
+          x = ((cx / asp + .5) % 1 + 1) % 1;
+          y = ((cy + .48) % 1 + 1) % 1;
+        } else {
+          x = r(); y = r();
+        }
+        var m = r(), size = m < .80 ? .52 + r() * .46 : m < .968 ? 1.0 + r() * .74 : 1.92 + r() * .88;
+        var bright = m < .80 ? (inGal ? .46 : .36) + r() * .42 : m < .968 ? .62 + r() * .34 : .92 + r() * .08;
+        var depth = .22 + r() * .78, c = tint(r), o2 = idx++ * 9;
+        data[o2] = x; data[o2 + 1] = y; data[o2 + 2] = size; data[o2 + 3] = depth;
+        data[o2 + 4] = .6 + r() * 2.5; data[o2 + 5] = r() * 6.283;
+        data[o2 + 6] = c[0] * bright; data[o2 + 7] = c[1] * bright; data[o2 + 8] = c[2] * bright;
+        if (size > 1.42 && anchors.length < 76) anchors.push({ x: x, y: y, d: depth, s: size });
       }
-      nStars = n; gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      nStars = total; gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
     }
     function initGL() {
-      function sh(type, src) { var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; }
-      var prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog);
-      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { gl = null; return; }
-      gl.useProgram(prog); buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      var aPos = gl.getAttribLocation(prog, 'aPos'), aStar = gl.getAttribLocation(prog, 'aStar'), aCol = gl.getAttribLocation(prog, 'aCol');
-      gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 36, 0);
-      gl.enableVertexAttribArray(aStar); gl.vertexAttribPointer(aStar, 4, gl.FLOAT, false, 36, 8);
-      gl.enableVertexAttribArray(aCol); gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, 36, 24);
+      function sh(type, src) { var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null; }
+      function link(vs, fs) {
+        var v = sh(gl.VERTEX_SHADER, vs), f = sh(gl.FRAGMENT_SHADER, fs);
+        if (!v || !f) return null;
+        var p = gl.createProgram(); gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p);
+        return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null;
+      }
+      prog = link(VS, FS);
+      if (!prog) { gl = null; return; }
+      nebProg = link(NEB_VS, NEB_FS);
+      blitProg = link(NEB_VS, BLIT_FS);
+      buf = gl.createBuffer();
+      aPosLoc = gl.getAttribLocation(prog, 'aPos'); aStarLoc = gl.getAttribLocation(prog, 'aStar'); aColLoc = gl.getAttribLocation(prog, 'aCol');
       uPar = gl.getUniformLocation(prog, 'uPar'); uTime = gl.getUniformLocation(prog, 'uTime'); uDpr = gl.getUniformLocation(prog, 'uDpr'); uTw = gl.getUniformLocation(prog, 'uTw'); uInk = gl.getUniformLocation(prog, 'uInk');
+      if (nebProg && blitProg) {
+        quadBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+        aQuadLoc = gl.getAttribLocation(nebProg, 'aQuad');
+        uNebRes = gl.getUniformLocation(nebProg, 'uRes'); uNebPar = gl.getUniformLocation(nebProg, 'uPar');
+        uNebTime = gl.getUniformLocation(nebProg, 'uTime'); uNebInk = gl.getUniformLocation(nebProg, 'uInk');
+        aBlitLoc = gl.getAttribLocation(blitProg, 'aQuad');
+        uBlitTex = gl.getUniformLocation(blitProg, 'uTex'); uBlitPar = gl.getUniformLocation(blitProg, 'uPar');
+        nebTex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, nebTex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        nebFbo = gl.createFramebuffer();
+      }
       gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    }
+    /* 将 6 阶分形 FBM + 脊状星云烘焙至离屏 LINEAR 纹理：尺寸或外观变化时重算一次，每帧闪烁仅做单次纹理采样（省去 99.8% 像素运算） */
+    function renderNebula() {
+      if (!gl || !nebProg || !nebFbo || !nebTex || !quadBuf) return;
+      var tw = Math.max(2, Math.round(W * .65)), th = Math.max(2, Math.round(H * .65));
+      gl.bindTexture(gl.TEXTURE_2D, nebTex);
+      if (tw !== nebW || th !== nebH) {
+        nebW = tw; nebH = th;
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, nebW, nebH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, nebFbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, nebTex, 0);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE) {
+        gl.viewport(0, 0, nebW, nebH);
+        gl.disable(gl.BLEND);
+        gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(nebProg);
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+        if (aQuadLoc >= 0) { gl.enableVertexAttribArray(aQuadLoc); gl.vertexAttribPointer(aQuadLoc, 2, gl.FLOAT, false, 0, 0); }
+        gl.uniform2f(uNebRes, W, H); gl.uniform2f(uNebPar, 0, 0); gl.uniform1f(uNebTime, 12.0); gl.uniform1f(uNebInk, INK ? 1 : 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        if (aQuadLoc >= 0) gl.disableVertexAttribArray(aQuadLoc);
+        gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      } else {
+        nebW = 0;
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
     var par = { x: 0, y: 0, tx: 0, ty: 0 }, mouse = { x: -999, y: -999, on: false, a: 0 }, t0 = performance.now(), lastStar = 0;
     addEventListener('pointermove', function (e) {
@@ -92,23 +231,105 @@
     function drawStars(now) {
       if (!gl) return;
       par.x += (par.tx - par.x) * .04; par.y += (par.ty - par.y) * .04;
+      var sec = REDUCE ? 0 : (now - t0) / 1000;
       gl.viewport(0, 0, starCv.width, starCv.height); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.uniform2f(uPar, par.x, par.y); gl.uniform1f(uTime, (now - t0) / 1000); gl.uniform1f(uDpr, DPR); gl.uniform1f(uTw, REDUCE ? 0 : 1); gl.uniform1f(uInk, INK ? 1 : 0);
+      if (nebW > 0 && blitProg && quadBuf) {
+        gl.useProgram(blitProg);
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+        if (aBlitLoc >= 0) { gl.enableVertexAttribArray(aBlitLoc); gl.vertexAttribPointer(aBlitLoc, 2, gl.FLOAT, false, 0, 0); }
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, nebTex);
+        gl.uniform1i(uBlitTex, 0); gl.uniform2f(uBlitPar, par.x, par.y);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        if (aBlitLoc >= 0) gl.disableVertexAttribArray(aBlitLoc);
+      } else if (nebProg && quadBuf) {
+        gl.useProgram(nebProg);
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+        if (aQuadLoc >= 0) { gl.enableVertexAttribArray(aQuadLoc); gl.vertexAttribPointer(aQuadLoc, 2, gl.FLOAT, false, 0, 0); }
+        gl.uniform2f(uNebRes, W, H); gl.uniform2f(uNebPar, par.x, par.y); gl.uniform1f(uNebTime, sec); gl.uniform1f(uNebInk, INK ? 1 : 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        if (aQuadLoc >= 0) gl.disableVertexAttribArray(aQuadLoc);
+      }
+      gl.useProgram(prog);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.enableVertexAttribArray(aPosLoc); gl.vertexAttribPointer(aPosLoc, 2, gl.FLOAT, false, 36, 0);
+      gl.enableVertexAttribArray(aStarLoc); gl.vertexAttribPointer(aStarLoc, 4, gl.FLOAT, false, 36, 8);
+      gl.enableVertexAttribArray(aColLoc); gl.vertexAttribPointer(aColLoc, 3, gl.FLOAT, false, 36, 24);
+      gl.uniform2f(uPar, par.x, par.y); gl.uniform1f(uTime, sec); gl.uniform1f(uDpr, DPR); gl.uniform1f(uTw, REDUCE ? 0 : 1); gl.uniform1f(uInk, INK ? 1 : 0);
       gl.drawArrays(gl.POINTS, 0, nStars);
     }
     function fallbackStars() {
       var c = starCv.getContext('2d'); if (!c) return; var r = rng(19);
       c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, W, H);
-      for (var i = 0; i < W * H / 900; i++) { var s = r() < .95 ? .4 + r() * .6 : 1.2 + r(); c.fillStyle = INK ? 'rgba(28,40,72,' + (.2 + r() * .45) + ')' : 'rgba(230,236,255,' + (.25 + r() * .6) + ')'; c.beginPath(); c.arc(r() * W, r() * H, s * .85, 0, 7); c.fill(); }
+      if (!INK) {
+        var mw = c.createLinearGradient(0, H * .88, W, H * .08);
+        mw.addColorStop(0, 'rgba(18,46,98,0)'); mw.addColorStop(.35, 'rgba(24,62,126,.22)');
+        mw.addColorStop(.58, 'rgba(92,72,40,.16)'); mw.addColorStop(.82, 'rgba(22,74,108,.18)'); mw.addColorStop(1, 'rgba(14,34,76,0)');
+        c.fillStyle = mw; c.fillRect(0, 0, W, H);
+        var hz = c.createRadialGradient(W * .5, H * 1.35, H * .2, W * .5, H * 1.35, H * .68);
+        hz.addColorStop(0, 'rgba(34,88,168,.26)'); hz.addColorStop(.6, 'rgba(20,52,110,.1)'); hz.addColorStop(1, 'rgba(0,0,0,0)');
+        c.fillStyle = hz; c.fillRect(0, 0, W, H);
+      }
+      for (var i = 0; i < W * H / 720; i++) { var s = r() < .93 ? .45 + r() * .6 : 1.25 + r(); c.fillStyle = INK ? 'rgba(28,40,72,' + (.2 + r() * .45) + ')' : 'rgba(232,238,255,' + (.25 + r() * .65) + ')'; c.beginPath(); c.arc(r() * W, r() * H, s * .85, 0, 7); c.fill(); }
     }
     var ctx = fx.getContext('2d'), bctx = back.getContext('2d'), meteors = [], dust = [], skyDust = [], sparks = [], rings = [], fxRaf = 0, meteorsOn = store.get('meteor') !== 'off';
     var bctxDirty = false, ctxDirty = false;
+    /* 预绘天球黄道/赤道大圆弧、刻度与五组真实星座线到离屏 chartCv：平时零帧开销，让夜空与星图拥有天文台星盘层次 */
+    function buildChart() {
+      chartCv.width = Math.round(W * DPR); chartCv.height = Math.round(H * DPR);
+      var cc = chartCv.getContext('2d'); if (!cc) return;
+      cc.setTransform(DPR, 0, 0, DPR, 0, 0); cc.clearRect(0, 0, W, H);
+      var gold = INK ? 'rgba(138,98,28,' : 'rgba(240,215,156,', blue = INK ? 'rgba(42,72,136,' : 'rgba(132,178,246,';
+      // 锁定顶点 y = H * .21 与 y = H * .79，保证横屏宽屏与竖屏手机都能看到完整的黄道/赤道大圆弧与赤经刻度
+      var R1 = Math.max(W, H) * 1.18, cx1 = W * .52, cy1 = H * .21 + R1;
+      cc.strokeStyle = gold + (INK ? '.15)' : '.095)'); cc.lineWidth = .75;
+      cc.beginPath(); cc.arc(cx1, cy1, R1, -Math.PI * .78, -Math.PI * .22); cc.stroke();
+      for (var d = -126; d <= -54; d += 2) {
+        var rad = d * Math.PI / 180, major = d % 8 === 0, len = major ? 5.5 : 2.5;
+        var x0 = cx1 + Math.cos(rad) * R1, y0 = cy1 + Math.sin(rad) * R1;
+        if (x0 < 24 || x0 > W - 24 || y0 < 18 || y0 > H - 18) continue;
+        cc.strokeStyle = gold + (major ? (INK ? '.24)' : '.17)') : (INK ? '.12)' : '.08)'));
+        cc.beginPath(); cc.moveTo(x0, y0); cc.lineTo(x0 + Math.cos(rad) * len, y0 + Math.sin(rad) * len); cc.stroke();
+        if (d % 16 === 0 && W >= 640 && x0 > 95 && x0 < W - 120) {
+          cc.fillStyle = gold + (INK ? '.28)' : '.17)');
+          cc.font = '500 9.5px ui-monospace, "SF Mono", Menlo, monospace';
+          var raH = 18 + Math.round((d + 112) / 16);
+          cc.fillText('RA ' + raH + 'h · +23°', x0 + 6, y0 - 7);
+        }
+      }
+      // 天赤道细虚线副弧
+      var R2 = Math.max(W, H) * 1.24, cx2 = W * .48, cy2 = H * .79 - R2;
+      cc.save(); cc.setLineDash([4, 7]); cc.strokeStyle = blue + (INK ? '.13)' : '.085)'); cc.lineWidth = .7;
+      cc.beginPath(); cc.arc(cx2, cy2, R2, Math.PI * .22, Math.PI * .78); cc.stroke(); cc.restore();
+      // 五组真实星座连线、主星寻星环与微标（窄屏自动弱化防拥挤）
+      var showLabel = W >= 700;
+      CONSTELLATIONS.forEach(function (cs) {
+        cc.strokeStyle = gold + (INK ? '.18)' : '.14)'); cc.lineWidth = .8;
+        cs.edges.forEach(function (e) {
+          var a = cs.pts[e[0]], b = cs.pts[e[1]];
+          cc.beginPath(); cc.moveTo(a[0] * W, a[1] * H); cc.lineTo(b[0] * W, b[1] * H); cc.stroke();
+        });
+        var ap = cs.pts[cs.alpha || 0], ax = ap[0] * W, ay = ap[1] * H;
+        cc.strokeStyle = gold + (INK ? '.30)' : '.23)'); cc.lineWidth = .75;
+        cc.beginPath(); cc.arc(ax, ay, 5.2, 0, 6.283); cc.stroke();
+        if (showLabel) {
+          cc.fillStyle = gold + (INK ? '.34)' : '.21)');
+          cc.font = '500 10px Inter, -apple-system, "PingFang SC", system-ui, sans-serif';
+          cc.fillText(cs.code, ax + 9, ay + 3);
+        }
+      });
+    }
+    function blitChart() {
+      bctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      bctx.clearRect(0, 0, W, H);
+      if (chartCv.width && chartCv.height) bctx.drawImage(chartCv, 0, 0, W, H);
+    }
     function size() {
       W = innerWidth; H = innerHeight; DPR = Math.min(2, window.devicePixelRatio || 1);
       // 高度写成固定像素、从顶上量：页面变矮（键盘）时夜空不跟着压扁
       [starCv, back, fx].forEach(function (c) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); c.style.height = H + 'px'; });
       bctxDirty = ctxDirty = false;
-      if (gl) { buildStars(); drawStars(performance.now()); } else fallbackStars();   // 改了画布尺寸画面会被清空，当场重画，不留一帧黑
+      buildChart(); blitChart();
+      if (gl) { renderNebula(); buildStars(); drawStars(performance.now()); } else fallbackStars();   // 改了画布尺寸画面会被清空，当场重画，不留一帧黑
     }
     function rgba(c, a) { return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
     function spawnMeteor(opt) {
@@ -267,13 +488,14 @@
     var lastFx = performance.now(), kbAt = 0;
     function loop(now) {
       var dt = Math.min(.05, (now - lastFx) / 1000); lastFx = now;
-      // 手机键盘弹起/收起动画的 ~210–382ms 内暂停夜空和 2D 画布重绘，保留已有画面不闪，把主线程与 GPU 预算全部让给键盘跟随
-      var kbBusy = html.classList.contains('kb-anim') || (kbAt && now - kbAt < 75);
-      if (!kbBusy) {
-        if (now - lastStar > 33) { drawStars(now); lastStar = now; }
+      // 手机键盘弹起/收起动画期间暂停夜空与 2D 重绘；触屏键盘已弹起且无前台特效时保持静帧，把主线程与 GPU 预算 100% 让给打字与键盘合成
+      var kbBusy = html.classList.contains('kb-anim') || (kbAt && now - kbAt < 85);
+      var kbIdle = COARSE && html.classList.contains('kb-up') && !orbit.on && orbit.alpha <= 0 && !dust.length && !sparks.length && !rings.length;
+      if (!kbBusy && !kbIdle) {
+        if (now - lastStar > (COARSE ? 50 : 33)) { drawStars(now); lastStar = now; }
         var needBack = meteors.length || skyDust.length || mouse.on || mouse.a > .01;
         if (needBack || bctxDirty) {
-          bctx.setTransform(DPR, 0, 0, DPR, 0, 0); bctx.clearRect(0, 0, W, H);
+          blitChart();
           if (needBack) {
             bctx.globalCompositeOperation = PAL.op;
             var drewLink = drawConstellation(dt);
@@ -304,7 +526,7 @@
     size();
     if (REDUCE) drawStars(performance.now());
     else { wake(); (function clock() { setTimeout(function () { spawnMeteor(); clock(); }, 18000 + Math.random() * 24000); })(); setTimeout(function () { spawnMeteor(); }, 2200); }
-    new MutationObserver(function () { INK = html.dataset.theme === 'light'; setPalette(); if (!gl) fallbackStars(); if (REDUCE) drawStars(performance.now()); }).observe(html, { attributes: true, attributeFilter: ['data-theme'] });
+    new MutationObserver(function () { INK = html.dataset.theme === 'light'; setPalette(); buildChart(); blitChart(); if (!gl) fallbackStars(); else { renderNebula(); drawStars(performance.now()); } }).observe(html, { attributes: true, attributeFilter: ['data-theme'] });
 
     /* 输入框边框微光跟随（SpotlightCard）+ 空状态星盘 3D 陀螺仪倾角（Tilt）+ 点夜空许愿流星（Meteors + ClickSpark） */
     var spotRaf = 0, spotEv = null;
@@ -424,6 +646,8 @@
     Object.keys(MQ).forEach(function (k) { var q = MQ[k]; (q.addEventListener ? q.addEventListener('change', relayout) : q.addListener(relayout)); });
     $('.tq-fold').addEventListener('click', toggleLeft);
     $('.tq-brand-key').addEventListener('click', function () { sparkFrom($('.tq-brand-mark'), PAL.trail, 8); if (L.mode === 'wide' || L.mode === 'mid') toggleLeft(); });
+    var railCmd = $('.tq-rail-cmd');
+    if (railCmd) railCmd.addEventListener('click', function () { var c = chat(); if (c && c.tqPal) c.tqPal(); });
     panelB.addEventListener('click', function () { L.touched = true; toggleRight(); });
     $('.tq-r-x').addEventListener('click', function () { L.touched = true; toggleRight(false); });
     scrim2.addEventListener('click', function () { toggleRight(false); });
@@ -432,12 +656,46 @@
        重设画布尺寸——画布被清空、星星按新高度重排，就是那一闪。照 Element / Discord 网页版的做法：只变矮、宽度没变（键盘）时夜空不动，
        画布按原来的高度留着，被键盘盖住的部分本来就看不见；宽度变了（转屏、拉窗口）或变高了才重画。 */
     addEventListener('resize', function () {
+      if (innerWidth === W && innerHeight <= H && Math.min(2, window.devicePixelRatio || 1) === DPR) return;
       clearTimeout(rs);
       rs = setTimeout(function () {
         if (innerWidth !== W || innerHeight > H || Math.min(2, window.devicePixelRatio || 1) !== DPR) { size(); if (REDUCE) drawStars(performance.now()); }
         if (L.right) moveInk();
       }, 120);
     });
+    // 独立打开 /tools/tianqi/（未嵌在工具箱外壳里）时，给真 iOS 补齐 preventScroll 屏外聚焦与 visualViewport 高度同步
+    if (window.top === window && window.visualViewport && (/iP(hone|ad|od)/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))) {
+      (function () {
+        var vv = window.visualViewport, restH = vv.height, closing = false, tap0 = null;
+        document.addEventListener('touchstart', function (e) { var t = e.touches[0]; tap0 = e.touches.length === 1 ? [t.clientX, t.clientY] : null; }, { capture: true, passive: true });
+        document.addEventListener('touchmove', function (e) { var t = e.touches[0]; if (tap0 && t && (Math.abs(t.clientX - tap0[0]) > 10 || Math.abs(t.clientY - tap0[1]) > 10)) tap0 = null; }, { capture: true, passive: true });
+        document.addEventListener('touchend', function (e) {
+          var pt = tap0; tap0 = null;
+          if (!pt || e.touches.length) return;
+          var t = e.target, el = t && t.tagName === 'TEXTAREA' ? t : (t && t.closest && !t.closest('button,a,select,input,label,[role=button]') && t.closest('.tq-entry,.tq-box') ? say : null);
+          if (!el || el.disabled || el.readOnly || el === document.activeElement) return;
+          e.preventDefault();
+          var pf = el.style.transform; el.style.transform = 'translateY(-8000px)'; el.focus({ preventScroll: true });
+          setTimeout(function () { if (pf) el.style.transform = pf; else el.style.removeProperty('transform'); }, 0);
+          try { var n = el.value.length; el.setSelectionRange(n, n); } catch (err) {}
+        }, { capture: true, passive: false });
+        function syncVV() {
+          if (Math.abs((vv.scale || 1) - 1) > 0.01) return;
+          if (closing && vv.height < restH - 2) return;
+          if (!document.activeElement || !/^(TEXTAREA|INPUT)$/.test(document.activeElement.tagName)) restH = Math.max(restH, vv.height);
+          var up = vv.height < restH - 60;
+          html.classList.toggle('kb-up', up);
+          document.body.style.height = up ? Math.round(vv.height) + 'px' : '';
+        }
+        document.addEventListener('focusin', function (e) { if (e.target && /^(TEXTAREA|INPUT)$/.test(e.target.tagName)) closing = false; }, true);
+        document.addEventListener('focusout', function (e) {
+          if (!e.target || !/^(TEXTAREA|INPUT)$/.test(e.target.tagName)) return;
+          closing = true; html.classList.remove('kb-up'); document.body.style.height = '';
+        }, true);
+        vv.addEventListener('resize', syncVV);
+        addEventListener('orientationchange', function () { closing = false; restH = vv.height; syncVV(); });
+      })();
+    }
     /* 键盘弹起、收起时面板只变高度，只保留「列表离底距离不变」（参考 element-web ScrollPanel.tsx 的 stuckAtBottom / bottomOffset）。
        每帧只做一次读+写，不在回调里重复读 scrollHeight/clientHeight。 */
     var dock = $('.tq-dock'), kbW = 0, kbH = 0, kbGap = 0, kbSet = false;

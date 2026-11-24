@@ -460,13 +460,19 @@
   function kbHeightKey() { return 'lm.kb.h:' + screen.width + 'x' + screen.height + ':' + innerWidth; }
   function loadKbHeight() {
     if (kbHeight > 0) return kbHeight;
-    try { var v = parseFloat(sessionStorage.getItem(kbHeightKey()) || ''); if (v >= 120 && v < innerHeight - 120) kbHeight = v; } catch (e) {}
+    var k = kbHeightKey();
+    try {
+      var v = parseFloat(sessionStorage.getItem(k) || localStorage.getItem(k) || '');
+      if (v >= 120 && v < innerHeight - 120) kbHeight = v;
+    } catch (e) {}
     return kbHeight;
   }
   function saveKbHeight(h) {
     if (!(h >= 120 && h < innerHeight - 120)) return;
     kbHeight = h;
-    try { sessionStorage.setItem(kbHeightKey(), String(Math.round(h))); } catch (e) {}
+    var k = kbHeightKey(), s = String(Math.round(h));
+    try { sessionStorage.setItem(k, s); } catch (e) {}
+    try { localStorage.setItem(k, s); } catch (e) {}
   }
   function kbOpenTarget(full) { var kh = loadKbHeight(); return kh ? Math.max(180, full - kh) : 0; }
   function kbCurve(tab, tan, ms) {
@@ -500,7 +506,7 @@
     else kbStart(dir, fromH, toH, now - delay);
   }
   function kbPlace(vv, h, full) {
-    var s = stage.style, top = Math.max(0, Math.round(vv.offsetTop)), rh = Math.round(h * 2) / 2;
+    var s = stage.style, top = Math.max(0, Math.round(vv.offsetTop)), rh = Math.round(h);
     if (kbLast.top !== top) { kbLast.top = top; s.top = top + 'px'; }
     if (kbLast.h !== rh) { kbLast.h = rh; s.height = rh + 'px'; s.bottom = 'auto'; }
     kbCover(true, Math.max(0, full - rh));
@@ -550,10 +556,10 @@
       }
       if (inMid && (kbAnim.dir === 'close' || kbAnim.vvSteps >= 2)) { kbAnim = null; kbSyncAnim(false); }
       else if (kbAnim.dir === 'open' && target < full - 1 && Math.abs(target - kbAnim.toH) > 1) {
-        // visualViewport 报出的键盘高度和记下的不一样：接着眼下的高度改奔新终点，到点的时间不变
+        // visualViewport 报出的键盘高度和记下的不一样：从画面当前高度无缝改奔新终点，resize 当刻 0px 跳变且不插队重排
         saveKbHeight(full - target);
-        var at = kbAnimAt(kbAnim, now), p = at.progress;
-        if (p < .95) { kbAnim.fromH = (at.h - target * p) / (1 - p); kbAnim.toH = target; at = kbAnimAt(kbAnim, now); }
+        var curH = stageH(), at = kbAnimAt(kbAnim, now), p = at.progress;
+        if (p < .95) { kbAnim.fromH = (curH - target * p) / (1 - p); kbAnim.toH = target; at = kbAnimAt(kbAnim, now); }
         else { kbAnim = null; kbSyncAnim(false); }
         if (kbAnim) {
           if (at.done) { kbAnim = null; kbSyncAnim(false); }
@@ -639,7 +645,16 @@
       return editable(ta) ? ta : null;
     }
     d.addEventListener('touchstart', function (e) { var t = e.touches[0]; start = e.touches.length === 1 ? [t.clientX, t.clientY] : null; }, { capture: true, passive: true });
-    d.addEventListener('touchmove', function (e) { var t = e.touches[0]; if (start && (Math.abs(t.clientX - start[0]) > 10 || Math.abs(t.clientY - start[1]) > 10)) start = null; }, { capture: true, passive: true });
+    d.addEventListener('touchmove', function (e) {
+      var t = e.touches[0];
+      if (start && t && (Math.abs(t.clientX - start[0]) > 10 || Math.abs(t.clientY - start[1]) > 10)) start = null;
+      // 键盘打开期间只让内部滚动容器自己滚，阻止 Safari 把外层页面/iframe 橡皮筋拖动（参考 caelinsutch/keyboard-playground.html）
+      if (e.touches.length !== 1 || !html.classList.contains('kb-up')) return;
+      var vv = window.visualViewport;
+      if (vv && Math.abs((vv.scale || 1) - 1) > 0.01) return;
+      var sc = e.target && e.target.closest ? e.target.closest('.xc-body, .xc-dr-sc, .tq-pane, .tq-set-body, .xc-pal-l, .xc-sh-list, .tq-r-head, .xc-sh-hd, pre, .xc-tbl, textarea, input') : null;
+      if (!sc || (sc.tagName === 'TEXTAREA' && sc.scrollHeight <= sc.clientHeight + 1)) e.preventDefault();
+    }, { capture: true, passive: false });
     d.addEventListener('touchend', function (e) {
       var tap = start; start = null;
       if (!tap || e.touches.length) return;
@@ -652,9 +667,11 @@
         }
         return;
       }
-      e.preventDefault();   // 不让系统自己 focus（它会挪整页）；也就没有后面的 click，这个输入框上本来也没挂 click
+      e.preventDefault();   // 不让系统自己 focus（它会挪整页）；配合 Searls 屏外位移护栏彻底阻止 iframe 内 WebKit 异步滚屏
+      var prevTf = el.style.transform;
+      el.style.transform = 'translateY(-8000px)';
       el.focus({ preventScroll: true });
-      // 系统那一下没了，光标不会落在手指的位置：天启的输入框点开时一般是空的或接着写，放到末尾
+      setTimeout(function () { if (prevTf) el.style.transform = prevTf; else el.style.removeProperty('transform'); }, 0);
       if (!el.isContentEditable) try { var n = el.value.length; el.setSelectionRange(n, n); } catch (err) { /* number 之类不支持 */ }
     }, { capture: true, passive: false });
   }
@@ -697,7 +714,17 @@
     bk.addEventListener('click', back);
     hb.addEventListener('click', goHome);
     var readyTimer = setTimeout(function () { p.classList.add('ready'); }, 6000);
-    f.addEventListener('load', function () { p._depth = 0; p.classList.remove('deep'); watchFrame(f); paintFrameBg(p); setTimeout(function () { p.classList.add('ready'); clearTimeout(readyTimer); }, 2500); });
+    f.addEventListener('load', function () {
+      p._depth = 0; p.classList.remove('deep'); watchFrame(f); paintFrameBg(p);
+      try {
+        var de = f.contentDocument && f.contentDocument.documentElement;
+        if (de) {
+          p.dataset.frameTheme = de.dataset.theme || '';
+          new MutationObserver(function () { p.dataset.frameTheme = de.dataset.theme || ''; paintFrameBg(p); }).observe(de, { attributes: true, attributeFilter: ['data-theme'] });
+        }
+      } catch (e) {}
+      setTimeout(function () { p.classList.add('ready'); clearTimeout(readyTimer); }, 2500);
+    });
     p._frame = f; p._ready = function () { clearTimeout(readyTimer); p.classList.add('ready'); };
     edgeSwipe(p);
     stage.appendChild(p); panels[t.id] = p;
