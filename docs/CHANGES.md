@@ -1,3 +1,40 @@
+# 修改清单 · 2026-11-25（天启：星空宇宙主题大改版——天枢星象舱布局、宇宙星表模型选择器、Codex 式思考强度、实时思考星链与 1:1 Claude Code 终端）
+
+- **谁做的**：实现由 Antigravity 完成（经 agy CLI）。第 1–3 步（布局、样式、交互引擎、e2e 调整）由 Gemini 4 Carbon High 完成；Gemini 额度用完后，同一会话切到 Claude Opus 5.5 High，完成第 4–5 步（截图核验中发现的模型星表弹层高度、手机顶栏截断两处修复，全量检查，本条记录）。以上均为自查；复核人 **Muse**（按站长指示未做本地全量复核，以 CI 结果为准；Muse 负责驱动监督、补填本条的 check 结果与随附的 AI-HANDOFF 纠正）。分支 `antigravity/tianqi-cosmos-rework-20261124`（基于 `main` `4d62222`，即 PR #209）。
+- **改动范围**：只改天启自己的 3 个文件（`site/tools/tianqi/index.html`、`workbench.css`、`sky.js`）、`test/e2e/xin_tianqi_e2e.py` 和本文件。小芯共用的 `site/xin/chat.js`、`term.js`、`chat.css`、`site/shell.js` 零改动。静态资源版本号改为 `?v=cosmos-rework-20261124`。
+- **原实现**：PR #192（Claude Code）的 Linear 实心三栏工作台，经 #203/#207/#209 迭代。问题：左栏常驻或窄条态挡住西侧星空；模型和思考强度挤在同一个按钮里（`.xc-mdl .xc-em`）；终端只是普通 `$` 命令行；推理过程和工具调用答完才看得到，推演中只显示「思考中…」。
+- **改法与开源参考**：
+  1. **天枢星象舱布局（`index.html`、`workbench.css`、`sky.js`）**：顶部是悬浮遥测顶栏 `.tq-topbar`（品牌星徽、在线状态、「星轨」历史计数角标、新对话、`工作区 / 标题` 路径、`Ctrl K`、设置、插件、li2、右栏开关）；中间是全景对话区 `.tq-desk`；右侧停靠栏 `.tq-right` 的标签顺序为「终端 / 文件 / 预览 / 计划」，终端排第一。左侧会话星轨 `.tq-side` 默认收起，点「星轨」或按 `Ctrl+B` 才在 `closed`/`open` 间切换，不再有窄条态，银河、黄道刻度和五组星座都能完整露出来。`≥900px` 时，设置、插件、li2 三个按钮从左栏底部搬到顶栏 `#tq-top-tools`（只搬一次节点，不复制）。面板仍保持实心，不用 `backdrop-filter`，不透明度为 1，输入框不加大阴影。
+  2. **宇宙星表模型选择器（`#xin-model-picker`）**：模型胶囊左侧加天体 SVG 徽标。弹层标题为「天体模型星表 · STAR CATALOG」，4 张星体卡片各带光谱分类徽章（`PSR`/`G2V`/`DA2`/`B0Ia` · 上下文 · 视觉/文本）和一行深空说明。截图核验时发现，空状态下输入区居中，chat.js 的 `fitPick()` 按输入区**下方**空间（227px）写了内联 `max-height`，天启的 CSS 却总是**向上**展开，结果只显示 3 张卡片。修复方法：在 `sky.js` 的 `fitPickUp()` 里按上方到顶栏的实际空间重算，与 chat.js 一样封顶 360px，值不变时不写回，避免触发观察者循环；`MutationObserver` 同时监听 `style` 属性。修复后弹层为 333px，4 张卡片全部可见；手机上仍为 360px，「面板高度不变」的回归检查照常通过。
+  3. **思考强度独立选择器（`#tq-eff` + `#tq-eff-pop`）**：参考 [`openai/codex`](https://github.com/openai/codex) 桌面端/TUI 的推理强度选择方式，把模型和推理强度拆成两个控件，档位列表每项带名称、说明和默认标记。实现方式：模型胶囊旁加一个星等胶囊，内含三颗等大四角星和档位名；弹层包含星盘轨道 SVG 仪表、`0`–`III 星等` 副标签、`默认` 徽章和一句说明。没在打字时按单键 `E` 打开，命令面板新增「换思考强度 E」。选中后同步写入 `state.effort`、`lm.tq.effort` 和终端欢迎框里的 `思考:最高`。
+  4. **实时思考星链（`.tq-chain`）**：参考 [`sst/opencode`](https://github.com/sst/opencode) 与 [`cline/cline`](https://github.com/cline/cline) 流式展示工具调用的做法，以及 [`assistant-ui/assistant-ui`](https://github.com/assistant-ui/assistant-ui) 推理与工具块默认折叠、可展开的交互。轮询或流式期间，每一步 `think`/`tool`/`tool_end` 实时追加到对话区，标题显示「思考星链 · 推演中」和步数/耗时，进行中的工具带脉冲点。答完后，星链挂到回答气泡上方，显示「N 步推理 · M 次工具 · 耗时」，可以折叠或展开，工具步骤下方用 `⎿` 列出输出首行或 Diff 摘要（`Updated src/main.c (+2 -1)`），旁边有「终端 ❯」跳转键。
+  5. **1:1 复刻 Claude Code 终端（`#tq-p-term` → `.tq-cc`）**：参考 [`anthropics/claude-code`](https://github.com/anthropics/claude-code) 的 Ink TUI，复刻了以下元素：
+     - 圆角欢迎框和 `Tips for getting started`；
+     - `❯` 提示行，用户输入回显带高亮底块；
+     - `⏺ Bash(...)`/`Update(...)`/`Write(...)`/`Read(...)`/`Search(...)`/`Fetch(...)`/`WebSearch(...)`/`MCP(...)` 工具行，以及 `✻` 斜体思考行；
+     - `⎿` 缩进输出，超出部分折成 `… +N lines (click to expand)`，展开后可点 `▴ Collapse` 收起；
+     - `Updated <file> with X additions and Y removals` 加带行号的红绿 Unified Diff（`+`/`-` 号、绿/红底、关键字和数字高亮）；
+     - 旋转星号 `· ✢ ✳ ✶ ✻ ✽` 和 `(esc to interrupt · Xs)`；
+     - 底栏 `⏵⏵ bypass permissions on`/`⏵ accept edits on`/`⏸ plan mode on`/`🔒 read-only mode`、`~/workspace`、`? for shortcuts`（按 `?` 展开快捷键说明）。
+     
+     唯一的改动是把 Claude Code 的吉祥物和品牌换成天启星徽（`✦ 天启 · Tianqi CLI`、`Welcome to 天启!`）。手动输入的命令仍走原有的 `term_run`/`term_poll`（参数、禁用态、退出码和耗时都不变），提示符从 `$` 改为 `❯`。历史对话里只有纯问答、没有工具或思考的轮次不进终端流，以免和对话区重复显示。
+  6. **星空背景与性能**：沿用 #209 的 [`xemantic/shader-web-background`](https://github.com/xemantic/shader-web-background) 和 [Stellarium Web](https://github.com/Stellarium/stellarium-web-engine) 星图做法。触屏上画布 DPR 封顶 1.25；`touchstart`/`focusout` 后让出 WebGL/2D 循环 480ms，`kb-anim` 期间也暂停，防止无头 SwiftShader 或真机在点按、键盘动画时抢帧。手机隐藏空状态坐标行；手机顶栏隐藏「天启」两字，只留星徽和状态，把位置让给「标题 / 工作区」两行。修复前，手机顶栏因原 `display:none` 规则优先级不够没有生效，被截成「新… / 工.」。微动效参考 Magic UI `BorderBeam`、React Bits `Particles`/`StarBorder`/`ClickSpark`，底部抽屉参考 [`emilkowalski/vaul`](https://github.com/emilkowalski/vaul)。`prefers-reduced-motion` 下所有动画静止。
+- **调整的旧测试断言（`test/e2e/xin_tianqi_e2e.py`，均为旧版三栏或窄条布局写死的期望，没有跳过或删除任何检查）**：
+  1. **场景 2（1280 初始布局）**：原检查左栏常驻（`side.right <= mid.left && side.width > 200`）、右栏标签 `['文件','终端','预览']`、左栏底部 `.tq-side-foot` 有「设置/插件」。改为：顶栏、对话区、右栏三者的几何关系；`data-left == 'closed'`；`.tq-hist-cnt` 显示会话数；标签为 `['终端','文件','预览']` 且终端默认选中；`#tq-top-tools` 有「设置/插件」。之后点 `.tq-hist-b` 展开左栏，继续验证历史列表；先点 `#tq-tab-files` 再验证文件预览。
+  2. **场景 2（思考强度星标选择器）**：`.tq-instruments .xc-mdl .xc-em b` 改为 `.tq-instruments #tq-eff .tq-eff-stars b`，“等大四角星、亮的是天启金色”这条断言不变。
+  3. **场景 2（`Ctrl+B`/方向键）**：`Ctrl+B` 的期望从 `'rail'` 改为在 `closed`/`open` 间切换，即 `('closed','open','closed','open')`；在「预览」上按 `ArrowRight` 绕回的目标从 `tq-tab-files` 改为 `tq-tab-term`，跳过隐藏的「计划」这一条仍然检查。
+  4. **场景 2b、2c、2c-2**：宽屏左栏默认收起，点 `.tq-side .xc-si`/`.xc-sgrp-b` 前先点 `.tq-hist-b` 展开。2c-2 的命令面板和单键检查扩充了「换思考强度 E」；输入框里打 `cmpwe` 只算打字，不弹层。
+  5. **场景 2d（终端手动命令）**：回显从 `'$ ls'` 改为 `'❯ ls'`，其余断言（参数、禁用态、分段输出拼接、退出码和耗时、焦点恢复）不变。
+  6. **场景 6（平板横屏 1180×820 嵌在首页）**：原检查窄条 `data-left == 'rail'` 时图标竖向居中、点 `.tq-rail-cmd` 打开命令面板。改为：外层返回键 `.back` 不压 `.tq-brand`（`back.right <= brandLeft`）；返回键、品牌和各工具芯片在顶栏水平中轴上，误差 ≤1.5px；点 `.tq-bridge-cmd` 打开命令面板。同场景的键盘缩放画布零重置（`__skyResets == 0`）和转竖屏重绘断言原样保留。
+  - **新增场景 2e**（4 项）：宇宙星表模型选择器、Codex 式思考强度选择器、分两阶段返回的流式思考星链（推演中 → 完成态）、1:1 Claude Code 终端（星徽欢迎框、旋转星、`❯`、`✻`、`⏺ Bash/Update`、`⎿`、`+N lines` 展开、带行号红绿 Diff、底栏与 `?`）。检查总数从 84 项增至 88 项。
+- **验证证据**：
+  - `test/e2e/xin_tianqi_e2e.py`：两处修复后重跑，**88/88 通过**（修复前也是 88/88）。
+  - `test/e2e/xin_term_e2e.py` **75/75**、`test/e2e/xin_motion_e2e.py` **27/27**：小芯终端、首页和动效无回归。
+  - 天启单测 `node --test test/xin-tianqi.test.cjs test/xin-tianqi-worker.test.cjs test/xin-writers.test.cjs`：**40/40 通过**。
+  - `npm run check`：**退出码 0，全绿**（`Syntax and local references passed`：303 个文件、231 处资源引用；全仓单测随 check 一并跑完，无失败）。本机有 `~/.local/bin/agy`，且设置了出口代理 `HTTP_PROXY`，会让 `xin.test.cjs` 拉起真实 agy、让 `xin-browser.test.cjs` 把 `127.0.0.1` 请求发进代理。因此按 CI 的隔离环境运行：`HTTP_PROXY= HTTPS_PROXY= http_proxy= https_proxy= XIN_AGY_HOME=/tmp/no-agy-home XIN_ANTIGRAVITY_BIN= CHROMIUM_PATH=… npm run check`。
+  - Playwright 截图逐张核对：`1280×860` 深色（空状态、模型星表、思考强度弹层、推演中星链、完成态星链与红绿 Diff）和浅色（完成态），`1024×768` 嵌在首页（返回键与顶栏同轴），`768×1024` 浅色空状态，`390×844` 深色（空状态、思考强度弹层）。核验中发现并修复了上面两处问题（星表只显示 3 张卡片、手机顶栏截断）。另有一次截图在弹层下方出现与弹层同尺寸的暗色矩形，但该位置除 `main` 外没有任何元素，同条件重跑 3 次不再出现，判断为无头 SwiftShader 下 WebGL 画布的局部合成残影，需在真机上确认。截图已删除。
+- **风险与下一步**：真机 iOS Safari 的手感（键盘让帧、Claude Code 终端的触屏展开）和桌面 Chrome/Safari 的 WebGL 合成需要站长实机确认；本 PR 按站长指示免本地复核直接提交，以 CI 结果为准。
+
 # 修改清单 · 2026-11-24（天启：深空星象台背景改造、全档位侧边栏像素级对齐与真机 iOS 输入框卡顿根治）
 
 - **谁做的**：Antigravity 实现并自查，无独立复核。分支 `antigravity/tianqi-cosmos-sidebar-ios-20261124`（基于 `main` `1aba37b`）。
