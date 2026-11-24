@@ -206,11 +206,12 @@ html.xc-lock #home{display:none}   /* 全屏工作台盖着首页时首页不占
 }
 .xc-mcopy,.xc-copy,.xc-wrap{--rad:8px;display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;font-size:12px;color:var(--ink-3);transition:background-color .15s,color .15s}
 .xc-mcopy svg,.xc-copy svg,.xc-wrap svg{width:15px;height:15px}
-.xc-mcopy .ok,.xc-copy .ok{opacity:0}
+.xc-mcopy .ok,.xc-copy .ok{opacity:0;stroke-dasharray:14;stroke-dashoffset:14;transition:stroke-dashoffset .26s var(--e-out),opacity .12s}
 .xc-mcopy.done,.xc-copy.done{color:var(--ok)}
 .xc-mcopy.done rect,.xc-mcopy.done path:not(.ok),.xc-copy.done rect,.xc-copy.done path:not(.ok){opacity:0}
-.xc-mcopy.done .ok,.xc-copy.done .ok{opacity:1}
-@media (hover:hover){.xc-mcopy:hover{background:var(--sunk);color:var(--ink)}}
+.xc-mcopy.done .ok,.xc-copy.done .ok{opacity:1;stroke-dashoffset:0}
+@media (hover:hover){.xc-mcopy:hover{background:var(--sunk);color:var(--ink)}.xc-new-b:hover svg,.xc-dr-new:hover svg{transform:rotate(90deg)}}
+.xc-new-b svg,.xc-dr-new svg{transition:transform .24s var(--e-out)}
 /* 正在输入：小芯的脸（跟着状态换）、一行字和秒数、三个像素点一格一格亮 */
 .xc-typing{display:flex;align-items:center;gap:10px;align-self:flex-start;padding:5px 14px 5px 6px;--rad:999px;background:var(--surface);box-shadow:var(--sh-1)}
 .xc-typing.cont{margin-top:12px}
@@ -320,15 +321,26 @@ html.xc-lock #home{display:none}   /* 全屏工作台盖着首页时首页不占
 .hl-kw{color:var(--hl-kw)}.hl-ty{color:var(--hl-ty)}.hl-fn{color:var(--hl-fn)}.hl-mc{color:var(--hl-mc)}.hl-str{color:var(--hl-str)}.hl-num{color:var(--hl-num)}
 .hl-com{color:var(--hl-com);font-style:italic}.hl-pre{color:var(--hl-pre)}.hl-var{color:var(--hl-var)}
 
-/* 空对话：大一点的小芯（会眨眼）和一句招呼，点阵字 */
+/* 空对话：大一点的小芯（会眨眼、眼睛跟指针动、带双轨暖星环）和一句招呼，点阵字 */
 .xc-hello{display:flex;flex-direction:column;align-items:center;gap:20px;padding:min(16vh,120px) 16px 12px;text-align:center}
 .xc.wb .xc-hello{padding-top:min(22vh,180px)}
-.xc-hello .xc-av.big,.xc-hello .xc-face{--rad:999px;display:grid;place-items:center;width:132px;height:132px;padding:0 14px;
+.xc-hello .xc-av.big,.xc-hello .xc-face{--rad:999px;position:relative;z-index:1;display:grid;place-items:center;width:132px;height:132px;padding:0 14px;
   background:radial-gradient(circle at 50% 40%,#ffffff 0,#efece6 62%,#e6e2da 100%);box-shadow:inset 0 0 0 1px var(--hair),0 22px 50px -26px rgba(30,22,10,.45)}
 .xc-hello .xc-face svg{width:96px;height:68px;margin-top:4px}
 [data-theme=dark] .xc-hello .xc-face{background:radial-gradient(circle at 50% 38%,#48443d 0,#2c2a26 62%,#211f1c 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 0 0 1px rgba(255,255,255,.04),0 0 60px -10px rgba(255,201,101,.18)}
 .xc-hello-t{font:32px/1 var(--px);letter-spacing:.04em;color:var(--ink);white-space:nowrap}
-.xc-hello-mk{display:grid;place-items:center}
+.xc-hello-mk{position:relative;display:grid;place-items:center;perspective:420px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.xc:not(.tq-mode) .xc-hello-mk{margin-bottom:14px}
+.xc:not(.tq-mode) .xc-hello .xc-face{transform:translate3d(var(--hx,0px),var(--hy,0px),0) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));transition:transform .22s var(--e-out),box-shadow .25s var(--e-out)}
+.xc:not(.tq-mode) .xc-hello .xc-face svg{transform:translate(var(--ex,0px),var(--ey,0px));transition:transform .18s var(--e-out)}
+.xc-hello-orb{position:absolute;inset:-14px;--rad:999px;pointer-events:none;border:1px dashed color-mix(in srgb,var(--glow) 34%,transparent);animation:xcorbspin 22s linear infinite}
+.xc-hello-orb::before{content:"";position:absolute;top:-3px;left:calc(50% - 3px);width:6px;height:6px;--rad:1px;background:var(--glow);box-shadow:0 0 8px var(--glow)}
+.xc-hello-orb::after{content:"";position:absolute;inset:-7px;--rad:999px;border:1px solid transparent;border-top-color:color-mix(in srgb,var(--glow) 42%,transparent);border-bottom-color:color-mix(in srgb,var(--glow) 16%,transparent);animation:xcorbspin 14s linear infinite reverse}
+@keyframes xcorbspin{to{transform:rotate(360deg)}}
+.xc-hello-mk.hop .xc-face{animation:xchop .46s var(--e-spring)}
+@keyframes xchop{35%{transform:translateY(-10px) scale(1.06)}70%{transform:translateY(2px) scale(.98)}}
+.xc-hspark{position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px 0 0 -2px;--rad:0px;background:var(--glow);pointer-events:none;animation:xchspark .54s cubic-bezier(.15,.85,.3,1) both}
+@keyframes xchspark{from{transform:rotate(var(--a,0deg)) translateX(52px) scale(1);opacity:1}to{transform:rotate(var(--a,0deg)) translateX(88px) scale(.4);opacity:0}}
 .xc-hello-tw{justify-items:center}
 /* 天启的星：深蓝底、像素星、几粒星点一闪一闪 */
 .xc-tq{display:inline-grid;place-items:center;flex:none}
@@ -358,14 +370,21 @@ html.xc-lock #home{display:none}   /* 全屏工作台盖着首页时首页不占
 .xc-jump.new{color:var(--glow)}
 @keyframes xcjump{from{opacity:0;transform:translateY(-40%) scale(.9)}}
 
-/* ---------- 输入框 ---------- */
+/* ---------- 输入框（带 SpotlightCard 指针追光细边与聚焦暖光展开线） ---------- */
 .xc-ft{position:relative;z-index:5;flex:none;padding:8px 14px calc(14px + var(--sb))}
 .xc.wb .xc-ft{padding:6px max(18px,calc(50% - 392px)) calc(18px + var(--sb))}
 .xc.wb.wb-side .xc-ft,.xc.wb.wb-pin .xc-ft,.xc.wb.sheet-open .xc-ft{padding-left:24px;padding-right:24px}
 .xc.wb .xc-ft > *{max-width:760px;margin-left:auto;margin-right:auto}
 .xc-row{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:6px;--rad:24px;background:var(--surface);cursor:text;
   box-shadow:0 0 0 1px var(--hair),var(--sh-1);transition:box-shadow .2s var(--e-out)}
+.xc:not(.tq-mode) .xc-row::before{content:"";position:absolute;inset:-1px;--rad:24px;padding:1.5px;pointer-events:none;opacity:0;
+  background:radial-gradient(200px circle at var(--mx,50%) var(--my,50%),color-mix(in srgb,var(--glow) 68%,transparent),transparent 70%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);transition:opacity .22s var(--e-out)}
+@media (hover:hover){.xc:not(.tq-mode) .xc-row:hover::before{opacity:1}}
+.xc:not(.tq-mode) .xc-row::after{content:"";position:absolute;top:-1px;left:16%;right:16%;height:1.5px;--rad:999px;pointer-events:none;
+  background:linear-gradient(90deg,transparent,var(--glow) 50%,transparent);transform:scaleX(0);opacity:0;transition:transform .28s var(--e-out),opacity .2s var(--e-out)}
 .xc-row:focus-within{box-shadow:0 0 0 1px var(--glow-ring),0 0 0 5px var(--glow-soft),var(--sh-1)}
+.xc:not(.tq-mode) .xc-row:focus-within::after{transform:scaleX(1);opacity:.9}
 .xc-row textarea{order:-1;flex:1 1 100%;min-width:0;min-height:40px;max-height:168px;padding:8px 10px 2px;border:0;background:none;color:var(--ink);font:15px/1.55 var(--sans);resize:none;outline:none}
 .xc-row textarea::placeholder{color:var(--ink-3)}
 .xc-row textarea:focus-visible,.xc-pal-q input:focus-visible,.xc-login input:focus-visible,.xc-sa input:focus-visible,.xc-tk-in:focus-visible,.xc-memt:focus-visible,.xm-in:focus-visible,.xm-edit:focus-visible,.xc-lg-in:focus-visible{outline:none}
@@ -374,9 +393,11 @@ html.xc-lock #home{display:none}   /* 全屏工作台盖着首页时首页不占
 .xc-plus svg{width:20px;height:20px}
 .xc-plus[aria-expanded=true]{transform:rotate(45deg);background:var(--sunk);color:var(--ink)}
 @media (hover:hover){.xc-plus:hover{background:var(--sunk);color:var(--ink)}}
-.xc-send{--rad:999px;display:grid;place-items:center;flex:none;width:36px;height:36px;margin-left:auto;background:var(--sunk);color:var(--ink-3);transition:background-color .2s var(--e-out),color .2s,transform .12s var(--e-out)}
+.xc-send{--rad:999px;position:relative;overflow:hidden;display:grid;place-items:center;flex:none;width:36px;height:36px;margin-left:auto;background:var(--sunk);color:var(--ink-3);transition:background-color .2s var(--e-out),color .2s,transform .12s var(--e-out)}
 .xc-send svg{width:19px;height:19px;stroke-width:2}
 .xc-send.ready{background:var(--ink);color:var(--surface)}
+.xc:not(.tq-mode) .xc-send.ready::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(120deg,transparent 20%,rgba(255,255,255,.32) 50%,transparent 80%);transform:translateX(-130%);animation:xcsendglint .62s var(--e-out) 1}
+@keyframes xcsendglint{to{transform:translateX(130%)}}
 .xc-send:active{transform:scale(.9)}
 .xc-send:disabled{opacity:.5}
 .xc.running .xc-send:not(.q){background:var(--ink);color:var(--surface);box-shadow:0 0 0 3px var(--glow-soft);animation:xcring 1.6s var(--e-out) infinite}
@@ -1301,8 +1322,8 @@ body.xs-open{overflow:hidden}
 
 /* ---------- 减少动态：只留颜色和状态 ---------- */
 @media (prefers-reduced-motion:reduce){
-  .xc,.xc.wb,.xc-drawer,.xc-scrim,.xc-work,.xc-sheet,.xc-pal,.xc-pal-box,.xc-toast,.xc-isle,.xc-send,.xc-plus,.xc-sw::after,body.xc-open #home{transition:none !important}
-  .xc-m.enter,.xc-me.enter,.xc-sheet,.xc-menu,.xc-pick,.xc-att,.xc-jump,.xq,.xc-sa,.xc-login.no,.wk-body.swap,.xc-dr-ft .xc-set,.xc-work.flash,.xc-isle-n i,.xc-sw-in,.xc-sw-o,.xc-work.enter .wk-c,.xc-work.enter .wk-h,.xc-work.enter .wk-seg{animation:none !important}
+  .xc,.xc.wb,.xc-drawer,.xc-scrim,.xc-work,.xc-sheet,.xc-pal,.xc-pal-box,.xc-toast,.xc-isle,.xc-send,.xc-plus,.xc-sw::after,.xc-new-b svg,.xc-dr-new svg,.xc-mcopy .ok,.xc-copy .ok,.xc:not(.tq-mode) .xc-row::before,.xc:not(.tq-mode) .xc-row::after,.xc:not(.tq-mode) .xc-hello .xc-face,body.xc-open #home{transition:none !important}
+  .xc-m.enter,.xc-me.enter,.xc-sheet,.xc-menu,.xc-pick,.xc-att,.xc-jump,.xq,.xc-sa,.xc-login.no,.wk-body.swap,.xc-dr-ft .xc-set,.xc-work.flash,.xc-isle-n i,.xc-sw-in,.xc-sw-o,.xc-work.enter .wk-c,.xc-work.enter .wk-h,.xc-work.enter .wk-seg,.xc-hello-orb,.xc-hello-orb::after,.xc-hello-mk.hop .xc-face,.xc-hspark,.xc:not(.tq-mode) .xc-send.ready::after{animation:none !important}
   .xc-wk-id,.xc-work .xc-wk-sc,.xc-sw-w{transition:none !important;transform:none !important}
   .xc-face .c-ew,.xc-face svg,.xc-typing .xc-bub i,.xc-tb-dots i,.xc-tb-s,.xc-tb.enter,.xc-tb.fold,.xc-upchip,.xc-ai.xc-glint > .xc-bub,.xc-tq .tq-g,.wk-bar::after,.wk-c.live .wk-ic::after,.xc-st.wait::before,.xc-task-st::before,.xc.running .xc-send,.xc-dr-st.busy::before,.xc-mainb.live i::before,.xc-tk-cmd.now::before,.xc-glow::before,.xw-t,.xw-st.busy i,.xw-t.run .xw-g{animation:none !important}
 }

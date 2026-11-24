@@ -112,8 +112,9 @@ kbd { font-size: 11px; line-height: 18px; padding: 0 6px; border: 1px solid var(
 .ttag:hover { background: color-mix(in srgb, var(--h) 22%, transparent); }
 .linkbtn { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--mask); font-size: 13.5px; text-align: left; }
 .linkbtn:hover { border-color: var(--mask); }
-.pill { height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface); font-size: 13.5px; white-space: nowrap; }
+.pill { height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface); font-size: 13.5px; white-space: nowrap; transition: border-color .16s var(--ease), color .16s var(--ease), transform .12s var(--ease); }
 .pill:hover { border-color: var(--mask); color: var(--mask); }
+.pill:active { transform: scale(.97); }
 .pill.solid { background: var(--mask); border-color: var(--mask); color: var(--mask-ink); font-weight: 600; }
 .pill.solid:hover { color: var(--mask-ink); filter: brightness(1.08); }
 .pill:disabled { opacity: .4; pointer-events: none; }
@@ -165,7 +166,7 @@ svg.chip { display: block; width: 100%; height: auto; overflow: visible; }
 .spec dt { font-size: 12.5px; color: var(--ink-3); }
 .spec dd { margin: 0; font: 600 14px var(--mono); }
 .home-lead { margin-top: 16px; font-size: 16px; color: var(--ink-2); max-width: 32em; }
-.home-search { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 520px; height: 48px; margin-top: 20px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--surface); color: var(--ink-3); text-align: left; box-shadow: var(--shadow); }
+.home-search { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 520px; height: 48px; margin-top: 20px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--surface); color: var(--ink-3); text-align: left; box-shadow: var(--shadow); transition: border-color .18s var(--ease), box-shadow .22s var(--ease); }
 .home-search span { flex: 1; }
 .home-search:hover { border-color: var(--mask); }
 .path { margin-top: 40px; }
@@ -177,15 +178,16 @@ svg.chip { display: block; width: 100%; height: auto; overflow: visible; }
 .trow { display: grid; grid-template-columns: 22px 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 8px; text-decoration: none; border-radius: 10px; transition: background-color .15s var(--ease); }
 .trow:hover, .trow:focus-visible { background: color-mix(in srgb, var(--h) 9%, transparent); }
 .trow-n { font: 13px var(--mono); color: var(--ink-3); text-align: right; }
-.trow-ic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; color: var(--h); background: color-mix(in srgb, var(--h) 12%, transparent); }
+.trow-ic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; color: var(--h); background: color-mix(in srgb, var(--h) 12%, transparent); transition: transform .2s var(--ease); }
 .trow-tx { display: flex; flex-direction: column; min-width: 0; }
 .trow-t { display: flex; align-items: baseline; gap: 10px; }
 .trow-code { font: 700 16px var(--mono); color: var(--h); letter-spacing: .02em; }
 .trow-t span { font-weight: 600; }
 .more { margin-top: 44px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .more .sec-h { margin-bottom: 2px; grid-column: 1 / -1; }
-.mrow { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); text-decoration: none; }
+.mrow { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); text-decoration: none; transition: border-color .18s var(--ease), transform .2s var(--ease); }
 .mrow:hover { border-color: var(--mask); }
+@media (hover: hover) { .trow:hover .trow-ic { transform: translateY(-1px) scale(1.05); } .mrow:hover { transform: translateY(-1px); } }
 .mrow > svg.ic { width: 22px; height: 22px; color: var(--mask); }
 .mrow b { display: block; font-weight: 600; }
 @media (min-width: 760px) {

@@ -207,6 +207,42 @@ async def dots_and_theme(browser):
     await pg.context.close()
 
 
+async def site_interactive_polish(browser):
+    pg = await ui.page(browser, 1280, 860)
+    await ui.xin_mock(pg, authed=True)
+    await pg.goto(ui.BASE + '/')
+    await pg.wait_for_selector('.card.art-sky .sky-orb')
+    arts = await pg.evaluate("""(() => ({
+      sky: !!document.querySelector('.card[data-id="tianqi"].art-sky .sky-const .c-line'),
+      world: document.querySelectorAll('.card[data-id="map"] .w-beacons .b-ring').length,
+      chip: document.querySelectorAll('.card[data-id="stm32"] .traces .tr-sig').length,
+    }))()""")
+    ui.check('首页卡片插画：天启有深空星盘与星群连线、世界地图有坐标信标脉冲、STM32 有 PCB 铜箔脉冲走线',
+             arts['sky'] and arts['world'] == 4 and arts['chip'] >= 6, arts)
+    cbox = await pg.locator('.card[data-id="tianqi"]').bounding_box()
+    await pg.mouse.move(cbox['x'] + 120, cbox['y'] + 60)
+    await pg.wait_for_timeout(60)
+    mx = await pg.evaluate("document.querySelector('.card[data-id=\"tianqi\"]').style.getPropertyValue('--mx')")
+    await pg.click('.hd .spark')
+    sparks_on = await pg.evaluate("document.querySelectorAll('.hm-spark').length")
+    ui.check('首页指针追光与像素迸发火花：鼠标移过卡片写入 --mx 追光坐标，点 ✻ 迸出 8 颗像素火花',
+             bool(mx) and sparks_on == 8, (mx, sparks_on))
+    await pg.goto(ui.BASE + '/#xin-work')
+    await pg.wait_for_selector('.xc.wb.show .xc-hello-mk .xc-hello-orb')
+    mk_box = await pg.locator('.xc-hello-mk').bounding_box()
+    await pg.mouse.move(mk_box['x'] + mk_box['width'] + 110, mk_box['y'] - 40)
+    await pg.wait_for_timeout(60)
+    tilt = await pg.evaluate("(() => { const m = document.querySelector('.xc-hello-mk'); return [m.style.getPropertyValue('--hx'), m.style.getPropertyValue('--ex')]; })()")
+    await pg.click('.xc-hello-mk')
+    hop = await pg.evaluate("(() => { const m = document.querySelector('.xc-hello-mk'); return [m.classList.contains('hop'), m.querySelectorAll('.xc-hspark').length, m.querySelector('.xc-face').classList.contains('f-happy')]; })()")
+    await pg.emulate_media(reduced_motion='reduce')
+    await pg.click('.xc-hello-mk')
+    red_orb = await pg.evaluate("getComputedStyle(document.querySelector('.xc-hello-orb')).animationName")
+    ui.check('小芯空状态：双轨暖星环、指针 3D 磁吸倾角与眼神跟随、点击笑脸弹跳迸火花，减少动态时自动静止',
+             all(tilt) and hop == [True, 8, True] and red_orb == 'none', (tilt, hop, red_orb))
+    await pg.context.close()
+
+
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, **({'executable_path': os.environ['CHROMIUM_PATH']} if os.environ.get('CHROMIUM_PATH') else {}))
@@ -221,6 +257,7 @@ async def main():
         await task_box(browser, False)
         await task_box(browser, True)
         await dots_and_theme(browser)
+        await site_interactive_polish(browser)
         await browser.close()
     n = len(ui.results); ok = sum(1 for r in ui.results if r[1])
     print('==== %d/%d 通过 ====' % (ok, n))

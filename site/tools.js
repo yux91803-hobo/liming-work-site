@@ -33,7 +33,7 @@ window.TOOLS = [
   {
     id: 'tianqi',
     name: '天启',
-    cat: 'ai',
+    cat: 'ai', art: 'sky',
     keywords: '天启 tianqi harness 模型 聊天 ai',
     path: '/tianqi',
     src: '/tools/tianqi/',

@@ -104,17 +104,52 @@ h1{margin:0;display:flex;align-items:center;font-size:24px;line-height:30px;font
 .card .art-icon{right:-18px;bottom:-22px;width:132px;height:132px;stroke-width:1.1;opacity:.12}
 .card.wide .art-icon{width:170px;height:170px;bottom:-40px}
 
-/* 世界地图：点阵地图铺在右侧，左边渐隐 */
+/* 世界地图：点阵地图铺在右侧，左边渐隐，带坐标信标脉冲与悬停经度扫描带 */
 .card.art-world .art{right:-6px;top:50%;width:auto;height:118%;transform:translateY(-50%);fill:var(--dot);
   -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 34%);mask-image:linear-gradient(90deg,transparent 0,#000 34%)}
 .card.art-world:not(.wide) .art{height:92%;right:-60px}
 .card.art-world .ic{background:color-mix(in srgb,var(--dot) 45%,var(--panel))}
+.art-world .b-dot{fill:var(--clay)}
+.art-world .b-ring{fill:none;stroke:var(--clay);stroke-width:1.4;transform-box:fill-box;transform-origin:center;animation:wping 2.8s steps(4,end) var(--d,0s) infinite}
+.art-world .w-scan{fill:color-mix(in srgb,var(--clay) 18%,transparent);opacity:0}
+@keyframes wping{0%{transform:scale(.45);opacity:.95}80%,100%{transform:scale(1.65);opacity:0}}
 
-/* 芯片卡 */
+/* 天启夜空星盘卡：深空靛黑底、错峰闪烁星群、悬停连亮的星轨与双轨星盘 */
+:root{--sky-bg:#0b1020;--sky-2:#151e38;--sky-edge:#28365c;--sky-star:#edd8a6;--sky-dim:#7e90be;--sky-ink:#eef2ff}
+[data-theme=dark]{--sky-bg:#0d1326;--sky-2:#182342;--sky-edge:#334470}
+.card.art-sky{background:var(--sky-bg);border-color:var(--sky-bg);color:var(--sky-ink)}
+.card.art-sky .ic{background:var(--sky-2);color:var(--sky-star)}
+.card.art-sky .ic svg .a{stroke:var(--sky-star)}
+.card.art-sky .art{right:-8px;top:50%;width:auto;height:116%;transform:translateY(-50%);stroke:none;
+  -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 22%);mask-image:linear-gradient(90deg,transparent 0,#000 22%)}
+.card.art-sky:not(.wide) .art{height:96%;right:-48px}
+.art-sky .st{fill:var(--sky-dim);animation:skytw 3.2s steps(2,end) var(--d,0s) infinite}
+@keyframes skytw{50%{opacity:.22;fill:var(--sky-star)}}
+.art-sky .c-line{fill:none;stroke:color-mix(in srgb,var(--sky-star) 32%,transparent);stroke-width:1.3;stroke-dasharray:260;stroke-dashoffset:160;transition:stroke-dashoffset .55s var(--out),stroke .3s var(--ease)}
+.art-sky .c-node{fill:var(--sky-star);opacity:.72;transition:opacity .25s,transform .25s}
+.art-sky .orb-outer{fill:none;stroke:color-mix(in srgb,var(--sky-star) 26%,transparent);stroke-width:1.2;stroke-dasharray:4 4}
+.art-sky .orb-inner{fill:none;stroke:color-mix(in srgb,var(--sky-dim) 34%,transparent);stroke-width:1.1;stroke-dasharray:12 6;transform-origin:254px 84px;animation:skyring 24s linear infinite reverse}
+.art-sky .orb-ticks{fill:none;stroke:color-mix(in srgb,var(--sky-star) 38%,transparent);stroke-width:1.2}
+.art-sky .orb-sat{transform-origin:254px 84px;animation:skyring 16s linear infinite}
+.art-sky .orb-planet{fill:var(--sky-star)}
+.art-sky .orb-moon{fill:#9bb8ff}
+.art-sky .orb-core{fill:var(--sky-star);transform-origin:254px 84px;animation:skycore 3.8s ease-in-out infinite}
+.art-sky .orb-heart{fill:#fff}
+.art-sky .sky-meteor{opacity:0;animation:skymeteor 7.5s linear 1.8s infinite}
+.art-sky .m-tail{fill:none;stroke:var(--sky-star);stroke-width:1.4;opacity:.65}
+.art-sky .m-head{fill:#fff}
+@keyframes skyring{to{transform:rotate(360deg)}}
+@keyframes skycore{0%,100%{transform:scale(.94);opacity:.85}50%{transform:scale(1.06);opacity:1}}
+@keyframes skymeteor{0%,86%{opacity:0;transform:translate(18px,-10px)}88%{opacity:1;transform:translate(18px,-10px)}96%{opacity:1;transform:translate(-34px,20px)}100%{opacity:0;transform:translate(-42px,25px)}}
+
+/* 芯片卡：LQFP144 封装 + 45° PCB 铜箔走线与数据脉冲 */
 .card.art-chip{background:var(--chip);border-color:var(--chip);color:var(--chip-text)}
 .card.art-chip .ic{background:var(--chip-2);color:var(--chip-text)}
 .card.art-chip .art{right:-46px;top:50%;width:250px;height:250px;transform:translateY(-50%) rotate(-9deg)}
 .card.art-chip:not(.wide) .art{width:190px;height:190px;right:-70px}
+.art-chip .traces .tr{fill:none;stroke:color-mix(in srgb,var(--chip-edge) 75%,transparent);stroke-width:1.5;stroke-linecap:square;stroke-linejoin:miter}
+.art-chip .traces .tr-sig{fill:none;stroke:var(--clay);stroke-width:1.8;stroke-linecap:square;stroke-dasharray:8 56;stroke-dashoffset:64;opacity:.45;animation:chipflow 3.4s linear var(--d,0s) infinite}
+@keyframes chipflow{to{stroke-dashoffset:0}}
 .art-chip .pins rect{fill:var(--chip-pin)}
 .art-chip .pins rect.on{fill:var(--clay);filter:drop-shadow(0 0 3px color-mix(in srgb,var(--clay) 70%,transparent));
   animation:pin .7s var(--out) both;animation-delay:calc(var(--k,1)*110ms + 250ms)}
@@ -131,30 +166,59 @@ h1{margin:0;display:flex;align-items:center;font-size:24px;line-height:30px;font
 .card.hero .tx{gap:12px}
 .card .go{display:inline-flex;align-items:center;gap:6px;max-width:100%;margin-top:-4px;font-size:13px;line-height:18px;color:var(--chip-sub)}
 .card .go span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.card .go svg{flex:none;width:18px;height:18px;padding:2px;border-radius:50%;background:var(--clay);color:#fff;stroke-width:2.4}
-.card:not(.art-chip) .go{color:var(--ink-2)}
+.card .go svg{flex:none;width:18px;height:18px;padding:2px;border-radius:50%;background:var(--clay);color:#fff;stroke-width:2.4;transition:transform .2s steps(2,end)}
+.card:not(.art-chip):not(.art-sky) .go{color:var(--ink-2)}
 .card.hero.art-chip .art{width:300px;height:300px;right:-64px}
+.card.hero.art-sky .art{height:124%;right:0}
+
+/* 指针追光（Spotlight）与斜向扫光（GlareHover） */
+.card::before,.xw-card::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;opacity:0;
+  background:radial-gradient(220px circle at var(--mx,50%) var(--my,50%),color-mix(in srgb,var(--clay) 12%,transparent),transparent 70%);
+  transition:opacity .22s var(--ease)}
+.card.art-sky::before{background:radial-gradient(240px circle at var(--mx,50%) var(--my,50%),rgba(237,216,166,.14),transparent 70%)}
+.card.art-chip::before{background:radial-gradient(240px circle at var(--mx,50%) var(--my,50%),color-mix(in srgb,var(--clay) 18%,transparent),transparent 70%)}
+.card::after{content:"";position:absolute;top:0;bottom:0;left:-45%;width:36%;z-index:0;pointer-events:none;opacity:0;
+  background:linear-gradient(105deg,transparent 10%,rgba(255,255,255,.14) 50%,transparent 90%);transform:skewX(-18deg)}
+[data-theme=light] .card:not(.art-chip):not(.art-sky)::after{background:linear-gradient(105deg,transparent 10%,color-mix(in srgb,var(--clay) 10%,transparent) 50%,transparent 90%)}
+@keyframes cardglare{from{left:-45%;opacity:1}to{left:125%;opacity:0}}
 
 /* 按下：整卡微缩，图标再多压一点；松开用较长的 ease-out 平稳回位 */
 .card.press{transform:scale(.965);transition:transform .12s ease-out,border-color .08s linear}
 .card.press .ic{transform:scale(.92);transition:transform .12s ease-out}
 @media (hover:hover) and (pointer:fine){
   .card:hover{border-color:var(--clay)}
-  .card:not(.art-chip):hover .ic{background:var(--clay-soft)}
+  .card:hover::before,.xw-card:hover::before{opacity:1}
+  .card:hover::after{animation:cardglare .65s var(--out) both}
+  .card:hover .go svg{transform:translateX(3px)}
+  .card.art-sky:hover .c-line{stroke-dashoffset:0;stroke:color-mix(in srgb,var(--sky-star) 78%,transparent)}
+  .card.art-sky:hover .c-node{opacity:1}
+  .card.art-sky:hover .orb-sat{animation-duration:7s}
+  .card.art-world:hover .w-scan{animation:wscan 1.4s steps(18,end) infinite}
+  .card.art-chip:hover .traces .tr-sig{opacity:.95;animation-duration:1.3s}
+  .card:not(.art-chip):not(.art-sky):hover .ic{background:var(--clay-soft)}
   .card:hover .ic{transform:translateY(-2px)}
   .card.press:hover .ic{transform:scale(.92)}
   .round:hover{border-color:var(--clay);color:var(--ink)}
   .cmd:hover:not(:focus-within){border-color:var(--ink-3)}
   .panel .back:hover{border-color:var(--clay)}
 }
+@keyframes wscan{from{opacity:.85;transform:translateX(0)}to{opacity:0;transform:translateX(420px)}}
 .card.hide{display:none}
 /* 打开工具前的「定格」帧：首页元素直接到终态，保证系统返回快照与返回后的页面一致 */
 body.freeze #home,body.freeze .card,body.freeze .card .ic,body.freeze .round,body.freeze .cmd,body.freeze .cmd .caret{transition:none!important}
 .settled .art-chip .pins rect.on{animation:none}
 
-/* 搜索框：标题栏放大镜点开才出现 */
+/* 搜索框：标题栏放大镜点开才出现；带展开节拍与终端光标闪烁 */
 #cmd{display:none}
-#home.searching #cmd{display:flex;animation:fadein .2s var(--ease)}
+#home.searching #cmd{display:flex;animation:cmdopen .18s steps(3,end) both}
+@keyframes cmdopen{from{opacity:0;transform:translateY(-6px)}}
+.cmd:focus-within .caret{animation:cmdcaret 1.1s steps(2,end) infinite}
+@keyframes cmdcaret{50%{opacity:.35}}
+.spark{cursor:pointer}
+.spark.spin{animation:sparkspin .48s steps(6,end)}
+@keyframes sparkspin{from{transform:rotate(0deg) scale(1.22)}to{transform:rotate(180deg) scale(1)}}
+.hm-spark{position:fixed;z-index:60;width:4px;height:4px;margin:-2px 0 0 -2px;background:var(--clay);pointer-events:none;animation:hmspark .46s steps(5,end) forwards}
+@keyframes hmspark{0%{opacity:1;transform:translate(0,0) scale(1)}100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(.5)}}
 .hd-btns{display:flex;gap:8px}
 #searchBtn{display:grid;place-items:center}
 #searchBtn svg{display:block;width:18px;height:18px}
@@ -238,8 +302,11 @@ h1{font-weight:400;font-size:26px}
 .cat-h::before{content:"";width:6px;height:6px;background:var(--clay)}
 .card{border:2px solid var(--pb);box-shadow:4px 4px 0 var(--ps);
   transition:transform .1s steps(2,end),box-shadow .1s steps(2,end),border-color .1s steps(1,end)}
-.card.art-chip{border-color:var(--pb)}
+.xw-card{position:relative;overflow:hidden;transition:transform .1s steps(2,end),box-shadow .1s steps(2,end)}
+.xw-card > *{position:relative;z-index:1}
+.card.art-chip,.card.art-sky{border-color:var(--pb)}
 [data-theme=dark] .card.art-chip{border-color:#5a564e}
+[data-theme=dark] .card.art-sky{border-color:#3d4d7a}
 .card.press{transform:translate(4px,4px);box-shadow:0 0 0 var(--ps);transition:transform .05s steps(1,end),box-shadow .05s steps(1,end)}
 .card.press .ic{transform:none}
 .card .nm{font-weight:400}
@@ -252,6 +319,8 @@ h1{font-weight:400;font-size:26px}
 .art-chip .pins rect.on{filter:none}
 @media (hover:hover) and (pointer:fine){
   .card:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--clay);border-color:var(--pb)}
+  .card.art-sky:hover{box-shadow:6px 6px 0 #c7a968}
+  .xw-card:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--clay)}
   .card:hover .ic{transform:none}
   .round:hover{border-color:var(--pb);background:var(--sunk)}
 }

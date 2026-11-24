@@ -417,8 +417,14 @@ html.embed .tq-mid-head .xc-x { display: none; }   /* 嵌在首页时首页有�
   place-items: center;
   width: 54px;
   height: 54px;
-  pointer-events: none;
+  cursor: pointer;
+  transform: perspective(320px) rotateX(var(--ax, 0deg)) rotateY(var(--ay, 0deg));
+  transition: transform .22s var(--ease);
 }
+.tq-empty-orbit > * { pointer-events: none; }
+.tq-empty-orbit.surge .tq-empty-ring { animation-duration: 2.2s; }
+.tq-empty-orbit.surge .tq-empty-planet { animation-duration: 1.5s; }
+.tq-empty-orbit.surge .tq-empty-star { transform: scale(1.22) rotate(45deg); transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
 /* 外轨：极细星仪同心圆 + 反向缓慢旋转的内虚环，纯 GPU transform */
 .tq-empty-ring {
   position: absolute;
@@ -860,8 +866,10 @@ html.tianqi[data-theme="light"] .tm-win {
 .tq-set-sec h3 + p { margin: 0 0 14px; color: var(--ink-3); font-size: 13px; }
 .tq-set-sec h3:not(:first-child) { margin-top: 26px; }
 .tq-themes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.tq-theme { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line); --rad: 14px; color: var(--ink-2); font-size: 13px; text-align: left; transition: border-color .2s var(--ease), color .2s var(--ease); }
+.tq-theme { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line); --rad: 14px; color: var(--ink-2); font-size: 13px; text-align: left; transition: border-color .2s var(--ease), color .2s var(--ease), transform .2s var(--ease); }
 .tq-theme:hover { color: var(--ink); border-color: var(--line-2); }
+@media (hover: hover) { .tq-theme:hover { transform: translateY(-1px); } .tianqi .xc.tq-mode .tq-pane .xc-fi:hover svg { transform: translateX(2px); } }
+.tianqi .xc.tq-mode .tq-pane .xc-fi svg { transition: transform .18s var(--ease); }
 .tq-theme[aria-checked="true"] { color: var(--ink); border-color: var(--star); box-shadow: 0 0 0 1px var(--star); }
 .tq-theme i { display: block; height: 58px; --rad: 9px; }
 /* 两种外观的缩略图：画的就是那个外观，颜色固定 */

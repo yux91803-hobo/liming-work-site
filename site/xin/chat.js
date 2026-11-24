@@ -303,8 +303,55 @@
           if (!m.classList.contains('cont')) break;
         }
         copy(parts.filter(Boolean).join('\n\n'), mc);
+        return;
+      }
+      var hmk = !TQ && e.target.closest('.xc-hello-mk');
+      if (hmk) {
+        S.mood = 'happy'; S.moodAt = Date.now(); paintFaces();
+        if (!reduceMotion()) {
+          hmk.classList.remove('hop'); void hmk.offsetWidth; hmk.classList.add('hop');
+          for (var si = 0; si < 8; si++) {
+            var sp = h('i', 'xc-hspark'); sp.setAttribute('aria-hidden', 'true');
+            sp.style.setProperty('--a', (si * 45 + (si % 2 ? 12 : -8)) + 'deg');
+            hmk.appendChild(sp);
+            setTimeout(function (n) { if (n.parentNode) n.parentNode.removeChild(n); }, 580, sp);
+          }
+        }
       }
     });
+    if (!TQ) {
+      var xcRow = root.querySelector('.xc-row'), pmRaf = 0, pmX = 0, pmY = 0, pmRow = false;
+      root.addEventListener('pointermove', function (e) {
+        if (e.pointerType === 'touch' || reduceMotion()) return;
+        pmX = e.clientX; pmY = e.clientY;
+        pmRow = !!(xcRow && e.target && e.target.closest && e.target.closest('.xc-row'));
+        if (pmRaf) return;
+        pmRaf = requestAnimationFrame(function () {
+          pmRaf = 0;
+          if (pmRow && xcRow) {
+            var rr = xcRow.getBoundingClientRect();
+            xcRow.style.setProperty('--mx', (pmX - rr.left).toFixed(1) + 'px');
+            xcRow.style.setProperty('--my', (pmY - rr.top).toFixed(1) + 'px');
+          }
+          var mk = list && list.querySelector('.xc-hello-mk');
+          if (mk) {
+            var mr = mk.getBoundingClientRect(), cx = mr.left + mr.width / 2, cy = mr.top + mr.height / 2;
+            var nx = Math.max(-1, Math.min(1, (pmX - cx) / 260)), ny = Math.max(-1, Math.min(1, (pmY - cy) / 220));
+            mk.style.setProperty('--hx', (nx * 6).toFixed(2) + 'px');
+            mk.style.setProperty('--hy', (ny * 5).toFixed(2) + 'px');
+            mk.style.setProperty('--rx', (-ny * 8).toFixed(2) + 'deg');
+            mk.style.setProperty('--ry', (nx * 8).toFixed(2) + 'deg');
+            mk.style.setProperty('--ex', (nx * 2.2).toFixed(2) + 'px');
+            mk.style.setProperty('--ey', (ny * 1.8).toFixed(2) + 'px');
+          }
+        });
+      }, { passive: true });
+      root.addEventListener('pointerleave', function () {
+        var mk = list && list.querySelector('.xc-hello-mk');
+        if (!mk) return;
+        ['--hx', '--hy', '--rx', '--ry', '--ex', '--ey'].forEach(function (k) { mk.style.removeProperty(k); });
+      });
+    }
     root.querySelector('.xc-body').addEventListener('scroll', jumpCheck, { passive: true });
     jumpEl.addEventListener('click', function () { toBottom(true, true); });
     upEl = root.querySelector('.xc-upchip'); upEl.addEventListener('click', upGo);
@@ -560,6 +607,8 @@
     }
     var p = h('div', 'xc-hello');
     var mk = h('div', 'xc-hello-mk');
+    var orb = h('i', 'xc-hello-orb'); orb.setAttribute('aria-hidden', 'true');
+    mk.appendChild(orb);
     mk.appendChild(avatar('big xc-face'));
     p.appendChild(mk);
     var tw = h('span', 'xc-sw-w xc-hello-tw'); tw.appendChild(h('b', 'xc-hello-t', '小芯')); p.appendChild(tw);
