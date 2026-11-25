@@ -15,19 +15,20 @@ const mkdir = p => fs.mkdirSync(p, { recursive: true });
 const hash = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const under = (p, root) => p === root || p.startsWith(root + path.sep);
 const SELF = fileURLToPath(import.meta.url);
+const INVENTORY_EXCLUDES = new Set(['.git', 'node_modules', '.xin-task']);
 
 export function inventory(root) {
   const out = {};
-  let total = 0;
+  let total = 0, files = 0;
   const walk = (dir, rel = '') => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (['.git', 'node_modules', '.xin-task'].includes(e.name)) continue;
+      if (INVENTORY_EXCLUDES.has(e.name)) continue;
       const name = rel ? rel + '/' + e.name : e.name, p = path.join(dir, e.name);
       if (e.isSymbolicLink()) throw new Error('项目里有软链接，请先改成普通文件：' + name);
       if (e.isDirectory()) walk(p, name);
       else if (e.isFile()) {
         total += fs.statSync(p).size;
-        if (total > 150 * 1024 * 1024 || Object.keys(out).length >= 10000) throw new Error('项目太大，先指定较小的项目目录');
+        if (total > 150 * 1024 * 1024 || ++files > 10000) throw new Error('项目太大，先指定较小的项目目录');
         out[name] = hash(p);
       } else throw new Error('项目包含非常规文件：' + name);
     }
@@ -210,16 +211,55 @@ export async function pruneWorkspaceStages(controller, before = Date.now() - 864
   }
 }
 
-export function publicationPlan(t, controller) {
+function publicationBase(t, controller) {
   const { original, before } = JSON.parse(fs.readFileSync(path.join(controller, 'workspaces', t.sid + '.json'), 'utf8'));
   if (fs.realpathSync(t.dir) !== original) throw new Error('项目目录已改变，结果未覆盖原文件');
-  const after = inventory(t.workspace.work), current = inventory(original);
+  return { original, before };
+}
+
+function projectVersion(root) {
+  const checksum = crypto.createHash('sha256');
+  let files = 0;
+  function walk(file, relative) {
+    const stat = fs.lstatSync(file, { bigint: true });
+    if (!stat.isDirectory() && !stat.isFile()) throw Error('项目包含非常规文件：' + relative);
+    checksum.update(JSON.stringify([relative, [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs].join(':')]));
+    if (stat.isFile()) {
+      if (++files > 10000) throw Error('项目太大');
+      return;
+    }
+    for (const name of fs.readdirSync(file).sort()) {
+      if (!INVENTORY_EXCLUDES.has(name)) walk(path.join(file, name), relative ? relative + '/' + name : name);
+    }
+  }
+  try { walk(root, ''); return checksum.digest('hex'); }
+  catch { return null; }
+}
+
+function plannedChanges({ original, before }, after, current) {
   // 原项目已经等于副本的（上次写回到一半被杀、或别人恰好改成一样）算已写回：不算冲突，也不再写
   const changed = Object.keys(after).filter(n => before[n] !== after[n]), removed = Object.keys(before).filter(n => !(n in after));
   const applied = [...changed.filter(n => current[n] === after[n]), ...removed.filter(n => !(n in current))];
   const changes = changed.filter(n => current[n] !== after[n]), deleted = removed.filter(n => n in current);
   const conflicts = [...changes, ...deleted].filter(n => current[n] !== before[n]);
   return { original, before, after, current, changes, deleted, conflicts, applied };
+}
+
+export function publicationPlan(t, controller, proposal = null) {
+  const base = publicationBase(t, controller);
+  if (proposal?.workVersion && proposal.originalVersion && projectVersion(t.workspace.work) === proposal.workVersion && projectVersion(base.original) === proposal.originalVersion)
+    return plannedChanges(base, proposal.after, proposal.current);
+  return plannedChanges(base, inventory(t.workspace.work), inventory(base.original));
+}
+
+export function preparePublication(t, controller) {
+  const base = publicationBase(t, controller), work = t.workspace.work;
+  const workVersion = projectVersion(work), originalVersion = projectVersion(base.original);
+  const after = inventory(work), current = inventory(base.original);
+  const inventoryDigest = publicationInventory({ ...base, after });
+  const proposal = workVersion && originalVersion && workVersion === projectVersion(work) && originalVersion === projectVersion(base.original)
+    ? { workVersion, originalVersion, after, current } : null;
+  return { inventoryDigest, proposal };
 }
 
 export function publicationInventory(plan) {
@@ -250,11 +290,12 @@ function currentFileHash(file) {
   } finally { fs.closeSync(fd); }
 }
 
-export function stm32Task(t) {
+export function stm32Task(t, files = null) {
   if(!t.workspace || !['code','review'].includes(t.tkind)) return false;
-  if(t.web){try{return !!t.workspace.stm32||detectStm32(t.workspace.work,Object.keys(inventory(t.workspace.work)));}catch{return true;}}
+  const names = () => Object.keys(files || inventory(t.workspace.work));
+  if(t.web){try{return !!t.workspace.stm32||detectStm32(t.workspace.work,names());}catch{return true;}}
   if(t.workspace.stm32||/stm32|arm-none-eabi|cortex-m\d/i.test((t.goal||'')+' '+(t.userRequest||'')))return true;
-  try{return detectStm32(t.workspace.work,Object.keys(inventory(t.workspace.work)));}catch{return true;} // Invalid trees must fail controlled validation, not bypass it.
+  try{return detectStm32(t.workspace.work,names());}catch{return true;} // Invalid trees must fail controlled validation, not bypass it.
 }
 function detectStm32(root,names){
   if(names.some(n=>/\.ioc$|(?:^|\/)[^/]*stm32[^/]*\.(?:c|h|s|ld)$/i.test(n)))return true;
@@ -325,9 +366,10 @@ export function compileWorkspace(t) {
   const ok=artifacts.length>0&&(!plan.artifacts||artifacts.length===plan.artifacts.length);
   return {ok,digest:ok?sourceDigest(t.workspace.work):null,artifacts,system:plan.system,output:output+(ok?'':'\n没有生成本次构建的新 ARM ELF / 有效 HEX / 非空 BIN 产物，不能使用旧文件作为编译证据。')};
 }
-export function validateTask(t, controller, meta, plan = publicationPlan(t, controller)) {
-  if (!stm32Task(t)) return { applicable: false };
-  if (!meta.compileTrusted || !meta.compileOk || meta.compileDigest !== sourceDigest(t.workspace.work)) return { error: 'STM32 程序必须在最终改动后通过受控 make / CMake 构建并生成新的有效产物；现在没有针对最终源码的成功编译记录。' };
+export function validateTask(t, controller, meta, plan = publicationPlan(t, controller), verifiedSnapshot = false) {
+  const files = verifiedSnapshot ? plan.after : undefined;
+  if (!stm32Task(t, files)) return { applicable: false };
+  if (!meta.compileTrusted || !meta.compileOk || meta.compileDigest !== sourceDigest(t.workspace.work, files)) return { error: 'STM32 程序必须在最终改动后通过受控 make / CMake 构建并生成新的有效产物；现在没有针对最终源码的成功编译记录。' };
   if(t.tkind==='code' && ![...plan.changes,...plan.applied].some(n=>/\.(?:c|h|s|cpp|hpp)$/i.test(n))) return {error:'STM32 实现任务没有源码改动，不能把只编译模板当成完成。请完成要求的程序后重新构建。'};
   const report = path.join(t.workspace.work, 'xin-review.json');
   if (t.tkind === 'review') {
@@ -342,13 +384,12 @@ export function validateTask(t, controller, meta, plan = publicationPlan(t, cont
   }
   return { applicable: true, compiled: !!meta.compileOk, reviewed: t.tkind==='review', hardware: false };
 }
-export function sourceDigest(root) {
-  const files = inventory(root);
+export function sourceDigest(root, files = inventory(root)) {
   return crypto.createHash('sha256').update(JSON.stringify(Object.entries(files).filter(([n])=>/\.(?:c|h|s|cpp|hpp|ld|mk|cmake|ioc)$|(?:^|\/)(?:Makefile|GNUmakefile|CMakeLists\.txt|CMakePresets\.json|xin-build\.json)$/i.test(n)).sort(([a],[b])=>a.localeCompare(b)))).digest('hex');
 }
 
-export function publishWorkspace(t, controller, approval = null, finalization = null) {
-  const plan = publicationPlan(t, controller);
+export function publishWorkspace(t, controller, approval = null, finalization = null, proposal = null) {
+  const plan = publicationPlan(t, controller, proposal);
   if (finalization && (publicationInventory(plan) !== finalization.inventory || !/^[a-f0-9]{32}$/.test(finalization.id)))
     throw Error('项目副本在收尾期间发生变化，已暂停写回。');
   // 批准的是这一份具体清单和文件内容，不是「这个任务以后都能删除/覆盖」。旧的无摘要批准也必须重新展示。

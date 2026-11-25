@@ -58,23 +58,23 @@ export function drainTaskReports(workspace, meta, { drain, submit, remember, ask
 
 const RESUME_TEXT = '（刚才电脑暂停或重启，这一轮中途断了。先检查现在的状态——看看文件、编译结果、还在不在跑的进程——已经做过的有副作用的事别再做一遍，然后接着把任务做完。）';
 
-function taskFileResult(t, meta, finalization) {
+function taskFileResult(t, meta, finalization, proposal) {
   try {
     if (t.web && (!meta.webCheck?.trusted || !meta.webCheck.ok)) {
       const error = '网页尚未通过实际浏览器检查：' + (meta.webCheck?.error || '缺少检查记录') + '。请修好自包含 HTML 和 xin-web.json 后结束，控制器会重新检查。';
       return (t.webRetries || 0) < 2 ? { retry:'web', error } : { error };
     }
-    const plan = runtime.publicationPlan(t, BASE);
+    const plan = runtime.publicationPlan(t, BASE, proposal);
     if (finalization && runtime.publicationInventory(plan) !== finalization.inventory)
       return { error:'项目副本在收尾期间发生变化，已暂停写回。' };
-    const verification = runtime.validateTask(t, BASE, meta, plan);
+    const verification = runtime.validateTask(t, BASE, meta, plan, !!finalization);
     if (verification.error) return { ...(t.validationRetries ? {} : { retry:'validation' }), error:verification.error };
     const id = finalization?.id;
     const web = meta.webCheck, page = meta.pageCheck;
     const screenshot = path.join(t.workspace.tmp, 'xin-web-preview.png');
     // For a web deliverable the preview must validate before any new project write.
     let preview = id && t.web && !plan.deleted.length && !plan.conflicts.length ? runtime.publishWebPreview(t, BASE, { ...web, screenshot }, id) : undefined;
-    const publication = runtime.publishWorkspace(t, BASE, null, finalization);
+    const publication = runtime.publishWorkspace(t, BASE, null, finalization, proposal);
     if (publication.pending) preview = undefined;
     else if (t.web && !preview) preview = runtime.publishWebPreview(t, BASE, id ? {...web,screenshot} : web, id);
     else if (!t.web && page?.trusted && page.ok) {
@@ -225,7 +225,11 @@ export function recordRunnerResult(store, meta, {ackedSteers, budgetSamples, ...
       Object.assign(ready, compile);
     }});
     if (t.workspace && reports.active()) {
-      try { ready.workspace = runtime.publicationInventory(runtime.publicationPlan(t, BASE)); }
+      try {
+        const { inventoryDigest, proposal } = runtime.preparePublication(t, BASE);
+        ready.workspace = inventoryDigest;
+        if (proposal) store.write(meta, 'publication-plan', { prepared:prepared.digest, inventory:inventoryDigest, ...proposal });
+      }
       catch { /* A missing/changed workspace is handled by the owner before publication. */ }
     }
   }
@@ -249,7 +253,10 @@ function finalizeFiles(store, meta, ready, task, at) {
   if (!ready.data.workspace) return { error:'无法核对本轮项目副本，结果保留供检查。' };
   const plan = intent.state === 'valid' ? intent : store.write(meta, 'intent', {ready:ready.digest, inventory:ready.data.workspace});
   const id = inputDigest([meta.run, meta.attempt]).slice(0, 32);
-  const result = taskFileResult(task, meta, {id, at, inventory:plan.data.inventory});
+  const saved = store.read(meta,'publication-plan');
+  const proposal = saved.state === 'valid' && saved.data.prepared === ready.data.prepared && saved.data.inventory === plan.data.inventory
+    ? saved.data : null;
+  const result = taskFileResult(task, meta, {id, at, inventory:plan.data.inventory}, proposal);
   return store.write(meta, 'effects', {...result, intent:plan.digest}).data;
 }
 

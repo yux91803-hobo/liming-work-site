@@ -338,6 +338,10 @@ for (const conflict of [false,true]) test('持久收尾项目写回中途重启�
   assert.match(fs.readFileSync(fault.file,'utf8'),/^new /);
   assert.match(fs.readFileSync(other,'utf8'),/^old /);
   const store = (await storeReader()).createFinalizationStore(f.home);
+  const saved = store.read(old,'publication-plan'), ready = store.read(old,'ready');
+  assert.equal(saved.state,'valid');
+  assert.equal(saved.data.prepared,ready.data.prepared);
+  assert.equal(saved.data.inventory,ready.data.workspace);
   assert.equal(store.read(old,'intent').state,'valid');
   assert.equal(store.read(old,'effects').state,'missing');
   if(conflict)fs.writeFileSync(other,'new external content');

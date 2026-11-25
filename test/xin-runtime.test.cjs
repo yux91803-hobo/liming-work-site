@@ -105,6 +105,38 @@ test('准备副本占用对应目录和调度名额；取消后不会用迟到�
   await scheduler.drain();
 });
 
+test('已准备的发布清单避免重新读项目内容，版本变化仍重新核对写回范围', async t => {
+  const f = fixture(t), r = await load();
+  const original = path.join(f.task.dir, 'main.c');
+  fs.writeFileSync(original, 'original');
+  fs.writeFileSync(path.join(f.task.dir, 'keep.txt'), 'keep');
+  f.task.workspace = r.prepareWorkspace(f.task, f.control);
+  const copy = path.join(f.task.workspace.work,'main.c');
+  fs.writeFileSync(copy, 'candidate');
+  const prepared = r.preparePublication(f.task, f.control);
+  assert.ok(prepared.proposal);
+  const read = fs.readFileSync;
+  try {
+    fs.readFileSync = (file, ...args) => {
+      if (typeof file === 'string' && [f.task.dir, f.task.workspace.work].some(root => file.startsWith(root + path.sep)))
+        assert.fail('matching publication versions should use the prepared hashes');
+      return read(file, ...args);
+    };
+    const plan = r.publicationPlan(f.task, f.control, prepared.proposal);
+    assert.deepEqual(plan.changes, ['main.c']);
+    assert.equal(r.publicationInventory(plan), prepared.inventoryDigest);
+  } finally { fs.readFileSync = read; }
+  const finalization = { id:'a'.repeat(32), at:Date.now(), inventory:prepared.inventoryDigest };
+  fs.writeFileSync(original, 'competing update');
+  const pending = r.publishWorkspace(f.task, f.control, null, finalization, prepared.proposal);
+  assert.equal(pending.pending, true);
+  assert.deepEqual(pending.conflicts, ['main.c']);
+  assert.equal(fs.readFileSync(original,'utf8'), 'competing update');
+  fs.writeFileSync(copy, 'changed after preparation');
+  assert.throws(() => r.publishWorkspace(f.task, f.control, null, finalization, prepared.proposal), /副本在收尾期间发生变化/);
+  assert.equal(fs.readFileSync(original,'utf8'), 'competing update');
+});
+
 test('分身修改副本，检查原文件并发变更；删除和冲突不会自动写回', async t => {
   const f = fixture(t), r = await load();
   fs.writeFileSync(path.join(f.task.dir, 'main.c'), 'original');
