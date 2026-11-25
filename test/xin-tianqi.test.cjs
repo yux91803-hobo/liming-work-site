@@ -71,6 +71,39 @@ test('天启身份：不写 agent 也是 Harness；补丁里的提示词只有�
   assert.match(args, /\[--json\] \[看看目录\]$/, '没有提醒、没有附带的页面');
 });
 
+test('天启给 Harness 声明每个网关模型的图片能力，并让支持看图的模型用 read_image 打开上传文件', async t => {
+  const { dsh, log } = fakeDsh(fs.mkdtempSync(path.join(os.tmpdir(), 'xin-tq-dsh-')));
+  const { home, xin, op } = agentEnv(t, { XIN_ROLE: 'tianqi', XIN_DSH: dsh });
+  fs.writeFileSync(path.join(xin, 'harness.key'), 'gw-key-123\n', { mode: 0o600 });
+  const upload = path.join(home, 'work', 'uploads', 'vision.png');
+  fs.mkdirSync(path.dirname(upload), { recursive: true });
+  fs.writeFileSync(upload, '仅用来核对附件路径');
+  const send = async model => {
+    const r = op('send', { model, perm: 'read-only', text: '读这张图', files: [{ path: upload }] });
+    assert.ok(r.run, JSON.stringify(r));
+    const p = await poll(op, r.run);
+    assert.ok(p.done && p.events.at(-1).ok, JSON.stringify(p.events));
+    return fs.readFileSync(log, 'utf8').split(/^MODE=/m).at(-1);
+  };
+
+  const vision = await send('deepseek-v4.1-flash');
+  const patch = fs.readdirSync(xin).find(n => /^harness-persona\.deepseek-v4\.1-flash\..+\.yml$/.test(n));
+  const yaml = fs.readFileSync(path.join(xin, patch), 'utf8');
+  const models = Object.fromEntries([...yaml.matchAll(/^ {10}- id: "([^"]+)"\n +name: [^\n]+\n +contextWindow: \d+\n +input: (\[[^\n]+\])$/gm)]
+    .map(([, id, input]) => [id, JSON.parse(input)]));
+  assert.deepEqual(models, {
+    'deepseek-v4.1-flash': ['text', 'image'], 'glm-5.4': ['text', 'image'], 'kimi-k3.1-pro': ['text', 'image']
+  });
+  assert.ok(vision.includes(upload));
+  assert.match(vision, /用 read_image/);
+  assert.match(vision, /^read-only\n/);
+
+  const upgraded = await send('glm-5.3-flash');
+  assert.ok(upgraded.includes(upload));
+  assert.match(upgraded, /harness-persona\.glm-5\.4\.high\.yml/);
+  assert.match(upgraded, /用 read_image/);
+});
+
 // 权限预设和计划模式（docs/superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md §3、§4 第 2 个 PR）：
 // Harness 基础配置自带 read-only / workspace-write / danger-full-access 三档；headless 每一轮用 --permission-mode 选，
 // 续聊也要重复带（dsh-headless README）；--approval-policy never：没人当场批准，越过沙箱的直接拒。

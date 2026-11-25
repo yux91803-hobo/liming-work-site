@@ -15,6 +15,7 @@ from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'https://liming-work.com').rstrip('/')
 PASSWORD = os.environ.get('XIN_OWNER_PASSWORD', '')
+CHECK_TIANQI_VISION = os.environ.get('CHECK_TIANQI_VISION') == 'true'
 AGY_MODEL = 'gemini-4-hydrogen'
 AGY_RESEARCH = 'gemini-4-hydrogen'
 # 后台按类别定思考强度（vm-runtime.mjs 的 AGY_KIND_EFFORT）：默认文件任务是查资料（research），点名做网页是写代码（code）
@@ -49,7 +50,7 @@ async def main():
         # The CI runner VM can be paused by its host; the TCP shim then turns the dead connection into ETIMEDOUT.
         # Both #106 and #107 release runs were rolled back by exactly that, mid-way through the long wait for the web task.
         # Read-only ops are safe to resend, so they are retried; ops with side effects are never resent here.
-        READ_ONLY = {'history', 'tasks', 'poll', 'sessions', 'status', 'delivery', 'usage'}
+        READ_ONLY = {'history', 'tasks', 'poll', 'sessions', 'status', 'delivery', 'usage', 'ping'}
         TRANSPORT = ('ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ENETUNREACH', 'EAI_AGAIN', 'socket hang up', 'Timeout')
         async def raw(what, send, retry):
             # Every direct request goes through here so a failure never prints Playwright's call log (it carries the cookie).
@@ -64,10 +65,10 @@ async def main():
                         await asyncio.sleep(3)
                         continue
                     raise RuntimeError('Production request transport failed: ' + what + ' ' + kind) from None
-        async def call(op, args):
+        async def call(op, args, scope='xin'):
             limit = time.monotonic() + 180
             while True:
-                response = await raw(op, lambda: context.request.post(BASE + '/api/xin/call', headers={'X-Xin': '1'}, data={'op': op, 'args': args}, timeout=80000), op in READ_ONLY)
+                response = await raw(scope + ' ' + op, lambda: context.request.post(BASE + '/api/' + scope + '/call', headers={'X-Xin': '1'}, data={'op': op, 'args': args}, timeout=80000), op in READ_ONLY)
                 try:
                     d = await response.json()
                 except Exception:
@@ -78,6 +79,54 @@ async def main():
                     await asyncio.sleep(min(15, max(2, d.get('retryAfter', 3))))
                     continue
                 raise RuntimeError('Production call failed: ' + op + ' HTTP ' + str(response.status) + ' state=' + str(d.get('state', d.get('data', {}).get('error', 'unknown'))))
+        async def upload_visual_check(scope):
+            # Only the pixels contain the answer. Use separate files and answers for each machine.
+            token = 'READ-' + uuid.uuid4().hex[:10].upper()
+            png = await page.evaluate("""text => {
+                const c=document.createElement('canvas');c.width=1100;c.height=200;
+                const g=c.getContext('2d');g.fillStyle='white';g.fillRect(0,0,c.width,c.height);
+                g.fillStyle='black';g.font='bold 90px monospace';g.fillText(text,30,130);
+                return c.toDataURL('image/png').split(',')[1];
+            }""", token)
+            response = await raw(scope + ' upload', lambda: context.request.post(BASE + '/api/' + scope + '/upload?name=visual-check.png',
+                headers={'X-Xin':'1','Content-Type':'application/octet-stream'},data=base64.b64decode(png),timeout=80000), False)
+            data = await response.json() if response.status == 200 else {}
+            if not data.get('ok'):
+                raise RuntimeError('Synthetic image upload failed: ' + scope + ' HTTP ' + str(response.status))
+            return token, [{'path':data['data']['path'],'name':'visual-check.png'}]
+        async def tianqi_vision(model):
+            ready = await call('ping', {}, 'tq')
+            if ready.get('role') != 'tianqi' or not ready.get('ready'):
+                raise RuntimeError('Tianqi Harness and gateway are not configured on li2')
+            token, files = await upload_visual_check('tq')
+            image = await call('send', {'agent':'harness','model':model,'perm':'read-only',
+                'clientId':'tq-visual-' + uuid.uuid4().hex, 'files':files,
+                'text':'这是上传图片联调。只用 read_image 打开附件，然后在最终回答照写图片里唯一一行字符。不要运行命令或使用其他工具。'}, 'tq')
+            try:
+                limit = time.monotonic() + RECOVERED_REPLY_LIMIT
+                while True:
+                    result = await call('poll', {'run':image['run'],'off':0}, 'tq')
+                    if result.get('done'):
+                        break
+                    if time.monotonic() > limit:
+                        raise RuntimeError('Tianqi image reply timed out')
+                    await asyncio.sleep(2)
+                events = result.get('events', [])
+                done = [e for e in events if e.get('t') == 'done']
+                if len(done) != 1 or not done[0].get('ok') or done[0].get('model') != model:
+                    raise RuntimeError('Tianqi image turn did not succeed: ' + model)
+                if not any(e.get('t') == 'tool_end' and e.get('name') == 'read_image' and e.get('ok') for e in events):
+                    raise RuntimeError('Tianqi Harness did not complete read_image')
+                if token not in ''.join(e.get('text','') for e in events if e.get('t') == 'text'):
+                    raise RuntimeError('Tianqi could not read the random characters from the image: ' + model)
+                print('PASS Tianqi ' + model + ' reads uploaded image pixels on li2 with Harness read_image in read-only mode', flush=True)
+            finally:
+                try:
+                    if (await call('history', {'sid':image['sid']}, 'tq')).get('active'):
+                        await call('stop', {'run':image['run']}, 'tq')
+                    await call('forget', {'sid':image['sid']}, 'tq')
+                except RuntimeError:
+                    print('Tianqi smoke conversation retained for diagnosis', flush=True)
         async def backup_check():
             # Off-machine backup, end to end on production: make today's backup now (an existing one is kept), find it in
             # the list, download it decrypted with the current owner credential and compare size, sha256 and the gzip magic.
@@ -132,6 +181,35 @@ async def main():
         async def check_front(done):
             quota = (await call('tasks', {'all': True})).get('frontAntigravity') if done.get('model') == 'deepseek-v4.1-flash' else None
             return validate_front_model(done, quota, time.time() * 1000)
+        async def glm54_background():
+            title = 'xin-smoke-glm-' + uuid.uuid4().hex[:12]
+            answer = 'GLM-' + uuid.uuid4().hex[:12].upper()
+            text = ('用 GLM-5.4 派一个后台任务做发布联调，立即回复，别等结果。用 xin task new --kind research --title ' + title +
+                    ' --dir ' + directory + '-glm -- 只回复 ' + answer + '。属于合成联调，不需要执行命令、联网或修改文件。')
+            sent = await call('send', {'agent':'codex','clientId':'glm54-' + uuid.uuid4().hex,'text':text})
+            try:
+                limit = time.monotonic() + RECOVERED_REPLY_LIMIT
+                while time.monotonic() < limit:
+                    tasks = (await call('tasks', {'sid':sent['sid']})).get('tasks', [])
+                    task = next((t for t in tasks if t.get('title') == title), None)
+                    if task and (len(tasks) != 1 or task.get('status') in ('failed','stopped','waiting')):
+                        raise RuntimeError('Xiaoxin GLM-5.4 dispatch did not complete')
+                    if task and task.get('status') == 'done':
+                        detail = await call('history', {'sid':task['sid']})
+                        actual = detail['task'].get('actualModel')
+                        if actual != 'glm-5.4' or answer not in (detail['task'].get('result') or {}).get('text', ''):
+                            raise RuntimeError('Xiaoxin background run did not use GLM-5.4 and return the requested reply')
+                        run = detail['runs'][-1]
+                        require_finalization(run['run'], run['events'], 'GLM-5.4 background')
+                        print('PASS Xiaoxin real GLM-5.4 background dispatch and durable reply on li', flush=True)
+                        return
+                    await asyncio.sleep(3)
+                raise RuntimeError('Xiaoxin GLM-5.4 background run timed out')
+            finally:
+                try:
+                    await forget_owned(sent['sid'], lambda t: t.get('title') == title)
+                except RuntimeError:
+                    print('Xiaoxin GLM-5.4 smoke conversation retained for diagnosis', flush=True)
         try:
             await page.goto(BASE + '/#xin', wait_until='domcontentloaded')
             await page.locator('.xc-login input[name=pw]').fill(PASSWORD, timeout=30000)
@@ -144,6 +222,9 @@ async def main():
             if tq_me.get('authed') is not True or not isinstance(tq_me.get('enabled'), bool):
                 raise RuntimeError('天启入口不认同一个登录或缺少启用状态')
             print('PASS 天启入口认同一个登录（enabled=' + json.dumps(tq_me['enabled']) + '）', flush=True)
+            if CHECK_TIANQI_VISION and tq_me['enabled']:
+                await tianqi_vision('deepseek-v4.1-flash')
+                await tianqi_vision('glm-5.4')
             # 第 2 批：状态切到内核模式。外壳拉起常驻的状态进程（换外壳、切换前备份都在这里头），最多等 120 秒；
             # 等不到就失败（会自动回滚）。这次部署改了外壳的，要等电脑上换成新外壳（kernelCurrent）以后才算。
             # 记下切换次数和外壳起控制器的次数，所有检查做完后再核对一次。
@@ -221,23 +302,11 @@ async def main():
             plain_turn = next((r for r in reversed(plain_history) if any(e.get('t') == 'user' and e.get('text') == plain_request for e in r['events'])), {})
             plain_done = next((e for e in plain_turn.get('events', []) if e.get('t') == 'done'), {})
             print('PASS foreground real-model reply during background work', flush=True)
-            # Only pixels contain the random answer; neither the prompt nor the filename reveals it.
-            visual_token = 'READ-' + uuid.uuid4().hex[:10].upper()
-            png = await page.evaluate("""text => {
-                const c=document.createElement('canvas');c.width=1100;c.height=200;
-                const g=c.getContext('2d');g.fillStyle='white';g.fillRect(0,0,c.width,c.height);
-                g.fillStyle='black';g.font='bold 90px monospace';g.fillText(text,30,130);
-                return c.toDataURL('image/png').split(',')[1];
-            }""", visual_token)
-            uploaded = await raw('upload', lambda: context.request.post(BASE + '/api/xin/upload?name=visual-check.png',
-                headers={'X-Xin':'1','Content-Type':'application/octet-stream'},data=base64.b64decode(png),timeout=80000), False)
-            upload_data = await uploaded.json()
-            if uploaded.status != 200 or not upload_data.get('ok'):
-                raise RuntimeError('Synthetic image upload failed')
+            visual_token, image_files = await upload_visual_check('xin')
             image_client = 'visual-' + uuid.uuid4().hex
             image = await call('send', {'agent':'codex','clientId':image_client,
                 'text':'只读取这张图片中唯一一行字符并照写出来。不要派任务、执行命令或记忆。',
-                'files':[{'path':upload_data['data']['path'],'name':'visual-check.png'}]})
+                'files':image_files})
             image_sid = image['sid']
             limit = time.monotonic() + RECOVERED_REPLY_LIMIT
             while True:
@@ -484,7 +553,9 @@ async def main():
                 web = (await call('history', {'sid': web_sid}))['task']
                 if web['status'] == 'done' and web.get('delivery', {}).get('state') == 'delivered': break
                 if web['status'] in ('failed','stopped','waiting') or time.monotonic() > limit:
-                    raise RuntimeError('Real Gemini web work did not complete: ' + web['status'])
+                    wait = max(0, round(((web.get('retryAt') or 0) - time.time() * 1000) / 1000))
+                    raise RuntimeError('Real Gemini web work did not complete: ' + web['status'] +
+                                       ' attempts=' + str(web.get('turns')) + ' model=' + str(web.get('actualModel')) + ' retrySeconds=' + str(wait))
                 await asyncio.sleep(5)
             preview = web.get('preview') or {}
             saved_front = await call('history', {'sid': alternate_sid})
@@ -535,6 +606,8 @@ async def main():
             await art.close()
             # 后台干活时插话（docs/superpowers/specs/2026-11-17-xin-steer-design.md）：Gemini 补一句、停下再继续、Codex（点名 Kimi）
             await steer_live(page, call, settle, errors, LEAKS, steer_sids, directory)
+            if CHECK_TIANQI_VISION:
+                await glm54_background()
             # 在联调结束时确认仍由同一个状态进程服务。
             same_resident_owner(owner, await call('usage', {}))
             print('PASS state owner PID and epoch stayed constant throughout the run', flush=True)

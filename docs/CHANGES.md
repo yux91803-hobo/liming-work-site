@@ -5,6 +5,25 @@
 - 浏览器按打开时的站点版本更新登录。手动重登或移除登录后，旧窗口和后台刷新不能覆盖新版或恢复已移除内容。空闲记忆由常驻主人定时检查，开始新工作时中止整理，换版排空等待清理。每日清单继续由 Cloudflare 准时唤醒并交给现有调度。
 - 仍需将实测较重的文件操作移出状态进程。隔离样本 1000 个文件共 7.81 MiB，准备副本 585 ms，写回清单 206 ms；3.125 MiB SQLite 负载的机外打包 202 ms，单独导出 39 ms。本机数据来自合成样本。11:06 只读汇总正式机内核日志，机外打包 10 次的中位数 467 ms、最大 1421 ms；每日操作 20 次中位数 330 ms。日志包含等待与传输耗时，下一步测量各同步阶段。
 
+# 修改清单 · 2026-11-25（小芯与天启切换 GLM-5.4）
+
+- Codex 实现并自查。`li` 与 `li2` 都确认网关提供 `glm-5.4`，支持百万上下文、图文和低／高／最高三档。旧标准版和 Flash 入口都使用 5.4。工作台继续提供 DeepSeek V4.1 Flash 与 Kimi K3.1 Pro。 [网关目录核对](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45615850604) [智谱官方模型说明](https://zcode.z.ai/cn/docs/qa)
+- 后台代码、难题、复核的 GLM 候选改为 5.4。浏览器选择、旧 Harness 会话、新启动的旧队列任务、执行尝试及回退候选都识别之前的 GLM 编号。历史回复和用量按真实执行时的模型显示。Gemini 与 DeepSeek 的既有自动调度继续使用。
+- 回滚目标先加入兼容的 5.4 目录，执行者可继续接手已保存的 5.4 请求。模型选择没有数据库迁移。旧请求、故障重启与历史名称都纳入回归；正式联调用两个云电脑各自的网关验证读图和后台真实派工。
+- CI 在旧轮次派工时发现，前台工具与任务 CLI 会在路由识别别名前拒绝旧型号。两处现在用现有别名校验，保留请求中的型号和发话原文。现有派工、交付及未知型号测试继续覆盖这两个入口。 [首次检查](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45620938427)
+
+# 修改清单 · 2026-11-25（回退模型尚未开工时继续使用剩余候选）
+
+- Codex 实现并自查。#215 正式站实际派出点名的 Gemini 网页任务，转到第一个网关候选后，后续几轮仍在同一模型，最终等待重试并触发发布回滚。只读统计证实轮次存在，状态进程也已正常换版。 [正式站流程](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45611479035) [模型统计核对](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45618654137)
+- 普通执行器在动手前失败时，沿同一轮次依序走已校验的候选，每个模型至多切入一次。保留最初故障、实际参与执行的模型、原项目副本及补充编号。下一次启动由原始输入和当前补充重新构成，接收回执成功后只收一次。停止、超时、严格点名和独立复核仍执行既有约束。收尾与回退的数据格式沿用前版。 [Codex 插话测试](https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/suite/v2/turn_steer.rs)
+
+# 修改清单 · 2026-11-25（天启 DeepSeek 读取上传图片）
+
+- Codex 实现并自查。原有模型目录标记了图片能力，每轮生成的 Harness 网关配置漏了 `input`，导致 Harness 的 `read_image` 返回 `IMAGE_UNSUPPORTED_MODEL`。现在按每个模型声明 `text` 和 `image`，GLM-5.3 Flash 只声明 `text`。附件提示写明原生读图工具，沿用现有只读、工作区和插件设置。 [Harness 模型配置](https://github.com/deepseek-ai/deepseek-harness/blob/38a6a5c965aa99ab525161efb7cc5cf1fe62fced/packages/llm/llm-pi-ai/src/config.ts#L88) [Harness 读图工具](https://github.com/deepseek-ai/deepseek-harness/blob/38a6a5c965aa99ab525161efb7cc5cf1fe62fced/packages/fs/tool-fs/src/read-image.ts#L124)
+- 用 `0.2.2-rc.3` 的实际 Harness 和仅本机的 Responses 夹具核对，旧补丁拒绝读图，新补丁在只读模式完成 `read_image` 并把 `input_image` 送到接口。模型配置变更时，正式联调用 `li2` 上的 DeepSeek 识别只存在于合成图片中的随机字符。
+- 网关配置按轮生成，无状态迁移。正式验证失败沿用部署工作流自动回滚，前版可以继续读取既有会话和附件。
+- 由 Codex 提前加入 GLM-5.4 的执行配置。`li` 和 `li2` 的网关目录均给出 `glm-5.4`、百万上下文、低／高／最高和图文能力。随后切换默认路由和模型选择时，回滚到本版的状态进程能够执行保留的 5.4 请求并记录正确的模型。 [现有网关目录核对](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45615850604) [智谱官方说明](https://zcode.z.ai/cn/docs/qa)
+
 # 修改清单 · 2026-11-25（第 2 步第 4a 批宿主派发授权）
 
 - Codex 实现并自查。按已确认的方案 C，Worker 验证站长登录后记录发话来源，待送达保存在消息信封中，消息编号和去重摘要沿用原规则。状态进程从匹配对话的当前执行尝试读取站长原话并签发授权。

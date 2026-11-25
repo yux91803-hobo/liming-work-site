@@ -58,7 +58,7 @@ import { loginStore, normalizeSite } from './vm-logins.mjs';
 import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
 import { fromClaude, fromCodex, fromHarness, stepActivity, appendBudgetSample } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
-import { resolveEffort, HARNESS_WIN, harnessModel, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route, backgroundRoute } from './vm-models.mjs';
+import { resolveEffort, HARNESS_WIN, harnessModel, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, activeModel, activeFallbacks, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route, backgroundRoute } from './vm-models.mjs';
 import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, harnessPerm, harnessTurn, permError, workError, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch, harnessUsage } from './vm-persona.mjs';import { termOps } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
@@ -624,13 +624,18 @@ function runner(run) {
   if (!meta) process.exit(1);
   assertAttempt(meta,callContext());
   if(meta.stopped){endStoppedRun(run,meta);return;}
-  meta.pid = process.pid; meta.identity = processIdentity(process.pid); patchRun(run,{pid:meta.pid,identity:meta.identity});
+  const model = activeModel(meta.model);
+  if (meta.task && model !== meta.model && lockedCall('tasks','task_model',{sid:meta.sid,run,model}).error) throw Error('无法保存升级后的任务模型');
+  meta.model = model;
+  meta.pid = process.pid; meta.identity = processIdentity(process.pid); patchRun(run,{pid:meta.pid,identity:meta.identity,...(model ? {model} : {})});
   const sess = taskBridgeSession(readJ(sessF(meta.sid)), meta);
   mk(WORK); installXin();
   const cwd = meta.cwd || WORK; mk(cwd);
   if (meta.task) setScreenTag('[任务 ' + meta.no + '] ');   // 「小芯在干什么」终端里分得清是哪个分身
   const role = meta.kind === 'daily' ? 'daily' : meta.task ? 'task' : 'front';
   const t0 = Date.now(), usageBefore=sessionUsage(sess), state = {};
+  const attempted = new Set([meta.model]), initialText = meta.text;
+  let resumeHint = '';
   const durable = hasFinalization(meta), key = meta.task ? 'tasks' : meta.sid, shortReport = {deadlineMs:1000};
   let finished = false, stderr = '', child = null, app = null, appCode = null, retried = false, restarting = false, stallTm = 0, deadTm = 0, scopeSeq = 0;
   ensureReaperTimer();
@@ -831,29 +836,29 @@ function runner(run) {
         state.strictRetried=true;emit(run,{t:'status',text:'执行入口暂时没接上，正在按原安排重试。'});
         Object.assign(state,{failed:false,errShown:false,heldErr:null,lastErr:''});stderr='';start();return;
       }
-      // 模型还没开始干活就失败了：换候选里的下一个模型再试一次（用户自己停的不换）
-      const quotaFallback=c===75&&runtime.isAgyModel(meta.model)&&!state.switched&&!state.timeout&&safeFallbacks().length;
-      const stallFallback=c===76&&runtime.isAgyModel(meta.model)&&!state.switched&&!state.timeout&&safeFallbacks().length;
+      const quotaFallback=c===75&&runtime.isAgyModel(meta.model)&&!state.timeout&&safeFallbacks().length;
+      const stallFallback=c===76&&runtime.isAgyModel(meta.model)&&!state.timeout&&safeFallbacks().length;
       if ((c !== 0 || state.failed) && (canSwitch()||quotaFallback||stallFallback) && !(readJ(metaF(run), meta) || {}).stopped) {
         const from = meta.model;
         const candidates=safeFallbacks();
         if(!candidates.length){finish(c,'独立复核候选已改变，未回退到实际作者模型。');return;}
         // 记下为什么换（2026-11-12 正式站联调里点名 Gemini 的任务开工前失败换了模型，原因没处查）
         const fromErr=cut(String(state.heldErr?.text||state.lastErr||stderr||'').trim().split('\n').filter(Boolean).slice(-3).join(' '),300);
-        state.switched = true; meta.from = from; meta.fromErr = fromErr; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);meta.effort=runtime.taskEffort({...sess,tkind:meta.routeKind},meta.model);
+        if (!meta.from) { meta.from = from; meta.fromErr = fromErr; }
+        meta.model = candidates[0]; attempted.add(meta.model); meta.fallbacks = candidates.slice(1);meta.effort=runtime.taskEffort({...sess,tkind:meta.routeKind},meta.model);
         // 换了执行入口，原来那条插话通道没了：新入口自己报能不能插话（app-server 开始这一轮时写 transport）
-        if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
-        else if(stallFallback)meta.text='原执行入口没有回应。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
+        if(quotaFallback)resumeHint='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n';
+        else if(stallFallback)resumeHint='原执行入口没有回应。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n';
         // 接手模型收到完整补充，成功后再确认尚未消费的输入。
-        if(meta.task){try{const h=retrySteerCall(left=>lockedCall('tasks','steer_handover',{run,claim:'handover-input'},{deadlineMs:left}));if(h.error)throw Error(h.error);if(h.steers?.length){meta.text+='\n\n'+handoverBlock(h.steers);state.handoverClaim=h.claim;}}catch(e){finish(c,'暂时无法读取换模型所需的补充，已保留现场：'+e.message);return;}}
-        patchRun(run,{model:meta.model,effort:meta.effort,from,fromErr,fallbacks:meta.fallbacks,text:meta.text,transport:null});
+        if(meta.task){try{const h=retrySteerCall(left=>lockedCall('tasks','steer_handover',{run,claim:'handover-input'},{deadlineMs:left}));if(h.error)throw Error(h.error);meta.text=resumeHint+initialText+(h.steers?.length?'\n\n'+handoverBlock(h.steers):'');state.handoverClaim=h.claim||state.handoverClaim;}catch(e){finish(c,'暂时无法读取换模型所需的补充，已保留现场：'+e.message);return;}}
+        patchRun(run,{model:meta.model,effort:meta.effort,from:meta.from,fromErr:meta.fromErr,fallbacks:meta.fallbacks,text:meta.text,transport:null});
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
         emit(run, { t: 'status', text: runtime.isAgyModel(from)?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
-        Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
+        Object.assign(state, { failed: false, errShown: false, worked: false, heldErr: null, lastErr: '' }); stderr = ''; retried = false;
         start(); return;
       }
       if (state.heldErr) { emit(run, state.heldErr); state.heldErr = null; }
-      const reviewFailure=sess.tkind==='review'&&(c!==0||state.failed)&&!state.worked&&!state.timeout&&!state.switched&&!safeFallbacks().length;
+      const reviewFailure=sess.tkind==='review'&&(c!==0||state.failed)&&!state.worked&&!state.timeout&&!safeFallbacks().length;
       finish(c,reviewFailure?'独立复核候选已耗尽，未回退到实际作者模型。':undefined);
     });
     armStall();
@@ -861,11 +866,11 @@ function runner(run) {
   const safeFallbacks=()=>{
     const current=readJ(sessF(meta.sid),sess);if(current.strictModel)return [];
     const avoid=current.tkind==='review'?reviewAuthors(current):[],images=!!(meta.images||[]).length;
-    return (meta.fallbacks||[]).filter(id=>!avoid.includes(id) && (runtime.isAgyModel(id)
+    return activeFallbacks(meta.fallbacks,meta.model).filter(id=>!attempted.has(id) && !avoid.includes(id) && (runtime.isAgyModel(id)
       ? !images && agyPoolOk(runtime.agyPool(id))
       : CODEX_MODELS.some(m=>m.id===id && (!images||m.image))));
   };
-  const canSwitch = () => meta.agent === 'codex' && !state.switched && !state.worked && !state.timeout && safeFallbacks().length > 0;
+  const canSwitch = () => meta.agent === 'codex' && !state.worked && !state.timeout && safeFallbacks().length > 0;
   // 后台任务到点没做完：停下（算没做成）
   if (meta.deadline) deadTm = setTimeout(() => { state.timeout = true; restarting = false; emit(run, { t: 'status', text: '到时间了，先停下' }); killTree(child); }, Math.max(1000, meta.deadline - Date.now()));
   bridgeTm = setInterval(async () => {
@@ -1266,7 +1271,7 @@ export function filesPart(files, agent, seesImages) {
   if (files.some(f => f.image)) {
     // 前台用 Responses input_image；Codex 后台用 -i；Harness 用自己的工具打开路径。
     if (agent === 'codex') tip = seesImages ? '\n图片已经直接给你看了。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
-    else if (agent === 'harness') tip = seesImages ? '\n图片在你电脑上，用工具打开上面的路径就能看。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
+    else if (agent === 'harness') tip = seesImages ? '\n图片在你电脑上，用 read_image 打开上面列出的图片路径。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
     else tip = '\n图片用 Read 工具打开就能看。';
   }
   return '\n\n【用户发来的文件（已经在你电脑上）】\n' + files.map(f => '- ' + f.path + '（' + f.name + '，' + (f.image ? '图片，' : '') + sizeText(f.size) + '）').join('\n') + tip;
@@ -1624,6 +1629,7 @@ function startTask(t, all) {
     if(rt.error){failTask(t,'没有开始：'+rt.note);return false;}
     t.model = rt.model; t.fallbacks = t.strictModel?[]:rt.fallbacks; t.why = rt.why;
   }
+  t.model = activeModel(t.model); t.fallbacks = activeFallbacks(t.fallbacks,t.model);
   // 项目副本和任务自己的会话都在系统临时目录里；电脑重启后它们可能已经没了（审查问题 16）。
   // 这时副本会按原项目重新拷一份，旧会话也续接不上：不再续接，开新会话，并把原要求和现状说清楚，而不是直接算没做成。
   const lost = !first && !hostTask(t) && !!t.workspace && !fs.existsSync(t.workspace.work);
@@ -1927,7 +1933,7 @@ export function frontAction(a) {
     if (!original) return {error:'找不到本轮用户原话，不能替用户编写要求'};
     if (o.kind && !TASK_KINDS.includes(o.kind)) return {error:'未知工作类型：'+o.kind+'（可用：'+TASK_KINDS.join('、')+'）'};
     // A model the user named is recorded from their own words and applied regardless; a loosely written --model must not block dispatch.
-    if (o.model && !m.frontNamed && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、')+'）'};
+    if (o.model && !m.frontNamed && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(x=>x.id===activeModel(o.model))) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、')+'）'};
     const previous = mine.find(t=>t.frontRun===a.run);
     if (previous) return {terminal:true,text:maintenanceApproval(previous)?TELL_TEXT.approval:'好，我这就去弄。',task:taskSummary(previous)};
     const requested = m.frontNamed || o.model;
@@ -2675,7 +2681,7 @@ function taskCmd(argv,print=console.log) {
     if (!o.goal) o.goal = readStdin().trim();
     if (!o.goal) { print('要写清楚让分身做什么\n' + TASK_HELP); return 2; }
     if (o.kind && !TASK_KINDS.includes(o.kind)) { print('类型只能是：' + TASK_KINDS.join(' / ')); return 2; }
-    if (o.model && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(m => m.id === o.model)) { print('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、') + '）'); return 2; }
+    if (o.model && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(m => m.id === activeModel(o.model))) { print('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、') + '）'); return 2; }
     // 用户这一句点名的就是这个模型：当成用户点名（检查任务也照用）
     const said = (events(run).find(e => e.t === 'user') || {}).text || '';
     if (meta.frontNamed) o.model = meta.frontNamed;

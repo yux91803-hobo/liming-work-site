@@ -4,7 +4,7 @@ import * as runtime from './vm-runtime.mjs';
 /* ---------- 思考强度 ----------
    只给模型真正支持的档位（网关 /v1/models 的 reasoning_efforts）：
    - Harness / Codex 的 DeepSeek V4.1 Flash：off / low / high / max（off 发 none）。
-   - Harness / Codex 的 GLM-5.3 Flash、GLM-5.3，以及 Codex 的 Kimi K3.1 Pro：low / high / max（不能关）。网关遇到不认识的档会换成 high，所以只发这三个。
+   - Harness / Codex 的 GLM-5.4 和 Kimi K3.1 Pro：low / high / max（不能关）。网关遇到不认识的档会换成 high，所以只发这三个。
    - Claude Code：--effort low / medium / high / xhigh / max。
    默认都是 high。网页传来的不在这个模型的档位里（以前的 auto、空的）就用默认；每一轮都明确带上，不靠各家自己的默认。 */
 export const CLAUDE_EFFORT = { efforts: ['low', 'medium', 'high', 'xhigh', 'max'], def: 'high' };
@@ -17,14 +17,18 @@ export function resolveEffort(agent, model, effort) {
 }
 
 export const HARNESS_WIN = 1000000;   // 网关 /v1/models 的真实 context_length，这几种模型都是 100 万
+const GLM = { id: 'glm-5.4', name: 'GLM-5.4', win: 1000000, image: true, efforts: ['low', 'high', 'max'], def: 'high' };
+export function activeModel(id) { return id === 'glm-5.3' || id === 'glm-5.3-flash' ? GLM.id : id; }
+export function activeFallbacks(models, primary) {
+  return [...new Set((models || []).map(activeModel))].filter(id => id !== primary);
+}
 export const HARNESS_MODELS = [
   { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', win: HARNESS_WIN, image: true, efforts: ['off', 'low', 'high', 'max'], def: 'high' },
-  { id: 'glm-5.3', name: 'GLM-5.3', win: HARNESS_WIN, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
-  { id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', win: HARNESS_WIN, image: false, efforts: ['low', 'high', 'max'], def: 'high' },
+  GLM,
   // 站长 11-20：天启也要能用 Kimi K3.1 Pro（小芯那边 Codex 已经在用，资料照抄 CODEX_MODELS 那条）
   { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', win: HARNESS_WIN, image: true, efforts: ['low', 'high', 'max'], def: 'high' }
 ];
-export function harnessModel(id) { return HARNESS_MODELS.find(m => m.id === id) || HARNESS_MODELS[0]; }
+export function harnessModel(id) { return HARNESS_MODELS.find(m => m.id === activeModel(id)) || HARNESS_MODELS[0]; }
 
 // 线路：本地网关（WorkBuddy），每轮显式传入当前模型。
 export const HARNESS_ROUTE = { provider: 'xin-gateway', name: 'WorkBuddy 网关', api: 'openai-responses', baseURL: 'http://127.0.0.1:8788/v1', model: 'deepseek-v4.1-flash', modelName: 'DeepSeek V4.1 Flash',
@@ -36,17 +40,17 @@ export const HARNESS_ROUTE = { provider: 'xin-gateway', name: 'WorkBuddy 网关'
    key：~/.xin/codex.key（单独给 Codex 的），没有就用 Harness 那把（~/.xin/harness.key）；起的时候用环境变量 XIN_CODEX_KEY 交给它（线路里写的是 env_key）。
    模型资料：Codex 要每个模型的上限、能不能看图等资料，网关的新模型它不认识；
    照着 ~/.codex/config.toml 里 model_catalog_json 那份资料复制一份到 ~/.xin/codex-models.json，补上这几个模型（照抄 DeepSeek 那条改名字和上限），每轮用 -c 指过去。
-   看不了图的模型（glm-5.3-flash）：图片不用 -i 给，只在消息里写路径。 */
+   看不了图的模型不用 -i 给图片，只在消息里写路径。 */
 export const CODEX_ROUTE = { provider: 'xin-gateway', name: 'WorkBuddy 网关', baseURL: 'http://127.0.0.1:8788/v1', wire: 'responses' };
 export const CODEX_MODELS = [
-  { id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', win: 1000000, image: false, efforts: ['low', 'high', 'max'], def: 'high' },
-  { id: 'glm-5.3', name: 'GLM-5.3', win: 1000000, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
+  GLM,
   { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', win: 1000000, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
   { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', win: 1000000, image: true, efforts: ['off', 'low', 'high', 'max'], def: 'high' }
 ];
-export function codexModel(id) { return CODEX_MODELS.find(m => m.id === id) || CODEX_MODELS[0]; }   // 起 Codex 用：不认识的照样按第一个开工
+export function codexModel(id) { return CODEX_MODELS.find(m => m.id === activeModel(id)) || CODEX_MODELS[0]; }   // 起 Codex 用：不认识的照样按第一个开工
 // 只用来显示名字：认得后台的 Gemini（Antigravity）和前台的 Opus；不认识的原样显示编号，不冒充成列表里第一个（审查问题 13）
 const OTHER_NAMES = Object.fromEntries(Object.entries(runtime.AGY_CATALOG).map(([id, m]) => [id, m.name]));   // Hydrogen、Neon、Argon
+Object.assign(OTHER_NAMES, { 'glm-5.3': 'GLM-5.3', 'glm-5.3-flash': 'GLM-5.3 Flash' });
 export function modelLabel(id) { const m = CODEX_MODELS.find(x => x.id === id) || HARNESS_MODELS.find(x => x.id === id); return m ? m.name : OTHER_NAMES[id] || String(id || '未知模型'); }
 // 用量页按来源分（站长 2026-11-16：「把网关和谷歌的分开」）：Google = Antigravity 的 Gemini；网关 = 小芯电脑上 WorkBuddy 网关的模型；其他（以前的 Claude 之类）
 export function modelSource(id) {
@@ -61,8 +65,8 @@ export function modelSource(id) {
    模型由这里挑——模型（小芯）可以提议，路由器负责校验：
    - 前台聊天（用户直接聊的那个小芯）按 chat 类别：默认 DeepSeek V4.1 Flash（快、能看图）。
      同一个对话里不按难度来回换模型：换了模型缓存就用不上，又慢又贵。按活挑模型放在派后台任务那一步（kind）。
-   - 用户点名（「用 Kimi」「换成 GLM-5.3」）：只管这一句 / 这个任务（namedModel）。
-   - 校验：不认识的模型不用；要看图的只给能看图的（glm-5.3-flash 看不了图）；avoid 里的不用（刚失败的、被检查的那个）。
+   - 用户点名（「用 Kimi」「换成 GLM-5.4」）：只管这一句 / 这个任务（namedModel）。
+   - 校验：不认识的模型不用；要看图的只给能看图的；avoid 里的不用（刚失败的、被检查的那个）。
    - 模型还没开始干活就报错（网关限流、模型挂了）：runner 换 fallbacks 里的下一个再试一次；已经执行过命令、说过话的不重试，免得重复做。
    候选顺序是起步时的猜测，不是排名：按 model-stats.jsonl 里的实际记录（用了谁、多久、成没成）手动调，不让程序自己改。 */
 export const AUTO_EFFORT = 'max';
@@ -71,11 +75,11 @@ export const AUTO_EFFORT = 'max';
 export const ROUTES = {
   chat: ['deepseek-v4.1-flash'],   // 前台聊天
   quick: ['deepseek-v4.1-flash'],                                              // 简单杂活：看文件、跑几条命令、整理
-  code: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                   // 写代码、改代码、编译、调试
+  code: [GLM.id, 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                      // 写代码、改代码、编译、调试
   research: ['deepseek-v4.1-flash'],                                           // 查资料、读文档、写长一点的说明
-  hard: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                   // 难题：复杂代码、疑难 bug、方案设计
+  hard: [GLM.id, 'kimi-k3.1-pro', 'deepseek-v4.1-flash'],                      // 难题：复杂代码、疑难 bug、方案设计
   vision: ['deepseek-v4.1-flash'],                                             // 看图
-  review: ['glm-5.3', 'deepseek-v4.1-flash'],                                  // 检查别的任务的结果（会避开被检查的那个模型）
+  review: [GLM.id, 'deepseek-v4.1-flash'],                                     // 检查别的任务的结果（会避开被检查的那个模型）
   daily: ['deepseek-v4.1-flash'],                                              // 每日任务
   system: ['deepseek-v4.1-flash']                                              // 电脑维护：不进容器，直接在电脑上查、修
 };
@@ -108,8 +112,7 @@ export const MODEL_ALIAS = [
   [runtime.AGY_ARGON, '(?:gemini[\\s-]*4[\\s-]*)?argon'],
   [runtime.AGY_MODEL, '(?:gemini[\\s-]*4[\\s-]*)?hydrogen|gemini(?:[\\s-]*[\\d.]+)?[\\s-]*flash(?:[\\s-]*high)?'],
   [runtime.AGY_NEON, 'antigravity\\b|agy\\b|gemini(?:[\\s-]*[\\d.]+)?(?:[\\s-]*high)?'],
-  ['glm-5.3-flash', 'glm[\\s-]*(?:5(?:\\.3)?)?[\\s-]*flash|智谱\\s*flash'],
-  ['glm-5.3', 'glm(?:[\\s-]*5(?:\\.3)?)?|智谱'],
+  [GLM.id, 'glm(?:[\\s-]*5(?:\\.[34])?)?(?:[\\s-]*flash)?|智谱(?:\\s*flash)?'],
   ['kimi-k3.1-pro', 'kimi(?:[\\s-]*k?3(?:\\.1)?)?(?:[\\s-]*pro)?|月之暗面'],
   ['deepseek-v4.1-flash', 'deep[\\s-]*seek(?:[\\s-]*v?4(?:\\.1)?)?(?:[\\s-]*flash)?|深度求索']
 ].map(([id, src]) => [id,
@@ -132,7 +135,7 @@ export function route(o = {}) {
   const order = ROUTES[kind].filter(id => fits(id) && !avoid.includes(id));
   let model = null, why = kind, note = '';
   if (o.want) {
-    const w = String(o.want);
+    const w = activeModel(String(o.want));
     if(kind==='review'&&o.named&&avoid.includes(w))return {model:null,why:'named',kind,fallbacks:[],error:'independent_review_model',note:'指定模型是被复核任务的实际作者，不能作为独立复核模型，请选择其他模型。'};
     if (fits(w) && (o.named && kind!=='review' || !avoid.includes(w))) { model = w; why = o.named ? 'named' : 'picked'; }
     else if (known(w)) note = modelLabel(w) + (o.images && (runtime.isAgyModel(w) || !codexModel(w).image) ? ' 看不了图' : ' 这次不合适') + '，换成了别的';

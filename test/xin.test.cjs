@@ -336,21 +336,21 @@ test('系统提示里列出了 xin 的全部动作', async () => {
 test('思考强度：只认这个模型真正支持的档位，别的（以前的 auto、空的、别家的档）用默认 high', async () => {
   const { resolveEffort, effortSpec } = await load('../site/xin/vm-agent.mjs');
   assert.deepStrictEqual(effortSpec('harness').efforts, ['off', 'low', 'high', 'max']);
-  for (const m of ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']) assert.deepStrictEqual(effortSpec('codex', m).efforts, ['low', 'high', 'max'], m);
+  for (const m of ['glm-5.3-flash', 'glm-5.4', 'kimi-k3.1-pro']) assert.deepStrictEqual(effortSpec('codex', m).efforts, ['low', 'high', 'max'], m);
   // 天启（Harness）也能用 Kimi K3.1 Pro（站长 11-20），和 GLM 一样三档
-  for (const m of ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']) assert.deepStrictEqual(effortSpec('harness', m).efforts, ['low', 'high', 'max'], m);
+  for (const m of ['glm-5.3-flash', 'glm-5.4', 'kimi-k3.1-pro']) assert.deepStrictEqual(effortSpec('harness', m).efforts, ['low', 'high', 'max'], m);
   assert.deepStrictEqual(effortSpec('codex', 'deepseek-v4.1-flash').efforts, ['off', 'low', 'high', 'max']);
-  assert.strictEqual(resolveEffort('harness', 'glm-5.3', 'off'), 'high');
+  assert.strictEqual(resolveEffort('harness', 'glm-5.4', 'off'), 'high');
   assert.strictEqual(resolveEffort('codex', 'deepseek-v4.1-flash', 'off'), 'off');
   assert.deepStrictEqual(effortSpec('claude').efforts, ['low', 'medium', 'high', 'xhigh', 'max']);
   assert.strictEqual(resolveEffort('harness', null, 'off'), 'off');
   assert.strictEqual(resolveEffort('harness', null, 'max'), 'max');
-  assert.strictEqual(resolveEffort('codex', 'glm-5.3', 'off'), 'high');      // GLM 不能关思考
+  assert.strictEqual(resolveEffort('codex', 'glm-5.4', 'off'), 'high');      // GLM 不能关思考
   assert.strictEqual(resolveEffort('codex', 'kimi-k3.1-pro', 'low'), 'low');
   assert.strictEqual(resolveEffort('codex', 'glm-5.3-flash', 'xhigh'), 'high');
   assert.strictEqual(resolveEffort('claude', null, 'xhigh'), 'xhigh');
   assert.strictEqual(resolveEffort('claude', null, 'off'), 'high');
-  for (const e of ['auto', '', undefined, 'MAX']) assert.strictEqual(resolveEffort('codex', 'glm-5.3', e), 'high', String(e));
+  for (const e of ['auto', '', undefined, 'MAX']) assert.strictEqual(resolveEffort('codex', 'glm-5.4', e), 'high', String(e));
 });
 
 test('思考强度：Codex 用 -c model_reasoning_effort（续接也带），Claude 用 --effort；不指定就不加', async () => {
@@ -855,20 +855,25 @@ test('插件：只列用户自己装的（电脑自带的不显示、不让关�
   process.env.XIN_HOME = xinDir; process.env.CODEX_HOME = codexHome; process.env.XIN_CODEX_SYS = sys;
   try {
     // 换了 XIN_HOME 要重新载入（BASE 在载入时定好），后面加个参数当成新模块
-    const { mcpFlags, agentArgs } = await import(freshAgentUrl('plug'));
+    const { mcpFlags, agentArgs, CODEX_MODELS } = await import(freshAgentUrl('plug'));
     assert.deepStrictEqual(mcpFlags(), ['-c', 'mcp_servers.rea.enabled=true']);
-    // glm-5.3-flash 看不了图：图片不用 -i
-    const [, a] = agentArgs('codex', { started: false }, '你好', '', { images: ['/data/workspace/uploads/1/a.png', '/data/workspace/uploads/1/b.jpg'] });
+    // 纯文本模型只拿文件路径。当前供应商目录没有纯文本模型，用独立测试条目保留这条保证。
+    const textOnly = { ...CODEX_MODELS[0], id: 'fixture-text-only', image: false };
+    CODEX_MODELS.push(textOnly);
+    let a, b;
+    try {
+      [, a] = agentArgs('codex', { started: false }, '你好', '', { model:textOnly.id, images: ['/data/workspace/uploads/1/a.png', '/data/workspace/uploads/1/b.jpg'] });
+      [, b] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '你好', '', { model:textOnly.id, images: ['/x/a.png'] });
+    } finally { CODEX_MODELS.pop(); }
     assert.deepStrictEqual(a.slice(0, 2), ['exec', '--json']);
     assert.ok(!a.includes('-i'));
     assert.ok(a.join(' ').includes('-c mcp_servers.rea.enabled=true') && !a.join(' ').includes('instabox'));
-    const [, b] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '你好', '', { images: ['/x/a.png'] });
     assert.deepStrictEqual(b.slice(0, 3), ['exec', 'resume', '--json']);
     assert.deepStrictEqual(b.slice(-2), ['th-1', '你好']);
   } finally { [process.env.XIN_HOME, process.env.CODEX_HOME, process.env.XIN_CODEX_SYS] = saved; }
 });
 
-test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3-flash，不认识的当默认）；模型资料照抄一份补上这几个模型；看不了图的不用 -i；key 先用 codex.key，没有用 harness.key', async () => {
+test('Codex 每轮显式指定本地网关、模型和图文能力，旧 GLM 标识也按 5.4 执行，key 先用 codex.key', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-cxroute-'));
   const codexHome = path.join(tmp, 'codex'), xinDir = path.join(tmp, 'xin');
   fs.mkdirSync(codexHome); fs.mkdirSync(xinDir);
@@ -884,23 +889,25 @@ test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3
     const cs = a.filter((x, i) => a[i - 1] === '-c');
     const cat = path.join(xinDir, 'codex-models.json');
     for (const want of ['model_provider="xin-gateway"', 'model_providers.xin-gateway.base_url="http://127.0.0.1:8788/v1"', 'model_providers.xin-gateway.wire_api="responses"',
-      'model_providers.xin-gateway.env_key="XIN_CODEX_KEY"', 'model="glm-5.3-flash"', 'model_context_window=1000000', 'model_catalog_json=' + JSON.stringify(cat)])
+      'model_providers.xin-gateway.env_key="XIN_CODEX_KEY"', 'model="glm-5.4"', 'model_context_window=1000000', 'model_catalog_json=' + JSON.stringify(cat)])
       assert.ok(cs.includes(want), want + ' 不在 ' + JSON.stringify(cs));
-    assert.deepStrictEqual(CODEX_MODELS.map(m => m.id), ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash']);
+    assert.deepStrictEqual(CODEX_MODELS.map(m => m.id), ['glm-5.4', 'kimi-k3.1-pro', 'deepseek-v4.1-flash']);
     const list = JSON.parse(fs.readFileSync(cat, 'utf8')).models;
-    assert.deepStrictEqual(list.map(m => m.slug), ['gpt-5.5', 'deepseek-v4.1-flash', 'glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']);
+    assert.deepStrictEqual(list.map(m => m.slug), ['gpt-5.5', 'deepseek-v4.1-flash', 'glm-5.4', 'kimi-k3.1-pro']);
     const g = list[2];
-    assert.deepStrictEqual([g.display_name, g.context_window, g.max_context_window, g.input_modalities, g.model_messages], ['GLM-5.3 Flash', 1000000, 1000000, ['text'], { instructions_template: 'T' }]);
-    assert.deepStrictEqual([list[3].display_name, list[3].input_modalities, list[4].display_name, list[4].input_modalities], ['GLM-5.3', ['text', 'image'], 'Kimi K3.1 Pro', ['text', 'image']]);
+    assert.deepStrictEqual([g.display_name, g.context_window, g.max_context_window, g.input_modalities, g.model_messages], ['GLM-5.4', 1000000, 1000000, ['text', 'image'], { instructions_template: 'T' }]);
+    assert.deepStrictEqual([list[3].display_name, list[3].input_modalities], ['Kimi K3.1 Pro', ['text', 'image']]);
     // 换模型：能看图的用 -i；不认识的当默认
     const [, k] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '看图', '', { model: 'kimi-k3.1-pro', images: ['/x/a.png'] });
-    assert.ok(k.includes('model="kimi-k3.1-pro"') && !k.includes('model="glm-5.3-flash"'));
+    assert.ok(k.includes('model="kimi-k3.1-pro"') && !k.includes('model="glm-5.4"'));
     assert.deepStrictEqual(k.slice(0, 4), ['exec', 'resume', '-i', '/x/a.png']);
-    const [, f] = agentArgs('codex', { started: false }, '看图', '', { model: 'gpt-9', images: ['/x/a.png'] });
-    assert.ok(f.includes('model="glm-5.3-flash"') && !f.includes('-i'));
+    for (const model of ['gpt-9', 'glm-5.3', 'glm-5.3-flash']) {
+      const [, f] = agentArgs('codex', { started: false }, '看图', '', { model, images: ['/x/a.png'] });
+      assert.ok(f.includes('model="glm-5.4"') && f.includes('-i'), model);
+    }
     // 续接也带
     const [, b] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '再说', '');
-    assert.ok(b.includes('model="glm-5.3-flash"') && b.slice(-2).join() === 'th-1,再说');
+    assert.ok(b.includes('model="glm-5.4"') && b.slice(-2).join() === 'th-1,再说');
     assert.deepStrictEqual(codexKeyEnv(), { XIN_CODEX_KEY: 'hk' });
     fs.writeFileSync(path.join(xinDir, 'codex.key'), 'ck\n');
     assert.deepStrictEqual(codexKeyEnv(), { XIN_CODEX_KEY: 'ck' });
@@ -908,7 +915,7 @@ test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3
     fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "x"\n');
     fs.rmSync(cat);
     const [, c] = agentArgs('codex', { started: false }, '你好', '');
-    assert.ok(c.includes('model="glm-5.3-flash"') && !c.some(x => x.startsWith('model_catalog_json')));
+    assert.ok(c.includes('model="glm-5.4"') && !c.some(x => x.startsWith('model_catalog_json')));
   } finally { [process.env.XIN_HOME, process.env.CODEX_HOME] = saved; }
 });
 
@@ -954,8 +961,8 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   assert.ok(!request.instructions.includes('必须交给 vision 工作读取'));
   assert.strictEqual(op('tasks',{sid:r.sid}).tasks.length,0,'前台读图回答没有派后台任务');
   assert.equal(p.events.find(e=>e.t==='done').model,'deepseek-v4.1-flash');
-  // 用户点名 GLM-5.3：这一句用它（网页传的 model / effort 不管），图片照样 -i，悄悄告诉它别提换模型；对话上记下最近用的模型
-  const r2 = op('send', { sid: r.sid, model: 'kimi-k3.1-pro', effort: 'low', text: '用 GLM-5.3 看看这张呢', files: [{ path: img, name: '板子.jpg' }] });
+  // 用户点名 GLM-5.4：这一句用它（网页传的 model / effort 不管），图片照样 -i，悄悄告诉它别提换模型；对话上记下最近用的模型
+  const r2 = op('send', { sid: r.sid, model: 'kimi-k3.1-pro', effort: 'low', text: '用 GLM-5.4 看看这张呢', files: [{ path: img, name: '板子.jpg' }] });
   assert.ok(r2.run, JSON.stringify(r2));
   assert.strictEqual(r2.model, 'deepseek-v4.1-flash');
   for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r2.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
@@ -964,7 +971,7 @@ test('发文件：send 带 files（只认上传目录里的普通文件）；消
   assert.ok(JSON.stringify(request2).includes('本轮已记录用户指定'));
   assert.deepEqual([p.events.find(e=>e.t==='done').model,p.events.find(e=>e.t==='done').why],['deepseek-v4.1-flash','chat']);
   assert.equal(op('sessions').sessions.find(x=>x.sid===r.sid).model,'deepseek-v4.1-flash');
-  // 点名看不了图的 GLM-5.3 Flash 却发了图：路由器不让，换成能看图的（前台默认那个）
+  // 旧 Flash 点名仍然能解析，前台回答使用同一条独立模型路由。
   const r3 = op('send', { sid: r.sid, text: '用 GLM-5.3 Flash 看图', files: [{ path: img, name: '板子.jpg' }] });
   assert.strictEqual(r3.model, 'deepseek-v4.1-flash');
   for (const end = performance.now() + platformTimeout(15000); performance.now() < end;) { p = op('poll', { run: r3.run, off: 0 }); if (p.done) break; await new Promise(ok => setTimeout(ok, 150)); }
@@ -980,35 +987,37 @@ test('路由器：按类别挑（不是排名）；点名只认能干的（看�
   for (const k of Object.keys(ROUTES)) for (const id of ROUTES[k]) assert.ok(CODEX_MODELS.some(m => m.id === id), k + ':' + id);
   assert.deepStrictEqual(route({}), { model: 'deepseek-v4.1-flash', why: 'chat', kind: 'chat', fallbacks: [], note: '' });
   // 站长 11-19：杂活、查资料、看图、每日任务、电脑维护用 DeepSeek；Kimi 只写代码（含前端）；GLM 只写代码和检查
-  assert.deepStrictEqual(ROUTES, { chat: ['deepseek-v4.1-flash'], quick: ['deepseek-v4.1-flash'], code: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'], research: ['deepseek-v4.1-flash'],
-    hard: ['glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'], vision: ['deepseek-v4.1-flash'], review: ['glm-5.3', 'deepseek-v4.1-flash'], daily: ['deepseek-v4.1-flash'], system: ['deepseek-v4.1-flash'] });
+  assert.deepStrictEqual(ROUTES, { chat: ['deepseek-v4.1-flash'], quick: ['deepseek-v4.1-flash'], code: ['glm-5.4', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'], research: ['deepseek-v4.1-flash'],
+    hard: ['glm-5.4', 'kimi-k3.1-pro', 'deepseek-v4.1-flash'], vision: ['deepseek-v4.1-flash'], review: ['glm-5.4', 'deepseek-v4.1-flash'], daily: ['deepseek-v4.1-flash'], system: ['deepseek-v4.1-flash'] });
   for (const [k, ids] of Object.entries(ROUTES)) {
     if (ids.includes('kimi-k3.1-pro')) assert.ok(['code', 'hard'].includes(k), 'Kimi 只写代码：' + k);
-    if (ids.includes('glm-5.3')) assert.ok(['code', 'hard', 'review'].includes(k), 'GLM 只写代码和检查：' + k);
+    if (ids.includes('glm-5.4')) assert.ok(['code', 'hard', 'review'].includes(k), 'GLM 只写代码和检查：' + k);
   }
-  assert.strictEqual(route({ kind: 'code' }).model, 'glm-5.3');
+  assert.strictEqual(route({ kind: 'code' }).model, 'glm-5.4');
   assert.strictEqual(route({ kind: 'quick' }).model, 'deepseek-v4.1-flash');
   assert.strictEqual(route({ kind: 'nope' }).kind, 'chat');
-  // 看图：看不了图的 GLM-5.3 Flash 不在候选里，点名它也不给
+  // 看图使用支持图片的路由，老 Flash 点名解析成现在的 GLM-5.4。
   assert.deepStrictEqual(route({ kind: 'quick', images: true }).fallbacks, []);
   assert.strictEqual(route({ kind: 'quick', images: true }).model, 'deepseek-v4.1-flash');
   const v = route({ want: 'glm-5.3-flash', named: true, images: true });
-  assert.deepStrictEqual([v.model, v.why], ['deepseek-v4.1-flash', 'chat']);
-  assert.match(v.note, /GLM-5.3 Flash 看不了图/);
+  assert.deepStrictEqual([v.model, v.why, v.note], ['glm-5.4', 'named', '']);
+  const unsupported = route({ kind:'code', want:'gemini-4-hydrogen', named:true, images:true });
+  assert.equal(unsupported.model, 'glm-5.4');
+  assert.match(unsupported.note, /看不了图/);
   // 点名、提议
   assert.deepStrictEqual([route({ want: 'kimi-k3.1-pro', named: true }).model, route({ want: 'kimi-k3.1-pro', named: true }).why], ['kimi-k3.1-pro', 'named']);
   assert.deepStrictEqual([route({ kind: 'code', want: 'deepseek-v4.1-flash' }).model, route({ kind: 'code', want: 'deepseek-v4.1-flash' }).why], ['deepseek-v4.1-flash', 'picked']);
   assert.match(route({ kind: 'code', want: 'gpt-9' }).note, /没有叫 gpt-9 的模型/);
-  assert.strictEqual(route({ kind: 'code', want: 'gpt-9' }).model, 'glm-5.3');
+  assert.strictEqual(route({ kind: 'code', want: 'gpt-9' }).model, 'glm-5.4');
   // 复核不能使用实际作者，即使点名也不能绕过；普通任务仍尊重点名。
-  assert.strictEqual(route({ kind: 'review', avoid: ['kimi-k3.1-pro'] }).model, 'glm-5.3');
-  assert.strictEqual(route({ kind: 'review', want: 'kimi-k3.1-pro', avoid: ['kimi-k3.1-pro'] }).model, 'glm-5.3');
+  assert.strictEqual(route({ kind: 'review', avoid: ['kimi-k3.1-pro'] }).model, 'glm-5.4');
+  assert.strictEqual(route({ kind: 'review', want: 'kimi-k3.1-pro', avoid: ['kimi-k3.1-pro'] }).model, 'glm-5.4');
   assert.strictEqual(route({ kind: 'review', want: 'kimi-k3.1-pro', named: true, avoid: ['kimi-k3.1-pro'] }).error, 'independent_review_model');
   assert.strictEqual(route({kind:'code',want:'kimi-k3.1-pro',named:true,avoid:['kimi-k3.1-pro']}).model,'kimi-k3.1-pro');
-  assert.strictEqual(route({ kind: 'hard', images: true, avoid: ['kimi-k3.1-pro', 'glm-5.3', 'deepseek-v4.1-flash'] }).model, 'glm-5.3');
+  assert.strictEqual(route({ kind: 'hard', images: true, avoid: ['kimi-k3.1-pro', 'glm-5.4', 'deepseek-v4.1-flash'] }).model, 'glm-5.4');
   // 用户点名：要有「用 / 换成 / 让…」或者「…来做」，光提到名字不算
-  for (const [t, want] of [['用 Kimi 检查一下', 'kimi-k3.1-pro'], ['换成GLM-5.3 Flash', 'glm-5.3-flash'], ['这次用glm5.3写', 'glm-5.3'], ['用 GLM 写', 'glm-5.3'],
-    ['让 DeepSeek 来回答', 'deepseek-v4.1-flash'], ['kimi 来做这个', 'kimi-k3.1-pro'], ['改用 deepseek v4.1 flash', 'deepseek-v4.1-flash'], ['交给智谱', 'glm-5.3'],
+  for (const [t, want] of [['用 Kimi 检查一下', 'kimi-k3.1-pro'], ['换成GLM-5.3 Flash', 'glm-5.4'], ['这次用glm5.3写', 'glm-5.4'], ['用 GLM-5.4 写', 'glm-5.4'], ['用 GLM 写', 'glm-5.4'],
+    ['让 DeepSeek 来回答', 'deepseek-v4.1-flash'], ['kimi 来做这个', 'kimi-k3.1-pro'], ['改用 deepseek v4.1 flash', 'deepseek-v4.1-flash'], ['交给智谱', 'glm-5.4'],
     ['Kimi 是什么', null], ['GLM 和 DeepSeek 哪个好', null], ['用定时器做呼吸灯', null], ['', null]])
     assert.strictEqual(namedModel(t), want, t);
 });
@@ -1097,17 +1106,17 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   const r = op('send', { agent: 'codex', text: '请 TEST_DISPATCH 一下' });
   const front = await until(() => { const p = op('poll', { run: r.run, off: 0 }); return p.done && p; }, 15000, '前台这一轮');
   const card = front.events.find(e => e.t === 'task');
-  assert.ok(card && card.no === 1 && card.title === '编译 LED' && card.kind === 'code' && card.model === 'glm-5.3', JSON.stringify(front.events));
+  assert.ok(card && card.no === 1 && card.title === '编译 LED' && card.kind === 'code' && card.model === 'glm-5.4', JSON.stringify(front.events));
   assert.deepStrictEqual(front.events.filter(e => e.t === 'text').map(e => e.text), ['好的'], '派活后用模型自己的话，不套固定一句');
   assert.ok(!fs.existsSync(path.join(fc.log,'xin-out')), '前台不执行 shell');
   const done = await until(() => { const d = op('tasks', { sid: r.sid }); return d.tasks[0] && d.tasks[0].status === 'done' && d.tasks[0].delivery?.state==='delivered' && d; }, 15000, '任务做完并自动交付');
   const t = done.tasks[0];
-  assert.deepStrictEqual([t.no, t.parent, t.kind, t.model, t.why, t.result.ok, t.result.text], [1, r.sid, 'code', 'glm-5.3', 'code', true, '编好了：/data/workspace/blink/build/app.hex']);
+  assert.deepStrictEqual([t.no, t.parent, t.kind, t.model, t.why, t.result.ok, t.result.text], [1, r.sid, 'code', 'glm-5.4', 'code', true, '编好了：/data/workspace/blink/build/app.hex']);
   assert.strictEqual(t.dir, path.join(work, 'tasks', '1-编译-LED'));
   assert.strictEqual(done.bg, 0);
   // 分身那一轮：在自己的目录里、沙盒、思考强度最高、设定是分身的
   const all = fc.args(), ta = all.find(a => a.includes('【你现在在后台】')).split('\n');
-  assert.ok(ta.includes('default_permissions="xin-task"') && ta.some(x => x.startsWith('permissions.xin-task.filesystem=')) && !ta.includes('--dangerously-bypass-approvals-and-sandbox') && ta.includes('model="glm-5.3"') && ta.includes('model_reasoning_effort="max"'));
+  assert.ok(ta.includes('default_permissions="xin-task"') && ta.some(x => x.startsWith('permissions.xin-task.filesystem=')) && !ta.includes('--dangerously-bypass-approvals-and-sandbox') && ta.includes('model="glm-5.4"') && ta.includes('model_reasoning_effort="max"'));
   assert.notStrictEqual(ta[ta.indexOf('-C') + 1], t.dir);
   assert.ok(ta[ta.indexOf('-C') + 1].includes('xin-task-'));
   const cwds = fs.readdirSync(fc.log).filter(f => f.startsWith('cwd.')).map(f => fs.readFileSync(path.join(fc.log, f), 'utf8').trim());
@@ -1137,7 +1146,7 @@ test('后台任务：前台派分身马上回话；分身在自己的目录、�
   assert.ok(!p3.includes('<后台任务>') && !p3all.includes('<后台任务>') && !p3all.includes('任务 1「编译 LED」做完了'), p3.slice(-300));
   // 运行记录里也有分身那一轮
   const stats = fs.readFileSync(path.join(xin, 'model-stats.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
-  assert.ok(stats.some(x => x.kind === 'code' && x.model === 'glm-5.3' && x.ok));
+  assert.ok(stats.some(x => x.kind === 'code' && x.model === 'glm-5.4' && x.ok));
   // 有任务在做时不让删对话；都做完了删对话连任务一起删
   assert.strictEqual(op('forget', { sid: r.sid }).ok, true);
   assert.strictEqual(fs.existsSync(path.join(xin, 'sessions', t.sid + '.json')), false);
@@ -1155,7 +1164,7 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   const env = Object.assign({}, process.env, actor, { XIN_HOME: xin, XIN_WORK: work, PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
   const xinTask = (...a) => { try { return execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString(); } catch (e) { return String(e.stdout || '') + String(e.stderr || ''); } };
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
-  assert.match(xinTask('new', '--title', 'A', '--dir', path.join(work, 'blink'), '--', '改 blink'), /任务 1「A」/);
+  assert.match(xinTask('new', '--title', 'A', '--dir', path.join(work, 'blink'), '--model', 'glm-5.3-flash', '--', '改 blink'), /任务 1「A」（写代码，GLM-5.4/);
   assert.match(xinTask('new', '-t', 'B', '-d', 'blink', '-k', 'quick', '--', '再改 blink'), /任务 2「B」（杂活，DeepSeek V4.1 Flash/);
   assert.match(xinTask('new', '--title', 'C', '--kind', 'research', '--model', 'deepseek-v4.1-flash', '--', '查资料'), /任务 3「C」（查资料，DeepSeek V4.1 Flash/);
   const st = () => Object.fromEntries(op('tasks', { sid: r.sid }).tasks.map(t => [t.title, t.status]));
@@ -1204,7 +1213,7 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   await until(() => op('tasks', { sid: r.sid }).tasks.find(t => t.title === 'D').status === 'done', 15000, 'D 做完');
   assert.ok(fc.args().some(x => x.includes('用户回复：删吧') && x.includes('（你之前问的是：要删掉旧的 build 目录吗）')));
   // 分身里不能再派分身、不能停别的任务；xin task list / show
-  assert.match(xinTask('list'), /任务 1「A」做完了（写代码，GLM-5.3）[\s\S]*任务 3「C」已停止/);
+  assert.match(xinTask('list'), /任务 1「A」做完了（写代码，GLM-5.4）[\s\S]*任务 3「C」已停止/);
   assert.match(xinTask('show', '1'), /工作目录：.*blink[\s\S]*最近执行的命令：\n  ✓ make[\s\S]*结果：编好了/);
 });
 
@@ -1275,7 +1284,7 @@ test('分身配合：--review 做完再派一个分身换个模型、在同一�
   const xinTask = (...a) => execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString();
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
   const out = xinTask('new', '--kind', 'code', '--title', '点灯', '--dir', 'pb5', '--review', '--', '写 PB5 点灯并编译');
-  assert.match(out, /任务 1「点灯」（写代码，GLM-5.3，[\s\S]*检查任务 2（DeepSeek V4.1 Flash）等它做完就开始/);
+  assert.match(out, /任务 1「点灯」（写代码，GLM-5.4，[\s\S]*检查任务 2（DeepSeek V4.1 Flash）等它做完就开始/);
   assert.match(xinTask('new', '--kind', 'research', '--title', '接着查', '--after', '1', '--', '在点灯基础上查串口'), /任务 3「接着查」/);
   const ts = () => op('tasks', { sid: r.sid }).tasks;
   let list = await until(() => { const x = ts(); return x.length === 3 && x[0].status === 'running' && x; }, 15000, '任务 1 在做');
@@ -1295,7 +1304,7 @@ test('分身配合：--review 做完再派一个分身换个模型、在同一�
   const all = op('tasks', { all: true });
   assert.deepStrictEqual(all.tasks.map(t => t.no), [1, 2, 3]);
   assert.strictEqual(all.titles[r.sid], '你好');
-  assert.ok(all.stats.some(x => x.model === 'glm-5.3' && x.n >= 1 && x.ok >= 1) && all.stats.some(x => x.model === 'deepseek-v4.1-flash'));   // 检查换成 DeepSeek（检查只用 GLM 或 DeepSeek，避开作者 GLM）
+  assert.ok(all.stats.some(x => x.model === 'glm-5.4' && x.n >= 1 && x.ok >= 1) && all.stats.some(x => x.model === 'deepseek-v4.1-flash'));   // 检查换成 DeepSeek（检查只用 GLM 或 DeepSeek，避开作者 GLM）
   assert.ok(all.daily && 'last' in all.daily && all.daily.today);
 });
 
@@ -1397,16 +1406,16 @@ test('Harness（天启）：dsh headless --json 起，带天启自己的设定�
   assert.ok(op('plugin_set', { agent: 'harness', name: 'purge', on: false }).ok);
   const r3 = op('send', { sid: r.sid, text: '切换到 GLM', model: 'glm-5.3', effort: 'off' });
   assert.ok((await poll(r3.run)).events.pop().ok);
-  const offFile = path.join(xin, 'harness-persona.glm-5.3.high.purge-off.yml'), offPatch = fs.readFileSync(offFile, 'utf8');
-  assert.ok(offPatch.includes('    model: "glm-5.3"\n    reasoningEffort: high\n'));
+  const offFile = path.join(xin, 'harness-persona.glm-5.4.high.purge-off.yml'), offPatch = fs.readFileSync(offFile, 'utf8');
+  assert.ok(offPatch.includes('    model: "glm-5.4"\n    reasoningEffort: high\n'));
   assert.ok(offPatch.includes('contextWindow: 1000000') && offPatch.endsWith('- id: dsh-purge\n  config:\n    enabled: false\n'));
-  assert.strictEqual(op('history', { sid: r.sid }).session.model, 'glm-5.3');
+  assert.strictEqual(op('history', { sid: r.sid }).session.model, 'glm-5.4');
   assert.ok(op('plugin_set', { agent: 'harness', name: 'purge', on: true }).ok);
   const r4 = op('send', { sid: r.sid, text: '保留这个模型' });
   assert.ok((await poll(r4.run)).events.pop().ok);
-  assert.ok(fs.readFileSync(path.join(xin, 'harness-persona.glm-5.3.high.purge-on.yml'), 'utf8').endsWith('    enabled: true\n'));
+  assert.ok(fs.readFileSync(path.join(xin, 'harness-persona.glm-5.4.high.purge-on.yml'), 'utf8').endsWith('    enabled: true\n'));
   assert.strictEqual(fs.readFileSync(offFile, 'utf8'), offPatch);
-  assert.strictEqual(op('history', { sid: r.sid }).session.model, 'glm-5.3');
+  assert.strictEqual(op('history', { sid: r.sid }).session.model, 'glm-5.4');
   assert.deepStrictEqual(op('plugins', { agent: 'claude' }).plugins, []);
   // 清旧记录：Harness 的会话号不算坏文件；对话还在，不删
   assert.deepStrictEqual(op('prune'), { codex: 0, claude: 0, harness: 0, bytes: 0 });
@@ -1438,7 +1447,7 @@ test('发文件提示：Codex / Harness / Claude 按能不能看图写清楚；H
   const mix = img.concat([{ path: '/data/workspace/uploads/b.pdf', name: 'b.pdf', size: 4, image: false }]);
   assert.ok(filesPart(img, 'codex', true).includes('图片已经直接给你看了。'));
   assert.ok(filesPart(img, 'codex', false).includes('看不了图片内容'));
-  assert.ok(filesPart(img, 'harness', true).includes('用工具打开上面的路径就能看') && !filesPart(img, 'harness', true).includes('已经直接给你看了'));
+  assert.ok(filesPart(img, 'harness', true).includes('用 read_image 打开上面列出的图片路径') && !filesPart(img, 'harness', true).includes('已经直接给你看了'));
   assert.ok(filesPart(img, 'harness', false).includes('看不了图片内容'));
   assert.ok(filesPart(img, 'claude', true).includes('图片用 Read 工具打开就能看'));
   assert.ok(filesPart(mix, 'harness', false).includes('a.png') && filesPart(mix, 'harness', false).includes('b.pdf'));
