@@ -6,13 +6,15 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import net from 'node:net';
 import dns from 'node:dns';
-import { spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { browserBroker } from './vm-browser.mjs';
 import { steerBlock, LATE_STEER, LATE_STEER_MAX, DELIVERY, NOTE_UNCONFIRMED_TEXT } from './vm-steer.mjs';
 
 const mkdir = p => fs.mkdirSync(p, { recursive: true });
 const hash = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const under = (p, root) => p === root || p.startsWith(root + path.sep);
+const SELF = fileURLToPath(import.meta.url);
 
 export function inventory(root) {
   const out = {};
@@ -122,6 +124,90 @@ export function prepareWorkspace(t, controller) {
   fs.writeFileSync(manifest, JSON.stringify({ original: fs.realpathSync(t.dir), before }), { mode: 0o600 });
   installTaskBridge({ home }, { shellEnvironment: true });
   return { work, io, home, tmp: path.join(root, 'tmp'), manifest,stm32:detectStm32(t.dir,Object.keys(before)) };
+}
+
+function preparePrivateCopy(sid, dir, stage) {
+  try {
+    if (!/^s[0-9a-z]{6,24}$/.test(sid) || fs.realpathSync(dir) !== dir) throw Error('项目目录已改变');
+    const { work, manifest, stm32 } = prepareWorkspace({ sid, dir }, path.join(stage, 'controller'));
+    const before = JSON.parse(fs.readFileSync(manifest, 'utf8')).before, copied = inventory(work);
+    if (Object.keys(before).length !== Object.keys(copied).length || Object.entries(copied).some(([name, digest]) => before[name] !== digest))
+      throw Error('准备副本期间项目文件发生变化，请重新开始');
+    process.stdout.write(JSON.stringify({ stm32 }));
+  } catch (error) {
+    process.stdout.write(JSON.stringify({ error: String(error.message).slice(0, 500) }));
+  }
+}
+
+export function startWorkspaceCopy(t, controller) {
+  const base = taskRoot(controller);
+  mkdir(base);
+  if (!fs.lstatSync(base).isDirectory()) throw Error('任务副本目录无效');
+  fs.chmodSync(base, 0o700);
+  const stage = fs.mkdtempSync(path.join(base, '.prepare-' + t.sid + '-'));
+  let child;
+  const ready = new Promise(resolve => {
+    child = execFile(process.execPath, [SELF, 'prepare-workspace', t.sid, t.dir, stage],
+      { timeout: 45000, maxBuffer: 16384, env: { LANG: 'C.UTF-8' } }, (error, stdout) => {
+        if (!error) {
+          try {
+            const report = JSON.parse(stdout);
+            if (typeof report.stm32 === 'boolean') return resolve({ stage, stm32: report.stm32, sid: t.sid, dir: t.dir });
+            if (typeof report.error === 'string') return resolve({ error: report.error });
+          } catch { /* Report is missing or incomplete. */ }
+        }
+        resolve({ error: '项目副本准备进程未完成' });
+      });
+  }).catch(() => ({ error: '项目副本准备进程未能启动' }));
+  return { ready, async close() {
+    child?.kill();
+    await ready;
+    await new Promise(resolve => fs.rm(stage, { recursive: true, force: true }, () => resolve()));
+  } };
+}
+
+export function commitWorkspaceCopy(t, controller, prepared) {
+  const { stage, stm32 } = prepared;
+  const staging = path.join(stage, 'controller'), name = 'xin-task-' + t.sid;
+  const candidate = path.join(taskRoot(staging), name), root = path.join(taskRoot(controller), name);
+  if (prepared.sid !== t.sid || prepared.dir !== t.dir || fs.realpathSync(t.dir) !== t.dir) throw Error('项目目录已改变');
+  mkdir(path.join(controller, 'workspaces'));
+  const manifest = path.join(controller, 'workspaces', t.sid + '.json');
+  const tmp = manifest + '.' + crypto.randomUUID() + '.tmp';
+  const workspace = { work: path.join(root, 'work'), home: path.join(root, 'home'), io: path.join(root, 'io'),
+    tmp: path.join(root, 'tmp'), manifest, stm32 };
+  try {
+    // The queued task has never launched. Replace any leftover copy from a crashed promotion.
+    fs.copyFileSync(path.join(staging, 'workspaces', t.sid + '.json'), tmp, fs.constants.COPYFILE_EXCL);
+    if (!prepared.installed) {
+      const copy = fs.lstatSync(candidate, { bigint: true });
+      if (!copy.isDirectory()) throw Error('任务副本目录无效');
+      try { fs.renameSync(root, path.join(stage, 'previous')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      fs.renameSync(candidate, root);
+      prepared.installed = { dev: copy.dev, ino: copy.ino };
+    }
+    // The files may have moved before a state transaction rolled back. Retry the same copy.
+    const installed = fs.lstatSync(root, { bigint: true });
+    if (!installed.isDirectory() || installed.dev !== prepared.installed.dev || installed.ino !== prepared.installed.ino) throw Error('任务副本目录已改变');
+    installTaskBridge(workspace, { shellEnvironment: true });
+    fs.renameSync(tmp, manifest);
+  } finally { fs.rmSync(tmp, { force: true }); }
+  return workspace;
+}
+
+export async function pruneWorkspaceStages(controller, before = Date.now() - 86400e3) {
+  const base = taskRoot(controller);
+  const dir = await new Promise(resolve => fs.lstat(base, (_, stat) => resolve(stat)));
+  if (!dir?.isDirectory()) return;
+  const items = await new Promise(resolve => fs.readdir(base, { withFileTypes: true }, (_, entries) => resolve(entries || [])));
+  for (const entry of items) {
+    if (!entry.isDirectory() || !/^\.prepare-s[0-9a-z]{6,24}-[a-z0-9]{6}$/i.test(entry.name)) continue;
+    const stale = path.join(base, entry.name);
+    await new Promise(resolve => fs.lstat(stale, (error, stat) => {
+      if (error || !stat.isDirectory() || stat.mtimeMs >= before) return resolve();
+      fs.rm(stale, { recursive: true, force: true }, () => resolve());
+    }));
+  }
 }
 
 export function publicationPlan(t, controller) {
@@ -521,25 +607,44 @@ export function confinedMcp(t, base, server) {
 
 // The task receives a short-lived inference-only credential, never the reusable gateway key.
 // The controller pins the model and endpoint and caps request size, concurrency and total requests.
-export function requestBudget(file,limit=128,options={}) {
+export function requestBudget({ read, write }, limit=128, options={}) {
   limit=Math.min(512,Math.max(1,Math.floor(limit)));
-  const read=()=>{try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch{return {};}};
-  const save=value=>{
-    mkdir(path.dirname(file));const tmp=file+'.'+process.pid+'.tmp';
-    fs.writeFileSync(tmp,JSON.stringify({...value,limit,updated:Date.now()}),{mode:0o600});fs.renameSync(tmp,file);
-  };
+  const save = value => write({ ...value, limit, updated: Date.now() });
   const take=()=>{const b=read();if((b.used||0)>=limit||options.tokens>0&&(b.total||0)>=options.tokens)return false;save({...b,used:(b.used||0)+1,tokenLimit:options.tokens||null});return true;};
   take.recordUsage=u=>{const b=read();if(!u){save({...b,unknownUsage:(b.unknownUsage||0)+1});return;}const input=Math.max(0,Number(u.input_tokens)||0),output=Math.max(0,Number(u.output_tokens)||0),cached=Math.max(0,Number(u.input_tokens_details?.cached_tokens)||0);save({...b,input:(b.input||0)+input,output:(b.output||0)+output,cached:(b.cached||0)+cached,total:(b.total||0)+input+output});};
   take.recordCumulativeUsage=(provider,id,u)=>{
     const b=read(),key=provider+':'+id,previous=b.providerUsage?.[key]||{},next={};
     u={...u,total_tokens:u?.total_tokens??((Number(u?.input_tokens)||0)+(Number(u?.output_tokens)||0))};
-    for(const k of ['input_tokens','output_tokens','cache_read_tokens','total_tokens']){next[k]=Math.max(0,Number(u?.[k])||0);if(next[k]<(previous[k]||0))throw Error('供应商累计用量倒退，未重复记账');}
+    for(const k of ['input_tokens','output_tokens','cache_read_tokens','total_tokens']){next[k]=Math.max(0,Number(u?.[k])||0);if(next[k]<(previous[k]||0))throw Object.assign(Error('供应商累计用量倒退，未重复记账'),{code:'budget_regression'});}
     const delta=Object.fromEntries(Object.keys(next).map(k=>[k,next[k]-(previous[k]||0)]));
     // Antigravity's result usage covers the WHOLE resumed conversation. Store
     // the watermark with the budget, so both later turns and restarts use deltas.
     save({...b,input:(b.input||0)+delta.input_tokens,output:(b.output||0)+delta.output_tokens,cached:(b.cached||0)+delta.cache_read_tokens,total:(b.total||0)+delta.total_tokens,providerUsage:{...b.providerUsage,[key]:next}});
     return delta;
   };
+  return take;
+}
+export function bridgedBudget(sid, run, lockedCall, defer) {
+  const cleanUsage = u => u ? { input_tokens: u.input_tokens, output_tokens: u.output_tokens,
+    cache_read_tokens: u.cache_read_tokens, total_tokens: u.total_tokens,
+    ...(u.input_tokens_details ? { input_tokens_details: { cached_tokens: u.input_tokens_details.cached_tokens } } : {}) } : null;
+  const apply = (action, args = {}) => {
+    const receipt = { sid, run, id: crypto.randomUUID(), action, ...args };
+    let res;
+    try {
+      res = lockedCall('tasks', 'task_budget', receipt, { deadlineMs: action === 'take' ? 15000 : 1000 });
+    } catch (error) {
+      const unavailable = ['owner_unavailable','state_busy','state_draining','state_disconnected','state_timeout','state_client_failed'];
+      if (action === 'take' || !defer || !unavailable.includes(error.code) || ![false,'unknown'].includes(error.executed)) throw error;
+      defer(receipt);
+      return {};
+    }
+    if (res?.error) throw Object.assign(Error(res.msg || res.error), { code: res.error });
+    return res;
+  };
+  const take = () => apply('take').allowed;
+  take.recordUsage = usage => apply('usage', { usage: cleanUsage(usage) });
+  take.recordCumulativeUsage = (provider, conversation, usage) => apply('cumulative', { provider, conversation, usage: cleanUsage(usage) }).delta;
   return take;
 }
 export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudget,socketPath}) {
@@ -1162,7 +1267,7 @@ export async function antigravityWork(t,options) {
     // 命令自己没跑起来（没有结果、退出码不为 0）：多半是我们这边调用出了问题（参数、版本），写明退出码，不记成 Gemini 不可用
     const result=r.result;if(!result&&r.code!==0)throw Error('Antigravity 没有返回结果，退出码 '+r.code+'，已保留进度');
     if(r.model!==provider)throw Error('Antigravity 实际模型与指定模型不一致');
-    if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);report({type:'xin.usage',usage:delta});}
+    if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);if(delta)report({type:'xin.usage',usage:delta});}
     else options.budget.recordUsage?.(null);
     if(r.code!==0||result?.status!=='SUCCESS'){
       try{quota=await readAntigravityQuota(binary,clientDir,model);options.quota(quota);}catch{}
@@ -1202,3 +1307,5 @@ export async function antigravityWork(t,options) {
   throw Error('Antigravity 达到本轮动作上限，进度已保留');
   }finally{network.close();}
 }
+
+if (process.argv[1] === SELF && process.argv[2] === 'prepare-workspace') preparePrivateCopy(...process.argv.slice(3));

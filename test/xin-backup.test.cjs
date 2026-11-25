@@ -194,3 +194,85 @@ test('backup_export：打一个包（状态库快照 + 对话过程、消息、�
   const op2 = vm(t, out);
   assert.deepEqual(op2('memory_export').items.map(i => i.content), ['讲代码先给结论'], '恢复后记忆照样读得出');
 });
+
+test('备份压缩期间状态进程能处理新写入，两个请求共享同一份归档输入', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-async-archive-'));
+  const home = path.join(root, 'xin'), bin = path.join(root, 'bin');
+  const marker = path.join(root, 'tar-started'), resume = path.join(root, 'tar-resume');
+  fs.mkdirSync(bin);
+  fs.mkdirSync(path.join(home, 'runs'), { recursive: true });
+  const run = path.join(home, 'runs', 'rarchive001.jsonl');
+  const before = '{"t":"user","text":"归档前的原话"}\n';
+  fs.writeFileSync(run, before);
+  fs.writeFileSync(path.join(home, 'daily.md'), '旧清单');
+  const tar = spawnSync('sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).stdout.trim();
+  assert.ok(path.isAbsolute(tar));
+  fs.writeFileSync(path.join(bin, 'tar'), '#!/bin/sh\nprintf x >> "$XIN_TAR_MARKER"\nwhile [ ! -f "$XIN_TAR_RESUME" ]; do sleep 0.05; done\nexec "$XIN_REAL_TAR" "$@"\n', { mode: 0o700 });
+  const env = { ...process.env, XIN_HOME: home, XIN_WORK: path.join(root, 'work'), XIN_SYSTEMD_BUS: path.join(root, 'no-bus'),
+    PATH: bin + ':' + process.env.PATH, XIN_TAR_MARKER: marker, XIN_TAR_RESUME: resume, XIN_REAL_TAR: tar };
+  const owner = require('./helpers/state-mode.cjs').stateMode(t, env);
+  t.after(async () => {
+    fs.writeFileSync(resume, '');
+    owner.child.stdin.end();
+    await owner.exited;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const { requestState } = await import('../site/xin/vm-kernel-client.mjs');
+  const call = (op, args = {}) => requestState(home, { kind: 'op', op, args }, { timeoutMs: 12000 });
+  const first = call('backup_export');
+  first.catch(() => {});
+  const until = performance.now() + 8000;
+  while (!fs.existsSync(marker) && performance.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
+  assert.ok(fs.existsSync(marker), 'archive subprocess started');
+  const second = call('backup_export');
+  second.catch(() => {});
+  const edited = await requestState(home, { kind: 'op', op: 'daily_set', args: { text: '新清单' } }, { timeoutMs: 2000 });
+  assert.equal(edited.ok, true);
+  fs.appendFileSync(run, '{"t":"text","text":"压缩期间的新事件"}\n');
+  fs.writeFileSync(resume, '');
+  const [original, repeat] = await Promise.all([first, second]);
+  assert.ok(original.ok, JSON.stringify(original));
+  assert.deepEqual(repeat, original);
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'x', 'only one tar subprocess');
+  const archived = name => spawnSync(tar, ['-xOzf', original.file, name], { encoding: 'utf8' }).stdout;
+  assert.equal(archived('daily.md'), '旧清单');
+  assert.equal(archived('runs/rarchive001.jsonl'), before);
+});
+
+test('异步复制 SQLite 时保留同一时点的文件与库快照，归档副本剔除已删除内容', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-backup-snapshot-'));
+  const { DatabaseSync } = require('node:sqlite');
+  const { createBackupExporter } = await import('../site/xin/vm-kernel-state.mjs');
+  const source = path.join(root, 'workflow.sqlite');
+  const db = new DatabaseSync(source);
+  t.after(() => { db.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  db.exec(`PRAGMA journal_mode=WAL; PRAGMA secure_delete=OFF;
+    CREATE TABLE launches (run TEXT PRIMARY KEY, state TEXT);
+    INSERT INTO launches VALUES ('rsnapshot01', 'dispatched');
+    CREATE TABLE memory (item TEXT);
+    INSERT INTO memory VALUES ('before'), ('deleted_fixture_do_not_export');
+    DELETE FROM memory WHERE item LIKE 'deleted%';
+    PRAGMA wal_checkpoint(TRUNCATE)`);
+  assert.ok(fs.readFileSync(source).includes('deleted_fixture_do_not_export'));
+  const daily = path.join(root, 'daily.md');
+  fs.writeFileSync(daily, 'old');
+  const exportBackup = createBackupExporter({ home: root, getDb: () => db, today: () => '2026-11-25' });
+  const backup = exportBackup();
+  db.exec("INSERT INTO memory VALUES ('after'); UPDATE launches SET state='completed'");
+  fs.writeFileSync(daily + '.tmp', 'new');
+  fs.renameSync(daily + '.tmp', daily);
+  const result = await backup;
+  assert.ok(result.ok, JSON.stringify(result));
+  const unpack = path.join(root, 'unpack'); fs.mkdirSync(unpack);
+  assert.equal(spawnSync('tar', ['-xzf', result.file, '-C', unpack]).status, 0);
+  assert.deepEqual(fs.readdirSync(unpack).sort(), ['daily.md', 'restore-stop.json', 'workflow.sqlite']);
+  assert.equal(fs.readFileSync(path.join(unpack, 'daily.md'), 'utf8'), 'old');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(unpack, 'restore-stop.json'))).runs, ['rsnapshot01']);
+  const snapshot = path.join(unpack, 'workflow.sqlite');
+  assert.ok(!fs.readFileSync(snapshot).includes('deleted_fixture_do_not_export'));
+  const restored = new DatabaseSync(snapshot, { readOnly: true });
+  try {
+    assert.deepEqual(restored.prepare('SELECT item FROM memory').all().map(r => r.item), ['before']);
+    assert.equal(restored.prepare('SELECT state FROM launches').get().state, 'pending');
+  } finally { restored.close(); }
+});

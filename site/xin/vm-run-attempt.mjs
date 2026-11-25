@@ -22,7 +22,7 @@ export const finalizationEnabled = (env = process.env) => env.XIN_RUN_FINALIZATI
 export const hasFinalization = m => m?.finalProtocol === 1 && /^r[0-9a-z]{6,24}$/.test(m.run) && /^[a-f0-9]{32}$/.test(m.attempt);
 const MAX_BYTES = 1024 * 1024;
 const DIGEST = /^[a-f0-9]{64}$/;
-const PHASES = ['prepared', 'steer', 'ready', 'intent', 'effects'];
+const PHASES = ['prepared', 'steer', 'budget', 'ready', 'intent', 'effects'];
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const object = value => value && Object.getPrototypeOf(value) === Object.prototype;
 const keys = (value, names) => object(value) && Object.keys(value).every(key => Object.hasOwn(names, key) && names[key](value[key]));
@@ -38,6 +38,16 @@ const browserCheck = x => keys(x, {ok:bool, error:string(1200), entry:string(204
 const changes = x => keys(x, {agentSid:string(100), started:bool, ctxWin:number, hUsage:usage, frontUsage:usage});
 const steerClaims = x => Array.isArray(x) && x.length > 0 && x.length <= 128 && x.every(id => typeof id === 'string' && /^[a-zA-Z0-9_-]{4,80}$/.test(id));
 const steer = x => keys(x, {prepared:hex, claims:steerClaims}) && hex(x.prepared) && steerClaims(x.claims);
+const budgetSample = x => keys(x, {
+  id: id => typeof id === 'string' && /^[a-f0-9-]{36}$/.test(id),
+  sid: sid => typeof sid === 'string' && /^s[0-9a-z]{6,24}$/.test(sid),
+  run: run => typeof run === 'string' && /^r[0-9a-z]{6,24}$/.test(run),
+  action: action => ['usage','cumulative'].includes(action),
+  provider: provider => provider === 'antigravity',
+  conversation: conversation => typeof conversation === 'string' && /^[0-9a-zA-Z_-]{1,96}$/.test(conversation),
+  usage: v => v === null || object(v)
+}) && typeof x.id === 'string' && typeof x.sid === 'string' && typeof x.run === 'string' && ['usage','cumulative'].includes(x.action);
+const budget = x => keys(x, {prepared:hex, samples:v=>Array.isArray(v)&&v.length<=128&&v.every(budgetSample)}) && hex(x.prepared) && Array.isArray(x.samples);
 const prepared = x => keys(x, {at, code:Number.isSafeInteger, ok:bool, timeout:bool, transient:bool, changes,
   usage: v => v === null || usage(v), delta:usage, cost:number, ms:number, reply:string(20000),
   model:string(128), providerModel:string(128), from:string(128), recordStats:bool}) &&
@@ -57,7 +67,7 @@ const preview = x => keys(x, {id:string(32), title:string(80), url:string(128), 
   /^[a-f0-9]{32}$/.test(x.id) && x.ready === true && x.url === '/xin/preview.html?id=' + x.id;
 const verification = x => keys(x, {applicable:bool, compiled:bool, reviewed:bool, hardware:bool}) && bool(x.applicable);
 const effects = x => keys(x, {intent:hex, publication, preview, verification, error:string(2000), retry:v=>v==='web'||v==='validation'}) && hex(x.intent);
-const validators = { prepared, steer, ready, intent, effects };
+const validators = { prepared, steer, budget, ready, intent, effects };
 const invalid = () => Object.assign(Error('收尾记录无法验证'), { code: 'finalization_invalid' });
 const conflict = () => Object.assign(Error('同一执行尝试的收尾内容发生冲突'), { code: 'finalization_conflict' });
 const absent = e => e.code === 'ENOENT';

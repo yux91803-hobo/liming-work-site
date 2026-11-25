@@ -66,6 +66,9 @@ export function codexCmd(c) {
   if (Array.isArray(c)) { const i = c.indexOf('-lc'); return i >= 0 && c[i + 1] ? c[i + 1] : c.join(' '); }
   return String(c || '');
 }
+export function appendBudgetSample(state, sample) {
+  if (sample && typeof sample === 'object') (state.budgetSamples ||= []).push(sample);
+}
 export function fromCodex(o, state) {
   const out = [];
   if (!o || typeof o !== 'object') return out;
@@ -75,6 +78,7 @@ export function fromCodex(o, state) {
     state.frontUsage={input,output,cached:p.cached+(u.cache_read_tokens||0),total:input+output,ctx:(u.input_tokens||0)+(u.output_tokens||0),win:1000000};return out;
   }
   if(o.type==='xin.steer_ack'&&typeof o.claim==='string'){state.ackedSteers=[...new Set([...(state.ackedSteers||[]),o.claim])].slice(-128);return out;}
+  if (o.type === 'xin.budget_usage') { appendBudgetSample(state, o.sample); return out; }
   if (o.type === 'thread.started') { if (o.thread_id) state.sid = o.thread_id; return out; }
   if (o.type === 'error') {
     const m = String(o.message || '');

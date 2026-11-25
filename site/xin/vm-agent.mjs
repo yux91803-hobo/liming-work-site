@@ -39,14 +39,13 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import * as runtime from './vm-runtime.mjs';
 import { createController } from './vm-kernel-controller.mjs';
-import { createStateServer, snapshotBeforeSwitch } from './vm-kernel-state.mjs';
+import { createBackupExporter, createStateServer, snapshotBeforeSwitch } from './vm-kernel-state.mjs';
 import { requestStateSync, retryLockedReport, waitForState, forwardCLI } from './vm-kernel-client.mjs';
 import { callContext, lockHeld } from './vm-kernel-context.mjs';
-import { initializeStateTables } from './vm-kernel-operations.mjs';
+import { initializeStateTables, stateLoginSave, taskBudget } from './vm-kernel-operations.mjs';
 import { checkControllers } from './vm-kernel-compat.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
@@ -57,7 +56,7 @@ import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './v
 import { loginStore, normalizeSite } from './vm-logins.mjs';
 import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
-import { fromClaude, fromCodex, fromHarness, stepActivity } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
+import { fromClaude, fromCodex, fromHarness, stepActivity, appendBudgetSample } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
 import { resolveEffort, HARNESS_WIN, harnessModel, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route, backgroundRoute } from './vm-models.mjs';
 import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, harnessPerm, harnessTurn, permError, workError, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch, harnessUsage } from './vm-persona.mjs';import { termOps } from './vm-persona.mjs';
 export * from './vm-base.mjs';
@@ -71,18 +70,18 @@ import {recallAll,turnGuidance,safeContextEvents,dropRecall} from './vm-context.
 import {dailyEvidence,dailyContext} from './vm-daily.mjs';
 import {openFrontProvider,preferredFrontModel,frontModelInfo,frontRouting,AGY_FRONT_MODEL} from './vm-front-agy.mjs';
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
-import { createDispatcher } from './vm-dispatch.mjs';
+import { createDispatcher, createTaskScheduler } from './vm-dispatch.mjs';
 import { attemptError, assertAttempt, attemptsEnabled, createFinalizationStore, finalizationEnabled, hasFinalization } from './vm-run-attempt.mjs';
 import { bridgeEnabled } from './vm-task-bridge.mjs';
 import { taskBridgeSession, createTaskBridgeHandler, createTaskFinisher, drainTaskReports, checkTaskResult, recordRunnerResult, createRunFinalizer } from './vm-task-reports.mjs';
 export * from './vm-memory.mjs';
-import { memoryActivity, idleMemoryReview } from './vm-memory-idle.mjs';
+import { memoryActivity, idleMemoryReview, createIdleMemoryScheduler } from './vm-memory-idle.mjs';
 import { transientFailure, finalFailure } from './vm-retry.mjs';
 import { quotaWindows, glowLevel, forecast, usageSummary, agyUsage, inclusive } from './vm-usage.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 const finalizations = createFinalizationStore(BASE);
-function workBudget(sid){return runtime.requestBudget(path.join(BASE,'budgets',sid+'.json'),Number(process.env.XIN_TASK_REQUEST_LIMIT)||128,{tokens:Number(process.env.XIN_TASK_TOKEN_LIMIT)||1500000});}
+const workBudget = (sid, run, defer) => runtime.bridgedBudget(sid, run, lockedCall, defer);
 const SESS = path.join(BASE, 'sessions'), RUNS = path.join(BASE, 'runs'), BIN = path.join(BASE, 'bin');
 const AGENTS = ['claude', 'codex', 'harness'];
 const TEXT_MAX = 20000;
@@ -162,11 +161,17 @@ const unb64u = s => Buffer.from(String(s || ''), 'base64url');
 export function vapidKeys() {
   let k = readJ(VAPID_F());
   if (k && k.publicKey && k.privateJwk) return k;
+  if (!ownership.owning) {
+    const ready = lockedCall('tasks', 'vapid_init', {});
+    if (ready?.error) throw Object.assign(Error('推送密钥暂时不可用'), { code: ready.error });
+    return readJ(VAPID_F());
+  }
   const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const jwk = privateKey.export({ format: 'jwk' });
   k = { publicKey: b64u(Buffer.concat([Buffer.from([4]), unb64u(jwk.x), unb64u(jwk.y)])), privateJwk: jwk, created: Date.now() };
   mk(PUSH_DIR());
-  fs.writeFileSync(VAPID_F(), JSON.stringify(k), { mode: 0o600 });
+  const tmp = VAPID_F() + '.' + process.pid + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(k), { mode: 0o600 }); fs.renameSync(tmp, VAPID_F());
   return k;
 }
 export function vapidHeader(endpoint, keys, now = Date.now()) {
@@ -440,13 +445,7 @@ export function frontCallShape(name, args, result) {
   const call = argv ? keep.join(' ') : name === 'finish_event' ? 'finish_event ' + String(args?.action || '?').slice(0, 20) : name + (args ? '' : '（参数不是有效 JSON）');
   return { call: call.slice(0, 200), ...(result?.error ? { error: String(result.msg || result.error).slice(0, 200) } : result?.terminal ? { terminal: true } : {}) };
 }
-export function frontLog(entry) {
-  try {
-    const f = path.join(BASE, 'logs', 'front.jsonl'); mk(path.dirname(f));
-    const lines = readText(f).split('\n').filter(Boolean).slice(-199); lines.push(JSON.stringify({ at: Date.now(), ...entry }));
-    fs.writeFileSync(f, lines.join('\n') + '\n');
-  } catch { /* diagnostics never break a turn */ }
-}
+export function frontLog(entry) { logLine(path.join(BASE, 'logs', 'front.jsonl'), entry); }
 export function frontDiagnostics(meta,events,logs=[]){
   const kind=s=>/sqlite|database.*lock/i.test(s)?'database':/abort|cancel/i.test(s)?'cancelled':/time.?out|超时/i.test(s)?'timeout':/额度|quota/i.test(s)?'quota':/fetch|HTTP|network|网关|gateway|socket/i.test(s)?'gateway':s?'controller':null;
   return {ended:!!meta.ended,stopped:!!meta.stopped,replyBytes:Buffer.byteLength(String(meta.reply||'')),
@@ -494,7 +493,7 @@ async function loginOpen(a) {
   if (!fs.existsSync(runtime.CHROMIUM())) return { error: 'no_browser', msg: '小芯的电脑上没装浏览器（Chromium），开不了登录窗口' };
   await loginDone();   // 同一时间只开一个：旧的先存好关掉
   try { fs.unlinkSync(LOGIN_WIN_LAST()); } catch { /* 没有 */ }
-  writeJ(LOGIN_WIN(), { site, url, sid, display: process.env.XIN_BROWSER_HEADLESS ? '' : screenDisplay(), at: Date.now(), state: 'starting' });
+  writeJ(LOGIN_WIN(), { id: rid('w'), removals: loginStore(LOGINS_DIR()).removals(), site, url, sid, display: process.env.XIN_BROWSER_HEADLESS ? '' : screenDisplay(), at: Date.now(), state: 'starting' });
   const c = spawn(process.execPath, [SELF, 'login-window'], { detached: true, stdio: 'ignore', env: process.env }); c.unref();
   // Worker 那次调用最多 40 秒：前面关旧窗口最多 12 秒，这里最多再等 20 秒
   for (const end = Date.now() + 20000; Date.now() < end; await sleepMs(200)) {
@@ -514,7 +513,7 @@ async function runLoginWindow() {
   let win;
   try {
     win = await loginWindow({ chrome: runtime.CHROMIUM(), profileDir: path.join(BASE, 'login-window-profile'), headless: !w.display, display: w.display || '',
-      egress: runtime.egressProxy, allowAddress: runtime.publicAddress, logins: loginStore(LOGINS_DIR()), site: w.site, url: w.url,
+      egress: runtime.egressProxy, allowAddress: runtime.publicAddress, logins: loginStore(LOGINS_DIR(), (site, cookies) => lockedCall('tasks', 'login_save', { window: w.id, site, cookies })), site: w.site, url: w.url,
       log: e => logLine(path.join(BASE, 'logs', 'browser.jsonl'), { at: Date.now(), ...e }) });
   } catch (e) { end({ error: e.message, saved: [] }); return; }
   writeJ(LOGIN_WIN(), { ...(readJ(LOGIN_WIN()) || w), pid: process.pid, state: 'open' });
@@ -528,14 +527,21 @@ async function runLoginWindow() {
 export function browserOpts(sid, run) {
   const t = readJ(sessF(sid)) || {};
   return { display: process.env.XIN_BROWSER_HEADLESS ? '' : screenDisplay(), log: e => logLine(path.join(BASE, 'logs', 'browser.jsonl'), { at: Date.now(), task: sid, run, ...e }),
-    sites: Array.isArray(t.sites) ? t.sites : [], logins: loginStore(LOGINS_DIR()), step: x => lockedCall('tasks', 'task_browser_step', { sid, run, step: x }) };
+    sites: Array.isArray(t.sites) ? t.sites : [], logins: loginStore(LOGINS_DIR(), (site, cookies, expected) => lockedCall('tasks', 'login_save', { sid, run, site, cookies, expected })), step: x => lockedCall('tasks', 'task_browser_step', { sid, run, step: x }) };
 }
-function logLine(file, entry, keep = 500) {
+const AUDIT_LOGS = new Set(['front.jsonl', 'browser.jsonl', 'reaper.jsonl', 'boundary.jsonl', 'integrity.jsonl', 'forget.jsonl']);
+function logLine(file, entry) {
   try {
+    const name = path.basename(file);
+    if (!AUDIT_LOGS.has(name) || !entry || typeof entry !== 'object') return false;
+    if (!ownership.owning) return lockedCall('tasks', 'log_append', { name, entry }, { deadlineMs: 2000 }).ok;
+    if (name === 'front.jsonl' && (!okId(entry.run, 'r') || !readJ(metaF(entry.run)))) return false;
+    const keep = name === 'front.jsonl' ? 200 : 500;
     mk(path.dirname(file));
     const lines = readText(file).split('\n').filter(Boolean).slice(-(keep - 1)); lines.push(JSON.stringify({ at: Date.now(), ...entry }));
     const tmp = file + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, lines.join('\n') + '\n', { mode: 0o600 }); fs.renameSync(tmp, file);
-  } catch { /* a diagnostic that cannot be written never breaks the turn */ }
+    return true;
+  } catch { return false; }
 }
 function recentLines(file, days = 7) {
   const since = Date.now() - days * 86400e3;
@@ -562,42 +568,7 @@ function boundaryNote(meta, ev) {
   const record = boundaryRecord(meta, ev);
   if (record) logLine(BOUNDARY_F(), record);
 }
-/* 机外备份的包（Worker 每天取走、加密存进 Durable Object，见 docs/xin-reliability-usage-design.md 的 C 部分）：
-   状态库的一致快照（VACUUM INTO，记忆、会话索引都在里面）+ 直接写成文件的对话过程、消息、清单和统计。
-   不放：网关密钥（*.key）、推送私钥和订阅（push/）、回调令牌、控制器脚本、锁、预览、导出、写回备份、终端日志这类能重建或不该外传的。
-   恢复：新云电脑上把包解进空的 ~/.xin（tar xzf … -C ~/.xin），网关密钥按 MACHINE.md 重新配。 */
-const BACKUP_ITEMS = ['sessions', 'runs', 'messages', 'agent-sessions', 'budgets', 'daily.md', 'memory.md', 'model-stats.jsonl', 'quota-history.jsonl',
-  'bond.json', 'next.json', 'moves.json', 'plugins.json', 'daily-done.json', 'daily-last.json', 'task-seq.json', 'tasks-index.json',
-  'front-antigravity-quota.json', 'antigravity-quota.json', 'antigravity-argon-quota.json'];
-export function backupExport(keep = 3) {
-  const dir = path.join(BASE, 'exports'), stamp = today().replace(/-/g, ''), file = path.join(dir, 'state-' + stamp + '.tar.gz');
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (!fs.existsSync(file)) {
-    const stage = fs.mkdtempSync(path.join(dir, '.stage-'));
-    try {
-      journal.db.exec("VACUUM INTO '" + path.join(stage, 'workflow.sqlite').replace(/'/g, "''") + "'");
-      // 这一刻没做完的几轮（排着的、在做的）：恢复后不该重跑（可能是几天前的话、早上的每日任务）。快照里把它们放回「排着」，
-      // 另记一份 restore-stop.json，恢复后第一次调用由 restoreStops 标成停了，照「开工前就停了」收尾
-      const staged = new DatabaseSync(path.join(stage, 'workflow.sqlite')), stage2 = ['workflow.sqlite'];
-      try {
-        const open = staged.prepare("SELECT run FROM launches WHERE state IN ('pending','dispatched')").all().map(x => x.run);
-        if (open.length) {
-          staged.prepare("UPDATE launches SET state='pending' WHERE state='dispatched'").run();
-          fs.writeFileSync(path.join(stage, 'restore-stop.json'), JSON.stringify({ at: Date.now(), runs: open }), { mode: 0o600 });
-          stage2.push('restore-stop.json');
-        }
-      } finally { staged.close(); }
-      const items = BACKUP_ITEMS.filter(n => fs.existsSync(path.join(BASE, n)));
-      const tmp = file + '.' + process.pid + '.tmp';
-      const r = spawnSync('tar', ['-czf', tmp, '--exclude=*.tmp', '--exclude=*.journal-*', '-C', stage, ...stage2, '-C', BASE, ...items], { encoding: 'utf8', timeout: 60000 });
-      if (r.status !== 0) { try { fs.unlinkSync(tmp); } catch { /* 没写出来 */ } return { error: 'tar_failed', msg: '打包失败：' + String(r.stderr || r.error?.message || '').trim().slice(0, 200) }; }
-      fs.chmodSync(tmp, 0o600); fs.renameSync(tmp, file);
-    } finally { fs.rmSync(stage, { recursive: true, force: true }); }
-    for (const n of fs.readdirSync(dir).filter(n => /^state-\d{8}\.tar\.gz$/.test(n)).sort().slice(0, -keep)) { try { fs.unlinkSync(path.join(dir, n)); } catch { /* 别处删了 */ } }
-  }
-  const bytes = fs.readFileSync(file);
-  return { ok: true, file, size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), date: today() };
-}
+export const backupExport = createBackupExporter({home:BASE,getDb:()=>journal.db,today});
 export function exportState(keep = 7) {
   const dir = path.join(BASE, 'exports'), file = path.join(dir, 'workflow-' + today().replace(/-/g, '') + '.sqlite');
   if (fs.existsSync(file)) return { skipped: 'exists', file };
@@ -690,7 +661,7 @@ function runner(run) {
       try {
         receipt = recordRunnerResult(finalizations,meta,{at,code,ok:modelOK(),timeout:!!state.timeout,transient:transient(),
           changes,usage,delta:delta(usage),ms:at-t0,cost:state.cost,reply:state.reply,model:meta.model||undefined,providerModel:meta.providerModel||undefined,
-          from:meta.from||undefined,recordStats:meta.agent!=='claude'&&!state.frontReceipt,...(state.ackedSteers?.length?{ackedSteers:state.ackedSteers}:{})},()=>readJ(sessF(meta.sid),s),
+          from:meta.from||undefined,recordStats:meta.agent!=='claude'&&!state.frontReceipt,budgetSamples:state.budgetSamples,...(state.ackedSteers?.length?{ackedSteers:state.ackedSteers}:{})},()=>readJ(sessF(meta.sid),s),
         {active,emit:announce,preparing:modelDone,checking});
       } catch (e) { if(e.code!=='stale_attempt')emit(run,{t:'err',text:'这轮的收尾记录未能写完，已保留现场。'}); return; }
       // The owner can finish even if this report or its response never arrives.
@@ -780,7 +751,7 @@ function runner(run) {
         let container;
         if(meta.sandbox){
           // Private network: the container reaches only the pinned inference proxy and public-web egress.
-          proxy=await runtime.taskNetwork(currentSession.workspace,{baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model,takeBudget:workBudget(meta.sid)},browserOpts(meta.sid,run));
+          proxy=await runtime.taskNetwork(currentSession.workspace,{baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,model:meta.model,takeBudget:workBudget(meta.sid, run, durable ? sample => appendBudgetSample(state, sample) : null)},browserOpts(meta.sid,run));
           container=runtime.containerAppServer(currentSession,config,{proxy,catalog:codexCatalog()});
         }
         const w = scoped(container?.command || cmd, container?.args || ['app-server', '--stdio', ...config], { unit, env: spawnOptions.env });
@@ -902,7 +873,7 @@ function runner(run) {
     }
     catch(e) { state.failed=true;finish(1,e.message);return; }
     const deliver=args=>lockedCall('tasks','handoff_finish',{run,...args});
-    const handoffBudget=meta.handoff?workBudget(journal.handoff(meta.handoff)?.task||meta.sid):null;
+    const handoffBudget=meta.handoff?workBudget(journal.handoff(meta.handoff)?.task||meta.sid, run, durable ? sample => appendBudgetSample(state, sample) : null):null;
     if(meta.handoffFallback){deliver({action:'deliver',text:''});finish(0);return;}
     const action = argv => lockedCall('tasks','front_action',{run,argv});
     const calls = [];let usedFallback = false;
@@ -1602,7 +1573,7 @@ function taskFirstText(t, deps) {
   const f = filesPart(t.files || [], 'codex', codexModel(t.model).image);
   return forAgent(parts.join('\n'), '') + f;
 }
-function startTask(t, all) {
+function startTask(t, all, copied) {
   if (!allowHostStart(t)) { saveTask(t); return false; }
   const deps = (t.after || []).map(n => all.find(x => x.no === n)).filter(Boolean);
   const first = !!t.hostDeferredFirst || !(t.runs && t.runs.length);
@@ -1620,7 +1591,7 @@ function startTask(t, all) {
   // 项目副本和任务自己的会话都在系统临时目录里；电脑重启后它们可能已经没了（审查问题 16）。
   // 这时副本会按原项目重新拷一份，旧会话也续接不上：不再续接，开新会话，并把原要求和现状说清楚，而不是直接算没做成。
   const lost = !first && !hostTask(t) && !!t.workspace && !fs.existsSync(t.workspace.work);
-  try { if (!hostTask(t)) t.workspace = runtime.prepareWorkspace(t, BASE); }
+  try { if (!hostTask(t)) t.workspace = copied ? runtime.commitWorkspaceCopy(t, BASE, copied) : runtime.prepareWorkspace(t, BASE); }
   catch (e) { failTask(t, '没有启动任务：' + e.message); return false; }
   if (lost) { t.agentSid = null; t.started = false; delete t.antigravityConversation; }
   // 上一轮没正常做完带下来的补充（断线重启后自动续做、临时出错后续做）：放在这一轮开头一起交出去，一次取完
@@ -1644,22 +1615,11 @@ function failTask(t, why, err = '') {
   if (t.dailyDate) dailyDone(lastRun(t), { sid: t.sid, dailyDate: t.dailyDate }, false);
   saveTask(t);
 }
-function scheduleNow() {
-  const all = listTasks();
-  let running = all.filter(occupiesTask).length;
-  for (const t of all.filter(t => t.status === 'queued').sort((a, b) => (a.queuedAt || a.created) - (b.queuedAt || b.created))) {
-    if (running >= TASK_MAX) break;
-    const deps = (t.after || []).map(n => all.find(x => x.no === n));
-    const bad = deps.filter(d => !d || d.status === 'failed' || d.status === 'stopped');
-    if (bad.length) { failTask(t, '前置任务' + bad.map(d => d ? ' ' + d.no : '').join('、') + ' 没做成，这个任务没开始。'); continue; }
-    if (deps.some(d => d.status !== 'done')) continue;
-    if (all.some(x => x !== t && occupiesTask(x) && overlaps(x.dir, t.dir))) continue;
-    if (t.retryAt > Date.now()) continue;   // 临时错误后等一会儿再接着做
-    // 时限从第一次开工算起，重试和续做都不延长：已经过了就按超时收尾，不再起一轮立刻被杀
-    if (t.deadline && Date.now() >= t.deadline) { const full = findTask({ sid: t.sid }) || t; failTask(full, '超过 ' + full.minutes + ' 分钟还没做完，停下了。', '超时（' + full.minutes + ' 分钟）'); continue; }
-    if (startTask(t, all) !== false) running++;
-  }
-}
+const { schedule: scheduleNow, drain: drainWorkspaceCopies } = createTaskScheduler({
+  listTasks, findTask, occupies: occupiesTask, overlaps, max: TASK_MAX, startTask, failTask,
+  needsCopy: t => !hostTask(t) && !t.workspace && !t.runs?.length,
+  copyWorkspace: t => runtime.startWorkspaceCopy(t, BASE), wake: () => lockedCall('tasks', 'task_tick', {})
+});
 const taskPush = (t, title, body) => ({ title, body: plainText(body, 120) || '点开看看', tag: 'xin-task-' + t.no, sid: t.parent || '', url: t.parent ? '/#xin=' + t.parent : '/#xin' });
 // 一轮做完（runner 调，在 tasks 锁里）：先把结果存进任务记录，再决定接着做、等用户，还是收尾；要推送的交回 runner 在锁外发
 const taskFinish = createTaskFinisher({
@@ -1757,16 +1717,6 @@ function tickTasks() {
   const r = lockedCall('tasks', 'task_tick', {});
   for (const n of (r && r.notify) || []) deliverNotice(n).catch(() => {});
 }
-function ensureMemoryIdle() { if (TIANQI) return;   // 天启没有小芯的记忆
-  if (journal.active) { journal.defer(ensureMemoryIdle); return; }
-  if (!(readText(CODEX_KEY()) || readText(HARNESS_KEY())).trim()) return;
-  mk(path.join(BASE, 'locks'));
-  // Only a local child after real work completes. Never registered as a task, callback, alarm or lease.
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !['XIN_RUN','XIN_ATTEMPT','XIN_LOCK'].includes(k)));
-  const child = spawn('flock', ['-w','3','--close',path.join(BASE,'locks/memory-idle.lock'),process.execPath,SELF,'memory-idle'],
-    {detached:true,stdio:'ignore',cwd:os.homedir(),env});
-  child.on('error', () => {}); child.unref();
-}
 const CURRENT_F = () => path.join(BASE, 'controller-current.json');
 /* 遗留进程（vm-reaper.mjs）：systemd 用户定时器每 10 分钟跑一次 reap。部署一次控制器路径就变，定时器调一个固定的小脚本，
    它照 controller-current.json 找到当前这份再跑。 */
@@ -1816,11 +1766,10 @@ function markCurrentController() {
     fs.writeFileSync(tmp, JSON.stringify({ self: SELF, at: Date.now() })); fs.renameSync(tmp, CURRENT_F());
   } catch { /* 记不下来就下次 */ }
 }
-// 无待处理的工作时一分钟检查一次，让 InstaBox 能按 CPU 空闲规则暂停。
 export function pendingWork(){const pending=readJ(path.join(BASE,'controller-event.json')),notices=fs.existsSync(NOTICE_DIR())&&fs.readdirSync(NOTICE_DIR()).some(n=>/^[a-f0-9]{32}\.json$/.test(n)&&readJ(path.join(NOTICE_DIR(),n))?.state==='pending');
   return listTasks().some(t=>isBackground(t)||t.cleanupPending)||notices||journal.hasPendingHandoffs()||journal.hasOpenLaunches()||!!(pending&&!pending.acknowledged);}
 function reconcileState(){journal.recover();dispatchLaunches();flushTaskCleanup();tickTasks();pumpHandoffs();}
-async function flushState(){await flushNotices();await flushControllerEvent();return pendingWork()?5000:60000;}
+async function flushState(memoryIdle){await flushNotices();await flushControllerEvent();return pendingWork()?5000:memoryIdle.tick(60000);}
 // 网页最近有没有在看这个对话（tasks 轮询会碰一下）：在看就不推送，卡片自己会更新
 const convSeenF = sid => path.join(RUNS, 'conv-' + sid + '.seen');
 const validDevice = id => typeof id==='string' && /^[A-Za-z0-9_-]{8,80}$/.test(id);
@@ -2488,6 +2437,10 @@ const ops = { ...termOps,   // 天启终端里自己输命令（vm-persona.mjs �
 };
 // 只在 tasks 锁里跑的（main 里分派）
 const iops = {
+  login_save: a => stateLoginSave(a, LOGINS_DIR(), LOGIN_WIN()),
+  task_budget: taskBudget,
+  vapid_init() { vapidKeys(); return { ok: true }; },
+  log_append(a) { return { ok: AUDIT_LOGS.has(a.name) && logLine(path.join(BASE, 'logs', a.name), a.entry) }; },
   front_model(a){
     const m=readJ(metaF(a.run));if(!m||m.task||m.agent!=='codex'||m.stopped||m.ended||![runtime.FRONT_MODEL,AGY_FRONT_MODEL].includes(a.model))return {error:'bad_front_model'};
     Object.assign(m,frontRouting(a,m.why));writeJ(metaF(a.run),m);
@@ -2522,7 +2475,6 @@ const iops = {
     if(done.ok&&!m.task&&m.injected?.length){if(a.durable)taskSeen({sids:m.injected});else journal.defer(()=>lockedCall('tasks','task_seen',{sids:m.injected}));}
     emit(a.run,done);m.ended=Date.now();writeJ(metaF(a.run),m);journal.finishLaunch(a.run);
     memoryActivity(); // Count the quiet window from the latest completion as well as the latest input.
-    journal.defer(ensureMemoryIdle);
     const pending=(m.steers||[]).filter(x=>x.state==='pending'||x.state==='next');
     if(!m.task&&!done.stopped&&!a.uncertain&&pending.length){
       for(const q of pending)q.state='consumed';writeJ(metaF(a.run),m);
@@ -2887,10 +2839,12 @@ const LONG_LIVED = ['run', 'agy-run', 'warm', 'memory-idle', 'callback', 'login-
 async function serveState(){
   checkControllers(BASE,SELF);
   let initialized=false;
+  const memoryIdle=createIdleMemoryScheduler({enabled:!TIANQI,busy:pendingWork,key:()=> (readText(CODEX_KEY())||readText(HARNESS_KEY())).trim()});
   const service=await createStateServer({home:BASE,owner:ownership,
     initialize:before=>{checkControllers(BASE,SELF);journal.recover();initializeStateTables();restoreStops();markCurrentController();if(before.mode==='legacy')snapshotBeforeSwitch(journal.db,BASE);initialized=true;},
-    handle:controller.handle,reconcile:reconcileState,tick:flushState,hasWork:pendingWork,beforeRelease:()=>{try{if(initialized)journal.recover();}finally{journal.close();}}
+    handle:controller.handle,reconcile:reconcileState,tick:()=>flushState(memoryIdle),hasWork:pendingWork,drain:()=>Promise.all([memoryIdle.stop(),drainWorkspaceCopies()]),beforeRelease:()=>{try{if(initialized)journal.recover();}finally{journal.close();}}
   });
+  if (!TIANQI) void runtime.pruneWorkspaceStages(BASE);
   const stop=()=>service.close().catch(()=>{process.exitCode=1;});
   process.on('SIGTERM',stop);process.on('SIGINT',stop);
   const piped=process.argv.includes('--parent-pipe');
@@ -2920,7 +2874,7 @@ async function main() {
     const t=m&&taskBridgeSession(readJ(sessF(m.sid)),m);
     if(!m?.task||!t?.workspace||!runtime.isAgyModel(m.model)){process.exitCode=1;return;}
     const clientDir=path.join(BASE,'antigravity-client'),steerBridge=createExecutorSteerBridge({run,sid:t.sid,model:m.model,lockedCall});mk(clientDir);
-    runtime.antigravityWork(t,{model:m.model,effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,runtime.AGY_QUOTA_FILES[runtime.agyPool(m.model)])),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:(quota,o)=>lockedCall('tasks','agy_quota',{quota},o?.postTurn?{deadlineMs:Number(process.env.XIN_STEER_RETRY_MS)||3000}:undefined),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:steerBridge.ask,remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why}),
+    runtime.antigravityWork(t,{model:m.model,effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,runtime.AGY_QUOTA_FILES[runtime.agyPool(m.model)])),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid, run, hasFinalization(m) ? sample => console.log(JSON.stringify({type:'xin.budget_usage',sample})) : null),quota:(quota,o)=>lockedCall('tasks','agy_quota',{quota},o?.postTurn?{deadlineMs:Number(process.env.XIN_STEER_RETRY_MS)||3000}:undefined),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:steerBridge.ask,remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why}),
       // 兄弟在它干活时的补充：每一步之前两阶段认领（vm-steer.mjs），模型步完成后再确认；主动说一句带步编号去重重送
       steers:steerBridge.take,ackSteers:steerBridge.ack,note:steerBridge.note})
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
@@ -2936,7 +2890,7 @@ async function main() {
 }
 const finalizeRun=createRunFinalizer({store:finalizations,loadRun:r=>readJ(metaF(r)),loadSession:s=>readJ(sessF(s)),
   taskFinish,emit,complete:iops.run_complete,rememberSession:(sid,changes)=>controller.patchSession(sid,changes),
-  patchRun:applyRunPatch,frontReply:iops.front_reply,frontNotice,dailyDone,statsFile:STATS_F,steerAck});
+  patchRun:applyRunPatch,frontReply:iops.front_reply,frontNotice,dailyDone,statsFile:STATS_F,steerAck,sessionUsage});
 const {dispatchLaunches,runDone}=createDispatcher({self:SELF,metaF,sessF,runF,lockedCall,emit,patchRun,finalizations,finalizeRun,allowHostLaunch});
 const controller=createController({ops,iops,isTask,saveTask,rememberAgentSession,mainSid,listTasks,lockedCall,dispatchLaunches,markCurrentController,xinCmd,reapNow,finalizeRun});
 

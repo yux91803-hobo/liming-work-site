@@ -17,6 +17,66 @@ export function runnerAlive(run, meta) {
   return probe.status !== 0;
 }
 
+export function createTaskScheduler({ listTasks, findTask, occupies, overlaps, max, needsCopy, copyWorkspace, startTask, failTask, wake }) {
+  const jobs = new Map();
+  let closing = false;
+  const valid = (job, task) => task?.status === 'queued' && task.dir === job.dir && needsCopy(task);
+  function release(job) {
+    if (jobs.get(job.sid) !== job) return;
+    jobs.delete(job.sid);
+    return job.copy?.close();
+  }
+  function reserve(t) {
+    if (closing || ownership.draining || jobs.has(t.sid)) return;
+    const all = listTasks(), task = all.find(x => x.sid === t.sid);
+    if (!valid(t, task)) return;
+    const active = all.filter(occupies).concat([...jobs.values()]);
+    if (active.length >= max || active.some(x => overlaps(x.dir, t.dir))) return;
+    const job = { sid: t.sid, dir: t.dir };
+    jobs.set(t.sid, job);
+    try { job.copy = copyWorkspace(t); }
+    catch (error) { job.result = { error: error.message }; }
+    Promise.resolve(job.copy?.ready || job.result).then(result => {
+      if (jobs.get(t.sid) !== job || closing) return;
+      job.result = result;
+      try { withCallContext({ locked: false, key: null, run: null, attempt: null }, wake); }
+      catch { /* The resident tick will try the same queued task again. */ }
+    });
+  }
+  function schedule() {
+    if (closing || ownership.draining) return;
+    const all = listTasks(), reserved = [];
+    for (const job of jobs.values()) {
+      if (valid(job, all.find(t => t.sid === job.sid))) reserved.push(job);
+      else journal.defer(() => release(job));
+    }
+    const active = all.filter(occupies).concat(reserved);
+    const queued = all.filter(t => t.status === 'queued').sort((a, b) => (a.queuedAt || a.created) - (b.queuedAt || b.created));
+    for (const t of queued) {
+      const job = jobs.get(t.sid);
+      if (job ? !reserved.includes(job) || !job.result : active.length >= max) continue;
+      const deps = (t.after || []).map(n => all.find(x => x.no === n));
+      const bad = deps.filter(d => !d || d.status === 'failed' || d.status === 'stopped');
+      if (!bad.length && deps.some(d => d.status !== 'done')) continue;
+      if (!bad.length && (t.retryAt > Date.now() || active.some(x => x.sid !== t.sid && overlaps(x.dir, t.dir)))) continue;
+      if (job) journal.defer(() => release(job));
+      if (bad.length) failTask(t, '前置任务' + bad.map(d => d ? ' ' + d.no : '').join('、') + ' 没做成，这个任务没开始。');
+      else if (t.deadline && Date.now() >= t.deadline) {
+        const full = findTask({ sid: t.sid }) || t;
+        failTask(full, '超过 ' + full.minutes + ' 分钟还没做完，停下了。', '超时（' + full.minutes + ' 分钟）');
+      } else if (job?.result.error) failTask(t, '没有启动任务：' + job.result.error);
+      else if (!job && needsCopy(t)) { active.push(t); journal.defer(() => reserve(t)); }
+      else if (startTask(t, all, job?.result) !== false) { if (!job) active.push(t); continue; }
+      if (job) active.splice(active.indexOf(job), 1);
+    }
+  }
+  async function drain() {
+    closing = true;
+    await Promise.all([...jobs.values()].map(release));
+  }
+  return { schedule, drain };
+}
+
 export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, patchRun, finalizations, finalizeRun, allowHostLaunch = () => true }) {
   const dead = (run, m, started = m.started) => Date.now() - started > (Number(process.env.XIN_DEAD_MS) || 15000) && !runnerAlive(run, m);
   function stopOrphan(run, m) {

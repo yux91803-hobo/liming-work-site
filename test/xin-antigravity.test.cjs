@@ -1,3 +1,4 @@
+const { budgetStore } = require('./helpers/budget-store.cjs');
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');
 const { lockedSpawn } = require('./helpers/locked.cjs');
 const { platformTimeout } = require('./helpers/timeout.cjs');
@@ -27,8 +28,8 @@ test('Claude 周限额用完时五小时限额被停用、不带恢复时间：�
 });
 test('CLI 续接返回整段累计用量：按持久水位记增量，重启和重复响应不重复计费',async t=>{
  const r=await load(),dir=require('./helpers/tmp.cjs').tmpDir('xin-agy-budget-');   // 进程退出时删：状态进程是后起的，在 t.after 里删会抢在停它之前
- const file=dir+'/budget.json',first=r.requestBudget(file,128,{tokens:10000}),a={input_tokens:2212,output_tokens:2431,cache_read_tokens:0,total_tokens:4643};first();assert.deepEqual(first.recordCumulativeUsage('antigravity','own',a),a);
- const resumed=r.requestBudget(file,128,{tokens:10000}),b={input_tokens:12190,output_tokens:4829,cache_read_tokens:0,total_tokens:17019};const delta=resumed.recordCumulativeUsage('antigravity','own',b);assert.equal(delta.input_tokens,9978);assert.equal(delta.output_tokens,2398);assert.equal(delta.total_tokens,12376);
+ const file=dir+'/budget.json',first=r.requestBudget(budgetStore(file),128,{tokens:10000}),a={input_tokens:2212,output_tokens:2431,cache_read_tokens:0,total_tokens:4643};first();assert.deepEqual(first.recordCumulativeUsage('antigravity','own',a),a);
+ const resumed=r.requestBudget(budgetStore(file),128,{tokens:10000}),b={input_tokens:12190,output_tokens:4829,cache_read_tokens:0,total_tokens:17019};const delta=resumed.recordCumulativeUsage('antigravity','own',b);assert.equal(delta.input_tokens,9978);assert.equal(delta.output_tokens,2398);assert.equal(delta.total_tokens,12376);
  resumed.recordCumulativeUsage('antigravity','own',b);assert.equal(JSON.parse(fs.readFileSync(file)).total,17019);assert.equal(resumed(),false);assert.throws(()=>resumed.recordCumulativeUsage('antigravity','own',a),/倒退/);
 });
 function fixture(t,mode='ok'){

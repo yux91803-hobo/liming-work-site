@@ -2,12 +2,139 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
+import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { pipeline } from 'node:stream/promises';
+import sqlite, { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 import { BRIDGE_PROTOCOL, Ownership } from './vm-kernel-owner.mjs';
 import { FRAME_MAX, stateSocket } from './vm-kernel-client.mjs';
 
+const SELF = fileURLToPath(import.meta.url);
 const KINDS = new Set(['op','named','write','append','xin','reap','control']);
 const ID = /^[A-Za-z0-9_-]{8,100}$/;
-export async function createStateServer({ home, owner = new Ownership(home), initialize = () => {}, handle,
+
+// Snapshot only the existing backup allowlist. API keys, logins and push data stay in the VM.
+const BACKUP_ITEMS = ['sessions', 'runs', 'messages', 'agent-sessions', 'budgets', 'daily.md', 'memory.md', 'model-stats.jsonl', 'quota-history.jsonl',
+  'bond.json', 'next.json', 'moves.json', 'plugins.json', 'daily-done.json', 'daily-last.json', 'task-seq.json', 'tasks-index.json',
+  'front-antigravity-quota.json', 'antigravity-quota.json', 'antigravity-argon-quota.json'];
+
+function freezeArchiveInputs(home, staged, pinned, names) {
+  const files = [];
+  function add(name) {
+    const source = path.join(home, name);
+    let stat;
+    try { stat = fs.lstatSync(source); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    if (stat.isDirectory()) {
+      fs.mkdirSync(path.join(staged, name), { recursive: true });
+      for (const child of fs.readdirSync(source)) {
+        if (!child.endsWith('.tmp') && !child.includes('.journal-')) add(path.join(name, child));
+      }
+      return;
+    }
+    if (!stat.isFile()) throw Object.assign(Error('备份包含非常规文件'), { code: 'backup_input' });
+    // JSON projections are replaced atomically. For append-only logs keep a fixed prefix.
+    const grows = name.endsWith('.jsonl');
+    const link = path.join(grows ? pinned : staged, name);
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.linkSync(source, link);
+    const snapshot = fs.lstatSync(link);
+    if (snapshot.dev !== stat.dev || snapshot.ino !== stat.ino || snapshot.size < stat.size)
+      throw Object.assign(Error('备份文件已变'), { code: 'backup_input' });
+    if (grows) files.push({ name, size: stat.size });
+  }
+  for (const name of names) add(name);
+  return files;
+}
+
+function compactArchiveDb(root) {
+  const stage = path.join(root, 'snapshot');
+  const file = path.join(stage, 'workflow.sqlite');
+  const source = new DatabaseSync(path.join(root, 'raw.sqlite'), { readOnly: true });
+  // Rebuild the private copy so deleted rows and unused pages stay out of the export.
+  try { source.prepare('VACUUM INTO ?').run(file); }
+  finally { source.close(); }
+  fs.chmodSync(file, 0o600);
+  const staged = new DatabaseSync(file);
+  try {
+    const runs = staged.prepare("SELECT run FROM launches WHERE state IN ('pending','dispatched')").all().map(row => row.run);
+    if (runs.length) {
+      staged.prepare("UPDATE launches SET state='pending' WHERE state='dispatched'").run();
+      fs.writeFileSync(path.join(stage, 'restore-stop.json'), JSON.stringify({ at: Date.now(), runs }), { mode: 0o600 });
+    }
+  } finally { staged.close(); }
+}
+
+if (process.argv[1] === SELF && process.argv[2] === 'compact-backup') compactArchiveDb(process.argv[3]);
+const archiveCommand = (command, args) => new Promise((resolve, reject) => {
+  execFile(command, args, { timeout: 60000, maxBuffer: 256 * 1024 }, error => error ? reject(error) : resolve());
+});
+async function archiveState(home, dir, file) {
+  const root = fs.mkdtempSync(path.join(dir, '.stage-'));
+  const staged = path.join(root, 'snapshot'), pinned = path.join(root, 'pinned');
+  try {
+    fs.mkdirSync(staged, { mode: 0o700 });
+    const raw = path.join(root, 'raw.sqlite');
+    const reader = new DatabaseSync(path.join(home, 'workflow.sqlite'), { readOnly: true });
+    let files;
+    try {
+      // Pin the WAL snapshot before freezing filesystem projections in this same owner turn.
+      reader.exec('BEGIN');
+      reader.prepare('SELECT name FROM sqlite_master LIMIT 1').get();
+      files = freezeArchiveInputs(home, staged, pinned, BACKUP_ITEMS);
+      if ('backup' in sqlite) await sqlite.backup(reader, raw);
+      else {
+        // Older Node 22 versions can take the copy in the same synchronous owner turn.
+        reader.exec('ROLLBACK');
+        reader.prepare('VACUUM INTO ?').run(raw);
+      }
+    } finally { reader.close(); }
+    await archiveCommand(process.execPath, [SELF, 'compact-backup', root]);
+    fs.unlinkSync(raw);
+    for (const { name, size } of files) {
+      const output = path.join(staged, name);
+      fs.mkdirSync(path.dirname(output), { recursive: true });
+      if (size) await pipeline(fs.createReadStream(path.join(pinned, name), { end: size - 1 }), fs.createWriteStream(output, { mode: 0o600 }));
+      else fs.writeFileSync(output, '', { mode: 0o600 });
+      if (fs.statSync(output).size !== size) throw Object.assign(Error('备份文件尺寸已变'), { code: 'backup_input' });
+    }
+    const items = ['workflow.sqlite', 'restore-stop.json', ...BACKUP_ITEMS].filter(name => fs.existsSync(path.join(staged, name)));
+    const tmp = path.join(root, 'state.tar.gz');
+    await archiveCommand('tar', ['-czf', tmp, '-C', staged, ...items]);
+    fs.chmodSync(tmp, 0o600);
+    fs.renameSync(tmp, file);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+export function createBackupExporter({ home, getDb, today }) {
+  const pending = new Map();
+  const dir = path.join(home, 'exports');
+  return async function backupExport(keep = 3) {
+    const date = today(), file = path.join(dir, 'state-' + date.replace(/-/g, '') + '.tar.gz');
+    if (pending.has(file)) return pending.get(file);
+    const build = async () => {
+      try {
+        if (!fs.existsSync(file)) {
+          fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+          getDb(); // Open and validate the owner's workflow database.
+          await archiveState(home, dir, file);
+          for (const old of fs.readdirSync(dir).filter(n => /^state-\d{8}\.tar\.gz$/.test(n)).sort().slice(0, -keep))
+            try { fs.unlinkSync(path.join(dir, old)); } catch { /* removed concurrently */ }
+        }
+        const hash = crypto.createHash('sha256'); let size = 0;
+        for await (const chunk of fs.createReadStream(file)) { size += chunk.length; hash.update(chunk); }
+        return { ok: true, file, size, sha256: hash.digest('hex'), date };
+      } catch (error) {
+        return { error: 'tar_failed', msg: '打包失败（' + (error.code || 'backup_failed') + '）' };
+      }
+    };
+    const result = build().finally(() => pending.delete(file));
+    pending.set(file, result);
+    return result;
+  };
+}
+
+export async function createStateServer({ home, owner = new Ownership(home), initialize = () => {}, handle, drain = () => {},
   tick, reconcile, hasWork = () => false, tickMs = 5000, wallClock = Date.now, recoveryGapMs = 30000, beforeRelease = () => {}, maxActive = 32, headerMs = 10000, log = () => {} }) {
   const file = stateSocket(home), directory = path.dirname(file);
   if (owner.record().busy) throw Object.assign(new Error('状态主人仍在运行'), { code: 'owner_busy' });
@@ -78,7 +205,7 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
     if (stopPromise) return stopPromise;
     draining = true; owner.draining = true; clearTimeout(timer);
     stopPromise = (async () => {
-      await waitIdle();
+      await Promise.all([waitIdle(), drain()]);
       // No await between the final flush, closing writable handles and handing ownership back.
       beforeRelease(); stopped = true; server.close();
       for (const s of sockets) if (!s.handling) s.destroy();

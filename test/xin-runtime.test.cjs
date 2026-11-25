@@ -1,3 +1,4 @@
+const { budgetStore } = require('./helpers/budget-store.cjs');
 const test = require('node:test');
 const { lockedSpawn } = require('./helpers/locked.cjs');
 const { platformTimeout } = require('./helpers/timeout.cjs');
@@ -53,6 +54,56 @@ function fixture(t) {
   fs.writeFileSync(path.join(env.XIN_HOME, 'runs/rruntime001.jsonl'), '');
   return { root, control: env.XIN_HOME, env, task, save, read, call, ensureState };
 }
+
+test('工作区副本准备完成前保持私有，发布后仍能核对原项目的并发修改', async t => {
+  const f = fixture(t), r = await load(), file = path.join(f.task.dir, 'main.c');
+  fs.writeFileSync(file, 'int state = 1;');
+  const work = r.startWorkspaceCopy(f.task, f.control);
+  try {
+    const prepared = await work.ready;
+    assert.ok(prepared.stage, JSON.stringify(prepared));
+    assert.ok(!fs.existsSync(path.join(r.taskRoot(f.control), 'xin-task-' + f.task.sid)));
+    assert.ok(!fs.existsSync(path.join(f.control, 'workspaces', f.task.sid + '.json')));
+    fs.writeFileSync(file, 'int state = 2;');
+    f.task.workspace = r.commitWorkspaceCopy(f.task, f.control, prepared);
+    assert.deepEqual(r.commitWorkspaceCopy(f.task, f.control, prepared), f.task.workspace, 'retry after the owner moved the copy');
+    const { work: project, home } = f.task.workspace;
+    assert.equal(fs.readFileSync(path.join(project, 'main.c'), 'utf8'), 'int state = 1;');
+    assert.ok(fs.readFileSync(path.join(home, 'shell-env.sh'), 'utf8').includes(path.join(home, 'bin')));
+    fs.writeFileSync(path.join(project, 'main.c'), 'int state = 3;');
+    assert.deepEqual(r.publicationPlan(f.task, f.control).conflicts, ['main.c']);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'int state = 2;');
+    const old = new Date(0);
+    fs.utimesSync(prepared.stage, old, old);
+    await r.pruneWorkspaceStages(f.control);
+    assert.ok(!fs.existsSync(prepared.stage));
+    assert.ok(fs.existsSync(project), 'the live workspace survives pruning');
+  } finally { await work.close(); }
+});
+
+test('准备副本占用对应目录和调度名额；取消后不会用迟到副本启动任务', async () => {
+  const { createTaskScheduler } = await import('../site/xin/vm-dispatch.mjs');
+  const tasks = ['/a', '/a/sub', '/b'].map((dir, i) => ({ dir, sid: 's' + i, created: i, status: 'queued' }));
+  const copies = new Map(), started = [], cancelled = [];
+  const options = { listTasks: () => tasks, occupies: t => t.status === 'running', max: 2,
+    overlaps: (a, b) => a === b || a.startsWith(b + '/') || b.startsWith(a + '/'),
+    needsCopy: t => !t.workspace, copyWorkspace: t => {
+      const ready = new Promise(resolve => copies.set(t.sid, resolve));
+      return { ready, close: () => { cancelled.push(t.sid); } };
+    }, startTask: (t, all, copy) => { started.push([t.sid, copy]); t.status = 'running'; },
+    failTask: (_, message) => { throw Error(message); }, wake: () => scheduler.schedule() };
+  const scheduler = createTaskScheduler(options);
+  scheduler.schedule();
+  assert.deepEqual([...copies.keys()], ['s0', 's2']);
+  assert.deepEqual(started, []);
+  tasks[0].status = 'stopped'; scheduler.schedule();
+  assert.deepEqual(cancelled, ['s0']);
+  assert.deepEqual([...copies.keys()], ['s0', 's2', 's1']);
+  copies.get('s0')({ stage: 'old' }); copies.get('s1')({ stage: 'new' }); copies.get('s2')({ stage: 'independent' });
+  await Promise.resolve();
+  assert.deepEqual(started, [['s1', { stage: 'new' }], ['s2', { stage: 'independent' }]]);
+  await scheduler.drain();
+});
 
 test('分身修改副本，检查原文件并发变更；删除和冲突不会自动写回', async t => {
   const f = fixture(t), r = await load();
@@ -441,9 +492,47 @@ test('状态进程失联时使用已有密钥发告警，恢复后由写者清�
 
 test('任务预算跨代理重启和续接累计，不因换一轮重新变满',async t=>{
   const f=fixture(t),r=await load(),file=path.join(f.control,'budgets',f.task.sid+'.json');
-  const first=r.requestBudget(file,2);assert.equal(first(),true);
-  const resumed=r.requestBudget(file,2);assert.equal(resumed(),true);assert.equal(resumed(),false);
+  const first=r.requestBudget(budgetStore(file),2);assert.equal(first(),true);
+  const resumed=r.requestBudget(budgetStore(file),2);assert.equal(resumed(),true);assert.equal(resumed(),false);
   assert.equal(JSON.parse(fs.readFileSync(file)).used,2);assert.equal(fs.statSync(file).mode&0o777,0o600);
+});
+
+test('状态主人串行扣减预算，同一回执重送不重复占用额度', async t => {
+  const f = fixture(t), run = f.task.runs[0], sid = f.task.sid;
+  f.env.XIN_TASK_REQUEST_LIMIT = '2';
+  fs.writeFileSync(path.join(f.control, 'runs', run + '.json'), JSON.stringify({ run, sid, task: true, started: Date.now(), pid: process.pid }));
+  f.ensureState();
+  const { requestState } = await import('../site/xin/vm-kernel-client.mjs');
+  const { randomUUID } = require('node:crypto');
+  const take = args => requestState(f.control, { kind: 'op', op: 'task_budget', key: 'tasks', locked: true, args: { sid, run, action: 'take', ...args } });
+  const id = randomUUID();
+  const repeat = await Promise.all([take({ id }), take({ id })]);
+  assert.deepEqual(repeat.map(r => r.allowed), [true, true]);
+  const concurrent = await Promise.all(Array.from({ length: 6 }, () => take({ id: randomUUID() })));
+  assert.equal(concurrent.filter(r => r.allowed).length, 1);
+  const file = path.join(f.control, 'budgets', sid + '.json');
+  assert.equal(JSON.parse(fs.readFileSync(file)).used, 2);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal((await take({ id, action: 'usage' })).error, 'message_conflict');
+});
+
+test('状态主人负责日志与首次密钥生成，迟到诊断不能恢复已移除的前台记录', async t => {
+  const f = fixture(t), run = f.task.runs[0];
+  f.ensureState();
+  const { requestState } = await import('../site/xin/vm-kernel-client.mjs');
+  const call = (op, args = {}) => requestState(f.control, { kind: 'op', op, locked: true, key: 'tasks', args });
+  await Promise.all(Array.from({ length: 4 }, () => call('vapid_init')));
+  const keys = await Promise.all([call('push_key'), call('push_key')]);
+  assert.ok(keys[0].key);
+  assert.equal(keys[0].key, keys[1].key);
+  assert.equal(Object.hasOwn(keys[0], 'privateJwk'), false);
+  const append = n => call('log_append', { name: 'boundary.jsonl', entry: { n } });
+  await Promise.all(Array.from({ length: 8 }, (_, n) => append(n)));
+  const entries = fs.readFileSync(path.join(f.control, 'logs', 'boundary.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(entries.map(e => e.n).sort(), [0,1,2,3,4,5,6,7]);
+  fs.unlinkSync(path.join(f.control, 'runs', run + '.json'));
+  assert.equal((await call('log_append', { name: 'front.jsonl', entry: { run, outcome: 'late' } })).ok, false);
+  assert.equal(fs.existsSync(path.join(f.control, 'logs', 'front.jsonl')), false);
 });
 
 test('普通前台对话变化不再让任务轮询逐个读取全部会话，索引只在任务锁内创建',t=>{
@@ -518,7 +607,7 @@ test('系统 SIGTERM 保留后台断点并续接，用户停止不被自动重�
   const wait=async fn=>{const deadline=performance.now()+platformTimeout(30000);while(performance.now()<deadline){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,100));}throw Error('fixture did not reach checkpoint: '+JSON.stringify(observed));};
   const start=async dir=>{
     fs.mkdirSync(dir,{recursive:true});const a=f.call('task_new',{kind:'research',dir,goal:'fixture',title:'graceful fixture'}).task;
-    const s=await wait(()=>{const v=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',a.sid+'.json'))),m=JSON.parse(fs.readFileSync(path.join(f.control,'runs',v.runs.at(-1)+'.json')));observed={phase:'start',status:v.status,modelSession:!!v.agentSid,child:!!m.childPid};return v.agentSid&&m.childIdentity&&v.workspace&&fs.existsSync(path.join(v.workspace.work,'.checkpoint'))?v:null;});
+    const s=await wait(()=>{const v=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',a.sid+'.json'))),run=v.runs.at(-1);if(!run)return null;const m=JSON.parse(fs.readFileSync(path.join(f.control,'runs',run+'.json')));observed={phase:'start',status:v.status,modelSession:!!v.agentSid,child:!!m.childPid};return v.agentSid&&m.childIdentity&&v.workspace&&fs.existsSync(path.join(v.workspace.work,'.checkpoint'))?v:null;});
     return {sid:s.sid,meta:JSON.parse(fs.readFileSync(path.join(f.control,'runs',s.runs.at(-1)+'.json')))};
   };
   const a=await start(path.join(f.root,'resume'));

@@ -84,7 +84,7 @@ export async function waitForState(home, { deadlineMs = 30000 } = {}) {
 }
 // Same-attempt reports only: assignments, or the foreground's existing run/frontRun receipt.
 // Quota reports also append a sample outside the journal, so are not safe to replay here.
-const LOCKED_REPORTS = new Set(['front_immediate', 'front_model', 'agy_conversation']);
+const LOCKED_REPORTS = new Set(['front_immediate', 'front_model', 'agy_conversation', 'task_budget']);
 function retryReport(fn, { deadlineMs = 30000, clock = () => performance.now(), sleep = syncSleep } = {}) {
   if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 300000) throw new StateUnavailable('state_request', false);
   const start = clock(); let failure, uncertain;

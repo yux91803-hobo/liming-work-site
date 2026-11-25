@@ -35,6 +35,27 @@ function fixture(t) {
   };
 }
 
+test('状态定时检查等到安静时间才发起一次整理，排空时中止并等待清理', t => {
+  const result = fixture(t)(`
+    let clock=now, busy=true, starts=0, aborted=0;
+    i.memoryActivity(clock);
+    const scheduler=i.createIdleMemoryScheduler({busy:()=>busy,key:()=>'synthetic-key',now:()=>clock,review:({signal})=>{
+      starts++;
+      return new Promise(resolve=>signal.addEventListener('abort',()=>{aborted++;resolve();},{once:true}));
+    }});
+    scheduler.tick(60000);
+    busy=false;
+    const wait=scheduler.tick(60000);
+    clock+=wait;
+    scheduler.tick(60000);
+    scheduler.tick(60000);
+    await scheduler.stop();
+    scheduler.tick(60000);
+    return {wait,starts,aborted};
+  `);
+  assert.deepEqual(result, { wait: 45000, starts: 1, aborted: 1 });
+});
+
 test('控制器逐字核对用户原话：编造、跨轮次、助手文字、错误事件和改过空白都拒绝',t=>{
   const run=fixture(t);
   const r=run(`chat('我以后都想先看  波形，再看寄存器');chat('另一个话题的原话，不能冒用');const p=plan();
