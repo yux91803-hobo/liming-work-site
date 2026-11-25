@@ -426,7 +426,7 @@
       }
       for (var j = rings.length - 1; j >= 0; j--) {
         var g = rings[j]; g.age += dt; if (g.age >= g.life) { rings.splice(j, 1); continue; }
-        var rk = g.age / g.life, re = 1 - Math.pow(1 - rk, 3), rad = g.r0 + (g.r1 - g.r0) * re;
+        var rk = Math.max(0, g.age / g.life), re = 1 - Math.pow(1 - rk, 3), rad = Math.max(.5, g.r0 + (g.r1 - g.r0) * re);
         ctx.strokeStyle = rgba(g.c, (1 - rk) * (1 - rk) * (INK ? .42 : .55)); ctx.lineWidth = 1.3 * (1 - rk * .5);
         ctx.beginPath(); ctx.arc(g.x, g.y, rad, 0, 6.283); ctx.stroke();
       }
@@ -497,10 +497,12 @@
     document.addEventListener('focusin', function (e) { if (e.target && /^(TEXTAREA|INPUT)$/.test(e.target.tagName)) yieldForKb(); }, true);
     document.addEventListener('focusout', function (e) { if (e.target && /^(TEXTAREA|INPUT)$/.test(e.target.tagName)) yieldForKb(); }, true);
     function loop(now) {
-      var dt = Math.min(.05, (now - lastFx) / 1000); lastFx = now;
-      var kbBusy = html.classList.contains('kb-anim') || (kbAt && now - kbAt < 140) || (COARSE && touchAt && now - touchAt < 620);
-      if (kbBusy) { fxRaf = 0; clearTimeout(kbWakeTm); kbWakeTm = setTimeout(wake, 260); return; }
+      var pnow = performance.now(), dt = Math.max(0, Math.min(.05, (now - lastFx) / 1000));
+      lastFx = Math.max(lastFx, now);
+      var kbBusy = html.classList.contains('kb-anim') || (kbAt && pnow - kbAt < 160) || (COARSE && touchAt && pnow - touchAt < 650);
+      if (kbBusy) { fxRaf = 0; clearTimeout(kbWakeTm); kbWakeTm = setTimeout(wake, 280); return; }
       var kbIdle = COARSE && (html.classList.contains('kb-up') || document.activeElement === say) && !orbit.on && orbit.alpha <= 0 && !dust.length && !sparks.length && !rings.length;
+      if (kbIdle) { fxRaf = 0; return; }
       if (!kbBusy && !kbIdle) {
         if (now - lastStar > (COARSE ? 110 : 42)) { drawStars(now); lastStar = now; }
         var needBack = meteors.length || skyDust.length || mouse.on || mouse.a > .01;
