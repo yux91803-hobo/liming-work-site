@@ -265,19 +265,22 @@ async def main():
                 if time.monotonic() > limit: raise RuntimeError('Foreground web lookup timed out')
                 await asyncio.sleep(2)
             lookup_events = result.get('events', [])
-            outage = front_lookup_during_outage(lookup_events, plain_done)
+            lookup_done = next((e for e in lookup_events if e.get('t') == 'done'), {})
+            quota = (await call('tasks', {'all': True})).get('frontAntigravity') if lookup_done.get('model') == 'deepseek-v4.1-flash' else None
+            now_ms = time.time() * 1000
+            outage = front_lookup_during_outage(lookup_events, plain_done, quota, now_ms)
             why = front_lookup_verdict(lookup_events) if outage is None else outage
             if why:
                 print('Foreground web lookup events: ' + json.dumps(event_digest(lookup_events), ensure_ascii=False), flush=True)
                 raise RuntimeError('Foreground web lookup: ' + why)
             require_finalization(lookup['run'], lookup_events, 'foreground')
-            await check_front(next((e for e in lookup_events if e.get('t') == 'done'), {}))
+            validate_front_model(lookup_done, quota, now_ms)
             if (await call('tasks', {'sid':image_sid})).get('tasks'):
                 raise RuntimeError('Foreground web lookup unexpectedly delegated work')
             if outage is None:
                 print('PASS real foreground looks up a public page itself (' + str(sum(1 for e in lookup_events if e.get('t') == 'tool')) + ' web steps) without delegating', flush=True)
             else:
-                print('PASS foreground reports lookup is unavailable during a Gemini outage without dispatching; native lookup is degraded', flush=True)
+                print('PASS foreground accurately reports native lookup unavailable without dispatching (' + str(lookup_done.get('why')) + ')', flush=True)
             # Kernel stage 1 (docs/xin-kernel-design.md §14): the message was stored before acknowledgement and maps to its turn,
             # and the turn's events stream from the kernel through Cloudflare. Only status codes and counts are printed.
             me = await (await raw('me', lambda: context.request.get(BASE + '/api/xin/me', timeout=30000), True)).json()

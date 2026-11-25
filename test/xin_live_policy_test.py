@@ -175,6 +175,18 @@ class FrontPolicy(unittest.TestCase):
         self.assertTrue(front_lookup_during_outage([{'t': 'text', 'text': '虚构网址'}, done], dict(done)))
         self.assertTrue(front_lookup_during_outage([answer, {'t': 'task'}, done], dict(done)))
 
+    def test_quota_downgrade_requires_turn_provenance_and_an_active_hydrogen_cooldown(self):
+        done = {'t': 'done', 'ok': True, 'model': DEEPSEEK, 'from': HYDROGEN, 'why': 'front_quota_fallback'}
+        answer = {'t': 'text', 'text': FRONT_WEB_UNAVAILABLE}
+        quota = {'model': HYDROGEN, 'blocked': True, 'retryAt': 2000}
+        self.assertEqual(front_lookup_during_outage([answer, done], quota=quota, now_ms=1000), '')
+        self.assertTrue(front_lookup_during_outage([answer, done], quota=quota, now_ms=2000))
+        self.assertTrue(front_lookup_during_outage([answer, done], quota={**quota, 'model': DEEPSEEK}, now_ms=1000))
+        self.assertTrue(front_lookup_during_outage([answer, {**done, 'from': None}], quota=quota, now_ms=1000))
+        self.assertTrue(front_lookup_during_outage([answer, {'t': 'task'}, done], quota=quota, now_ms=1000))
+        self.assertTrue(front_lookup_during_outage([{**answer, 'text': 'https://example.com'}, done], quota=quota, now_ms=1000))
+        self.assertIsNone(front_lookup_during_outage([answer, {**done, 'why': 'chat'}], quota=quota, now_ms=1000))
+
     def test_deadlines_include_existing_inference_budget_and_remain_bounded(self):
         self.assertGreaterEqual(front_reply_limit(HYDROGEN), 65)
         self.assertLessEqual(front_reply_limit(HYDROGEN), 75)

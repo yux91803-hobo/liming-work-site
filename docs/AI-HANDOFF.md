@@ -1,3 +1,8 @@
+## 2026-11-25 · #213 正式站验收续接
+
+- Antigravity 原实现和 Codex 审查修正已由 [#213](https://github.com/yux91803-hobo/liming-work-site/pull/213) 合入 `49366ef`。当地全量检查 1098/1098，E2E 15 组。两次正式发布在同一前台搜索验收处失败并自动回滚，失败证据见 [正式发布](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45533235022)。
+- Codex 在 `codex/xin-live-front-quota-20261125` 补上每轮额度来源与联调核对，本次实现及自查由 Codex 完成。实际 Hydrogen 配额已核实处于冷却，本批正式结果和剩余原生查询覆盖以接续 PR 为准。第 4a 批及第 5 批继续独立验证。
+
 ## 2026-11-25 · #211 的独立复核与接续（Codex）
 
 - `codex/xin-3b-reviewed-20261125` 从 Antigravity 的 `c218600` 开出。Antigravity 实现两阶段交付、报告重送、额度容错，并自查。Codex 独立复核，修复批次重领、原生编号与回滚格式三个问题，并自查修正。原提交和分支保留。
