@@ -521,25 +521,44 @@ export function confinedMcp(t, base, server) {
 
 // The task receives a short-lived inference-only credential, never the reusable gateway key.
 // The controller pins the model and endpoint and caps request size, concurrency and total requests.
-export function requestBudget(file,limit=128,options={}) {
+export function requestBudget({ read, write }, limit=128, options={}) {
   limit=Math.min(512,Math.max(1,Math.floor(limit)));
-  const read=()=>{try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch{return {};}};
-  const save=value=>{
-    mkdir(path.dirname(file));const tmp=file+'.'+process.pid+'.tmp';
-    fs.writeFileSync(tmp,JSON.stringify({...value,limit,updated:Date.now()}),{mode:0o600});fs.renameSync(tmp,file);
-  };
+  const save = value => write({ ...value, limit, updated: Date.now() });
   const take=()=>{const b=read();if((b.used||0)>=limit||options.tokens>0&&(b.total||0)>=options.tokens)return false;save({...b,used:(b.used||0)+1,tokenLimit:options.tokens||null});return true;};
   take.recordUsage=u=>{const b=read();if(!u){save({...b,unknownUsage:(b.unknownUsage||0)+1});return;}const input=Math.max(0,Number(u.input_tokens)||0),output=Math.max(0,Number(u.output_tokens)||0),cached=Math.max(0,Number(u.input_tokens_details?.cached_tokens)||0);save({...b,input:(b.input||0)+input,output:(b.output||0)+output,cached:(b.cached||0)+cached,total:(b.total||0)+input+output});};
   take.recordCumulativeUsage=(provider,id,u)=>{
     const b=read(),key=provider+':'+id,previous=b.providerUsage?.[key]||{},next={};
     u={...u,total_tokens:u?.total_tokens??((Number(u?.input_tokens)||0)+(Number(u?.output_tokens)||0))};
-    for(const k of ['input_tokens','output_tokens','cache_read_tokens','total_tokens']){next[k]=Math.max(0,Number(u?.[k])||0);if(next[k]<(previous[k]||0))throw Error('供应商累计用量倒退，未重复记账');}
+    for(const k of ['input_tokens','output_tokens','cache_read_tokens','total_tokens']){next[k]=Math.max(0,Number(u?.[k])||0);if(next[k]<(previous[k]||0))throw Object.assign(Error('供应商累计用量倒退，未重复记账'),{code:'budget_regression'});}
     const delta=Object.fromEntries(Object.keys(next).map(k=>[k,next[k]-(previous[k]||0)]));
     // Antigravity's result usage covers the WHOLE resumed conversation. Store
     // the watermark with the budget, so both later turns and restarts use deltas.
     save({...b,input:(b.input||0)+delta.input_tokens,output:(b.output||0)+delta.output_tokens,cached:(b.cached||0)+delta.cache_read_tokens,total:(b.total||0)+delta.total_tokens,providerUsage:{...b.providerUsage,[key]:next}});
     return delta;
   };
+  return take;
+}
+export function bridgedBudget(sid, run, lockedCall, defer) {
+  const cleanUsage = u => u ? { input_tokens: u.input_tokens, output_tokens: u.output_tokens,
+    cache_read_tokens: u.cache_read_tokens, total_tokens: u.total_tokens,
+    ...(u.input_tokens_details ? { input_tokens_details: { cached_tokens: u.input_tokens_details.cached_tokens } } : {}) } : null;
+  const apply = (action, args = {}) => {
+    const receipt = { sid, run, id: crypto.randomUUID(), action, ...args };
+    let res;
+    try {
+      res = lockedCall('tasks', 'task_budget', receipt, { deadlineMs: action === 'take' ? 15000 : 1000 });
+    } catch (error) {
+      const unavailable = ['owner_unavailable','state_busy','state_draining','state_disconnected','state_timeout','state_client_failed'];
+      if (action === 'take' || !defer || !unavailable.includes(error.code) || ![false,'unknown'].includes(error.executed)) throw error;
+      defer(receipt);
+      return {};
+    }
+    if (res?.error) throw Object.assign(Error(res.msg || res.error), { code: res.error });
+    return res;
+  };
+  const take = () => apply('take').allowed;
+  take.recordUsage = usage => apply('usage', { usage: cleanUsage(usage) });
+  take.recordCumulativeUsage = (provider, conversation, usage) => apply('cumulative', { provider, conversation, usage: cleanUsage(usage) }).delta;
   return take;
 }
 export async function inferenceProxy({baseURL,key,model,maxRequests=128,takeBudget,socketPath}) {
@@ -1162,7 +1181,7 @@ export async function antigravityWork(t,options) {
     // 命令自己没跑起来（没有结果、退出码不为 0）：多半是我们这边调用出了问题（参数、版本），写明退出码，不记成 Gemini 不可用
     const result=r.result;if(!result&&r.code!==0)throw Error('Antigravity 没有返回结果，退出码 '+r.code+'，已保留进度');
     if(r.model!==provider)throw Error('Antigravity 实际模型与指定模型不一致');
-    if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);report({type:'xin.usage',usage:delta});}
+    if(result?.usage&&result.conversation_id){const delta=options.budget.recordCumulativeUsage('antigravity',result.conversation_id,result.usage);if(delta)report({type:'xin.usage',usage:delta});}
     else options.budget.recordUsage?.(null);
     if(r.code!==0||result?.status!=='SUCCESS'){
       try{quota=await readAntigravityQuota(binary,clientDir,model);options.quota(quota);}catch{}

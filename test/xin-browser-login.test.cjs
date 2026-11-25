@@ -74,6 +74,27 @@ test('从浏览器里拿到的 cookie 分网站存：只存点名（或主页面
   assert.equal(s.has('ads.test'), false);
 });
 
+test('后台登录快照不能覆盖手动重登或恢复站长删除的登录', async t => {
+  const { loginStore, saveSites } = await imp('vm-logins.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-login-cas-')), site = 'shop.test';
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cookie = value => ({ name: 'session', value, domain: site, path: '/' });
+  const owner = loginStore(dir);
+  const browser = () => loginStore(dir, (name, jar, revision) => owner.save(name, jar, revision));
+  owner.save(site, [cookie('seed')]);
+  const old = browser();
+  assert.equal(old.cookies([site])[0].value, 'seed');
+  owner.save(site, [cookie('new-login')]);
+  assert.deepEqual(saveSites(old, [cookie('old-browser')], [site]), []);
+  assert.equal(owner.cookies([site])[0].value, 'new-login');
+  const later = browser();
+  later.cookies([site]);
+  assert.deepEqual(saveSites(later, [cookie('refreshed')], [site]), [site]);
+  owner.remove(site);
+  assert.deepEqual(saveSites(later, [cookie('late-refresh')], [site]), []);
+  assert.deepEqual(owner.list(), []);
+});
+
 /* ---------- 真的 Chromium：几个「网站」用不同主机名指到本机测试服务器 ---------- */
 
 function chromium() {

@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 /* ---------- 网站 = 可注册域名 ----------
    没带完整的公共后缀表：常见的多段后缀（com.cn、co.uk…）和托管域名（github.io…，每个子域名是不同的人）按下一级算，
@@ -39,19 +40,38 @@ const FIELDS = ['name', 'value', 'domain', 'path', 'expires', 'httpOnly', 'secur
 const clean = c => Object.fromEntries(FIELDS.filter(k => c[k] !== undefined && c[k] !== null).map(k => [k, c[k]]));
 const MAX_COOKIES = 300;
 
-export function loginStore(dir) {
+export function loginStore(dir, commit) {
   const ok = site => typeof site === 'string' && siteOf(site) === site;
   const file = site => path.join(dir, site + '.json');
-  const read = site => { if (!ok(site)) return null; try { return JSON.parse(fs.readFileSync(file(site), 'utf8')); } catch { return null; } };
+  const readFile = name => { try { return JSON.parse(fs.readFileSync(name, 'utf8')); } catch { return null; } };
+  const removals = path.join(dir, '.removed');
+  const revision = record => record ? record.revision || crypto.createHash('sha256').update(JSON.stringify(record)).digest('hex') : null;
+  const read = site => {
+    const record = ok(site) && readFile(file(site));
+    return record && readFile(removals)?.[site]?.revision !== revision(record) ? record : null;
+  };
+  const opened = new Map();
   return {
     dir,
     has: site => !!read(site),
-    save(site, cookies) {
+    removals: () => readFile(removals) || {},
+    save(site, cookies, expected) {
       if (!ok(site)) throw Error('不认的网站：' + site);
+      const list = (cookies || []).filter(c => cookieSite(c) === site).slice(0, MAX_COOKIES).map(clean);
+      if (!list.length) return { saved: false };
+      if (commit) {
+        const result = commit(site, list, opened.get(site) || null);
+        if (!result?.saved) return { saved: false };
+        opened.set(site, result.revision);
+        return result;
+      }
+      if (expected !== undefined && (!expected || expected !== revision(read(site)))) return { saved: false };
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.chmodSync(dir, 0o700);
-      const body = JSON.stringify({ site, saved: Date.now(), cookies: (cookies || []).slice(0, MAX_COOKIES).map(clean) });
+      const rev = crypto.randomUUID();
+      const body = JSON.stringify({ site, saved: Date.now(), revision: rev, cookies: list });
       const tmp = file(site) + '.' + process.pid + '.tmp';
       fs.writeFileSync(tmp, body, { mode: 0o600 }); fs.renameSync(tmp, file(site));
+      return { saved: true, revision: rev };
     },
     list() {
       let names = []; try { names = fs.readdirSync(dir).filter(f => f.endsWith('.json')); } catch { return []; }
@@ -60,14 +80,25 @@ export function loginStore(dir) {
     // 点名网站保存的 cookie，变成装进浏览器的参数；过期的不装
     cookies(sites) {
       const now = Date.now() / 1000, out = [];
-      for (const site of new Set(sites || [])) for (const c of read(site)?.cookies || []) {
-        if (cookieSite(c) !== site || c.expires > 0 && c.expires < now) continue;
-        const p = clean(c); if (!(p.expires > 0)) delete p.expires;
-        out.push(p);
+      for (const site of new Set(sites || [])) {
+        const record = read(site);
+        opened.set(site, revision(record));
+        for (const c of record?.cookies || []) {
+          if (cookieSite(c) !== site || c.expires > 0 && c.expires < now) continue;
+          const p = clean(c); if (!(p.expires > 0)) delete p.expires;
+          out.push(p);
+        }
       }
       return out;
     },
-    remove(site) { if (!ok(site)) return false; try { fs.unlinkSync(file(site)); return true; } catch { return false; } },
+    remove(site) {
+      if (!ok(site)) return false;
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const tmp = removals + '.' + process.pid + '.tmp';
+      const mark = { id: crypto.randomUUID(), revision: revision(readFile(file(site))) };
+      fs.writeFileSync(tmp, JSON.stringify({ ...readFile(removals), [site]: mark }), { mode: 0o600 }); fs.renameSync(tmp, removals);
+      try { fs.unlinkSync(file(site)); return true; } catch { return false; }
+    },
   };
 }
 // 浏览器里拿到的整罐 cookie，按网站分开存：只存给出的网站；这次一个都没拿到的网站不存（不把原来好好的登录冲掉）
@@ -76,7 +107,7 @@ export function saveSites(store, jar, sites) {
   for (const site of [...new Set(sites || [])]) {
     const list = (jar || []).filter(c => cookieSite(c) === site);
     if (!list.length) continue;
-    store.save(site, list); saved.push(site);
+    if (store.save(site, list)?.saved !== false) saved.push(site);
   }
   return saved;
 }

@@ -244,6 +244,34 @@ export async function idleMemoryReview(o = {}) {
     return {skipped:controller.signal.aborted?'interrupted':'request_failed'};
   } finally {
     clearInterval(poll);clearTimeout(timer);o.signal?.removeEventListener('abort',stop);
-    setMemoryMeta('idle_attempt',{at:started,ms:Math.max(0,now()-started)});
+    setMemoryMeta('idle_attempt',{activity:activity.id,at:started,ms:Math.max(0,now()-started)});
   }
+}
+
+export function createIdleMemoryScheduler({ busy, key, enabled = true, now = Date.now, review = idleMemoryReview }) {
+  let running = null, controller = null, attempted = null, stopped = false;
+  // Older releases may have a one-shot review already past reservation when the owner drains.
+  const legacyUntil = fs.existsSync(path.join(BASE, 'locks', 'memory-idle.lock'))
+    ? now() + MEMORY_IDLE.quietMs + MEMORY_IDLE.requestMs + 3000 : 0;
+  return {
+    tick(delay) {
+      if (!enabled || stopped || running || busy()) return delay;
+      const activity = memoryMeta('idle_activity');
+      if (!activity?.id || attempted === activity.id || memoryMeta('idle_attempt')?.activity === activity.id) return delay;
+      const wait = Math.max(legacyUntil, activity.at + MEMORY_IDLE.quietMs) - now();
+      if (wait > 0) return Math.min(wait, delay);
+      const token = key();
+      if (!token) return delay;
+      attempted = activity.id;
+      controller = new AbortController();
+      running = review({ busy, key: token, signal: controller.signal, pollMs: 1000, now })
+        .catch(() => {}).finally(() => { running = null; controller = null; });
+      return delay;
+    },
+    async stop() {
+      stopped = true;
+      controller?.abort();
+      await running;
+    }
+  };
 }

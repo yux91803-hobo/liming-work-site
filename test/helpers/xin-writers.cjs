@@ -1,6 +1,6 @@
 // 写者清单的扫描器（只在测试里用）：逐行扫控制器源码，找出每一处直接写文件的调用，归到它所在的顶层函数或成员名下。
 // 设计见 docs/superpowers/specs/2026-11-14-xin-kernel-stage2-design.md §6.5。
-// 边界：盘点直接 fs.方法 / new DatabaseSync；常见间接写法要求显式核对，未知打开按可能写登记。
+// 边界：盘点直接 fs.方法、new DatabaseSync 和 node:sqlite 的 backup；常见间接写法要求显式核对，未知打开按可能写登记。
 // 这是文本回归门槛，不是完整 JS 数据流分析；cp、tar、sqlite3 等子进程写入仍需人工审查。
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,7 +11,7 @@ const KINDS = ['rmw', 'op', 'run', 'safe', 'owner', 'shell', 'outside'];
 
 const WRITES = ['writeFile', 'appendFile', 'rename', 'unlink', 'rm', 'rmdir', 'copyFile', 'cp', 'truncate', 'ftruncate', 'symlink', 'link',
   'mkdir', 'mkdtemp', 'chmod', 'chown', 'utimes', 'write', 'open'];
-const CALL = new RegExp('\\bfs\\.((?:' + WRITES.join('|') + ')(?:Sync)?|createWriteStream)\\b|\\bnew\\s+(DatabaseSync)\\b', 'g');
+const CALL = new RegExp('\\bfs\\.((?:' + WRITES.join('|') + ')(?:Sync)?|createWriteStream)\\b|\\bnew\\s+(DatabaseSync)\\b|\\bsqlite\\.(backup)\\b', 'g');
 const TOP = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?\s+([A-Za-z_$][\w$]*)|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=|class\s+([A-Za-z_$][\w$]*))/;
 const METHOD = /^ {2}(?:(?:static|async|get|set)\s+)*\*?\s*([A-Za-z_$#][\w$]*)\s*\(/;
 const PROPERTY = /^ {2}([A-Za-z_$][\w$]*)\s*:\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)/;
@@ -69,9 +69,10 @@ function scanWriters(dir) {
     for (const m of source.matchAll(new RegExp('\\bimport\\s*\\(\\s*' + MODULE, 'g'))) problem(m.index, 'fs 不能动态引入，扫描器只认 fs.方法');
     for(const m of source.matchAll(/\bfrom\s*['"]node:sqlite['"]/g)) {
       const prefix=source.slice(0,m.index),start=Math.max(prefix.lastIndexOf(';')+1,prefix.lastIndexOf('\nimport ')+1);
-      if(!/^\s*import\s*\{\s*DatabaseSync\s*\}\s*$/.test(prefix.slice(start)))problem(m.index,'SQLite 必须以 DatabaseSync 原名静态引入，不能通过别名或命名空间绕过盘点');
+      if(!/^\s*import\s*(?:sqlite\s*,\s*)?\{\s*DatabaseSync\s*\}\s*$/.test(prefix.slice(start)))problem(m.index,'SQLite 必须以 DatabaseSync 原名静态引入，backup 通过 sqlite.backup 使用');
     }
-    for(const m of source.matchAll(/\bimport\s*\(\s*['"]node:sqlite['"]|(?<![=!<>])=\s*DatabaseSync\b/g))problem(m.index,'SQLite 构造器不能动态引入或保存为别名');
+    for(const m of source.matchAll(/\b(?:import|require)\s*\(\s*['"]node:sqlite['"]|(?<![=!<>])=\s*(?:DatabaseSync|sqlite)\b(?!\s*\.)|\bsqlite\s*(?:\[|\?\.|\.(?!backup\s*\())/g))
+      problem(m.index,'SQLite 方法不能动态引入、使用别名或通过模块访问其他方法');
     source.split('\n').forEach((line, i) => {
       const at = file + ':' + (i + 1) + ' ';
       if (/['"](?:node:)?fs\/promises['"]/.test(line)) problems.push(at + '用了 fs/promises，扫描器只认 fs.方法');
@@ -85,7 +86,7 @@ function scanWriters(dir) {
       else if (line.startsWith('}')) member = null;
       else member = memberOf(line) || member;
       for (const c of line.matchAll(CALL)) {
-        const call = c[1] || c[2], a = argsAt(line, c.index + c[0].length);
+        const call = c[1] || c[2] || c[3], a = argsAt(line, c.index + c[0].length);
         if (!a && c[1]) problems.push(at + '写方法必须直接调用，不能保存别名后间接写入');
         if (a?.closed && /^open(?:Sync)?$/.test(call) && readOnlyOpen(a.args)) continue;
         if (a?.closed && call === 'DatabaseSync' && /^\{\s*readOnly\s*:\s*true\s*,?\s*\}$/.test(splitArgs(a.args)[1] || '')) continue;

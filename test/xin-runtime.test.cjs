@@ -1,3 +1,4 @@
+const { budgetStore } = require('./helpers/budget-store.cjs');
 const test = require('node:test');
 const { lockedSpawn } = require('./helpers/locked.cjs');
 const { platformTimeout } = require('./helpers/timeout.cjs');
@@ -441,9 +442,47 @@ test('状态进程失联时使用已有密钥发告警，恢复后由写者清�
 
 test('任务预算跨代理重启和续接累计，不因换一轮重新变满',async t=>{
   const f=fixture(t),r=await load(),file=path.join(f.control,'budgets',f.task.sid+'.json');
-  const first=r.requestBudget(file,2);assert.equal(first(),true);
-  const resumed=r.requestBudget(file,2);assert.equal(resumed(),true);assert.equal(resumed(),false);
+  const first=r.requestBudget(budgetStore(file),2);assert.equal(first(),true);
+  const resumed=r.requestBudget(budgetStore(file),2);assert.equal(resumed(),true);assert.equal(resumed(),false);
   assert.equal(JSON.parse(fs.readFileSync(file)).used,2);assert.equal(fs.statSync(file).mode&0o777,0o600);
+});
+
+test('状态主人串行扣减预算，同一回执重送不重复占用额度', async t => {
+  const f = fixture(t), run = f.task.runs[0], sid = f.task.sid;
+  f.env.XIN_TASK_REQUEST_LIMIT = '2';
+  fs.writeFileSync(path.join(f.control, 'runs', run + '.json'), JSON.stringify({ run, sid, task: true, started: Date.now(), pid: process.pid }));
+  f.ensureState();
+  const { requestState } = await import('../site/xin/vm-kernel-client.mjs');
+  const { randomUUID } = require('node:crypto');
+  const take = args => requestState(f.control, { kind: 'op', op: 'task_budget', key: 'tasks', locked: true, args: { sid, run, action: 'take', ...args } });
+  const id = randomUUID();
+  const repeat = await Promise.all([take({ id }), take({ id })]);
+  assert.deepEqual(repeat.map(r => r.allowed), [true, true]);
+  const concurrent = await Promise.all(Array.from({ length: 6 }, () => take({ id: randomUUID() })));
+  assert.equal(concurrent.filter(r => r.allowed).length, 1);
+  const file = path.join(f.control, 'budgets', sid + '.json');
+  assert.equal(JSON.parse(fs.readFileSync(file)).used, 2);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal((await take({ id, action: 'usage' })).error, 'message_conflict');
+});
+
+test('状态主人负责日志与首次密钥生成，迟到诊断不能恢复已移除的前台记录', async t => {
+  const f = fixture(t), run = f.task.runs[0];
+  f.ensureState();
+  const { requestState } = await import('../site/xin/vm-kernel-client.mjs');
+  const call = (op, args = {}) => requestState(f.control, { kind: 'op', op, locked: true, key: 'tasks', args });
+  await Promise.all(Array.from({ length: 4 }, () => call('vapid_init')));
+  const keys = await Promise.all([call('push_key'), call('push_key')]);
+  assert.ok(keys[0].key);
+  assert.equal(keys[0].key, keys[1].key);
+  assert.equal(Object.hasOwn(keys[0], 'privateJwk'), false);
+  const append = n => call('log_append', { name: 'boundary.jsonl', entry: { n } });
+  await Promise.all(Array.from({ length: 8 }, (_, n) => append(n)));
+  const entries = fs.readFileSync(path.join(f.control, 'logs', 'boundary.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(entries.map(e => e.n).sort(), [0,1,2,3,4,5,6,7]);
+  fs.unlinkSync(path.join(f.control, 'runs', run + '.json'));
+  assert.equal((await call('log_append', { name: 'front.jsonl', entry: { run, outcome: 'late' } })).ok, false);
+  assert.equal(fs.existsSync(path.join(f.control, 'logs', 'front.jsonl')), false);
 });
 
 test('普通前台对话变化不再让任务轮询逐个读取全部会话，索引只在任务锁内创建',t=>{
