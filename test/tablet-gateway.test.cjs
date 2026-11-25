@@ -11,7 +11,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const tmp=t=>{const d=fs.mkdtempSync(path.join(os.tmpdir(),'tablet-gw-'));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));return d;};
 const alive=pid=>{try{process.kill(pid,0);return true;}catch{return false;}};
 const freePort=()=>new Promise(r=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>r(p));});});
-async function waitFor(fn,ms=5000){const t0=Date.now();for(;;){const v=await fn();if(v||Date.now()-t0>ms)return v;await sleep(25);}}
+async function waitFor(fn,ms=5000){const t0=performance.now();for(;;){const v=await fn();if(v||performance.now()-t0>ms)return v;await sleep(25);}}
 const FAKE_PY=`import json, os, signal, sys, http.server
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 args = sys.argv[1:]
@@ -146,9 +146,9 @@ test('健康检查超时：返回 unhealthy，进程留着',async t=>{
 test('停止：先发 SIGINT（网关当 Ctrl+C 正常退出），不理就 SIGKILL；停了以后不再重启',async t=>{
   const dir=fakeGateway(t,'ignore-stop'),s=await supervisor(t,fast(dir,await freePort()));
   assert.equal(await s.start(),'started');
-  const pid=s.state().pid,t0=Date.now();
+  const pid=s.state().pid,t0=performance.now();
   await s.stop();
-  assert.ok(Date.now()-t0<1300,'在 stopGraceMs 加 1 秒内停完');
+  assert.ok(performance.now()-t0<1300,'在 stopGraceMs 加 1 秒内停完');
   assert.equal(alive(pid),false);
   await sleep(300);assert.equal(spawns(dir),1);
 });
