@@ -1,8 +1,7 @@
 # 修改清单 · 2026-11-25（第 5 批机外备份打包）
 
-- Codex 实现并自查。状态进程取 SQLite 一致快照、固定归档文件版本和事件字节长度，随后异步复制事件前缀、压缩和校验。两次同日请求共用一个进行中的打包结果；压缩成功后原子发布。恢复的文件名、停止在途任务记录、校验和和私有路径原样兼容。
-- 定向测试包括压缩挂起时处理状态写入、并发请求只打包一次、备份恢复与排除凭据，共 30/30。状态进程冻结输入与 SQLite 快照仍是同步阶段。负载下的合成样本首次返回异步等待前 72 ms，继续测量和优化 SQLite 快照及项目准备、写回清单。
-- 硬链接用于固定以改名更新的投影。事件按记录的字节前缀复制后才归档。 [rsnapshot 快照实现](https://github.com/rsnapshot/rsnapshot/blob/master/rsnapshot-program.pl)
+- Codex 实现并自查。状态进程用只读事务固定 SQLite 快照，同一回合用硬链接固定原子替换的投影及追加日志的字节长度。随后异步复制快照和事件前缀。子进程压实 SQLite 副本以排除已删除的数据，再压缩、核对并原子发布。两次同日请求共用一次打包，恢复文件名、停止在途任务记录和校验方式兼容上一版。
+- 定向备份、恢复和写者清单回归 32/32。验证复制期间更新数据库与清单仍可恢复成同一时点，并发导出共用同一结果。Node 22.15 实测兼容路径通过。3.125 MiB SQLite、160 个会话和事件文件的合成样本各测三次，同步部分中位数由 70 ms 降到 7 ms。正式性能与工作区准备、写回清单待继续验证。 [Node.js SQLite 备份接口](https://nodejs.org/docs/latest-v22.x/api/sqlite.html#sqlitebackupsource-db-destination-options) [rsnapshot 快照实现](https://github.com/rsnapshot/rsnapshot/blob/master/rsnapshot-program.pl)
 
 # 修改清单 · 2026-11-25（第 2 步第 5 批写者与空闲整理）
 

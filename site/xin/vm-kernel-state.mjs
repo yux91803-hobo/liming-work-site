@@ -5,10 +5,12 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
-import { DatabaseSync } from 'node:sqlite';
+import sqlite, { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 import { BRIDGE_PROTOCOL, Ownership } from './vm-kernel-owner.mjs';
 import { FRAME_MAX, stateSocket } from './vm-kernel-client.mjs';
 
+const SELF = fileURLToPath(import.meta.url);
 const KINDS = new Set(['op','named','write','append','xin','reap','control']);
 const ID = /^[A-Za-z0-9_-]{8,100}$/;
 
@@ -45,30 +47,50 @@ function freezeArchiveInputs(home, staged, pinned, names) {
   return files;
 }
 
-function snapshotArchiveDb(db, stage) {
+function compactArchiveDb(root) {
+  const stage = path.join(root, 'snapshot');
   const file = path.join(stage, 'workflow.sqlite');
-  db.exec("VACUUM INTO '" + file.replace(/'/g, "''") + "'");
+  const source = new DatabaseSync(path.join(root, 'raw.sqlite'), { readOnly: true });
+  // Rebuild the private copy so deleted rows and unused pages stay out of the export.
+  try { source.prepare('VACUUM INTO ?').run(file); }
+  finally { source.close(); }
   fs.chmodSync(file, 0o600);
   const staged = new DatabaseSync(file);
-  const names = ['workflow.sqlite'];
   try {
     const runs = staged.prepare("SELECT run FROM launches WHERE state IN ('pending','dispatched')").all().map(row => row.run);
     if (runs.length) {
       staged.prepare("UPDATE launches SET state='pending' WHERE state='dispatched'").run();
       fs.writeFileSync(path.join(stage, 'restore-stop.json'), JSON.stringify({ at: Date.now(), runs }), { mode: 0o600 });
-      names.push('restore-stop.json');
     }
   } finally { staged.close(); }
-  return names;
 }
 
-async function archiveState(home, db, dir, file) {
+if (process.argv[1] === SELF && process.argv[2] === 'compact-backup') compactArchiveDb(process.argv[3]);
+const archiveCommand = (command, args) => new Promise((resolve, reject) => {
+  execFile(command, args, { timeout: 60000, maxBuffer: 256 * 1024 }, error => error ? reject(error) : resolve());
+});
+async function archiveState(home, dir, file) {
   const root = fs.mkdtempSync(path.join(dir, '.stage-'));
   const staged = path.join(root, 'snapshot'), pinned = path.join(root, 'pinned');
   try {
     fs.mkdirSync(staged, { mode: 0o700 });
-    const names = snapshotArchiveDb(db, staged);
-    const files = freezeArchiveInputs(home, staged, pinned, BACKUP_ITEMS);
+    const raw = path.join(root, 'raw.sqlite');
+    const reader = new DatabaseSync(path.join(home, 'workflow.sqlite'), { readOnly: true });
+    let files;
+    try {
+      // Pin the WAL snapshot before freezing filesystem projections in this same owner turn.
+      reader.exec('BEGIN');
+      reader.prepare('SELECT name FROM sqlite_master LIMIT 1').get();
+      files = freezeArchiveInputs(home, staged, pinned, BACKUP_ITEMS);
+      if ('backup' in sqlite) await sqlite.backup(reader, raw);
+      else {
+        // Older Node 22 versions can take the copy in the same synchronous owner turn.
+        reader.exec('ROLLBACK');
+        reader.prepare('VACUUM INTO ?').run(raw);
+      }
+    } finally { reader.close(); }
+    await archiveCommand(process.execPath, [SELF, 'compact-backup', root]);
+    fs.unlinkSync(raw);
     for (const { name, size } of files) {
       const output = path.join(staged, name);
       fs.mkdirSync(path.dirname(output), { recursive: true });
@@ -76,10 +98,9 @@ async function archiveState(home, db, dir, file) {
       else fs.writeFileSync(output, '', { mode: 0o600 });
       if (fs.statSync(output).size !== size) throw Object.assign(Error('备份文件尺寸已变'), { code: 'backup_input' });
     }
-    const items = BACKUP_ITEMS.filter(name => fs.existsSync(path.join(staged, name)));
+    const items = ['workflow.sqlite', 'restore-stop.json', ...BACKUP_ITEMS].filter(name => fs.existsSync(path.join(staged, name)));
     const tmp = path.join(root, 'state.tar.gz');
-    await new Promise((resolve, reject) => execFile('tar', ['-czf', tmp, '-C', staged, ...names, ...items],
-      { timeout: 60000, maxBuffer: 256 * 1024 }, (error) => error ? reject(error) : resolve()));
+    await archiveCommand('tar', ['-czf', tmp, '-C', staged, ...items]);
     fs.chmodSync(tmp, 0o600);
     fs.renameSync(tmp, file);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -95,7 +116,8 @@ export function createBackupExporter({ home, getDb, today }) {
       try {
         if (!fs.existsSync(file)) {
           fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-          await archiveState(home, getDb(), dir, file);
+          getDb(); // Open and validate the owner's workflow database.
+          await archiveState(home, dir, file);
           for (const old of fs.readdirSync(dir).filter(n => /^state-\d{8}\.tar\.gz$/.test(n)).sort().slice(0, -keep))
             try { fs.unlinkSync(path.join(dir, old)); } catch { /* removed concurrently */ }
         }

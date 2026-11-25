@@ -73,7 +73,17 @@ import * as sqlite from 'node:sqlite';
 const dynamic = await import('node:sqlite');
 const Other = DatabaseSync;
 new DB('state.sqlite');new sqlite.DatabaseSync('state.sqlite');`});
-  assert.equal(scanWriters(dir).problems.length,4);
+  assert.equal(scanWriters(dir).problems.length,5);
+});
+
+test('扫描器：SQLite 异步备份登记输出写入，拒绝未登记的别名',t=>{
+  const dir = sources(t, {'vm-a.mjs': `import sqlite, { DatabaseSync } from 'node:sqlite';
+function copy(db) { return sqlite.backup(db, '/tmp/snapshot.sqlite'); }
+const copyDb = sqlite.backup;
+const other = require('node:sqlite');`});
+  const { writers, problems } = scanWriters(dir);
+  assert.deepEqual(writers, {'vm-a.mjs::copy': {backup: 1}, 'vm-a.mjs::copyDb': {backup: 1}});
+  assert.equal(problems.length, 2);
 });
 
 test('写者清单：控制器里每一处直接写文件的调用都登记了，清单里也没有多出来的', () => {

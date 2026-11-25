@@ -238,3 +238,41 @@ test('备份压缩期间状态进程能处理新写入，两个请求共享同�
   assert.equal(archived('daily.md'), '旧清单');
   assert.equal(archived('runs/rarchive001.jsonl'), before);
 });
+
+test('异步复制 SQLite 时保留同一时点的文件与库快照，归档副本剔除已删除内容', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-backup-snapshot-'));
+  const { DatabaseSync } = require('node:sqlite');
+  const { createBackupExporter } = await import('../site/xin/vm-kernel-state.mjs');
+  const source = path.join(root, 'workflow.sqlite');
+  const db = new DatabaseSync(source);
+  t.after(() => { db.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  db.exec(`PRAGMA journal_mode=WAL; PRAGMA secure_delete=OFF;
+    CREATE TABLE launches (run TEXT PRIMARY KEY, state TEXT);
+    INSERT INTO launches VALUES ('rsnapshot01', 'dispatched');
+    CREATE TABLE memory (item TEXT);
+    INSERT INTO memory VALUES ('before'), ('deleted_fixture_do_not_export');
+    DELETE FROM memory WHERE item LIKE 'deleted%';
+    PRAGMA wal_checkpoint(TRUNCATE)`);
+  assert.ok(fs.readFileSync(source).includes('deleted_fixture_do_not_export'));
+  const daily = path.join(root, 'daily.md');
+  fs.writeFileSync(daily, 'old');
+  const exportBackup = createBackupExporter({ home: root, getDb: () => db, today: () => '2026-11-25' });
+  const backup = exportBackup();
+  db.exec("INSERT INTO memory VALUES ('after'); UPDATE launches SET state='completed'");
+  fs.writeFileSync(daily + '.tmp', 'new');
+  fs.renameSync(daily + '.tmp', daily);
+  const result = await backup;
+  assert.ok(result.ok, JSON.stringify(result));
+  const unpack = path.join(root, 'unpack'); fs.mkdirSync(unpack);
+  assert.equal(spawnSync('tar', ['-xzf', result.file, '-C', unpack]).status, 0);
+  assert.deepEqual(fs.readdirSync(unpack).sort(), ['daily.md', 'restore-stop.json', 'workflow.sqlite']);
+  assert.equal(fs.readFileSync(path.join(unpack, 'daily.md'), 'utf8'), 'old');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(unpack, 'restore-stop.json'))).runs, ['rsnapshot01']);
+  const snapshot = path.join(unpack, 'workflow.sqlite');
+  assert.ok(!fs.readFileSync(snapshot).includes('deleted_fixture_do_not_export'));
+  const restored = new DatabaseSync(snapshot, { readOnly: true });
+  try {
+    assert.deepEqual(restored.prepare('SELECT item FROM memory').all().map(r => r.item), ['before']);
+    assert.equal(restored.prepare('SELECT state FROM launches').get().state, 'pending');
+  } finally { restored.close(); }
+});
