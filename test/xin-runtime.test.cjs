@@ -55,6 +55,55 @@ function fixture(t) {
   return { root, control: env.XIN_HOME, env, task, save, read, call, ensureState };
 }
 
+test('工作区副本准备完成前保持私有，发布后仍能核对原项目的并发修改', async t => {
+  const f = fixture(t), r = await load(), file = path.join(f.task.dir, 'main.c');
+  fs.writeFileSync(file, 'int state = 1;');
+  const work = r.startWorkspaceCopy(f.task, f.control);
+  try {
+    const prepared = await work.ready;
+    assert.ok(prepared.stage, JSON.stringify(prepared));
+    assert.ok(!fs.existsSync(path.join(r.taskRoot(f.control), 'xin-task-' + f.task.sid)));
+    assert.ok(!fs.existsSync(path.join(f.control, 'workspaces', f.task.sid + '.json')));
+    fs.writeFileSync(file, 'int state = 2;');
+    f.task.workspace = r.commitWorkspaceCopy(f.task, f.control, prepared);
+    const { work: project, home } = f.task.workspace;
+    assert.equal(fs.readFileSync(path.join(project, 'main.c'), 'utf8'), 'int state = 1;');
+    assert.ok(fs.readFileSync(path.join(home, 'shell-env.sh'), 'utf8').includes(path.join(home, 'bin')));
+    fs.writeFileSync(path.join(project, 'main.c'), 'int state = 3;');
+    assert.deepEqual(r.publicationPlan(f.task, f.control).conflicts, ['main.c']);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'int state = 2;');
+    const old = new Date(0);
+    fs.utimesSync(prepared.stage, old, old);
+    await r.pruneWorkspaceStages(f.control);
+    assert.ok(!fs.existsSync(prepared.stage));
+    assert.ok(fs.existsSync(project), 'the live workspace survives pruning');
+  } finally { await work.close(); }
+});
+
+test('准备副本占用对应目录和调度名额；取消后不会用迟到副本启动任务', async () => {
+  const { createTaskScheduler } = await import('../site/xin/vm-dispatch.mjs');
+  const tasks = ['/a', '/a/sub', '/b'].map((dir, i) => ({ dir, sid: 's' + i, created: i, status: 'queued' }));
+  const copies = new Map(), started = [], cancelled = [];
+  const options = { listTasks: () => tasks, occupies: t => t.status === 'running', max: 2,
+    overlaps: (a, b) => a === b || a.startsWith(b + '/') || b.startsWith(a + '/'),
+    needsCopy: t => !t.workspace, copyWorkspace: t => {
+      const ready = new Promise(resolve => copies.set(t.sid, resolve));
+      return { ready, close: () => { cancelled.push(t.sid); } };
+    }, startTask: (t, all, copy) => { started.push([t.sid, copy]); t.status = 'running'; },
+    failTask: (_, message) => { throw Error(message); }, wake: () => scheduler.schedule() };
+  const scheduler = createTaskScheduler(options);
+  scheduler.schedule();
+  assert.deepEqual([...copies.keys()], ['s0', 's2']);
+  assert.deepEqual(started, []);
+  tasks[0].status = 'stopped'; scheduler.schedule();
+  assert.deepEqual(cancelled, ['s0']);
+  assert.deepEqual([...copies.keys()], ['s0', 's2', 's1']);
+  copies.get('s0')({ stage: 'old' }); copies.get('s1')({ stage: 'new' }); copies.get('s2')({ stage: 'independent' });
+  await Promise.resolve();
+  assert.deepEqual(started, [['s1', { stage: 'new' }], ['s2', { stage: 'independent' }]]);
+  await scheduler.drain();
+});
+
 test('分身修改副本，检查原文件并发变更；删除和冲突不会自动写回', async t => {
   const f = fixture(t), r = await load();
   fs.writeFileSync(path.join(f.task.dir, 'main.c'), 'original');
@@ -557,7 +606,7 @@ test('系统 SIGTERM 保留后台断点并续接，用户停止不被自动重�
   const wait=async fn=>{const deadline=performance.now()+platformTimeout(30000);while(performance.now()<deadline){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,100));}throw Error('fixture did not reach checkpoint: '+JSON.stringify(observed));};
   const start=async dir=>{
     fs.mkdirSync(dir,{recursive:true});const a=f.call('task_new',{kind:'research',dir,goal:'fixture',title:'graceful fixture'}).task;
-    const s=await wait(()=>{const v=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',a.sid+'.json'))),m=JSON.parse(fs.readFileSync(path.join(f.control,'runs',v.runs.at(-1)+'.json')));observed={phase:'start',status:v.status,modelSession:!!v.agentSid,child:!!m.childPid};return v.agentSid&&m.childIdentity&&v.workspace&&fs.existsSync(path.join(v.workspace.work,'.checkpoint'))?v:null;});
+    const s=await wait(()=>{const v=JSON.parse(fs.readFileSync(path.join(f.control,'sessions',a.sid+'.json'))),run=v.runs.at(-1);if(!run)return null;const m=JSON.parse(fs.readFileSync(path.join(f.control,'runs',run+'.json')));observed={phase:'start',status:v.status,modelSession:!!v.agentSid,child:!!m.childPid};return v.agentSid&&m.childIdentity&&v.workspace&&fs.existsSync(path.join(v.workspace.work,'.checkpoint'))?v:null;});
     return {sid:s.sid,meta:JSON.parse(fs.readFileSync(path.join(f.control,'runs',s.runs.at(-1)+'.json')))};
   };
   const a=await start(path.join(f.root,'resume'));

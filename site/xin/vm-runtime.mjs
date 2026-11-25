@@ -6,13 +6,15 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import net from 'node:net';
 import dns from 'node:dns';
-import { spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { browserBroker } from './vm-browser.mjs';
 import { steerBlock, LATE_STEER, LATE_STEER_MAX, DELIVERY, NOTE_UNCONFIRMED_TEXT } from './vm-steer.mjs';
 
 const mkdir = p => fs.mkdirSync(p, { recursive: true });
 const hash = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const under = (p, root) => p === root || p.startsWith(root + path.sep);
+const SELF = fileURLToPath(import.meta.url);
 
 export function inventory(root) {
   const out = {};
@@ -122,6 +124,81 @@ export function prepareWorkspace(t, controller) {
   fs.writeFileSync(manifest, JSON.stringify({ original: fs.realpathSync(t.dir), before }), { mode: 0o600 });
   installTaskBridge({ home }, { shellEnvironment: true });
   return { work, io, home, tmp: path.join(root, 'tmp'), manifest,stm32:detectStm32(t.dir,Object.keys(before)) };
+}
+
+function preparePrivateCopy(sid, dir, stage) {
+  try {
+    if (!/^s[0-9a-z]{6,24}$/.test(sid) || fs.realpathSync(dir) !== dir) throw Error('项目目录已改变');
+    const { work, manifest, stm32 } = prepareWorkspace({ sid, dir }, path.join(stage, 'controller'));
+    const before = JSON.parse(fs.readFileSync(manifest, 'utf8')).before, copied = inventory(work);
+    if (Object.keys(before).length !== Object.keys(copied).length || Object.entries(copied).some(([name, digest]) => before[name] !== digest))
+      throw Error('准备副本期间项目文件发生变化，请重新开始');
+    process.stdout.write(JSON.stringify({ stm32 }));
+  } catch (error) {
+    process.stdout.write(JSON.stringify({ error: String(error.message).slice(0, 500) }));
+  }
+}
+
+export function startWorkspaceCopy(t, controller) {
+  const base = taskRoot(controller);
+  mkdir(base);
+  if (!fs.lstatSync(base).isDirectory()) throw Error('任务副本目录无效');
+  fs.chmodSync(base, 0o700);
+  const stage = fs.mkdtempSync(path.join(base, '.prepare-' + t.sid + '-'));
+  let child;
+  const ready = new Promise(resolve => {
+    child = execFile(process.execPath, [SELF, 'prepare-workspace', t.sid, t.dir, stage],
+      { timeout: 45000, maxBuffer: 16384, env: { LANG: 'C.UTF-8' } }, (error, stdout) => {
+        if (!error) {
+          try {
+            const report = JSON.parse(stdout);
+            if (typeof report.stm32 === 'boolean') return resolve({ stage, stm32: report.stm32 });
+            if (typeof report.error === 'string') return resolve({ error: report.error });
+          } catch { /* Report is missing or incomplete. */ }
+        }
+        resolve({ error: '项目副本准备进程未完成' });
+      });
+  }).catch(() => ({ error: '项目副本准备进程未能启动' }));
+  return { ready, async close() {
+    child?.kill();
+    await ready;
+    await new Promise(resolve => fs.rm(stage, { recursive: true, force: true }, () => resolve()));
+  } };
+}
+
+export function commitWorkspaceCopy(t, controller, { stage, stm32 }) {
+  const staging = path.join(stage, 'controller'), name = 'xin-task-' + t.sid;
+  const candidate = path.join(taskRoot(staging), name), root = path.join(taskRoot(controller), name);
+  if (fs.realpathSync(t.dir) !== t.dir) throw Error('项目目录已改变');
+  mkdir(path.join(controller, 'workspaces'));
+  const manifest = path.join(controller, 'workspaces', t.sid + '.json');
+  const tmp = manifest + '.' + crypto.randomUUID() + '.tmp';
+  const workspace = { work: path.join(root, 'work'), home: path.join(root, 'home'), io: path.join(root, 'io'),
+    tmp: path.join(root, 'tmp'), manifest, stm32 };
+  try {
+    // The queued task has never launched. Replace any leftover copy from a crashed promotion.
+    fs.copyFileSync(path.join(staging, 'workspaces', t.sid + '.json'), tmp, fs.constants.COPYFILE_EXCL);
+    try { fs.renameSync(root, path.join(stage, 'previous')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    fs.renameSync(candidate, root);
+    installTaskBridge(workspace, { shellEnvironment: true });
+    fs.renameSync(tmp, manifest);
+  } finally { fs.rmSync(tmp, { force: true }); }
+  return workspace;
+}
+
+export async function pruneWorkspaceStages(controller, before = Date.now() - 86400e3) {
+  const base = taskRoot(controller);
+  const dir = await new Promise(resolve => fs.lstat(base, (_, stat) => resolve(stat)));
+  if (!dir?.isDirectory()) return;
+  const items = await new Promise(resolve => fs.readdir(base, { withFileTypes: true }, (_, entries) => resolve(entries || [])));
+  for (const entry of items) {
+    if (!entry.isDirectory() || !/^\.prepare-s[0-9a-z]{6,24}-[a-z0-9]{6}$/i.test(entry.name)) continue;
+    const stale = path.join(base, entry.name);
+    await new Promise(resolve => fs.lstat(stale, (error, stat) => {
+      if (error || !stat.isDirectory() || stat.mtimeMs >= before) return resolve();
+      fs.rm(stale, { recursive: true, force: true }, () => resolve());
+    }));
+  }
 }
 
 export function publicationPlan(t, controller) {
@@ -1221,3 +1298,5 @@ export async function antigravityWork(t,options) {
   throw Error('Antigravity 达到本轮动作上限，进度已保留');
   }finally{network.close();}
 }
+
+if (process.argv[1] === SELF && process.argv[2] === 'prepare-workspace') preparePrivateCopy(...process.argv.slice(3));

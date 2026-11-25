@@ -70,7 +70,7 @@ import {recallAll,turnGuidance,safeContextEvents,dropRecall} from './vm-context.
 import {dailyEvidence,dailyContext} from './vm-daily.mjs';
 import {openFrontProvider,preferredFrontModel,frontModelInfo,frontRouting,AGY_FRONT_MODEL} from './vm-front-agy.mjs';
 import {reportLearning,learningEvidence} from './vm-learning.mjs';
-import { createDispatcher } from './vm-dispatch.mjs';
+import { createDispatcher, createTaskScheduler } from './vm-dispatch.mjs';
 import { attemptError, assertAttempt, attemptsEnabled, createFinalizationStore, finalizationEnabled, hasFinalization } from './vm-run-attempt.mjs';
 import { bridgeEnabled } from './vm-task-bridge.mjs';
 import { taskBridgeSession, createTaskBridgeHandler, createTaskFinisher, drainTaskReports, checkTaskResult, recordRunnerResult, createRunFinalizer } from './vm-task-reports.mjs';
@@ -1579,7 +1579,7 @@ function taskFirstText(t, deps) {
   const f = filesPart(t.files || [], 'codex', codexModel(t.model).image);
   return forAgent(parts.join('\n'), '') + f;
 }
-function startTask(t, all) {
+function startTask(t, all, copied) {
   if (!allowHostStart(t)) { saveTask(t); return false; }
   const deps = (t.after || []).map(n => all.find(x => x.no === n)).filter(Boolean);
   const first = !!t.hostDeferredFirst || !(t.runs && t.runs.length);
@@ -1597,7 +1597,7 @@ function startTask(t, all) {
   // 项目副本和任务自己的会话都在系统临时目录里；电脑重启后它们可能已经没了（审查问题 16）。
   // 这时副本会按原项目重新拷一份，旧会话也续接不上：不再续接，开新会话，并把原要求和现状说清楚，而不是直接算没做成。
   const lost = !first && !hostTask(t) && !!t.workspace && !fs.existsSync(t.workspace.work);
-  try { if (!hostTask(t)) t.workspace = runtime.prepareWorkspace(t, BASE); }
+  try { if (!hostTask(t)) t.workspace = copied ? runtime.commitWorkspaceCopy(t, BASE, copied) : runtime.prepareWorkspace(t, BASE); }
   catch (e) { failTask(t, '没有启动任务：' + e.message); return false; }
   if (lost) { t.agentSid = null; t.started = false; delete t.antigravityConversation; }
   // 上一轮没正常做完带下来的补充（断线重启后自动续做、临时出错后续做）：放在这一轮开头一起交出去，一次取完
@@ -1621,22 +1621,11 @@ function failTask(t, why, err = '') {
   if (t.dailyDate) dailyDone(lastRun(t), { sid: t.sid, dailyDate: t.dailyDate }, false);
   saveTask(t);
 }
-function scheduleNow() {
-  const all = listTasks();
-  let running = all.filter(occupiesTask).length;
-  for (const t of all.filter(t => t.status === 'queued').sort((a, b) => (a.queuedAt || a.created) - (b.queuedAt || b.created))) {
-    if (running >= TASK_MAX) break;
-    const deps = (t.after || []).map(n => all.find(x => x.no === n));
-    const bad = deps.filter(d => !d || d.status === 'failed' || d.status === 'stopped');
-    if (bad.length) { failTask(t, '前置任务' + bad.map(d => d ? ' ' + d.no : '').join('、') + ' 没做成，这个任务没开始。'); continue; }
-    if (deps.some(d => d.status !== 'done')) continue;
-    if (all.some(x => x !== t && occupiesTask(x) && overlaps(x.dir, t.dir))) continue;
-    if (t.retryAt > Date.now()) continue;   // 临时错误后等一会儿再接着做
-    // 时限从第一次开工算起，重试和续做都不延长：已经过了就按超时收尾，不再起一轮立刻被杀
-    if (t.deadline && Date.now() >= t.deadline) { const full = findTask({ sid: t.sid }) || t; failTask(full, '超过 ' + full.minutes + ' 分钟还没做完，停下了。', '超时（' + full.minutes + ' 分钟）'); continue; }
-    if (startTask(t, all) !== false) running++;
-  }
-}
+const { schedule: scheduleNow, drain: drainWorkspaceCopies } = createTaskScheduler({
+  listTasks, findTask, occupies: occupiesTask, overlaps, max: TASK_MAX, startTask, failTask,
+  needsCopy: t => !hostTask(t) && !t.workspace && !t.runs?.length,
+  copyWorkspace: t => runtime.startWorkspaceCopy(t, BASE), wake: () => lockedCall('tasks', 'task_tick', {})
+});
 const taskPush = (t, title, body) => ({ title, body: plainText(body, 120) || '点开看看', tag: 'xin-task-' + t.no, sid: t.parent || '', url: t.parent ? '/#xin=' + t.parent : '/#xin' });
 // 一轮做完（runner 调，在 tasks 锁里）：先把结果存进任务记录，再决定接着做、等用户，还是收尾；要推送的交回 runner 在锁外发
 const taskFinish = createTaskFinisher({
@@ -2859,8 +2848,9 @@ async function serveState(){
   const memoryIdle=createIdleMemoryScheduler({enabled:!TIANQI,busy:pendingWork,key:()=> (readText(CODEX_KEY())||readText(HARNESS_KEY())).trim()});
   const service=await createStateServer({home:BASE,owner:ownership,
     initialize:before=>{checkControllers(BASE,SELF);journal.recover();initializeStateTables();restoreStops();markCurrentController();if(before.mode==='legacy')snapshotBeforeSwitch(journal.db,BASE);initialized=true;},
-    handle:controller.handle,reconcile:reconcileState,tick:()=>flushState(memoryIdle),hasWork:pendingWork,drain:()=>memoryIdle.stop(),beforeRelease:()=>{try{if(initialized)journal.recover();}finally{journal.close();}}
+    handle:controller.handle,reconcile:reconcileState,tick:()=>flushState(memoryIdle),hasWork:pendingWork,drain:()=>Promise.all([memoryIdle.stop(),drainWorkspaceCopies()]),beforeRelease:()=>{try{if(initialized)journal.recover();}finally{journal.close();}}
   });
+  if (!TIANQI) void runtime.pruneWorkspaceStages(BASE);
   const stop=()=>service.close().catch(()=>{process.exitCode=1;});
   process.on('SIGTERM',stop);process.on('SIGINT',stop);
   const piped=process.argv.includes('--parent-pipe');

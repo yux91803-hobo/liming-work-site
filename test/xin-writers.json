@@ -6,7 +6,7 @@
   "扫不到的：通过 cp、tar、sqlite3 这类子进程写的文件。状态库里的写不在这里管，靠只读连接和写入口（vm-state.mjs 的 writing）。",
   "agentLines 是 vm-agent.mjs 的行数基线（只减不增）；rmw 是「读了再写」的条数；atomic 是各文件里直接开事务（journal.atomic）的次数。"
  ],
- "agentLines": 2913,
+ "agentLines": 2903,
  "rmw": 0,
  "atomic": {
   "vm-agent.mjs": 2,
@@ -76,6 +76,9 @@
   "vm-runtime.mjs::syncPath": { "calls": { "openSync": 1 }, "kind": "safe", "what": "只读打开受控写回的文件或目录并同步到磁盘" },
   "vm-runtime.mjs::installTaskBridge": {"calls": {"mkdirSync": 1, "openSync": 3, "renameSync": 1, "unlinkSync": 1, "writeFileSync": 1}, "kind": "outside", "what": "任务home/bin中无身份硬编码的兼容xin脚本；固定目录fd、nofollow、排他临时文件、fsync/rename；不写工作流库"},
   "vm-runtime.mjs::prepareWorkspace": {"calls": {"chmodSync": 3, "rmSync": 1, "copyFileSync": 1, "writeFileSync": 1}, "kind": "outside", "what": "后台任务的沙盒：根目录、工作副本和开工时的文件清单"},
+  "vm-runtime.mjs::startWorkspaceCopy": {"calls": {"chmodSync": 1, "mkdtempSync": 1, "rm": 1}, "kind": "outside", "what": "准备进程专用的工作区暂存目录与清理"},
+  "vm-runtime.mjs::commitWorkspaceCopy": {"calls": {"copyFileSync": 1, "renameSync": 3, "rmSync": 1}, "kind": "owner", "what": "只由状态进程发布已完成的工作区副本及开工清单"},
+  "vm-runtime.mjs::pruneWorkspaceStages": {"calls": {"rm": 1}, "kind": "outside", "what": "启动后清理过期的未提交副本暂存目录"},
   "vm-runtime.mjs::id": {"calls": {"writeFileSync": 1, "renameSync": 1, "openSync": 1}, "kind": "outside", "what": "沙盒xin写请求：排他临时文件、文件fsync、rename、目录fsync；不改变旧shim格式"},
   "vm-runtime.mjs::directory": {"calls": {"openSync": 1}, "kind": "outside", "what": "沙盒请求发布后打开队列目录并fsync，保证已写入请求的持久化"},
   "vm-task-bridge.mjs::scopedBridgeWorkspace": {"calls": {"mkdirSync": 1, "openSync": 2}, "kind": "outside", "what": "按run/attempt建立私有队列目录，只在执行器自己的任务副本内，不写工作流库"},
