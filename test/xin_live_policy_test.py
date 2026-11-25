@@ -308,8 +308,8 @@ class LiveScriptUsesOnePolicy(unittest.TestCase):
         src = (Path(__file__).resolve().parents[1] / 'scripts' / 'test-xin-live.py').read_text(encoding='utf-8')
         self.assertNotIn("get('antigravity') or {}", src)
         self.assertNotIn('without a real quota cooldown', src)
-        # 默认后台任务、点名 Gemini 做网页：两处换模型的验收都走同一个规则
-        self.assertEqual(src.count('explain_background_fallback(center'), 2)
+        # 默认后台任务、点名 Gemini 做网页（完成验收与开工在岗验收）：换模型的验收都走同一个规则
+        self.assertEqual(src.count('explain_background_fallback(center'), 3)
 
     def test_resident_owner_is_waited_for_then_checked_at_the_end(self):
         src = (Path(__file__).resolve().parents[1] / 'scripts' / 'test-xin-live.py').read_text(encoding='utf-8')

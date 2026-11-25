@@ -1,4 +1,4 @@
-## 2026-11-25 · 平板版 DSH Go 第一步（Claude Code）
+## 2026-11-26 · 平板版 DSH Go 第一步（Claude Code）
 
 - Claude Code 实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。站长选「先插件后 fork」。 [设计](superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [计划](superpowers/plans/2026-11-25-tablet-dshgo-phase1.md) · [站长步骤](tablet.md) · [CHANGES 最新一条](CHANGES.md)
 - 做了：`site/tablet/` 下的装机脚本、网关插件、li/li2 包装脚本和网关补丁。都是新文件，网站页面、Worker、小芯和天启的代码没动。li 只读：查网关程序、取 zip 核对。li2 没碰。
@@ -12,6 +12,12 @@
   - 真实账号签到。
 - 全量检查、E2E 和上线结果见本分支 PR。
 - 下一步：站长照 tablet.md 装好、用一阵，列出要砍的功能，再单独设计第二步 fork（只改外壳、Actions 出 APK、签名 key 放 Secrets）。
+
+## 2026-11-26 · 正式联调点名网页任务在岗验收改有界观测
+
+- Muse 实现并自查，分支 `fix/live-named-web-active-window-20261126`。起因：#222 的正式 Deploy 45635000867 联调在「点名 Gemini 做网页」处一次性采样状态落空而回滚（当时 Gemini 池真实额度冷却中，同轮其他场景已按冷却证据通过）。原作者为 Codex 等历任实现者，本次只改联调脚本的观测方式与失败诊断，不动产品代码、不动派发与回退规则。
+- 行为保证：派发记录验收不变；在岗时并发前台、进度、完成交付、预览点击等全套验收不变；不在岗且无控制器记录的解释时仍判失败，错误带观测证据。守卫计数 2→3 的理由见 docs/CHANGES.md 本日条目。
+- 验证与下一步：本地隔离 check 与全量 e2e 结果见 PR；合并后的正式 Deploy 即本修复的真实环境验收（重点看点名网页场景与 ?v=glm54-20261125 上线）。
 
 ## 2026-11-25 · 小芯与天启切换 GLM-5.4
 

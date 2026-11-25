@@ -524,86 +524,118 @@ async def main():
             if len(web) != 1 or web[0].get('requestedModel') != AGY_MODEL or web[0].get('why') != 'named':
                 raise RuntimeError('Named Gemini web dispatch was missing, duplicated or not recorded as named')
             web_sid = web[0]['sid']
-            if web[0]['status'] not in ('queued','running'):
-                raise RuntimeError('Expected active Gemini web work during concurrent foreground test')
-            front_marker = spoken_marker(first_marker + ' ' + second_marker)
-            await page.locator('.xc-row textarea').fill('只回复 ' + front_marker + '，不要执行命令、派任务，也不用管正在做的事。')
-            await page.locator('.xc-send').click()
-            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
-            if not says(await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text(), front_marker):
-                shown = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()
-                # Counts and booleans only: never print the reply, the marker or the prompt.
-                raise RuntimeError('Concurrent real foreground reply missing during Gemini web work: '
-                    + await front_diagnosis(alternate_sid)
-                    + ' shape=' + json.dumps(reply_shape(shown[-1:], front_marker))
-                    + ' lastMentionsWeb=' + str(any(w in (shown[-1] if shown else '') for w in ('奶龙', '网页', '页面', '在做'))))
-            front = await call('history', {'sid': alternate_sid})
-            done = [e for r in front['runs'] for e in r['events'] if e.get('t') == 'done']
-            await check_front(done[-1] if done else {})
-            await page.locator('.xc-row textarea').fill('现在进度怎么样')
-            await page.locator('.xc-send').click()
-            await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
-            progress = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text()
-            state = (await call('history', {'sid': web_sid}))['task']['status']
-            if state in ('queued','running') and ('画好了' in progress or '%' in progress):
-                raise RuntimeError('Progress claimed completion or an invented percentage')
-            print('PASS named Gemini web receipt, configured foreground with real quota evidence and truthful progress', flush=True)
-            limit = time.monotonic() + 1500
+            # Do not sample the status once: on a quota-blocked pool the first turn can end before
+            # the front receipt returns (runner code 75 with no safe fallback ends the turn, and the
+            # report then parks or fails the task), so a single sample can miss every active state.
+            # Observe a bounded window instead and record what was seen (statuses and counts only).
+            seen = []
+            web_active = None
+            last_seen = web[0]
+            deadline = time.monotonic() + 180
             while True:
-                web = (await call('history', {'sid': web_sid}))['task']
-                if web['status'] == 'done' and web.get('delivery', {}).get('state') == 'delivered': break
-                if web['status'] in ('failed','stopped','waiting') or time.monotonic() > limit:
-                    wait = max(0, round(((web.get('retryAt') or 0) - time.time() * 1000) / 1000))
-                    raise RuntimeError('Real Gemini web work did not complete: ' + web['status'] +
-                                       ' attempts=' + str(web.get('turns')) + ' model=' + str(web.get('actualModel')) + ' retrySeconds=' + str(wait))
-                await asyncio.sleep(5)
-            preview = web.get('preview') or {}
-            saved_front = await call('history', {'sid': alternate_sid})
-            deliveries = [e for r in saved_front['runs'] for e in r['events'] if e.get('taskResult', {}).get('sid') == web_sid]
-            if len(deliveries) != 1 or '我画好了' not in deliveries[0].get('text', ''):
-                raise RuntimeError('Completion was not delivered exactly once without another user prompt')
-            if web.get('actualModel') != AGY_MODEL:
-                # Same rule as the background file task: only a cause the controller recorded explains a fallback
-                # (a real quota cooldown, or a Gemini outage: stall / non-SUCCESS answer). #132 正式站：named Gemini 120 秒不出声，换 GLM 做完。
-                center = await call('tasks', {'all': True})
-                why = explain_background_fallback(center.get('antigravity'), center.get('antigravityIssue'), named_dispatched_ms, time.time() * 1000, expected_model=AGY_MODEL)
-                print('PASS named Gemini web fell back only because ' + ('of a real quota cooldown' if why == 'quota' else why + ' was recorded by the controller'), flush=True)
-            if not preview.get('ready') or not preview.get('checks'):
-                raise RuntimeError('Real Gemini web artifact or browser evidence missing')
-            if not all((web.get('cleanup') or {}).get(k) for k in ('processesGone','tmpCleaned')):
-                raise RuntimeError('Temporary processes/files were not cleaned before delivery')
-            result = web['result']['text']
-            if '我画好了' not in result or any(x in result.lower() for x in LEAKS):
-                raise RuntimeError('Web completion did not use the required public voice')
-            await page.evaluate('LimingXinChat.tasks()')
-            await page.wait_for_selector('.xc-preview', timeout=15000)
-            async with page.expect_popup() as opened:
-                await page.locator('.xc-preview').last.click()
-            art = await opened.value
-            art.on('pageerror', lambda e: errors.append(type(e).__name__))
-            await art.wait_for_selector('#frame:not([hidden])', timeout=180000)
-            frame = art.frame_locator('#frame')
-            for check in preview['checks']:
-                # Model-made artwork often animates forever; Playwright's "stable" wait would never end.
-                # Click like a person (and like the controller's own CDP check): visible, then click its centre.
-                control = frame.locator(check['selector'])
-                await control.wait_for(state='visible', timeout=15000)
-                await control.click(force=True)
-                target = frame.locator(check['expectSelector'])
-                if 'expectText' in check and check['expectText'] not in await target.inner_text():
-                    raise RuntimeError('Delivered artwork click text failed')
-                if 'expectClass' in check and check['expectClass'] not in (await target.get_attribute('class') or '').split():
-                    raise RuntimeError('Delivered artwork click state failed')
-                if 'expectAttribute' in check:
-                    expected = check['expectAttribute']
-                    if await target.get_attribute(expected['name']) != expected['value']:
-                        raise RuntimeError('Delivered artwork attribute failed')
-            if await frame.locator('body').evaluate('() => self.origin') != 'null':
-                raise RuntimeError('Delivered artwork escaped its opaque sandbox')
-            if errors: raise RuntimeError('Browser JavaScript errors')
-            print('PASS real Gemini animated web preview, actual clicks and complete temporary cleanup', flush=True)
-            print('PREVIEW_URL ' + BASE + preview['url'], flush=True)
-            await art.close()
+                status = last_seen.get('status')
+                if status and (not seen or seen[-1] != status): seen.append(status)
+                if status in ('queued', 'running'):
+                    web_active = last_seen
+                    break
+                if status in ('done', 'failed', 'stopped', 'waiting') or time.monotonic() > deadline:
+                    break
+                await asyncio.sleep(3)
+                cur = next((t for t in (await call('tasks', {'sid': alternate_sid}))['tasks'] if t.get('sid') == web_sid), None)
+                if cur is None: break
+                last_seen = cur
+            if web_active is None:
+                # Same rule as the completion check below: a cause the controller recorded (a real
+                # quota cooldown, or a Gemini outage) explains work that could not stay in flight.
+                # Anything else is a genuine failure, reported with what was actually observed.
+                try:
+                    center = await call('tasks', {'all': True})
+                    why = explain_background_fallback(center.get('antigravity'), center.get('antigravityIssue'), named_dispatched_ms, time.time() * 1000, expected_model=AGY_MODEL)
+                except RuntimeError:
+                    raise RuntimeError('Expected active Gemini web work during concurrent foreground test'
+                        + ' seen=' + ','.join(seen)
+                        + ' turns=' + str(last_seen.get('turns')) + ' model=' + str(last_seen.get('actualModel'))
+                        + ' retryAt=' + str(bool(last_seen.get('retryAt'))))
+                print('PASS named Gemini web dispatch recorded; work could not stay in flight because ' + ('of a real quota cooldown' if why == 'quota' else why + ' was recorded by the controller'), flush=True)
+            if web_active is not None:
+                front_marker = spoken_marker(first_marker + ' ' + second_marker)
+                await page.locator('.xc-row textarea').fill('只回复 ' + front_marker + '，不要执行命令、派任务，也不用管正在做的事。')
+                await page.locator('.xc-send').click()
+                await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
+                if not says(await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text(), front_marker):
+                    shown = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').all_text_contents()
+                    # Counts and booleans only: never print the reply, the marker or the prompt.
+                    raise RuntimeError('Concurrent real foreground reply missing during Gemini web work: '
+                        + await front_diagnosis(alternate_sid)
+                        + ' shape=' + json.dumps(reply_shape(shown[-1:], front_marker))
+                        + ' lastMentionsWeb=' + str(any(w in (shown[-1] if shown else '') for w in ('奶龙', '网页', '页面', '在做'))))
+                front = await call('history', {'sid': alternate_sid})
+                done = [e for r in front['runs'] for e in r['events'] if e.get('t') == 'done']
+                await check_front(done[-1] if done else {})
+                await page.locator('.xc-row textarea').fill('现在进度怎么样')
+                await page.locator('.xc-send').click()
+                await page.wait_for_function('!LimingXinChat.state.run && !LimingXinChat.state.sending', timeout=90000)
+                progress = await page.locator('.xc-ai:not(.xc-typing) .xc-bub').last.inner_text()
+                state = (await call('history', {'sid': web_sid}))['task']['status']
+                if state in ('queued','running') and ('画好了' in progress or '%' in progress):
+                    raise RuntimeError('Progress claimed completion or an invented percentage')
+                print('PASS named Gemini web receipt, configured foreground with real quota evidence and truthful progress', flush=True)
+                limit = time.monotonic() + 1500
+                while True:
+                    web = (await call('history', {'sid': web_sid}))['task']
+                    if web['status'] == 'done' and web.get('delivery', {}).get('state') == 'delivered': break
+                    if web['status'] in ('failed','stopped','waiting') or time.monotonic() > limit:
+                        wait = max(0, round(((web.get('retryAt') or 0) - time.time() * 1000) / 1000))
+                        raise RuntimeError('Real Gemini web work did not complete: ' + web['status'] +
+                                           ' attempts=' + str(web.get('turns')) + ' model=' + str(web.get('actualModel')) + ' retrySeconds=' + str(wait))
+                    await asyncio.sleep(5)
+                preview = web.get('preview') or {}
+                saved_front = await call('history', {'sid': alternate_sid})
+                deliveries = [e for r in saved_front['runs'] for e in r['events'] if e.get('taskResult', {}).get('sid') == web_sid]
+                if len(deliveries) != 1 or '我画好了' not in deliveries[0].get('text', ''):
+                    raise RuntimeError('Completion was not delivered exactly once without another user prompt')
+                if web.get('actualModel') != AGY_MODEL:
+                    # Same rule as the background file task: only a cause the controller recorded explains a fallback
+                    # (a real quota cooldown, or a Gemini outage: stall / non-SUCCESS answer). #132 正式站：named Gemini 120 秒不出声，换 GLM 做完。
+                    center = await call('tasks', {'all': True})
+                    why = explain_background_fallback(center.get('antigravity'), center.get('antigravityIssue'), named_dispatched_ms, time.time() * 1000, expected_model=AGY_MODEL)
+                    print('PASS named Gemini web fell back only because ' + ('of a real quota cooldown' if why == 'quota' else why + ' was recorded by the controller'), flush=True)
+                if not preview.get('ready') or not preview.get('checks'):
+                    raise RuntimeError('Real Gemini web artifact or browser evidence missing')
+                if not all((web.get('cleanup') or {}).get(k) for k in ('processesGone','tmpCleaned')):
+                    raise RuntimeError('Temporary processes/files were not cleaned before delivery')
+                result = web['result']['text']
+                if '我画好了' not in result or any(x in result.lower() for x in LEAKS):
+                    raise RuntimeError('Web completion did not use the required public voice')
+                await page.evaluate('LimingXinChat.tasks()')
+                await page.wait_for_selector('.xc-preview', timeout=15000)
+                async with page.expect_popup() as opened:
+                    await page.locator('.xc-preview').last.click()
+                art = await opened.value
+                art.on('pageerror', lambda e: errors.append(type(e).__name__))
+                await art.wait_for_selector('#frame:not([hidden])', timeout=180000)
+                frame = art.frame_locator('#frame')
+                for check in preview['checks']:
+                    # Model-made artwork often animates forever; Playwright's "stable" wait would never end.
+                    # Click like a person (and like the controller's own CDP check): visible, then click its centre.
+                    control = frame.locator(check['selector'])
+                    await control.wait_for(state='visible', timeout=15000)
+                    await control.click(force=True)
+                    target = frame.locator(check['expectSelector'])
+                    if 'expectText' in check and check['expectText'] not in await target.inner_text():
+                        raise RuntimeError('Delivered artwork click text failed')
+                    if 'expectClass' in check and check['expectClass'] not in (await target.get_attribute('class') or '').split():
+                        raise RuntimeError('Delivered artwork click state failed')
+                    if 'expectAttribute' in check:
+                        expected = check['expectAttribute']
+                        if await target.get_attribute(expected['name']) != expected['value']:
+                            raise RuntimeError('Delivered artwork attribute failed')
+                if await frame.locator('body').evaluate('() => self.origin') != 'null':
+                    raise RuntimeError('Delivered artwork escaped its opaque sandbox')
+                if errors: raise RuntimeError('Browser JavaScript errors')
+                print('PASS real Gemini animated web preview, actual clicks and complete temporary cleanup', flush=True)
+                print('PREVIEW_URL ' + BASE + preview['url'], flush=True)
+                await art.close()
             # 后台干活时插话（docs/superpowers/specs/2026-11-17-xin-steer-design.md）：Gemini 补一句、停下再继续、Codex（点名 Kimi）
             await steer_live(page, call, settle, errors, LEAKS, steer_sids, directory)
             if CHECK_TIANQI_VISION:

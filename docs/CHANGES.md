@@ -1,4 +1,4 @@
-# 修改清单 · 2026-11-25（平板版 DSH Go 第一步：网关搬到平板、接上 li 和 li2）
+# 修改清单 · 2026-11-26（平板版 DSH Go 第一步：网关搬到平板、接上 li 和 li2）
 
 - Claude Code 实现并自查，无独立复核。站长想用 GitHub 上的 DSH Go（`ccch1mneyyy/dsh-go`，AGPL-3.0）在安卓平板上让 AI 操控平板、用自己网关的模型、接上 li 和 li2，界面以后再改；选了「先插件后 fork」。网关搬到平板是站长自己提的。 [设计](superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [计划](superpowers/plans/2026-11-25-tablet-dshgo-phase1.md) · [站长步骤](tablet.md)
 - 新增 `site/tablet/`，都是新文件，网站页面、Worker、小芯和天启的代码没动：
@@ -24,6 +24,13 @@
   - `test/tablet-profile.test.cjs`、`test/tablet-gateway.test.cjs`（真 Python 假网关、真端口和信号）、`test/tablet-setup.test.cjs`（假 ssh 在各主机的临时 HOME 里真执行远端脚本），共 30 项。
   - shellcheck 0.11.0 无告警。
   - 没验证的：真平板上 PRoot 里的 Python 和 TLS 组件、DSH Go 的 SSH 能不能用 InstaBox 令牌登录、真实账号签到。
+
+# 修改清单 · 2026-11-26（正式联调：点名网页任务的在岗验收改为有界观测）
+
+- Muse 实现并自查（站长先令 Antigravity 接手，因 Gemini 额度耗尽改由 Muse 续修）。原实现与验收规则不变：点名 Gemini 做网页仍须派发记录准确（恰好一条、requestedModel 与 why=named 不变）。
+- #222 的正式 Deploy（45635000867）联调失败：点名任务派发记录正确，但紧接着的一次性状态采样没采到 queued/running 即判失败回滚，且没留下任何观测记录。当时 Gemini 池正处真实额度冷却（同轮联调的前台回退与后台文件任务均已按冷却证据验收通过）；额度堵住时执行进程首轮可因无安全回退候选在前台回执返回前结束（vm-agent 退出码 75 的换模型只在有安全候选时发生），回执处理随即把任务停放或判失败，一次性采样必然落空。
+- 改法只动联调脚本 scripts/test-xin-live.py：状态改为最长 180 秒的有界观测（每 3 秒一次，见到终态即停），记录见过的状态序列；在岗（queued/running）照旧进入并发前台全套验收；始终不在岗时，与本脚本既有的完成验收同一规则——只有控制器记录在案的额度冷却或 Gemini 故障（explain_background_fallback）能解释，解释成立记一条带原因的 PASS 并跳过依赖在岗的后续段，无解释仍判失败且错误里带实际观测到的状态序列、轮次、实际模型与 retryAt 有无（只记计数与布尔，不打印内容）。
+- 守卫测试 test/xin_live_policy_test.py 里「换模型验收都走同一规则」的调用点计数由 2 更新为 3：新增的在岗验收是第三处调用点，仍走同一 explain_background_fallback，未新增任何旁路解释。原计数测试的注释同步注明三处构成。
 
 # 修改清单 · 2026-11-25（小芯与天启切换 GLM-5.4）
 
