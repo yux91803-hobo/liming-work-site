@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from xin_live_policy import FRONT_WEB_UNAVAILABLE, front_lookup_during_outage, front_lookup_verdict, event_digest, HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, drop_mentions, after_steer, steer_count, canned_reply
+from xin_live_policy import FRONT_WEB_UNAVAILABLE, front_lookup_during_outage, front_lookup_verdict, event_digest, HYDROGEN, DEEPSEEK, validate_front_model, front_reply_limit, is_leftover_smoke, reply_shape, spoken_marker, says, SPOKEN, first_person_receipt, explain_background_fallback, resident_owner, same_resident_owner, steer_request, list_verdict, drop_mentions, after_steer, steer_count, canned_reply, codex_steer_outcome
 
 
 class SpokenMarker(unittest.TestCase):
@@ -78,6 +78,24 @@ class Steer(unittest.TestCase):
     def test_canned_controller_receipts_are_not_own_words(self):
         self.assertTrue(canned_reply('好，我这就去弄。')); self.assertTrue(canned_reply(' 好，我接着做。 '))
         self.assertFalse(canned_reply('行，最后只给你列正在用的'))
+
+    def test_codex_accepts_one_turn_or_one_recorded_retry_with_same_input(self):
+        model, cid = 'kimi-k3.1-pro', 'ft-0123456789abcdef01234567'
+        steer = {'t': 'user', 'steer': True, 'clientId': cid}
+        done = {'t': 'done', 'model': model, 'ok': True, 'stopped': False}
+        run = {'run': 'ra', 'events': [steer, done]}
+        self.assertEqual(codex_steer_outcome([run], model), 'same turn')
+        first = {'run': 'ra', 'events': [steer, dict(done, ok=False, retry='transient')]}
+        carried = {'t': 'user', 'carriedSteers': [cid]}
+        second = {'run': 'rb', 'events': [carried, done]}
+        self.assertEqual(codex_steer_outcome([first, second], model), 'transient retry')
+        for rows in ([run, second], [dict(first, events=[steer, dict(done, ok=False)]), second],
+                     [first, dict(second, events=[done])], [first, dict(second, events=[carried, steer, done])],
+                     [first, dict(second, events=[carried, carried, done])],
+                     [first, dict(second, events=[carried, dict(done, model='another')])],
+                     [first, dict(second, events=[carried, done, done])], [first, dict(second, run='ra')],
+                     [dict(run, events=[done])], [first, second, second]):
+            self.assertIsNone(codex_steer_outcome(rows, model))
 
 
 class ReplyShape(unittest.TestCase):

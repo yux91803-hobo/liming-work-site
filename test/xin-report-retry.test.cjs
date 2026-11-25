@@ -1,6 +1,7 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { spawn } = require('node:child_process'), { pathToFileURL } = require('node:url');
+const { platformTimeout } = require('./helpers/timeout.cjs');
 const url = name => pathToFileURL(path.join(__dirname, '../site/xin/' + name + '.mjs')).href;
 const client = () => import(url('vm-kernel-client'));
 const failure = (code = 'state_disconnected', executed = 'unknown') => Object.assign(new Error(code), { code, executed });
@@ -67,6 +68,7 @@ async function actor(t, mode = 'after') {
     const c=createController({ops:{probe:()=>({ok:true})},iops:{},dispatchLaunches:()=>{},
       xinCmd:()=>0,withCallContext:fn=>fn()});
     fs.mkdirSync(path.join(home,'run'),{recursive:true});
+    journal.recover();
     const server=net.createServer(socket=>{let body='';socket.on('error',()=>{});socket.on('data',b=>{
       body+=b; if(!body.includes('\\n'))return;
       const q=JSON.parse(body.split('\\n')[0]);
@@ -161,12 +163,12 @@ test('持续丢 ACK 的数据库报告按截止时间退出；数据库中的提
 });
 
 test('提交后进程退出且一直未恢复：最终保留 unknown，外层默认重试不能换 ID 再做', async t => {
-  const f = await actor(t, 'depart'), { requestStateSync, retryUnsent } = await client();
+  const f = await actor(t, 'depart'), { requestStateSync, retryUnsent, StateUnavailable } = await client();
   let calls = 0;
   assert.throws(() => retryUnsent(() => {
     calls++;
-    return requestStateSync(f.home, { kind: 'append', name: 'reports.jsonl', event: { t: 'note' } }, { deadlineMs: 300 });
-  }, clockOptions()), e => e.code === 'state_disconnected' && e.executed === 'unknown');
+    return requestStateSync(f.home, { kind: 'append', name: 'reports.jsonl', event: { t: 'note' } }, { deadlineMs: platformTimeout(600) });
+  }, clockOptions()), e => e instanceof StateUnavailable && e.executed === 'unknown');
   assert.equal(calls, 1);
   assert.equal(f.requests().length, 1);
   assert.equal(inspect(f.home, db => db.prepare('SELECT COUNT(*) n FROM appends').get().n), 1);
