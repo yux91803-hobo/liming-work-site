@@ -50,7 +50,7 @@ import { initializeStateTables } from './vm-kernel-operations.mjs';
 import { checkControllers } from './vm-kernel-compat.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
-import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps, saysContinue } from './vm-steer.mjs';
+import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps, createExecutorSteerBridge, saysContinue } from './vm-steer.mjs';
 import { BASE, TIANQI, HARNESS_KEY, dshCmd, harnessInstalled, tianqiReady, tianqiRefuse, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
@@ -688,7 +688,7 @@ function runner(run) {
       try {
         receipt = recordRunnerResult(finalizations,meta,{at,code,ok:modelOK(),timeout:!!state.timeout,transient:transient(),
           changes,usage,delta:delta(usage),ms:at-t0,cost:state.cost,reply:state.reply,model:meta.model||undefined,providerModel:meta.providerModel||undefined,
-          from:meta.from||undefined,recordStats:meta.agent!=='claude'&&!state.frontReceipt},()=>readJ(sessF(meta.sid),s),
+          from:meta.from||undefined,recordStats:meta.agent!=='claude'&&!state.frontReceipt,...(state.ackedSteers?.length?{ackedSteers:state.ackedSteers}:{})},()=>readJ(sessF(meta.sid),s),
         {active,emit:announce,preparing:modelDone,checking});
       } catch (e) { if(e.code!=='stale_attempt')emit(run,{t:'err',text:'这轮的收尾记录未能写完，已保留现场。'}); return; }
       // The owner can finish even if this report or its response never arrives.
@@ -921,12 +921,12 @@ function runner(run) {
     const controller = new AbortController();
     const cancel = () => { controller.abort(); if(!finished){state.failed=!readJ(metaF(run))?.stopped;finish(0);} };
     process.on('SIGTERM', cancel); process.on('SIGINT', cancel);
-    let provider;const protocol={};
+    let provider;const protocol={},frontSteer=createExecutorSteerBridge({run,sid:meta.sid,lockedCall,onUnacked:c=>{state.ackedSteers=[...new Set([...(state.ackedSteers||[]),c])].slice(-128);}});
     const infer=async()=>{
       provider=await openFrontProvider({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,signal:controller.signal,
-        protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},thought:t=>{if(!finished)emit(run,{t:'think',text:t,src:'model'});},tool:e=>{if(!finished)emit(run,{...e,at:Date.now()});},steers:()=>{try{const r=lockedCall('tasks','steer_take',{run});return Array.isArray(r?.steers)?r.steers:[];}catch{return [];}},
+        protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},thought:t=>{if(!finished)emit(run,{t:'think',text:t,src:'model'});},tool:e=>{if(!finished)emit(run,{...e,at:Date.now()});},steers:frontSteer.take,ackSteers:frontSteer.ack,
         quotaState:readJ(path.join(BASE,'front-antigravity-quota.json')),
-        quota:quota=>lockedCall('tasks','front_quota',{quota}),
+        quota:quota=>{const r=lockedCall('tasks','front_quota',{quota});if(r?.error)throw Object.assign(Error(r.msg||r.error),{code:r.error});return r;},
         model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);Object.assign(meta,frontRouting(chosen,meta.why));}
       });
       if(meta.frontFiles?.some(f=>f.image)&&provider.image===false){
@@ -1671,7 +1671,7 @@ const taskFinish = createTaskFinisher({
 // 后面才定义的（runDone、taskVersion）包一层，用到时再取
 const { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover } = createSteerOps({
   metaF, sessF, findTask, taskSummary, saveTask, scheduleNow, cleanupFinishedTask, listTasks, emit, isTask, isFinished, lastRun, TASK_STATUS,
-  runDone: r => runDone(r), taskVersion: t => taskVersion(t), readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel });
+  runDone: r => runDone(r), taskVersion: t => taskVersion(t), readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel, callContext });
 function taskStop(a) {
   const t = findTask(a);
   if (!t) return { error: 'no_task', msg: '找不到这个任务' };
@@ -2923,12 +2923,10 @@ async function main() {
     const run=process.argv[3],m=readJ(metaF(run));assertAttempt(m,callContext());
     const t=m&&taskBridgeSession(readJ(sessF(m.sid)),m);
     if(!m?.task||!t?.workspace||!runtime.isAgyModel(m.model)){process.exitCode=1;return;}
-    const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
-    runtime.antigravityWork(t,{model:m.model,effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,runtime.AGY_QUOTA_FILES[runtime.agyPool(m.model)])),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why}),
-      // 兄弟在它干活时的补充：每一步之前取走还没送的（docs/superpowers/specs/2026-11-17-xin-steer-design.md §1）；取不到就下一步再取，结束时照样带到下一轮
-      steers:()=>{try{const r=lockedCall('tasks','steer_take',{run});return Array.isArray(r?.steers)?r.steers:[];}catch{return [];}},
-      // 主动回原聊天说一句（§4）：控制器记下、合并、到时候看还有没有用再发；回执交回给模型
-      note:text=>{try{const r=lockedCall('tasks','task_note',{sid:t.sid,run,text});return r?.msg||'';}catch{return '';}}})
+    const clientDir=path.join(BASE,'antigravity-client'),steerBridge=createExecutorSteerBridge({run,sid:t.sid,lockedCall});mk(clientDir);
+    runtime.antigravityWork(t,{model:m.model,effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,runtime.AGY_QUOTA_FILES[runtime.agyPool(m.model)])),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:(quota,o)=>lockedCall('tasks','agy_quota',{quota},o?.postTurn?{deadlineMs:Number(process.env.XIN_STEER_RETRY_MS)||3000}:undefined),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:steerBridge.ask,remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why}),
+      // 兄弟在它干活时的补充：每一步之前两阶段认领（vm-steer.mjs），模型步完成后再确认；主动说一句带步编号去重重送
+      steers:steerBridge.take,ackSteers:steerBridge.ack,note:steerBridge.note})
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }
@@ -2942,7 +2940,7 @@ async function main() {
 }
 const finalizeRun=createRunFinalizer({store:finalizations,loadRun:r=>readJ(metaF(r)),loadSession:s=>readJ(sessF(s)),
   taskFinish,emit,complete:iops.run_complete,rememberSession:(sid,changes)=>controller.patchSession(sid,changes),
-  patchRun:applyRunPatch,frontReply:iops.front_reply,frontNotice,dailyDone,statsFile:STATS_F});
+  patchRun:applyRunPatch,frontReply:iops.front_reply,frontNotice,dailyDone,statsFile:STATS_F,steerAck});
 const {dispatchLaunches,runDone}=createDispatcher({self:SELF,metaF,sessF,runF,lockedCall,emit,patchRun,finalizations,finalizeRun});
 const controller=createController({ops,iops,isTask,saveTask,rememberAgentSession,mainSid,listTasks,lockedCall,dispatchLaunches,markCurrentController,xinCmd,reapNow,finalizeRun});
 

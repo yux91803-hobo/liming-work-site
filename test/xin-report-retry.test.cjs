@@ -99,7 +99,7 @@ async function actor(t, mode = 'after') {
 function inspect(home, fn) {
   const { DatabaseSync } = require('node:sqlite');
   const db = new DatabaseSync(path.join(home, 'workflow.sqlite'), { readOnly: true });
-  try { return fn(db); } finally { db.close(); }
+  try { db.exec('PRAGMA busy_timeout=5000'); return fn(db); } finally { db.close(); }
 }
 
 test('append 已提交但真实套接字丢回包：自动重送保留 ID，事件和事务回执各一条', async t => {

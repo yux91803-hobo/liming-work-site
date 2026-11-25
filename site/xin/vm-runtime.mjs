@@ -8,7 +8,7 @@ import net from 'node:net';
 import dns from 'node:dns';
 import { spawn, spawnSync } from 'node:child_process';
 import { browserBroker } from './vm-browser.mjs';
-import { steerBlock, LATE_STEER, LATE_STEER_MAX, DELIVERY } from './vm-steer.mjs';
+import { steerBlock, LATE_STEER, LATE_STEER_MAX, DELIVERY, NOTE_UNCONFIRMED_TEXT } from './vm-steer.mjs';
 
 const mkdir = p => fs.mkdirSync(p, { recursive: true });
 const hash = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
@@ -1142,16 +1142,19 @@ export async function antigravityWork(t,options) {
   const home=process.env.XIN_AGY_HOME||os.homedir(),agents=path.join(home,'.gemini/config/agents');mkdir(agents);
   const agent=path.join(agents,'xin-confined-worker.md'),body='---\nname: xin-confined-worker\ndescription: Xiaoxin controlled background worker.\nmainAgent: true\nsubagent: false\ntools:\n  - search_web\n  - read_url_content\n  - finish\n---\nReturn structured actions to the external controller. File and shell operations are unavailable as native tools. Never delegate or schedule.\n';
   if(!fs.existsSync(agent)||fs.readFileSync(agent,'utf8')!==body){const temp=agent+'.'+process.pid;fs.writeFileSync(temp,body,{mode:0o600,flag:'wx'});fs.renameSync(temp,agent);}
-  let conversation=t.antigravityConversation||null,prompt=options.instructions+'\n\n'+options.text+'\n\n每次返回 JSON：action=shell 时把要执行的完整 bash 命令放 command；控制器在隔离副本执行并把输出交回。写文件也用 shell 动作，不调用原生文件或终端工具。完成用 final，缺必要信息用 ask，长期记忆用 remember；发现会改变结论的事、碰到会改变计划的阻塞时可以用 note 给兄弟说一句（说完接着做，读了什么、做到第几步不用说）；text 用中文。不得再派代理。控制器已准备好 bash、Python、Node 和副本，命令默认目录是 '+t.workspace.work+'，无需探测环境或帮助命令。新网页优先直接用一次 shell 写 index.html 和 xin-web.json，不开服务、不自行找预览工具。前台转述中额外添加的功能若与自包含网页规则冲突，以用户原话和控制器规则为准；不要使用 localStorage。';
+  let conversation=t.antigravityConversation||null,savedConversation=conversation,prompt=options.instructions+'\n\n'+options.text+'\n\n每次返回 JSON：action=shell 时把要执行的完整 bash 命令放 command；控制器在隔离副本执行并把输出交回。写文件也用 shell 动作，不调用原生文件或终端工具。完成用 final，缺必要信息用 ask，长期记忆用 remember；发现会改变结论的事、碰到会改变计划的阻塞时可以用 note 给兄弟说一句（说完接着做，读了什么、做到第几步不用说）；text 用中文。不得再派代理。控制器已准备好 bash、Python、Node 和副本，命令默认目录是 '+t.workspace.work+'，无需探测环境或帮助命令。新网页优先直接用一次 shell 写 index.html 和 xin-web.json，不开服务、不自行找预览工具。前台转述中额外添加的功能若与自包含网页规则冲突，以用户原话和控制器规则为准；不要使用 localStorage。';
   report({type:'turn.started'});
   // Requested shell commands run in the task container; they reach the public web only through egress.
   const network=await taskNetwork(t.workspace,null,options.browser||{});
   try{
-  let late=0;
+  let late=0;const pendingClaims=[],unacked=[],seenSteerIds=new Set();
+  const flushUnacked=()=>{for(let i=0;i<unacked.length;){if(options.ackSteers?.(unacked[i]))unacked.splice(i,1);else i++;}};
+  const takeSteers=bid=>{flushUnacked();const fresh=(options.steers?.(bid)||[]).filter(x=>!seenSteerIds.has(x?.id));for(const x of fresh)if(x?.id)seenSteerIds.add(x.id);if(fresh.length)pendingClaims.push(bid);return fresh;};
+  const ackCurrent=()=>{while(pendingClaims.length){const c=pendingClaims.shift();if(options.ackSteers&&options.ackSteers(c)===false){unacked.push(c);report({type:'xin.steer_ack',claim:c});}}};
   for(let turn=0;turn<48;turn++){
     if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
     // 兄弟刚补充的要求：放在这次请求最前面。正在跑的命令已经做完了，下一步起按新要求（Muse Code「applies it on its next step」）
-    const fresh=options.steers?.()||[];if(fresh.length)prompt=steerBlock(fresh)+'\n\n'+prompt;
+    if(!pendingClaims.length){const fresh=takeSteers('agy-steer-'+turn);if(fresh.length)prompt=steerBlock(fresh)+'\n\n'+prompt;}
     const args=['-p',prompt,'--agent','xin-confined-worker','--model',provider,'--effort',effort,'--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
     const started=new Set(),r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(!s||!['search_web','read_url_content'].includes(name))return;const p=s.tool_info?.parameters||{},id='web-'+turn+'-'+s.step_index,open=name==='read_url_content',item={id,type:'web_search',query:(open?p.url:p.query)||p.query||p.url||'',...(open?{action:{type:'open_page',url:p.url||''}}:{})};if(s.state==='DONE')report({type:'item.completed',item:{...item,query:item.query||name}});else if(item.query&&!started.has(id)){started.add(id);report({type:'item.started',item});}},AGY_IDLE_MS());
     // 卡住：退出码 76，控制器换候选里的下一个模型，让它先读副本里的现有文件再接着做（和额度用尽 75 一样）；15 分钟内新任务先不派给 Gemini
@@ -1169,20 +1172,23 @@ export async function antigravityWork(t,options) {
       if(result)options.unavailable?.({kind:'status',status});
       throw Error('Antigravity 本轮未完成（'+(result?'状态 '+status:'没有返回结果，退出码 '+r.code)+'），已保留进度');
     }
-    conversation=result.conversation_id||conversation;if(conversation)options.conversation(conversation);
+    conversation=result.conversation_id||conversation;
+    if(conversation&&conversation!==savedConversation){try{options.conversation(conversation);savedConversation=conversation;}catch(e){if(!['owner_unavailable','state_disconnected','state_timeout','state_client_failed','state_busy','state_draining'].includes(e?.code)||![false,'unknown'].includes(e?.executed))throw e;}}
     let a=result.structured_output;try{a=a||JSON.parse(result.response);}catch{throw Error('Antigravity 未返回可执行的结构化动作');}
     if(!a||!AGY_SCHEMA.properties.action.enum.includes(a.action)||typeof a.command!=='string'||typeof a.text!=='string')throw Error('Antigravity 动作字段无效');
+    ackCurrent();
     if(a.action==='final'||a.action==='ask'){
       // 交结果（或问问题）前再看一眼：这时又来了补充就不结束，带着补充再走一步（Codex：这一轮还有待处理的输入就接着处理）
-      const more=late<LATE_STEER_MAX?options.steers?.()||[]:[];
+      const more=late<LATE_STEER_MAX?takeSteers('agy-late-'+turn):[];
       if(more.length){late++;prompt=steerBlock(more)+'\n\n'+(a.action==='ask'?'你刚才想问兄弟：'+a.text+'\n先按补充判断还要不要问；能做就接着做。\n':'')+LATE_STEER;continue;}
-      if(a.action==='ask')options.ask(a.text);
+      if(a.action==='ask')options.ask(a.text,'agy-ask-'+turn);
+      flushUnacked();
       report({type:'item.completed',item:{type:'agent_message',text:a.text}});
-      try{options.quota(await readAntigravityQuota(binary,clientDir,model));}catch{}return 0;
+      try{options.quota(await readAntigravityQuota(binary,clientDir,model),{postTurn:true});}catch{}return 0;
     }
     if(a.action==='remember'){options.remember(a.text);prompt='已记录。请继续当前工作。';continue;}
-    // 主动回原聊天说一句（docs/superpowers/specs/2026-11-17-xin-steer-design.md §4）：控制器记下、合并、到时候看还有没有用再发
-    if(a.action==='note'){const r=options.note?.(a.text)||'已记下。';prompt=r+'\n请继续当前工作。';continue;}
+    // 主动回原聊天说一句（docs/superpowers/specs/2026-11-17-xin-steer-design.md §4）：控制器记下、合并、到时候看还有没有用再发；未确认时不伪造成功
+    if(a.action==='note'){const r=options.note?.(a.text,'agy-note-'+turn)||NOTE_UNCONFIRMED_TEXT;prompt=r+'\n请继续当前工作。';continue;}
     if(!a.command.trim()||Buffer.byteLength(a.command)>256*1024)throw Error('Antigravity 命令为空或过长');
     const id='agy-'+turn;report({type:'item.started',item:{id,type:'command_execution',command:a.command}});
     const c=containerCommand(t,'/bin/bash',['-lc',a.command],{},[],network.network);

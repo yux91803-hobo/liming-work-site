@@ -36,11 +36,12 @@ const usage = x => keys(x, {input:number, output:number, cached:number, ctx:numb
 const viewports = x => Array.isArray(x) && x.length <= 4 && x.every(v => keys(v, {width:number, checks:number}));
 const browserCheck = x => keys(x, {ok:bool, error:string(1200), entry:string(2048), digest:hex, viewports}) && bool(x.ok) && (!x.ok || hex(x.digest));
 const changes = x => keys(x, {agentSid:string(100), started:bool, ctxWin:number, hUsage:usage, frontUsage:usage});
+const steerClaims = optional(x => Array.isArray(x) && x.length <= 128 && x.every(id => typeof id === 'string' && /^[a-zA-Z0-9_-]{4,80}$/.test(id)));
 const prepared = x => keys(x, {at, code:Number.isSafeInteger, ok:bool, timeout:bool, transient:bool, changes,
   usage: v => v === null || usage(v), delta:usage, cost:number, ms:number, reply:string(20000),
-  model:string(128), providerModel:string(128), from:string(128), recordStats:bool}) &&
+  model:string(128), providerModel:string(128), from:string(128), recordStats:bool, ackedSteers:steerClaims}) &&
   at(x.at) && Number.isSafeInteger(x.code) && bool(x.ok) && bool(x.timeout) && bool(x.transient) && changes(x.changes) &&
-  (x.usage === null || usage(x.usage)) && number(x.ms) && bool(x.recordStats);
+  (x.usage === null || usage(x.usage)) && number(x.ms) && bool(x.recordStats) && steerClaims(x.ackedSteers);
 const ready = x => keys(x, {prepared:hex, workspace:hex, webCheck:browserCheck, pageCheck:browserCheck, compileTrusted:bool,
   compileOk:bool, compileDigest:hex}) && hex(x.prepared);
 const intent = x => keys(x, {ready:hex, inventory:hex}) && hex(x.ready) && hex(x.inventory);

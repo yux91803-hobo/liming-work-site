@@ -159,8 +159,9 @@ export function frontOutput(text,{prose=true}={}){
 const quotaError=e=>e?.code===429||/resource[_ ]exhausted|quota.*(?:exceed|exhaust)|(?:exceed|exhaust).*quota|rate.limit/i.test(String(e?.message||'')+' '+JSON.stringify(e?.data||{}));
 // ACP 1.5.12 streams this provider notice as assistant text while retrying. Count it only after a prompt actually times out.
 const capacityNotice = text => /\bapi error unavailable code 503 no capacity available for model gemini-4-hydrogen-(?:high|medium) on the server\b/i.test(text.replace(/[^a-z0-9-]+/gi, ' '));
+const ignoreQuotaDisconnect=e=>(['owner_unavailable','state_disconnected','state_timeout','state_client_failed'].includes(e?.code)&&[false,'unknown'].includes(e?.executed))||(['state_busy','state_draining'].includes(e?.code)&&e?.executed===false);
 export async function openFrontProvider(o={}){
- let actual=FRONT_MODEL,reason=null,acp=null,sid=null,sent=0,previous=[],images=false;
+ let actual=FRONT_MODEL,reason=null,acp=null,sid=null,sent=0,previous=[],images=false,steerSeq=0;
  const chosen=(model,why=null,providerModel=model)=>{actual=model;reason=why;o.model?.({model,reason:why,providerModel});};
  const fallback=async(payload,signal)=>{
   const instructions = (payload.instructions||'')+'\n当前前台没有直接搜网页或读网页的工具。需要实时查询时按用户要求交后台；用户要求不派后台时，如实说明现在无法查询。';
@@ -173,7 +174,7 @@ export async function openFrontProvider(o={}){
  }
  const binary=o.binary||antigravityBinary();if(!binary)throw Error('电脑上没有可用的 Antigravity，无法启动前台');
  const cwd=o.cwd||path.join(BASE,'front-antigravity');fs.mkdirSync(cwd,{recursive:true,mode:0o700});
- let q=await quota(binary,cwd,o.signal);o.quota?.(q);
+ let q=await quota(binary,cwd,o.signal);try{o.quota?.(q);}catch(e){if(!ignoreQuotaDisconnect(e))throw e;}
  if(q.blocked){chosen(FRONT_MODEL,'quota');return {request:fallback,image:true,close(){}};}
  // ACP reuses the signed-in CLI but gets its own non-executing agent. Do not edit Tianqi/global settings.
  const home=process.env.XIN_AGY_HOME||os.homedir(),agents=path.join(home,'.gemini/config/agents');fs.mkdirSync(agents,{recursive:true,mode:0o700});
@@ -216,15 +217,19 @@ export async function openFrontProvider(o={}){
   // 前台自己查（站长 2026-11-18）：用了网页工具这一轮放宽到 3 分钟。查的时候兄弟插话、或者时间到了：等手上的网页步骤做完，
   // 取消这一次，隔 3 秒在同一个会话里接着发（li 上实测：取消后马上发会卡住，隔几秒能接上，而且直接用刚才查到的）
   const LOOKUP=Number(process.env.XIN_FRONT_LOOKUP_MS)||180000,GAP=Number(process.env.XIN_FRONT_STEER_GAP_MS)||3000;
+  const pendingClaims=[],seenSteerIds=new Set();
   async function lookupPrompt(first,signal){
    const t0=Date.now();let next=first,limited=false;
    for(;;){
-    acp.text='';acp.update=null;acp.lastThought='';let action=null;const widen=()=>{if(!limited)acp.extend(Math.max(LOOKUP-(Date.now()-t0),5000));};
+    acp.text='';acp.update=null;acp.lastThought='';let action=null,batchId=null;const widen=()=>{if(!limited)acp.extend(Math.max(LOOKUP-(Date.now()-t0),5000));};
     acp.onWebStart=widen;
     const watch=setInterval(()=>{
      if(action||!acp.web)return;
      if(!limited&&Date.now()-t0>=LOOKUP)action='limit';
-     else if(![...acp.tools.values()].some(w=>!w.done)){const st=o.steers?.()||[];if(st.length)action=st;}
+     else if(![...acp.tools.values()].some(w=>!w.done)){
+      const bid='front-steer-'+(++steerSeq),st=(o.steers?.(bid)||[]).filter(x=>!seenSteerIds.has(x?.id));
+      if(st.length){action=st;batchId=bid;}
+     }
      if(action)acp.send({method:'session/cancel',params:{sessionId:sid}});
     },250);
     const pr=acp.request('session/prompt',{sessionId:sid,prompt:next},signal,limited?45000:AGY_PROMPT_MS);if(acp.web)widen();
@@ -232,7 +237,11 @@ export async function openFrontProvider(o={}){
     if(!action)return;
     await new Promise(r=>setTimeout(r,GAP));
     if(action==='limit'){limited=true;next=[{type:'text',text:'时间到了：按已经查到的回答；查不完的照实说，需要的话派后台去查。回复格式照旧：只输出一个 JSON。'}];}
-    else next=[{type:'text',text:'兄弟中途补充（按顺序）：\n'+action.map((x,i)=>(i+1)+'. '+String(x.text||'').slice(0,2000)).join('\n')+'\n按补充接着刚才的查；刚才查到的能用就别重查。回复格式照旧：只输出一个 JSON。'}];
+    else{
+     for(const x of action)if(x?.id)seenSteerIds.add(x.id);
+     if(batchId)pendingClaims.push(batchId);
+     next=[{type:'text',text:'兄弟中途补充（按顺序）：\n'+action.map((x,i)=>(i+1)+'. '+String(x.text||'').slice(0,2000)).join('\n')+'\n按补充接着刚才的查；刚才查到的能用就别重查。回复格式照旧：只输出一个 JSON。'}];
+    }
    }
   }
   const offset=previous.length&&JSON.stringify(payload.input.slice(sent,sent+previous.length))===JSON.stringify(previous)?sent+previous.length:sent;
@@ -252,6 +261,7 @@ export async function openFrontProvider(o={}){
      acp.close();chosen(FRONT_MODEL,'format');return fallback(payload,signal);
     }
    }
+   while(pendingClaims.length)o.ackSteers?.(pendingClaims.shift());
    sent=payload.input.length;previous=out.output;
    if(acp.update?.used!=null)out.contextUsage={used:acp.update.used,size:acp.update.size};
    return out;
@@ -262,7 +272,8 @@ export async function openFrontProvider(o={}){
    // A generic rate limit is not evidence that the owner's allowance is exhausted.
    try{q=await quota(binary,cwd,signal);}catch{q=null;}
    if(!q?.blocked)throw e;
-   o.quota?.({...q,providerExhausted:true});acp.close();chosen(FRONT_MODEL,'quota');return fallback(payload,signal);
+   try{o.quota?.({...q,providerExhausted:true});}catch(err){if(!ignoreQuotaDisconnect(err))throw err;}
+   acp.close();chosen(FRONT_MODEL,'quota');return fallback(payload,signal);
   }finally{signal?.removeEventListener('abort',cancel);}
  }};
 }

@@ -1,3 +1,32 @@
+## 2026-11-25 · 小芯内核架构接手盘点与第 2 步第 3B 批协议收口（Antigravity 实现并自查，无独立复核）
+
+- **谁做的**：**Antigravity** 独立完成架构全面盘点、第 3B 批遗留协议实现与测试验证；**自查（无独立 AI 复核）**。分支 `antigravity/xin-steer-report-delivery`（基于 `main` `df4430d`，即 PR #210）。完整改法、开源参考与设计取舍见 [docs/CHANGES.md](CHANGES.md) 最新一条及 [持久收尾计划](superpowers/plans/2026-11-16-xin-finalization.md)。
+- **一、三层架构进度核对台账（截至 2026-11-25，以代码与测试记录为准）**：
+  1. **小芯原始架构六步路线图（[docs/xin-kernel-design.md](xin-kernel-design.md) §10）**：
+     - **第 1 步（内核外壳、私有端口、待送达与 SSE 事件流传输）**：**已完成并验收**（#136；模型逐字流式生成按原设计在第 3 步）。
+     - **第 2 步（常驻状态进程单写者接管状态与调度，Kernel-owned）**：**核心运行中，尚未全部收官**——第 0 补、1、2、3A、3B（含本次尾项）、6 批已完成；**仍剩第 4a 批（宿主授权方案 C）与第 5 批（5 处 `rmw` 清零、`memory-idle` 常驻调度、>50ms 同步重活外移）及整机冷启动自启实测**。
+     - **第 3 步（统一收件箱、`ModelRoute` 流式接口、`Executor` 接口、四档工具闸门）**：未开始。
+     - **第 4 步（Durable Object 日程/提醒/推送与 `schedule.*` 工具）**：未开始。
+     - **第 5 步（退役 JSON/JSONL 双写投影，直读 SQLite）**：未开始（删投影前须先问站长）。
+     - **第 6 步（Android 平板伴侣中枢）**：未开始。
+  2. **第 2 步内部分批状态（[stage2-design.md](superpowers/specs/2026-11-14-xin-kernel-stage2-design.md) §7）**：
+     - **0 补**（按对话分道与发布绑定摘要，#137/#138）、**第 1 批**（`owner.sqlite`、双层桥、写者清单、持久服务，#139–#145）、**第 2 批**（正式站切换常驻主人与自动睡眠唤醒验证，#148–#151）、**第 3A 批**（`attemptProtocol: 1` 围栏、墙钟跳变 >30s 补扫、孤儿进程组清理，#153/#155）、**第 6 批**（提前移除旧 `flock` 业务锁、看门狗与 `XIN_STATE_OWNER`，#169–#171）：**均已完成验收，切勿重复返工**。
+     - **第 3B 批**：沙盒 `task_bridge` 回执（#160/#163）、报告断线重试（#166）、持续故障推送（#172）、持久收尾包 `run_finalize`（#173/#174）已上线；#174 交接留下的三项协议尾项（`steer_take` 两阶段消费回执、AGY 原生 `note/ask` 幂等回执与诚实失联反馈、前台 `front_quota` 传输断线容错）**由本批全部补齐**。
+     - **第 4a 批（宿主授权方案 C，§1 ① & §6.10）**：**未实现**（目前 `taskNew` / `startTask` 无宿主授权记录核对，`taskCmd` 亦未拦截 `handoff` 派发宿主任务）。
+     - **第 5 批（`rmw` 清零与重活外移）**：**未实现**（`test/xin-writers.json` 仍有 `rmw = 5`：`vapidKeys`、`frontLog`、`logLine`、`loginStore.save`、`requestBudget`；`ensureMemoryIdle` 仍由 `run_complete` 外部拉起；`prepareWorkspace`、`publishWorkspace`、`codex mcp list/get`、`VACUUM INTO` / `tar` 仍在状态进程内同步执行）。
+     - **凭据代理核实**：容器 `inferenceProxy` 与 `browserBroker` 已生效并覆盖测试；跨 UID / InstaBox 组织密钥方案已由站长在设计 §1 ③ 确认不放进第 2 步。
+  3. **天启独立迁移轨道**：`li2` 独立部署 1–9 步（#175/#180/#190）及工作台 v4 / Linear / 星空宇宙主题（#186–#210）已独立完成，本批零改动天启与前端文件。
+- **二、本批已完成改动**：
+  - `site/xin/vm-steer.mjs`、`vm-kernel-controller.mjs`、`vm-runtime.mjs`、`vm-front-agy.mjs`、`vm-events.mjs`、`vm-run-attempt.mjs`、`vm-task-reports.mjs`、`vm-agent.mjs`：实现 `steer_take({ run, claim })` / `steer_ack({ run, claim, state: 'accepted' })` 两阶段批次认领与确认、长失联终态包可选 `ackedSteers` 原子补确认（常规轮次不写该键以兼容回滚 `#210`）、AGY 原生 `note` / `ask` 步级编号重送与 `t.noteMsgs` 原回执保留、失联超预算 `NOTE_UNCONFIRMED_TEXT` 诚实反馈、未变化 `agy_conversation` 去重上报，以及前台 `openFrontProvider` 的 `front_quota` 传输断线容错（不进 `LOCKED_REPORTS`，避免重复写 `quota-history.jsonl`）。
+- **三、测试结果、当前状态与硬约束提醒**：
+  - 本地语法与资源引用检查（303 文件 / 231 引用）通过；全仓 86 个单测文件 **1,097 / 1,097 全部通过**（含新增 `test/xin-steer-delivery.test.cjs` 6/6、`test/xin-writers.test.cjs` 16/16，以及为 `test/xin-report-retry.test.cjs` 的 `inspect()` 补齐 `PRAGMA busy_timeout=5000` 防并发锁竞争并连跑 3 轮通过）。
+  - 因额度临近耗尽，按站长指示在本地浏览器 E2E 中途（`stm32_e2e.py` 已过 265 项、本批零前端改动）先提交推送分支 `antigravity/xin-steer-report-delivery` 并开启 PR 触发 GitHub Actions，**尚未合入 `main`**（严守未过全套检查不合并底线）。
+  - **接手硬约束**：控制器冷启动子请求已在 40/50 上限（**严禁新增 `site/xin/vm-*.mjs` 文件**）；`vm-agent.mjs` 行数上限 2949（当前 2948）；`steer_take` / `front_quota` / `agy_quota` 严禁加入 `vm-kernel-client.mjs` 的 `LOCKED_REPORTS`。
+- **四、下一步接手清单（按顺序执行）**：
+  1. **先收尾本批 PR 上线**：查看分支 `antigravity/xin-steer-report-delivery` 对应 PR 的 `Deploy` Actions 运行，确认 `check`、`e2e`、`deploy`（测试站 `liming-hub-staging` 及 `tested-tree-check`/`tested-tree-e2e` 凭证）全部 `success`（若需本地补跑一遍 `npm run test:e2e` 亦可），随后执行 `gh pr merge --squash --delete-branch`，并盯完 `main` 正式站 `liming-worldmap` 部署与联调变绿。
+  2. **紧接做第 2 步第 4a 批（宿主授权方案 C）**：在 `taskNew` / `startTask` / `taskTell` / `taskCmd` 落地绑定任务与目标摘要（`goal` + `dir` + 有效期）的宿主授权记录——站长原话轮次由控制器自动签发；`handoff` 或无授权来源发起的宿主维护任务停在 `waiting`（复用 `chat.js` 已有的非 `input` 类 `approval` 批准/拒绝卡片与 30 分钟 `WAIT_TTL_MS`），仅网页验签的 `task_tell`（`!a.front`）批准可放行；保留 `daily` 既有清单授权。
+  3. **随后做第 2 步第 5 批（5 处 `rmw` 清零 + `memory-idle` 迁入常驻定时检查 + >50ms 同步重活外移）**，验收达标后第 2 步才算真正收官。
+
 ## 2026-11-25 · 天启星空宇宙主题大改版：天枢星象舱布局、宇宙星表模型选择器、Codex 式思考强度、实时思考星链与 1:1 Claude Code 终端（Antigravity 实现，Muse 驱动监督）
 
 - **谁做的**：Antigravity 实现并自查——第 1–3 步（布局、样式、交互引擎、e2e 调整）由 Gemini 4 Carbon High 完成；Gemini 额度用完后同一 agy 会话切 Claude Opus 5.5 High 完成第 4–5 步（截图核验修复、全量检查、本条所据的变更记录）；两个池额度均用尽后，最终总结未及输出。Muse 负责驱动监督、补填 `docs/CHANGES.md` 的 check 结果、随附下方账号数纠正与本条交接；本地全量复核按站长指示略过，以 CI 结果为准。分支 `antigravity/tianqi-cosmos-rework-20261124`（基于 `main` `4d62222`，即 PR #209）。完整改法、开源参考与验证记录见 [docs/CHANGES.md](CHANGES.md) 最新一条。
