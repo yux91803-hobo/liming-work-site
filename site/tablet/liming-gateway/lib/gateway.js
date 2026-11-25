@@ -1,5 +1,7 @@
 // 平板网关守护：随 DSH 本机引擎启停 WorkBuddy 网关。只用 Node 自带模块。
 // 启动参数和环境照 li 上的 workbuddy-gateway.service；重启次数上限照 systemd 的 StartLimitIntervalSec / StartLimitBurst。
+// 网关单独一个进程组：它自己会起 TLS 组件子进程，只在 atexit 里收掉（SIGTERM 不会跑 atexit）。所以停止时对整组先发 SIGINT
+// （网关当 Ctrl+C 正常退出），超时再整组 SIGKILL，最后再扫一遍；作用同 systemd 停服务时杀掉整个 cgroup。
 // 设计：liming-work-site 仓库 docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md §4.1、§4.2
 import fs from 'node:fs';
 import path from 'node:path';
@@ -78,6 +80,16 @@ function rotate(file, maxBytes) {
 
 const human = ms => (ms >= 1000 ? Math.round(ms / 1000) + ' 秒' : ms + ' 毫秒');
 
+// 给网关所在的整组进程发信号（网关是组长）；组不在了就退回只发给它自己。
+function signalGroup(c, sig) {
+  try { process.kill(-c.pid, sig); return true; } catch {}
+  try { return c.kill(sig); } catch { return false; }
+}
+// 网关退出后，组里可能还剩它起的子进程（比如 TLS 组件），一并收掉。
+function sweepGroup(c) {
+  if (c.pid) try { process.kill(-c.pid, 'SIGKILL'); } catch {}
+}
+
 export function createSupervisor(options = {}) {
   const o = { ...DEFAULTS, ...options };
   const logsDir = path.join(o.dir, 'logs'), gatewayLog = path.join(logsDir, 'gateway.log'), pluginLog = path.join(logsDir, 'plugin.log');
@@ -130,7 +142,7 @@ export function createSupervisor(options = {}) {
     let fd;
     try { fd = fs.openSync(gatewayLog, 'a', 0o600); } catch (err) { log('打不开网关日志：' + err.message); return null; }
     let c;
-    try { c = spawn(cmd.command, cmd.args, { cwd: cmd.cwd, env: cmd.env, stdio: ['ignore', fd, fd] }); }
+    try { c = spawn(cmd.command, cmd.args, { cwd: cmd.cwd, env: cmd.env, stdio: ['ignore', fd, fd], detached: true }); }
     catch (err) { log('网关启动失败：' + err.message); return null; }
     finally { fs.closeSync(fd); }
     child = c;
@@ -157,6 +169,7 @@ export function createSupervisor(options = {}) {
   async function onExit(c, startedAt, code, signal, err) {
     if (child === c) child = null;
     if (stopped) return;
+    sweepGroup(c);
     log(err ? '网关启动失败：' + err.message : '网关退出了（' + (signal ? '信号 ' + signal : '退出码 ' + code) + '）');
     if (!err && Date.now() - startedAt < 3000 && await portOpen(o.host, o.port) && !(await healthy(1000)))
       log(o.port + ' 被其他程序占用，网关起不来');
@@ -203,10 +216,11 @@ export function createSupervisor(options = {}) {
     const c = child;
     if (c && c.exitCode === null && c.signalCode === null && c.pid) {
       await new Promise(resolve => {
-        const kill = setTimeout(() => { try { c.kill('SIGKILL'); } catch {} }, o.stopGraceMs);
+        const kill = setTimeout(() => signalGroup(c, 'SIGKILL'), o.stopGraceMs);
         c.once('exit', () => { clearTimeout(kill); resolve(); });
-        try { c.kill('SIGTERM'); } catch { clearTimeout(kill); resolve(); }
+        if (!signalGroup(c, 'SIGINT')) { clearTimeout(kill); resolve(); }
       });
+      sweepGroup(c);
       log('网关已停止');
     }
     child = null;

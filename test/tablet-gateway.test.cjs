@@ -1,6 +1,7 @@
 // 平板网关随 DSH 本机引擎启停的插件（docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md §4.1、§4.2）
 // 假网关是真的 Python 进程：解析 --host/--port，/health 回 {"ok": true}，每次启动往 spawns.txt 记一行；
-// 网关目录里的 fake-mode 文件切换模式：exit（立刻退出）、ignore-term（不理 SIGTERM）、never-ok（/health 永不 ok）。
+// 网关目录里的 fake-mode 文件写几个开关：exit（立刻退出）、ignore-stop（不理 SIGINT、SIGTERM）、never-ok（/health 永不 ok）、
+// bridge（像真网关的 TLS 组件那样起一个子进程，只靠 atexit 收掉）。
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),net=require('node:net'),http=require('node:http');
 const {pathToFileURL}=require('node:url');
@@ -16,16 +17,22 @@ root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 args = sys.argv[1:]
 opt = lambda n: args[args.index(n) + 1]
 mf = os.path.join(root, 'fake-mode')
-mode = open(mf).read().strip() if os.path.exists(mf) else 'ok'
+modes = set(open(mf).read().split()) if os.path.exists(mf) else set()
 with open(os.path.join(root, 'spawns.txt'), 'a') as f: f.write(str(os.getpid()) + '\\n')
 with open(os.path.join(root, 'last-run.json'), 'w') as f:
     json.dump({'args': args, 'cwd': os.getcwd(), 'TZ': os.environ.get('TZ'), 'realm': os.environ.get('WB_PROXY_DEFAULT_REALM'), 'unbuffered': os.environ.get('PYTHONUNBUFFERED')}, f)
 print('fake gateway up', flush=True)
-if mode == 'exit': sys.exit(3)
-if mode == 'ignore-term': signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if 'exit' in modes: sys.exit(3)
+if 'ignore-stop' in modes:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN); signal.signal(signal.SIGINT, signal.SIG_IGN)
+if 'bridge' in modes:
+    import atexit, subprocess
+    bridge = subprocess.Popen(['sleep', '300'])
+    with open(os.path.join(root, 'bridge.pid'), 'w') as f: f.write(str(bridge.pid))
+    atexit.register(bridge.kill)
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        ok = self.path == '/health' and mode != 'never-ok'
+        ok = self.path == '/health' and 'never-ok' not in modes
         body = b'{"ok": true}' if ok else b'{"ok": false}'
         self.send_response(200 if ok else 503); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
     def log_message(self, *a): pass
@@ -136,14 +143,35 @@ test('健康检查超时：返回 unhealthy，进程留着',async t=>{
   assert.ok(alive(s.state().pid));
 });
 
-test('停止：先 SIGTERM，不理就 SIGKILL；停了以后不再重启',async t=>{
-  const dir=fakeGateway(t,'ignore-term'),s=await supervisor(t,fast(dir,await freePort()));
+test('停止：先发 SIGINT（网关当 Ctrl+C 正常退出），不理就 SIGKILL；停了以后不再重启',async t=>{
+  const dir=fakeGateway(t,'ignore-stop'),s=await supervisor(t,fast(dir,await freePort()));
   assert.equal(await s.start(),'started');
   const pid=s.state().pid,t0=Date.now();
   await s.stop();
   assert.ok(Date.now()-t0<1300,'在 stopGraceMs 加 1 秒内停完');
   assert.equal(alive(pid),false);
   await sleep(300);assert.equal(spawns(dir),1);
+});
+
+async function bridgeOf(t,dir){
+  assert.ok(await waitFor(()=>fs.existsSync(path.join(dir,'bridge.pid'))),'假网关起了子进程');
+  const pid=Number(fs.readFileSync(path.join(dir,'bridge.pid'),'utf8'));t.after(()=>{try{process.kill(pid,'SIGKILL');}catch{}});return pid;
+}
+
+test('停止时连网关自己起的子进程（TLS 组件）一起收掉，不在平板上留孤儿进程',async t=>{
+  const dir=fakeGateway(t,'bridge'),s=await supervisor(t,fast(dir,await freePort()));
+  assert.equal(await s.start(),'started');
+  const bridge=await bridgeOf(t,dir);assert.ok(alive(bridge));
+  await s.stop();
+  assert.ok(await waitFor(()=>!alive(bridge),2000),'子进程跟着网关一起停了');
+});
+
+test('网关不理停止信号时，SIGKILL 打到整组进程，子进程也不留',async t=>{
+  const dir=fakeGateway(t,'ignore-stop bridge'),s=await supervisor(t,fast(dir,await freePort()));
+  assert.equal(await s.start(),'started');
+  const bridge=await bridgeOf(t,dir);
+  await s.stop();
+  assert.ok(await waitFor(()=>!alive(bridge),2000));
 });
 
 test('网关日志超过 5 MB 就在启动时轮换',async t=>{

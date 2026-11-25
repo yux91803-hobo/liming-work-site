@@ -57,7 +57,7 @@ REA 开启时通过 MCP 兼容桥转换当前网关不接受的 pattern `allOf` 
 
 ## 平板（DSH Go）
 
-站长自用的安卓平板，第一步装原版 [DSH Go](https://github.com/ccch1mneyyy/dsh-go)（DeepSeek Harness 的安卓 App），不改 App。装法是在 App 的终端里运行 `curl -fsSL https://liming-work.com/tablet/setup.sh | bash`：
+站长自用的安卓平板，第一步装原版 [DSH Go](https://github.com/ccch1mneyyy/dsh-go)（DeepSeek Harness 的安卓 App），不改 App。装法是在 App 的终端里运行 `apt-get update && apt-get install -y curl && curl -fsSL https://liming-work.com/tablet/setup.sh | bash`：
 
 - **网关在平板上**：WorkBuddy 网关装进 App 的本机 Linux，跟着本机引擎一起启停（插件 `site/tablet/liming-gateway/`）。签到钟点设成全天，所以打开 App 就会签到。
 - **平板上的 AI**：用网关里的模型回话，开了手机操控后能读屏、点按、输入。

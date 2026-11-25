@@ -18,8 +18,10 @@
 3. **跑装机脚本**：在 App 里打开一个对话 → 全部功能 → 终端，粘贴
 
    ```
-   curl -fsSL https://liming-work.com/tablet/setup.sh | bash
+   apt-get update && apt-get install -y curl && curl -fsSL https://liming-work.com/tablet/setup.sh | bash
    ```
+
+   App 里的 Linux 是精简版，一开始没有 curl，所以这一行先用 apt 装上它，再下载装机脚本。
 
    按提示先粘贴 li2 的令牌，再粘贴 li 的；不接 li 就直接回车。令牌只在这一次用，不会存下来。脚本最后会打印 li2、li 的启动命令和工作目录。
 4. **加网关账号**：「设置 › 本机引擎」点重启。然后用平板浏览器打开 `http://127.0.0.1:8788`，用 `admin` 登录。

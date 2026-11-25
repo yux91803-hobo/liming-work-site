@@ -21,7 +21,7 @@
 - 网关启动：`python3 current/wb_proxy.py --host 127.0.0.1 --port 8788 --accounts-dir <dir>/accounts --usage-dir <dir>/usage`，工作目录 `current`，环境变量加 `TZ=Asia/Shanghai`、`PYTHONUNBUFFERED=1`、`WB_PROXY_DEFAULT_REALM=cn`，umask 077。
 - 健康检查 `GET http://127.0.0.1:8788/health`，JSON 里 `ok === true` 才算活着。
 - 签到钟点：`accounts/settings.json` 没有 `schedule.checkin` 时写入 `0…23`，保留其他键；已有就不动。
-- 退避 5、15、45 秒；10 分钟内最多重启 3 次；停止时 SIGTERM，5 秒后 SIGKILL。
+- 退避 5、15、45 秒；10 分钟内最多重启 3 次；停止时 SIGTERM，5 秒后 SIGKILL。（执行中改为对网关整组进程先 SIGINT、超时整组 SIGKILL，见设计 §4.2 第 6 条。）
 - 远端（li2、li）只新建 `~/.local/bin/dsh-tablet`、`~/.dsh/profiles/tablet/cordis.patch.yml`、`/data/workspace/tablet/`；不读出、不打印 `~/.xin/harness.key`。
 - 插件包：`engines.dsh` 为 `">=0.2.1-rc.2 <0.3.0-0"`，`engines.node` 为 `">=22.19"`，没有依赖。
 - 文案用中文，按钮和步骤名照 DSH Go 界面上的叫法。

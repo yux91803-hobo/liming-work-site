@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Liming 平板装机：在 DSH Go 的终端里（打开一个对话 → 全部功能 → 终端）运行
-#   curl -fsSL https://liming-work.com/tablet/setup.sh | bash
+#   apt-get update && apt-get install -y curl && curl -fsSL https://liming-work.com/tablet/setup.sh | bash
+# （App 里的 Ubuntu 是精简版，没有 curl、python3、openssh-client；curl 由这行先装，后两个脚本自己装。）
 # 装好随本机引擎启停的 WorkBuddy 网关和插件，并在 li2、li 上配好给平板用的 Harness web 配置。
 # 脚本里不含任何密钥；InstaBox 的 SSH 令牌只用来连 li2、li，用完不存。可以重复运行。
 #   --dry-run  只列出要做的事    --skip-li  不接 li

@@ -84,14 +84,14 @@ InstaBox（`instabox.sh/llms.txt`、`docs/ssh.md`、`docs/idle-suspend.md`）：
 3. 否则按 §4.1 写入签到钟点、拉起网关，日志追加到 `logs/gateway.log`（启动时超过 5 MB 就轮换成 `.1`）。
 4. 每秒查一次 `/health`，最多等 60 秒。没起来就记日志，进程留着，下一次退出时按第 5 步处理。
 5. 意外退出就按 5、15、45 秒退避重启，10 分钟内最多 3 次；超过就停下记日志，等下次引擎重启。这个次数上限照 systemd 的 `StartLimitIntervalSec` / `StartLimitBurst`。
-6. 引擎卸载插件时（`ctx.effect` 的清理函数）先 SIGTERM，5 秒后还在就 SIGKILL。沿用的网关不是自己起的，不去停。
+6. 网关单独起一个进程组。引擎卸载插件时（`ctx.effect` 的清理函数），对整组先发 SIGINT，网关当 Ctrl+C 正常退出，并在 `atexit` 里收掉它自己起的 TLS 组件；5 秒后还在就整组 SIGKILL，最后再扫一遍。意外退出时也先扫掉组里剩下的进程再重启。这相当于 systemd 停服务时杀掉整个 cgroup。（实现时改：原写先 SIGTERM。整分支自查发现 Python 收到 SIGTERM 不跑 `atexit`，会把 TLS 组件留成孤儿进程。）沿用的网关不是自己起的，不去停。
 7. 自己的日志写 `logs/plugin.log`（限 1 MB），也走 `ctx.logger`（如果有的话）。
 
 `config` 可以覆盖目录、端口、Python 命令、退避时间，供测试用。默认值就是平板上的路径。
 
 ### 4.3 装机脚本 `site/tablet/setup.sh`
 
-站长在 App 的终端里粘贴：`curl -fsSL https://liming-work.com/tablet/setup.sh | bash`。脚本里不含任何密钥，可以重复运行；`--dry-run` 只打印要做的事，`--skip-li` 跳过 li。
+站长在 App 的终端里粘贴：`apt-get update && apt-get install -y curl && curl -fsSL https://liming-work.com/tablet/setup.sh | bash`（DSH Go 的 Ubuntu 是精简版，运行时清单里没有 curl、python3、openssh-client，所以先用 apt 装 curl）。脚本里不含任何密钥，可以重复运行；`--dry-run` 只打印要做的事，`--skip-li` 跳过 li。
 
 1. 检查环境：`HOME=/root`、有 `dsh`。不是 `aarch64` 就提示，但不拦（便于在 x86 上试）。
 2. `apt-get install -y python3 openssh-client ca-certificates`，已经装了的跳过。
@@ -121,7 +121,7 @@ DSH Go 里的设置：「添加 SSH 主机」。主机和用户名取自令牌�
 
 1. 平板装原版 DSH Go（GitHub Releases 或 go.dshtui.com，选 arm64），首次启动选「本机」，在「设置 › 隐私与分享」关掉匿名统计。
 2. 在 InstaBox 后台给 li2、li 各建一个 SSH 令牌（Connect → SSH tokens → Create token，选永久）。平板丢了就在这里吊销。
-3. 打开一个对话 → 全部功能 → 终端，粘贴装机命令，按提示粘贴令牌。
+3. 打开一个对话 → 全部功能 → 终端，粘贴 §4.3 那一行装机命令，按提示粘贴令牌。
 4. 平板浏览器打开 `http://127.0.0.1:8788`，用 `admin` 登录，先改密码，再加网关账号，最后在「设置 → API Key」新建一个 key。
 5. 「设置 › 本机引擎」重启引擎；「设置 › 模型 › 添加渠道」按 §4.6 填；「切换主机 › 管理远程主机」按 §4.4 加 li2、li。关掉「连接上次使用的主机」。
 6. 「设置 › 手机操控」打开开关，开无障碍和通知。侧载的 App 打不开无障碍时，先按页面提示「允许受限制的设置」。
