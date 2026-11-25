@@ -8,7 +8,7 @@
 - **改法、开源参考与行为保证**：
   1. **输入区合一为单个模型与思考强度胶囊，并去掉档位四角星标（`index.html`、`workbench.css`、`sky.js`）**：彻底删除独立的 `#tq-eff` 按钮与 `#tq-eff-pop` 弹层及其事件监听；按站长确认一并去掉表示思考强度的 `.xc-em` 四角星标图案（天启品牌星徽、滑杆滑块与星空背景均保留不动），输入区单个 `.xc-mdl` 胶囊仅依次展示天体 SVG 徽标（`.tq-mdl-orb`）、模型名称（`.tq-mdl-txt`）、细分隔线与当前档位名（`.tq-mdl-eff`），手机窄屏同样单行容纳且不溢出输入框。
   2. **星表弹层内嵌可拖动星空滑杆（`#xin-model-picker` → `.xc-eff.tq-slider`）**：参考 [`openai/codex`](https://github.com/openai/codex) 桌面端模型弹层内的推理强度滑杆交互，将 `#xin-model-picker` 底部原有的「思考强度」展示行改造为真正的双层星空滑杆控件：
-     - 标题行左侧显示 `思考强度 EFFORT`，右侧去掉 `.xc-em` 星标，仅显示档位文字（如 `II 星等 · 默认 · 高`）；
+     - 标题行左侧显示 `思考强度 EFFORT`，右侧去掉 `.xc-em` 星标，仅显示档位文字（如 `II 星等 · 默认 · 高`）；同时为 `.xc-pk-t` 显式锁死 `height: 26px`（子项 `19px` 行盒、`.tq-eff-def` 固定 `16px` 高），消除 CI Ubuntu 字体（默认 `line-height ~1.2` 下文字高 `15px`、而 `默认` 徽章带内边距与边框高 `16.5px`）从「高」切到「最高」隐藏 `默认` 徽章时产生的 `1.5px`（`343.1 → 341.6`）高度收缩；
      - 滑杆上层为星轨滑道（`.tq-sl-rail`），含香槟金渐进光轨（`.tq-sl-fill`）、与各档严格对齐的星等刻度节点（`.tq-sl-dot`）及内嵌四角星的圆形浑天滑块（`.xc-eff-th`）；下层对齐各档刻度按钮（DeepSeek V4.1 Flash 为 `关 / 低 / 高 / 最高` 4 档，GLM-5.3 / GLM-5.3 Flash / Kimi K3.1 Pro 为 `低 / 高 / 最高` 3 档）；
      - 支持**按住滑轨或滑块水平连续拖动**（`pointerdown` + `pointermove` 期间挂 `.is-dragging` 实时更新 `--f` 零延迟跟手，跨过档位中点即时切换档位，松手自动吸附到刻度节点并迸发微光星尘）、**点击任意刻度切档**及**左右方向键 / Home / End 切档**；
      - 底部保留现有档位深空说明文案（`.tq-eff-desc-line`，单行 `17px` 锁高，隐藏 `chat.js` 自带的 `swapText` 宽度翻转节点，确保手机 `390`/`360` 切换档位时面板高度 `0.0px` 零弹跳）；
@@ -19,7 +19,7 @@
   2. **场景 2c-2（第 654 行，单键 `E` 快捷键状态判断）**：原检查 `!document.querySelector('#tq-eff-pop').hidden`；现单键 `E` 打开 `#xin-model-picker` 并把焦点移入 `.xc-eff` 滑杆，故改为检查 `!document.querySelector('#xin-model-picker').hidden && !!document.activeElement?.closest('#xin-model-picker .xc-eff')`（与单键 `M` 聚焦模型卡片区分），`Esc` 关闭与输入框打 `cmpwe` 不误触断言不变。
   3. **场景 2e（第 768–828 行，思考强度专项检查）**：原检查点击 `#tq-eff` 弹出 `#tq-eff-pop` 列表项；现改为在 `#xin-model-picker` 内检验合一后的 `.xc-eff.tq-slider` 星空滑杆——校验单控件与无 `.xc-em` 星标约束、滑杆与说明一屏完整可见无裁切、按住滑轨从「高」水平拖到左端「低」时实时连续滑动与吸附更新、再点击右端刻度切到「最高」同步更新胶囊档位字、本地存储与终端欢迎头 `GLM-5.3 · 思考:最高`。
 - **验证证据**：
-  - `test/e2e/xin_tianqi_e2e.py`：**88/88 全部通过（失败 0 项）**。
+  - `test/e2e/xin_tianqi_e2e.py`：锁死 `.xc-pk-t` 高度后本地连续跑两遍，均 **88/88 全部通过（失败 0 项）**，且复现 CI `line-height: 1.2` 字体条件下切档高度差由 `1.5px` 降为 `0.0px`。
   - 天启专项单测 `node --test test/xin-tianqi.test.cjs test/xin-tianqi-worker.test.cjs test/xin-writers.test.cjs`：**40/40 通过（失败 0 项）**。
   - `npm run check`（隔离环境 `HTTP_PROXY= HTTPS_PROXY= http_proxy= https_proxy= XIN_AGY_HOME=/tmp/no-agy-home XIN_ANTIGRAVITY_BIN= CHROMIUM_PATH=… npm run check`）：**退出码 0，全绿**——`Syntax and local references passed: 303 files, 231 asset references`，全仓单测 **1091/1091 通过（失败 0、跳过 0）**。
   - Playwright 多视口深浅色截图逐张自查：`1280×860`（夜空 4 档滑杆 + 星图浅色 3 档滑杆）、`1024×768`（嵌在首页 `/tianqi` 弹层展开）、`768×1024`（竖屏平板弹层展开）、`390×844`（手机夜空与星图浅色弹层展开及空状态）。全部视口下 4 张星体卡与滑杆完整可见、无滚动裁切、无合成残影，临时截图已清理。
