@@ -13,6 +13,7 @@ const bad = () => ({ error: 'bad_op', msg: '不认识的操作' });
 // 天启身份（li2）下网页和 Worker 能用的操作：聊天、看对话、文件、用量、插件以及例行维护。
 export const TIANQI_OPS = new Set(['ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'rename', 'archive', 'forget', 'files', 'usage', 'plugins', 'plugin_set', 'prune', 'preview_asset', 'integrity_event', 'term_run', 'term_poll']);
 const RUN_REPORTS = new Set(['session_patch','run_patch','run_complete','task_finish','task_stage','task_model','agy_conversation','front_reply','front_model','front_immediate','front_action','front_fallback','handoff_start','handoff_finish','continue_steers','run_stat','task_bridge','steer_take','steer_ack','steer_handover']);
+const nativeReport = (op, args) => ['task_note','task_ask'].includes(op) && /^agy-[a-f0-9]{32}$/.test(args.id || '');
 export function createController({ ops, iops, isTask, saveTask, rememberAgentSession, mainSid, listTasks,
   lockedCall, dispatchLaunches, markCurrentController, xinCmd, reapNow, finalizeRun }) {
   const sessF = sid => path.join(BASE,'sessions',sid+'.json'), metaF = run => path.join(BASE,'runs',run+'.json');
@@ -34,7 +35,21 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
     // Keep the original command IDs/digests: retries across a mode switch must find the same receipt.
     if(op==='send'||op==='continue_steers'){mk(path.join(BASE,'sessions'));mk(path.join(BASE,'runs'));listTasks();}
     let command=null;
-    if(op==='task_bridge'){
+    if(nativeReport(op,args)){
+      const {run, attempt} = callContext();
+      const meta = readJ(metaF(run));
+      if (!taskScope || !meta?.task || meta.sid !== args.sid || run !== args.run) return staleAttempt();
+      command = {id:'native:'+run+':'+(attempt || 'legacy')+':'+op+':'+args.id, digest:inputDigest(args)};
+      const apply = fn;
+      fn = () => {
+        const task = readJ(sessF(meta.sid));
+        if (!isTask(task) || task.runs?.at(-1) !== run || task.status !== 'running' || meta.stopped || meta.ended)
+          return {error:'bridge_ended', msg:'这次运行已结束，请求未应用'};
+        return apply();
+      };
+    }else if(op==='steer_handover'&&args.claim==='handover-input'){
+      command={id:'steer-handover:'+args.run+':'+callContext().attempt,digest:inputDigest(args)};
+    }else if(op==='task_bridge'){
       if(!/^[a-f0-9]{24}$/.test(args.id||'')||!['remember','ask','note'].includes(args.op)||typeof args.text!=='string'||!args.text.trim()||args.text.length>1000)return {error:'bad_bridge_request',msg:'不认识的任务请求'};
       command={id:'task-bridge:'+args.run+':'+callContext().attempt+':'+args.id,digest:inputDigest(args)};
     }
@@ -59,6 +74,7 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
       dispatchLaunches();return result;
     }
     if(op==='task_bridge'&&(!run||! /^[a-f0-9]{32}$/.test(attempt||'')))return staleAttempt();
+    if(nativeReport(op,args)&&(!locked||key!=='tasks'||!run||run!==args.run))return staleAttempt();
     if(run&&!okId(run,'r')||attempt&&(typeof attempt!=='string'||attempt.length>128))return bad();
     if(!internal){
       const target=RUN_REPORTS.has(op)||['run_recover','run_stopped'].includes(op)?args.run||(op==='session_patch'?readJ(sessF(args.sid||''))?.runs?.at(-1):null):null;

@@ -50,7 +50,7 @@ import { initializeStateTables } from './vm-kernel-operations.mjs';
 import { checkControllers } from './vm-kernel-compat.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
-import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps, createExecutorSteerBridge, saysContinue } from './vm-steer.mjs';
+import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps, createExecutorSteerBridge, retrySteerCall, saysContinue } from './vm-steer.mjs';
 import { BASE, TIANQI, HARNESS_KEY, dshCmd, harnessInstalled, tianqiReady, tianqiRefuse, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
@@ -678,6 +678,7 @@ function runner(run) {
     const s = durable ? {...readJ(sessF(meta.sid),sess),...changes} : saveState();
     if (!durable && meta.task) checkTaskResult(s,{active,emit:announce,checking,report:changes=>patchRun(run,changes)});
     let stopped = !!readJ(metaF(run),meta).stopped, ok = active();
+    if (ok && state.handoverClaim) { if (durable) state.ackedSteers = [...new Set([...(state.ackedSteers || []), state.handoverClaim])].slice(-128); else lockedCall(key,'steer_ack',{run,claim:state.handoverClaim}); }
     if (!ok && !stopped && !state.errShown) {
       const tail = stderr.trim().split('\n').slice(-6).join('\n');
       emit(run, { t: 'err', text: why || tail || ('退出码 ' + code) });
@@ -835,8 +836,8 @@ function runner(run) {
         // 换了执行入口，原来那条插话通道没了：新入口自己报能不能插话（app-server 开始这一轮时写 transport）
         if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         else if(stallFallback)meta.text='原执行入口没有回应。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
-        // 接手的模型从头开始，看不到前一个入口收到的补充：这一轮收到的补充全部交给它（还没送的也算送达）
-        if(meta.task){const h=lockedCall('tasks','steer_handover',{run});if(Array.isArray(h?.steers)&&h.steers.length)meta.text+='\n\n'+handoverBlock(h.steers);}
+        // 接手模型收到完整补充，成功后再确认尚未消费的输入。
+        if(meta.task){try{const h=retrySteerCall(left=>lockedCall('tasks','steer_handover',{run,claim:'handover-input'},{deadlineMs:left}));if(h.error)throw Error(h.error);if(h.steers?.length){meta.text+='\n\n'+handoverBlock(h.steers);state.handoverClaim=h.claim;}}catch(e){finish(c,'暂时无法读取换模型所需的补充，已保留现场：'+e.message);return;}}
         patchRun(run,{model:meta.model,effort:meta.effort,from,fromErr,fallbacks:meta.fallbacks,text:meta.text,transport:null});
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
         emit(run, { t: 'status', text: runtime.isAgyModel(from)?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
@@ -863,7 +864,7 @@ function runner(run) {
     try {
       drainTaskReports(sess.workspace, meta, {drain:runtime.drainBridge,submit:a=>lockedCall('tasks','task_bridge',a),remember:addMemory,ask:a=>lockedCall('tasks','task_ask',a),note:a=>lockedCall('tasks','task_note',a)});
       if (!app || steering || finished) return;
-      const m = readJ(metaF(run), meta), queue = (m.steers || []).filter(x => x.state === 'pending');
+      const m = readJ(metaF(run), meta), queue = (m.steers || []).filter(x => x.state === 'pending' && (!x.claim || (x.claim.attempt || null) !== (meta.attempt || null)));
       if (!queue.length || !m.turnId) return;
       steering = true;
       for (const q of queue) {
@@ -2923,7 +2924,7 @@ async function main() {
     const run=process.argv[3],m=readJ(metaF(run));assertAttempt(m,callContext());
     const t=m&&taskBridgeSession(readJ(sessF(m.sid)),m);
     if(!m?.task||!t?.workspace||!runtime.isAgyModel(m.model)){process.exitCode=1;return;}
-    const clientDir=path.join(BASE,'antigravity-client'),steerBridge=createExecutorSteerBridge({run,sid:t.sid,lockedCall});mk(clientDir);
+    const clientDir=path.join(BASE,'antigravity-client'),steerBridge=createExecutorSteerBridge({run,sid:t.sid,model:m.model,lockedCall});mk(clientDir);
     runtime.antigravityWork(t,{model:m.model,effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,runtime.AGY_QUOTA_FILES[runtime.agyPool(m.model)])),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:(quota,o)=>lockedCall('tasks','agy_quota',{quota},o?.postTurn?{deadlineMs:Number(process.env.XIN_STEER_RETRY_MS)||3000}:undefined),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:steerBridge.ask,remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why}),
       // 兄弟在它干活时的补充：每一步之前两阶段认领（vm-steer.mjs），模型步完成后再确认；主动说一句带步编号去重重送
       steers:steerBridge.take,ackSteers:steerBridge.ack,note:steerBridge.note})

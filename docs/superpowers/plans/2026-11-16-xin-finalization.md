@@ -15,6 +15,8 @@
 - 失联期间的会话号、线程号和前台用量属于纯报告。终态包保留结算所需的会话变化及用量，应用时维持执行编号检查。一次任意第三方命令的未知执行结果仍需根据现场判断。
 - **2026-11-25 尾项补齐记录（Antigravity 实现并自查，无独立 AI 复核）**：补齐上条留下的三项执行器输入与报告协议尾项——（1）`steer_take` / `steer_ack` 两阶段批次认领与确认消费（认领保持 `state: 'pending'` 并挂 `claim: { id, attempt, at }`，模型步完成后再确认 `accepted`；在线确认失败的长失联轮次写入 `prepared.ackedSteers` 由 `finalizeRun` 原子确认，常规轮次不加新字段以兼容回滚 #210）；（2）AGY 原生 `note` / `ask` 按步编号去重重送并保留原回执文本，失联超预算时如实返回 `NOTE_UNCONFIRMED_TEXT` 而不伪造 `已记下。`，同时避免未变化的 `agy_conversation` 重复上报；（3）前台 `openFrontProvider` 的 `front_quota` 与后台对齐容忍传输断线且不重放采样，仍透传 `stale_attempt` / `bad_quota` / 协议错误。**注意**：第 3 批（3A+3B）协议闭环后，第 2 步整体仍未全部完成——第 4a 批（宿主授权方案 C）与第 5 批（`test/xin-writers.json` 的 5 处 `rmw` 清零、`memory-idle` 迁入状态进程定时检查、>50ms 同步重活外移）尚待后续独立批次实施。
 
+Codex 独立审核 #211 后的调整：输入确认扩展保存在独立的 `steer` 文件，并绑定准备包摘要。完整的 `prepared`、`ready` 维持 #210 格式。轮次、模型、步号和执行尝试共同区分原生报告。原批次重送只读自身，换入口成功后才确认交接的插话。详见 CHANGES 和接续 PR 的回归与回滚证据。
+
 ## 1. 需要解决的具体问题
 
 现在 `site/xin/vm-agent.mjs` 的 `runner` 内，`finish` 先设置 `finished=true`，再调用 `saveState`、受控验收、`run_complete`、`task_finish`、每日记录和通知。主人不可用时，状态桥可能抛 `StateUnavailable`，结果还没固定保存就离开了收尾路径。把重试时间从 30 秒改成更大不能解决提交成功但回执丢失、进程同时死亡或进程重启后的重送。

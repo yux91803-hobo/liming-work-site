@@ -203,9 +203,12 @@ export function checkTaskResult(t, { active, emit, report, checking }) {
   }
 }
 
-export function recordRunnerResult(store, meta, data, getSession, reports) {
+export function recordRunnerResult(store, meta, {ackedSteers, ...data}, getSession, reports) {
   journal.checkWriter();
   const prepared = store.write(meta, 'prepared', data, {flushEvents:true});
+  // Keep the existing prepared and ready envelopes readable during a rollback.
+  // An older owner can finish the result and carry unconfirmed input forward.
+  if (ackedSteers?.length) store.write(meta, 'steer', {prepared:prepared.digest, claims:ackedSteers});
   reports.preparing();
   const ready = {prepared:prepared.digest};
   const t = getSession();
@@ -267,8 +270,10 @@ export function createRunFinalizer({ store, loadRun, loadSession, taskFinish, em
       const changes = {modelDone:true, ...(data?.changes.frontUsage ? {frontUsage:data.changes.frontUsage} : {}),
         ...(webCheck ? {webCheck:{...webCheck,trusted:true}} : {}),
         ...(pageCheck ? {pageCheck:{...pageCheck,trusted:true}} : {}), ...(compileTrusted ? {compileTrusted,compileOk,compileDigest} : {})};
-      const acked = !uncertain && Array.isArray(data?.ackedSteers) ? new Set(data.ackedSteers) : null;
-      const steers = acked?.size && Array.isArray(current.steers) ? current.steers.map(x => acked.has(x.claim?.id) && (!x.claim.attempt || x.claim.attempt === attempt) ? { ...x, state: 'accepted', acceptedAt: x.acceptedAt || data.at } : x) : current.steers;
+      const steerReceipt = !uncertain && current.steers?.some(x => x.claim) ? store.read(current, 'steer') : null;
+      const acked = steerReceipt?.state === 'valid' && steerReceipt.data.prepared === prepared?.digest ? new Set(steerReceipt.data.claims) : null;
+      const steers = acked?.size ? current.steers.map(x => ['pending','next'].includes(x.state) && acked.has(x.claim?.id) && x.claim.attempt === attempt
+        ? { ...x, state: 'accepted', acceptedAt: x.acceptedAt || data.at } : x) : current.steers;
       const runMeta = {...current, ...changes, ...(steers ? {steers} : {})};
       const task = loadSession(sid);
       const result = {sid, run, ok:!uncertain && !!data?.ok && !current.stopped, stopped:!!current.stopped,

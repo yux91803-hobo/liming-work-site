@@ -1154,7 +1154,7 @@ export async function antigravityWork(t,options) {
   for(let turn=0;turn<48;turn++){
     if(!options.budget())throw Error('本项工作已达到推理预算，进度已保留');
     // 兄弟刚补充的要求：放在这次请求最前面。正在跑的命令已经做完了，下一步起按新要求（Muse Code「applies it on its next step」）
-    if(!pendingClaims.length){const fresh=takeSteers('agy-steer-'+turn);if(fresh.length)prompt=steerBlock(fresh)+'\n\n'+prompt;}
+    if(!pendingClaims.length){const fresh=takeSteers(model+'-steer-'+turn);if(fresh.length)prompt=steerBlock(fresh)+'\n\n'+prompt;}
     const args=['-p',prompt,'--agent','xin-confined-worker','--model',provider,'--effort',effort,'--settings',JSON.stringify(AGY_SETTINGS),'--json-schema',JSON.stringify(AGY_SCHEMA),'--disable-slash-commands','--output-format','stream-json','--print-timeout','240s',...(conversation?['--conversation',conversation]:['--new-project'])];
     const started=new Set(),r=await agyProcess(binary,args,clientDir,o=>{const s=o.step_update,name=s?.tool_name||s?.step_type;if(!s||!['search_web','read_url_content'].includes(name))return;const p=s.tool_info?.parameters||{},id='web-'+turn+'-'+s.step_index,open=name==='read_url_content',item={id,type:'web_search',query:(open?p.url:p.query)||p.query||p.url||'',...(open?{action:{type:'open_page',url:p.url||''}}:{})};if(s.state==='DONE')report({type:'item.completed',item:{...item,query:item.query||name}});else if(item.query&&!started.has(id)){started.add(id);report({type:'item.started',item});}},AGY_IDLE_MS());
     // 卡住：退出码 76，控制器换候选里的下一个模型，让它先读副本里的现有文件再接着做（和额度用尽 75 一样）；15 分钟内新任务先不派给 Gemini
@@ -1179,9 +1179,12 @@ export async function antigravityWork(t,options) {
     ackCurrent();
     if(a.action==='final'||a.action==='ask'){
       // 交结果（或问问题）前再看一眼：这时又来了补充就不结束，带着补充再走一步（Codex：这一轮还有待处理的输入就接着处理）
-      const more=late<LATE_STEER_MAX?takeSteers('agy-late-'+turn):[];
+      const more=late<LATE_STEER_MAX?takeSteers(model+'-late-'+turn):[];
       if(more.length){late++;prompt=steerBlock(more)+'\n\n'+(a.action==='ask'?'你刚才想问兄弟：'+a.text+'\n先按补充判断还要不要问；能做就接着做。\n':'')+LATE_STEER;continue;}
-      if(a.action==='ask')options.ask(a.text,'agy-ask-'+turn);
+      if(a.action==='ask'){
+        const receipt=options.ask(a.text,'agy-ask-'+turn);
+        if(receipt?.error)throw Error(receipt.msg||receipt.error);
+      }
       flushUnacked();
       report({type:'item.completed',item:{type:'agent_message',text:a.text}});
       try{options.quota(await readAntigravityQuota(binary,clientDir,model),{postTurn:true});}catch{}return 0;

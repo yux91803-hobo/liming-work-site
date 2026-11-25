@@ -79,8 +79,9 @@ export function retrySteerCall(fn, { deadlineMs = Number(process.env.XIN_STEER_R
     }
   }
 }
-export function createExecutorSteerBridge({ run, sid, lockedCall, onUnacked }) {
+export function createExecutorSteerBridge({ run, sid, model = '', lockedCall, onUnacked }) {
   let seq = 0;
+  const reportId = step => 'agy-' + crypto.createHash('sha256').update(JSON.stringify([run, model, step])).digest('hex').slice(0, 32);
   const noteDeadline = () => Number(process.env.XIN_NOTE_RETRY_MS) || 15000;
   return {
     take(claim) {
@@ -96,12 +97,13 @@ export function createExecutorSteerBridge({ run, sid, lockedCall, onUnacked }) {
       return false;
     },
     note(text, stepId) {
-      const id = /^[a-zA-Z0-9_-]{8,80}$/.test(stepId || '') ? stepId : 'agy-note-' + (++seq);
+      const id = reportId(stepId || 'note-' + (++seq));
       try { const r = retrySteerCall(left => lockedCall('tasks', 'task_note', { sid, run, id, text }, { deadlineMs: left }), { deadlineMs: noteDeadline() }); return r && !r.error ? r.msg || '' : ''; }
       catch { return ''; }
     },
-    ask(question) {
-      return retrySteerCall(left => lockedCall('tasks', 'task_ask', { sid, question }, { deadlineMs: left }), { deadlineMs: noteDeadline() });
+    ask(question, stepId) {
+      const id = reportId(stepId || 'ask-' + (++seq));
+      return retrySteerCall(left => lockedCall('tasks', 'task_ask', { sid, run, id, question }, { deadlineMs: left }), { deadlineMs: noteDeadline() });
     }
   };
 }
@@ -289,8 +291,9 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
   function steerAck(a) {
     const m = okId(a.run, 'r') && readJ(metaF(a.run)); if (!m) return { error: 'no_run' };
     const attempt = callContext().attempt || null;
-    const targets = BATCH_RE.test(a.claim || '')
-      ? (m.steers || []).filter(x => x.claim?.id === a.claim && (!attempt || !x.claim.attempt || x.claim.attempt === attempt))
+    const batch = BATCH_RE.test(a.claim || '');
+    const targets = batch
+      ? (m.steers || []).filter(x => ['pending', 'next'].includes(x.state) && x.claim?.id === a.claim && (x.claim.attempt || null) === attempt)
       : (m.steers || []).filter(x => x.id === a.id);
     if (!targets.length) return { ok: true };
     const at = Date.now(), nextState = a.state || 'accepted';
@@ -300,7 +303,7 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
       if (q.state !== nextState || q.claim || a.error) changed = true;
       q.state = nextState;
       if (nextState === 'accepted' && !q.acceptedAt) q.acceptedAt = at;
-      delete q.claim;
+      if (!batch) delete q.claim;
       if (a.error) q.error = cut(a.error, 200);
       // 后台任务：补充送进去的那一刻在这一轮的过程里显示成兄弟的一句话（对话里的插话在 steer 时已经显示了）
       if (m.task && fresh && !q.shown) { q.shown = true; emit(a.run, { t: 'user', text: q.text, at, steer: true, clientId: q.id }); }
@@ -326,8 +329,10 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
       writeJ(metaF(a.run), m);
       return { steers: take.map(q => ({ id: q.id, text: q.text, at: q.at })) };
     }
-    const existing = (m.steers || []).filter(x => x.state === 'pending' && x.claim?.id === claim && (x.claim.attempt || null) === attempt);
-    const take = existing.length ? existing : (m.steers || []).filter(x => x.state === 'pending');
+    // Keep the original batch identity after ACK so an old retry cannot claim newer input.
+    const existing = (m.steers || []).filter(x => x.claim?.id === claim && (x.claim.attempt || null) === attempt);
+    const take = existing.length ? existing.filter(x => x.state === 'pending')
+      : (m.steers || []).filter(x => x.state === 'pending' && (!x.claim || (x.claim.attempt || null) !== attempt));
     if (!take.length) return { steers: [] };
     if (!existing.length) {
       const at = Date.now();
@@ -339,20 +344,22 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
     }
     return { steers: take.map(q => ({ id: q.id, text: q.text, at: q.at })) };
   }
-  // 同一轮里换执行入口（Gemini 额度用完、卡住）：接手的模型从头开始，这一轮收到的补充全部交给它，还没送的也算送达
+  // 换入口需要原补充的完整快照。新 runner 到成功收尾才确认，旧 runner 保留原协议。
   function steerHandover(a) {
     const m = okId(a.run, 'r') && readJ(metaF(a.run)), t = m && readJ(sessF(m.sid));
     if (!m || !isTask(t) || lastRun(t) !== a.run || m.stopped) return { steers: [] };
     const at = Date.now(), fresh = (m.steers || []).filter(x => x.state === 'pending' || x.state === 'next');
+    const claim = BATCH_RE.test(a.claim || '') ? a.claim : null, attempt = callContext().attempt || null;
     if (fresh.length) {
       for (const q of fresh) {
         const shown = q.shown;
-        Object.assign(q, { state: 'accepted', acceptedAt: at, shown: true }); delete q.claim;
+        if (claim) { q.state = 'pending'; q.claim = {id:claim, attempt, at}; q.shown = true; }
+        else { Object.assign(q, { state: 'accepted', acceptedAt: at, shown: true }); delete q.claim; }
         if (!shown) emit(a.run, { t: 'user', text: q.text, at, steer: true, clientId: q.id });
       }
       writeJ(metaF(a.run), m);
     }
-    return { steers: (m.steers || []).filter(x => x.state === 'accepted').map(q => ({ id: q.id, text: q.text, at: q.at })) };
+    return { steers: (m.steers || []).filter(x => x.state === 'accepted' || claim && x.claim?.id === claim).map(q => ({ id:q.id, text:q.text, at:q.at })), ...(claim && fresh.length ? {claim} : {}) };
   }
   return { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover };
 }

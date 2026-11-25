@@ -217,7 +217,7 @@ export async function openFrontProvider(o={}){
   // 前台自己查（站长 2026-11-18）：用了网页工具这一轮放宽到 3 分钟。查的时候兄弟插话、或者时间到了：等手上的网页步骤做完，
   // 取消这一次，隔 3 秒在同一个会话里接着发（li 上实测：取消后马上发会卡住，隔几秒能接上，而且直接用刚才查到的）
   const LOOKUP=Number(process.env.XIN_FRONT_LOOKUP_MS)||180000,GAP=Number(process.env.XIN_FRONT_STEER_GAP_MS)||3000;
-  const pendingClaims=[],seenSteerIds=new Set();
+  const pendingClaims=[],pendingInput=new Map();
   async function lookupPrompt(first,signal){
    const t0=Date.now();let next=first,limited=false;
    for(;;){
@@ -227,28 +227,31 @@ export async function openFrontProvider(o={}){
      if(action||!acp.web)return;
      if(!limited&&Date.now()-t0>=LOOKUP)action='limit';
      else if(![...acp.tools.values()].some(w=>!w.done)){
-      const bid='front-steer-'+(++steerSeq),st=(o.steers?.(bid)||[]).filter(x=>!seenSteerIds.has(x?.id));
+      const bid='front-steer-'+(++steerSeq),st=(o.steers?.(bid)||[]).filter(x=>!pendingInput.has(x?.id));
       if(st.length){action=st;batchId=bid;}
      }
      if(action)acp.send({method:'session/cancel',params:{sessionId:sid}});
     },250);
     const pr=acp.request('session/prompt',{sessionId:sid,prompt:next},signal,limited?45000:AGY_PROMPT_MS);if(acp.web)widen();
-    try{await pr;}finally{clearInterval(watch);acp.onWebStart=null;}
-    if(!action)return;
+    let completed;
+    try{completed=await pr;}finally{clearInterval(watch);acp.onWebStart=null;}
+    if(!action)return completed;
     await new Promise(r=>setTimeout(r,GAP));
-    if(action==='limit'){limited=true;next=[{type:'text',text:'时间到了：按已经查到的回答；查不完的照实说，需要的话派后台去查。回复格式照旧：只输出一个 JSON。'}];}
+    if(action==='limit')limited=true;
     else{
-     for(const x of action)if(x?.id)seenSteerIds.add(x.id);
+     for(const x of action)pendingInput.set(x.id,x);
      if(batchId)pendingClaims.push(batchId);
-     next=[{type:'text',text:'兄弟中途补充（按顺序）：\n'+action.map((x,i)=>(i+1)+'. '+String(x.text||'').slice(0,2000)).join('\n')+'\n按补充接着刚才的查；刚才查到的能用就别重查。回复格式照旧：只输出一个 JSON。'}];
     }
+    const input=[...pendingInput.values()].map((x,i)=>(i+1)+'. '+String(x.text||'').slice(0,2000)).join('\n');
+    const guide=limited?'时间到了：按已经查到的回答；查不完的照实说，需要的话派后台去查。':'按补充接着刚才的查；刚才查到的能用就别重查。';
+    next=[{type:'text',text:(input?'兄弟中途补充（按顺序）：\n'+input+'\n':'')+guide+'回复格式照旧：只输出一个 JSON。'}];
    }
   }
   const offset=previous.length&&JSON.stringify(payload.input.slice(sent,sent+previous.length))===JSON.stringify(previous)?sent+previous.length:sent;
   const blocks=promptBlocks(payload,offset);if(!images&&blocks.some(b=>b.type==='image'))throw Error('当前前台接口没有接收到图片能力，未发送不一致的看图提示');
   const cancel=()=>acp.close(),prose=!(payload.tools||[]).some(t=>t?.name==='finish_event');signal?.addEventListener('abort',cancel,{once:true});
   try{
-   await lookupPrompt(blocks,signal);
+   const result=await lookupPrompt(blocks,signal);
    let out;
    try{out=frontOutput(acp.text,{prose});}catch{
     o.protocol?.({kind:'format_repair',bytes:Buffer.byteLength(acp.text)});
@@ -261,7 +264,10 @@ export async function openFrontProvider(o={}){
      acp.close();chosen(FRONT_MODEL,'format');return fallback(payload,signal);
     }
    }
-   while(pendingClaims.length)o.ackSteers?.(pendingClaims.shift());
+   if(result?.stopReason==='end_turn'){
+    while(pendingClaims.length)o.ackSteers?.(pendingClaims.shift());
+    pendingInput.clear();
+   }
    sent=payload.input.length;previous=out.output;
    if(acp.update?.used!=null)out.contextUsage={used:acp.update.used,size:acp.update.size};
    return out;

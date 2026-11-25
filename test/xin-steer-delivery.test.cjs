@@ -132,17 +132,44 @@ test('两阶段取件契约：同批次重取不吞新来的补充；未确认�
   assert.deepEqual(replay.steers.map(x => x.id), ['s-1'], '同批次重取不混入后到的第二条');
   assert.equal(events.length, 1, '重取不重复记过程事件');
 
+  const second = withCallContext({ locked: true, key: 'tasks', run: 'rrun0001', attempt: 'a'.repeat(32) }, () =>
+    ops.steerTake({ run: 'rrun0001', claim: 'agy-steer-1' }));
+  assert.deepEqual(second.steers.map(x => x.id), ['s-2'], '新批次只可认领未被认领的补充');
+
   // 模型步完成后确认第一批：只有 s-1 变 accepted，s-2 仍保持 pending 等下一步（或收尾带入下一轮）
   withCallContext({ locked: true, key: 'tasks', run: 'rrun0001', attempt: 'a'.repeat(32) }, () =>
     ops.steerAck({ run: 'rrun0001', claim: 'agy-steer-0', state: 'accepted' }));
   assert.deepEqual(store.get(metaF('rrun0001')).steers.map(x => [x.id, x.state]), [['s-1', 'accepted'], ['s-2', 'pending']]);
-  assert.equal(events.length, 1, '确认消费不再重复发第二条过程事件');
+  assert.equal(events.length, 2, '确认消费不重复显示插话');
+  const lateRetry = withCallContext({ locked:true, key:'tasks', run:'rrun0001', attempt:'a'.repeat(32) }, () =>
+    ops.steerTake({run:'rrun0001', claim:'agy-steer-0'}));
+  assert.deepEqual(lateRetry.steers, [], '确认过的批次重送不取走新输入');
 
   // 下一步认领 s-2，但模型步在确认前结束/崩溃：s-2 仍是 pending，旧版或新版 taskFinish 都会按 pending 带去下一轮
-  const second = withCallContext({ locked: true, key: 'tasks', run: 'rrun0001', attempt: 'a'.repeat(32) }, () =>
+  const again = withCallContext({ locked: true, key: 'tasks', run: 'rrun0001', attempt: 'a'.repeat(32) }, () =>
     ops.steerTake({ run: 'rrun0001', claim: 'agy-steer-1' }));
-  assert.deepEqual(second.steers.map(x => x.id), ['s-2']);
+  assert.deepEqual(again.steers.map(x => x.id), ['s-2']);
   assert.equal(store.get(metaF('rrun0001')).steers[1].state, 'pending');
+});
+
+test('AGY 原生动作重试使用同一编号，继续任务或在同一轮换模型时使用新编号', async () => {
+  const {createExecutorSteerBridge} = await import(url('vm-steer'));
+  const calls = [];
+  const lockedCall = (_key, op, args) => { calls.push({op, ...args}); return {ok:true, msg:'已记下'}; };
+  const first = createExecutorSteerBridge({run:'rrun0001', sid:'stask001', model:'gemini-4-hydrogen', lockedCall});
+  const switched = createExecutorSteerBridge({run:'rrun0001', sid:'stask001', model:'gemini-4-argon', lockedCall});
+  const resumed = createExecutorSteerBridge({run:'rrun0002', sid:'stask001', model:'gemini-4-hydrogen', lockedCall});
+  for (const bridge of [first, first, switched, resumed]) {
+    bridge.note('新发现', 'agy-note-0');
+    bridge.ask('需要确认什么？', 'agy-ask-1');
+  }
+  for (const op of ['task_note', 'task_ask']) {
+    const reports = calls.filter(x => x.op === op);
+    assert.equal(typeof reports[0].id, 'string');
+    assert.equal(reports[0].id, reports[1].id);
+    assert.equal(new Set(reports.map(x => x.id)).size, 3);
+    assert.deepEqual(reports.map(x => x.run), ['rrun0001','rrun0001','rrun0001','rrun0002']);
+  }
 });
 
 test('AGY 原生 note 与 ask 回包前主人被杀：按步编号重送只记一次并拿到原回执；持续失联时如实告知模型而不伪造已记下', async t => {
@@ -337,7 +364,7 @@ test('前台 openFrontProvider 的 front_quota 报告失联容错与校验错误
   }
 });
 
-test('主人长失联跨过 steer_ack 直至收尾：终态包保存未送达的消费回执，恢复后不重复再起一轮；常规轮次终态包不加新字段以兼容回滚', async t => {
+test('主人长失联跨过 steer_ack 直至收尾：扩展回执另存，恢复后不重复再起一轮，主包仍兼容回滚', async t => {
   const f = agyFaultFixture(t, [
     { action: 'shell', command: 'echo step-one >> list.txt', gate: true },
     { action: 'final', text: '长失联期间也完成了补充要求', gate: true }
@@ -355,8 +382,12 @@ test('主人长失联跨过 steer_ack 直至收尾：终态包保存未送达的
   f.owner.child.kill('SIGKILL'); await f.owner.exited;
   fs.writeFileSync(path.join(f.root, 'go-2'), '');
   await f.until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, 'runner 离线写完终态包并退出');
-  const offlinePrepared = JSON.parse(fs.readFileSync(path.join(f.home, 'finalization', run + '.' + runMetaBefore.attempt, 'prepared'), 'utf8').split('\n')[1]);
-  assert.deepEqual(offlinePrepared.data.ackedSteers, ['agy-steer-1']);
+  const dir = path.join(f.home, 'finalization', run + '.' + runMetaBefore.attempt);
+  const offlinePrepared = JSON.parse(fs.readFileSync(path.join(dir, 'prepared'), 'utf8').split('\n')[1]);
+  assert.equal(Object.hasOwn(offlinePrepared.data, 'ackedSteers'), false, '长失联也必须保持 #210 的严格 prepared 格式');
+  const receipt = JSON.parse(fs.readFileSync(path.join(dir, 'steer'), 'utf8').split('\n')[1]);
+  assert.equal(receipt.data.prepared, fs.readFileSync(path.join(dir, 'prepared'), 'utf8').split('\n')[0]);
+  assert.equal(receipt.data.claims.length, 1);
 
   // 重启主人后由持久收尾恢复：已消费的补充被终态包确认，任务直接 done，不会因为 steer_ack 当时没送到而多跑第二轮
   f.owner = f.startOwner({ XIN_STATE_TEST_FAULT: '' });
