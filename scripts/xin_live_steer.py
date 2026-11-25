@@ -7,14 +7,14 @@ A. Gemini：按顺序核对 4 个模型名（2 个启用、2 个备用），每�
    它之后不再核对备用的（按新要求把之前查到的筛掉不算）；最终名单只有启用的。接着像网页任务详情那样带编号补同一句、断线重送一次：两次回执一样，只送进去一次。
 B. 停下再继续（中途断掉）：补充以后把任务停下；先说一句不带「继续」的补充，前台说状态、不开工；再明确说继续，接着做的那一轮
    仍按停下前的补充给名单（补的那句还在）。
-C. Codex（点名 Kimi）：同样的补充经 turn/steer 进当前轮，最终名单对。
+C. Codex（点名 Kimi）：补充经 turn/steer 进当前轮，最终名单正确。已确认接受后遇到连接故障时，核对控制器记录的重试与补充编号。
 
 只打印布尔值和计数，不打印回话、标记和提示词（仓库公开）。
 """
 import asyncio
 import time
 import uuid
-from xin_live_policy import steer_request, list_verdict, drop_mentions, after_steer, steer_count, canned_reply
+from xin_live_policy import steer_request, list_verdict, drop_mentions, after_steer, steer_count, canned_reply, codex_steer_outcome
 
 KEEP, DROP = ['alpha-main', 'gamma-main'], ['beta-backup', 'delta-backup']
 ITEMS = [('alpha-main', True), ('beta-backup', False), ('gamma-main', True), ('delta-backup', False)]
@@ -140,10 +140,12 @@ async def steer_live(page, call, settle, errors, leaks, owned, base_dir):
     _, reply = await say('刚才 ' + title_c + ' 那件事，' + SUPPLEMENT)
     check_reply('Codex supplement reply', reply)
     done_c = await wait_status(task_c['sid'], ('done', 'failed', 'stopped', 'waiting'))
-    steer = after_steer(run_events(done_c), ['beta-backup'])
-    if not steer['steered'] or len(done_c.get('runs', [])) != 1:
-        raise RuntimeError('Codex supplement did not enter the running turn: chatSteered=' + str(steer['steered']) + ' runs=' + str(len(done_c.get('runs', []))))
+    runs = done_c.get('runs', [])
+    outcome = codex_steer_outcome(runs, 'kimi-k3.1-pro')
+    if not outcome:
+        raise RuntimeError('Codex supplement did not complete in one turn or a proven transient retry: runs=' + str(len(runs))
+                           + ' steerEvents=' + str(after_steer(run_events(done_c), ['beta-backup'])['steers']))
     final_list(done_c, ['alpha-main', 'gamma-main'], ['beta-backup'], 'Codex supplement')
     if errors:
         raise RuntimeError('Browser JavaScript errors')
-    print('PASS Codex (named Kimi) supplement entered the running turn via steer and the final list followed it', flush=True)
+    print('PASS Codex (named Kimi) supplement entered the running turn via steer and the final list followed it (' + outcome + ')', flush=True)
