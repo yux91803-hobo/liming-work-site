@@ -49,7 +49,7 @@ import { initializeStateTables, stateLoginSave, taskBudget } from './vm-kernel-o
 import { checkControllers } from './vm-kernel-compat.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
-import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps, createExecutorSteerBridge, retrySteerCall, saysContinue, maintenanceTask, maintenanceApproval, retainHostGrant, WAIT_TTL_MS, waitUntil } from './vm-steer.mjs';
+import { heldBlock, handoverBlock, HAND_MODE, createSteerOps, createExecutorSteerBridge, createAppSteerRelay, retrySteerCall, saysContinue, maintenanceTask, maintenanceApproval, retainHostGrant, WAIT_TTL_MS, waitUntil } from './vm-steer.mjs';
 import { BASE, TIANQI, HARNESS_KEY, dshCmd, harnessInstalled, tianqiReady, tianqiRefuse, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
@@ -598,7 +598,8 @@ function runner(run) {
   const durable = hasFinalization(meta), key = meta.task ? 'tasks' : meta.sid, shortReport = {deadlineMs:1000};
   let finished = false, stderr = '', child = null, app = null, appCode = null, retried = false, restarting = false, stallTm = 0, deadTm = 0, scopeSeq = 0;
   ensureReaperTimer();
-  let bridgeTm = 0, steering = false, proxy = null;
+  let bridgeTm = 0, proxy = null;
+  const appSteer = createAppSteerRelay({run,key,lockedCall,onUnacked:c=>{state.ackedSteers=[...new Set([...(state.ackedSteers||[]),c])].slice(-128);}});
   const sessionChanges = () => {
     const changes = {};
     if (state.sid) { changes.agentSid = state.sid; changes.started = true; }
@@ -622,7 +623,7 @@ function runner(run) {
   };
   const finish = (code, why) => {
     if (finished) return;
-    if (steering) { setTimeout(() => finish(code, why), 100); return; }
+    if (appSteer.busy) { setTimeout(() => finish(code, why), 100); return; }
     if(meta.task&&child&&processGroupMembers(child.pid,child.xinIdentity).length){
       const first=!state.cleanupSince;state.cleanupSince=state.cleanupSince||Date.now();
       clearTimeout(stallTm);clearTimeout(deadTm);clearInterval(bridgeTm);
@@ -834,17 +835,10 @@ function runner(run) {
   bridgeTm = setInterval(async () => {
     try {
       drainTaskReports(sess.workspace, meta, {drain:runtime.drainBridge,submit:a=>lockedCall('tasks','task_bridge',a),remember:addMemory,ask:a=>lockedCall('tasks','task_ask',a),note:a=>lockedCall('tasks','task_note',a)});
-      if (!app || steering || finished) return;
+      if (!app || appSteer.busy || finished) return;
       const m = readJ(metaF(run), meta), queue = (m.steers || []).filter(x => x.state === 'pending' && (!x.claim || (x.claim.attempt || null) !== (meta.attempt || null)));
-      if (!queue.length || !m.turnId) return;
-      steering = true;
-      for (const q of queue) {
-        // 后台任务的补充带上怎么照着做（和 Gemini 后台同一个说法）；对话里的插话照原话
-        try { await app.steer(meta.task ? steerBlock([q]) : q.text, q.id); lockedCall(meta.task ? 'tasks' : meta.sid, 'steer_ack', { run, id: q.id, state: 'accepted' }); }
-        catch (e) { lockedCall(meta.task ? 'tasks' : meta.sid, 'steer_ack', { run, id: q.id, state: 'next', error: e.message }); }
-      }
+      if (m.turnId) await appSteer.deliver(app, queue);
     } catch { /* pending input stays durable and is retried */ }
-    finally { steering = false; }
   }, 300).unref();
   const term = external => {
     restarting = false;
@@ -1601,7 +1595,7 @@ function startTask(t, all) {
   catch (e) { failTask(t, '没有启动任务：' + e.message); return false; }
   if (lost) { t.agentSid = null; t.started = false; delete t.antigravityConversation; }
   // 上一轮没正常做完带下来的补充（断线重启后自动续做、临时出错后续做）：放在这一轮开头一起交出去，一次取完
-  const held = first && !t.hostDeferredFirst ? [] : (t.inbox || []).map(x => x.text).filter(Boolean), heldText = held.length ? '\n\n' + heldBlock(held) : '';
+  const held = first && !t.hostDeferredFirst ? [] : (t.inbox || []).filter(x => x.text), heldText = held.length ? '\n\n' + heldBlock(held.map(x=>x.text)) : '';
   const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps) + heldText
     : lost ? forAgent('电脑重启过，上一轮的项目副本和过程记录都没了，现在的目录是按原项目重新拷贝的。原来的要求：\n' + cut(t.goal || '', 10000) + '\n先看看现在的文件，再接着做' + (t.next ? '：' + t.next : '。') + heldText, '')
     : forAgent((t.next || '接着做。') + heldText, '');
@@ -1612,7 +1606,7 @@ function startTask(t, all) {
   delete t.hostDeferredFirst; retainGrant();
   const run = launch(t, { text, effort: runtime.taskEffort(t), kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||runtime.isAgyModel(t.model) ? t.fallbacks || [] : [],
     images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !hostTask(t) && TASK_SANDBOX(),
-    deadline: t.deadline, ...(hostInput ? { hostInput } : {}) }, { t: 'user', text: userText, at: Date.now() });
+    deadline: t.deadline, ...(hostInput ? { hostInput } : {}) }, { t: 'user', text: userText, at: Date.now(), ...(held.length ? {carriedSteers:[...new Set(held.map(x=>x.id).filter(Boolean))]} : {}) });
   if (t.dailyDate) writeJ(DAILY_LAST(), { date: t.dailyDate, run, sid: t.sid, at: Date.now(), ok: null });
 }
 function failTask(t, why, err = '') {

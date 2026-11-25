@@ -259,6 +259,29 @@ def after_steer(events, drop):
 def steer_count(events, client_id):
     return sum(1 for e in events if e.get('t') == 'user' and e.get('steer') and e.get('clientId') == client_id)
 
+
+def codex_steer_outcome(runs, model):
+    if len(runs) not in (1, 2):
+        return None
+    first = runs[0].get('events', [])
+    accepted = [e['clientId'] for e in first if e.get('t') == 'user' and e.get('steer')
+                and str(e.get('clientId', '')).startswith('ft-')]
+    if len(accepted) != 1:
+        return None
+    receipts = [[e for e in r.get('events', []) if e.get('t') == 'done'] for r in runs]
+    if any(len(receipt) != 1 or receipt[0].get('model') != model or receipt[0].get('stopped') for receipt in receipts):
+        return None
+    if receipts[-1][0].get('ok') is not True or receipts[-1][0].get('retry'):
+        return None
+    if len(runs) == 1:
+        return 'same turn'
+    initial, second = receipts[0][0], runs[1].get('events', [])
+    carried = [id for e in second if e.get('t') == 'user' for id in e.get('carriedSteers', [])]
+    if (initial.get('ok') is False and initial.get('retry') == 'transient' and runs[0].get('run') != runs[1].get('run')
+            and carried.count(accepted[0]) == 1 and not steer_count(second, accepted[0])):
+        return 'transient retry'
+    return None
+
 # 控制器兜底的固定说法（前台自己的话要不到时才用）；站长要的是顺着对话的一句
 CANNED = ('好，我这就去弄。', '行，接下来就按你说的来。', '好，这一轮跑完我就按你补的再来一遍。', '好，开始的时候一起带上。', '好，我接着做。')
 def canned_reply(text):
