@@ -624,6 +624,8 @@ function runner(run) {
   if (meta.task) setScreenTag('[任务 ' + meta.no + '] ');   // 「小芯在干什么」终端里分得清是哪个分身
   const role = meta.kind === 'daily' ? 'daily' : meta.task ? 'task' : 'front';
   const t0 = Date.now(), usageBefore=sessionUsage(sess), state = {};
+  const attempted = new Set([meta.model]), initialText = meta.text;
+  let resumeHint = '';
   const durable = hasFinalization(meta), key = meta.task ? 'tasks' : meta.sid, shortReport = {deadlineMs:1000};
   let finished = false, stderr = '', child = null, app = null, appCode = null, retried = false, restarting = false, stallTm = 0, deadTm = 0, scopeSeq = 0;
   ensureReaperTimer();
@@ -824,29 +826,29 @@ function runner(run) {
         state.strictRetried=true;emit(run,{t:'status',text:'执行入口暂时没接上，正在按原安排重试。'});
         Object.assign(state,{failed:false,errShown:false,heldErr:null,lastErr:''});stderr='';start();return;
       }
-      // 模型还没开始干活就失败了：换候选里的下一个模型再试一次（用户自己停的不换）
-      const quotaFallback=c===75&&runtime.isAgyModel(meta.model)&&!state.switched&&!state.timeout&&safeFallbacks().length;
-      const stallFallback=c===76&&runtime.isAgyModel(meta.model)&&!state.switched&&!state.timeout&&safeFallbacks().length;
+      const quotaFallback=c===75&&runtime.isAgyModel(meta.model)&&!state.timeout&&safeFallbacks().length;
+      const stallFallback=c===76&&runtime.isAgyModel(meta.model)&&!state.timeout&&safeFallbacks().length;
       if ((c !== 0 || state.failed) && (canSwitch()||quotaFallback||stallFallback) && !(readJ(metaF(run), meta) || {}).stopped) {
         const from = meta.model;
         const candidates=safeFallbacks();
         if(!candidates.length){finish(c,'独立复核候选已改变，未回退到实际作者模型。');return;}
         // 记下为什么换（2026-11-12 正式站联调里点名 Gemini 的任务开工前失败换了模型，原因没处查）
         const fromErr=cut(String(state.heldErr?.text||state.lastErr||stderr||'').trim().split('\n').filter(Boolean).slice(-3).join(' '),300);
-        state.switched = true; meta.from = from; meta.fromErr = fromErr; meta.model = candidates[0]; meta.fallbacks = candidates.slice(1);meta.effort=runtime.taskEffort({...sess,tkind:meta.routeKind},meta.model);
+        if (!meta.from) { meta.from = from; meta.fromErr = fromErr; }
+        meta.model = candidates[0]; attempted.add(meta.model); meta.fallbacks = candidates.slice(1);meta.effort=runtime.taskEffort({...sess,tkind:meta.routeKind},meta.model);
         // 换了执行入口，原来那条插话通道没了：新入口自己报能不能插话（app-server 开始这一轮时写 transport）
-        if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
-        else if(stallFallback)meta.text='原执行入口没有回应。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
+        if(quotaFallback)resumeHint='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n';
+        else if(stallFallback)resumeHint='原执行入口没有回应。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n';
         // 接手模型收到完整补充，成功后再确认尚未消费的输入。
-        if(meta.task){try{const h=retrySteerCall(left=>lockedCall('tasks','steer_handover',{run,claim:'handover-input'},{deadlineMs:left}));if(h.error)throw Error(h.error);if(h.steers?.length){meta.text+='\n\n'+handoverBlock(h.steers);state.handoverClaim=h.claim;}}catch(e){finish(c,'暂时无法读取换模型所需的补充，已保留现场：'+e.message);return;}}
-        patchRun(run,{model:meta.model,effort:meta.effort,from,fromErr,fallbacks:meta.fallbacks,text:meta.text,transport:null});
+        if(meta.task){try{const h=retrySteerCall(left=>lockedCall('tasks','steer_handover',{run,claim:'handover-input'},{deadlineMs:left}));if(h.error)throw Error(h.error);meta.text=resumeHint+initialText+(h.steers?.length?'\n\n'+handoverBlock(h.steers):'');state.handoverClaim=h.claim||state.handoverClaim;}catch(e){finish(c,'暂时无法读取换模型所需的补充，已保留现场：'+e.message);return;}}
+        patchRun(run,{model:meta.model,effort:meta.effort,from:meta.from,fromErr:meta.fromErr,fallbacks:meta.fallbacks,text:meta.text,transport:null});
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
         emit(run, { t: 'status', text: runtime.isAgyModel(from)?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
-        Object.assign(state, { failed: false, errShown: false, heldErr: null, lastErr: '' }); stderr = '';
+        Object.assign(state, { failed: false, errShown: false, worked: false, heldErr: null, lastErr: '' }); stderr = ''; retried = false;
         start(); return;
       }
       if (state.heldErr) { emit(run, state.heldErr); state.heldErr = null; }
-      const reviewFailure=sess.tkind==='review'&&(c!==0||state.failed)&&!state.worked&&!state.timeout&&!state.switched&&!safeFallbacks().length;
+      const reviewFailure=sess.tkind==='review'&&(c!==0||state.failed)&&!state.worked&&!state.timeout&&!safeFallbacks().length;
       finish(c,reviewFailure?'独立复核候选已耗尽，未回退到实际作者模型。':undefined);
     });
     armStall();
@@ -854,11 +856,11 @@ function runner(run) {
   const safeFallbacks=()=>{
     const current=readJ(sessF(meta.sid),sess);if(current.strictModel)return [];
     const avoid=current.tkind==='review'?reviewAuthors(current):[],images=!!(meta.images||[]).length;
-    return (meta.fallbacks||[]).filter(id=>!avoid.includes(id) && (runtime.isAgyModel(id)
+    return (meta.fallbacks||[]).filter(id=>!attempted.has(id) && !avoid.includes(id) && (runtime.isAgyModel(id)
       ? !images && agyPoolOk(runtime.agyPool(id))
       : CODEX_MODELS.some(m=>m.id===id && (!images||m.image))));
   };
-  const canSwitch = () => meta.agent === 'codex' && !state.switched && !state.worked && !state.timeout && safeFallbacks().length > 0;
+  const canSwitch = () => meta.agent === 'codex' && !state.worked && !state.timeout && safeFallbacks().length > 0;
   // 后台任务到点没做完：停下（算没做成）
   if (meta.deadline) deadTm = setTimeout(() => { state.timeout = true; restarting = false; emit(run, { t: 'status', text: '到时间了，先停下' }); killTree(child); }, Math.max(1000, meta.deadline - Date.now()));
   bridgeTm = setInterval(async () => {
@@ -1259,7 +1261,7 @@ export function filesPart(files, agent, seesImages) {
   if (files.some(f => f.image)) {
     // 前台用 Responses input_image；Codex 后台用 -i；Harness 用自己的工具打开路径。
     if (agent === 'codex') tip = seesImages ? '\n图片已经直接给你看了。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
-    else if (agent === 'harness') tip = seesImages ? '\n图片在你电脑上，用工具打开上面的路径就能看。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
+    else if (agent === 'harness') tip = seesImages ? '\n图片在你电脑上，用 read_image 打开上面列出的图片路径。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
     else tip = '\n图片用 Read 工具打开就能看。';
   }
   return '\n\n【用户发来的文件（已经在你电脑上）】\n' + files.map(f => '- ' + f.path + '（' + f.name + '，' + (f.image ? '图片，' : '') + sizeText(f.size) + '）').join('\n') + tip;

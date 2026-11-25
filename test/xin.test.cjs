@@ -886,12 +886,13 @@ test('Codex 线路每轮自己带：本地网关 + 选的模型（默认 glm-5.3
     for (const want of ['model_provider="xin-gateway"', 'model_providers.xin-gateway.base_url="http://127.0.0.1:8788/v1"', 'model_providers.xin-gateway.wire_api="responses"',
       'model_providers.xin-gateway.env_key="XIN_CODEX_KEY"', 'model="glm-5.3-flash"', 'model_context_window=1000000', 'model_catalog_json=' + JSON.stringify(cat)])
       assert.ok(cs.includes(want), want + ' 不在 ' + JSON.stringify(cs));
-    assert.deepStrictEqual(CODEX_MODELS.map(m => m.id), ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash']);
+    assert.deepStrictEqual(CODEX_MODELS.map(m => m.id), ['glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro', 'deepseek-v4.1-flash', 'glm-5.4']);
     const list = JSON.parse(fs.readFileSync(cat, 'utf8')).models;
-    assert.deepStrictEqual(list.map(m => m.slug), ['gpt-5.5', 'deepseek-v4.1-flash', 'glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro']);
+    assert.deepStrictEqual(list.map(m => m.slug), ['gpt-5.5', 'deepseek-v4.1-flash', 'glm-5.3-flash', 'glm-5.3', 'kimi-k3.1-pro', 'glm-5.4']);
     const g = list[2];
     assert.deepStrictEqual([g.display_name, g.context_window, g.max_context_window, g.input_modalities, g.model_messages], ['GLM-5.3 Flash', 1000000, 1000000, ['text'], { instructions_template: 'T' }]);
     assert.deepStrictEqual([list[3].display_name, list[3].input_modalities, list[4].display_name, list[4].input_modalities], ['GLM-5.3', ['text', 'image'], 'Kimi K3.1 Pro', ['text', 'image']]);
+    assert.deepStrictEqual([list[5].display_name, list[5].input_modalities], ['GLM-5.4', ['text', 'image']]);
     // 换模型：能看图的用 -i；不认识的当默认
     const [, k] = agentArgs('codex', { started: true, agentSid: 'th-1' }, '看图', '', { model: 'kimi-k3.1-pro', images: ['/x/a.png'] });
     assert.ok(k.includes('model="kimi-k3.1-pro"') && !k.includes('model="glm-5.3-flash"'));
@@ -1438,7 +1439,7 @@ test('发文件提示：Codex / Harness / Claude 按能不能看图写清楚；H
   const mix = img.concat([{ path: '/data/workspace/uploads/b.pdf', name: 'b.pdf', size: 4, image: false }]);
   assert.ok(filesPart(img, 'codex', true).includes('图片已经直接给你看了。'));
   assert.ok(filesPart(img, 'codex', false).includes('看不了图片内容'));
-  assert.ok(filesPart(img, 'harness', true).includes('用工具打开上面的路径就能看') && !filesPart(img, 'harness', true).includes('已经直接给你看了'));
+  assert.ok(filesPart(img, 'harness', true).includes('用 read_image 打开上面列出的图片路径') && !filesPart(img, 'harness', true).includes('已经直接给你看了'));
   assert.ok(filesPart(img, 'harness', false).includes('看不了图片内容'));
   assert.ok(filesPart(img, 'claude', true).includes('图片用 Read 工具打开就能看'));
   assert.ok(filesPart(mix, 'harness', false).includes('a.png') && filesPart(mix, 'harness', false).includes('b.pdf'));

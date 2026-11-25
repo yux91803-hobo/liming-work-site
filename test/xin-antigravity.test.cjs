@@ -192,6 +192,38 @@ test('Gemini 干了一步以后才卡住：一样换模型，接手的模型先�
  assert.match(fs.readFileSync(f.root+'/fallback.args','utf8'),/先读取同一项目副本中的现有文件/);
 });
 
+test('Gemini 和第一个网关候选先后未能开始工作：下一候选继续，原始故障和插话各保留一次', async t => {
+  const f = fixture(t, 'stall');
+  const calls = path.join(f.root, 'gateway-chain.jsonl');
+  fs.writeFileSync(path.join(f.root, 'bin', 'codex'), '#!' + process.execPath + '\n' + `
+const fs=require('node:fs'), args=process.argv.slice(2);
+const model=JSON.parse(args.find(arg=>arg.startsWith('model=')).slice(6));
+fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({model,text:args.at(-1)})+'\\n');
+if (model.startsWith('glm-')) { process.stderr.write('upstream 503 before work'); process.exit(1); }
+console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'合成任务已完成'}}));
+`, { mode: 0o755 });
+  const task = f.call('task_new', { kind:'code', title:'候选顺序合成测试', goal:'同一副本继续完成', model:'gemini-4-hydrogen', named:true }).task;
+  const run = JSON.parse(fs.readFileSync(path.join(f.control, 'sessions', task.sid + '.json'), 'utf8')).runs[0];
+  const runFile = path.join(f.control, 'runs', run + '.json');
+  const transport = () => JSON.parse(fs.readFileSync(runFile, 'utf8')).transport;
+  for (const until = performance.now() + platformTimeout(4000); transport() !== 'antigravity' && performance.now() < until;)
+    await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(transport(), 'antigravity');
+  const tell = f.call('task_tell', { sid:task.sid, text:'保持补充 AX7GB', clientId:'gateway-chain-input' });
+  assert.equal(tell.delivery, 'now');
+  const done = await f.wait(task.sid), before = f.call('history', { sid:task.sid }).runs;
+  assert.equal(done.status, 'done', JSON.stringify(done));
+  assert.equal(done.actualModel, 'kimi-k3.1-pro');
+  assert.equal(before.length, 1, '同一执行轮次保留原始请求');
+  assert.equal(before[0].events.filter(e => e.t === 'user' && e.clientId === 'gateway-chain-input').length, 1);
+  assert.equal(before[0].events.filter(e => e.t === 'done').length, 1);
+  const attempts = fs.readFileSync(calls, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(attempts.map(x => x.model), ['glm-5.3', 'kimi-k3.1-pro']);
+  assert.ok(attempts.every(x => x.text.split('保持补充 AX7GB').length === 2));
+  const receipt = before[0].events.find(e => e.t === 'done');
+  assert.equal(receipt.from, 'gemini-4-hydrogen');
+});
+
 // 2026-11-13 #131 正式站联调：Gemini 约 2 分钟后回了「没做完」（状态不是 SUCCESS），控制器换 Kimi 做完了，联调却因为「不是额度原因」判失败、回滚。
 // 同一时间单独探测：只回「OK」也要 118 秒（平时 40 多秒），是 Gemini 服务那边慢。和不出声一样记下来，联调据此认可这次换模型。
 test('Gemini 回了没做完（状态不是 SUCCESS）：错误里写明状态，记下来，15 分钟内新任务先不派给它；换别的模型做完',async t=>{

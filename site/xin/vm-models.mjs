@@ -17,12 +17,14 @@ export function resolveEffort(agent, model, effort) {
 }
 
 export const HARNESS_WIN = 1000000;   // 网关 /v1/models 的真实 context_length，这几种模型都是 100 万
+const GLM_54 = { id: 'glm-5.4', name: 'GLM-5.4', win: 1000000, image: true, efforts: ['low', 'high', 'max'], def: 'high' };
 export const HARNESS_MODELS = [
   { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', win: HARNESS_WIN, image: true, efforts: ['off', 'low', 'high', 'max'], def: 'high' },
   { id: 'glm-5.3', name: 'GLM-5.3', win: HARNESS_WIN, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
   { id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', win: HARNESS_WIN, image: false, efforts: ['low', 'high', 'max'], def: 'high' },
   // 站长 11-20：天启也要能用 Kimi K3.1 Pro（小芯那边 Codex 已经在用，资料照抄 CODEX_MODELS 那条）
-  { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', win: HARNESS_WIN, image: true, efforts: ['low', 'high', 'max'], def: 'high' }
+  { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', win: HARNESS_WIN, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
+  GLM_54
 ];
 export function harnessModel(id) { return HARNESS_MODELS.find(m => m.id === id) || HARNESS_MODELS[0]; }
 
@@ -42,7 +44,8 @@ export const CODEX_MODELS = [
   { id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', win: 1000000, image: false, efforts: ['low', 'high', 'max'], def: 'high' },
   { id: 'glm-5.3', name: 'GLM-5.3', win: 1000000, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
   { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', win: 1000000, image: true, efforts: ['low', 'high', 'max'], def: 'high' },
-  { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', win: 1000000, image: true, efforts: ['off', 'low', 'high', 'max'], def: 'high' }
+  { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', win: 1000000, image: true, efforts: ['off', 'low', 'high', 'max'], def: 'high' },
+  GLM_54
 ];
 export function codexModel(id) { return CODEX_MODELS.find(m => m.id === id) || CODEX_MODELS[0]; }   // 起 Codex 用：不认识的照样按第一个开工
 // 只用来显示名字：认得后台的 Gemini（Antigravity）和前台的 Opus；不认识的原样显示编号，不冒充成列表里第一个（审查问题 13）
@@ -108,6 +111,7 @@ export const MODEL_ALIAS = [
   [runtime.AGY_ARGON, '(?:gemini[\\s-]*4[\\s-]*)?argon'],
   [runtime.AGY_MODEL, '(?:gemini[\\s-]*4[\\s-]*)?hydrogen|gemini(?:[\\s-]*[\\d.]+)?[\\s-]*flash(?:[\\s-]*high)?'],
   [runtime.AGY_NEON, 'antigravity\\b|agy\\b|gemini(?:[\\s-]*[\\d.]+)?(?:[\\s-]*high)?'],
+  [GLM_54.id, 'glm[\\s-]*5\\.4'],
   ['glm-5.3-flash', 'glm[\\s-]*(?:5(?:\\.3)?)?[\\s-]*flash|智谱\\s*flash'],
   ['glm-5.3', 'glm(?:[\\s-]*5(?:\\.3)?)?|智谱'],
   ['kimi-k3.1-pro', 'kimi(?:[\\s-]*k?3(?:\\.1)?)?(?:[\\s-]*pro)?|月之暗面'],

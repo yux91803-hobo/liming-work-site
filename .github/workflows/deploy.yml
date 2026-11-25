@@ -327,6 +327,7 @@ jobs:
             core.info((r.run?'跑小芯联调：':'跳过小芯联调：')+r.reason);
             await core.summary.addRaw((r.run?'小芯联调：照跑。':'小芯联调：跳过。')+r.reason+'\n').write();
             core.setOutput('run',r.run?'true':'false');
+            core.setOutput('tianqi_vision',r.tianqiVision?'true':'false');
 
       - uses: actions/setup-python@v6
         if: steps.smoke.outcome == 'success' && env.TARGET == 'production' && steps.xin_scope.outputs.run != 'false'
@@ -350,6 +351,7 @@ jobs:
         timeout-minutes: 45
         env:
           XIN_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
+          CHECK_TIANQI_VISION: ${{ steps.xin_scope.outputs.tianqi_vision }}
         run: python scripts/test-xin-live.py
 
       - name: 正式站检查失败，回滚到发布前记录的版本

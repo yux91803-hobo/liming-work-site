@@ -31,9 +31,25 @@ function fake({ runs, cmp, fail }) {
 
 test('以上一次成功发布为基准比较', async () => {
   const runs = [{ id: 9, head_sha: 'h'.repeat(40), conclusion: 'success' }, { id: 7, head_sha: 'b'.repeat(40), conclusion: 'success' }];
-  assert.equal((await decide(fake({ runs, cmp: { status: 'ahead', files: [{ filename: 'site/tools/tianqi/sky.js' }] } }))).run, false);
+  const ui = await decide(fake({ runs, cmp: { status: 'ahead', files: [{ filename: 'site/tools/tianqi/sky.js' }] } }));
+  assert.equal(ui.run, false);
+  assert.equal(ui.tianqiVision, false);
   assert.equal((await decide(fake({ runs, cmp: { status: 'ahead', files: [{ filename: 'site/tools/tianqi/a.js', previous_filename: 'site/xin/a.js' }] } }))).run, true);
   assert.equal((await decide(fake({ runs, cmp: { status: 'diverged', files: [] } }))).run, true);
   assert.equal((await decide(fake({ runs: [], cmp: {} }))).run, true);
   assert.equal((await decide(fake({ fail: true }))).run, true);
+});
+
+test('模型目录或 Harness 配置变化时验证 li2 读图，普通内核改动只测小芯', async () => {
+  const runs = [{ id: 7, head_sha: 'b'.repeat(40), conclusion: 'success' }];
+  const scope = filename => decide(fake({ runs, cmp: { status: 'ahead', files: [{ filename }] } }));
+  for (const file of ['site/xin/vm-persona.mjs', 'site/xin/vm-models.mjs', 'scripts/test-xin-live.py']) {
+    const r = await scope(file);
+    assert.equal(r.run, true);
+    assert.equal(r.tianqiVision, true);
+  }
+  const r = await scope('site/xin/vm-state.mjs');
+  assert.equal(r.run, true);
+  assert.equal(r.tianqiVision, false);
+  assert.equal((await decide(fake({ fail: true }))).tianqiVision, true);
 });

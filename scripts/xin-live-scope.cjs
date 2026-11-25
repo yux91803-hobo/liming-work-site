@@ -4,6 +4,7 @@
    参考 dorny/paths-filter：按路径判断。只有下面这些路径全都不碰小芯和服务端时才跳过，其它一律照跑（宁可多跑）。
    找不到基准、文件太多（GitHub 比较接口最多列 300 个）或读接口出错，都照跑。 */
 const SKIP_PREFIXES = ['site/tools/tianqi/', 'docs/', 'test/e2e/'];
+const TIANQI_VISION_FILES = new Set(['site/xin/vm-persona.mjs', 'site/xin/vm-models.mjs', 'scripts/test-xin-live.py']);
 
 function skippable(file) {
   const f = String(file || '');
@@ -18,22 +19,23 @@ function needsXinLive(files, truncated) {
   return !files.every(skippable);
 }
 
-/* 在 actions/github-script 里调用。返回 {run, reason}。 */
+/* 在 actions/github-script 里调用。只在 Harness 模型配置或联调变化时另外唤醒 li2。 */
 async function decide({ github, context, core }) {
   const { owner, repo } = context.repo, head = context.sha;
   try {
     const { data } = await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: 'deploy.yml', branch: 'main', event: 'push', status: 'success', per_page: 20 });
     const last = data.workflow_runs.find(r => r.conclusion === 'success' && r.head_sha !== head && r.id !== context.runId);
-    if (!last) return { run: true, reason: '找不到上一次成功发布到正式站的运行' };
+    if (!last) return { run: true, tianqiVision: true, reason: '找不到上一次成功发布到正式站的运行' };
     const { data: cmp } = await github.rest.repos.compareCommits({ owner, repo, base: last.head_sha, head, per_page: 300 });
-    if (cmp.status !== 'ahead') return { run: true, reason: `基准 ${last.head_sha.slice(0, 7)} 不在这次提交之前（${cmp.status}）` };
+    if (cmp.status !== 'ahead') return { run: true, tianqiVision: true, reason: `基准 ${last.head_sha.slice(0, 7)} 不在这次提交之前（${cmp.status}）` };
     const list = cmp.files || [], files = list.flatMap(f => [f.filename, f.previous_filename].filter(Boolean));
     const run = needsXinLive(files, list.length >= 300);
+    const tianqiVision = !files.length || list.length >= 300 || files.some(f => TIANQI_VISION_FILES.has(f));
     const outside = files.filter(f => !skippable(f));
-    return { run, reason: run ? `基准 ${last.head_sha.slice(0, 7)} 之后改到了：${outside.slice(0, 10).join('、') || '（文件太多或为空）'}` : `基准 ${last.head_sha.slice(0, 7)}（运行 ${last.id}）之后只改了天启界面、文档或浏览器测试，共 ${files.length} 个文件` };
+    return { run, tianqiVision, reason: run ? `基准 ${last.head_sha.slice(0, 7)} 之后改到了：${outside.slice(0, 10).join('、') || '（文件太多或为空）'}` : `基准 ${last.head_sha.slice(0, 7)}（运行 ${last.id}）之后只改了天启界面、文档或浏览器测试，共 ${files.length} 个文件` };
   } catch (e) {
     core.warning('判断小芯联调范围失败，照跑：' + e.message);
-    return { run: true, reason: '读 GitHub 接口失败' };
+    return { run: true, tianqiVision: true, reason: '读 GitHub 接口失败' };
   }
 }
 
