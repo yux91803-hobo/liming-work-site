@@ -868,19 +868,12 @@
         efforts: ['off', 'low', 'high', 'max'],
         svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="9" ry="3.8" transform="rotate(-28 12 12)"/><path d="M5.5 5.5l3.2 3.2M15.3 15.3l3.2 3.2"/><circle cx="12" cy="12" r="2.3" fill="currentColor" stroke="none"/></svg>'
       },
-      'glm-5.3': {
-        name: 'GLM-5.3',
+      'glm-5.4': {
+        name: 'GLM-5.4',
         spec: 'G2V · 1M · 视觉',
         desc: '主序恒星旗舰 · 代码工程、终端工具与长上下文稳健执行',
         efforts: ['low', 'high', 'max'],
         svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><circle cx="12" cy="12" r="8.2" stroke-dasharray="2.4 2.4"/><path d="M12 2.4v2.1M12 19.5v2.1M2.4 12h2.1M19.5 12h2.1"/></svg>'
-      },
-      'glm-5.3-flash': {
-        name: 'GLM-5.3 Flash',
-        spec: 'DA2 · 1M · 文本',
-        desc: '白矮星高速跃迁 · 低延迟纯文本巡天与快速检索',
-        efforts: ['low', 'high', 'max'],
-        svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.5c3.5-1.2 7.2-4.2 10.6-8.4"/><path d="M6.5 19.5c3.2-1 6.3-3.2 9.2-6.4" opacity=".65"/><path d="M16.5 4.5l1.1 2.5 2.5 1.1-2.5 1.1-1.1 2.5-1.1-2.5-2.5-1.1 2.5-1.1z" fill="currentColor" stroke="none"/></svg>'
       },
       'kimi-k3.1-pro': {
         name: 'Kimi K3.1 Pro',

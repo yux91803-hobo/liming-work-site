@@ -1,3 +1,9 @@
+# 修改清单 · 2026-11-25（小芯与天启切换 GLM-5.4）
+
+- Codex 实现并自查。`li` 与 `li2` 都确认网关提供 `glm-5.4`，支持百万上下文、图文和低／高／最高三档。旧标准版和 Flash 入口都使用 5.4。工作台继续提供 DeepSeek V4.1 Flash 与 Kimi K3.1 Pro。 [网关目录核对](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45615850604) [智谱官方模型说明](https://zcode.z.ai/cn/docs/qa)
+- 后台代码、难题、复核的 GLM 候选改为 5.4。浏览器选择、旧 Harness 会话、新启动的旧队列任务、执行尝试及回退候选都识别之前的 GLM 编号。历史回复和用量按真实执行时的模型显示。Gemini 与 DeepSeek 的既有自动调度继续使用。
+- 回滚目标先加入兼容的 5.4 目录，执行者可继续接手已保存的 5.4 请求。模型选择没有数据库迁移。旧请求、故障重启与历史名称都纳入回归；正式联调用两个云电脑各自的网关验证读图和后台真实派工。
+
 # 修改清单 · 2026-11-25（天启 DeepSeek 读取上传图片）
 
 - Codex 实现并自查。原有模型目录标记了图片能力，每轮生成的 Harness 网关配置漏了 `input`，导致 Harness 的 `read_image` 返回 `IMAGE_UNSUPPORTED_MODEL`。现在按每个模型声明 `text` 和 `image`，GLM-5.3 Flash 只声明 `text`。附件提示写明原生读图工具，沿用现有只读、工作区和插件设置。 [Harness 模型配置](https://github.com/deepseek-ai/deepseek-harness/blob/38a6a5c965aa99ab525161efb7cc5cf1fe62fced/packages/llm/llm-pi-ai/src/config.ts#L88) [Harness 读图工具](https://github.com/deepseek-ai/deepseek-harness/blob/38a6a5c965aa99ab525161efb7cc5cf1fe62fced/packages/fs/tool-fs/src/read-image.ts#L124)

@@ -19,8 +19,8 @@
   var LS_SID = LS_PFX + 'sid', LS_MAIN = LS_PFX + 'main', LS_DRAFT = LS_PFX + 'draft', LS_EFF = LS_PFX + 'effort', LS_CTX = LS_PFX + 'ctx', LS_HM = LS_PFX + 'hmodel';
   var AGENTS = { harness: 'Harness', codex: 'Codex', claude: 'Claude' };
   // Codex（默认模式）的几个模型：小芯每一轮自己挑（见 vm-agent.mjs 的路由器），这里只用来显示名字
-  var CX_MODELS = { 'glm-5.3-flash': 'GLM-5.3 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash' };
-  var HM_MODELS = { 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash', 'glm-5.3': 'GLM-5.3', 'glm-5.3-flash': 'GLM-5.3 Flash', 'kimi-k3.1-pro': 'Kimi K3.1 Pro' };
+  var CX_MODELS = { 'glm-5.4': 'GLM-5.4', 'glm-5.3-flash': 'GLM-5.3 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash' };
+  var HM_MODELS = { 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash', 'glm-5.4': 'GLM-5.4', 'kimi-k3.1-pro': 'Kimi K3.1 Pro' };
   var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
   var WORK = '/data/workspace';
 
@@ -40,7 +40,8 @@
   function sleepMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   // 新对话的执行器由入口决定。打开已有对话时仍使用它自己的执行器。
-  function hmPref() { var m = ls(LS_HM); return HM_MODELS[m] ? m : 'deepseek-v4.1-flash'; }
+  function hmChoice(m) { if (m === 'glm-5.3' || m === 'glm-5.3-flash') return 'glm-5.4'; return HM_MODELS[m] ? m : ''; }
+  function hmPref() { return hmChoice(ls(LS_HM)) || 'deepseek-v4.1-flash'; }
   function agentPref() { return TQ ? 'harness' : 'codex'; }
   function modelName(id) { return CX_MODELS[id] || HM_MODELS[id] || id || ''; }
   function deviceId(){var id=ls('lm.xin.device');if(!id||!/^[A-Za-z0-9_-]{8,80}$/.test(id)){id=crypto.randomUUID();ls('lm.xin.device',id);}return id;}
@@ -648,7 +649,7 @@
       S.more = !!d.more; S.first = d.runs.length ? d.runs[0].run : '';
       if (S.more) list.appendChild(earlierBtn());
       // Harness 对话接着用它上次的模型；Codex（默认模式）的模型是小芯挑的，只记下最近一句用的是谁（模型按钮点开能看到）
-      if (TQ || d.session.agent === 'harness') S.hModel = HM_MODELS[d.session.model] ? d.session.model : hmPref();
+      if (TQ || d.session.agent === 'harness') S.hModel = hmChoice(d.session.model) || hmPref();
       S.lastModel = d.session.model || '';
       // 这个对话派出去的后台任务：先记下最新状态（卡片按它画），做完的结果按结束时间插在各轮之间
       (d.tasks || []).forEach(function (t) { S.tinfo[t.sid] = t; });
@@ -2862,8 +2863,8 @@
     }, function (e) { if (quotaEl !== wrap) return; card.innerHTML = ''; card.appendChild(h('p', 'xq-hint', '读取失败：' + e.message)); });
   }
   // 用量页的模型颜色跟着模型走、不跟着排名走（dataviz 参考调色板的前六个，浅色 / 深色都验过色盲可分）；别的模型并成「其他」
-  var SERIES = ['gemini-4-hydrogen', 'deepseek-v4.1-flash', 'glm-5.3', 'kimi-k3.1-pro', 'glm-5.3-flash', 'gemini-4-neon', 'gemini-4-argon'];
-  function seriesOf(id) { var i = SERIES.indexOf(id); return i >= 0 ? 's' + (i + 1) : 'so'; }
+  var SERIES = ['gemini-4-hydrogen', 'deepseek-v4.1-flash', 'glm-5.3', 'kimi-k3.1-pro', 'glm-5.3-flash', 'gemini-4-neon', 'gemini-4-argon', 'glm-5.4'];
+  function seriesOf(id) { var i = SERIES.indexOf(id === 'glm-5.4' ? 'glm-5.3' : id); return i >= 0 ? 's' + (i + 1) : 'so'; }
   var RANGES = [['1', '今天'], ['7', '7 天'], ['30', '30 天']];
   function openUsage() {
     var p = S.open && S.wb ? null : work();

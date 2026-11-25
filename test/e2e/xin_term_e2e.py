@@ -578,7 +578,7 @@ async def part5(browser):
     await pg.wait_for_timeout(700)
     p2 = await pg.evaluate(PICK)
     ui.check('点「关」：一格都不亮，说明「不思考，直接回复」', p2[2:] == [True, 0, '不思考，直接回复', '关'], p2)
-    await pg.click('.xc-pk-o[data-v="glm-5.3"]')
+    await pg.click('.xc-pk-o[data-v="glm-5.4"]')
     await pg.wait_for_timeout(500)
     g = await pg.evaluate("[[...document.querySelectorAll('.xc-eff-d')].map(b => b.textContent), document.querySelectorAll('.xc-pk-t .xc-em b').length]")
     ui.check('换成 GLM：只有低 / 高 / 最高三档，强度格也是三格', g == [['低', '高', '最高'], 3], g)
