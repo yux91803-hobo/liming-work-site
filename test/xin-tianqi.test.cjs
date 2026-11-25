@@ -93,7 +93,7 @@ test('天启给 Harness 声明每个网关模型的图片能力，并让支持�
     .map(([, id, input]) => [id, JSON.parse(input)]));
   assert.deepEqual(models, {
     'deepseek-v4.1-flash': ['text', 'image'], 'glm-5.3': ['text', 'image'],
-    'glm-5.3-flash': ['text'], 'kimi-k3.1-pro': ['text', 'image']
+    'glm-5.3-flash': ['text'], 'kimi-k3.1-pro': ['text', 'image'], 'glm-5.4': ['text', 'image']
   });
   assert.ok(vision.includes(upload));
   assert.match(vision, /用 read_image/);
@@ -103,6 +103,10 @@ test('天启给 Harness 声明每个网关模型的图片能力，并让支持�
   assert.ok(textOnly.includes(upload));
   assert.match(textOnly, /模型看不了图片内容/);
   assert.doesNotMatch(textOnly, /read_image/);
+
+  const glm54 = await send('glm-5.4');
+  assert.match(glm54, /harness-persona\.glm-5\.4\.high\.yml/);
+  assert.match(glm54, /用 read_image/);
 });
 
 // 权限预设和计划模式（docs/superpowers/specs/2026-11-19-tianqi-harness-workbench-design.md §3、§4 第 2 个 PR）：
