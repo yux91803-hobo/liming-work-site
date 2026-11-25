@@ -50,7 +50,7 @@ import { initializeStateTables } from './vm-kernel-operations.mjs';
 import { checkControllers } from './vm-kernel-compat.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
-import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps, saysContinue } from './vm-steer.mjs';
+import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps, createExecutorSteerBridge, retrySteerCall, saysContinue } from './vm-steer.mjs';
 import { BASE, TIANQI, HARNESS_KEY, dshCmd, harnessInstalled, tianqiReady, tianqiRefuse, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
@@ -678,6 +678,7 @@ function runner(run) {
     const s = durable ? {...readJ(sessF(meta.sid),sess),...changes} : saveState();
     if (!durable && meta.task) checkTaskResult(s,{active,emit:announce,checking,report:changes=>patchRun(run,changes)});
     let stopped = !!readJ(metaF(run),meta).stopped, ok = active();
+    if (ok && state.handoverClaim) { if (durable) state.ackedSteers = [...new Set([...(state.ackedSteers || []), state.handoverClaim])].slice(-128); else lockedCall(key,'steer_ack',{run,claim:state.handoverClaim}); }
     if (!ok && !stopped && !state.errShown) {
       const tail = stderr.trim().split('\n').slice(-6).join('\n');
       emit(run, { t: 'err', text: why || tail || ('退出码 ' + code) });
@@ -688,7 +689,7 @@ function runner(run) {
       try {
         receipt = recordRunnerResult(finalizations,meta,{at,code,ok:modelOK(),timeout:!!state.timeout,transient:transient(),
           changes,usage,delta:delta(usage),ms:at-t0,cost:state.cost,reply:state.reply,model:meta.model||undefined,providerModel:meta.providerModel||undefined,
-          from:meta.from||undefined,recordStats:meta.agent!=='claude'&&!state.frontReceipt},()=>readJ(sessF(meta.sid),s),
+          from:meta.from||undefined,recordStats:meta.agent!=='claude'&&!state.frontReceipt,...(state.ackedSteers?.length?{ackedSteers:state.ackedSteers}:{})},()=>readJ(sessF(meta.sid),s),
         {active,emit:announce,preparing:modelDone,checking});
       } catch (e) { if(e.code!=='stale_attempt')emit(run,{t:'err',text:'这轮的收尾记录未能写完，已保留现场。'}); return; }
       // The owner can finish even if this report or its response never arrives.
@@ -835,8 +836,8 @@ function runner(run) {
         // 换了执行入口，原来那条插话通道没了：新入口自己报能不能插话（app-server 开始这一轮时写 transport）
         if(quotaFallback)meta.text='原执行入口额度已耗尽。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
         else if(stallFallback)meta.text='原执行入口没有回应。请先读取同一项目副本中的现有文件，再继续原要求；保留已完成的改动，不重复执行已完成的外部操作。\n'+meta.text;
-        // 接手的模型从头开始，看不到前一个入口收到的补充：这一轮收到的补充全部交给它（还没送的也算送达）
-        if(meta.task){const h=lockedCall('tasks','steer_handover',{run});if(Array.isArray(h?.steers)&&h.steers.length)meta.text+='\n\n'+handoverBlock(h.steers);}
+        // 接手模型收到完整补充，成功后再确认尚未消费的输入。
+        if(meta.task){try{const h=retrySteerCall(left=>lockedCall('tasks','steer_handover',{run,claim:'handover-input'},{deadlineMs:left}));if(h.error)throw Error(h.error);if(h.steers?.length){meta.text+='\n\n'+handoverBlock(h.steers);state.handoverClaim=h.claim;}}catch(e){finish(c,'暂时无法读取换模型所需的补充，已保留现场：'+e.message);return;}}
         patchRun(run,{model:meta.model,effort:meta.effort,from,fromErr,fallbacks:meta.fallbacks,text:meta.text,transport:null});
         if(meta.task){const saved=lockedCall('tasks','task_model',{sid:meta.sid,run,model:meta.model,worked:!!state.worked});if(saved.error){finish(127,'无法保存任务实际模型，未执行回退。');return;}}
         emit(run, { t: 'status', text: runtime.isAgyModel(from)?'原执行入口暂不可用，保留现有文件继续处理。':modelLabel(from) + ' 没接上，换 ' + modelLabel(meta.model) + ' 再试…' });
@@ -863,7 +864,7 @@ function runner(run) {
     try {
       drainTaskReports(sess.workspace, meta, {drain:runtime.drainBridge,submit:a=>lockedCall('tasks','task_bridge',a),remember:addMemory,ask:a=>lockedCall('tasks','task_ask',a),note:a=>lockedCall('tasks','task_note',a)});
       if (!app || steering || finished) return;
-      const m = readJ(metaF(run), meta), queue = (m.steers || []).filter(x => x.state === 'pending');
+      const m = readJ(metaF(run), meta), queue = (m.steers || []).filter(x => x.state === 'pending' && (!x.claim || (x.claim.attempt || null) !== (meta.attempt || null)));
       if (!queue.length || !m.turnId) return;
       steering = true;
       for (const q of queue) {
@@ -921,12 +922,12 @@ function runner(run) {
     const controller = new AbortController();
     const cancel = () => { controller.abort(); if(!finished){state.failed=!readJ(metaF(run))?.stopped;finish(0);} };
     process.on('SIGTERM', cancel); process.on('SIGINT', cancel);
-    let provider;const protocol={};
+    let provider;const protocol={},frontSteer=createExecutorSteerBridge({run,sid:meta.sid,lockedCall,onUnacked:c=>{state.ackedSteers=[...new Set([...(state.ackedSteers||[]),c])].slice(-128);}});
     const infer=async()=>{
       provider=await openFrontProvider({baseURL:CODEX_ROUTE.baseURL,key:codexKeyEnv().XIN_CODEX_KEY,signal:controller.signal,
-        protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},thought:t=>{if(!finished)emit(run,{t:'think',text:t,src:'model'});},tool:e=>{if(!finished)emit(run,{...e,at:Date.now()});},steers:()=>{try{const r=lockedCall('tasks','steer_take',{run});return Array.isArray(r?.steers)?r.steers:[];}catch{return [];}},
+        protocol:e=>{const p=protocol[e.kind]||(protocol[e.kind]={count:0,bytes:0,fields:[]});p.count++;p.bytes+=e.bytes||0;p.fields=[...new Set(p.fields.concat(e.inputFields||[]))];},thought:t=>{if(!finished)emit(run,{t:'think',text:t,src:'model'});},tool:e=>{if(!finished)emit(run,{...e,at:Date.now()});},steers:frontSteer.take,ackSteers:frontSteer.ack,
         quotaState:readJ(path.join(BASE,'front-antigravity-quota.json')),
-        quota:quota=>lockedCall('tasks','front_quota',{quota}),
+        quota:quota=>{const r=lockedCall('tasks','front_quota',{quota});if(r?.error)throw Object.assign(Error(r.msg||r.error),{code:r.error});return r;},
         model:chosen=>{const r=lockedCall(meta.sid,'front_model',{run,...chosen});if(r.error)throw Error(r.msg||r.error);Object.assign(meta,frontRouting(chosen,meta.why));}
       });
       if(meta.frontFiles?.some(f=>f.image)&&provider.image===false){
@@ -1671,7 +1672,7 @@ const taskFinish = createTaskFinisher({
 // 后面才定义的（runDone、taskVersion）包一层，用到时再取
 const { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover } = createSteerOps({
   metaF, sessF, findTask, taskSummary, saveTask, scheduleNow, cleanupFinishedTask, listTasks, emit, isTask, isFinished, lastRun, TASK_STATUS,
-  runDone: r => runDone(r), taskVersion: t => taskVersion(t), readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel });
+  runDone: r => runDone(r), taskVersion: t => taskVersion(t), readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel, callContext });
 function taskStop(a) {
   const t = findTask(a);
   if (!t) return { error: 'no_task', msg: '找不到这个任务' };
@@ -2923,12 +2924,10 @@ async function main() {
     const run=process.argv[3],m=readJ(metaF(run));assertAttempt(m,callContext());
     const t=m&&taskBridgeSession(readJ(sessF(m.sid)),m);
     if(!m?.task||!t?.workspace||!runtime.isAgyModel(m.model)){process.exitCode=1;return;}
-    const clientDir=path.join(BASE,'antigravity-client');mk(clientDir);
-    runtime.antigravityWork(t,{model:m.model,effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,runtime.AGY_QUOTA_FILES[runtime.agyPool(m.model)])),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:quota=>lockedCall('tasks','agy_quota',{quota}),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:text=>lockedCall('tasks','task_ask',{sid:t.sid,question:text}),remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why}),
-      // 兄弟在它干活时的补充：每一步之前取走还没送的（docs/superpowers/specs/2026-11-17-xin-steer-design.md §1）；取不到就下一步再取，结束时照样带到下一轮
-      steers:()=>{try{const r=lockedCall('tasks','steer_take',{run});return Array.isArray(r?.steers)?r.steers:[];}catch{return [];}},
-      // 主动回原聊天说一句（§4）：控制器记下、合并、到时候看还有没有用再发；回执交回给模型
-      note:text=>{try{const r=lockedCall('tasks','task_note',{sid:t.sid,run,text});return r?.msg||'';}catch{return '';}}})
+    const clientDir=path.join(BASE,'antigravity-client'),steerBridge=createExecutorSteerBridge({run,sid:t.sid,model:m.model,lockedCall});mk(clientDir);
+    runtime.antigravityWork(t,{model:m.model,effort:m.effort,clientDir,quotaState:readJ(path.join(BASE,runtime.AGY_QUOTA_FILES[runtime.agyPool(m.model)])),text:m.text,instructions:taskSystemPrompt(t),budget:workBudget(t.sid),quota:(quota,o)=>lockedCall('tasks','agy_quota',{quota},o?.postTurn?{deadlineMs:Number(process.env.XIN_STEER_RETRY_MS)||3000}:undefined),conversation:id=>lockedCall('tasks','agy_conversation',{sid:t.sid,run,id}),ask:steerBridge.ask,remember:text=>addMemory({content:text,source:'worker',evidence:{sid:t.sid,run}}),browser:browserOpts(t.sid,run),unavailable:why=>writeJ(AGY_STALL_F(),{at:Date.now(),run,...why}),
+      // 兄弟在它干活时的补充：每一步之前两阶段认领（vm-steer.mjs），模型步完成后再确认；主动说一句带步编号去重重送
+      steers:steerBridge.take,ackSteers:steerBridge.ack,note:steerBridge.note})
       .then(code=>{process.exitCode=code;}).catch(e=>{process.stdout.write(JSON.stringify({type:'turn.failed',error:{message:e.message}})+'\n');process.exitCode=1;});return;
   }
   if (op === 'warm') { warm(); return; }
@@ -2942,7 +2941,7 @@ async function main() {
 }
 const finalizeRun=createRunFinalizer({store:finalizations,loadRun:r=>readJ(metaF(r)),loadSession:s=>readJ(sessF(s)),
   taskFinish,emit,complete:iops.run_complete,rememberSession:(sid,changes)=>controller.patchSession(sid,changes),
-  patchRun:applyRunPatch,frontReply:iops.front_reply,frontNotice,dailyDone,statsFile:STATS_F});
+  patchRun:applyRunPatch,frontReply:iops.front_reply,frontNotice,dailyDone,statsFile:STATS_F,steerAck});
 const {dispatchLaunches,runDone}=createDispatcher({self:SELF,metaF,sessF,runF,lockedCall,emit,patchRun,finalizations,finalizeRun});
 const controller=createController({ops,iops,isTask,saveTask,rememberAgentSession,mainSid,listTasks,lockedCall,dispatchLaunches,markCurrentController,xinCmd,reapNow,finalizeRun});
 

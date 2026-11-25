@@ -57,8 +57,59 @@ export const HAND_MODE = {
   ended: '已经结束，兄弟明确说继续才接着做（用 --continue）'
 };
 
+export const NOTE_UNCONFIRMED_TEXT = '状态进程暂时不可用，刚才那句还没确认转告成功；请继续当前工作，重要发现请一并写进最后的结果。';
+const BATCH_RE = /^[a-zA-Z0-9_-]{4,80}$/;
+const STEER_UNSENT = new Set(['owner_unavailable', 'state_busy', 'state_draining']);
+const STEER_UNKNOWN = new Set(['owner_unavailable', 'state_disconnected', 'state_timeout', 'state_client_failed']);
+const steerSleep = ms => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+// 仅用于具备批次/编号幂等保证的插话认领、确认与后台主动说/提问：保持同一批号重送，不进通用 LOCKED_REPORTS 白名单。
+export function retrySteerCall(fn, { deadlineMs = Number(process.env.XIN_STEER_RETRY_MS) || 8000, clock = () => performance.now(), sleep = steerSleep } = {}) {
+  const start = clock(); let failure;
+  for (let i = 0; ; i++) {
+    const remaining = deadlineMs - (clock() - start);
+    if (i && remaining <= 0) throw failure;
+    try { return fn(Math.max(1, Math.ceil(remaining))); }
+    catch (e) {
+      const retryable = e && (e.executed === false && STEER_UNSENT.has(e.code) || e.executed === 'unknown' && STEER_UNKNOWN.has(e.code));
+      if (!retryable) throw e;
+      failure = e;
+      const left = deadlineMs - (clock() - start);
+      if (left <= 0) throw failure;
+      sleep(Math.min(50 * 2 ** Math.min(i, 5), 500, left));
+    }
+  }
+}
+export function createExecutorSteerBridge({ run, sid, model = '', lockedCall, onUnacked }) {
+  let seq = 0;
+  const reportId = step => 'agy-' + crypto.createHash('sha256').update(JSON.stringify([run, model, step])).digest('hex').slice(0, 32);
+  const noteDeadline = () => Number(process.env.XIN_NOTE_RETRY_MS) || 15000;
+  return {
+    take(claim) {
+      const batch = BATCH_RE.test(claim || '') ? claim : 'steer-batch-' + (++seq);
+      try { const r = retrySteerCall(left => lockedCall('tasks', 'steer_take', { run, claim: batch }, { deadlineMs: left })); return Array.isArray(r?.steers) ? r.steers : []; }
+      catch { return []; }
+    },
+    ack(claim) {
+      if (!BATCH_RE.test(claim || '')) return false;
+      try { const r = retrySteerCall(left => lockedCall('tasks', 'steer_ack', { run, claim, state: 'accepted' }, { deadlineMs: left })); if (!r?.error) return true; }
+      catch {}
+      onUnacked?.(claim);
+      return false;
+    },
+    note(text, stepId) {
+      const id = reportId(stepId || 'note-' + (++seq));
+      try { const r = retrySteerCall(left => lockedCall('tasks', 'task_note', { sid, run, id, text }, { deadlineMs: left }), { deadlineMs: noteDeadline() }); return r && !r.error ? r.msg || '' : ''; }
+      catch { return ''; }
+    },
+    ask(question, stepId) {
+      const id = reportId(stepId || 'ask-' + (++seq));
+      return retrySteerCall(left => lockedCall('tasks', 'task_ask', { sid, run, id, question }, { deadlineMs: left }), { deadlineMs: noteDeadline() });
+    }
+  };
+}
+
 export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, scheduleNow, cleanupFinishedTask, listTasks, emit, isTask, isFinished, lastRun, TASK_STATUS, runDone, taskVersion,
-  readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel }) {
+  readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel, callContext = () => ({}) }) {
   // 用户（或前台）给任务补充要求：在做就等这一步做完接着做；还没开始就并进要求；做完了、停了、在等确认就接着做
   function taskTell(a) {
     const t = findTask(a);
@@ -202,7 +253,7 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
     const text = String(a.text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
     if (!text) return { error: 'empty', msg: '要说的话是空的' };
     const id = /^[a-zA-Z0-9_-]{8,80}$/.test(a.id || '') ? a.id : rid('n');
-    if ((t.noteIds || []).includes(id)) return { ok: true, duplicate: true, msg: '已经转告了，接着做。' };
+    if ((t.noteIds || []).includes(id)) return { ok: true, duplicate: true, msg: t.noteMsgs?.[id] || '已经转告了，接着做。' };
     t.noteIds = (t.noteIds || []).concat(id).slice(-32);
     emit(a.run, { t: 'note', text, at: Date.now() });   // 工作台的过程里看得到
     let msg;
@@ -215,6 +266,7 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
       t.noteRow = row; t.notesSent = (t.notesSent || 0) + 1;
       msg = '记下了，过一会儿回原聊天告诉兄弟（这期间相关的发现会合成一条）；接着做。';
     }
+    t.noteMsgs = Object.fromEntries(Object.entries({ ...(t.noteMsgs || {}), [id]: msg }).filter(([k]) => t.noteIds.includes(k)));
     saveTask(t);
     return { ok: true, msg };
   }
@@ -237,39 +289,77 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
       .map(m => ({ run: m.run, text: m.reply, at: m.started, task: m.note }));
   }
   function steerAck(a) {
-    const m = readJ(metaF(a.run)); if (!m) return { error: 'no_run' };
-    const q = (m.steers || []).find(x => x.id === a.id);
-    if (q) {
-      const fresh = q.state !== 'accepted' && a.state === 'accepted';
-      q.state = a.state; if (a.error) q.error = cut(a.error, 200); writeJ(metaF(a.run), m);
+    const m = okId(a.run, 'r') && readJ(metaF(a.run)); if (!m) return { error: 'no_run' };
+    const attempt = callContext().attempt || null;
+    const batch = BATCH_RE.test(a.claim || '');
+    const targets = batch
+      ? (m.steers || []).filter(x => ['pending', 'next'].includes(x.state) && x.claim?.id === a.claim && (x.claim.attempt || null) === attempt)
+      : (m.steers || []).filter(x => x.id === a.id);
+    if (!targets.length) return { ok: true };
+    const at = Date.now(), nextState = a.state || 'accepted';
+    let changed = false;
+    for (const q of targets) {
+      const fresh = q.state !== 'accepted' && nextState === 'accepted';
+      if (q.state !== nextState || q.claim || a.error) changed = true;
+      q.state = nextState;
+      if (nextState === 'accepted' && !q.acceptedAt) q.acceptedAt = at;
+      if (!batch) delete q.claim;
+      if (a.error) q.error = cut(a.error, 200);
       // 后台任务：补充送进去的那一刻在这一轮的过程里显示成兄弟的一句话（对话里的插话在 steer 时已经显示了）
-      if (m.task && fresh) emit(a.run, { t: 'user', text: q.text, at: Date.now(), steer: true, clientId: q.id });
+      if (m.task && fresh && !q.shown) { q.shown = true; emit(a.run, { t: 'user', text: q.text, at, steer: true, clientId: q.id }); }
     }
+    if (changed) writeJ(metaF(a.run), m);
     return { ok: true };
   }
-  // Gemini 后台下一步之前取走还没送的补充：标成送达、在这一轮的过程里显示成兄弟的一句话；在 tasks 锁里，不会送两次
+  // Gemini 后台或前台查资料下一步之前取走还没送的补充：带 claim 时先认领（保持 pending，模型步真正完成后再由 steer_ack 标成 accepted，
+  // 参考 openai/codex#40805 与 #32627 区分未送达、处理中和已吸收三阶段）；不带 claim 时保留旧的立即消费兼容行为。
   function steerTake(a) {
-    // 前台这一轮（小芯的对话，前台自己在查资料）也能取：站长 2026-11-18「我可以继续说话改变任务」
     const m = okId(a.run, 'r') && readJ(metaF(a.run)), t = m && readJ(sessF(m.sid)), front = !!t && !isTask(t) && t.agent === 'codex';
     if (!m || !(isTask(t) || front) || lastRun(t) !== a.run || m.stopped || m.ended) return { steers: [] };
-    const take = (m.steers || []).filter(x => x.state === 'pending');
+    const claim = BATCH_RE.test(a.claim || '') ? a.claim : null, attempt = callContext().attempt || null;
+    if (!claim) {
+      const take = (m.steers || []).filter(x => x.state === 'pending');
+      if (!take.length) return { steers: [] };
+      const at = Date.now();
+      for (const q of take) {
+        const shown = q.shown;
+        Object.assign(q, { state: 'accepted', acceptedAt: at, shown: true }); delete q.claim;
+        if (!front && !shown) emit(a.run, { t: 'user', text: q.text, at, steer: true, clientId: q.id });
+      }
+      writeJ(metaF(a.run), m);
+      return { steers: take.map(q => ({ id: q.id, text: q.text, at: q.at })) };
+    }
+    // Keep the original batch identity after ACK so an old retry cannot claim newer input.
+    const existing = (m.steers || []).filter(x => x.claim?.id === claim && (x.claim.attempt || null) === attempt);
+    const take = existing.length ? existing.filter(x => x.state === 'pending')
+      : (m.steers || []).filter(x => x.state === 'pending' && (!x.claim || (x.claim.attempt || null) !== attempt));
     if (!take.length) return { steers: [] };
-    const at = Date.now(); for (const q of take) Object.assign(q, { state: 'accepted', acceptedAt: at });
-    writeJ(metaF(a.run), m);
-    if (!front) for (const q of take) emit(a.run, { t: 'user', text: q.text, at, steer: true, clientId: q.id });   // 前台这一轮：补充到的时候已经画过了（steer）
+    if (!existing.length) {
+      const at = Date.now();
+      for (const q of take) {
+        q.claim = { id: claim, attempt, at };
+        if (!front && !q.shown) { q.shown = true; emit(a.run, { t: 'user', text: q.text, at, steer: true, clientId: q.id }); }
+      }
+      writeJ(metaF(a.run), m);
+    }
     return { steers: take.map(q => ({ id: q.id, text: q.text, at: q.at })) };
   }
-  // 同一轮里换执行入口（Gemini 额度用完、卡住）：接手的模型从头开始，这一轮收到的补充全部交给它，还没送的也算送达
+  // 换入口需要原补充的完整快照。新 runner 到成功收尾才确认，旧 runner 保留原协议。
   function steerHandover(a) {
     const m = okId(a.run, 'r') && readJ(metaF(a.run)), t = m && readJ(sessF(m.sid));
     if (!m || !isTask(t) || lastRun(t) !== a.run || m.stopped) return { steers: [] };
     const at = Date.now(), fresh = (m.steers || []).filter(x => x.state === 'pending' || x.state === 'next');
+    const claim = BATCH_RE.test(a.claim || '') ? a.claim : null, attempt = callContext().attempt || null;
     if (fresh.length) {
-      for (const q of fresh) Object.assign(q, { state: 'accepted', acceptedAt: at });
+      for (const q of fresh) {
+        const shown = q.shown;
+        if (claim) { q.state = 'pending'; q.claim = {id:claim, attempt, at}; q.shown = true; }
+        else { Object.assign(q, { state: 'accepted', acceptedAt: at, shown: true }); delete q.claim; }
+        if (!shown) emit(a.run, { t: 'user', text: q.text, at, steer: true, clientId: q.id });
+      }
       writeJ(metaF(a.run), m);
-      for (const q of fresh) emit(a.run, { t: 'user', text: q.text, at, steer: true, clientId: q.id });
     }
-    return { steers: (m.steers || []).filter(x => x.state === 'accepted').map(q => ({ id: q.id, text: q.text, at: q.at })) };
+    return { steers: (m.steers || []).filter(x => x.state === 'accepted' || claim && x.claim?.id === claim).map(q => ({ id:q.id, text:q.text, at:q.at })), ...(claim && fresh.length ? {claim} : {}) };
   }
   return { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover };
 }

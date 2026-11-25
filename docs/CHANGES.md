@@ -1,3 +1,43 @@
+# 修改清单 · 2026-11-25（#211 独立复核：按批确认、原生动作回执及回滚读取）
+
+- Antigravity 实现 #211 并自查。Codex 独立复核 `c218600`，在接续分支实现下列修正并自查。原实现提交保留。
+- 原实现让新批次认领所有 `pending`，会覆盖尚未确认的在途批次。现在同一尝试的新批次只取未认领输入，完成的批次重送不会混入新输入。换执行器时按快照接续，成功后确认。ACP 被新插话打断时，下次带齐此前尚未确认的补充，成功完成才确认。
+- 原生 `note` 编号原来会在任务续做或换模型时重复，`ask` 的编号也未传到主人。现在按轮次、模型和模型步区分，主人用同一执行尝试的事务回执号对照内容与目标。丢回包后重送取得原回执，错误回执不会被报告成成功。
+- 原实现把长失联确认写成 `prepared.ackedSteers`。#210 的严格读取器会拒绝该包。现在扩展回执单独持久化，并核对它绑定的准备包摘要。#210 的原始读取器已读过实际长失联的 `prepared` 和 `ready`。新主人能恢复确认，旧主人可收尾并保留未确认输入供续做。保留已有收尾协议、投影、可回滚站点版本和任务目录。
+- 沿用 [Temporal 的执行尝试围栏](https://github.com/temporalio/temporal/blob/main/service/history/api/respondactivitytaskcompleted/api.go) 和 [Codex 的输入交付讨论](https://github.com/openai/codex/issues/40805)。定向回归包括同批重取、换批、恢复、撤回读者和任务续做。全量验证以接续 PR 记录为准。
+
+# 修改清单 · 2026-11-25（小芯内核第 2 步第 3B 批收口：运行中插话两阶段认领确认、AGY 原生动作幂等回执与前台额度报告失联容错）
+
+- **谁做的**：**Antigravity** 独立完成架构接手审查、实现与本地/线上验证；**自查（无独立 AI 复核）**。分支 `antigravity/xin-steer-report-delivery`（基于 `main` `df4430d`，即 PR #210）。未触碰任何前端界面或天启工作台代码，冷启动控制器模块数保持不变（子请求预算维持 40/50，`vm-agent.mjs` 行数保持在 2949 基线内，`test/xin-writers.json` 直接写者清单与 `rmw = 5` 不变）。
+- **接手架构核查结论（按 `main` `df4430d` 源码与测试逐项核实）**：
+  1. **原始六步架构（`docs/xin-kernel-design.md` §10）**：第 1 步已完成验收（#136，模型逐字流式属第 3 步）；第 2 步主体已上线但**尚未全部完成**（3B 尾项由本批收口，仍剩第 4a 批宿主授权方案 C 与第 5 批 5 处 `rmw` 清零/`memory-idle` 常驻调度/重活外移，外加整机冷启动自启实测）；第 3–6 步均未开始。天启 `li2` 独立迁移（#175/#180/#190）与工作台改版（#186–#210）属独立轨道，已完成上线。
+  2. **不重复已验收工作**：常驻状态进程与 `owner.sqlite` 单写者（第 1–2 批）、执行尝试编号与孤儿进程组清理（3A，#153/#155）、沙盒 `task_bridge` 回执（#160/#163）、持久终态包 `run_finalize`（#173/#174）和旧模式删除（第 6 批，#169–#171）均已核实在线，本批不重做。
+  3. **凭据代理现状**：容器 `inferenceProxy` 与 `browserBroker` 已运行并覆盖测试；跨 UID / InstaBox 组织密钥方案按设计 §1 ③ 已由站长确认移出第 2 步。
+- **原实现与问题定位（PR #174 交接与 `2026-11-16-xin-finalization.md` §2、§4 遗留尾项）**：
+  1. **运行中插话过早标 `accepted` 导致断线或兜底时静默丢输入**：`site/xin/vm-steer.mjs` 的 `steerTake` 原先一读取就把 `m.steers` 从 `pending` 改为 `accepted`。若状态套接字回包丢失（`executed: 'unknown'`），执行器回调捕获异常返回 `[]`，再次 `steer_take` 已为空，本轮正常完成（`okEnd === true`）时 `taskFinish` 不把 `accepted` 带入 `t.inbox`；同理，前台 `site/xin/vm-front-agy.mjs` 的 `lookupPrompt` 在 250ms 定时器中先取走补充再取消 ACP，若取消后的第二轮 ACP 因超时、503 容量不足或协议修正失败回退到 DeepSeek（`fallback(payload)` 仅含初始提问），`run_complete` 看到 `state === 'accepted'` 便不再开启续跑轮次，站长的中途插话被静默吞掉。
+  2. **AGY 原生 `note` / `ask` 缺少步级回执重送且失联时伪造成功**：`site/xin/vm-agent.mjs` 的 `agy-run` 调 `task_note` 未传稳定 `id`，主人提交后丢回包重跑无法去重并拿回原回执；更严重的是 `task_note` 异常返回 `''` 时，`site/xin/vm-runtime.mjs` 的 `antigravityWork` 用 `|| '已记下。'` 欺骗模型说已转告成功。此外每一步无条件重发未变化的 `agy_conversation`，主人离线时还会拖慢收尾退出。
+  3. **前台 `front_quota` 未对齐后台传输失联容错**：`openFrontProvider` 在预检和 429 复核时直接调 `o.quota?.(q)`，未像后台 `antigravityWork` 那样容忍状态进程重启瞬间的连接断开（同时按 #166 约束，`front_quota` / `agy_quota` / `steer_take` 绝不能放进通用 `LOCKED_REPORTS` 以免重复追加 `quota-history.jsonl` 采样）。
+- **改法、开源参考与 Muse 五项审核基准保证**：
+  - **开源参考**：
+    - 参考 [`openai/codex` Issue #40805](https://github.com/openai/codex/issues/40805)（`codex-rs/core/src/session/turn_input.rs`、`turn.rs`：采样未完成前不能把排队插话当作已持久消费）与 [Issue #32627](https://github.com/openai/codex/issues/32627)（区分「未送达 / 正在由当前模型步处理 / 已吸收进当前任务」三阶段生命周期）。
+    - 参考 [`temporalio/temporal` `respondactivitytaskcompleted/api.go`](https://github.com/temporalio/temporal/blob/main/service/history/api/respondactivitytaskcompleted/api.go) 按执行尝试身份（`run + attempt + step/claim`）绑定动作与消费回执。
+  - **1. 状态所有权与两阶段插话交付（`vm-steer.mjs`、`vm-runtime.mjs`、`vm-front-agy.mjs`、`vm-kernel-controller.mjs`）**：
+    - `steer_take` 带批次号 `claim` 时仅在主人事务内写入 `q.claim = { id: claim, attempt, at }`，**保持 `q.state = 'pending'`**（后台任务过程事件由 `q.shown` 保证只记一次）；同一 `(claim, attempt)` 丢回包重取时幂等返回原批次，不混入重取期间新到的补充。
+    - 只有携带该批次的模型步骤实际成功完成（`antigravityWork` 收到有效结构化动作后、`openFrontProvider` 在 `lookupPrompt` 及 `frontOutput` 解析通过后）才调用 `steer_ack({ run, claim, state: 'accepted' })` 转为 `accepted`（`steer_ack` 纳入 `RUN_REPORTS` 尝试围栏与会话原子事务）。若模型步超时、崩溃、切 DeepSeek 兜底或同轮换模型（`steer_handover`），未确认条目仍为 `pending`，由 `run_complete`、`taskFinish` 或 `steerHandover` 完整接住。
+  - **2. 长失联收尾与回滚兼容（`vm-events.mjs`、`vm-run-attempt.mjs`、`vm-task-reports.mjs`、`vm-agent.mjs`）**：
+    - 若模型步已完成消费但状态进程持续离线至本轮退出，执行器将未送达的 `claim` 记入终态包 `prepared.ackedSteers`，主人恢复执行 `finalizeRun` 时在同一笔原子事务内先补做 `steerAck` 再跑 `run_complete` / `taskFinish`，避免误起重复轮次。
+    - **回滚兼容 `#210`**：不引入任何新的 `steers[].state` 枚举值（认领态仍为 `'pending'`，退回 `#210` 时未确认插话照常按 `pending` 保留）；常规在线确认成功的轮次 `prepared` **不写入 `ackedSteers` 键**，保证在途终态包对 `#210` 严格键白名单完全兼容。
+  - **3. AGY 原生 `note` / `ask` 幂等回执与 `front_quota` 失联容错（`vm-steer.mjs`、`vm-runtime.mjs`、`vm-front-agy.mjs`、`vm-agent.mjs`）**：
+    - `createExecutorSteerBridge` 为原生 `note` / `ask` 赋予确定性步编号（`agy-note-<turn>`）并在瞬时断线时同编号有界重试；`taskNote` 用 `t.noteMsgs` 保留最近 32 条原回执说明，重送时既保持 `duplicate: true` 又向模型返回真实回执；持续失联超预算时返回 `NOTE_UNCONFIRMED_TEXT` 如实告知模型把发现写进最终结果，绝不伪造 `已记下。`。`antigravityWork` 仅在会话号变化时上报 `agy_conversation` 并为收尾额度刷新加短截止时间。
+    - `openFrontProvider` 用 `ignoreQuotaDisconnect` 容忍 `front_quota` 的瞬时传输断开（可用时继续用 Hydrogen、耗尽时照常切 DeepSeek），同时让 `vm-agent.mjs` 把 `{ error }` 转成带 `code` 的异常，确保 `stale_attempt`、`bad_quota`、`state_protocol` 等错误原样阻断。
+- **验证证据**：
+  - 新增故障回归测试 `test/xin-steer-delivery.test.cjs`（6 项）：覆盖 `after:steer_take` 主人被 `SIGKILL` 重启同批重取、两阶段批次隔离与 `stale_attempt` 围栏、`after:task_note` + `after:task_ask` 连环杀主人重启与长失联诚实提示、前台 `WebSearch` 插话后坏格式切 DeepSeek 自动续跑下一轮、`front_quota` 失联容错与校验错误透传、主人长失联跨 `steer_ack` 由终态包 `ackedSteers` 恢复及常规轮次字段回滚兼容，**先验证旧实现 5/5 失败，实现后 6/6 全过**。
+  - 全仓语法/资源引用检查（303 个文件、231 处引用）通过；全仓 86 个单测文件共 **1,097 / 1,097 全部通过**（顺手为 `test/xin-report-retry.test.cjs` 只读检查辅助函数 `inspect()` 补齐与 `vm-state.mjs` 一致的 `PRAGMA busy_timeout=5000`，消除并发跑单测时子进程退出收尾 WAL 瞬时锁竞争并连跑 3 轮复核全绿）。因额度即将用尽按站长指示先提交推送并开 PR 交由 GitHub Actions 跑完 `check` / 15 套浏览器 `e2e` / `liming-hub-staging` 预发验证（本机 `stm32_e2e.py` 前 265 项已过且本批零前端改动），待下一位接手 AI 确认 PR 三项作业全绿后合入并核验正式站部署。
+- **剩余未完成架构事项（严禁将本批合入视作第 2 步全部完成）**：
+  1. **第 2 步第 4a 批 — 宿主授权（方案 C，`2026-11-14-xin-kernel-stage2-design.md` §6.10）**：下一顺位最高优先任务。需为站长原话轮次自动签发绑定任务与目标摘要的宿主授权，拦截无授权的 `system` / `handoff` 宿主任务停在 `waiting` 等网页批准。
+  2. **第 2 步第 5 批 — 剩余 `rmw` 写者清零与同步重活外移**：将 `test/xin-writers.json` 剩余 5 处 `rmw`（`vapidKeys`、`frontLog`、`logLine`、`loginStore.save`、`requestBudget`）改为状态进程操作使 `rmw = 0`；将 `ensureMemoryIdle` 迁入状态进程定时检查；将 `startTask` / `finalizeRun` / `backup_export` / `plugins` 中超过 50ms 的同步文件/子进程操作迁出状态进程主线程。
+  3. **整机冷启动电源重启验收**与**原始架构第 3–6 步**。
+
 # 修改清单 · 2026-11-25（天启：星空宇宙主题大改版——天枢星象舱布局、宇宙星表模型选择器、Codex 式思考强度、实时思考星链与 1:1 Claude Code 终端）
 
 - **谁做的**：实现由 Antigravity 完成（经 agy CLI）。第 1–3 步（布局、样式、交互引擎、e2e 调整）由 Gemini 4 Carbon High 完成；Gemini 额度用完后，同一会话切到 Claude Opus 5.5 High，完成第 4–5 步（截图核验中发现的模型星表弹层高度、手机顶栏截断两处修复，全量检查，本条记录）。以上均为自查；复核人 **Muse**（按站长指示未做本地全量复核，以 CI 结果为准；Muse 负责驱动监督、补填本条的 check 结果与随附的 AI-HANDOFF 纠正）。分支 `antigravity/tianqi-cosmos-rework-20261124`（基于 `main` `4d62222`，即 PR #209）。

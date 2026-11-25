@@ -74,6 +74,7 @@ export function fromCodex(o, state) {
     const input=p.input+(u.input_tokens||0),output=p.output+(u.output_tokens||0);
     state.frontUsage={input,output,cached:p.cached+(u.cache_read_tokens||0),total:input+output,ctx:(u.input_tokens||0)+(u.output_tokens||0),win:1000000};return out;
   }
+  if(o.type==='xin.steer_ack'&&typeof o.claim==='string'){state.ackedSteers=[...new Set([...(state.ackedSteers||[]),o.claim])].slice(-128);return out;}
   if (o.type === 'thread.started') { if (o.thread_id) state.sid = o.thread_id; return out; }
   if (o.type === 'error') {
     const m = String(o.message || '');

@@ -203,9 +203,12 @@ export function checkTaskResult(t, { active, emit, report, checking }) {
   }
 }
 
-export function recordRunnerResult(store, meta, data, getSession, reports) {
+export function recordRunnerResult(store, meta, {ackedSteers, ...data}, getSession, reports) {
   journal.checkWriter();
   const prepared = store.write(meta, 'prepared', data, {flushEvents:true});
+  // Keep the existing prepared and ready envelopes readable during a rollback.
+  // An older owner can finish the result and carry unconfirmed input forward.
+  if (ackedSteers?.length) store.write(meta, 'steer', {prepared:prepared.digest, claims:ackedSteers});
   reports.preparing();
   const ready = {prepared:prepared.digest};
   const t = getSession();
@@ -245,7 +248,7 @@ function finalizeFiles(store, meta, ready, task, at) {
 }
 
 export function createRunFinalizer({ store, loadRun, loadSession, taskFinish, emit, complete, rememberSession,
-  patchRun, frontReply, frontNotice, dailyDone, statsFile }) {
+  patchRun, frontReply, frontNotice, dailyDone, statsFile, steerAck }) {
   return function finalizeRun(meta, { digest, evidence = finalizationEvidence(store, meta), abandon = false } = {}) {
     if (!hasFinalization(meta)) return { error:'finalization_protocol' };
     const {run, attempt, sid} = meta, context = { locked:true, key:meta.task?'tasks':sid, run, attempt };
@@ -267,7 +270,11 @@ export function createRunFinalizer({ store, loadRun, loadSession, taskFinish, em
       const changes = {modelDone:true, ...(data?.changes.frontUsage ? {frontUsage:data.changes.frontUsage} : {}),
         ...(webCheck ? {webCheck:{...webCheck,trusted:true}} : {}),
         ...(pageCheck ? {pageCheck:{...pageCheck,trusted:true}} : {}), ...(compileTrusted ? {compileTrusted,compileOk,compileDigest} : {})};
-      const runMeta = {...current, ...changes};
+      const steerReceipt = !uncertain && current.steers?.some(x => x.claim) ? store.read(current, 'steer') : null;
+      const acked = steerReceipt?.state === 'valid' && steerReceipt.data.prepared === prepared?.digest ? new Set(steerReceipt.data.claims) : null;
+      const steers = acked?.size ? current.steers.map(x => ['pending','next'].includes(x.state) && acked.has(x.claim?.id) && x.claim.attempt === attempt
+        ? { ...x, state: 'accepted', acceptedAt: x.acceptedAt || data.at } : x) : current.steers;
+      const runMeta = {...current, ...changes, ...(steers ? {steers} : {})};
       const task = loadSession(sid);
       const result = {sid, run, ok:!uncertain && !!data?.ok && !current.stopped, stopped:!!current.stopped,
         timeout:!!data?.timeout, transient:!uncertain && !!data?.transient, model:data?.model, uncertain};
@@ -282,6 +289,7 @@ export function createRunFinalizer({ store, loadRun, loadSession, taskFinish, em
       const command = {id, digest:ready?.digest || inputDigest([id, reason])};
       return journal.atomic(() => {
         if (data) rememberSession(sid, data.changes);
+        if (acked?.size) for (const claim of acked) steerAck?.({ run, claim, state: 'accepted' });
         patchRun(run, changes);
         if (uncertain) emit(run, {t:'err',text:uncertain});
         if (data?.reply && !uncertain) frontReply({run,text:data.reply});
@@ -295,7 +303,7 @@ export function createRunFinalizer({ store, loadRun, loadSession, taskFinish, em
         const completed = complete({run, done, durable:true, uncertain});
         if (completed.error) return completed;
         if (meta.task) {
-          const finished = taskFinish(result, {meta:runMeta, files, usage:done.usage});
+          const finished = taskFinish(result, {meta:{...loadRun(run), ...changes}, files, usage:done.usage});
           if (finished.error) return finished;
         } else if (current.kind === 'daily') dailyDone(run, current, done.ok);
         else if (!done.stopped && !['handoff','note'].includes(current.kind)) frontNotice(current, done, data?.reply || uncertain);
