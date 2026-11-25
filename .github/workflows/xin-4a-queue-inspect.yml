@@ -1,0 +1,50 @@
+name: Verify stage 4a queue diagnostics
+on:
+  push:
+    branches: [codex/xin-4a-live-diagnostics-20261125]
+    paths: [.github/workflows/xin-4a-queue-inspect.yml]
+permissions: {}
+jobs:
+  inspect:
+    if: github.repository == 'yux91803-hobo/liming-work-site' && github.ref_name == 'codex/xin-4a-live-diagnostics-20261125'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Summarize queue and sanitized codes without reading model text or credentials into the runner
+        env:
+          LI_API: ${{ secrets.XIN_INSTABOX_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from urllib.error import HTTPError
+          from urllib.parse import quote
+          from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self, *args):
+                  return None
+          opener = build_opener(NoRedirect())
+          def call(path, body=None):
+              headers = {'X-API-Key': os.environ['LI_API'], 'Content-Type': 'application/json'}
+              data = json.dumps(body).encode() if body is not None else None
+              with opener.open(Request('https://api.instabox.sh'+path,headers=headers,data=data), timeout=60) as response:
+                  return json.load(response)
+
+          target = "import collections\nimport datetime\nimport json\nimport re\nfrom pathlib import Path\nroot = Path('/data/home/.xin')\nts = lambda t: datetime.datetime.fromisoformat(t).timestamp() * 1000\nfirst = ts('2026-11-25T12:26:30+00:00')\nlast = ts('2026-11-25T12:54:45+00:00')\ndef rows(file):\n    try:\n        with (root/file).open(encoding='utf-8') as f:\n            for line in f:\n                try:\n                    v = json.loads(line)\n                    if isinstance(v,dict): yield v\n                except ValueError: pass\n    except FileNotFoundError: pass\ndef in_window(v):\n    at = v.get('at', v.get('ts',0))\n    if isinstance(at,str):\n        try: at = ts(at.replace('Z','+00:00'))\n        except ValueError: return False\n    return isinstance(at,(int,float)) and first <= at <= last\nallowed = {'gemini-4-hydrogen','gemini-4-neon','gemini-4-argon','glm-5.3','glm-5.3-flash','glm-5.4','kimi-k3.1-pro','deepseek-v4.1-flash'}\nlength = lambda v: int(v) if isinstance(v,(int,float)) and v>=0 else None\nkinds = {'code','quick','research','hard','review','vision','daily','system'}\ndef safe(v):\n    kind = v.get('kind')\n    return {'offsetMinutes':round((v['at']-first)/60000,2),'model':v.get('model') if v.get('model') in allowed else 'other',\n            'kind':kind,'ok':v.get('ok') is True,'from':v.get('from') if v.get('from') in allowed else None,\n            'why':'named' if v.get('why')=='named' else 'other','ms':length(v.get('ms')),\n            'errorCodes':sorted(set(re.findall(r'\\b(?:401|403|408|429|502|503|504)\\b',str(v.get('fromErr','')))))}\nstats = [safe(v) for v in rows('model-stats.jsonl') if in_window(v) and isinstance(v.get('at'),int) and v.get('kind') in kinds]\nmanual = collections.Counter()\nfor file in (root/'sessions').glob('s*.json'):\n    try: d=json.loads(file.read_text())\n    except (OSError,ValueError): continue\n    if d.get('kind')!='task' or d.get('status') not in ('queued','running','stopping','waiting'): continue\n    group='workspace_root' if d.get('dir')=='/data/workspace' else 'smoke' if str(d.get('dir','')).startswith('/data/workspace/.xin-live-smoke/') else 'other'\n    manual[d['status']+':'+group]+=1\nallowed_ops={'tasks','tick_tasks','task_tick','task_new','task_model','task_stage','run_finalize','poll','history','send','task_stop'}\nlogs=collections.Counter()\ncritical=[]\nfor r in rows('logs/kernel.jsonl'):\n    if not in_window(r): continue\n    if r.get('op') in allowed_ops: logs[(r['op'], r.get('status') if isinstance(r.get('status'),int) else None)]+=1\n    if r.get('route')=='state' and r.get('event') in ('exit','start','ready','down','hard_limit','spawn_error'):\n        critical.append({'event':r['event'],'signal':r.get('signal') if r.get('signal') in ('SIGKILL','SIGTERM','SIGINT') else None,'code':length(r.get('code'))})\nprint(json.dumps({'backgroundReplies':stats[:60],'currentWork':dict(manual),'kernelOps':[[*key,n] for key,n in logs.items()],'kernelLifecycle':critical[:50]}))\n"
+          try:
+              machines = [m['id'] for m in call('/v1/machines')['machines'] if m.get('name') == 'li']
+              if len(machines) != 1:
+                  raise SystemExit('Expected one named instance')
+              path = '/v1/machines/' + quote(machines[0], safe='')
+              if call(path).get('state') != 'running':
+                  raise SystemExit('Instance is not running')
+              r=call(path+'/exec',{'argv':['/usr/bin/python3','-c',target],'timeoutSeconds':35})
+              if r.get('exitCode') != 0:
+                  raise SystemExit('Queue diagnostic failed')
+              print('QUEUE_EVIDENCE ' + json.dumps(json.loads(r['stdout']), sort_keys=True))
+          except HTTPError as error:
+              raise SystemExit('Queue diagnostic HTTP '+str(error.code)) from None
+          except (OSError, ValueError, KeyError) as error:
+              raise SystemExit('Queue diagnostic '+type(error).__name__) from None
+          PY
