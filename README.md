@@ -55,6 +55,16 @@ REA 开启时通过 MCP 兼容桥转换当前网关不接受的 pattern `allOf` 
 
 新站点需配置 `li2` 的 InstaBox key、Harness 和独立网关账号，再验收真实回话。已有天启对话仍在小芯工作台，通过 `li` 继续。 [天启设计与验收条件](docs/superpowers/specs/2026-11-18-tianqi-li2-design.md)
 
+## 平板（DSH Go）
+
+站长自用的安卓平板，第一步装原版 [DSH Go](https://github.com/ccch1mneyyy/dsh-go)（DeepSeek Harness 的安卓 App），不改 App。装法是在 App 的终端里运行 `curl -fsSL https://liming-work.com/tablet/setup.sh | bash`：
+
+- **网关在平板上**：WorkBuddy 网关装进 App 的本机 Linux，跟着本机引擎一起启停（插件 `site/tablet/liming-gateway/`）。签到钟点设成全天，所以打开 App 就会签到。
+- **平板上的 AI**：用网关里的模型回话，开了手机操控后能读屏、点按、输入。
+- **li2、li**：作为 SSH 远程主机。平板连过去用的是那台 Harness 没人用的内置 `web` 配置和它本机的网关，不碰小芯、天启的 `headless` 配置。
+
+网关程序和账号不进仓库。站长要做的几步见 [docs/tablet.md](docs/tablet.md)；第二步 fork 改界面以后单独设计。 [设计](docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md)
+
 ## 小芯后台运行方式
 
 - 2026-11-18 删旧状态路径。小芯的会话和任务由云电脑上的常驻状态进程提交到 SQLite，普通命令、执行回报和网页轮询经本机套接字进入。换版或重启时网页操作最多等 15 秒，未执行的消息由待送达稍后再投。每轮执行锁负责防止重复运行，InstaBox exec 仍可作为备用传输。状态进程连续起不来时，外壳尝试向已经订阅通知的设备发送一次故障告警。回滚由 Actions 恢复已验证的 Worker 版本，以 #170 为本次的回退目标。[设计](docs/superpowers/specs/2026-11-17-xin-remove-legacy-design.md) · [验证与交接](docs/AI-HANDOFF.md)

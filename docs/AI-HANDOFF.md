@@ -1,3 +1,18 @@
+## 2026-11-25 · 平板版 DSH Go 第一步（Claude Code）
+
+- Claude Code 实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。站长选「先插件后 fork」。 [设计](superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [计划](superpowers/plans/2026-11-25-tablet-dshgo-phase1.md) · [站长步骤](tablet.md) · [CHANGES 最新一条](CHANGES.md)
+- 做了：`site/tablet/` 下的装机脚本、网关插件、li/li2 包装脚本和网关补丁。都是新文件，网站页面、Worker、小芯和天启的代码没动。li 只读：查网关程序、取 zip 核对。li2 没碰。
+- **接手注意**：
+  - li、li2 上平板用的是 Harness 内置的 `web` 配置，不是 `tablet`：自定义配置名不会自动建，`dsh web` 就是 `dsh --profile web`。DSH Go 的启动命令只填 `/data/home/.local/bin/dsh-tablet`，后面别加 `web`。
+  - 天启换了模型表（`HARNESS_MODELS`），要跑 `node scripts/tablet-profile.mjs` 重新生成 `site/tablet/dsh-tablet-profile.yml`（测试会红着提醒），站长再跑一次装机脚本，把新表带到 li2、li。
+  - 网关程序（WorkBuddy2API-Hub，上游已删）不能进仓库，因为仓库是公开的。装机脚本只写死 zip 的大小和 SHA-256。
+- 没验证，等站长在平板上装：
+  - PRoot 里的 Python 和 arm64 TLS 组件。
+  - DSH Go 的 SSH 能不能用令牌登录。不行的话第二步在 fork 里修，或改走 DSH Remote。
+  - 真实账号签到。
+- 全量检查、E2E 和上线结果见本分支 PR。
+- 下一步：站长照 tablet.md 装好、用一阵，列出要砍的功能，再单独设计第二步 fork（只改外壳、Actions 出 APK、签名 key 放 Secrets）。
+
 ## 2026-11-25 · 小芯与天启切换 GLM-5.4
 
 - Codex 实现并自查，分支 `codex/tianqi-xin-glm54-20261125`。先发布天启读图和 5.4 兼容目录，再迁移两边的旧 GLM 选择及执行路由。旧任务与浏览器偏好在下次运行时升级，历史事件沿用实际型号。

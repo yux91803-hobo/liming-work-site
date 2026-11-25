@@ -1,3 +1,28 @@
+# 修改清单 · 2026-11-25（平板版 DSH Go 第一步：网关搬到平板、接上 li 和 li2）
+
+- Claude Code 实现并自查，无独立复核。站长想用 GitHub 上的 DSH Go（`ccch1mneyyy/dsh-go`，AGPL-3.0）在安卓平板上让 AI 操控平板、用自己网关的模型、接上 li 和 li2，界面以后再改；选了「先插件后 fork」。网关搬到平板是站长自己提的。 [设计](superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [计划](superpowers/plans/2026-11-25-tablet-dshgo-phase1.md) · [站长步骤](tablet.md)
+- 新增 `site/tablet/`，都是新文件，网站页面、Worker、小芯和天启的代码没动：
+  - `setup.sh`：在平板终端里一行装好。经 InstaBox SSH 令牌从 li2 取原版网关 zip（取不到就从 li 取），按写死的大小和 SHA-256 校验后解压；装插件；在 li2、li 上写包装脚本 `dsh-tablet` 和 Harness `web` 配置的网关补丁。
+  - `liming-gateway/`：DSH 插件。引擎启动时拉起网关，停止时先 SIGTERM、5 秒后 SIGKILL；端口上已有网关在答就沿用，沿用的没了就接手；意外退出按退避重启，有次数上限；首次启动前把签到钟点设为全天。
+  - `dsh-tablet.sh`：li、li2 上的包装脚本。
+  - `dsh-tablet-profile.yml`：li、li2 上的网关线路，由 `scripts/tablet-profile.mjs` 从天启的 `HARNESS_MODELS` 生成。
+- 参考：
+  - DSH Go 的 `docs/plugins/from-zero.md`、`hosts.md`、`examples/plugins/dsh-go-example-usage`：插件结构、本地路径安装、`ctx.effect` 收尾。
+  - DSH Go 的 `app/lib/remote/ssh/remote_bootstrap.dart`：托管启动会在启动命令后追加 `--host 127.0.0.1 --port 0 --no-open`。
+  - li 上的 `workbuddy-gateway.service`：启动参数、`TZ=Asia/Shanghai`。
+  - systemd 的 `StartLimitIntervalSec` / `StartLimitBurst`：重启次数上限。
+  - InstaBox 的 `docs/ssh.md`、`docs/idle-suspend.md`：SSH 令牌一行登录，SSH 连接会叫醒暂停的机器。
+- 核对与实测：
+  - 网关程序在 li 上只读查看：只用 Python 标准库，自带 arm64 的 TLS 组件；签到钟点读 `accounts/settings.json` 的 `schedule.checkin`，只在这些钟点签到。
+  - 原版 zip 从 li 只读取到会话容器，没有提交。在插件下 0.5 秒起来，`/health` 正常，网关自己的解析器接受全天签到钟点，停止后端口释放。
+  - 用 npm 上的 Harness 0.2.2-rc.3（Node 24）实测，发现自定义配置名不会自动建，`dsh web` 就是 `dsh --profile web`。所以 li、li2 改用没人用的内置 `web` 配置，原计划是另建一个 `tablet` 配置。
+  - 在这个 `web` 配置里，`--dump-config` 有网关线路；包装脚本收到 DSH Go 的那几个参数后能打出带 token 的地址；`dsh plugin --profile web add` 装上插件后，引擎启动时拉起真网关，收到 SIGTERM 时 2 秒内停掉，没有残留进程。
+  - 新装的网关在面板里建 key 之前是 `api key: off`，说明里提醒先改面板密码、再建 key。
+- 测试：
+  - `test/tablet-profile.test.cjs`、`test/tablet-gateway.test.cjs`（真 Python 假网关、真端口和信号）、`test/tablet-setup.test.cjs`（假 ssh 在各主机的临时 HOME 里真执行远端脚本），共 28 项。
+  - shellcheck 0.11.0 无告警。
+  - 没验证的：真平板上 PRoot 里的 Python 和 TLS 组件、DSH Go 的 SSH 能不能用 InstaBox 令牌登录、真实账号签到。
+
 # 修改清单 · 2026-11-25（小芯与天启切换 GLM-5.4）
 
 - Codex 实现并自查。`li` 与 `li2` 都确认网关提供 `glm-5.4`，支持百万上下文、图文和低／高／最高三档。旧标准版和 Flash 入口都使用 5.4。工作台继续提供 DeepSeek V4.1 Flash 与 Kimi K3.1 Pro。 [网关目录核对](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45615850604) [智谱官方模型说明](https://zcode.z.ai/cn/docs/qa)
