@@ -50,6 +50,98 @@ function agyFaultFixture(t, script, faultRule, extra = {}) {
   return { root, home, env, agent, get owner() { return owner; }, set owner(v) { owner = v; }, startOwner, call, read, lines, until };
 }
 
+function codexFaultFixture(t, fault, retry = false) {
+  const f = agyFaultFixture(t, [], fault, { XIN_CODEX_TRANSPORT:'app-server', XIN_STEER_RETRY_MS:'700', XIN_RETRY_DELAYS_MS:'100' });
+  const files = name => path.join(f.root, name);
+  fs.writeFileSync(files('bin/codex'), '#!' + process.execPath + '\n' + `
+const fs = require('node:fs'), path = require('node:path');
+const root = ${JSON.stringify(f.root)};
+const file = name => path.join(root, name);
+if (!process.argv.includes('app-server')) { console.log('[]'); process.exit(0); }
+const send = o => console.log(JSON.stringify(o));
+const result = (m, value) => send({id:m.id, result:value});
+const turn = {id:'test-turn', status:'completed'};
+const notify = (method, params) => send({method, params});
+const when = (name, fn) => { const timer=setInterval(()=>{if(fs.existsSync(file(name))){clearInterval(timer);fn();}},20); };
+const finish = failed => {
+  if (!failed) notify('item/completed',{item:{type:'agentMessage',id:'finished',text:'只列启用的：alpha-main'}});
+  notify('turn/completed',{turn:failed?{...turn,status:'failed',error:{message:'connection reset by peer'}}:turn});
+};
+require('node:readline').createInterface({ input:process.stdin }).on('line', line => {
+  const m = JSON.parse(line);
+  if(m.method==='initialize') result(m,{});
+  if(m.method==='thread/start'||m.method==='thread/resume') result(m,{thread:{id:'test-thread'}});
+  if(m.method==='turn/start'){
+    const later=fs.existsSync(file('app-starts'));
+    fs.appendFileSync(file('app-starts'),JSON.stringify(m.params.input[0].text)+'\\n');
+    result(m,{turn}); notify('turn/started',{turn});
+    notify('item/started',{item:{type:'commandExecution',id:'working',command:'echo alpha-main'}});
+    if(later) setTimeout(()=>finish(false),30);
+  }
+  if(m.method==='turn/steer'){
+    const duplicate=fs.existsSync(file('app-steers'));
+    fs.appendFileSync(file('app-steers'),JSON.stringify(m.params.clientUserMessageId)+'\\n');
+    if(duplicate){send({id:m.id,error:{message:'turn already accepted this message'}});return;}
+    when('app-ack',()=>{result(m,{turnId:turn.id});when('app-finish',()=>finish(${retry}));});
+  }
+});`, { mode:0o755 });
+  const text = '只列启用的，不要备用项';
+  const id = 'ft-fault-fixture-01';
+  const start = async () => {
+    const task = f.call('task_new', {kind:'research',goal:'核对测试配置',model:'kimi-k3.1-pro',named:true,strictModel:true}).task;
+    const active = await f.until(() => {
+      const h = f.call('history', {sid:task.sid}), run = h.runs[0]?.run;
+      return run && f.read(path.join(f.home,'runs',run+'.json'))?.turnId && run;
+    }, 'app-server 开始当前轮');
+    assert.equal(f.call('task_tell',{sid:task.sid,text,clientId:id}).delivery,'now');
+    await f.until(() => fs.existsSync(files('app-steers')), '执行器收到插话');
+    return {task,run:active};
+  };
+  const done = task => f.until(() => {
+    const h = f.call('history',{sid:task.sid});
+    return ['done','failed'].includes(h.task.status) && h;
+  }, 'Codex 任务收尾');
+  return {f,files,start,done,id,text};
+}
+
+for (const phase of ['before','after']) test('Codex 慢插话只送一次，状态进程在保存接受回执 ' + phase + ' 失联', async t => {
+  const {f,files,start,done,id} = codexFaultFixture(t, phase + ':steer_ack');
+  const {task,run} = await start();
+  await new Promise(resolve => setTimeout(resolve, 1150));
+  assert.deepEqual(f.lines(files('app-steers')), [id]);
+  fs.writeFileSync(files('app-ack'), '');
+  const fault = await f.until(() => stateSocketFault(f.home), '执行器确认后的状态写入故障');
+  assert.deepEqual([fault.run,fault.phase],[run,phase]);
+  f.owner.child.kill('SIGKILL'); await f.owner.exited;
+  fs.writeFileSync(files('app-finish'), '');
+  const pack = path.join(f.home,'finalization',run+'.'+fault.attempt);
+  await f.until(() => fs.existsSync(path.join(pack,'ready')), '长失联收尾证据');
+  const {appSteerReceipt} = await import(url('vm-steer'));
+  const receipt = JSON.parse(fs.readFileSync(path.join(pack,'steer'),'utf8').split('\n')[1]);
+  assert.deepEqual(receipt.data.claims,[appSteerReceipt(id)]);
+  f.owner = f.startOwner({XIN_STATE_TEST_FAULT:''});
+  const h = await done(task);
+  assert.equal(h.task.status,'done'); assert.equal(h.runs.length,1);
+  assert.equal(h.runs[0].events.filter(e => e.steer && e.clientId===id).length, 1);
+  assert.deepEqual(f.lines(files('app-steers')), [id]);
+});
+
+test('已接插话后真实连接失败：第二轮保留同一编号和内容，只执行一次恢复', async t => {
+  const {f,files,start,done,id,text} = codexFaultFixture(t, '', true);
+  const {task,run} = await start();
+  fs.writeFileSync(files('app-ack'), '');
+  await f.until(() => f.read(path.join(f.home,'runs',run+'.json'))?.steers?.some(q=>q.state==='accepted'), '保存接受回执');
+  fs.writeFileSync(files('app-finish'), '');
+  const h = await done(task);
+  assert.equal(h.task.status,'done'); assert.equal(h.runs.length,2);
+  const first = h.runs[0].events.find(e=>e.t==='done');
+  assert.deepEqual([first.ok,first.retry,first.model],[false,'transient','kimi-k3.1-pro']);
+  const next = h.runs[1].events.find(e=>e.t==='user');
+  assert.deepEqual(next.carriedSteers,[id]);
+  assert.equal(f.lines(files('app-starts'))[1].split(text).length - 1, 1);
+  assert.deepEqual(f.lines(files('app-steers')),[id]);
+});
+
 test('steer_take 已提交但回包前主人被杀：执行器按同一批次重取，补充不丢且只送进模型一次、过程事件只记一条', async t => {
   const f = agyFaultFixture(t, [
     { action: 'shell', command: 'echo step-one >> list.txt', gate: true },
@@ -141,6 +233,9 @@ test('两阶段取件契约：同批次重取不吞新来的补充；未确认�
     ops.steerAck({ run: 'rrun0001', claim: 'agy-steer-0', state: 'accepted' }));
   assert.deepEqual(store.get(metaF('rrun0001')).steers.map(x => [x.id, x.state]), [['s-1', 'accepted'], ['s-2', 'pending']]);
   assert.equal(events.length, 2, '确认消费不重复显示插话');
+  withCallContext({ locked:true, key:'tasks', run:'rrun0001', attempt:'a'.repeat(32) }, () =>
+    ops.steerAck({run:'rrun0001', id:'s-1', state:'next', error:'late provider reply'}));
+  assert.equal(store.get(metaF('rrun0001')).steers[0].state, 'accepted');
   const lateRetry = withCallContext({ locked:true, key:'tasks', run:'rrun0001', attempt:'a'.repeat(32) }, () =>
     ops.steerTake({run:'rrun0001', claim:'agy-steer-0'}));
   assert.deepEqual(lateRetry.steers, [], '确认过的批次重送不取走新输入');

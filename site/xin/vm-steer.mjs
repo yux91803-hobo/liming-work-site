@@ -103,6 +103,38 @@ export function retrySteerCall(fn, { deadlineMs = Number(process.env.XIN_STEER_R
     }
   }
 }
+
+// The receipt is already scoped to a run and attempt by its envelope.
+export const appSteerReceipt = id => 'app-' + crypto.createHash('sha256').update(id).digest('hex');
+
+export function createAppSteerRelay({run, key, lockedCall, onUnacked}) {
+  const attempted = new Set();
+  let busy = false;
+  return {
+    get busy() { return busy; },
+    async deliver(app, pending) {
+      if (busy) return;
+      const queue = pending.filter(q => !attempted.has(q.id));
+      if (!queue.length) return;
+      busy = true;
+      try {
+        for (const q of queue) {
+          let error;
+          try { await app.steer(key === 'tasks' ? steerBlock([q]) : q.text, q.id); }
+          catch (e) { error = e.message || '执行器未确认插话'; }
+          attempted.add(q.id);
+          const ack = {run, id:q.id, state:error ? 'next' : 'accepted', ...(error ? {error} : {})};
+          try {
+            const result = retrySteerCall(left => lockedCall(key, 'steer_ack', ack, {deadlineMs:left}));
+            if (!result?.error) continue;
+          } catch { /* Keep the input pending if the owner could not record the outcome. */ }
+          if (!error) onUnacked?.(appSteerReceipt(q.id));
+        }
+      } finally { busy = false; }
+    }
+  };
+}
+
 export function createExecutorSteerBridge({ run, sid, model = '', lockedCall, onUnacked }) {
   let seq = 0;
   const reportId = step => 'agy-' + crypto.createHash('sha256').update(JSON.stringify([run, model, step])).digest('hex').slice(0, 32);
@@ -403,6 +435,7 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
     const at = Date.now(), nextState = a.state || 'accepted';
     let changed = false;
     for (const q of targets) {
+      if (q.state === 'accepted' && nextState !== 'accepted') continue;
       const fresh = q.state !== 'accepted' && nextState === 'accepted';
       if (q.state !== nextState || q.claim || a.error) changed = true;
       q.state = nextState;

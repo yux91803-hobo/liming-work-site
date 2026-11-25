@@ -120,6 +120,7 @@ test('新对话里问别的对话的任务：task show 看得到；task tell/sto
   h.hold(true);
   const n = h.locked('task_new', { kind: 'quick', title: '查网关签到积分', goal: '现在有多少积分了？', parent: 'sxianliao001' });
   const sid = 'snewchat0001', run = 'rnewchat0001';
+  fs.mkdirSync(path.join(h.xin, 'runs'), { recursive: true });
   fs.writeFileSync(path.join(h.xin, 'sessions', sid + '.json'), JSON.stringify({ sid, agent: 'codex', runs: [run] }));
   fs.writeFileSync(path.join(h.xin, 'runs', run + '.json'), JSON.stringify({ run, sid, agent: 'codex', model: 'deepseek-v4.1-flash', text: '那个查网关积分的', started: Date.now() }));
   fs.writeFileSync(path.join(h.xin, 'runs', run + '.jsonl'), JSON.stringify({ t: 'user', text: '那个查网关积分的' }) + '\n');
