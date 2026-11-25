@@ -1,3 +1,8 @@
+## 2026-11-25 · 天启上传图片
+
+- Codex 实现并自查，分支 `codex/tianqi-harness-vision-20261125`，基线 `843fd72`。Harness 对未声明方式的网关模型只允许文字，补齐目录和每轮配置间丢失的图片能力。实际 Harness 的旧、新配置回归与 `li2` 合成图片的正式验证见此分支 PR。无需迁移，正式站由既有工作流按版本回滚。
+- [#221 正式联调](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45578675951)已通过，3B 可收尾。第 4a 批 #215 已合入，等待[正式联调](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45611479035)。第 5 批 #216、#217、#220 依次同步并发布，工作区写回清单在独立工作树验证。
+
 ## 2026-11-25 · 第 2 步第 4a 批
 
 - **实现与审核**：Codex 实现并自查，分支 `codex/xin-stage2-host-approval-20261125`。依照第 2 步设计 §1 的方案 C 及 §6.10。#211 原提交和审查修正已由 [#213](https://github.com/yux91803-hobo/liming-work-site/pull/213) 合入 `49366ef`。

@@ -1,3 +1,9 @@
+# 修改清单 · 2026-11-25（天启 DeepSeek 读取上传图片）
+
+- Codex 实现并自查。原有模型目录标记了图片能力，每轮生成的 Harness 网关配置漏了 `input`，导致 Harness 的 `read_image` 返回 `IMAGE_UNSUPPORTED_MODEL`。现在按每个模型声明 `text` 和 `image`，GLM-5.3 Flash 只声明 `text`。附件提示写明原生读图工具，沿用现有只读、工作区和插件设置。 [Harness 模型配置](https://github.com/deepseek-ai/deepseek-harness/blob/38a6a5c965aa99ab525161efb7cc5cf1fe62fced/packages/llm/llm-pi-ai/src/config.ts#L88) [Harness 读图工具](https://github.com/deepseek-ai/deepseek-harness/blob/38a6a5c965aa99ab525161efb7cc5cf1fe62fced/packages/fs/tool-fs/src/read-image.ts#L124)
+- 用 `0.2.2-rc.3` 的实际 Harness 和仅本机的 Responses 夹具核对，旧补丁拒绝读图，新补丁在只读模式完成 `read_image` 并把 `input_image` 送到接口。模型配置变更时，正式联调用 `li2` 上的 DeepSeek 识别只存在于合成图片中的随机字符。
+- 网关配置按轮生成，无状态迁移。正式验证失败沿用部署工作流自动回滚，前版可以继续读取既有会话和附件。
+
 # 修改清单 · 2026-11-25（第 2 步第 4a 批宿主派发授权）
 
 - Codex 实现并自查。按已确认的方案 C，Worker 验证站长登录后记录发话来源，待送达保存在消息信封中，消息编号和去重摘要沿用原规则。状态进程从匹配对话的当前执行尝试读取站长原话并签发授权。

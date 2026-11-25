@@ -1259,7 +1259,7 @@ export function filesPart(files, agent, seesImages) {
   if (files.some(f => f.image)) {
     // 前台用 Responses input_image；Codex 后台用 -i；Harness 用自己的工具打开路径。
     if (agent === 'codex') tip = seesImages ? '\n图片已经直接给你看了。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
-    else if (agent === 'harness') tip = seesImages ? '\n图片在你电脑上，用工具打开上面的路径就能看。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
+    else if (agent === 'harness') tip = seesImages ? '\n图片在你电脑上，用 read_image 打开上面列出的图片路径。' : '\n你现在用的模型看不了图片内容，要看图的话如实跟用户说。';
     else tip = '\n图片用 Read 工具打开就能看。';
   }
   return '\n\n【用户发来的文件（已经在你电脑上）】\n' + files.map(f => '- ' + f.path + '（' + f.name + '，' + (f.image ? '图片，' : '') + sizeText(f.size) + '）').join('\n') + tip;

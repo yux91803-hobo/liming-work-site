@@ -470,6 +470,7 @@ export function writeHarnessPatch(effort, model, state) {
     '        displayName: ' + q(R.name), '        apiKeyEnv: XIN_HARNESS_KEY', '        api: ' + R.api, '        baseURL: ' + q(R.baseURL),
     '        models:'].concat(HARNESS_MODELS.flatMap(m => [
     '          - id: ' + q(m.id), '            name: ' + q(m.name), '            contextWindow: ' + m.win,
+    '            input: ' + q(m.image ? ['text', 'image'] : ['text']),
     '            reasoningEfforts:'].concat(m.efforts.map(x => '              ' + x + ': ' + (x === 'off' ? 'none' : x)))), [
     '- id: agent-default-model', '  config:', '    provider: ' + R.provider, '    model: ' + q(M.id), '    reasoningEffort: ' + e,
     '- id: system-prompt', '  config:', '    personaPrefix: ' + q(TIANQI ? TIANQI_NAME : tianqiPrompt())
