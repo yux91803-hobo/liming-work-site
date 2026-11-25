@@ -203,7 +203,7 @@ async def main():
                 raise RuntimeError('Smoke turn landed in the main conversation')
             tasks = (await call('tasks', {'sid': sid}))['tasks']
             owned = [t for t in tasks if t['parent'] == sid and t['title'] == marker and t['dir'] == directory]
-            if len(owned) != 1 or owned[0]['status'] not in ('running', 'queued'):
+            if len(owned) != 1 or owned[0].get('kind') != 'research' or owned[0]['status'] not in ('running', 'queued'):
                 raise RuntimeError('Expected one active isolated smoke task')
             task = owned[0]
             print('PASS real browser login and real background dispatch', flush=True)
@@ -329,8 +329,17 @@ async def main():
                 # 15 minutes before it (new tasks skip Gemini then). A local agy failure (no result, non-zero exit) is never
                 # recorded, so a broken integration on our side still fails here.
                 center = await call('tasks', {'all': True})
-                why = explain_background_fallback(center.get('antigravity'), center.get('antigravityIssue'), dispatched_ms, time.time() * 1000, expected_model=AGY_RESEARCH)
-                print('PASS ' + ('real quota cooldown retained' if why == 'quota' else why + ' recorded by the controller') +
+                done = next((e for e in turn['events'] if e.get('t') == 'done'), {})
+                planned_fallback = task.get('model') == actual == 'deepseek-v4.1-flash' and not done.get('from')
+                shared = center.get('frontAntigravity') if planned_fallback else None
+                try:
+                    why = explain_background_fallback(center.get('antigravity'), center.get('antigravityIssue'), dispatched_ms, time.time() * 1000, expected_model=AGY_RESEARCH, front_quota=shared)
+                except RuntimeError:
+                    print('Background routing evidence: ' + json.dumps({'kind': task.get('kind'), 'planned': task.get('model'),
+                          'actual': actual, 'from': done.get('from'), 'sharedBlocked': bool((shared or {}).get('blocked'))}), flush=True)
+                    raise
+                labels = {'quota': 'real quota cooldown retained', 'shared quota': 'recorded cooldown of the shared Gemini pool'}
+                print('PASS ' + labels.get(why, why + ' recorded by the controller') +
                       ' and fallback produced the verified file', flush=True)
             if errors:
                 raise RuntimeError('Browser JavaScript errors')
@@ -486,7 +495,7 @@ async def main():
                 # Same rule as the background file task: only a cause the controller recorded explains a fallback
                 # (a real quota cooldown, or a Gemini outage: stall / non-SUCCESS answer). #132 正式站：named Gemini 120 秒不出声，换 GLM 做完。
                 center = await call('tasks', {'all': True})
-                why = explain_background_fallback(center.get('antigravity'), center.get('antigravityIssue'), named_dispatched_ms, time.time() * 1000)
+                why = explain_background_fallback(center.get('antigravity'), center.get('antigravityIssue'), named_dispatched_ms, time.time() * 1000, expected_model=AGY_MODEL)
                 print('PASS named Gemini web fell back only because ' + ('of a real quota cooldown' if why == 'quota' else why + ' was recorded by the controller'), flush=True)
             if not preview.get('ready') or not preview.get('checks'):
                 raise RuntimeError('Real Gemini web artifact or browser evidence missing')

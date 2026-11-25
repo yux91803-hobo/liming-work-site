@@ -160,17 +160,23 @@ GEMINI_SKIP_MS = 15 * 60 * 1000  # vm-agent AGY_STALL_MS: new tasks skip Gemini 
 CLOCK_SKEW_MS = 60 * 1000  # the runner and the cloud computer keep separate clocks
 
 
-def explain_background_fallback(quota, issue, dispatched_ms, now_ms, expected_model=None):
+def explain_background_fallback(quota, issue, dispatched_ms, now_ms, expected_model=None, front_quota=None):
     """Why the default background task did not finish on Gemini, from what the controller recorded.
 
-    Accepted: a quota cooldown still in force, or a Gemini outage (no output = stall, or a non-SUCCESS
-    answer = status) recorded during this run or in the window before it in which new tasks skip Gemini.
+    Accepted: a quota cooldown still in force, including the front record used for the shared pool at
+    dispatch, or a Gemini outage recorded during this run or in the preceding skip window.
     A local agy failure is never recorded by the controller, so it cannot explain anything here."""
     quota = quota or {}
     gemini_pool = ('gemini-4-hydrogen', 'gemini-4-neon')
     model_matches = expected_model is None or quota.get('model') == expected_model or (expected_model in gemini_pool and quota.get('model') in gemini_pool)
     if model_matches and quota.get('blocked') is True and isinstance(quota.get('retryAt'), (int, float)) and quota['retryAt'] > now_ms:
         return 'quota'
+    # vm-runtime's agyPoolAvailable uses the front record for the shared Gemini pool at dispatch.
+    # It cannot explain a named request or a later error starting an assigned Gemini executor.
+    checked_at = (front_quota or {}).get('checkedAt')
+    if (expected_model in gemini_pool and front_quota_blocked(front_quota, now_ms)
+            and type(checked_at) in (int, float) and 0 < checked_at <= dispatched_ms + CLOCK_SKEW_MS):
+        return 'shared quota'
     issue = issue or {}
     at = issue.get('at')
     if issue.get('kind') in ('stall', 'status') and isinstance(at, (int, float)) and dispatched_ms - GEMINI_SKIP_MS <= at <= now_ms + CLOCK_SKEW_MS:

@@ -233,6 +233,16 @@ class BackgroundFallback(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             explain_background_fallback(argon, None, self.SENT, self.NOW, expected_model=HYDROGEN)
 
+    def test_shared_front_cooldown_explains_only_planned_gemini_pool_fallback(self):
+        background = {'model': HYDROGEN, 'blocked': False, 'retryAt': 0}
+        front = {'model': HYDROGEN, 'blocked': True, 'retryAt': self.NOW + 60000, 'checkedAt': self.SENT - 60000}
+        self.assertEqual(explain_background_fallback(background, None, self.SENT, self.NOW, HYDROGEN, front), 'shared quota')
+        for model, sample in ((HYDROGEN, None), ('gemini-4-argon', front),
+                              (HYDROGEN, {**front, 'retryAt': self.NOW}), (HYDROGEN, {**front, 'model': 'gemini-4-argon'}),
+                              (HYDROGEN, {**front, 'checkedAt': self.SENT + 120000}), (HYDROGEN, {**front, 'checkedAt': None})):
+            with self.subTest(model=model, sample=sample), self.assertRaises(RuntimeError):
+                explain_background_fallback(background, None, self.SENT, self.NOW, model, sample)
+
     def test_recorded_gemini_outage_in_this_run_or_the_15_minutes_before_explains_it(self):
         for issue in ({'kind': 'stall', 'at': self.SENT + 120_000}, {'kind': 'status', 'status': 'ERROR', 'at': self.SENT + 125_000},
                       {'kind': 'stall', 'at': self.SENT - 14 * 60_000}, {'kind': 'stall', 'at': self.NOW + 30_000}):
