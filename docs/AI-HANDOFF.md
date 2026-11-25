@@ -1,6 +1,6 @@
 ## 2026-11-25 · 天启思考强度修正：并回模型选择器、改 Codex 式内嵌滑杆（Antigravity 实现，Muse 驱动监督）
 
-- **谁做的**：Antigravity（Gemini 4 Carbon High，经 agy CLI）实现并自查；Muse 驱动监督与轻查，1280/390 弹层截图已经站长过目确认。分支 `antigravity/tianqi-codex-slider-fix-20261125`（基于 `main` `df4430d`，即 PR #210）。完整改法与验证记录见 [docs/CHANGES.md](CHANGES.md) 最新一条。
+- **谁做的**：Antigravity（Gemini 4 Carbon High，经 agy CLI）实现并自查；Muse 驱动监督与轻查，1280/390 弹层截图已经站长过目确认。分支 `antigravity/tianqi-codex-slider-fix-20261125`（原基于 `main` `df4430d` 即 PR #210；2026-11-25 由 Muse 变基到最新 main，文档冲突已解，承载 PR 为 #218）。完整改法与验证记录见 [docs/CHANGES.md](CHANGES.md) 最新一条。
 - **已完成**：修正 #210 对 Codex 桌面端的仿错——模型与思考强度合一为输入区单个 `.xc-mdl` 胶囊，删除独立的 `#tq-eff` 按钮与 `#tq-eff-pop` 列表弹层；星表弹层底部「思考强度」改为可拖动/点刻度/方向键切档的星空滑杆（档位随模型 3 或 4 档），`state.effort`、`lm.tq.effort`、终端欢迎框同步不变。其后按站长追加指示，去掉胶囊与弹层标题行表示档位的 `.xc-em` 四角星标，只保留档位文字。顺带把弹层锚定改为紧贴胶囊上方 8px，4 张星体卡与滑杆在各视口一屏全显，并消除无头截图里偶发的暗色矩形残影。小芯共用的 `site/xin/*` 与 `site/shell.js` 零改动；资源版本号 `?v=cosmos-slider-20261125`。
 - **测试结果（Antigravity 本机自查）**：`xin_tianqi_e2e.py` 88/88（3 处断言随控件结构同步更新，理由见 CHANGES.md，无跳过/删除）、天启单测 40/40、隔离环境 `npm run check` 退出码 0（全仓单测 1091/1091）。CI 结果以本 PR 的 Actions 运行为准。
 - **接手注意**：真机 iOS Safari 上滑杆拖动手感与键盘让帧仍需站长实机确认（#210 遗留的真机确认项不变）。
@@ -19,7 +19,7 @@
 
 ## 2026-11-25 · 小芯内核架构接手盘点与第 2 步第 3B 批协议收口（Antigravity 原交接）
 
-- **谁做的**：**Antigravity** 独立完成架构全面盘点、第 3B 批遗留协议实现与测试验证；**自查（无独立 AI 复核）**。分支 `antigravity/xin-steer-report-delivery`（基于 `main` `df4430d`，即 PR #210）。完整改法、开源参考与设计取舍见 [docs/CHANGES.md](CHANGES.md) 最新一条及 [持久收尾计划](superpowers/plans/2026-11-16-xin-finalization.md)。
+- **谁做的**：**Antigravity** 独立完成架构全面盘点、第 3B 批遗留协议实现与测试验证；**自查（无独立 AI 复核）**。分支 `antigravity/xin-steer-report-delivery`（原基于 `main` `df4430d` 即 PR #210；2026-11-25 由 Muse 变基到最新 main，文档冲突已解，承载 PR 为 #218）。完整改法、开源参考与设计取舍见 [docs/CHANGES.md](CHANGES.md) 最新一条及 [持久收尾计划](superpowers/plans/2026-11-16-xin-finalization.md)。
 - **一、三层架构进度核对台账（截至 2026-11-25，以代码与测试记录为准）**：
   1. **小芯原始架构六步路线图（[docs/xin-kernel-design.md](xin-kernel-design.md) §10）**：
      - **第 1 步（内核外壳、私有端口、待送达与 SSE 事件流传输）**：**已完成并验收**（#136；模型逐字流式生成按原设计在第 3 步）。
