@@ -1,3 +1,10 @@
+## 2026-11-25 · 天启思考强度修正：并回模型选择器、改 Codex 式内嵌滑杆（Antigravity 实现，Muse 驱动监督）
+
+- **谁做的**：Antigravity（Gemini 4 Carbon High，经 agy CLI）实现并自查；Muse 驱动监督与轻查，1280/390 弹层截图已经站长过目确认。分支 `antigravity/tianqi-codex-slider-fix-20261125`（基于 `main` `df4430d`，即 PR #210）。完整改法与验证记录见 [docs/CHANGES.md](CHANGES.md) 最新一条。
+- **已完成**：修正 #210 对 Codex 桌面端的仿错——模型与思考强度合一为输入区单个 `.xc-mdl` 胶囊，删除独立的 `#tq-eff` 按钮与 `#tq-eff-pop` 列表弹层；星表弹层底部「思考强度」改为可拖动/点刻度/方向键切档的星空滑杆（档位随模型 3 或 4 档），`state.effort`、`lm.tq.effort`、终端欢迎框同步不变。其后按站长追加指示，去掉胶囊与弹层标题行表示档位的 `.xc-em` 四角星标，只保留档位文字。顺带把弹层锚定改为紧贴胶囊上方 8px，4 张星体卡与滑杆在各视口一屏全显，并消除无头截图里偶发的暗色矩形残影。小芯共用的 `site/xin/*` 与 `site/shell.js` 零改动；资源版本号 `?v=cosmos-slider-20261125`。
+- **测试结果（Antigravity 本机自查）**：`xin_tianqi_e2e.py` 88/88（3 处断言随控件结构同步更新，理由见 CHANGES.md，无跳过/删除）、天启单测 40/40、隔离环境 `npm run check` 退出码 0（全仓单测 1091/1091）。CI 结果以本 PR 的 Actions 运行为准。
+- **接手注意**：真机 iOS Safari 上滑杆拖动手感与键盘让帧仍需站长实机确认（#210 遗留的真机确认项不变）。
+
 ## 2026-11-25 · 天启星空宇宙主题大改版：天枢星象舱布局、宇宙星表模型选择器、Codex 式思考强度、实时思考星链与 1:1 Claude Code 终端（Antigravity 实现，Muse 驱动监督）
 
 - **谁做的**：Antigravity 实现并自查——第 1–3 步（布局、样式、交互引擎、e2e 调整）由 Gemini 4 Carbon High 完成；Gemini 额度用完后同一 agy 会话切 Claude Opus 5.5 High 完成第 4–5 步（截图核验修复、全量检查、本条所据的变更记录）；两个池额度均用尽后，最终总结未及输出。Muse 负责驱动监督、补填 `docs/CHANGES.md` 的 check 结果、随附下方账号数纠正与本条交接；本地全量复核按站长指示略过，以 CI 结果为准。分支 `antigravity/tianqi-cosmos-rework-20261124`（基于 `main` `4d62222`，即 PR #209）。完整改法、开源参考与验证记录见 [docs/CHANGES.md](CHANGES.md) 最新一条。
