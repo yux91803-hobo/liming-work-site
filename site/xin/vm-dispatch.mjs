@@ -17,7 +17,7 @@ export function runnerAlive(run, meta) {
   return probe.status !== 0;
 }
 
-export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, patchRun, finalizations, finalizeRun }) {
+export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, patchRun, finalizations, finalizeRun, allowHostLaunch = () => true }) {
   const dead = (run, m, started = m.started) => Date.now() - started > (Number(process.env.XIN_DEAD_MS) || 15000) && !runnerAlive(run, m);
   function stopOrphan(run, m) {
     if (m.childPid && processGroupMembers(m.childPid, m.childIdentity).length) {
@@ -59,8 +59,10 @@ export function createDispatcher({ self, metaF, sessF, runF, lockedCall, emit, p
     const run = job.run;
     let attempt = null, claimed = false;
     journal.atomic(() => {
+      const meta = readJ(metaF(run));
+      if (!allowHostLaunch(meta)) return;
       if (!(claimed = journal.claimLaunch(job))) return;
-      const meta = readJ(metaF(run)); attempt = nextAttempt(meta);
+      attempt = nextAttempt(meta);
       if (attempt) writeJ(metaF(run), { ...meta, attempt, pid: null, identity: null, launcher: null, childPid: null, childIdentity: null });
     });
     if (!claimed) return false;

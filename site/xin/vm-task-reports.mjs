@@ -7,7 +7,7 @@ import { retryDelays, RETRY_TEXT } from './vm-retry.mjs';
 import { hasFinalization, attemptError, finalizationEvidence } from './vm-run-attempt.mjs';
 import { withCallContext } from './vm-kernel-context.mjs';
 import { inputDigest } from './vm-state.mjs';
-import { appSteerReceipt } from './vm-steer.mjs';
+import { appSteerReceipt, retainHostGrant } from './vm-steer.mjs';
 
 export function taskBridgeSession(session, meta) {
   if (meta?.bridgeProtocol === undefined || meta.bridgeProtocol === 0) return session;
@@ -104,6 +104,7 @@ export function createTaskFinisher({ sessF, metaF, isTask, lastRun, tailEvents, 
     // 这一轮没正常做完（超时、断线、重启、停下、出错）的话，送进去了的也带上（held）：没法确定模型已经照着做了，下一轮开头再交一次
     const okEnd = !!a.ok && !a.stopped && !a.timeout && !a.died && !a.transient;
     const carry = (runMeta.steers || []).filter(x => x.state === 'pending' || x.state === 'next' || (!okEnd && x.state === 'accepted'));
+    const retainGrant = carry.every(x => x.ownerInput === true) ? retainHostGrant(t) : () => {};
     if (carry.length) t.inbox = (t.inbox || []).concat(carry.map(x => ({ id: x.id, text: x.text, at: x.at, ...(x.state === 'accepted' ? { held: true } : {}) })));
     const last = evs.filter(e => e.t === 'text').pop(), err = evs.filter(e => e.t === 'err').pop();
     let notify = null;
@@ -171,6 +172,7 @@ export function createTaskFinisher({ sessF, metaF, isTask, lastRun, tailEvents, 
       if (isFinished(t) && t.workspace && !a.uncertain) t.cleanupPending = a.run;
     } else cleanupFinishedTask(t);
     if (t.dailyDate && isFinished(t)) dailyDone(a.run, { sid: t.sid, dailyDate: t.dailyDate }, t.status === 'done');
+    retainGrant();
     saveTask(t);
     const notice = notify&&t.delivery?.state!=='pending' ? enqueueNotice(t, notify) : null;
     if (!finalization) scheduleNow();

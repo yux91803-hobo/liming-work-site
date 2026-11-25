@@ -40,7 +40,7 @@ export class Inbox {
   // 只串行化存储变更，不在这里等待云电脑。新消息、闹钟、迟到的回应和确认共用同一条写入队列。
   serial(fn) { const p = this.mutations.then(fn); this.mutations = p.catch(() => {}); return p; }
   // 存好了才返回；新的一行（或到期的旧行）当场送一次，最多等 budgetMs，没等到就先回「在送」
-  async accept({ id, op, args }) {
+  async accept({ id, op, args, ownerInput }) {
     if (typeof id !== 'string' || !ID.test(id)) return { error: 'bad_id' };
     args = args && typeof args === 'object' ? args : {};
     const digest = await digestOf(args);
@@ -50,7 +50,7 @@ export class Inbox {
       const now = this.now(), seq = ((await this.storage.get(this.prefix + 'seq')) || 0) + 1;
       await this.storage.put(this.prefix + 'meta', { v: 1 });   // 有行就一定有标记，闹钟能认出这是待送达
       await this.storage.put(this.prefix + 'seq', seq);
-      await this.storage.put(this.rowPrefix + id, { id, op, args, digest, seq, state: 'pending', attempts: 0, backoff: 0, nextAt: now, leaseUntil: 0, createdAt: now,
+      await this.storage.put(this.rowPrefix + id, { id, op, args, digest, ...(ownerInput === true ? { ownerInput: true } : {}), seq, state: 'pending', attempts: 0, backoff: 0, nextAt: now, leaseUntil: 0, createdAt: now,
         firstAttemptAt: 0, deliveredAt: 0, finishedAt: 0, result: null, wait: null, error: null, acked: false, woke: false });
       return false;
     });

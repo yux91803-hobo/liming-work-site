@@ -196,6 +196,11 @@ const modelStats = (f, run) => rows(path.join(f.home, 'model-stats.jsonl')).filt
 async function startBackground(f, options) {
   const result = await locked(f, 'task_new', {kind:'system', title:'收尾测试', goal:'运行隔离的本地收尾测试', model:'glm-5.3', named:true, ...options});
   assert.ok(result.task?.sid, JSON.stringify(result));
+  if (result.task.approval?.kind === 'host') {
+    const approved = await (await stateClient()).requestState(f.home, { kind: 'op', op: 'task_tell',
+      args: { sid: result.task.sid, approvalId: result.task.approval.id, decision: 'approve', _ownerInput: true } });
+    assert.equal(approved.ok, true, JSON.stringify(approved));
+  }
   const launched = await until(() => loadSession(f, result.task.sid).runs.at(-1));
   assert.ok(launched, '后台任务没有启动');
   return {sid:result.task.sid, run:launched};

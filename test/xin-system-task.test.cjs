@@ -11,6 +11,8 @@ const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { platformTimeout } = require('./helpers/timeout.cjs');
 const { stopOwned } = require('./helpers/stop-owned.cjs');
+const { captureRunContext } = require('./helpers/run-context.cjs');
+const { stateMode } = require('./helpers/state-mode.cjs');
 const SITE = path.join(__dirname, '../site/xin');
 const AGENT = path.join(SITE, 'vm-agent.mjs');
 const imp = f => import(pathToFileURL(path.join(SITE, f)).href);
@@ -41,19 +43,39 @@ function fakeCodex(dir) {
     .map(f => ({ args: fs.readFileSync(path.join(log, f), 'utf8'), cwd: fs.readFileSync(path.join(log, 'cwd.' + f.split('.')[1]), 'utf8').trim() }));
   return { bin, log, calls };
 }
-function home(t) {
+function home(t, extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xin-system-')), xin = path.join(dir, 'xin'), work = path.join(dir, 'work');
   fs.mkdirSync(xin, { recursive: true }); fs.mkdirSync(work, { recursive: true }); fs.mkdirSync(path.join(dir, 'tmp'));
   const fc = fakeCodex(dir);
+  const preload = path.join(dir, 'fetch.cjs');
+  fs.writeFileSync(preload, `
+    globalThis.fetch = async (_url, init) => {
+      if (JSON.parse(init.body || '{}').stream) return new Response('{}');
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 30000);
+        init.signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+      });
+      return new Response(JSON.stringify({ status: 'completed', output: [] }));
+    };
+  `);
   const env = { ...process.env, TMPDIR: path.join(dir, 'tmp'), XIN_HOME: xin, XIN_WORK: work, XIN_CODEX_TRANSPORT: 'exec', XIN_FRONT_PROVIDER: 'deepseek',
-    XIN_DSH: path.join(dir, 'no-dsh'), XIN_AGY_HOME: dir, XIN_ANTIGRAVITY_BIN: '', CODEX_HOME: path.join(dir, 'codex'), PATH: fc.bin + ':' + process.env.PATH };
-  const ensureState=require('./helpers/state-mode.cjs').stateClient(t,env);
+    XIN_DSH: path.join(dir, 'no-dsh'), XIN_AGY_HOME: dir, XIN_ANTIGRAVITY_BIN: '', CODEX_HOME: path.join(dir, 'codex'), PATH: fc.bin + ':' + process.env.PATH,
+    XIN_CODEX_KEY_FILE: path.join(dir, 'codex.key'), NODE_OPTIONS: '--require=' + preload, ...extra };
+  let owner;
+  const ensureState = () => owner ||= stateMode(t, env);
+  const restart = async () => {
+    owner.child.kill('SIGKILL');
+    await owner.exited;
+    owner = stateMode(t, env);
+  };
   const run = (argv, args) => { ensureState(); const r = spawnSync(process.execPath, [AGENT, ...argv], { env, input: JSON.stringify(args || {}), encoding: 'utf8', timeout: platformTimeout(20000) }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
-  const locked = (name, args) => { ensureState(); const r = lockedSpawn(AGENT, name, args, { env, encoding: 'utf8', timeout: platformTimeout(20000) }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  const locked = (name, args, context) => { ensureState(); const r = lockedSpawn(AGENT, name, args, { env: { ...env, ...context }, encoding: 'utf8', timeout: platformTimeout(20000) }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  const op = (name, args) => run([name], args);
   const hold = on => { const f = path.join(fc.log, 'hold-bg'); if (on) fs.writeFileSync(f, ''); else fs.rmSync(f, { force: true }); };
   const task = sid => JSON.parse(fs.readFileSync(path.join(xin, 'sessions', sid + '.json'), 'utf8'));
   t.after(() => stopOwned(xin, dir));
-  return { dir, xin, work, locked, hold, task, fc };
+  const decide = (t, decision = 'approve', fields = {}) => op('task_tell', { sid: t.sid, decision, approvalId: t.approval.id, _ownerInput: true, ...fields });
+  return { dir, xin, work, locked, hold, task, fc, op, decide, restart };
 }
 async function until(fn, ms = 15000, what = '') {
   const end = performance.now() + platformTimeout(ms); let v;
@@ -65,7 +87,9 @@ test('电脑维护任务不进容器：目录是 WORK/system、不建项目副�
   const h = home(t);
   const s = h.locked('task_new', { kind: 'system', title: '看看磁盘', goal: '电脑磁盘是不是满了，满了就清一清', dir: 'proj', web: true, sites: ['bilibili.com'] });
   assert.ok(s.task, JSON.stringify(s));
-  assert.equal(s.task.kind, 'system');
+  assert.deepEqual([s.task.kind, s.task.status, s.task.approval.kind], ['system', 'waiting', 'host']);
+  assert.equal(h.task(s.task.sid).runs.length, 0);
+  assert.equal(h.decide(s.task).ok, true);
   await until(() => h.task(s.task.sid).status === 'done', 20000, '电脑维护任务做完');
   const st = h.task(s.task.sid);
   assert.equal(st.dir, fs.realpathSync(path.join(h.work, 'system')), '--dir 不管用，固定在 WORK/system');
@@ -86,13 +110,115 @@ test('电脑维护任务同一时间只做一个；它在做的时候普通任�
   const h = home(t);
   h.hold(true);
   const a = h.locked('task_new', { kind: 'system', title: '修甲', goal: '重启卡住的服务' });
+  assert.equal(h.decide(a.task).ok, true);
   await until(() => h.task(a.task.sid).status === 'running', 15000, '甲开始');
   const b = h.locked('task_new', { kind: 'system', title: '修乙', goal: '装个软件' });
+  assert.equal(h.decide(b.task).ok, true);
   const c = h.locked('task_new', { kind: 'code', title: '普通丙', goal: '写代码' });
   await until(() => h.task(c.task.sid).status === 'running', 15000, '普通任务不用等');
   assert.equal(h.task(b.task.sid).status, 'queued', '第二个电脑维护任务排队');
   h.hold(false);
   await until(() => h.task(b.task.sid).status === 'done', 20000, '乙最后也做完');
+});
+
+test('维护审批只接受站长任务卡片上的决定，编号不可跨任务或重放，拒绝不启动执行器', async t => {
+  const h = home(t);
+  const a = h.locked('task_new', { kind: 'system', goal: '检查系统 A' }).task;
+  const b = h.locked('task_new', { kind: 'system', goal: '检查系统 B' }).task;
+  assert.equal(h.locked('task_tell', { sid: a.sid, decision: 'approve', approvalId: a.approval.id, _ownerInput: true }).error, 'owner_required');
+  assert.equal(h.decide(a, 'approve', { approvalId: b.approval.id }).error, 'stale_approval');
+  const { requestState } = await imp('vm-kernel-client.mjs');
+  const changed = { ...h.task(b.sid), goal: '改过的目标', dir: h.work };
+  await requestState(h.xin, { kind: 'write', name: 'sessions/' + b.sid + '.json', body: JSON.stringify(changed) });
+  assert.equal(h.decide(b).error, 'stale_approval');
+  const denied = h.decide(a, 'deny');
+  assert.equal(denied.task.status, 'stopped');
+  assert.equal(h.decide(a).error, 'stale_approval');
+  assert.equal(h.task(b.sid).status, 'waiting');
+  assert.equal(h.fc.calls().length, 0);
+  assert.equal(h.op('send', { sid: b.sid, text: '执行', _ownerInput: true }).error, 'use_task_tell');
+  assert.ok(h.locked('task_new', { daily: true, goal: '不在清单中的任务' }).error);
+});
+
+test('维护审批过期后停止，旧编号不会启动任务，也不会把待确认当作活跃任务', async t => {
+  const h = home(t, { XIN_WAIT_TTL_MS: '100' });
+  const task = h.locked('task_new', { kind: 'system', goal: '检查磁盘占用' }).task;
+  assert.equal(task.approval.kind, 'host');
+  assert.ok(task.waitUntil > 0);
+  await until(() => Date.now() >= task.waitUntil);
+  assert.equal(h.decide(task).error, 'stale_approval');
+  h.locked('task_expire');
+  assert.equal(h.task(task.sid).status, 'stopped');
+  assert.equal(h.task(task.sid).runs.length, 0);
+  assert.equal(h.fc.calls().length, 0);
+});
+
+test('主人重启保留待处理审批，排队中的授权过期后重新等待，不启动执行器', async t => {
+  const h = home(t, { XIN_WAIT_TTL_MS: '2200' });
+  h.hold(true);
+  const first = h.locked('task_new', { kind: 'system', goal: '检查版本 A' }).task;
+  assert.equal(h.decide(first).ok, true);
+  await until(() => h.fc.calls().length === 1, 15000, '第一个任务占用维护目录');
+  let next = h.locked('task_new', { kind: 'system', goal: '检查版本 B' }).task;
+  await h.restart();
+  assert.equal(h.task(next.sid).approval.id, next.approval.id);
+  assert.equal(h.decide(next).task.status, 'queued');
+  await until(() => h.task(next.sid).hostGrant?.expiresAt <= Date.now(), 5000, '排队的授权过期');
+  h.hold(false);
+  await until(() => h.task(next.sid).status === 'waiting', 15000, '重新进入确认状态');
+  assert.equal(h.task(next.sid).runs.length, 0);
+  assert.equal(h.fc.calls().length, 1);
+  assert.equal(h.decide(next).error, 'stale_approval');
+  next = h.op('history', { sid: next.sid }).task;
+  assert.equal(h.decide(next).ok, true);
+  await until(() => h.task(next.sid).status === 'done', 15000, '第二次批准后完成');
+});
+
+test('未授权来源的维护续做重新等待确认，获授权的同一命令重试只启动一轮', async t => {
+  const h = home(t);
+  const a = h.locked('task_new', { kind: 'system', goal: '检查版本' }).task;
+  assert.equal(h.decide(a).ok, true);
+  await until(() => h.task(a.sid).status === 'done', 20000, '第一次维护结束');
+  const tell = { sid: a.sid, text: '检查另一项状态', clientId: 'auto-host-0001' };
+  const next = h.locked('task_tell', tell);
+  assert.equal(next.delivery, 'approval');
+  assert.equal(next.task.status, 'waiting');
+  assert.equal(h.task(a.sid).runs.length, 1);
+  assert.equal(h.locked('task_tell', tell).delivery, 'approval');
+  const args = { clientId: 'owner-host-0001' };
+  assert.equal(h.decide(next.task, 'approve', args).ok, true);
+  assert.equal(h.decide(next.task, 'approve', args).ok, true);
+  await until(() => h.task(a.sid).status === 'done', 20000, '第二次维护结束');
+  assert.equal(h.task(a.sid).runs.length, 2);
+  assert.equal(h.fc.calls().length, 2);
+});
+
+test('方案 C 只从同一对话内仍在运行的站长前台轮次签发自动授权，维护要求取站长原话', async t => {
+  const h = home(t);
+  fs.writeFileSync(path.join(h.dir, 'codex.key'), 'synthetic-key');
+  h.hold(true);
+  const send = { text: '检查本机版本', _ownerInput: true };
+  const front = h.op('send', send);
+  const context = captureRunContext(h.xin, front.run);
+  assert.ok(context.XIN_ATTEMPT);
+  const argv = ['xin', 'task', 'new', '--kind', 'system', '--', '替换掉站长要求'];
+  // 有权限轮次的编号本身不提供授权，来源必须和派发命令的执行尝试相符。
+  const unrelated = h.locked('task_new', { parent: front.sid, frontRun: front.run, kind: 'system', goal: send.text });
+  assert.ok(unrelated.error);
+  const action = h.locked('front_action', { run: front.run, argv }, context);
+  assert.equal(action.task?.status, 'running', JSON.stringify(action));
+  const task = h.task(action.task.sid);
+  assert.equal(task.goal, send.text);
+  assert.equal(task.hostGrant.run, front.run);
+  assert.equal(h.locked('task_tell', { sid: task.sid, text: '模型追加目标' }).error, 'owner_required');
+  const tell = h.op('task_tell', { sid: task.sid, text: '再确认磁盘余量', _ownerInput: true });
+  assert.ok(tell.ok);
+  h.hold(false);
+  await until(() => h.task(task.sid).status === 'done', 20000, '已授权维护完成');
+  const old = h.op('send', { text: '旧版待送达消息' });
+  const fromOld = h.locked('front_action', { run: old.run, argv }, captureRunContext(h.xin, old.run));
+  assert.equal(fromOld.task?.status, 'waiting', JSON.stringify(fromOld));
+  assert.equal(h.task(fromOld.task.sid).runs.length, 0);
 });
 
 test('提示词：电脑维护直接查直接修、能 sudo、别停两个关键服务；前台知道派 --kind system；容器任务做不了时说要电脑维护', async () => {

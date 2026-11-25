@@ -2,6 +2,30 @@
 // 交给模型时怎么说、什么时候附 <手上的事>（纯函数），以及 createSteerOps（补充 taskTell、主动说一句）。
 // 只引 node:crypto：控制器的读写都由 vm-agent.mjs 传进来（它的行数有基线、只许往下；网站给云电脑装控制器时每个模块一个子请求，免费套餐有上限）。
 import crypto from 'node:crypto';
+import { inputDigest } from './vm-state.mjs';
+
+export const maintenanceTask = t => t?.tkind === 'system' && !t.dailyDate;
+export const maintenanceApproval = t => t?.approval?.kind === 'host';
+export const WAIT_TTL_MS = () => Number(process.env.XIN_WAIT_TTL_MS) || 30 * 60e3;
+export const waitUntil = t => {
+  if (t?.status !== 'waiting') return 0;
+  if (maintenanceApproval(t)) return t.approval.expiresAt;
+  return !t.approval && t.endedAt ? t.endedAt + WAIT_TTL_MS() : 0;
+};
+const hostTarget = t => inputDigest([t.sid, t.parent, t.tkind, t.goal, t.dir, t.after || [], t.next || '', (t.inbox || []).map(item => item.text)]);
+function hostConfirmed(t, run, ttl, now = Date.now()) {
+  t.hostGrant = { target: hostTarget(t), by: 'owner', run: run || null, at: now, expiresAt: now + ttl };
+}
+function hostAllowed(t, now = Date.now()) {
+  const grant = t.hostGrant;
+  return grant?.by === 'owner' && grant.at <= now && now < grant.expiresAt && grant.target === hostTarget(t);
+}
+// Retarget the same grant after the controller consumes or requeues already authorized input.
+export function retainHostGrant(t) {
+  if (!maintenanceTask(t) || !hostAllowed(t)) return () => {};
+  const grant = t.hostGrant;
+  return () => { if (t.hostGrant === grant) grant.target = hostTarget(t); };
+}
 // 参考 Muse Code「Steer the active turn（在下一个安全的模型步骤加进去）/ Queue for the next turn」、
 // Codex codex-rs 的 turn/steer 和「这一轮收尾时还有待处理的输入就接着处理」。
 const lines = items => (items || []).map(x => typeof x === 'string' ? x : x?.text).filter(Boolean)
@@ -141,7 +165,63 @@ export function createExecutorSteerBridge({ run, sid, model = '', lockedCall, on
 }
 
 export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, scheduleNow, cleanupFinishedTask, listTasks, emit, isTask, isFinished, lastRun, TASK_STATUS, runDone, taskVersion,
-  readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel, callContext = () => ({}) }) {
+  readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel, ownerRequest = () => '', callContext = () => ({}) }) {
+  function allowHostStart(t) {
+    if (!maintenanceTask(t) || hostAllowed(t)) return true;
+    delete t.hostGrant;
+    const now = Date.now();
+    t.approval = { kind: 'host', id: rid('a'), target: hostTarget(t), at: now, expiresAt: now + WAIT_TTL_MS() };
+    const pending = [t.next, ...(t.inbox || []).map(item => item.text)].filter(Boolean).join('\n');
+    Object.assign(t, { status: 'waiting', endedAt: now, frontSeen: false,
+      question: '批准在小芯电脑上执行这项维护吗？\n工作目录：' + t.dir + '\n任务要求：' + t.goal + (pending ? '\n补充要求：' + pending : '') });
+    return false;
+  }
+  function confirmHostStart(t, run) { hostConfirmed(t, run, WAIT_TTL_MS()); }
+  function allowHostLaunch(m) {
+    const t = m?.task && readJ(sessF(m.sid));
+    if (!maintenanceTask(t) || m.stopped) return true;
+    if (t.status === 'running' && lastRun(t) === m.run) {
+      if (hostAllowed(t)) return true;
+      const input = m.hostInput;
+      if (input) {
+        t.next = input.next;
+        t.nextShow = input.nextShow;
+        t.inbox = [...new Map(input.inbox.concat(t.inbox || []).map(item => [item.id, item])).values()];
+        t.hostDeferredFirst = input.first;
+      } else if (t.runs.length === 1 && !t.agentSid) t.hostDeferredFirst = true;
+      else t.next = m.text;
+      if (t.hostDeferredFirst) { t.deadline = null; t.startedAt = 0; }
+      delete t.hostGrant;
+      allowHostStart(t);
+      t.finishedRun = m.run;
+      saveTask(t);
+    }
+    emit(m.run, { t: 'done', ok: false, stopped: true, code: -1, at: Date.now() });
+    writeJ(metaF(m.run), { ...m, ended: Date.now(), stopped: true });
+    journal.finishLaunch(m.run);
+    return false;
+  }
+  function decideHost(t, a) {
+    if (a._ownerInput !== true || callContext().run)
+      return { error: 'owner_required', msg: '请站长在任务详情里批准或拒绝电脑维护' };
+    const approval = t.approval, now = Date.now();
+    if (a.approvalId !== approval.id || approval.at > now || approval.expiresAt <= now || approval.target !== hostTarget(t))
+      return { error: 'stale_approval', msg: '维护确认已过期或目标已变化，请刷新任务后核对' };
+    if (!['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '请点「批准」或「拒绝」' };
+    delete t.approval;
+    t.question = '';
+    if (a.decision === 'approve') {
+      hostConfirmed(t, null, WAIT_TTL_MS(), now);
+      Object.assign(t, { status: 'queued', queuedAt: now, frontSeen: true });
+    } else {
+      delete t.hostGrant;
+      Object.assign(t, { status: 'stopped', endedAt: now, frontSeen: true, result: { ok: false, text: '已拒绝电脑维护。', at: now } });
+      cleanupFinishedTask(t);
+    }
+    saveTask(t);
+    scheduleNow();
+    return { ok: true, msg: a.decision === 'approve' ? '已批准电脑维护' : '已拒绝电脑维护', task: taskSummary(readJ(sessF(t.sid)) || t) };
+  }
   // 用户（或前台）给任务补充要求：在做就等这一步做完接着做；还没开始就并进要求；做完了、停了、在等确认就接着做
   function taskTell(a) {
     const t = findTask(a);
@@ -149,6 +229,7 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
     const expectedApproval = t.publication ? t.publication.id || 'publish' : t.approval?.id;
     if (a.approvalId !== undefined && a.approvalId !== expectedApproval || a.decision && !t.approval && !t.publication && !t.browserStep)
       return { error: 'stale_approval', msg: '这次确认已结束或已变化，请刷新任务后核对' };
+    if (maintenanceApproval(t)) return decideHost(t, a);
     if (t.approval) {
       if (t.approval.kind !== 'input' && !['approve', 'deny'].includes(a.decision)) return { error: 'needs_decision', msg: '请点「批准」或「拒绝」' };
       if (t.approval.kind === 'input' && !String(a.text || '').trim()) return { error: 'empty', msg: '请回复问题' };
@@ -190,31 +271,54 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
       else if (a.decision === 'deny') decided = '站长不用 ' + site + ' 的登录。别换别的办法登录；做不了的部分写进结果。';
       delete t.browserStep;
     }
-    const text = decided || String(a.text || '').trim().slice(0, 4000) || '接着做';
+    const host = maintenanceTask(t), run = callContext().run;
+    const original = host && run ? ownerRequest(run, t.parent) : '';
+    const owner = !!original || !run && a._ownerInput === true;
+    const activeRun = host && lastRun(t);
+    if (activeRun && !runDone(activeRun) && !owner)
+      return { error: 'owner_required', msg: '进行中的电脑维护只能由站长补充要求' };
+    const text = decided || String(original || a.text || '').trim().slice(0, 4000) || '接着做';
+    const saveTell = delivery => {
+      if (host) {
+        if (owner) confirmHostStart(t, run);
+        else delete t.hostGrant;
+        if (t.status === 'queued' && !allowHostStart(t)) delivery = 'approval';
+      }
+      told(delivery);
+      saveTask(t);
+      return delivery;
+    };
+    const waitingForHost = () => ({ ok: true, delivery: 'approval', msg: '已记下维护要求，等站长批准后执行', task: taskSummary(t) });
     t.transientRetries = 0;
     if(t.tkind==='review'&&t.status==='waiting'){const requested=namedModel(text);if(requested){t.requestedModel=requested;t.requestedNamed=true;}}
     if (t.status === 'running') {
       const r = lastRun(t), m = r && readJ(metaF(r));
       // 能进这一轮的（Codex app-server、Gemini 后台）记进这一轮的 steers，模型下一步就拿到；接不了的等这一轮跑完
       if (steerable(r, m) && !t.pendingQuestion) {
-        m.steers = (m.steers || []).concat([{ id, text, at: Date.now(), state: 'pending' }]);
-        writeJ(metaF(r), m); told('now'); saveTask(t);
+        m.steers = (m.steers || []).concat([{ id, text, at: Date.now(), state: 'pending', ...(host && owner ? { ownerInput: true } : {}) }]);
+        writeJ(metaF(r), m); saveTell('now');
         return { ok: true, delivery: 'now', msg: '补充已经送进任务 ' + t.no + ' 正在做的这一轮：它下一步就按新要求来，之前查到的也会按新要求重新筛一遍', task: taskSummary(t) };
       }
       t.inbox = (t.inbox || []).concat([{ id, text, at: Date.now() }]);
       if(t.pendingQuestion){delete t.pendingQuestion;t.question='';}
-      told('next'); saveTask(t);
+      saveTell('next');
       return { ok: true, delivery: 'next', msg: '记下了：任务 ' + t.no + ' 这一轮跑完就按你说的接着做', task: taskSummary(t) };
     }
     if (t.status === 'queued' && !(t.runs && t.runs.length)) {
-      t.goal += '\n补充：' + text; told('start'); saveTask(t);
+      t.goal += '\n补充：' + text;
+      if (saveTell('start') === 'approval') return waitingForHost();
       return { ok: true, delivery: 'start', msg: '任务 ' + t.no + ' 还没开始，补充的要求并进去了', task: taskSummary(t) };
     }
-    if (t.status === 'queued') { t.next = (t.next ? t.next + '\n' : '') + '用户又说：' + text; t.nextShow = (t.nextShow ? t.nextShow + '\n' : '') + text; told('start'); saveTask(t); return { ok: true, delivery: 'start', msg: '记下了：任务 ' + t.no + ' 接着做的时候一开始就带上', task: taskSummary(t) }; }
+    if (t.status === 'queued') {
+      t.next = (t.next ? t.next + '\n' : '') + '用户又说：' + text;
+      t.nextShow = (t.nextShow ? t.nextShow + '\n' : '') + text;
+      if (saveTell('start') === 'approval') return waitingForHost();
+      return { ok: true, delivery: 'start', msg: '记下了：任务 ' + t.no + ' 接着做的时候一开始就带上', task: taskSummary(t) };
+    }
     // 做完、停了、没做成：前台转过来的补充先记下，不重新开工；站长明确说继续（--continue）才接着做（站长 2026-11-17）。
     // 完成事件里让原工作接着改、网页任务详情里的「接着做」不经过这里。
     if (isFinished(t) && a.front && !a.resume) {
-      t.inbox = (t.inbox || []).concat([{ id, text, at: Date.now() }]); told('ended'); saveTask(t);
+      t.inbox = (t.inbox || []).concat([{ id, text, at: Date.now() }]); saveTell('ended');
       return { ok: true, ended: true, delivery: 'ended', status: t.status, result: cut(t.result ? t.result.text : '', 1500),
         msg: '任务 ' + t.no + '「' + t.title + '」' + TASK_STATUS[t.status] + '，没有接着做。先告诉兄弟它现在的状态和要点，问他要不要接着做；他明确说继续，再用 xin task tell ' + t.no + ' --continue 话。这句补充已经记下，接着做时会带上。', task: taskSummary(t) };
     }
@@ -225,7 +329,7 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
     if (active && !runDone(active)) {
       t.inbox = (t.inbox || []).concat([{ id, text, at: Date.now() }]);
       if(t.pendingQuestion||t.status==='waiting'){delete t.pendingQuestion;t.question='';t.status='running';}
-      told('next'); saveTask(t);
+      saveTell('next');
       return { ok: true, delivery: 'next', msg: '已收到，当前进程退出后接着做', task: taskSummary(t) };
     }
     // 停下前压着的补充（干活时收到、这一轮没正常做完带下来的、停下以后前台记下的）跟这句一起交给模型，这句放最后、以它为准；
@@ -236,8 +340,8 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
       inbox: [], status: 'queued', queuedAt: Date.now(), question: '', frontSeen: true });
     if (waiting) t.deadline = null;
     if (interrupted) t.resumes = 0;
-    const delivery = told(waiting ? 'reply' : 'resumed');
-    saveTask(t);
+    const delivery = saveTell(waiting ? 'reply' : 'resumed');
+    if (delivery === 'approval') return waitingForHost();
     scheduleNow();
     return { ok: true, delivery, msg: '任务 ' + t.no + ' 接着做了', task: taskSummary(readJ(sessF(t.sid)) || t) };
   }
@@ -394,5 +498,5 @@ export function createSteerOps({ metaF, sessF, findTask, taskSummary, saveTask, 
     }
     return { steers: (m.steers || []).filter(x => x.state === 'accepted' || claim && x.claim?.id === claim).map(q => ({ id:q.id, text:q.text, at:q.at })), ...(claim && fresh.length ? {claim} : {}) };
   }
-  return { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover };
+  return { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover, allowHostStart, allowHostLaunch, confirmHostStart };
 }
