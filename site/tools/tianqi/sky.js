@@ -3,7 +3,7 @@
    1. 深空星象台背景：WebGL 双通道（6 阶 FBM 分形银河星云离屏纹理 + 多光谱恒星与十字衍射星芒）、离屏黄道/赤道星盘与五组星座、许愿流星、双彗星流光与文字化星尘。
       参考 xemantic/shader-web-background、Stellarium Web、Magic UI BorderBeam、React Bits（Particles / StarBorder / ClickSpark）。
    2. 天枢星象舱空间布局：顶栏星象遥测桥 + 全景深空对话舱 + 右翼 Claude Code 终端观测台 + 按需展开/停靠对话星轨舱（Ctrl+B / Ctrl+J）。
-   3. 宇宙星表模型选择器 + 借鉴 OpenAI Codex 桌面端（openai/codex ComposerReasoningSelector）的独立思考强度星等控制台（#tq-eff / #tq-eff-pop，单键 E）。
+   3. 合一的宇宙星表模型与思考强度选择器（仿 OpenAI Codex 桌面端：单胶囊展示天体徽标、模型名与档位文字，弹层底部内嵌可拖动/可点刻度的星轨算力滑杆，单键 M / E）。
    4. 实时思考星链（.tq-chain）：流式展示模型每一步推理与工具执行，支持展开/收起与一键定位终端记录。参考 sst/opencode、cline/cline、assistant-ui Reasoning 组件。
    5. 1:1 复刻 Claude Code CLI 终端（.tq-cc，参考 anthropics/claude-code Ink TUI）：天启深空星徽欢迎框、❯ 提示符输入行、⏺ 动作块与 ✻ 思考行、
       ⎿ 折角缩进层级（含 +N lines 展开/折叠）、Unified Diff 红绿增删带行号与语法着色、运行态旋转星（✢✳✶✻✽）及底部权限与 ? 快捷键提示栏。 */
@@ -330,7 +330,7 @@
       if (chartCv.width && chartCv.height) bctx.drawImage(chartCv, 0, 0, W, H);
     }
     function size() {
-      W = innerWidth; H = innerHeight; DPR = Math.min(COARSE ? 1.25 : 2, window.devicePixelRatio || 1);
+      W = innerWidth; H = innerHeight; DPR = Math.min(COARSE ? 1 : 2, window.devicePixelRatio || 1);
       [starCv, back, fx].forEach(function (c) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); c.style.height = H + 'px'; });
       bctxDirty = ctxDirty = false;
       buildChart(); blitChart();
@@ -338,7 +338,7 @@
     }
     function rgba(c, a) { return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
     function spawnMeteor(opt) {
-      if (REDUCE || !meteorsOn || document.hidden) return;
+      if (REDUCE || !meteorsOn || document.hidden || html.classList.contains('kb-up') || html.classList.contains('kb-anim') || (COARSE && touchAt && performance.now() - touchAt < 900)) return;
       opt = opt || {};
       var fromLeft = Math.random() < .5, ang = (18 + Math.random() * 22) * Math.PI / 180, dir = fromLeft ? 1 : -1;
       var x = opt.x != null ? opt.x : (fromLeft ? W * (.05 + Math.random() * .5) : W * (.45 + Math.random() * .5));
@@ -485,12 +485,21 @@
       ctx.fillStyle = rgba(head, .65 * oa); ctx.beginPath(); ctx.arc(P.x, P.y, 1.15, 0, 6.283); ctx.fill();
       return true;
     }
-    var lastFx = performance.now(), kbAt = 0, touchAt = 0;
-    document.addEventListener('touchstart', function () { touchAt = performance.now(); }, { capture: true, passive: true });
-    document.addEventListener('focusout', function (e) { if (e.target && /^(TEXTAREA|INPUT)$/.test(e.target.tagName)) touchAt = performance.now(); }, true);
+    var lastFx = performance.now(), kbAt = 0, touchAt = 0, kbWakeTm = 0;
+    function yieldForKb() {
+      touchAt = performance.now();
+      if (fxRaf) { cancelAnimationFrame(fxRaf); fxRaf = 0; }
+      clearTimeout(kbWakeTm);
+      kbWakeTm = setTimeout(wake, 650);
+    }
+    document.addEventListener('touchstart', function () { yieldForKb(); }, { capture: true, passive: true });
+    document.addEventListener('pointerdown', function () { if (COARSE) yieldForKb(); }, { capture: true, passive: true });
+    document.addEventListener('focusin', function (e) { if (e.target && /^(TEXTAREA|INPUT)$/.test(e.target.tagName)) yieldForKb(); }, true);
+    document.addEventListener('focusout', function (e) { if (e.target && /^(TEXTAREA|INPUT)$/.test(e.target.tagName)) yieldForKb(); }, true);
     function loop(now) {
       var dt = Math.min(.05, (now - lastFx) / 1000); lastFx = now;
-      var kbBusy = html.classList.contains('kb-anim') || (kbAt && now - kbAt < 120) || (COARSE && touchAt && now - touchAt < 480);
+      var kbBusy = html.classList.contains('kb-anim') || (kbAt && now - kbAt < 140) || (COARSE && touchAt && now - touchAt < 620);
+      if (kbBusy) { fxRaf = 0; clearTimeout(kbWakeTm); kbWakeTm = setTimeout(wake, 260); return; }
       var kbIdle = COARSE && (html.classList.contains('kb-up') || document.activeElement === say) && !orbit.on && orbit.alpha <= 0 && !dust.length && !sparks.length && !rings.length;
       if (!kbBusy && !kbIdle) {
         if (now - lastStar > (COARSE ? 110 : 42)) { drawStars(now); lastStar = now; }
@@ -689,11 +698,11 @@
 
     var rs = 0;
     addEventListener('resize', function () {
-      var curDpr = Math.min(COARSE ? 1.25 : 2, window.devicePixelRatio || 1);
+      var curDpr = Math.min(COARSE ? 1 : 2, window.devicePixelRatio || 1);
       if (innerWidth === W && innerHeight <= H && curDpr === DPR) return;
       clearTimeout(rs);
       rs = setTimeout(function () {
-        var nextDpr = Math.min(COARSE ? 1.25 : 2, window.devicePixelRatio || 1);
+        var nextDpr = Math.min(COARSE ? 1 : 2, window.devicePixelRatio || 1);
         if (innerWidth !== W || innerHeight > H || nextDpr !== DPR) { size(); if (REDUCE) drawStars(performance.now()); }
         if (L.right) moveInk();
       }, 120);
@@ -880,16 +889,16 @@
       }
     };
     var EFF_META = {
-      off: { label: '关', sub: '0 星等', desc: '跳过推理星链，瞬时直出回复', ic: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6.5" stroke-dasharray="2.5 2.5"/><path d="M7.5 16.5l9-9"/></svg>' },
-      low: { label: '低', sub: 'I 星等', desc: '轻量单轨推演，兼顾响应速度', ic: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 4.8a7.2 7.2 0 1 0 3.7 13.3A6.2 6.2 0 0 1 15.5 4.8z"/></svg>' },
-      high: { label: '高', sub: 'II 星等', def: true, desc: '多步星链推演，适合代码修改与调试', ic: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.5"/><path d="M12 7l1.4 3.6L17 12l-3.6 1.4L12 17l-1.4-3.6L7 12l3.6-1.4z" fill="currentColor" stroke="none"/></svg>' },
-      max: { label: '最高', sub: 'III 星等', desc: '全天球深度穷举，攻坚复杂架构与逆向', ic: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><ellipse cx="12" cy="12" rx="8.2" ry="3.2" transform="rotate(-30 12 12)"/><path d="M12 6.2l1.5 4.3 4.3 1.5-4.3 1.5L12 17.8l-1.5-4.3L6.2 12l4.3-1.5z" fill="currentColor" stroke="none"/></svg>' }
+      off: { label: '关', sub: '0 星等', desc: '跳过推理星链，瞬时直出回复' },
+      low: { label: '低', sub: 'I 星等', desc: '轻量单轨推演，兼顾响应速度' },
+      high: { label: '高', sub: 'II 星等', def: true, desc: '多步星链推演，适合代码修改与调试' },
+      max: { label: '最高', sub: 'III 星等', desc: '全天球深度穷举，攻坚复杂架构与逆向' }
     };
     var CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>';
     var CHEV_DOWN = '<svg class="tq-mdl-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    var SLIDER_STAR = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.45 4.75L14.2 8l-4.75 1.45L8 14.2 6.55 9.45 1.8 8l4.75-1.45z"/></svg>';
 
-    var mdlBtn = $('.tq-instruments .xc-mdl'), pickEl = $('#xin-model-picker'), effBtn = $('#tq-eff'), effStars = $('.tq-eff-stars', effBtn), effLbl = $('.tq-eff-lbl', effBtn);
-    var epop = h('div', 'tq-pop tq-eff-pop'); epop.id = 'tq-eff-pop'; epop.hidden = true; root.appendChild(epop);
+    var mdlBtn = $('.tq-instruments .xc-mdl'), pickEl = $('#xin-model-picker');
     var enhancingPick = false, mdlMo = null, pickMo = null, msgsMo = null;
     function setText(el, v) { v = String(v == null ? '' : v); if (el && el.textContent !== v) el.textContent = v; }
 
@@ -899,50 +908,111 @@
       var s = state(), info = curModelInfo(), raw = s && s.effort || 'high';
       return info.efforts.indexOf(raw) >= 0 ? raw : 'high';
     }
-    function effGaugeSvg(eff, total) {
-      var rank = eff === 'off' ? 0 : eff === 'low' ? 1 : eff === 'high' ? 2 : 3;
-      return '<svg viewBox="0 0 32 32" aria-hidden="true">' +
-        '<circle cx="16" cy="16" r="12.5" stroke-opacity=".22"/>' +
-        (rank >= 1 ? '<path d="M16 3.5A12.5 12.5 0 0 1 28.5 16" stroke-width="1.8"/>' : '') +
-        (rank >= 2 ? '<path d="M28.5 16A12.5 12.5 0 0 1 7.2 24.8" stroke-width="1.8"/>' : '') +
-        (rank >= 3 ? '<circle cx="16" cy="16" r="12.5" stroke-width="1.8"/>' : '') +
-        '<circle cx="16" cy="16" r="7.5" stroke-dasharray="2 2" stroke-opacity="' + (rank >= 2 ? '.65' : '.25') + '"/>' +
-        (rank === 0 ? '<circle cx="16" cy="16" r="2.2" stroke-opacity=".45"/>' : '<path d="M16 10.6l1.5 3.9 3.9 1.5-3.9 1.5-1.5 3.9-1.5-3.9-3.9-1.5 3.9-1.5z" fill="currentColor" stroke="none"/>') +
-        '</svg>';
-    }
-    function syncEffPill() {
-      if (!effBtn) return;
-      var info = curModelInfo(), lv = info.efforts.filter(function (x) { return x !== 'off'; }), cur = curEffId(), k = lv.indexOf(cur) + 1;
-      if (effStars.querySelectorAll('b').length !== lv.length) {
-        effStars.innerHTML = '';
-        lv.forEach(function () { effStars.appendChild(document.createElement('b')); });
-      }
-      $$('b', effStars).forEach(function (b, i) { b.classList.toggle('on', i < k); });
-      var meta = EFF_META[cur] || EFF_META.high;
-      setText(effLbl, meta.label);
-      var al = '思考强度：' + meta.label;
-      if (effBtn.getAttribute('aria-label') !== al) effBtn.setAttribute('aria-label', al);
-    }
     function decorateModelBtn() {
       if (!mdlBtn || enhancingPick) return;
       enhancingPick = true;
       try {
-        var info = curModelInfo(), sp = mdlBtn.querySelector(':scope > span');
-        if (sp && (!sp.querySelector('.tq-mdl-orb') || sp.dataset.mid !== curModelId())) {
-          sp.textContent = '';
-          sp.dataset.mid = curModelId();
-          var orb = h('i', 'tq-mdl-orb'); orb.setAttribute('aria-hidden', 'true'); orb.innerHTML = info.svg;
-          var txt = h('span', 'tq-mdl-txt', info.name);
-          sp.appendChild(orb); sp.appendChild(txt);
+        var info = curModelInfo(), cur = curEffId(), meta = EFF_META[cur] || EFF_META.high;
+        var sp = mdlBtn.querySelector(':scope > span');
+        if (sp) {
+          var staleEm = sp.querySelector('.xc-em');
+          if (staleEm) staleEm.remove();
+          if (!sp.querySelector('.tq-mdl-orb') || sp.dataset.mid !== curModelId()) {
+            sp.textContent = '';
+            sp.dataset.mid = curModelId();
+            var orb = h('i', 'tq-mdl-orb'); orb.setAttribute('aria-hidden', 'true'); orb.innerHTML = info.svg;
+            var txt = h('span', 'tq-mdl-txt', info.name);
+            var sep = h('span', 'tq-mdl-sep'); sep.setAttribute('aria-hidden', 'true');
+            var effTxt = h('span', 'tq-mdl-eff', meta.label);
+            sp.appendChild(orb); sp.appendChild(txt); sp.appendChild(sep); sp.appendChild(effTxt);
+          } else {
+            setText(sp.querySelector('.tq-mdl-eff'), meta.label);
+          }
         }
         if (!mdlBtn.querySelector('.tq-mdl-caret')) mdlBtn.insertAdjacentHTML('beforeend', CHEV_DOWN);
-        syncEffPill();
-        if (!epop.hidden) buildEffMenu();
         syncCcWelcome();
       } finally {
         if (mdlMo) mdlMo.takeRecords();
         enhancingPick = false;
       }
+    }
+    function syncPickerSlider() {
+      if (!pickEl) return;
+      var tr = pickEl.querySelector('.xc-eff');
+      if (!tr) return;
+      var info = curModelInfo(), efforts = info.efforts, cur = curEffId(), meta = EFF_META[cur] || EFF_META.high;
+      var n = efforts.length, k = Math.max(0, efforts.indexOf(cur));
+      var snapF = (n > 1 ? k / (n - 1) : 0).toFixed(4);
+      if (!tr.classList.contains('is-dragging') && tr.style.getPropertyValue('--f') !== snapF) {
+        tr.style.setProperty('--f', snapF);
+      }
+      $$('.tq-sl-dot', tr).forEach(function (dot, i) {
+        dot.classList.toggle('on', i <= k);
+        dot.classList.toggle('cur', i === k);
+      });
+      var subEl = pickEl.querySelector('.tq-eff-subtag');
+      if (subEl) setText(subEl, meta.sub);
+      var defEl = pickEl.querySelector('.tq-eff-def');
+      if (defEl) defEl.hidden = !meta.def;
+      var descEl = pickEl.querySelector('.tq-eff-desc-line');
+      if (descEl) setText(descEl, meta.desc);
+      syncCcWelcome();
+    }
+    function wireCosmicSlider(tr) {
+      if (!tr || tr.dataset.tqSl === '1') return;
+      tr.dataset.tqSl = '1';
+      tr.classList.add('tq-slider');
+      var info = curModelInfo(), n = info.efforts.length;
+      var track = h('div', 'tq-sl-track'); track.setAttribute('aria-hidden', 'true');
+      var rail = h('div', 'tq-sl-rail');
+      rail.appendChild(h('i', 'tq-sl-fill'));
+      var dots = h('div', 'tq-sl-dots');
+      for (var i = 0; i < n; i++) {
+        var dot = h('i', 'tq-sl-dot');
+        dot.style.setProperty('--i', n > 1 ? (i / (n - 1)).toFixed(4) : '0');
+        dots.appendChild(dot);
+      }
+      rail.appendChild(dots);
+      var th = tr.querySelector('.xc-eff-th') || h('i', 'xc-eff-th');
+      th.innerHTML = SLIDER_STAR;
+      rail.appendChild(th);
+      track.appendChild(rail);
+      tr.insertBefore(track, tr.firstChild);
+
+      function dragFrac(clientX) {
+        var r = rail.getBoundingClientRect();
+        return r.width > 0 ? Math.max(0, Math.min(1, (clientX - r.left) / r.width)) : 0;
+      }
+      function syncDragAt(clientX) {
+        var f = dragFrac(clientX), efforts = curModelInfo().efforts, len = efforts.length;
+        tr.style.setProperty('--f', f.toFixed(4));
+        var idx = Math.max(0, Math.min(len - 1, Math.round(f * Math.max(1, len - 1))));
+        var lv = efforts[idx], btn = tr.querySelector('.xc-eff-d[data-v="' + lv + '"]');
+        if (btn && btn.getAttribute('aria-checked') !== 'true') btn.click();
+        if (pickMo) pickMo.takeRecords();
+      }
+      var dragging = false;
+      tr.addEventListener('pointerdown', function (ev) {
+        if (ev.button !== 0) return;
+        dragging = true;
+        tr.classList.add('is-dragging');
+        syncDragAt(ev.clientX);
+      });
+      tr.addEventListener('pointermove', function (ev) {
+        if (!dragging) return;
+        syncDragAt(ev.clientX);
+      });
+      function endDrag() {
+        if (!dragging) return;
+        dragging = false;
+        tr.classList.remove('is-dragging');
+        syncPickerSlider();
+        if (pickMo) pickMo.takeRecords();
+        sparkFrom(th, PAL.trail, 5);
+      }
+      tr.addEventListener('pointerup', endDrag);
+      tr.addEventListener('pointercancel', endDrag);
+      tr.addEventListener('lostpointercapture', endDrag);
     }
     function decorateModelPicker() {
       if (!pickEl || pickEl.hidden || enhancingPick) return;
@@ -968,104 +1038,63 @@
           btn.appendChild(ic); btn.appendChild(info);
           if (chk) btn.appendChild(chk);
         });
-        syncEffPill();
+        var pkt = pickEl.querySelector('.xc-pk-t');
+        if (pkt) {
+          var pkb = pkt.querySelector('b');
+          if (pkb && !pkb.querySelector('.tq-pk-sub')) {
+            pkb.textContent = '思考强度';
+            pkb.appendChild(h('span', 'tq-pk-sub', 'EFFORT'));
+          }
+          var tv = pkt.querySelector('.xc-pk-tv');
+          if (tv) {
+            var oldEm = tv.querySelector('.xc-em');
+            if (oldEm) oldEm.remove();
+            if (!tv.querySelector('.tq-eff-meta')) {
+              var metaWrap = h('span', 'tq-eff-meta');
+              metaWrap.appendChild(h('span', 'tq-eff-subtag', ''));
+              var defTag = h('span', 'tq-eff-def', '默认'); defTag.hidden = true;
+              metaWrap.appendChild(defTag);
+              tv.insertBefore(metaWrap, tv.firstChild);
+            }
+          }
+        }
+        var tr = pickEl.querySelector('.xc-eff');
+        if (tr) wireCosmicSlider(tr);
+        var hp = pickEl.querySelector('.xc-eff-hp');
+        if (hp && !hp.querySelector('.tq-eff-desc-line')) {
+          hp.appendChild(h('span', 'tq-eff-desc-line', ''));
+        }
+        syncPickerSlider();
         fitPickUp();
       } finally {
         if (pickMo) pickMo.takeRecords();
         enhancingPick = false;
       }
     }
-    // 天启的星表面板始终从输入区上方弹出（workbench.css），chat.js 的 fitPick 在空状态输入区居中时按下方空间算高度，
-    // 这里按上方到顶栏的实际空间重算，与 chat.js 一样封顶 360px；值不变时不写，避免触发观察者循环
+    // 天启的星表面板紧贴在 .xc-mdl 模型胶囊正上方 8px 弹出（仿 Codex 桌面端），chat.js 的 fitPick 按整个输入区下方空间算高度，
+    // 这里按胶囊顶边到顶栏底边的实际可用空间重算，封顶 420px 以完整容纳 4 张星体卡与星轨滑杆；值不变时不写，避免触发观察者循环
     function fitPickUp() {
       var foot = pickEl.offsetParent, bar = $('.tq-topbar');
-      if (!foot || !bar) return;
-      var above = foot.getBoundingClientRect().top - bar.getBoundingClientRect().bottom - 18;
-      var v = Math.min(360, Math.max(96, Math.floor(above))) + 'px';
-      if (pickEl.style.maxHeight !== v) pickEl.style.maxHeight = v;
+      if (!foot || !mdlBtn) return;
+      var fr = foot.getBoundingClientRect(), br = mdlBtn.getBoundingClientRect();
+      if (!br.height) return;
+      var topLim = bar ? bar.getBoundingClientRect().bottom + 10 : 12;
+      var bot = Math.max(8, Math.round(fr.bottom - br.top + 8));
+      var above = Math.floor(br.top - 8 - topLim);
+      var bStr = bot + 'px', mStr = Math.min(420, Math.max(140, above)) + 'px';
+      if (pickEl.style.bottom !== bStr) pickEl.style.bottom = bStr;
+      if (pickEl.style.maxHeight !== mStr) pickEl.style.maxHeight = mStr;
     }
     if (mdlBtn) { mdlMo = new MutationObserver(decorateModelBtn); mdlMo.observe(mdlBtn, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label'] }); }
-    if (pickEl) { pickMo = new MutationObserver(decorateModelPicker); pickMo.observe(pickEl, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'style'] }); }
+    if (pickEl) { pickMo = new MutationObserver(decorateModelPicker); pickMo.observe(pickEl, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'style', 'aria-checked'] }); }
+    addEventListener('resize', function () { if (pickEl && !pickEl.hidden) fitPickUp(); });
 
-    function applyEffort(lv) {
-      var info = curModelInfo();
-      if (info.efforts.indexOf(lv) < 0) return;
-      var s = state();
-      if (s) s.effort = lv;
-      store.set('effort', lv);
-      // 若模型面板已渲染出档位按钮，同步其内部状态；否则同步更新按钮读屏文案与星等胶囊
-      var pickBtn = pickEl && !pickEl.hidden ? pickEl.querySelector('.xc-eff-d[data-v="' + lv + '"]') : null;
-      if (pickBtn) pickBtn.click();
-      else if (mdlBtn) {
-        var meta = EFF_META[lv] || EFF_META.high;
-        mdlBtn.setAttribute('aria-label', '模型和思考强度：' + info.name + ' ' + meta.label);
-        var em = mdlBtn.querySelector('.xc-em');
-        if (em) {
-          var nonOff = info.efforts.filter(function (x) { return x !== 'off'; }), idx = nonOff.indexOf(lv) + 1;
-          $$('b', em).forEach(function (b, i) { b.classList.toggle('on', i < idx); });
-        }
-      }
-      syncEffPill();
-      syncCcWelcome();
-      sparkFrom(effBtn, PAL.trail, 6);
-    }
-    function buildEffMenu() {
-      var info = curModelInfo(), cur = curEffId();
-      epop.setAttribute('role', 'menu');
-      epop.setAttribute('aria-label', '思考强度');
-      epop.innerHTML =
-        '<div class="tq-eff-head">' +
-          '<div class="tq-eff-htxt"><b>思考强度 · 星等算力</b><small>' + esc(info.name) + ' · ' + info.efforts.length + ' 档可调</small></div>' +
-          '<span class="tq-eff-gauge">' + effGaugeSvg(cur, info.efforts.length) + '</span>' +
-        '</div>' +
-        info.efforts.map(function (lv) {
-          var m = EFF_META[lv] || EFF_META.high, on = lv === cur;
-          return '<button class="tq-eff-item" type="button" role="menuitemradio" aria-checked="' + on + '" data-eff="' + lv + '">' +
-            '<span class="tq-eff-ic">' + m.ic + '</span>' +
-            '<span class="tq-eff-main">' +
-              '<span class="tq-eff-top"><span>' + m.label + '</span><span class="tq-eff-subtag">' + m.sub + '</span>' + (m.def ? '<span class="tq-eff-def">默认</span>' : '') + '</span>' +
-              '<span class="tq-eff-desc">' + m.desc + '</span>' +
-            '</span>' +
-            '<svg class="tq-eff-chk" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>' +
-          '</button>';
-        }).join('');
-    }
     function placeOver(btn, el) {
       var b = btn.getBoundingClientRect(), w = el.offsetWidth, hh = el.offsetHeight;
       var x = Math.max(12, Math.min(innerWidth - w - 12, b.left)), y = b.top - hh - 8;
       if (y < 12) y = Math.max(12, Math.min(innerHeight - hh - 12, b.bottom + 8));
       el.style.left = x + 'px'; el.style.top = y + 'px';
     }
-    function focusEff() { var f = $('.tq-eff-item[aria-checked="true"]', epop) || $('.tq-eff-item', epop); if (f) f.focus(); }
-    function openEff() {
-      closePop(false); closeWork(false);
-      if (pickEl && !pickEl.hidden && mdlBtn) mdlBtn.click();
-      buildEffMenu(); epop.hidden = false; placeOver(effBtn, epop);
-      effBtn.setAttribute('aria-expanded', 'true');
-      if (!REDUCE) { epop.classList.remove('in'); void epop.offsetWidth; epop.classList.add('in'); }
-      focusEff();
-    }
-    function closeEff(backFocus) {
-      if (epop.hidden) return false;
-      epop.hidden = true;
-      effBtn.setAttribute('aria-expanded', 'false');
-      if (backFocus && effBtn) effBtn.focus();
-      return true;
-    }
-    if (effBtn) effBtn.addEventListener('click', function () { if (epop.hidden) openEff(); else closeEff(true); });
-    epop.addEventListener('click', function (e) {
-      var b = e.target.closest('[data-eff]'); if (!b) return;
-      applyEffort(b.dataset.eff);
-      closeEff(true);
-    });
-    epop.addEventListener('keydown', function (e) {
-      if (['ArrowDown', 'ArrowUp', 'Home', 'End'].indexOf(e.key) < 0) return;
-      var o = $$('.tq-eff-item', epop); if (!o.length) return;
-      var i = o.indexOf(document.activeElement), n = e.key === 'Home' ? 0 : e.key === 'End' ? o.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + o.length) % o.length;
-      o[n].focus(); e.preventDefault();
-    });
-    document.addEventListener('pointerdown', function (e) { if (!epop.hidden && !epop.contains(e.target) && !(effBtn && effBtn.contains(e.target))) closeEff(false); }, true);
-    addEventListener('resize', function () { if (!epop.hidden && effBtn) placeOver(effBtn, epop); });
 
     /* ================= 4. Claude Code 工具调用规范化与 Diff 解析器（供思考链与终端共用） ================= */
     function ccSpec(ev) {
@@ -1840,7 +1869,7 @@
     }
     function focusOpt() { var f = $('.tq-opt[aria-checked="true"]', pop) || $('.tq-opt', pop); if (f) f.focus(); }
     function openPop() {
-      closeEff(false); closeWork(false);
+      closeWork(false);
       permMenu(false); pop.hidden = false; placeOver(permBtn, pop); permBtn.setAttribute('aria-expanded', 'true');
       if (!REDUCE) { pop.classList.remove('in'); void pop.offsetWidth; pop.classList.add('in'); }
       focusOpt();
@@ -1979,7 +2008,7 @@
     }
     function focusWork() { var f = $('.tq-opt[aria-checked="true"]', wpop) || $('.tq-opt', wpop); if (f) f.focus(); }
     function openWork() {
-      closePop(false); closeEff(false);
+      closePop(false);
       workMenu(null, '读取文件夹…'); wpop.hidden = false; placeOver(workBtn, wpop); workBtn.setAttribute('aria-expanded', 'true');
       if (!REDUCE) { wpop.classList.remove('in'); void wpop.offsetWidth; wpop.classList.add('in'); }
       focusWork();
@@ -2026,7 +2055,7 @@
       ws.sid = d.sid || '';
       ws.work = d.work || '';
       liveSeenRuns = {};
-      closePop(false); closeWork(false); closeEff(false);
+      closePop(false); closeWork(false);
       resetPlans(); syncChips(); syncWork(); syncChains(); syncCcFeed();
     });
     new MutationObserver(function (list) {
@@ -2096,16 +2125,23 @@
       if (!fresh()) { var c = chat(); if (c && c.tqNew) c.tqNew(); }
       if (wpop.hidden) openWork();
     }
-    function openModel() {
-      closeEff(false); closePop(false); closeWork(false);
+    function openModel(focusSlider) {
+      closePop(false); closeWork(false);
       var b = $('.tq-instruments .xc-mdl');
       if (b && b.getAttribute('aria-expanded') !== 'true') b.click();
+      if (focusSlider && pickEl) {
+        requestAnimationFrame(function () {
+          if (pickEl.hidden) return;
+          var ef = pickEl.querySelector('.xc-eff-d[aria-checked="true"]') || pickEl.querySelector('.xc-eff-d');
+          if (ef) ef.focus({ preventScroll: true });
+        });
+      }
     }
     function tqActions() {
       var lf = frame.dataset.left;
       return [
-        { ic: PI.model, t: '换模型', k: '模型 星表 model deepseek glm kimi', kbd: 'M', run: openModel },
-        { ic: PI.effort, t: '换思考强度', k: '思考强度 星等 算力 effort codex 最高', kbd: 'E', run: function () { if (epop.hidden) openEff(); } },
+        { ic: PI.model, t: '换模型', k: '模型 星表 model deepseek glm kimi', kbd: 'M', run: function () { openModel(false); } },
+        { ic: PI.effort, t: '换思考强度', k: '思考强度 星等 算力 滑杆 effort codex 最高', kbd: 'E', run: function () { openModel(true); } },
         { ic: PI.shield, t: '换权限', k: '权限 只读 完全 permission', kbd: 'P', run: function () { if (pop.hidden) openPop(); } },
         { ic: PI.plan, t: cfg.plan ? '关掉计划模式' : '计划模式', k: '计划 plan 先出计划', run: function () { planBtn.click(); } },
         { ic: 'files', t: '切换工作区', k: '工作区 文件夹 workspace 目录', kbd: 'W', run: pickWorkspace },
@@ -2118,8 +2154,8 @@
     }
     var KEY1 = {
       c: function () { var c = chat(); if (c && c.tqNew) c.tqNew(); },
-      m: openModel,
-      e: function () { if (epop.hidden) openEff(); },
+      m: function () { openModel(false); },
+      e: function () { openModel(true); },
       p: function () { if (pop.hidden) openPop(); },
       w: pickWorkspace,
       '?': function () { if (L.right && tab === 'term') ccHelpB.click(); }
@@ -2132,12 +2168,12 @@
       if ((t && t.closest && t.closest(OVER)) || (a && a.closest && a.closest(OVER))) return false;
       if (root.classList.contains('pal-open') || root.classList.contains('sheet-open')) return false;
       if (root.classList.contains('dr-open') && drawer.getAttribute('role') === 'dialog') return false;
-      return pop.hidden && wpop.hidden && epop.hidden && !$('.xc-pick:not([hidden])') && !$('.xc-menu:not([hidden])');
+      return pop.hidden && wpop.hidden && !$('.xc-pick:not([hidden])') && !$('.xc-menu:not([hidden])');
     }
 
     window.addEventListener('keydown', function (e) {
       var mod = e.ctrlKey || e.metaKey, k = (e.key || '').toLowerCase(), stop = function () { e.preventDefault(); e.stopImmediatePropagation(); };
-      if (e.key === 'Escape' && (closePop(true) || closeWork(true) || closeEff(true))) { stop(); return; }
+      if (e.key === 'Escape' && (closePop(true) || closeWork(true))) { stop(); return; }
       if (e.key === 'Escape' && !ccKeys.hidden) { stop(); ccKeys.hidden = true; ccHelpB.setAttribute('aria-expanded', 'false'); ccHelpB.focus(); return; }
       if (!modal.hidden) { if (e.key === 'Escape') { stop(); closeSettings(); } return; }
       if (root.classList.contains('locked')) return;
