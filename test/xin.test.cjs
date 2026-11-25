@@ -1164,7 +1164,7 @@ test('后台任务：同时最多两个；同一个项目目录排队；补充�
   const env = Object.assign({}, process.env, actor, { XIN_HOME: xin, XIN_WORK: work, PATH: path.join(xin, 'bin') + ':' + fc.bin + ':' + process.env.PATH });
   const xinTask = (...a) => { try { return execFileSync(process.execPath, [agent, 'xin', 'task', ...a], { env, input: '' }).toString(); } catch (e) { return String(e.stdout || '') + String(e.stderr || ''); } };
   fs.writeFileSync(path.join(fc.log, 'task-wait'), '');
-  assert.match(xinTask('new', '--title', 'A', '--dir', path.join(work, 'blink'), '--', '改 blink'), /任务 1「A」/);
+  assert.match(xinTask('new', '--title', 'A', '--dir', path.join(work, 'blink'), '--model', 'glm-5.3-flash', '--', '改 blink'), /任务 1「A」（写代码，GLM-5.4/);
   assert.match(xinTask('new', '-t', 'B', '-d', 'blink', '-k', 'quick', '--', '再改 blink'), /任务 2「B」（杂活，DeepSeek V4.1 Flash/);
   assert.match(xinTask('new', '--title', 'C', '--kind', 'research', '--model', 'deepseek-v4.1-flash', '--', '查资料'), /任务 3「C」（查资料，DeepSeek V4.1 Flash/);
   const st = () => Object.fromEntries(op('tasks', { sid: r.sid }).tasks.map(t => [t.title, t.status]));

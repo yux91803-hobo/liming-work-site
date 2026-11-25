@@ -1937,7 +1937,7 @@ export function frontAction(a) {
     if (!original) return {error:'找不到本轮用户原话，不能替用户编写要求'};
     if (o.kind && !TASK_KINDS.includes(o.kind)) return {error:'未知工作类型：'+o.kind+'（可用：'+TASK_KINDS.join('、')+'）'};
     // A model the user named is recorded from their own words and applied regardless; a loosely written --model must not block dispatch.
-    if (o.model && !m.frontNamed && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、')+'）'};
+    if (o.model && !m.frontNamed && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(x=>x.id===activeModel(o.model))) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、')+'）'};
     const previous = mine.find(t=>t.frontRun===a.run);
     if (previous) return {terminal:true,text:maintenanceApproval(previous)?TELL_TEXT.approval:'好，我这就去弄。',task:taskSummary(previous)};
     const requested = m.frontNamed || o.model;
@@ -2682,7 +2682,7 @@ function taskCmd(argv,print=console.log) {
     if (!o.goal) o.goal = readStdin().trim();
     if (!o.goal) { print('要写清楚让分身做什么\n' + TASK_HELP); return 2; }
     if (o.kind && !TASK_KINDS.includes(o.kind)) { print('类型只能是：' + TASK_KINDS.join(' / ')); return 2; }
-    if (o.model && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(m => m.id === o.model)) { print('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、') + '）'); return 2; }
+    if (o.model && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(m => m.id === activeModel(o.model))) { print('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、') + '）'); return 2; }
     // 用户这一句点名的就是这个模型：当成用户点名（检查任务也照用）
     const said = (events(run).find(e => e.t === 'user') || {}).text || '';
     if (meta.frontNamed) o.model = meta.frontNamed;
