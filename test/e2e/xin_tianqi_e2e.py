@@ -288,14 +288,15 @@ async def main():
         ui.check('照 Linear：面板实心、没有毛玻璃；输入框没有大阴影；品牌星、标签下划线不发光；用系统字体，不加载外面的样式表',
                  look['blur'] == 'none' and look['alpha'] == 1 and '80px' not in look['boxShadow'] and look['markGlow'] == 'none'
                  and look['inkGlow'] == 'none' and bool(re.match(r'^\s*(Inter|-apple-system|system-ui|"SF Pro)', look['font'])) and not look['ext'], look)
-        # 站长 11-20 + 大改版：模型胶囊旁独立的 Codex 式思考强度胶囊 #tq-eff 是一排等大四角金星，亮着的是天启的金色
-        em = await pg.evaluate("""(() => { const bs = [...document.querySelectorAll('.tq-instruments #tq-eff .tq-eff-stars b')];
-          const probe = document.createElement('i'); probe.style.background = 'var(--star)'; document.querySelector('.tq-instruments').appendChild(probe);
-          const star = getComputedStyle(probe).backgroundColor; probe.remove();
-          return { n: bs.length, clip: bs.map(b => getComputedStyle(b).clipPath.startsWith('polygon')), h: [...new Set(bs.map(b => Math.round(b.getBoundingClientRect().height)))],
-            on: bs.filter(b => b.classList.contains('on')).map(b => getComputedStyle(b).backgroundColor === star) }; })()""")
-        ui.check('天启的思考强度是一排星星（不是信号格）：一样大，亮着的是天启的金色',
-                 em['n'] >= 3 and all(em['clip']) and len(em['h']) == 1 and len(em['on']) > 0 and all(em['on']), em)
+        # 站长 11-25 确认：去掉表示思考强度的四角星标（.xc-em），输入区单个 .xc-mdl 胶囊只保留模型名与档位文字
+        em = await pg.evaluate("""(() => ({
+          single: !document.querySelector('#tq-eff') && !document.querySelector('#tq-eff-pop'),
+          noStars: document.querySelectorAll('.tq-instruments .xc-mdl .xc-em, #xin-model-picker .xc-em').length === 0,
+          mdlTxt: document.querySelector('.tq-instruments .xc-mdl .tq-mdl-txt')?.textContent,
+          effTxt: document.querySelector('.tq-instruments .xc-mdl .tq-mdl-eff')?.textContent,
+        }))()""")
+        ui.check('天启的模型胶囊展示模型名与思考强度档位文字，不渲染思考强度四角星标元素',
+                 em['single'] and em['noStars'] and bool(em['mdlTxt']) and em['effTxt'] in ('关', '低', '高', '最高'), em)
         await pg.locator('.tq-hist-b').click()
         await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
         await pg.get_by_text('老回答', exact=True).wait_for()
@@ -651,7 +652,8 @@ async def main():
                  and kb.get('新建对话') == 'C' and kb.get('换模型') == 'M' and kb.get('换思考强度') == 'E' and kb.get('换权限') == 'P' and kb.get('切换工作区') == 'W'
                  and any(t.endswith('右栏') and k == 'Ctrl J' for t, k in pal) and any(t.endswith('左栏') and k == 'Ctrl B' for t, k in pal), pal)
         opened = """(() => ({ perm: !document.querySelector('#tq-perm-pop').hidden, model: document.querySelector('.tq-instruments .xc-mdl').getAttribute('aria-expanded') === 'true',
-          effort: !document.querySelector('#tq-eff-pop').hidden, work: !document.querySelector('#tq-work-pop').hidden, sid: window.LimingXinChat.state.sid || '' }))()"""
+          effort: !document.querySelector('#xin-model-picker').hidden && !!document.activeElement?.closest('#xin-model-picker .xc-eff'),
+          work: !document.querySelector('#tq-work-pop').hidden, sid: window.LimingXinChat.state.sid || '' }))()"""
         # 在输入框里打这几个字母只是打字
         await pg.locator('.xc-row textarea').click()
         await pg.keyboard.type('cmpwe')
@@ -758,36 +760,72 @@ async def main():
           })),
         }))()""")
         await pg.locator('#xin-model-picker .xc-pk-o[data-v="glm-5.3"]').click()
-        await pg.keyboard.press('Escape')
         ui.check('宇宙星表模型选择器：输入框模型胶囊带天体 SVG 徽标，弹出 4 张星体卡片（含光谱分类徽章与深空说明），切换 GLM-5.3 立即更新',
                  catalog['orb'] and '天体模型星表' in (catalog['head'] or '') and 'STAR CATALOG' in (catalog['head'] or '')
                  and len(catalog['cards']) == 4 and all(c['svg'] and c['spec'] and c['desc'] for c in catalog['cards'])
                  and [c['id'] for c in catalog['cards']] == ['deepseek-v4.1-flash', 'glm-5.3', 'glm-5.3-flash', 'kimi-k3.1-pro']
                  and await pg.evaluate("window.LimingXinChat.state.hModel === 'glm-5.3' && document.querySelector('.tq-mdl-txt')?.textContent === 'GLM-5.3'"),
                  catalog)
-        await pg.click('#tq-eff')
-        await pg.wait_for_selector('#tq-eff-pop:not([hidden]) .tq-eff-item')
-        eff_ui = await pg.evaluate("""(() => ({
-          gauge: !!document.querySelector('#tq-eff-pop .tq-eff-gauge svg'),
-          head: document.querySelector('#tq-eff-pop .tq-eff-htxt')?.textContent,
-          items: [...document.querySelectorAll('#tq-eff-pop .tq-eff-item')].map(b => [
-            b.dataset.eff, b.getAttribute('aria-checked'), b.querySelector('.tq-eff-top')?.textContent, b.querySelector('.tq-eff-desc')?.textContent
-          ]),
+        eff_ui = await pg.evaluate("""(() => {
+          const pk = document.querySelector('#xin-model-picker'), pr = pk.getBoundingClientRect();
+          const sl = pk.querySelector('.xc-eff.tq-slider'), sr = sl.getBoundingClientRect();
+          const rail = sl.querySelector('.tq-sl-rail').getBoundingClientRect();
+          const hp = pk.querySelector('.xc-eff-hp').getBoundingClientRect();
+          return {
+            single: !document.querySelector('#tq-eff') && !document.querySelector('#tq-eff-pop'),
+            inView: Math.round(sr.top) >= Math.round(pr.top) && Math.round(hp.bottom) <= Math.round(pr.bottom) + 1,
+            noScroll: pk.scrollHeight <= pk.clientHeight + 2,
+            thumbStar: !!sl.querySelector('.xc-eff-th svg'),
+            dots: sl.querySelectorAll('.tq-sl-dot').length,
+            f0: sl.style.getPropertyValue('--f'),
+            sub: pk.querySelector('.tq-eff-subtag')?.textContent,
+            defVisible: !pk.querySelector('.tq-eff-def')?.hidden,
+            desc: pk.querySelector('.tq-eff-desc-line')?.textContent,
+            ticks: [...sl.querySelectorAll('.xc-eff-d')].map(b => [b.dataset.v, b.getAttribute('aria-checked'), b.textContent]),
+            rail: [rail.left, rail.top + rail.height / 2, rail.width],
+          };
+        })()""")
+        # 1) 按住滑杆从中间（高）水平拖到最左端（低），校验连续滑动与松手吸附
+        rx, ry, rw = eff_ui['rail']
+        await pg.mouse.move(rx + rw * 0.5, ry)
+        await pg.mouse.down()
+        await pg.mouse.move(rx + 2, ry, steps=6)
+        drag_mid = await pg.evaluate("""(() => ({
+          dragging: document.querySelector('#xin-model-picker .xc-eff').classList.contains('is-dragging'),
+          f: parseFloat(document.querySelector('#xin-model-picker .xc-eff').style.getPropertyValue('--f')),
+          state: window.LimingXinChat.state.effort,
         }))()""")
-        await pg.locator('#tq-eff-pop [data-eff="max"]').click()
+        await pg.mouse.up()
+        drag_after = await pg.evaluate("""(() => ({
+          state: window.LimingXinChat.state.effort,
+          sub: document.querySelector('#xin-model-picker .tq-eff-subtag')?.textContent,
+          defHidden: !!document.querySelector('#xin-model-picker .tq-eff-def')?.hidden,
+          pillEff: document.querySelector('.xc-mdl .tq-mdl-eff')?.textContent,
+          noStars: document.querySelectorAll('.xc-mdl .xc-em, #xin-model-picker .xc-em').length === 0,
+        }))()""")
+        # 2) 再点击最右刻度切到「最高」，校验刻度点击、胶囊档位字、本地缓存与终端欢迎头同步
+        await pg.locator('#xin-model-picker .xc-eff-d[data-v="max"]').click()
         eff_after = await pg.evaluate("""(() => ({
-          hidden: document.querySelector('#tq-eff-pop').hidden,
+          f: document.querySelector('#xin-model-picker .xc-eff').style.getPropertyValue('--f'),
           state: window.LimingXinChat.state.effort,
           saved: localStorage.getItem('lm.tq.effort'),
-          lbl: document.querySelector('#tq-eff .tq-eff-lbl')?.textContent,
-          litStars: document.querySelectorAll('#tq-eff .tq-eff-stars b.on').length,
+          sub: document.querySelector('#xin-model-picker .tq-eff-subtag')?.textContent,
+          desc: document.querySelector('#xin-model-picker .tq-eff-desc-line')?.textContent,
+          pillEff: document.querySelector('.xc-mdl .tq-mdl-eff')?.textContent,
+          noStars: document.querySelectorAll('.xc-mdl .xc-em, #xin-model-picker .xc-em').length === 0,
           ccBanner: document.querySelector('.cc-w-mdl')?.textContent,
         }))()""")
-        ui.check('借鉴 Codex 桌面端的思考强度选择器：独立胶囊紧邻模型胶囊，弹层含星盘轨道仪表、星等说明与默认标记，切「最高」同步状态、缓存与终端头',
-                 eff_ui['gauge'] and 'GLM-5.3' in (eff_ui['head'] or '') and [x[0] for x in eff_ui['items']] == ['low', 'high', 'max']
-                 and any('默认' in (x[2] or '') and x[0] == 'high' for x in eff_ui['items'])
-                 and eff_after == {'hidden': True, 'state': 'max', 'saved': 'max', 'lbl': '最高', 'litStars': 3, 'ccBanner': 'GLM-5.3 · 思考:最高'},
-                 (eff_ui, eff_after))
+        await pg.keyboard.press('Escape')
+        ui.check('仿 Codex 桌面端的模型与思考强度合一滑杆：输入区只留单个模型胶囊，星表弹层内嵌可拖动/可点刻度的星空滑杆，切档同步胶囊、缓存与终端头',
+                 eff_ui['single'] and eff_ui['inView'] and eff_ui['noScroll'] and eff_ui['thumbStar'] and eff_ui['dots'] == 3
+                 and eff_ui['sub'] == 'II 星等' and eff_ui['defVisible'] and [x[0] for x in eff_ui['ticks']] == ['low', 'high', 'max']
+                 and drag_mid['dragging'] and drag_mid['f'] <= 0.08 and drag_mid['state'] == 'low'
+                 and drag_after == {'state': 'low', 'sub': 'I 星等', 'defHidden': True, 'pillEff': '低', 'noStars': True}
+                 and eff_after['f'] == '1.0000' and eff_after['state'] == 'max' and eff_after['saved'] == 'max'
+                 and eff_after['sub'] == 'III 星等' and '全天球' in (eff_after['desc'] or '')
+                 and eff_after['pillEff'] == '最高' and eff_after['noStars'] and eff_after['ccBanner'] == 'GLM-5.3 · 思考:最高'
+                 and await pg.evaluate("document.querySelector('#xin-model-picker').hidden"),
+                 (eff_ui, drag_mid, drag_after, eff_after))
 
         # 流式思考星链 + Claude Code 终端实时同步（分两阶段返回 poll，阶段 1 暂停校验推演中 UI，放行阶段 2 校验完成态与红绿 Diff）
         poll_gate = asyncio.Event()

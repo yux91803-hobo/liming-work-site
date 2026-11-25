@@ -4,6 +4,37 @@
 - 宿主维护在排队派发和启动执行器前核对任务、目标、补充、目录和 30 分钟有效期。自动续做和旧消息缺少授权时用现有任务详情确认。批准、拒绝及过期按同一审批编号处理。每日清单沿用预先授权，天启不使用小芯维护审批。
 - 回滚读取原有 SQLite 和 JSON。已等待的维护任务保留待确认状态，前版可停止；重新启用第 4a 批后可在有效期内处理同一编号。回滚到本批前会恢复旧的派发策略。
 
+# 修改清单 · 2026-11-25（正式联调核对后台共享额度池）
+
+- Codex 实现并自查。#214 与 #218 的正式联调都通过真实派工、消息送达、SSE 和持久收尾，随后在后台默认模型的证据判定失败并回滚。
+- 正式机的研究任务都按备用 DeepSeek 运行并完成。它的调度已让前后台共用同一个 Gemini 额度池。只读核对发现前台那份记录持续冷却至北京时间 12 月 1 日 08:24，后台文件仍是旧的可用采样。
+- 联调在实际派出的查资料任务直接使用预期备用模型时，核对派发附近已有证据、匹配的模型池及未过期的额度。点名任务继续按执行侧证据验收。保持结果文件、一次收尾、队列、SSE 和其他真实联调原有门槛。 [#214 正式联调](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45539044657) [#218 正式联调](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45550198834)
+
+# 修改清单 · 2026-11-25（天启：修正思考强度交互——并回模型选择器并改造为可拖动星空滑杆）
+
+- **谁做的**：实现由 Antigravity（Gemini 4 Carbon High，经 agy CLI）完成并自查；复核人 **Muse**（轻查；1280/390 弹层截图已于 2026-11-25 由站长过目确认）。分支 `antigravity/tianqi-codex-slider-fix-20261125`（基于 `main` `df4430d`，即 PR #210）。
+- **改动范围**：只改天启自己的 3 个文件（`site/tools/tianqi/index.html`、`workbench.css`、`sky.js`）、`test/e2e/xin_tianqi_e2e.py` 和本文件。小芯共用的 `site/xin/chat.js`、`term.js`、`chat.css` 与 `site/shell.js` 零改动。静态资源版本号更新为 `?v=cosmos-slider-20261125`。
+- **原实现与问题定位**：
+  1. **仿 Codex 桌面端思考强度仿错**：OpenAI Codex 桌面端（[`openai/codex`](https://github.com/openai/codex)）里，模型与思考强度合一在同一个选择器控件中，点开模型弹层后通过内部滑杆切换思考强度档位；#210 误将两者拆成输入区两个独立胶囊（`.xc-mdl` + `#tq-eff`）并做成独立列表弹窗 `#tq-eff-pop`。
+  2. **弹层锚点偏高与偶发合成残影**：原 `.xc-pick` 按外层 `form.xc-ft.tq-dock` 顶部设 `bottom: calc(100% + 8px)`，空状态下跨过输入框与工作目录行上浮约 110px，既脱离所点的 `.xc-mdl` 胶囊、挤压顶部净空，又因展开前后位置跳变在无头 SwiftShader 下偶发留下暗色矩形残影。
+- **改法、开源参考与行为保证**：
+  1. **输入区合一为单个模型与思考强度胶囊，并去掉档位四角星标（`index.html`、`workbench.css`、`sky.js`）**：彻底删除独立的 `#tq-eff` 按钮与 `#tq-eff-pop` 弹层及其事件监听；按站长确认一并去掉表示思考强度的 `.xc-em` 四角星标图案（天启品牌星徽、滑杆滑块与星空背景均保留不动），输入区单个 `.xc-mdl` 胶囊仅依次展示天体 SVG 徽标（`.tq-mdl-orb`）、模型名称（`.tq-mdl-txt`）、细分隔线与当前档位名（`.tq-mdl-eff`），手机窄屏同样单行容纳且不溢出输入框。
+  2. **星表弹层内嵌可拖动星空滑杆（`#xin-model-picker` → `.xc-eff.tq-slider`）**：参考 [`openai/codex`](https://github.com/openai/codex) 桌面端模型弹层内的推理强度滑杆交互，将 `#xin-model-picker` 底部原有的「思考强度」展示行改造为真正的双层星空滑杆控件：
+     - 标题行左侧显示 `思考强度 EFFORT`，右侧去掉 `.xc-em` 星标，仅显示档位文字（如 `II 星等 · 默认 · 高`）；同时为 `.xc-pk-t` 显式锁死 `height: 26px`（子项 `19px` 行盒、`.tq-eff-def` 固定 `16px` 高），消除 CI Ubuntu 字体（默认 `line-height ~1.2` 下文字高 `15px`、而 `默认` 徽章带内边距与边框高 `16.5px`）从「高」切到「最高」隐藏 `默认` 徽章时产生的 `1.5px`（`343.1 → 341.6`）高度收缩；
+     - 滑杆上层为星轨滑道（`.tq-sl-rail`），含香槟金渐进光轨（`.tq-sl-fill`）、与各档严格对齐的星等刻度节点（`.tq-sl-dot`）及内嵌四角星的圆形浑天滑块（`.xc-eff-th`）；下层对齐各档刻度按钮（DeepSeek V4.1 Flash 为 `关 / 低 / 高 / 最高` 4 档，GLM-5.3 / GLM-5.3 Flash / Kimi K3.1 Pro 为 `低 / 高 / 最高` 3 档）；
+     - 支持**按住滑轨或滑块水平连续拖动**（`pointerdown` + `pointermove` 期间挂 `.is-dragging` 实时更新 `--f` 零延迟跟手，跨过档位中点即时切换档位，松手自动吸附到刻度节点并迸发微光星尘）、**点击任意刻度切档**及**左右方向键 / Home / End 切档**；
+     - 底部保留现有档位深空说明文案（`.tq-eff-desc-line`，单行 `17px` 锁高，隐藏 `chat.js` 自带的 `swapText` 宽度翻转节点，确保手机 `390`/`360` 切换档位时面板高度 `0.0px` 零弹跳）；
+     - `fitPickUp()` 改为紧贴 `.xc-mdl` 胶囊正上方 `8px` 锚定 `bottom` 并按到顶栏底边的实际净空计算 `max-height`（初始 CSS `bottom: 52px` 与展开位置一致），使 `1280×860`、`1024×768`、`768×1024`、`390×844` 下 4 张星体卡、星空滑杆与说明文案全部一屏完整展示（`scrollHeight === clientHeight === 350px`），同时彻底消除 SwiftShader 下的暗色矩形残影。
+  3. **状态同步、快捷键与触屏键盘让路**：切换模型或拖动/点选滑杆时，`state.effort`、`localStorage['lm.tq.effort']`、`.xc-mdl` 胶囊档位字与右侧 Claude Code 终端欢迎框 `思考:<档位>` 实时同步，逻辑不变；单键快捷键 `E` 与 `Ctrl+K` 命令面板「换思考强度」改为打开 `#xin-model-picker` 星表弹层并在下一帧将焦点落到思考强度滑杆当前档位（`.xc-eff-d[aria-checked="true"]`），便于按键后直接用方向键调档（单键 `M` 仍聚焦当前模型卡片，`Esc` 统一收起弹层）；顺带在触屏点按或聚焦/失焦输入框期间（`yieldForKb`）暂停 `sky.js` 的空转 `requestAnimationFrame` 与自动流星，并将触屏画布 DPR 设为 `1`，消除键盘滑入初段的渲染抢帧。
+- **调整的测试断言（`test/e2e/xin_tianqi_e2e.py`，共 3 处，均因删掉 `#tq-eff`/`#tq-eff-pop` 并回模型弹层滑杆及去掉档位星标而同步更新，无跳过或删除，总检查数保持 88 项）**：
+  1. **场景 2（第 292 行，思考强度胶囊展示）**：原查「等大四角星、亮的是天启金色」；按站长确认去掉 `.xc-em` 档位星标后，改为断言页面无 `#tq-eff` / `#tq-eff-pop`、无 `.xc-em` 星标元素，且 `.xc-mdl` 胶囊同时展示模型名与档位文字（`关/低/高/最高`）。
+  2. **场景 2c-2（第 654 行，单键 `E` 快捷键状态判断）**：原检查 `!document.querySelector('#tq-eff-pop').hidden`；现单键 `E` 打开 `#xin-model-picker` 并把焦点移入 `.xc-eff` 滑杆，故改为检查 `!document.querySelector('#xin-model-picker').hidden && !!document.activeElement?.closest('#xin-model-picker .xc-eff')`（与单键 `M` 聚焦模型卡片区分），`Esc` 关闭与输入框打 `cmpwe` 不误触断言不变。
+  3. **场景 2e（第 768–828 行，思考强度专项检查）**：原检查点击 `#tq-eff` 弹出 `#tq-eff-pop` 列表项；现改为在 `#xin-model-picker` 内检验合一后的 `.xc-eff.tq-slider` 星空滑杆——校验单控件与无 `.xc-em` 星标约束、滑杆与说明一屏完整可见无裁切、按住滑轨从「高」水平拖到左端「低」时实时连续滑动与吸附更新、再点击右端刻度切到「最高」同步更新胶囊档位字、本地存储与终端欢迎头 `GLM-5.3 · 思考:最高`。
+- **验证证据**：
+  - `test/e2e/xin_tianqi_e2e.py`：锁死 `.xc-pk-t` 高度后本地连续跑两遍，均 **88/88 全部通过（失败 0 项）**，且复现 CI `line-height: 1.2` 字体条件下切档高度差由 `1.5px` 降为 `0.0px`。
+  - 天启专项单测 `node --test test/xin-tianqi.test.cjs test/xin-tianqi-worker.test.cjs test/xin-writers.test.cjs`：**40/40 通过（失败 0 项）**。
+  - `npm run check`（隔离环境 `HTTP_PROXY= HTTPS_PROXY= http_proxy= https_proxy= XIN_AGY_HOME=/tmp/no-agy-home XIN_ANTIGRAVITY_BIN= CHROMIUM_PATH=… npm run check`）：**退出码 0，全绿**——`Syntax and local references passed: 303 files, 231 asset references`，全仓单测 **1091/1091 通过（失败 0、跳过 0）**。
+  - Playwright 多视口深浅色截图逐张自查：`1280×860`（夜空 4 档滑杆 + 星图浅色 3 档滑杆）、`1024×768`（嵌在首页 `/tianqi` 弹层展开）、`768×1024`（竖屏平板弹层展开）、`390×844`（手机夜空与星图浅色弹层展开及空状态）。全部视口下 4 张星体卡与滑杆完整可见、无滚动裁切、无合成残影，临时截图已清理。
 # 修改清单 · 2026-11-25（#213 正式验收遇到 Hydrogen 额度冷却）
 
 - Codex 实现并自查。[#213 正式发布两次](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45533235022) 均通过部署、冒烟、派工、聊天和看图。前台查网页走备用 DeepSeek，提示暂不可用，联调因没有原生查询步骤失败并自动回滚。只读核实 Hydrogen 额度冷却至北京时间 12 月 1 日 08:24。
