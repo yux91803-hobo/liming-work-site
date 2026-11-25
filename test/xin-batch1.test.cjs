@@ -236,7 +236,7 @@ test('模型还没开工就失败、换下一个候选：失败原因记进 mode
   const rows = () => { let s = ''; try { s = fs.readFileSync(statsF, 'utf8'); } catch { /* 还没写 */ } return s.split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } }); };
   const last = await until(() => rows().find(x => x.run === done.finishedRun), 15000, 'model-stats 记下这一轮');
   assert.equal(last.kind, 'code', JSON.stringify(last));
-  assert.equal(last.from, 'glm-5.3', JSON.stringify(last));
+  assert.equal(last.from, 'glm-5.4', JSON.stringify(last));
   assert.equal(last.model, 'kimi-k3.1-pro');
   assert.match(last.fromErr || '', /503/);
 });

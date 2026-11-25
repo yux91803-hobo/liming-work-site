@@ -292,7 +292,7 @@ test('Hydrogen 派工仍由控制器原话照传，模型补写的造型、配�
  const f=fixture(t),text='FRONT_DISPATCH：做一个钟表。',sent=f.call('send',{agent:'codex',text}),done=await f.wait(sent.run);
  assert.equal(done.events.find(e=>e.t==='done').ok,true);
  const tasks=f.call('tasks',{sid:sent.sid}).tasks;assert.equal(tasks.length,1);
- const original=JSON.parse(fs.readFileSync(f.control+'/sessions/'+tasks[0].sid+'.json'));assert.equal(original.goal,text);assert.equal(original.userRequest,text);
+ const original=JSON.parse(fs.readFileSync(f.control+'/sessions/'+tasks[0].sid+'.json'));assert.equal(original.goal,text);assert.equal(original.userRequest,text);assert.equal(original.requestedModel,'glm-5.3');
 });
 test('Hydrogen 未查询却声称查过时，补上的真实查询输入没有因增量偏移而漏掉',async t=>{
  const f=fixture(t,'claim'),sent=f.call('send',{agent:'codex',text:'你好'}),done=await f.wait(sent.run);

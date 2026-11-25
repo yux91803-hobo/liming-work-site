@@ -94,12 +94,12 @@ async def main():
             if not data.get('ok'):
                 raise RuntimeError('Synthetic image upload failed: ' + scope + ' HTTP ' + str(response.status))
             return token, [{'path':data['data']['path'],'name':'visual-check.png'}]
-        async def tianqi_vision():
+        async def tianqi_vision(model):
             ready = await call('ping', {}, 'tq')
             if ready.get('role') != 'tianqi' or not ready.get('ready'):
                 raise RuntimeError('Tianqi Harness and gateway are not configured on li2')
             token, files = await upload_visual_check('tq')
-            image = await call('send', {'agent':'harness','model':'deepseek-v4.1-flash','perm':'read-only',
+            image = await call('send', {'agent':'harness','model':model,'perm':'read-only',
                 'clientId':'tq-visual-' + uuid.uuid4().hex, 'files':files,
                 'text':'这是上传图片联调。只用 read_image 打开附件，然后在最终回答照写图片里唯一一行字符。不要运行命令或使用其他工具。'}, 'tq')
             try:
@@ -113,13 +113,13 @@ async def main():
                     await asyncio.sleep(2)
                 events = result.get('events', [])
                 done = [e for e in events if e.get('t') == 'done']
-                if len(done) != 1 or not done[0].get('ok') or done[0].get('model') != 'deepseek-v4.1-flash':
-                    raise RuntimeError('Tianqi DeepSeek image turn did not succeed')
+                if len(done) != 1 or not done[0].get('ok') or done[0].get('model') != model:
+                    raise RuntimeError('Tianqi image turn did not succeed: ' + model)
                 if not any(e.get('t') == 'tool_end' and e.get('name') == 'read_image' and e.get('ok') for e in events):
                     raise RuntimeError('Tianqi Harness did not complete read_image')
                 if token not in ''.join(e.get('text','') for e in events if e.get('t') == 'text'):
-                    raise RuntimeError('Tianqi DeepSeek did not read the random characters from the image')
-                print('PASS Tianqi DeepSeek reads uploaded image pixels on li2 with Harness read_image in read-only mode', flush=True)
+                    raise RuntimeError('Tianqi could not read the random characters from the image: ' + model)
+                print('PASS Tianqi ' + model + ' reads uploaded image pixels on li2 with Harness read_image in read-only mode', flush=True)
             finally:
                 try:
                     if (await call('history', {'sid':image['sid']}, 'tq')).get('active'):
@@ -181,6 +181,35 @@ async def main():
         async def check_front(done):
             quota = (await call('tasks', {'all': True})).get('frontAntigravity') if done.get('model') == 'deepseek-v4.1-flash' else None
             return validate_front_model(done, quota, time.time() * 1000)
+        async def glm54_background():
+            title = 'xin-smoke-glm-' + uuid.uuid4().hex[:12]
+            answer = 'GLM-' + uuid.uuid4().hex[:12].upper()
+            text = ('用 GLM-5.4 派一个后台任务做发布联调，立即回复，别等结果。用 xin task new --kind research --title ' + title +
+                    ' --dir ' + directory + '-glm -- 只回复 ' + answer + '。属于合成联调，不需要执行命令、联网或修改文件。')
+            sent = await call('send', {'agent':'codex','clientId':'glm54-' + uuid.uuid4().hex,'text':text})
+            try:
+                limit = time.monotonic() + RECOVERED_REPLY_LIMIT
+                while time.monotonic() < limit:
+                    tasks = (await call('tasks', {'sid':sent['sid']})).get('tasks', [])
+                    task = next((t for t in tasks if t.get('title') == title), None)
+                    if task and (len(tasks) != 1 or task.get('status') in ('failed','stopped','waiting')):
+                        raise RuntimeError('Xiaoxin GLM-5.4 dispatch did not complete')
+                    if task and task.get('status') == 'done':
+                        detail = await call('history', {'sid':task['sid']})
+                        actual = detail['task'].get('actualModel')
+                        if actual != 'glm-5.4' or answer not in (detail['task'].get('result') or {}).get('text', ''):
+                            raise RuntimeError('Xiaoxin background run did not use GLM-5.4 and return the requested reply')
+                        run = detail['runs'][-1]
+                        require_finalization(run['run'], run['events'], 'GLM-5.4 background')
+                        print('PASS Xiaoxin real GLM-5.4 background dispatch and durable reply on li', flush=True)
+                        return
+                    await asyncio.sleep(3)
+                raise RuntimeError('Xiaoxin GLM-5.4 background run timed out')
+            finally:
+                try:
+                    await forget_owned(sent['sid'], lambda t: t.get('title') == title)
+                except RuntimeError:
+                    print('Xiaoxin GLM-5.4 smoke conversation retained for diagnosis', flush=True)
         try:
             await page.goto(BASE + '/#xin', wait_until='domcontentloaded')
             await page.locator('.xc-login input[name=pw]').fill(PASSWORD, timeout=30000)
@@ -194,7 +223,8 @@ async def main():
                 raise RuntimeError('天启入口不认同一个登录或缺少启用状态')
             print('PASS 天启入口认同一个登录（enabled=' + json.dumps(tq_me['enabled']) + '）', flush=True)
             if CHECK_TIANQI_VISION and tq_me['enabled']:
-                await tianqi_vision()
+                await tianqi_vision('deepseek-v4.1-flash')
+                await tianqi_vision('glm-5.4')
             # 第 2 批：状态切到内核模式。外壳拉起常驻的状态进程（换外壳、切换前备份都在这里头），最多等 120 秒；
             # 等不到就失败（会自动回滚）。这次部署改了外壳的，要等电脑上换成新外壳（kernelCurrent）以后才算。
             # 记下切换次数和外壳起控制器的次数，所有检查做完后再核对一次。
@@ -523,7 +553,9 @@ async def main():
                 web = (await call('history', {'sid': web_sid}))['task']
                 if web['status'] == 'done' and web.get('delivery', {}).get('state') == 'delivered': break
                 if web['status'] in ('failed','stopped','waiting') or time.monotonic() > limit:
-                    raise RuntimeError('Real Gemini web work did not complete: ' + web['status'])
+                    wait = max(0, round(((web.get('retryAt') or 0) - time.time() * 1000) / 1000))
+                    raise RuntimeError('Real Gemini web work did not complete: ' + web['status'] +
+                                       ' attempts=' + str(web.get('turns')) + ' model=' + str(web.get('actualModel')) + ' retrySeconds=' + str(wait))
                 await asyncio.sleep(5)
             preview = web.get('preview') or {}
             saved_front = await call('history', {'sid': alternate_sid})
@@ -574,6 +606,8 @@ async def main():
             await art.close()
             # 后台干活时插话（docs/superpowers/specs/2026-11-17-xin-steer-design.md）：Gemini 补一句、停下再继续、Codex（点名 Kimi）
             await steer_live(page, call, settle, errors, LEAKS, steer_sids, directory)
+            if CHECK_TIANQI_VISION:
+                await glm54_background()
             # 在联调结束时确认仍由同一个状态进程服务。
             same_resident_owner(owner, await call('usage', {}))
             print('PASS state owner PID and epoch stayed constant throughout the run', flush=True)

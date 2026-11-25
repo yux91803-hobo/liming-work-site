@@ -57,6 +57,8 @@ test('接着做一个中途断了的任务、副本已经不在了：重新拷�
   const task = JSON.parse(fs.readFileSync(path.join(xin, 'sessions', 'staskreboot1.json'), 'utf8'));
   assert.equal(task.runs.length, 2, JSON.stringify(task.status));
   const meta = JSON.parse(fs.readFileSync(path.join(xin, 'runs', task.runs[1] + '.json'), 'utf8'));
+  assert.equal(task.model, 'glm-5.4');
+  assert.equal(meta.model, 'glm-5.4');
   assert.match(meta.text, /电脑重启过/); assert.match(meta.text, /把 PA0 的灯点亮/); assert.match(meta.text, /这一轮中途断了/);
   assert.equal(task.agentSid ?? null, null, '不再续接旧会话');
   assert.ok(fs.existsSync(path.join(task.workspace.work, 'main.c')), '按原项目重新拷了副本');

@@ -58,7 +58,7 @@ import { loginStore, normalizeSite } from './vm-logins.mjs';
 import { loginWindow } from './vm-browser.mjs';
 import { scoped, readProcs, reapOnce } from './vm-reaper.mjs';
 import { fromClaude, fromCodex, fromHarness, stepActivity } from './vm-events.mjs';import { frontStatus } from './vm-status.mjs';
-import { resolveEffort, HARNESS_WIN, harnessModel, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route, backgroundRoute } from './vm-models.mjs';
+import { resolveEffort, HARNESS_WIN, harnessModel, CODEX_ROUTE, CODEX_MODELS, codexModel, modelLabel, modelSource, activeModel, activeFallbacks, AUTO_EFFORT, ROUTES, KIND_NAMES, namedModel, route, backgroundRoute } from './vm-models.mjs';
 import { withContext, forAgent, MEM_FILE, readMemory, DAILY_FILE, dailyPrompt, remember, systemPrompt, frontMaterials, TIANQI_REMIND, harnessPerm, harnessTurn, permError, workError, taskSystemPrompt, DSH_HOME, harnessEnv, harnessPurgeInstalled, tianqiPlugins, writeHarnessPatch, harnessUsage } from './vm-persona.mjs';import { termOps } from './vm-persona.mjs';
 export * from './vm-base.mjs';
 export * from './vm-companion.mjs';
@@ -617,7 +617,10 @@ function runner(run) {
   if (!meta) process.exit(1);
   assertAttempt(meta,callContext());
   if(meta.stopped){endStoppedRun(run,meta);return;}
-  meta.pid = process.pid; meta.identity = processIdentity(process.pid); patchRun(run,{pid:meta.pid,identity:meta.identity});
+  const model = activeModel(meta.model);
+  if (meta.task && model !== meta.model && lockedCall('tasks','task_model',{sid:meta.sid,run,model}).error) throw Error('无法保存升级后的任务模型');
+  meta.model = model;
+  meta.pid = process.pid; meta.identity = processIdentity(process.pid); patchRun(run,{pid:meta.pid,identity:meta.identity,...(model ? {model} : {})});
   const sess = taskBridgeSession(readJ(sessF(meta.sid)), meta);
   mk(WORK); installXin();
   const cwd = meta.cwd || WORK; mk(cwd);
@@ -856,7 +859,7 @@ function runner(run) {
   const safeFallbacks=()=>{
     const current=readJ(sessF(meta.sid),sess);if(current.strictModel)return [];
     const avoid=current.tkind==='review'?reviewAuthors(current):[],images=!!(meta.images||[]).length;
-    return (meta.fallbacks||[]).filter(id=>!attempted.has(id) && !avoid.includes(id) && (runtime.isAgyModel(id)
+    return activeFallbacks(meta.fallbacks,meta.model).filter(id=>!attempted.has(id) && !avoid.includes(id) && (runtime.isAgyModel(id)
       ? !images && agyPoolOk(runtime.agyPool(id))
       : CODEX_MODELS.some(m=>m.id===id && (!images||m.image))));
   };
@@ -1619,6 +1622,7 @@ function startTask(t, all) {
     if(rt.error){failTask(t,'没有开始：'+rt.note);return false;}
     t.model = rt.model; t.fallbacks = t.strictModel?[]:rt.fallbacks; t.why = rt.why;
   }
+  t.model = activeModel(t.model); t.fallbacks = activeFallbacks(t.fallbacks,t.model);
   // 项目副本和任务自己的会话都在系统临时目录里；电脑重启后它们可能已经没了（审查问题 16）。
   // 这时副本会按原项目重新拷一份，旧会话也续接不上：不再续接，开新会话，并把原要求和现状说清楚，而不是直接算没做成。
   const lost = !first && !hostTask(t) && !!t.workspace && !fs.existsSync(t.workspace.work);
@@ -1933,7 +1937,7 @@ export function frontAction(a) {
     if (!original) return {error:'找不到本轮用户原话，不能替用户编写要求'};
     if (o.kind && !TASK_KINDS.includes(o.kind)) return {error:'未知工作类型：'+o.kind+'（可用：'+TASK_KINDS.join('、')+'）'};
     // A model the user named is recorded from their own words and applied regardless; a loosely written --model must not block dispatch.
-    if (o.model && !m.frontNamed && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、')+'）'};
+    if (o.model && !m.frontNamed && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(x=>x.id===activeModel(o.model))) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、')+'）'};
     const previous = mine.find(t=>t.frontRun===a.run);
     if (previous) return {terminal:true,text:maintenanceApproval(previous)?TELL_TEXT.approval:'好，我这就去弄。',task:taskSummary(previous)};
     const requested = m.frontNamed || o.model;
@@ -2678,7 +2682,7 @@ function taskCmd(argv,print=console.log) {
     if (!o.goal) o.goal = readStdin().trim();
     if (!o.goal) { print('要写清楚让分身做什么\n' + TASK_HELP); return 2; }
     if (o.kind && !TASK_KINDS.includes(o.kind)) { print('类型只能是：' + TASK_KINDS.join(' / ')); return 2; }
-    if (o.model && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(m => m.id === o.model)) { print('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、') + '）'); return 2; }
+    if (o.model && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(m => m.id === activeModel(o.model))) { print('没有这个模型：' + o.model + '（能用的：' + CODEX_MODELS.map(m => m.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、') + '）'); return 2; }
     // 用户这一句点名的就是这个模型：当成用户点名（检查任务也照用）
     const said = (events(run).find(e => e.t === 'user') || {}).text || '';
     if (meta.frontNamed) o.model = meta.frontNamed;

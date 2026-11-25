@@ -39,7 +39,7 @@ def usage():
             models['deepseek-v4.1-flash'] = {'input': 50000, 'cached': 20000, 'output': 4000, 'runs': 3}
         # 看图、电脑维护、每日任务还走 GLM / Kimi（只放在上面有数据的日子：30 天里空柱数不变）
         if i in (0, 3, 10):
-            models['glm-5.3'] = {'input': 90000, 'cached': 30000, 'output': 7000, 'runs': 2}
+            models['glm-5.4' if i == 0 else 'glm-5.3'] = {'input': 90000, 'cached': 30000, 'output': 7000, 'runs': 2}
         if i in (0, 20):
             models['kimi-k3.1-pro'] = {'input': 60000, 'cached': 10000, 'output': 5000, 'runs': 1}
         if i in (0, 1):
@@ -59,7 +59,7 @@ def usage():
             {'key': 'argon', 'name': 'Argon', 'checkedAt': NOW - 2 * 60000, 'windows': [
                 {'id': 'gemini-argon-wtu-weekly', 'kind': 'week', 'used': 0.4, 'resetAt': NOW + 100 * H, 'reset': False, 'forecastAt': None}]}],
         'days': days, 'totals': totals, 'since': NOW - 40 * 24 * H, 'now': NOW,
-        'names': {'gemini-4-hydrogen': 'Gemini 4 Hydrogen', 'gemini-4-neon': 'Gemini 4 Neon', 'gemini-4-argon': 'Gemini 4 Argon', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash', 'glm-5.3': 'GLM-5.3', 'kimi-k3.1-pro': 'Kimi K3.1 Pro', 'glm-5.3-flash': 'GLM-5.3 Flash'}}
+        'names': {'gemini-4-hydrogen': 'Gemini 4 Hydrogen', 'gemini-4-neon': 'Gemini 4 Neon', 'gemini-4-argon': 'Gemini 4 Argon', 'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash', 'glm-5.3': 'GLM-5.3', 'glm-5.4': 'GLM-5.4', 'kimi-k3.1-pro': 'Kimi K3.1 Pro', 'glm-5.3-flash': 'GLM-5.3 Flash'}}
 
 
 # 内核外壳给的主人状态（site/xin/vm-kernel.mjs 的 summary，Worker 在 usage 里挂上 ops）
@@ -180,7 +180,7 @@ async def main():
         await pg.click('.xc-sheet .xu-sc:has-text("网关")')
         await pg.wait_for_timeout(300)
         gw = await pg.evaluate(PAGE)
-        ok = gw['src'] == '网关' and gw['quota'] == 0 and gw['days'] == 7 and sorted(gw['legend']) == sorted(['DeepSeek V4.1 Flash', 'GLM-5.3', 'Kimi K3.1 Pro', 'GLM-5.3 Flash']) \
+        ok = gw['src'] == '网关' and gw['quota'] == 0 and gw['days'] == 7 and sorted(gw['legend']) == sorted(['DeepSeek V4.1 Flash', 'GLM-5.3', 'GLM-5.4', 'Kimi K3.1 Pro', 'GLM-5.3 Flash']) \
             and not any('Gemini' in m for m in gw['models']) and '缓存命中' in gw['sum'] and st.get('usage_calls') == calls
         ui.check('切到网关：没有额度卡，只算 DeepSeek、GLM、Kimi（图例和列表里没有 Gemini），不再请求；记在这个浏览器里', ok and await pg.evaluate("localStorage.getItem('lm.xin.uSrc')") == 'gateway', gw)
         await pg.click('.xc-sheet .xu-sc:has-text("Google")')
