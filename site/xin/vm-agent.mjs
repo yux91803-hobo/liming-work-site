@@ -50,7 +50,7 @@ import { initializeStateTables } from './vm-kernel-operations.mjs';
 import { checkControllers } from './vm-kernel-compat.mjs';
 // xin-state-bridge:1
 import { workVersion, handoffId, handoffPrompt, publicCompletion, foregroundContext } from './vm-handoff.mjs';
-import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps, createExecutorSteerBridge, retrySteerCall, saysContinue } from './vm-steer.mjs';
+import { heldBlock, handoverBlock, steerBlock, HAND_MODE, createSteerOps, createExecutorSteerBridge, retrySteerCall, saysContinue, maintenanceTask, maintenanceApproval, retainHostGrant, WAIT_TTL_MS, waitUntil } from './vm-steer.mjs';
 import { BASE, TIANQI, HARNESS_KEY, dshCmd, harnessInstalled, tianqiReady, tianqiRefuse, journal, WORK, today, readText, hasCmd, mk, rid, okId, readJ, writeJ, cut, processIdentity, alive, processGroupMembers, signalProcessGroup, UPLOADS, readTail, TASK_SANDBOX, ownership } from './vm-base.mjs';
 import { ACTS, setNext, claimNext, MOVES_MAX, cleanMove, readMoves, writeMoves, MOVE_HELP, bondLevel, bondAdd, bondInfo } from './vm-companion.mjs';
 import { bareCmd, screenLog, openScreen, setScreenTag, screenDisplay } from './vm-screen.mjs';
@@ -1394,7 +1394,7 @@ export const SYSTEM_DIR = () => path.join(WORK, 'system');
 export const hostTask = t => !!(t && (t.dailyDate || t.tkind === 'system'));
 const TASK_SEQ = () => path.join(BASE, 'task-seq.json');
 const isTask = s => !!s && s.kind === 'task';
-const isBackground = t => ['queued','running','stopping'].includes(t.status) || t.status==='waiting' && !!t.approval;
+const isBackground = t => ['queued','running','stopping'].includes(t.status) || t.status==='waiting' && !!t.approval && !maintenanceApproval(t);
 const isFinished = t => t.status === 'done' || t.status === 'failed' || t.status === 'stopped';
 function cleanupFinishedTask(t){
   if(!isFinished(t))return;
@@ -1431,7 +1431,7 @@ function findTask(a, all) {
 }
 function saveTask(t) {
   t.updated = Date.now(); mk(SESS); writeJ(sessF(t.sid), t);
-  if(t.parent&&['done','failed','waiting'].includes(t.status)&&!t.pendingQuestion&&t.result){
+  if(t.parent&&['done','failed','waiting'].includes(t.status)&&!t.pendingQuestion&&t.result&&!maintenanceApproval(t)){
     const parent=readJ(sessF(t.parent));
     if(parent?.agent==='codex'){
       const id=handoffId(t);
@@ -1543,7 +1543,6 @@ function taskDir(no, title, want) {
   return { dir: real };
 }
 const overlaps = (a, b) => !!a && !!b && (a === b || a.startsWith(b + '/') || b.startsWith(a + '/'));
-// 派任务（在 tasks 锁里）：a = {parent, kind, title, goal, model, named, dir, files, after, minutes}
 const agyPoolOk = pool => runtime.agyPoolAvailable(pool, file => readJ(path.join(BASE,file)));
 function agyAvailable() {
   return !!runtime.antigravityBinary() && Date.now() - (readJ(AGY_STALL_F(), {})?.at || 0) >= AGY_STALL_MS;
@@ -1586,7 +1585,10 @@ function taskNew(a) {
     plugins: host ? [] : [...new Set((a.plugins || []).filter(n => n === 'rea' && mcpUser().has(n)))], dailyDate: a.daily ? today() : null,
     frontRun:a.frontRun||null,web:!!a.web&&!host,strictModel:!!a.strictModel&&!runtime.isAgyModel(rt.model),...(sites.length?{sites}:{}),status: 'queued', created: Date.now(), updated: Date.now(), runs: [], agentSid: null, started: false, resumes: 0, inbox: [] };
   if(t.strictModel)t.fallbacks=[];
+  if (maintenanceTask(t) && a.frontRun === callContext().run && ownerRequest(a.frontRun, t.parent) === goal) confirmHostStart(t, a.frontRun);
+  const ready = allowHostStart(t);
   saveTask(t);
+  if (!ready) return { task: taskSummary(t) };
   memoryActivity();
   if (a.daily) writeJ(DAILY_LAST(), { date: t.dailyDate, run: null, sid: t.sid, at: Date.now(), ok: null, status: 'queued' });
   scheduleNow();
@@ -1607,8 +1609,9 @@ function taskFirstText(t, deps) {
   return forAgent(parts.join('\n'), '') + f;
 }
 function startTask(t, all) {
+  if (!allowHostStart(t)) { saveTask(t); return false; }
   const deps = (t.after || []).map(n => all.find(x => x.no === n)).filter(Boolean);
-  const first = !(t.runs && t.runs.length);
+  const first = !!t.hostDeferredFirst || !(t.runs && t.runs.length);
   delete t.verification;
   delete t.cleanupPending;
   t.deadline = t.deadline || Date.now() + (Number(process.env.XIN_TASK_TIMEOUT_MS) || (t.minutes || TASK_MIN) * 60e3);
@@ -1627,16 +1630,18 @@ function startTask(t, all) {
   catch (e) { failTask(t, '没有启动任务：' + e.message); return false; }
   if (lost) { t.agentSid = null; t.started = false; delete t.antigravityConversation; }
   // 上一轮没正常做完带下来的补充（断线重启后自动续做、临时出错后续做）：放在这一轮开头一起交出去，一次取完
-  const held = first ? [] : (t.inbox || []).map(x => x.text).filter(Boolean), heldText = held.length ? '\n\n' + heldBlock(held) : '';
-  const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps)
+  const held = first && !t.hostDeferredFirst ? [] : (t.inbox || []).map(x => x.text).filter(Boolean), heldText = held.length ? '\n\n' + heldBlock(held) : '';
+  const text = first ? t.dailyDate ? forAgent(t.goal, '') : taskFirstText(t, deps) + heldText
     : lost ? forAgent('电脑重启过，上一轮的项目副本和过程记录都没了，现在的目录是按原项目重新拷贝的。原来的要求：\n' + cut(t.goal || '', 10000) + '\n先看看现在的文件，再接着做' + (t.next ? '：' + t.next : '。') + heldText, '')
     : forAgent((t.next || '接着做。') + heldText, '');
   const userText = first ? t.goal : String(t.nextShow || t.next || '接着做');
   const cm = codexModel(t.model);
+  const hostInput = maintenanceTask(t) ? { first, next: t.next || null, nextShow: t.nextShow || null, inbox: t.inbox || [] } : null, retainGrant = retainHostGrant(t);
   Object.assign(t, { status: 'running',stage:'working',actualModel:t.model,question: '', next: null, nextShow: null, retryAt: 0, startedAt: t.startedAt || Date.now() }, held.length ? { inbox: [] } : {});
+  delete t.hostDeferredFirst; retainGrant();
   const run = launch(t, { text, effort: runtime.taskEffort(t), kind: t.dailyDate ? 'daily' : 'task', routeKind: t.tkind, task: true, no: t.no, model: t.model, why: t.why, fallbacks: first||runtime.isAgyModel(t.model) ? t.fallbacks || [] : [],
     images: first && cm.image ? (t.files || []).filter(f => f.image).map(f => f.path) : [], cwd: t.workspace?.work || t.dir || WORK, sandbox: !hostTask(t) && TASK_SANDBOX(),
-    deadline: t.deadline }, { t: 'user', text: userText, at: Date.now() });
+    deadline: t.deadline, ...(hostInput ? { hostInput } : {}) }, { t: 'user', text: userText, at: Date.now() });
   if (t.dailyDate) writeJ(DAILY_LAST(), { date: t.dailyDate, run, sid: t.sid, at: Date.now(), ok: null });
 }
 function failTask(t, why, err = '') {
@@ -1645,7 +1650,6 @@ function failTask(t, why, err = '') {
   if (t.dailyDate) dailyDone(lastRun(t), { sid: t.sid, dailyDate: t.dailyDate }, false);
   saveTask(t);
 }
-// 排队的能开始就开始（在 tasks 锁里）
 function scheduleNow() {
   const all = listTasks();
   let running = all.filter(occupiesTask).length;
@@ -1668,17 +1672,15 @@ const taskFinish = createTaskFinisher({
   sessF, metaF, isTask, lastRun, tailEvents, taskPush, isFinished, sessionUsage,
   cleanupFinishedTask, dailyDone, saveTask, enqueueNotice, scheduleNow
 });
-// 补充（taskTell、tellMode）、前台的 <手上的事>、后台主动说一句：在 vm-steer.mjs（docs/superpowers/specs/2026-11-17-xin-steer-design.md）。
-// 后面才定义的（runDone、taskVersion）包一层，用到时再取
-const { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover } = createSteerOps({
+const { taskTell, tellMode, handNotes, taskNote, noteStart, recentNotes, steerAck, steerTake, steerHandover, allowHostStart, allowHostLaunch, confirmHostStart } = createSteerOps({
   metaF, sessF, findTask, taskSummary, saveTask, scheduleNow, cleanupFinishedTask, listTasks, emit, isTask, isFinished, lastRun, TASK_STATUS,
-  runDone: r => runDone(r), taskVersion: t => taskVersion(t), readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel, callContext });
+  runDone: r => runDone(r), taskVersion: t => taskVersion(t), readJ, writeJ, journal, rid, okId, cut, runtime, BASE, namedModel, ownerRequest, callContext });
 function taskStop(a) {
   const t = findTask(a);
   if (!t) return { error: 'no_task', msg: '找不到这个任务' };
   if (isFinished(t)) return { ok: true, already: true, task: taskSummary(t) };
   const activeRun = lastRun(t), wasRunning = !!activeRun && !runDone(activeRun);
-  delete t.approval; delete t.publication; delete t.pendingQuestion; delete t.browserStep;
+  delete t.approval; delete t.publication; delete t.pendingQuestion; delete t.browserStep; delete t.hostGrant;
   // 补充是要求、不是操作：停下不清掉，兄弟之后说继续照样按补充做（docs/superpowers/specs/2026-11-17-xin-steer-design.md §2）
   Object.assign(t, { status: wasRunning ? 'stopping' : 'stopped', result: { ok: false, text: wasRunning ? '做到一半被停下了。' : '还没做完就停了。', at: Date.now() }, endedAt: wasRunning ? 0 : Date.now(), frontSeen: false });
   cleanupFinishedTask(t);
@@ -1688,16 +1690,11 @@ function taskStop(a) {
   scheduleNow();
   return { ok: true, task: taskSummary(t) };
 }
-/* 停下来等站长（要批准的事、登录、写回确认）最多等 30 分钟，过了就停下、不再挂着（站长 2026-11-12「这种东西有什么意义吗」）。
-   参考 OpenMuse apps/server/src/actions.ts：批准请求带 expiresAt，30 分钟没处理就作废；Grok Bot 的后台子任务没有「等用户」这一状态。
-   停下不再提醒（frontSeen 记成看过：Grok Bot 对过时、站长没在等的结果不说话）；站长之后回一句，照样接着做（taskTell）。
-   这一轮还活着、模型在等回答的（t.approval）不算：它有自己的 10 分钟（APPROVAL_HOLD_MS）。 */
-export const WAIT_TTL_MS = () => Number(process.env.XIN_WAIT_TTL_MS) || 30 * 60e3;
-export const waitUntil = t => t && t.status === 'waiting' && !t.approval && t.endedAt ? t.endedAt + WAIT_TTL_MS() : 0;
+export { WAIT_TTL_MS, waitUntil };
 function expireWait(t, now = Date.now()) {
   const q = t.question || '', parts = [t.result?.text || ''];
   if (t.publication) { delete t.publication; parts.push('原项目未更改，任务副本保留。'); }
-  delete t.browserStep; delete t.pendingQuestion;
+  delete t.browserStep; delete t.pendingQuestion; if (maintenanceApproval(t)) delete t.approval;
   parts.push('等确认超过 ' + Math.round(WAIT_TTL_MS() / 60e3) + ' 分钟没有回复，先停下了' + (q ? '（' + q + '）' : '') + '。要接着做，回复一句就行。');
   t.result = { ...(t.result || {}), ok: false, text: cut(parts.filter(Boolean).join('\n\n'), 8000), at: now };
   Object.assign(t, { status: 'stopped', expired: { question: q, at: now }, question: '', endedAt: now, frontSeen: true });
@@ -1733,7 +1730,7 @@ function taskSeen(a) {
 function taskTick() {
   const out = [];
   try { expireWaits(); } catch { /* 过期处理出错不挡收拾 */ }
-  for (const t of listTasks().filter(t=>t.status==='running'||t.status==='stopping'||t.status==='waiting'&&t.approval)) {
+  for (const t of listTasks().filter(t=>t.status!=='queued'&&isBackground(t))) {
     const r = lastRun(t), m = r && readJ(metaF(r));
     if (!r || !m || !runDone(r)) continue;
     const m2 = readJ(metaF(r)) || m;
@@ -1747,9 +1744,9 @@ function taskTick() {
   scheduleNow();
   return { notify: out };
 }
-// 不在锁里：要不要收拾（有在跑的已经结束、或者排队的可能能开始了）
 function taskNeedsTick(all) {
-  const running = all.filter(t=>t.status==='running'||t.status==='stopping'||t.status==='waiting'&&t.approval);
+  if (all.some(t => waitUntil(t) && Date.now() >= waitUntil(t))) return true;
+  const running = all.filter(t=>t.status!=='queued'&&isBackground(t));
   if (running.some(t => { const r = lastRun(t); return !r || runDone(r); })) return true;
   return all.some(t => t.status === 'queued' && !(t.retryAt > Date.now())) && running.length < TASK_MAX;
 }
@@ -1899,11 +1896,16 @@ export function frontImmediate(a){
   return {};
 }
 // 转过去以后的兜底回话（前台自己的话要不到时才用）：按补充怎么接说，只说一次
-const TELL_TEXT = { now: '行，接下来就按你说的来。', next: '好，这一轮跑完我就按你补的再来一遍。', start: '好，开始的时候一起带上。', reply: '好，我接着做。', resumed: '好，我接着做。' };
+const TELL_TEXT = { now: '行，接下来就按你说的来。', next: '好，这一轮跑完我就按你补的再来一遍。', start: '好，开始的时候一起带上。', reply: '好，我接着做。', resumed: '好，我接着做。', approval: '维护要求已记下，请在任务详情里确认。' };
 function frontOriginalRequest(run, meta) {
   const original = events(run).find(e=>e.t==='user');
   return String(original?.text || meta.frontRequest || ((meta.frontFiles||[]).length ?
     meta.frontFiles.every(f=>f.image) ? '看看我发的图片。' : '看看我发的文件。' : '')).trim();
+}
+function ownerRequest(run, sid) {
+  const m = okId(run, 'r') && readJ(metaF(run));
+  return m?.ownerInput === true && m.sid === sid && !m.task && !m.handoff && !m.ended && !m.stopped && m.agent === 'codex' && lastRun(readJ(sessF(sid))) === run
+    ? m.frontRequest || '' : '';
 }
 export function frontAction(a) {
   const m = okId(a.run,'r') && readJ(metaF(a.run));
@@ -1937,7 +1939,7 @@ export function frontAction(a) {
     // A model the user named is recorded from their own words and applied regardless; a loosely written --model must not block dispatch.
     if (o.model && !m.frontNamed && !runtime.isAgyModel(o.model) && !CODEX_MODELS.some(x=>x.id===o.model)) return {error:'未知模型：'+o.model+'（可用：'+CODEX_MODELS.map(x=>x.id).concat(Object.keys(runtime.AGY_CATALOG)).join('、')+'）'};
     const previous = mine.find(t=>t.frontRun===a.run);
-    if (previous) return {terminal:true,text:'好，我这就去弄。',task:taskSummary(previous)};
+    if (previous) return {terminal:true,text:maintenanceApproval(previous)?TELL_TEXT.approval:'好，我这就去弄。',task:taskSummary(previous)};
     const requested = m.frontNamed || o.model;
     r = taskNew({parent:m.sid,...o,goal:original,web:!!o.web,strictModel:!!m.frontNamed,frontRun:a.run,files:[...new Set([...(o.files||[]),...(m.frontFiles||[]).map(f=>f.path)])],model:requested,named:!!m.frontNamed,userRequest:original});
   } else {
@@ -1976,7 +1978,7 @@ export function frontAction(a) {
   // 实际接法和它不一样（或者这一轮没附 <手上的事>），就不用预先写好的那句，带着回执再要一句（vm-runtime.mjs 的 ownWords）
   const shown = sub === 'tell' && m.frontHandModes ? m.frontHandModes[r.task?.no] : undefined;
   const reword = sub === 'tell' && !(shown && (shown === r.delivery || shown === 'ended' && r.delivery === 'resumed'));
-  const result = {terminal:true,text:sub === 'stop' ? (r.task?.status==='stopping' ? '好，我正在停下。' : '好，我停下了。') : sub === 'tell' ? TELL_TEXT[r.delivery] || '好，我这就去弄。' : '好，我这就去弄。',task:r.task,
+  const result = {terminal:true,text:sub === 'stop' ? (r.task?.status==='stopping' ? '好，我正在停下。' : '好，我停下了。') : r.task?.approval?.kind === 'host' ? TELL_TEXT.approval : TELL_TEXT[r.delivery] || '好，我这就去弄。',task:r.task,
     ...(sub === 'tell' ? { delivery: r.delivery || '', ...(reword ? { reword: true } : {}) } : {}),...(r.reviewError?{reviewError:r.reviewError}:{} )};
   if(r.reviewError) result.text+='复核还没安排成功，我需要再确认一下。';
   writeJ(path.join(RUNS,a.run+'.front.json'),result);
@@ -2012,7 +2014,6 @@ export function frontTaskByNo(sid, no, all) {
   all = all || listTasks();
   return all.find(t => t.parent === sid && String(t.no) === String(no)) || all.find(t => String(t.no) === String(no)) || null;
 }
-// 前台转述时说明还能等多久（过了就停下，见 WAIT_TTL_MS）
 const waitLeft = t => { const u = waitUntil(t); return u ? '（' + Math.max(1, Math.ceil((u - Date.now()) / 60e3)) + ' 分钟内没回复就先停下，之后回一句照样能接着做）' : ''; };
 export function taskNotes(sid, all, { active = true } = {}) {
   all = all || listTasks();
@@ -2089,6 +2090,7 @@ const ops = { ...termOps,   // 天启终端里自己输命令（vm-persona.mjs �
     if (!okId(a.sid, 's') || !okId(a.run, 'r')) return { error: 'bad_id', msg: '对话或轮次不对' };
     const s = readJ(sessF(a.sid)), m = readJ(metaF(a.run));
     if (!s || !m || m.sid !== a.sid) return { error: 'stale', msg: '这一轮已经变化，请重新打开对话' };
+    if (maintenanceTask(s)) return { error: 'use_task_tell', msg: '请在电脑维护任务详情里补充' };
     const text = String(a.text || '').trim().slice(0, 4000), id = /^[a-zA-Z0-9_-]{8,80}$/.test(a.clientId || '') ? a.clientId : rid('u');
     if (!text) return { error: 'empty', msg: '补充消息是空的' };
     if(m.stopped)return {error:'stopped',msg:'这一轮正在停止，请下一轮再发'};
@@ -2098,8 +2100,8 @@ const ops = { ...termOps,   // 天启终端里自己输命令（vm-persona.mjs �
     const prior=readJ(path.join(BASE,'messages',id+'.json'));
     if(prior?.sid===a.sid) return {...prior,ok:true,next:true,id};
     if(lastRun(s)!==a.run) return {error:'stale',msg:'这一轮已经变化，请重新打开对话'};
-    if (runDone(a.run)) return { ...ops.send({ sid: a.sid, text, clientId:id }), next: true, id };
-    m.steers = (m.steers || []).concat([{ id, text, at: Date.now(), state: 'pending' }]); writeJ(metaF(a.run), m);
+    if (runDone(a.run)) return { ...ops.send({ sid: a.sid, text, clientId:id, _ownerInput: a._ownerInput }), next: true, id };
+    m.steers = (m.steers || []).concat([{ id, text, at: Date.now(), state: 'pending', ...(a._ownerInput === true ? { ownerInput: true } : {}) }]); writeJ(metaF(a.run), m);
     memoryActivity();
     emit(a.run, { t: 'user', text, at: Date.now(), steer: true, clientId: id });
     return { ok: true, id, state: 'pending' };
@@ -2160,6 +2162,7 @@ const ops = { ...termOps,   // 天启终端里自己输命令（vm-persona.mjs �
       if (!okId(a.sid, 's')) return { error: 'bad_sid', msg: '对话编号不对' };
       s = readJ(sessF(a.sid));
       if (!s) return { error: 'no_session', msg: '找不到这个对话' };
+      if (maintenanceTask(s)) return { error: 'use_task_tell', msg: '请在电脑维护任务详情里补充' };
       const r = lastRun(s);
       if (r && !runDone(r)) {
         const current=readJ(metaF(r));
@@ -2183,8 +2186,6 @@ const ops = { ...termOps,   // 天启终端里自己输命令（vm-persona.mjs �
     const ht = harnessTurn(s, a, said), userEv = { t: 'user', text, at: Date.now(), ...(ht.plan ? { plan: true } : {}) };   // 天启：对话记住权限，计划那一轮只读
     if (ctxLabel) userEv.ctx = ctxLabel;
     if (files.length) userEv.files = files.map(f => ({ name: f.name, path: f.path, size: f.size, image: f.image }));
-    // 前台优先 Antigravity 的 Gemini 4 Hydrogen；额度耗尽或推理未完成时可回 DeepSeek。点名只记给后台。
-    // Harness（天启模式）按网页选的，续聊没带 model 时保留对话里的选择。
     let rt = null, cm = null;
     if (s.agent === 'codex') {
       rt = { model: preferredFrontModel(), why: 'chat', fallbacks: [] };
@@ -2198,7 +2199,7 @@ const ops = { ...termOps,   // 天启终端里自己输命令（vm-persona.mjs �
     const all = s.agent === 'codex' ? listTasks() : [];
     const tn = s.agent === 'codex' ? taskNotes(s.sid, all, { active: false }) : { text: '', seen: [] };
     const hands = s.agent === 'codex' && s.runs.length ? handNotes(s.sid, text, all) : null;
-    const run = launch(s, Object.assign({ frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:TIANQI?'':String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? (TIANQI ? ht.said : withContext(ht.said, a.context) + '\n\n' + TIANQI_REMIND) : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, frontTaskNotes: tn.text, ...(hands ? { frontHands: hands.text, frontHandModes: hands.modes } : {}), effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [], ...ht.meta },
+    const run = launch(s, Object.assign({ ...(s.agent === 'codex' && a._ownerInput === true ? { ownerInput: true } : {}), frontNamed: s.agent === 'codex' ? namedModel(text) : null, frontRequest:text,context:TIANQI?'':String(a.context||'').slice(0,12000),frontWeb:isWebRequest(text),frontFiles: files,frontSeesImages:!!(cm && cm.image), text: (s.agent === 'harness' ? (TIANQI ? ht.said : withContext(ht.said, a.context) + '\n\n' + TIANQI_REMIND) : forAgent(said, a.context)) + filesPart(files, s.agent, !!(cm && cm.image)) + hint, frontTaskNotes: tn.text, ...(hands ? { frontHands: hands.text, frontHandModes: hands.modes } : {}), effort, images: cm && cm.image ? files.filter(f => f.image).map(f => f.path) : [], ...ht.meta },
       cm ? { model: cm.id } : {}, rt ? { why: rt.why, fallbacks: rt.fallbacks } : {}, tn.seen.length ? { injected: tn.seen } : {}), userEv);
     const result = Object.assign({ sid: s.sid, run, agent: s.agent, title: s.title }, s.main ? { main: true, turns: s.runs.length } : {}, cm ? { model: cm.id } : {}, s.agent === 'codex' ? bgInfo(all) : {});
     if (receipt) { mk(path.dirname(receipt)); writeJ(receipt, result); }
@@ -2478,7 +2479,7 @@ const ops = { ...termOps,   // 天启终端里自己输命令（vm-persona.mjs �
   async task_tell(a) {
     // 「已登录，继续」：先把登录窗口存好关掉（锁外，最多等 12 秒），下一轮浏览器才拿得到刚登好的 cookie
     if (a.decision === 'approve' && okId(a.sid, 's') && readJ(sessF(a.sid))?.browserStep) await loginDone();
-    return lockedCall('tasks', 'task_tell', { sid: a.sid, no: a.no, text: a.text, decision: a.decision, approvalId: a.approvalId,clientId:a.clientId });
+    return lockedCall('tasks', 'task_tell', { sid: a.sid, no: a.no, text: a.text, decision: a.decision, approvalId: a.approvalId,clientId:a.clientId, ...(a._ownerInput === true ? { _ownerInput: true } : {}) });
   },
   // 设置里的「网站登录」：保存了哪些网站（不出 cookie 的值）、删掉一个；登录窗口开着的话是哪个网站
   logins() { const w = readJ(LOGIN_WIN()); return { ok: true, sites: loginStore(LOGINS_DIR()).list(), window: w && alive(w.pid) ? { site: w.site } : null }; },
@@ -2531,7 +2532,7 @@ const iops = {
     const pending=(m.steers||[]).filter(x=>x.state==='pending'||x.state==='next');
     if(!m.task&&!done.stopped&&!a.uncertain&&pending.length){
       for(const q of pending)q.state='consumed';writeJ(metaF(a.run),m);
-      const next=ops.send({sid:m.sid,text:pending.map(q=>q.text).join('\n'),clientId:pending[0].id});
+      const next=ops.send({sid:m.sid,text:pending.map(q=>q.text).join('\n'),clientId:pending[0].id,_ownerInput:pending.every(q=>q.ownerInput===true)});
       return {done,next};
     }
     return {done};
@@ -2566,7 +2567,7 @@ const iops = {
     if (!pending.length) return {};
     // Mark input consumed and start under the conversation lock, so reconnects cannot deliver it twice.
     for (const q of pending) q.state = 'consumed'; writeJ(metaF(a.run), m);
-    return ops.send({ sid: a.sid, text: pending.map(x => x.text).join('\n') });
+    return ops.send({ sid: a.sid, text: pending.map(x => x.text).join('\n'), _ownerInput: pending.every(x => x.ownerInput === true) });
   },
   task_bridge:createTaskBridgeHandler({loadRun:r=>readJ(metaF(r)),loadTask:s=>readJ(sessF(s)),isTask,lastRun,remember:addMemory,ask:taskAsk,note:taskNote}),task_note:taskNote,front_action: frontAction, front_fallback: frontFallback, task_new: taskNew, task_finish: taskFinish, task_tell: taskTell, task_stop: taskStop, task_ask: taskAsk, task_seen: taskSeen, task_tick: taskTick, task_expire: () => { expireWaits(); return { ok: true }; },
   // 浏览器代理请站长登录（vm-browser.mjs 的 loginStep）：照 xin task ask 记一个问题，这一轮结束后任务停成「等你登录」
@@ -2942,7 +2943,7 @@ async function main() {
 const finalizeRun=createRunFinalizer({store:finalizations,loadRun:r=>readJ(metaF(r)),loadSession:s=>readJ(sessF(s)),
   taskFinish,emit,complete:iops.run_complete,rememberSession:(sid,changes)=>controller.patchSession(sid,changes),
   patchRun:applyRunPatch,frontReply:iops.front_reply,frontNotice,dailyDone,statsFile:STATS_F,steerAck});
-const {dispatchLaunches,runDone}=createDispatcher({self:SELF,metaF,sessF,runF,lockedCall,emit,patchRun,finalizations,finalizeRun});
+const {dispatchLaunches,runDone}=createDispatcher({self:SELF,metaF,sessF,runF,lockedCall,emit,patchRun,finalizations,finalizeRun,allowHostLaunch});
 const controller=createController({ops,iops,isTask,saveTask,rememberAgentSession,mainSid,listTasks,lockedCall,dispatchLaunches,markCurrentController,xinCmd,reapNow,finalizeRun});
 
 if (process.argv[1] && path.resolve(process.argv[1]) === SELF) main().catch(e=>{process.stderr.write((e.code==='owner_unavailable'?e.message:e.code||'state_failed')+'\n');process.exitCode=1;});

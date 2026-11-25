@@ -563,7 +563,7 @@ async function sendViaInbox(env, args, now) {
   args = { ...args };
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(args.clientId || '')) args.clientId = uuid();
   let res = null;
-  try { res = await inboxPost(env, 'accept', { id: args.clientId, op: 'send', args }); } catch { /* 这次调用断了：存没存上还不知道 */ }
+  try { res = await inboxPost(env, 'accept', { id: args.clientId, op: 'send', args, ownerInput: !isTq(env) }); } catch { /* 这次调用断了：存没存上还不知道 */ }
   if (res && res.d.error === 'conflict') return { ok: true, data: { error: 'message_conflict', msg: '同一个消息标识对应了不同内容，请重新发送' } };
   if (res && res.status === 200 && res.d.view) return inboxReply(res.d.view, now);
   // 调用出了错不等于没存上：那一行可能已经写进去了（之后闹钟会把它送出去）。先按编号查一下，查到就照「已收到」回。
@@ -688,8 +688,10 @@ export async function handleXin(req, env, ctx, now = Date.now()) {
   if (!OPS.has(op)) return json({ error: 'bad_op' }, 400);
   if (isTq(env) && !TQ_OPS.has(op)) return json(NOT_TQ, 400);
   const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? body.args : {};
+  delete args._ownerInput;
   if (op === 'send' && env.XIN_INBOX === '1' && inboxStub(env)) return json(await sendViaInbox(env, args, now));
   if (op === 'delivery' || op === 'deliveries') return json(await deliveryOp(env, op, args));
+  if (!isTq(env) && ['send', 'steer', 'task_tell'].includes(op)) args._ownerInput = true;
   const r = await call(env, url.origin, op, args, ctx, now);
   if (op === 'greet' || op === 'wake') kickInbox(env, ctx);
   if (op === 'usage' && r.ok && r.data && inboxStub(env)) { try { r.data.wake = (await inboxPost(env, 'stats')).d; } catch { /* 读不到就不带 */ } }
@@ -875,13 +877,13 @@ export class XinTaskSupervisor {
     return this.inboxImpl || (this.inboxImpl = new Inbox(this.state.storage, {
       // 旧版闹钟只认 inbox:meta。回滚期间，天启的待送达留在原处，恢复新版后再由 kick 重新安排。
       namespace: this.scope === 'tq' ? 'tq-inbox' : undefined,
-      deliver: row => call(this.scopedEnv(), CRON_ORIGIN, row.op, { ...row.args, clientId: row.id }, { waitUntil: p => this.state.waitUntil?.(p) }, Date.now(), { kernel: this.kernelAdapter() })
+      deliver: row => call(this.scopedEnv(), CRON_ORIGIN, row.op, { ...row.args, clientId: row.id, _ownerInput: this.scope !== 'tq' && row.ownerInput === true }, { waitUntil: p => this.state.waitUntil?.(p) }, Date.now(), { kernel: this.kernelAdapter() })
     }));
   }
   async inboxRoute(action, req) {
     const a = await req.json().catch(() => ({}));
     try {
-      if (action === 'accept') { const r = await this.inbox().accept({ id: a.id, op: a.op, args: a.args }); return json(r, r.error === 'bad_id' ? 400 : r.error ? 409 : 200); }
+      if (action === 'accept') { const r = await this.inbox().accept({ id: a.id, op: a.op, args: a.args, ownerInput: a.ownerInput }); return json(r, r.error === 'bad_id' ? 400 : r.error ? 409 : 200); }
       if (action === 'view') return json({ view: await this.inbox().view(a.id) });
       if (action === 'list') return json(await this.inbox().list());
       if (action === 'ack') { await this.inbox().ack(a.id); return json({ ok: true }); }

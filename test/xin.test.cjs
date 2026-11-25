@@ -183,7 +183,7 @@ test('send：脚本没传上去时自动上传再跑，并挂活动租约', asyn
     assert.strictEqual(body.argv[0], 'node');
     assert.match(body.argv[1], /^\/data\/home\/\.xin\/agent\/vm-agent-[0-9a-f]{12}\.mjs$/);
     assert.strictEqual(body.argv[2], 'send');
-    assert.deepStrictEqual(JSON.parse(body.stdin), { agent: 'claude', text: '你好' });
+    assert.deepStrictEqual(JSON.parse(body.stdin), { agent: 'claude', text: '你好', _ownerInput: true });
     // 一次 exec 装好：argv 是 node -e <安装小程序> <目录>，标准输入是要装的文件
     const install = JSON.parse(execs[1].body);
     assert.deepStrictEqual([install.argv[0], install.argv[1], install.argv[3]], ['node', '-e', '/data/home/.xin/agent']);
@@ -2428,8 +2428,11 @@ test('send 走待送达：电脑醒着时和以前一样回 run，控制器拿�
     assert.deepStrictEqual(await callOp(m, env, ck, 'send', sendArgs), { ok: true, data: { sid: 's1', run: 'r1' } });
     const ex = JSON.parse(ib.calls.find(c => c.key.endsWith('/exec')).body);
     assert.strictEqual(JSON.parse(ex.stdin).clientId, 'cid-inbox-0001');
+    assert.strictEqual(JSON.parse(ex.stdin)._ownerInput, true);
     const row = inboxOf(env).values.get('inbox:row:cid-inbox-0001');
     assert.deepStrictEqual([row.state, row.result.run], ['delivered', 'r1']);
+    assert.strictEqual(row.ownerInput, true);
+    assert.strictEqual(row.args._ownerInput, undefined, '来源由 Worker 写入存储信封，消息内容和去重摘要不依赖它');
   } finally { ib.restore(); }
 });
 
