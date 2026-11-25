@@ -99,14 +99,24 @@ test('整套装一遍：网关解好、插件挂上、li2 和 li 上建好 table
     const h=path.join(d,'home-'+host);
     assert.equal(fs.readFileSync(path.join(h,'.local/bin/dsh-tablet'),'utf8'),fs.readFileSync(path.join(tablet,'dsh-tablet.sh'),'utf8'));
     assert.equal(mode(path.join(h,'.local/bin/dsh-tablet')),0o700);
-    assert.equal(fs.readFileSync(path.join(h,'.dsh/profiles/tablet/cordis.patch.yml'),'utf8'),fs.readFileSync(path.join(tablet,'dsh-tablet-profile.yml'),'utf8'));
+    assert.equal(fs.readFileSync(path.join(h,'.dsh/profiles/web/cordis.patch.yml'),'utf8'),fs.readFileSync(path.join(tablet,'dsh-tablet-profile.yml'),'utf8'));
     assert.equal(fs.readFileSync(path.join(h,'.xin/harness.key'),'utf8'),'remote-secret-key\n');
     assert.ok(fs.statSync(path.join(d,'ws-'+host)).isDirectory());
-    assert.ok(r.stdout.includes(path.join(h,'.local/bin/dsh-tablet')+' web'),'打印 '+host+' 的启动命令');
+    assert.ok(r.stdout.includes('启动命令 '+path.join(h,'.local/bin/dsh-tablet')+'，工作目录 '+path.join(d,'ws-'+host)),'打印 '+host+' 的启动命令（后面不加 web）');
   }
   const all=r.stdout+r.stderr;
   for(const secret of ['remote-secret-key','li2token','litoken'])assert.ok(!all.includes(secret),'输出里不该有 '+secret);
   assert.ok(all.includes('http://127.0.0.1:8788/v1'));assert.ok(all.includes('Responses'));
+});
+
+test('远端 web 配置里已有别的补丁时先备份再换，内容不丢',t=>{
+  const {d,run}=rig(t),prof=path.join(d,'home-li2.example/.dsh/profiles/web');
+  fs.mkdirSync(prof,{recursive:true});fs.writeFileSync(path.join(prof,'cordis.patch.yml'),'# 站长自己的\n- id: something\n');
+  const r=run();assert.equal(r.status,0,r.stdout+r.stderr);
+  const baks=fs.readdirSync(prof).filter(f=>f.startsWith('cordis.patch.yml.bak'));
+  assert.equal(baks.length,1);assert.equal(fs.readFileSync(path.join(prof,baks[0]),'utf8'),'# 站长自己的\n- id: something\n');
+  assert.equal(fs.readFileSync(path.join(prof,'cordis.patch.yml'),'utf8'),fs.readFileSync(path.join(tablet,'dsh-tablet-profile.yml'),'utf8'));
+  assert.equal(run().status,0);assert.equal(fs.readdirSync(prof).filter(f=>f.startsWith('cordis.patch.yml.bak')).length,1,'再跑一次不会多一份备份');
 });
 
 test('重复跑：不再下载安装包、不碰 accounts、不重复挂插件',t=>{

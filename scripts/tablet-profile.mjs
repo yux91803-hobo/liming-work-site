@@ -1,4 +1,4 @@
-// 生成平板（DSH Go）连 li、li2 时用的 tablet 配置补丁：线路和模型表取自天启（HARNESS_ROUTE、HARNESS_MODELS），
+// 生成平板（DSH Go）连 li、li2 时用的配置补丁（放进那台电脑 Harness 内置的 web 配置）：线路和模型表取自天启（HARNESS_ROUTE、HARNESS_MODELS），
 // 形状照 site/xin/vm-persona.mjs 的 writeHarnessPatch，只留线路和默认模型（不要人设、purge、REA）。
 // 用法：node scripts/tablet-profile.mjs [--check] [--out 文件]，默认写 site/tablet/dsh-tablet-profile.yml。
 // 设计：docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md §4.4
@@ -13,8 +13,8 @@ export const PROFILE_FILE = path.join(root, 'site/tablet/dsh-tablet-profile.yml'
 export function tabletProfileYaml() {
   const R = HARNESS_ROUTE, q = JSON.stringify; // JSON 字符串就是合法的 YAML 双引号字符串
   return [
-    '# 平板（DSH Go）连 li、li2 时用的 tablet 配置：网关线路和默认模型。',
-    '# 由 scripts/tablet-profile.mjs 从天启的模型表生成，别手改；装机脚本把它放到 ~/.dsh/profiles/tablet/cordis.patch.yml。',
+    '# 平板（DSH Go）连 li、li2 时用的配置：网关线路和默认模型。',
+    '# 由 scripts/tablet-profile.mjs 从天启的模型表生成，别手改；装机脚本把它放到 ~/.dsh/profiles/web/cordis.patch.yml。',
     '- id: llm-pi-ai', '  config:', '    providers:', '      ' + R.provider + ':',
     '        displayName: ' + q(R.name), '        apiKeyEnv: XIN_HARNESS_KEY', '        api: ' + R.api, '        baseURL: ' + q(R.baseURL),
     '        models:',

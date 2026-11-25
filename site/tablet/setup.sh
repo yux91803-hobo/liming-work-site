@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Liming 平板装机：在 DSH Go 的终端里（打开一个对话 → 全部功能 → 终端）运行
 #   curl -fsSL https://liming-work.com/tablet/setup.sh | bash
-# 装好随本机引擎启停的 WorkBuddy 网关和插件，并在 li2、li 上建好给平板用的 tablet 配置。
+# 装好随本机引擎启停的 WorkBuddy 网关和插件，并在 li2、li 上配好给平板用的 Harness web 配置。
 # 脚本里不含任何密钥；InstaBox 的 SSH 令牌只用来连 li2、li，用完不存。可以重复运行。
 #   --dry-run  只列出要做的事    --skip-li  不接 li
 # 设计和说明：liming-work-site 仓库 docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md、docs/tablet.md
@@ -113,7 +113,8 @@ install_plugin() {
   fi
 }
 
-# 在 li2、li 上执行的脚本：只新建包装脚本、tablet 配置和工作目录；只检查 key 文件在不在，不读出来。
+# 在 li2、li 上执行的脚本：只写包装脚本、web 配置的补丁和工作目录（web 配置那台电脑上没人用：小芯、天启用 headless）；
+# web 配置里原有别的补丁就先备份；只检查 key 文件在不在，不读出来。
 remote_script() {
   local wrapper=$1 profile=$2
   cat <<'HEAD'
@@ -122,7 +123,7 @@ umask 077
 [ -x "$HOME/.local/bin/dsh" ] || { echo NO_DSH; exit 3; }
 [ -s "$HOME/.xin/harness.key" ] || { echo NO_KEY; exit 4; }
 WS=${LIMING_REMOTE_WS:-/data/workspace/tablet}
-mkdir -p "$HOME/.local/bin" "$HOME/.dsh/profiles/tablet" "$WS"
+mkdir -p "$HOME/.local/bin" "$HOME/.dsh/profiles/web" "$WS"
 cat > "$HOME/.local/bin/dsh-tablet.tmp" <<'LIMING_WRAPPER_EOF'
 HEAD
   cat "$wrapper"
@@ -130,12 +131,14 @@ HEAD
 LIMING_WRAPPER_EOF
 chmod 700 "$HOME/.local/bin/dsh-tablet.tmp"
 mv -f "$HOME/.local/bin/dsh-tablet.tmp" "$HOME/.local/bin/dsh-tablet"
-cat > "$HOME/.dsh/profiles/tablet/cordis.patch.yml.tmp" <<'LIMING_PROFILE_EOF'
+P="$HOME/.dsh/profiles/web/cordis.patch.yml"
+cat > "$P.new" <<'LIMING_PROFILE_EOF'
 MID
   cat "$profile"
   cat <<'TAIL'
 LIMING_PROFILE_EOF
-mv -f "$HOME/.dsh/profiles/tablet/cordis.patch.yml.tmp" "$HOME/.dsh/profiles/tablet/cordis.patch.yml"
+if [ -s "$P" ] && ! grep -q "scripts/tablet-profile.mjs" "$P"; then mv -f "$P" "$P.bak.$(date +%Y%m%d%H%M%S)"; fi
+mv -f "$P.new" "$P"
 echo "OK $HOME/.local/bin/dsh-tablet $WS"
 TAIL
 }
@@ -147,7 +150,7 @@ remote_setup() {
     case "$out" in
       *NO_DSH*) say_err "$label 上没找到 ~/.local/bin/dsh（Harness 没装好）";;
       *NO_KEY*) say_err "$label 上没有 ~/.xin/harness.key（这台的网关还没配好）";;
-      *) say_err "$label 上建 tablet 配置失败：$(printf '%s\n' "$out" | tail -n 3)";;
+      *) say_err "$label 上配 web 配置失败：$(printf '%s\n' "$out" | tail -n 3)";;
     esac
     return 1
   fi
@@ -173,7 +176,7 @@ dry_run_plan() {
   say "2. 从 $BASE 下载插件和 li、li2 用的配置。"
   say "3. 问 li2 的 SSH 令牌；网关没装就从 li2 取安装包 $REMOTE_ZIP，核对大小和 SHA-256 后解到 $GW_DIR。"
   say "4. 插件放到 $PLUGIN_DIR；第一次装时 dsh plugin --profile web add。"
-  say "5. 在 li2 上新建 ~/.local/bin/dsh-tablet、~/.dsh/profiles/tablet/cordis.patch.yml、/data/workspace/tablet。"
+  say "5. 在 li2 上写 ~/.local/bin/dsh-tablet、~/.dsh/profiles/web/cordis.patch.yml（原有别的就先备份）、建 /data/workspace/tablet。"
   if [ "$1" = 1 ]; then say "6. --skip-li：不接 li。"; else say "6. 问 li 的令牌（可以直接回车跳过），在 li 上做同样的事。"; fi
 }
 
@@ -184,8 +187,8 @@ summary() {
   say "· 网关：$GW_DIR/current（$VERSION），日志在 $GW_DIR/logs/"
   say "· 插件：$PLUGIN_DIR"
   IFS=$'\t' read -r w ws <<<"$1"
-  say "· li2：启动命令 $w web，工作目录 $ws"
-  if [ -n "$2" ]; then IFS=$'\t' read -r w ws <<<"$2"; say "· li：启动命令 $w web，工作目录 $ws"
+  say "· li2：启动命令 $w，工作目录 $ws"
+  if [ -n "$2" ]; then IFS=$'\t' read -r w ws <<<"$2"; say "· li：启动命令 $w，工作目录 $ws"
   else say "· li：没接（以后想接，再跑一次这个脚本）"; fi
   cat <<'EOF'
 
@@ -193,7 +196,7 @@ summary() {
 1. 设置 › 本机引擎 › 重启。网关会跟着引擎起来。
 2. 浏览器打开 http://127.0.0.1:8788 ，用 admin 登录，先在设置里改密码（平板上别的 App 也能访问这个地址），再加网关账号，然后在「设置 → API Key」新建一个 key。
 3. 设置 › 模型 › 添加渠道：兼容协议 Responses，Base URL http://127.0.0.1:8788/v1，API Key 填上一步的 key；点「获取模型」，勾 deepseek-v4.1-flash、glm-5.4、kimi-k3.1-pro。每个模型的上下文填 1M，输入类型选「文本和图片」；思考档位 DeepSeek 选 不思考/低/高/最高，GLM、Kimi 选 低/高/最高。
-4. 切换主机 › 管理远程主机 › 添加 SSH 主机：主机填令牌行里 @ 右边那段，用户名填 @ 左边那段，端口 22；实例管理选「托管启动」，启动命令和工作目录照上面填。再关掉「连接上次使用的主机」。
+4. 切换主机 › 管理远程主机 › 添加 SSH 主机：主机填令牌行里 @ 右边那段，用户名填 @ 左边那段，端口 22；实例管理选「托管启动」，启动命令和工作目录照上面填（启动命令后面不要加 web）。再关掉「连接上次使用的主机」。
 5. 设置 › 手机操控：打开开关，开无障碍和通知。
 
 别做：别点「重置运行环境」（会删掉网关和账号）；连上 li2 时别接着天启的对话；用完切回本机，云电脑才会按时睡。
@@ -243,10 +246,10 @@ main() {
   install_plugin "$WORK/plugin" || die "插件没装上"
   say "插件装好了：$PLUGIN_DIR"
 
-  r2=$(remote_setup "$li2" li2) || die "li2 上的 tablet 配置没建好"
+  r2=$(remote_setup "$li2" li2) || die "li2 上的配置没配好"
   if [ "$skip_li" = 0 ]; then
     if [ "$li_asked" = 0 ]; then li=$(ask_token 'li（小芯那台）' 1) || li=''; fi
-    if [ -n "$li" ]; then r1=$(remote_setup "$li" li) || die "li 上的 tablet 配置没建好"; fi
+    if [ -n "$li" ]; then r1=$(remote_setup "$li" li) || die "li 上的配置没配好"; fi
   fi
   summary "$r2" "$r1"
 }

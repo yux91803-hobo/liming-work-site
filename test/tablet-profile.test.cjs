@@ -48,13 +48,13 @@ function fakeHome(t,key){
   return home;
 }
 
-test('包装脚本把 DSH Go 追加的参数原样传给 dsh，并固定用 tablet 配置；key 只进环境变量、不出现在输出里',t=>{
+test('包装脚本把 DSH Go 追加的参数原样传给 dsh，固定用内置的 web 配置（dsh web 就是 dsh --profile web）；key 只进环境变量、不出现在输出里',t=>{
   assert.equal(spawnSync('sh',['-n',wrapper]).status,0);
   const home=fakeHome(t,'test-key-123\n');
-  const r=spawnSync('sh',[wrapper,'web','--host','127.0.0.1','--port','0','--no-open','--note','a b'],{env:{PATH:process.env.PATH,HOME:home},encoding:'utf8'});
+  const r=spawnSync('sh',[wrapper,'--host','127.0.0.1','--port','0','--no-open','--note','a b'],{env:{PATH:process.env.PATH,HOME:home},encoding:'utf8'});
   assert.equal(r.status,0,r.stderr);
   assert.deepEqual(fs.readFileSync(path.join(home,'args.txt'),'utf8').split('\n').slice(0,-1),
-    ['--profile','tablet','web','--host','127.0.0.1','--port','0','--no-open','--note','a b']);
+    ['--profile','web','--host','127.0.0.1','--port','0','--no-open','--note','a b']);
   assert.equal(fs.readFileSync(path.join(home,'key-seen.txt'),'utf8'),'test-key-123');
   assert.ok(!(r.stdout+r.stderr).includes('test-key-123'));
 });

@@ -25,7 +25,7 @@
 
 不能出现的：
 - 网关程序或任何账号、key 进仓库。liming-work-site 是**公开仓库**。
-- 改动天启的 `headless` 配置、`~/.xin` 或小芯的任何东西。
+- 改动天启和小芯用的 `headless` 配置、`~/.xin` 或小芯的任何东西。
 - 平板日常聊天要等云电脑醒。
 - 把小芯的前台、派活、路由、记忆那一套搬进来。
 
@@ -99,31 +99,23 @@ InstaBox（`instabox.sh/llms.txt`、`docs/ssh.md`、`docs/idle-suspend.md`）：
 4. `ssh <令牌>@<host> 'cat /data/workbuddy-gateway/releases/workbuddy2api-hub-v2.0.8.zip'` 取 zip，核对大小和哈希。li2 上没有就提示粘贴 li 的令牌再取。
 5. 按 §4.1 解压、建目录、加可执行位。已有 `current` 就跳过解压，`accounts/` 永远不动。
 6. 下载插件三个文件到 `/root/liming-gateway/`，然后 `dsh plugin --profile web add /root/liming-gateway`。
-7. 经 SSH 在 li2 上建 §4.4 的三样东西。远端只新建这几个文件，再查一下 `~/.xin/harness.key` 和 `~/.local/bin/dsh` 在不在，不打印内容。
+7. 经 SSH 在 li2 上写 §4.4 的三样东西（原有别的补丁先备份），再查一下 `~/.xin/harness.key` 和 `~/.local/bin/dsh` 在不在，不打印内容。
 8. 问要不要也接 li（粘贴 li 的令牌；直接回车就跳过），接的话照第 7 步做。
 9. 打印接下来要点的几步（§4.5）和填法（§4.6），包括 li2、li 包装脚本的绝对路径。
 
-### 4.4 li2、li 上给平板用的 `tablet` 配置
+### 4.4 li2、li 上给平板用的 `web` 配置
 
-每台只新建：
+（实现时改：原计划另建一个 `tablet` 配置。本地用 Harness 0.2.2-rc.3 实测，Harness 里「命令」就是配置名，`dsh web` 等于 `dsh --profile web`。只有内置模板 `acp`、`web`、`headless`、`sdk` 会自动建，自定义名字要先 `dsh plugin --profile 名字 add`。li、li2 上没人用 `web`，小芯和天启都走 `headless`，所以直接用内置的 `web` 配置，由 Harness 自己建、自己维护。）
 
-- `~/.local/bin/dsh-tablet`（权限 700）：
+每台只写这几样：
 
-  ```sh
-  #!/bin/sh
-  # 平板（DSH Go）连这台电脑时用：独立的 tablet 配置；网关 key 只在这台电脑上读
-  XIN_HARNESS_KEY=$(cat "$HOME/.xin/harness.key") || exit 78
-  export XIN_HARNESS_KEY
-  exec "$HOME/.local/bin/dsh" --profile tablet "$@"
-  ```
-
-  因为第一个参数是 `--profile`，li 的包装脚本不会再加 `headless`。`tablet` 配置有自己的 `node_modules`，不会装 purge。
-- `~/.dsh/profiles/tablet/cordis.patch.yml` ← `site/tablet/dsh-tablet-profile.yml`。由 `scripts/tablet-profile.mjs` 导入 `site/xin/vm-models.mjs` 的 `HARNESS_ROUTE`、`HARNESS_MODELS` 生成，形状照 `writeHarnessPatch`（`site/xin/vm-persona.mjs`），只留线路和默认模型，不要人设、purge、REA。单元测试核对提交的文件和生成结果一致，天启换了模型表这里也会跟着红。
+- `~/.local/bin/dsh-tablet`（权限 700），原文见 `site/tablet/dsh-tablet.sh`：读 `~/.xin/harness.key` 放进环境变量 `XIN_HARNESS_KEY`（读不到就退出码 78），再 `exec "$HOME/.local/bin/dsh" --profile web "$@"`。因为第一个参数是 `--profile`，li 的包装脚本不会再加 `headless`。`web` 配置的插件装在它自己的 `node_modules` 里，不会带上 `headless` 里的 purge。
+- `~/.dsh/profiles/web/cordis.patch.yml` ← `site/tablet/dsh-tablet-profile.yml`。由 `scripts/tablet-profile.mjs` 导入 `site/xin/vm-models.mjs` 的 `HARNESS_ROUTE`、`HARNESS_MODELS` 生成，形状照 `writeHarnessPatch`（`site/xin/vm-persona.mjs`），只留线路和默认模型，不要人设、purge、REA。单元测试核对提交的文件和生成结果一致，天启换了模型表这里也会跟着红。原来已有、又不是我们生成的补丁，先改名成 `.bak.<时间>` 再换。
 - `/data/workspace/tablet/`：平板新对话的工作目录。
 
-DSH Go 里的设置：「添加 SSH 主机」。主机和用户名取自令牌行，端口 22；实例管理选托管启动，启动命令填 `/data/home/.local/bin/dsh-tablet web`，工作目录填 `/data/workspace/tablet`。
+DSH Go 里的设置：「添加 SSH 主机」。主机和用户名取自令牌行，端口 22；实例管理选托管启动，启动命令填 `/data/home/.local/bin/dsh-tablet`（后面**不要**加 `web`，DSH Go 会自己追加 `--host 127.0.0.1 --port 0 --no-open`），工作目录填 `/data/workspace/tablet`。
 
-注意：DSH 的对话按工作目录存在 `~/.dsh/sessions/` 下，所以平板连上 li2 时可能看得到天启的工作区。说明里写：要接着天启的对话就回网站，平板上只在 `tablet` 工作区里开新对话，免得两边同时写同一个对话。
+注意：DSH 的对话按工作目录存在 `~/.dsh/sessions/` 下，所以平板连上 li2 时可能看得到天启的工作区。说明里写：要接着天启的对话就回网站，平板上只在 `/data/workspace/tablet` 工作区里开新对话，免得两边同时写同一个对话。
 
 ### 4.5 站长要做的事（第一次装）
 
@@ -166,7 +158,7 @@ DSH Go 里的设置：「添加 SSH 主机」。主机和用户名取自令牌�
 ## 6. 验收
 
 - 本地：`npm run check`、`npm run test:e2e` 全过；新单元测试先失败、后通过。
-- 本地集成：在会话容器里用原版 zip（从 li 只读取，不提交）和插件，在测试端口拉起网关，核对启动、`/health`、签到钟点写入、停止。装 `@deepseek-ai/dsh@0.2.2-rc.3` 试 `tablet` 配置和包装脚本：`--dump-config` 里有网关线路，`web` 能打印带 token 的地址。li、li2 上不起任何进程。
+- 本地集成：在会话容器里用原版 zip（从 li 只读取，不提交）和插件，在测试端口拉起网关，核对启动、`/health`、签到钟点写入、停止。装 `@deepseek-ai/dsh@0.2.2-rc.3`（Node 24）试包装脚本和 `web` 配置：`--dump-config` 里有网关线路；照 DSH Go 托管启动的参数能打印带 token 的地址；`dsh plugin --profile web add` 能装插件，引擎启动时拉起真网关、收到 SIGTERM 时停掉。li、li2 上不起任何进程。
 - 上线：按 CLAUDE.md 的流程；合并后 `https://liming-work.com/tablet/setup.sh` 能下载。
 - 平板（站长做完 §4.5 以后对照）：打开 App 十几秒内网关起来，DeepSeek V4.1 Flash 能回话；「打开设置看看系统版本」能跑完；切到 li2，第一次约 40 秒叫醒，之后能对话、天启照常；切到 li 同样；当天开过 App，面板里能看到签到成功。
 

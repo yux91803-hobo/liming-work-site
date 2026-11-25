@@ -12,6 +12,8 @@
 
 **进度与分工：** Claude Code 实现并自查，没有另一位 AI 复核（交接里如实写）。
 
+**执行中的改动：** Task 4 用真 Harness 实测，发现自定义配置名不会自动建（`dsh web` 就是 `dsh --profile web`）。li、li2 改用没人用的内置 `web` 配置，DSH Go 的启动命令只填包装脚本、不加 `web`。下面各任务里的 `tablet` 配置都按这条理解，原因和证据见设计 §4.4、`docs/CHANGES.md` 本条。
+
 ## Global Constraints
 
 - 网关程序、账号、key 一律不进仓库（公开仓库）；脚本里只写死 zip 的大小 `22962873` 和 SHA-256 `b322c73b9a18f09c6560bff0e4b748e9acdc26272c339b4f5fce2413bb500cc6`。

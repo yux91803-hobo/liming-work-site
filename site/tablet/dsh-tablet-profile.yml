@@ -1,5 +1,5 @@
-# 平板（DSH Go）连 li、li2 时用的 tablet 配置：网关线路和默认模型。
-# 由 scripts/tablet-profile.mjs 从天启的模型表生成，别手改；装机脚本把它放到 ~/.dsh/profiles/tablet/cordis.patch.yml。
+# 平板（DSH Go）连 li、li2 时用的配置：网关线路和默认模型。
+# 由 scripts/tablet-profile.mjs 从天启的模型表生成，别手改；装机脚本把它放到 ~/.dsh/profiles/web/cordis.patch.yml。
 - id: llm-pi-ai
   config:
     providers:
