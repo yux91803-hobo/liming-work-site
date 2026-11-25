@@ -224,7 +224,7 @@ test('Hydrogen 把协议包在代码块和说明文字里、省略空 calls 时�
 test('修正一次后仍是坏格式时，本轮改由 DeepSeek 用同一上下文回答，不把格式错误给用户，也不重复派活',async t=>{
  const f=fixture(t,'broken'),sent=f.call('send',{agent:'codex',text:'你觉得人生有什么意义？'}),done=await f.wait(sent.run);
  const end=done.events.find(e=>e.t==='done');assert.equal(end.ok,true);assert.equal(end.model,'deepseek-v4.1-flash');assert.equal(end.from,'gemini-4-hydrogen');
- assert.equal(end.why,'front_quota_fallback');
+ assert.equal(end.why,'chat');
  assert.equal(done.events.find(e=>e.t==='text').text,'deepseek-quota-answer');
  assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,2);
  const bodies=f.rows(f.gateway);assert.equal(bodies.length,1);assert.equal(bodies[0].model,'deepseek-v4.1-flash');assert.match(JSON.stringify(bodies[0].input),/人生有什么意义/);
@@ -263,6 +263,7 @@ test('确认 Gemini 额度耗尽才切 DeepSeek，同一份图片与原话继续
  const f=fixture(t,'blocked'),file=f.work+'/uploads/photo.png';fs.writeFileSync(file,'same-image');
  const sent=f.call('send',{agent:'codex',text:'图里写了什么',files:[{path:file,name:'photo.png'}]}),done=await f.wait(sent.run);
  const end=done.events.find(e=>e.t==='done');assert.equal(end.ok,true);assert.equal(end.model,'deepseek-v4.1-flash');assert.equal(end.from,'gemini-4-hydrogen');
+ assert.equal(end.why,'front_quota_fallback');
  const body=f.rows(f.gateway)[0];assert.equal(body.model,'deepseek-v4.1-flash');assert.ok(body.input.at(-1).content.some(b=>b.type==='input_image'));assert.match(body.input.at(-1).content[0].text,/图里写了什么/);
  assert.equal(f.rows(f.log).filter(r=>r.method==='session/prompt').length,0);
  const count=f.rows(f.log).length,next=f.call('send',{sid:sent.sid,text:'继续聊'});await f.wait(next.run);assert.equal(f.rows(f.log).length,count);
