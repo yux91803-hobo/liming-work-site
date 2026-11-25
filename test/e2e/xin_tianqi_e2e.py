@@ -140,7 +140,7 @@ async def tianqi_mock(pg, enabled=True, authed=True, ready=True, waking_send=Fal
             st['plugins'][args['name']] = args['on']
             return await ok({'ok': True, 'data': {'on': args['on']}})
         if op == 'history':
-            sess = {'sid': args.get('sid'), 'agent': 'harness', 'title': '天启旧对话', 'model': 'deepseek-v4.1-flash'}
+            sess = {'sid': args.get('sid'), 'agent': 'harness', 'title': '天启旧对话', 'model': st.get('hist_model', 'deepseek-v4.1-flash')}
             if st['hist_perm']:
                 sess['perm'] = st['hist_perm']
             if st['hist_work'] is not None:
@@ -759,12 +759,12 @@ async def main():
             desc: b.querySelector('.tq-mdl-row2')?.textContent,
           })),
         }))()""")
-        await pg.locator('#xin-model-picker .xc-pk-o[data-v="glm-5.3"]').click()
-        ui.check('宇宙星表模型选择器：输入框模型胶囊带天体 SVG 徽标，弹出 4 张星体卡片（含光谱分类徽章与深空说明），切换 GLM-5.3 立即更新',
+        await pg.locator('#xin-model-picker .xc-pk-o[data-v="glm-5.4"]').click()
+        ui.check('宇宙星表模型选择器：输入框模型胶囊带天体 SVG 徽标，弹出 3 张星体卡片（含光谱分类徽章与深空说明），切换 GLM-5.4 立即更新',
                  catalog['orb'] and '天体模型星表' in (catalog['head'] or '') and 'STAR CATALOG' in (catalog['head'] or '')
-                 and len(catalog['cards']) == 4 and all(c['svg'] and c['spec'] and c['desc'] for c in catalog['cards'])
-                 and [c['id'] for c in catalog['cards']] == ['deepseek-v4.1-flash', 'glm-5.3', 'glm-5.3-flash', 'kimi-k3.1-pro']
-                 and await pg.evaluate("window.LimingXinChat.state.hModel === 'glm-5.3' && document.querySelector('.tq-mdl-txt')?.textContent === 'GLM-5.3'"),
+                 and len(catalog['cards']) == 3 and all(c['svg'] and c['spec'] and c['desc'] for c in catalog['cards'])
+                 and [c['id'] for c in catalog['cards']] == ['deepseek-v4.1-flash', 'glm-5.4', 'kimi-k3.1-pro']
+                 and await pg.evaluate("window.LimingXinChat.state.hModel === 'glm-5.4' && document.querySelector('.tq-mdl-txt')?.textContent === 'GLM-5.4'"),
                  catalog)
         eff_ui = await pg.evaluate("""(() => {
           const pk = document.querySelector('#xin-model-picker'), pr = pk.getBoundingClientRect();
@@ -823,7 +823,7 @@ async def main():
                  and drag_after == {'state': 'low', 'sub': 'I 星等', 'defHidden': True, 'pillEff': '低', 'noStars': True}
                  and eff_after['f'] == '1.0000' and eff_after['state'] == 'max' and eff_after['saved'] == 'max'
                  and eff_after['sub'] == 'III 星等' and '全天球' in (eff_after['desc'] or '')
-                 and eff_after['pillEff'] == '最高' and eff_after['noStars'] and eff_after['ccBanner'] == 'GLM-5.3 · 思考:最高'
+                 and eff_after['pillEff'] == '最高' and eff_after['noStars'] and eff_after['ccBanner'] == 'GLM-5.4 · 思考:最高'
                  and await pg.evaluate("document.querySelector('#xin-model-picker').hidden"),
                  (eff_ui, drag_mid, drag_after, eff_after))
 
@@ -846,7 +846,7 @@ async def main():
                 {'t': 'tool_end', 'id': 'call_1', 'name': 'Bash', 'detail': 'make -j4', 'ok': True, 'out': long_out},
                 {'t': 'tool_end', 'id': 'call_2', 'name': 'Edit', 'detail': 'update src/main.c', 'ok': True, 'out': diff_out},
                 {'t': 'text', 'text': '已将主循环闪烁延时调整为 200ms 并完成交叉编译。'},
-                {'t': 'done', 'ok': True, 'code': 0, 'ms': 2400, 'model': 'glm-5.3'},
+                {'t': 'done', 'ok': True, 'code': 0, 'ms': 2400, 'model': 'glm-5.4'},
             ]
             return {'events': evs2, 'off': off + len(evs2), 'done': True}
 
@@ -919,8 +919,21 @@ async def main():
                  and len(cc_info['adds']) == 2 and len(cc_info['dels']) == 1
                  and cc_info['dels'][0][:2] == ['13', '-'] and cc_info['adds'][0][:2] == ['13', '+'] and cc_info['adds'][0][2] != cc_info['dels'][0][2]
                  and 'bypass permissions' in (cc_info['permFoot'] or '') and cc_info['cwdFoot'] == '~/workspace' and cc_info['keysOpen']
-                 and st['sends'][-1].get('model') == 'glm-5.3' and st['sends'][-1].get('effort') == 'max',
+                 and st['sends'][-1].get('model') == 'glm-5.4' and st['sends'][-1].get('effort') == 'max',
                  (cc_before_expand, cc_after_expand, cc_info))
+        await pg.context.close()
+
+        pg = await ui.page(browser, 390, 844)
+        await pg.add_init_script("localStorage.setItem('lm.tq.hmodel','glm-5.3-flash')")
+        st = await tianqi_mock(pg, enabled=True, authed=True, ready=True)
+        st['hist_model'] = 'glm-5.3'
+        await pg.goto(ui.BASE + '/tools/tianqi/')
+        await pg.wait_for_selector('.xc.wb.show.tq-mode .xc-hello.tq')
+        ui.check('旧 Flash 的浏览器偏好迁到 GLM-5.4', await pg.evaluate("LimingXinChat.state.hModel === 'glm-5.4'"))
+        await pg.locator('.tq-menu').click()
+        await pg.locator('.tq-side .xc-si', has_text='天启旧对话').click()
+        await pg.wait_for_function("!LimingXinChat.state.loadingConversation && LimingXinChat.state.sid === 'stq000001'")
+        ui.check('旧 GLM 会话续聊时选择 5.4', await pg.evaluate("LimingXinChat.state.hModel === 'glm-5.4'"))
         await pg.context.close()
 
         # 3. 没登录

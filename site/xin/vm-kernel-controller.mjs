@@ -5,14 +5,14 @@ import { BASE, TIANQI, journal, readJ, writeJ, mk, okId } from './vm-base.mjs';
 import { inputDigest } from './vm-state.mjs';
 import { ACTS } from './vm-companion.mjs';
 import { callContext, withCallContext } from './vm-kernel-context.mjs';
-import { stateOperations } from './vm-kernel-operations.mjs';
+import { budgetCommand, stateOperations } from './vm-kernel-operations.mjs';
 import { attemptError, hasFinalization, staleAttempt } from './vm-run-attempt.mjs';
 
 const object = a => a && typeof a === 'object' && !Array.isArray(a);
 const bad = () => ({ error: 'bad_op', msg: '不认识的操作' });
 // 天启身份（li2）下网页和 Worker 能用的操作：聊天、看对话、文件、用量、插件以及例行维护。
 export const TIANQI_OPS = new Set(['ping', 'send', 'steer', 'poll', 'stop', 'sessions', 'history', 'rename', 'archive', 'forget', 'files', 'usage', 'plugins', 'plugin_set', 'prune', 'preview_asset', 'integrity_event', 'term_run', 'term_poll']);
-const RUN_REPORTS = new Set(['session_patch','run_patch','run_complete','task_finish','task_stage','task_model','agy_conversation','front_reply','front_model','front_immediate','front_action','front_fallback','handoff_start','handoff_finish','continue_steers','run_stat','task_bridge','steer_take','steer_ack','steer_handover']);
+const RUN_REPORTS = new Set(['session_patch','run_patch','run_complete','task_finish','task_stage','task_model','agy_conversation','front_reply','front_model','front_immediate','front_action','front_fallback','handoff_start','handoff_finish','continue_steers','run_stat','task_bridge','task_budget','login_save','steer_take','steer_ack','steer_handover']);
 const nativeReport = (op, args) => ['task_note','task_ask'].includes(op) && /^agy-[a-f0-9]{32}$/.test(args.id || '');
 export function createController({ ops, iops, isTask, saveTask, rememberAgentSession, mainSid, listTasks,
   lockedCall, dispatchLaunches, markCurrentController, xinCmd, reapNow, finalizeRun }) {
@@ -47,6 +47,9 @@ export function createController({ ops, iops, isTask, saveTask, rememberAgentSes
           return {error:'bridge_ended', msg:'这次运行已结束，请求未应用'};
         return apply();
       };
+    }else if(op==='task_budget'){
+      if(!taskScope||typeof args.id!=='string'||! /^[a-f0-9-]{36}$/.test(args.id))return {error:'bad_budget'};
+      command=budgetCommand(args, callContext().attempt);
     }else if(op==='steer_handover'&&args.claim==='handover-input'){
       command={id:'steer-handover:'+args.run+':'+callContext().attempt,digest:inputDigest(args)};
     }else if(op==='task_bridge'){

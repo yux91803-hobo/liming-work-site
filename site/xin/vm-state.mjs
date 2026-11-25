@@ -170,7 +170,7 @@ export class StateJournal {
   handoffCount(){return this.db.prepare("SELECT COUNT(DISTINCT parent) AS n FROM handoffs WHERE state IN ('pending','running')").get().n;}
   dropConversation(sid,runs=[]){
     return this.atomic(()=>{
-      const names=['sessions/'+sid+'.json','contexts/'+sid+'.json'];
+      const names=['sessions/'+sid+'.json','contexts/'+sid+'.json','budgets/'+sid+'.json'];
       for(const r of runs){for(const row of this.db.prepare('SELECT name FROM documents WHERE name GLOB ?').all('runs/'+r+'.*'))names.push(row.name);this.db.prepare('DELETE FROM appends WHERE name=?').run('runs/'+r+'.jsonl');}
       for(const name of names){this.overlay.delete(name);this.db.prepare('DELETE FROM documents WHERE name=?').run(name);}
       this.db.prepare('DELETE FROM launches WHERE sid=?').run(sid);

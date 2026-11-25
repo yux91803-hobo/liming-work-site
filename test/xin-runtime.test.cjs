@@ -1,3 +1,4 @@
+const { budgetStore } = require('./helpers/budget-store.cjs');
 const test = require('node:test');
 const { lockedSpawn } = require('./helpers/locked.cjs');
 const { platformTimeout } = require('./helpers/timeout.cjs');
@@ -441,9 +442,47 @@ test('状态进程失联时使用已有密钥发告警，恢复后由写者清�
 
 test('任务预算跨代理重启和续接累计，不因换一轮重新变满',async t=>{
   const f=fixture(t),r=await load(),file=path.join(f.control,'budgets',f.task.sid+'.json');
-  const first=r.requestBudget(file,2);assert.equal(first(),true);
-  const resumed=r.requestBudget(file,2);assert.equal(resumed(),true);assert.equal(resumed(),false);
+  const first=r.requestBudget(budgetStore(file),2);assert.equal(first(),true);
+  const resumed=r.requestBudget(budgetStore(file),2);assert.equal(resumed(),true);assert.equal(resumed(),false);
   assert.equal(JSON.parse(fs.readFileSync(file)).used,2);assert.equal(fs.statSync(file).mode&0o777,0o600);
+});
+
+test('状态主人串行扣减预算，同一回执重送不重复占用额度', async t => {
+  const f = fixture(t), run = f.task.runs[0], sid = f.task.sid;
+  f.env.XIN_TASK_REQUEST_LIMIT = '2';
+  fs.writeFileSync(path.join(f.control, 'runs', run + '.json'), JSON.stringify({ run, sid, task: true, started: Date.now(), pid: process.pid }));
+  f.ensureState();
+  const { requestState } = await import('../site/xin/vm-kernel-client.mjs');
+  const { randomUUID } = require('node:crypto');
+  const take = args => requestState(f.control, { kind: 'op', op: 'task_budget', key: 'tasks', locked: true, args: { sid, run, action: 'take', ...args } });
+  const id = randomUUID();
+  const repeat = await Promise.all([take({ id }), take({ id })]);
+  assert.deepEqual(repeat.map(r => r.allowed), [true, true]);
+  const concurrent = await Promise.all(Array.from({ length: 6 }, () => take({ id: randomUUID() })));
+  assert.equal(concurrent.filter(r => r.allowed).length, 1);
+  const file = path.join(f.control, 'budgets', sid + '.json');
+  assert.equal(JSON.parse(fs.readFileSync(file)).used, 2);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal((await take({ id, action: 'usage' })).error, 'message_conflict');
+});
+
+test('状态主人负责日志与首次密钥生成，迟到诊断不能恢复已移除的前台记录', async t => {
+  const f = fixture(t), run = f.task.runs[0];
+  f.ensureState();
+  const { requestState } = await import('../site/xin/vm-kernel-client.mjs');
+  const call = (op, args = {}) => requestState(f.control, { kind: 'op', op, locked: true, key: 'tasks', args });
+  await Promise.all(Array.from({ length: 4 }, () => call('vapid_init')));
+  const keys = await Promise.all([call('push_key'), call('push_key')]);
+  assert.ok(keys[0].key);
+  assert.equal(keys[0].key, keys[1].key);
+  assert.equal(Object.hasOwn(keys[0], 'privateJwk'), false);
+  const append = n => call('log_append', { name: 'boundary.jsonl', entry: { n } });
+  await Promise.all(Array.from({ length: 8 }, (_, n) => append(n)));
+  const entries = fs.readFileSync(path.join(f.control, 'logs', 'boundary.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(entries.map(e => e.n).sort(), [0,1,2,3,4,5,6,7]);
+  fs.unlinkSync(path.join(f.control, 'runs', run + '.json'));
+  assert.equal((await call('log_append', { name: 'front.jsonl', entry: { run, outcome: 'late' } })).ok, false);
+  assert.equal(fs.existsSync(path.join(f.control, 'logs', 'front.jsonl')), false);
 });
 
 test('普通前台对话变化不再让任务轮询逐个读取全部会话，索引只在任务锁内创建',t=>{
@@ -567,7 +606,7 @@ test('独立复核不忽略 avoid，点名作者及耗尽全部视觉候选均�
 });
 test('原任务 fallback 与复核 fallback 组合：requestedModel 保持原值，actualModel 避开实际作者',async t=>{
  const f=fixture(t);fs.unlinkSync(path.join(f.control,'sessions',f.task.sid+'.json'));const bin=path.join(f.root,'bin');fs.mkdirSync(bin);f.env.PATH=bin+':'+process.env.PATH;f.env.XIN_CODEX_TRANSPORT='exec';const log=path.join(f.root,'models.jsonl');
- fs.writeFileSync(path.join(bin,'codex'),'#!'+process.execPath+'\n'+`const fs=require('node:fs');const a=process.argv.slice(2),v=a.find(s=>s.startsWith('model='));if(!v){console.log('[]');process.exit(0);}const model=JSON.parse(v.slice(6)),role=a.join(' ').includes('REVIEW_CASE')?'review':'author';fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({role,model})+'\\n');if(role==='author'&&model==='glm-5.3'||role==='review'&&model==='deepseek-v4.1-flash'){setTimeout(()=>{console.log(JSON.stringify({type:'error',message:'provider unavailable'}));process.exit(1);},300);}else{console.log(JSON.stringify({type:'thread.started',thread_id:role+'-fixture'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'done'}}));console.log(JSON.stringify({type:'turn.completed'}));}` ,{mode:0o755});
+ fs.writeFileSync(path.join(bin,'codex'),'#!'+process.execPath+'\n'+`const fs=require('node:fs');const a=process.argv.slice(2),v=a.find(s=>s.startsWith('model='));if(!v){console.log('[]');process.exit(0);}const model=JSON.parse(v.slice(6)),role=a.join(' ').includes('REVIEW_CASE')?'review':'author';fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({role,model})+'\\n');if(role==='author'&&model==='glm-5.4'||role==='review'&&model==='deepseek-v4.1-flash'){setTimeout(()=>{console.log(JSON.stringify({type:'error',message:'provider unavailable'}));process.exit(1);},300);}else{console.log(JSON.stringify({type:'thread.started',thread_id:role+'-fixture'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'done'}}));console.log(JSON.stringify({type:'turn.completed'}));}` ,{mode:0o755});
  // 作者用写代码任务：写代码的网关候选有 GLM→Kimi→DeepSeek，才退得到 Kimi（站长 11-19 起查资料的网关候选只有 DeepSeek）
  const a=f.call('task_new',{kind:'code',goal:'AUTHOR_CASE',dir:f.task.dir,model:'glm-5.3',named:true}).task;
  const review=f.call('task_new',{kind:'review',goal:'REVIEW_CASE',after:[a.no],dir:f.task.dir,model:'deepseek-v4.1-flash',named:true}).task;
@@ -575,8 +614,8 @@ test('原任务 fallback 与复核 fallback 组合：requestedModel 保持原值
  while(performance.now()<deadline){f.call('tasks',{});ah=f.call('history',{sid:a.sid}).task;rh=f.call('history',{sid:review.sid}).task;if(['done','failed','waiting'].includes(rh.status))break;await new Promise(r=>setTimeout(r,100));}
  ah=f.call('history',{sid:a.sid}).task;rh=f.call('history',{sid:review.sid}).task;
  assert.equal(ah.status,'done',JSON.stringify(ah));assert.equal(rh.status,'done',JSON.stringify(rh));
- assert.equal(ah.requestedModel,'glm-5.3');assert.equal(ah.actualModel,'kimi-k3.1-pro');assert.equal(rh.requestedModel,'deepseek-v4.1-flash');assert.equal(rh.actualModel,'glm-5.3');assert.equal(rh.independent,true);
- const attempts=fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);assert.deepEqual(attempts.filter(x=>x.role==='review').map(x=>x.model),['deepseek-v4.1-flash','glm-5.3']);
+ assert.equal(ah.requestedModel,'glm-5.3');assert.equal(ah.actualModel,'kimi-k3.1-pro');assert.equal(rh.requestedModel,'deepseek-v4.1-flash');assert.equal(rh.actualModel,'glm-5.4');assert.equal(rh.independent,true);
+ const attempts=fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);assert.deepEqual(attempts.filter(x=>x.role==='review').map(x=>x.model),['deepseek-v4.1-flash','glm-5.4']);
  const bad=f.call('task_new',{kind:'review',goal:'same author',after:[a.no],dir:f.task.dir,model:ah.actualModel,named:true});assert.equal(bad.error,'independent_review_model');
 });
 

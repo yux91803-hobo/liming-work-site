@@ -70,7 +70,9 @@ test('显示用的模型名：Gemini 4 Hydrogen 有自己的名字；不再用�
   assert.equal(modelLabel('claude-opus-4.6'), 'claude-opus-4.6');
   assert.equal(modelLabel('kimi-k3.1-pro'), 'Kimi K3.1 Pro');
   assert.equal(modelLabel('glm-5.3'), 'GLM-5.3');
+  assert.equal(modelLabel('glm-5.3-flash'), 'GLM-5.3 Flash');
+  assert.equal(modelLabel('glm-5.4'), 'GLM-5.4');
   assert.equal(modelLabel('some-new-model'), 'some-new-model');
   // 起 Codex 时不认识的照旧按第一个开工（只改显示，不改执行）
-  assert.equal(codexModel('some-new-model').id, 'glm-5.3-flash');
+  assert.equal(codexModel('some-new-model').id, 'glm-5.4');
 });

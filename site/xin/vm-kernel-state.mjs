@@ -7,7 +7,7 @@ import { FRAME_MAX, stateSocket } from './vm-kernel-client.mjs';
 
 const KINDS = new Set(['op','named','write','append','xin','reap','control']);
 const ID = /^[A-Za-z0-9_-]{8,100}$/;
-export async function createStateServer({ home, owner = new Ownership(home), initialize = () => {}, handle,
+export async function createStateServer({ home, owner = new Ownership(home), initialize = () => {}, handle, drain = () => {},
   tick, reconcile, hasWork = () => false, tickMs = 5000, wallClock = Date.now, recoveryGapMs = 30000, beforeRelease = () => {}, maxActive = 32, headerMs = 10000, log = () => {} }) {
   const file = stateSocket(home), directory = path.dirname(file);
   if (owner.record().busy) throw Object.assign(new Error('状态主人仍在运行'), { code: 'owner_busy' });
@@ -78,7 +78,7 @@ export async function createStateServer({ home, owner = new Ownership(home), ini
     if (stopPromise) return stopPromise;
     draining = true; owner.draining = true; clearTimeout(timer);
     stopPromise = (async () => {
-      await waitIdle();
+      await Promise.all([waitIdle(), drain()]);
       // No await between the final flush, closing writable handles and handing ownership back.
       beforeRelease(); stopped = true; server.close();
       for (const s of sockets) if (!s.handling) s.destroy();
