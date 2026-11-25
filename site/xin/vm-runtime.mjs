@@ -152,7 +152,7 @@ export function startWorkspaceCopy(t, controller) {
         if (!error) {
           try {
             const report = JSON.parse(stdout);
-            if (typeof report.stm32 === 'boolean') return resolve({ stage, stm32: report.stm32 });
+            if (typeof report.stm32 === 'boolean') return resolve({ stage, stm32: report.stm32, sid: t.sid, dir: t.dir });
             if (typeof report.error === 'string') return resolve({ error: report.error });
           } catch { /* Report is missing or incomplete. */ }
         }
@@ -166,10 +166,11 @@ export function startWorkspaceCopy(t, controller) {
   } };
 }
 
-export function commitWorkspaceCopy(t, controller, { stage, stm32 }) {
+export function commitWorkspaceCopy(t, controller, prepared) {
+  const { stage, stm32 } = prepared;
   const staging = path.join(stage, 'controller'), name = 'xin-task-' + t.sid;
   const candidate = path.join(taskRoot(staging), name), root = path.join(taskRoot(controller), name);
-  if (fs.realpathSync(t.dir) !== t.dir) throw Error('项目目录已改变');
+  if (prepared.sid !== t.sid || prepared.dir !== t.dir || fs.realpathSync(t.dir) !== t.dir) throw Error('项目目录已改变');
   mkdir(path.join(controller, 'workspaces'));
   const manifest = path.join(controller, 'workspaces', t.sid + '.json');
   const tmp = manifest + '.' + crypto.randomUUID() + '.tmp';
@@ -178,8 +179,16 @@ export function commitWorkspaceCopy(t, controller, { stage, stm32 }) {
   try {
     // The queued task has never launched. Replace any leftover copy from a crashed promotion.
     fs.copyFileSync(path.join(staging, 'workspaces', t.sid + '.json'), tmp, fs.constants.COPYFILE_EXCL);
-    try { fs.renameSync(root, path.join(stage, 'previous')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    fs.renameSync(candidate, root);
+    if (!prepared.installed) {
+      const copy = fs.lstatSync(candidate, { bigint: true });
+      if (!copy.isDirectory()) throw Error('任务副本目录无效');
+      try { fs.renameSync(root, path.join(stage, 'previous')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      fs.renameSync(candidate, root);
+      prepared.installed = { dev: copy.dev, ino: copy.ino };
+    }
+    // The files may have moved before a state transaction rolled back. Retry the same copy.
+    const installed = fs.lstatSync(root, { bigint: true });
+    if (!installed.isDirectory() || installed.dev !== prepared.installed.dev || installed.ino !== prepared.installed.ino) throw Error('任务副本目录已改变');
     installTaskBridge(workspace, { shellEnvironment: true });
     fs.renameSync(tmp, manifest);
   } finally { fs.rmSync(tmp, { force: true }); }

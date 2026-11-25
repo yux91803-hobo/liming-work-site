@@ -66,6 +66,7 @@ test('工作区副本准备完成前保持私有，发布后仍能核对原项�
     assert.ok(!fs.existsSync(path.join(f.control, 'workspaces', f.task.sid + '.json')));
     fs.writeFileSync(file, 'int state = 2;');
     f.task.workspace = r.commitWorkspaceCopy(f.task, f.control, prepared);
+    assert.deepEqual(r.commitWorkspaceCopy(f.task, f.control, prepared), f.task.workspace, 'retry after the owner moved the copy');
     const { work: project, home } = f.task.workspace;
     assert.equal(fs.readFileSync(path.join(project, 'main.c'), 'utf8'), 'int state = 1;');
     assert.ok(fs.readFileSync(path.join(home, 'shell-env.sh'), 'utf8').includes(path.join(home, 'bin')));
