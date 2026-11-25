@@ -15,6 +15,13 @@ def recovered_front_timeout(done):
             done.get('why') in ('front_timeout_fallback', 'front_capacity_fallback'))
 
 
+def front_quota_blocked(quota, now_ms):
+    quota = quota or {}
+    until = quota.get('retryAt')
+    return (quota.get('model') == HYDROGEN and quota.get('blocked') is True
+            and type(until) in (int, float) and until > now_ms)
+
+
 def validate_front_model(done, quota=None, now_ms=0):
     if done.get('ok') is not True:
         raise RuntimeError('Foreground did not complete successfully')
@@ -25,9 +32,7 @@ def validate_front_model(done, quota=None, now_ms=0):
         raise RuntimeError('Foreground used an unexpected model')
     if recovered_front_timeout(done):
         return model
-    quota = quota or {}
-    if (quota.get('model') != HYDROGEN or quota.get('blocked') is not True
-            or not isinstance(quota.get('retryAt'), (int, float)) or quota['retryAt'] <= now_ms):
+    if not front_quota_blocked(quota, now_ms):
         raise RuntimeError('Foreground skipped Hydrogen without real exhausted Gemini quota')
     return model
 
@@ -127,15 +132,18 @@ def event_digest(events, text_chars=300):
     return out
 
 
-def front_lookup_during_outage(events, plain_done=None):
-    """Check the degraded reply after a provider 503 or corroborated timeouts."""
+def front_lookup_during_outage(events, plain_done=None, quota=None, now_ms=0):
+    """Check a documented downgrade while direct lookup is unavailable."""
     done = next((e for e in events if e.get('t') == 'done'), {})
     plain_done = plain_done or {}
     repeated_timeout = (done.get('why') == 'front_timeout_fallback' and
                         plain_done.get('ok') is True and recovered_front_timeout(plain_done))
-    if done.get('why') != 'front_capacity_fallback' and not repeated_timeout:
+    quota_fallback = done.get('why') == 'front_quota_fallback'
+    if quota_fallback and not front_quota_blocked(quota, now_ms):
+        return 'quota fallback has no active quota cooldown'
+    if done.get('why') != 'front_capacity_fallback' and not repeated_timeout and not quota_fallback:
         return None  # The usual native-web check still applies.
-    if done.get('ok') is not True or not recovered_front_timeout(done):
+    if done.get('ok') is not True or done.get('model') != DEEPSEEK or done.get('from') != HYDROGEN:
         return 'outage fallback did not finish on the backup model'
     if any(e.get('t') in ('task', 'tool', 'tool_end') for e in events):
         return 'outage fallback reported an unexpected operation'

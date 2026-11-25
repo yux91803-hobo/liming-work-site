@@ -16,8 +16,8 @@ export const preferredFrontModel=()=>process.env.XIN_FRONT_PROVIDER==='deepseek'
 export const frontModelInfo=id=>{id=id||preferredFrontModel();return {id,name:id===FRONT_MODEL?'DeepSeek V4.1 Flash':'Gemini 4 Hydrogen',image:true};};
 export function frontRouting({model,providerModel,reason}, why) {
   const from = ['quota','format','front_model','unavailable','timeout','capacity'].includes(reason) ? AGY_FRONT_MODEL : undefined;
-  if (reason === 'timeout' || reason === 'capacity') why = `front_${reason}_fallback`;
-  else if (why === 'front_timeout_fallback' || why === 'front_capacity_fallback') why = 'chat';
+  if (['quota','timeout','capacity'].includes(reason)) why = `front_${reason}_fallback`;
+  else if (['front_quota_fallback','front_timeout_fallback','front_capacity_fallback'].includes(why)) why = 'chat';
   return {model,providerModel:String(providerModel||model).slice(0,200),why,from};
 }
 const AGENT='xin-front-controller';
