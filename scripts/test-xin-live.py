@@ -553,7 +553,9 @@ async def main():
                 web = (await call('history', {'sid': web_sid}))['task']
                 if web['status'] == 'done' and web.get('delivery', {}).get('state') == 'delivered': break
                 if web['status'] in ('failed','stopped','waiting') or time.monotonic() > limit:
-                    raise RuntimeError('Real Gemini web work did not complete: ' + web['status'])
+                    wait = max(0, round(((web.get('retryAt') or 0) - time.time() * 1000) / 1000))
+                    raise RuntimeError('Real Gemini web work did not complete: ' + web['status'] +
+                                       ' attempts=' + str(web.get('turns')) + ' model=' + str(web.get('actualModel')) + ' retrySeconds=' + str(wait))
                 await asyncio.sleep(5)
             preview = web.get('preview') or {}
             saved_front = await call('history', {'sid': alternate_sid})
