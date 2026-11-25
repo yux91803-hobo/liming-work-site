@@ -1,0 +1,63 @@
+name: Read WorkBuddy model metadata
+on:
+  push:
+    branches: [codex/glm54-gateway-inspect-20261125]
+    paths: [.github/workflows/codex-glm54-gateway-inspect.yml]
+permissions: {}
+jobs:
+  catalog:
+    if: github.repository == 'yux91803-hobo/liming-work-site' && github.ref_name == 'codex/glm54-gateway-inspect-20261125'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read selected model IDs from the existing gateway on each machine
+        env:
+          LI_API: ${{ secrets.XIN_INSTABOX_API_KEY }}
+          LI2_API: ${{ secrets.XIN_TQ_INSTABOX_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures
+          import json
+          import os
+          from urllib.error import HTTPError
+          from urllib.parse import quote
+          from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self, *args):
+                  return None
+
+          target = "import http.client\nimport json\nimport sys\nfrom pathlib import Path\n\nroot = Path('/data/home/.xin')\nnames = ('harness.key',) if sys.argv[1] == 'li2' else ('codex.key', 'harness.key')\ntoken = next((root.joinpath(name).read_text().strip() for name in names if root.joinpath(name).is_file()), '')\nif not token:\n    print(json.dumps({'state': 'local_client_key_missing'}))\n    raise SystemExit(0)\nconn = http.client.HTTPConnection('127.0.0.1', 8788, timeout=15)\nconn.request('GET', '/v1/models', headers={'Authorization': 'Bearer ' + token})\nresponse = conn.getresponse()\nif response.status != 200:\n    print(json.dumps({'http': response.status}))\n    raise SystemExit(0)\npayload = json.loads(response.read(1048576))\nwanted = {'glm-5.3','glm-5.3-flash','glm-5.4','glm-5.4-flash','deepseek-v4.1-flash'}\nmodels = []\nfor row in payload.get('data', []):\n    if row.get('id') not in wanted:\n        continue\n    length = row.get('context_length', row.get('context_window'))\n    efforts = row.get('reasoning_efforts', []) or []\n    modes = row.get('input_modalities', row.get('modalities', [])) or []\n    models.append({'id': row['id'], 'context': length if isinstance(length, int) else None,\n                   'efforts': [e for e in efforts if e in ('off','none','low','medium','high','max')],\n                   'input': [m for m in modes if m in ('text','image')]})\nprint(json.dumps({'http': 200, 'models': models, 'total': len(payload.get('data', []))}))\n"
+
+          def describe(machine, env_name):
+              key = os.environ.get(env_name)
+              if not key:
+                  return {'state': 'not_configured'}
+              opener = build_opener(NoRedirect())
+              def call(path, body=None):
+                  headers = {'X-API-Key': key, 'Content-Type': 'application/json'}
+                  data = json.dumps(body).encode() if body is not None else None
+                  with opener.open(Request('https://api.instabox.sh' + path, headers=headers, data=data), timeout=55) as response:
+                      return json.load(response)
+              try:
+                  candidates = [m for m in call('/v1/machines')['machines'] if m.get('name') == machine]
+                  if len(candidates) != 1:
+                      return {'state': 'instance_not_resolved'}
+                  path = '/v1/machines/' + quote(candidates[0]['id'], safe='')
+                  state = call(path).get('state')
+                  if state != 'running':
+                      return {'state': state if state in ('suspended','stopped','starting','resuming') else 'unavailable'}
+                  result = call(path + '/exec', {'argv': ['/usr/bin/python3','-c', target, machine], 'timeoutSeconds': 25})
+                  if result.get('exitCode') != 0:
+                      return {'state': 'catalog_unavailable'}
+                  return json.loads(result['stdout'])
+              except HTTPError as e:
+                  return {'instabox_http': e.code}
+              except Exception as e:
+                  return {'state': 'query_failed', 'kind': type(e).__name__}
+
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+              results = {machine:executor.submit(describe, machine, secret) for machine,secret in [('li','LI_API'), ('li2','LI2_API')]}
+              for machine, result in results.items():
+                  print('MODEL_CATALOG ' + machine + ' ' + json.dumps(result.result(),sort_keys=True))
+          PY
