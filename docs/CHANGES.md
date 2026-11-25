@@ -1,3 +1,8 @@
+# 修改清单 · 2026-11-25（回退模型尚未开工时继续使用剩余候选）
+
+- Codex 实现并自查。#215 正式站实际派出点名的 Gemini 网页任务，转到第一个网关候选后，后续几轮仍在同一模型，最终等待重试并触发发布回滚。只读统计证实轮次存在，状态进程也已正常换版。 [正式站流程](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45611479035) [模型统计核对](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45618654137)
+- 普通执行器在动手前失败时，沿同一轮次依序走已校验的候选，每个模型至多切入一次。保留最初故障、实际参与执行的模型、原项目副本及补充编号。下一次启动由原始输入和当前补充重新构成，接收回执成功后只收一次。停止、超时、严格点名和独立复核仍执行既有约束。收尾与回退的数据格式沿用前版。 [Codex 插话测试](https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/suite/v2/turn_steer.rs)
+
 # 修改清单 · 2026-11-25（天启 DeepSeek 读取上传图片）
 
 - Codex 实现并自查。原有模型目录标记了图片能力，每轮生成的 Harness 网关配置漏了 `input`，导致 Harness 的 `read_image` 返回 `IMAGE_UNSUPPORTED_MODEL`。现在按每个模型声明 `text` 和 `image`，GLM-5.3 Flash 只声明 `text`。附件提示写明原生读图工具，沿用现有只读、工作区和插件设置。 [Harness 模型配置](https://github.com/deepseek-ai/deepseek-harness/blob/38a6a5c965aa99ab525161efb7cc5cf1fe62fced/packages/llm/llm-pi-ai/src/config.ts#L88) [Harness 读图工具](https://github.com/deepseek-ai/deepseek-harness/blob/38a6a5c965aa99ab525161efb7cc5cf1fe62fced/packages/fs/tool-fs/src/read-image.ts#L124)
