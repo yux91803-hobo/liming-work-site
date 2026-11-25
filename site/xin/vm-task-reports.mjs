@@ -7,7 +7,7 @@ import { retryDelays, RETRY_TEXT } from './vm-retry.mjs';
 import { hasFinalization, attemptError, finalizationEvidence } from './vm-run-attempt.mjs';
 import { withCallContext } from './vm-kernel-context.mjs';
 import { inputDigest } from './vm-state.mjs';
-import { retainHostGrant } from './vm-steer.mjs';
+import { appSteerReceipt, retainHostGrant } from './vm-steer.mjs';
 
 export function taskBridgeSession(session, meta) {
   if (meta?.bridgeProtocol === undefined || meta.bridgeProtocol === 0) return session;
@@ -126,6 +126,7 @@ export function createTaskFinisher({ sessF, metaF, isTask, lastRun, tailEvents, 
         notify = taskPush(t, '我没做成：' + t.title, why);
       }
     } else if (a.transient && !a.stopped && !a.timeout && (t.transientRetries || 0) < retryDelays().length) {   // 断线、网关暂时不可用：等一会儿用同一个会话接着做
+      if (finalization?.probe) return { files:false, retry:'transient' };
       const n = (t.transientRetries || 0) + 1;
       Object.assign(t, { transientRetries: n, retryAt: Date.now() + retryDelays()[n - 1], next: RETRY_TEXT, nextShow: '（连接出错，稍后接着做）', status: 'queued', queuedAt: Date.now() });
     } else {
@@ -273,32 +274,36 @@ export function createRunFinalizer({ store, loadRun, loadSession, taskFinish, em
       const changes = {modelDone:true, ...(data?.changes.frontUsage ? {frontUsage:data.changes.frontUsage} : {}),
         ...(webCheck ? {webCheck:{...webCheck,trusted:true}} : {}),
         ...(pageCheck ? {pageCheck:{...pageCheck,trusted:true}} : {}), ...(compileTrusted ? {compileTrusted,compileOk,compileDigest} : {})};
-      const steerReceipt = !uncertain && current.steers?.some(x => x.claim) ? store.read(current, 'steer') : null;
+      const pending = (current.steers || []).filter(x => ['pending','next'].includes(x.state));
+      const steerReceipt = !uncertain && pending.length ? store.read(current, 'steer') : null;
       const acked = steerReceipt?.state === 'valid' && steerReceipt.data.prepared === prepared?.digest ? new Set(steerReceipt.data.claims) : null;
-      const steers = acked?.size ? current.steers.map(x => ['pending','next'].includes(x.state) && acked.has(x.claim?.id) && x.claim.attempt === attempt
+      const acceptedIds = new Set(acked ? pending.filter(x => typeof x.id === 'string' && acked.has(appSteerReceipt(x.id))).map(x => x.id) : []);
+      const steers = acked?.size ? current.steers.map(x => ['pending','next'].includes(x.state) && (acceptedIds.has(x.id) || acked.has(x.claim?.id) && x.claim.attempt === attempt)
         ? { ...x, state: 'accepted', acceptedAt: x.acceptedAt || data.at } : x) : current.steers;
       const runMeta = {...current, ...changes, ...(steers ? {steers} : {})};
       const task = loadSession(sid);
       const result = {sid, run, ok:!uncertain && !!data?.ok && !current.stopped, stopped:!!current.stopped,
         timeout:!!data?.timeout, transient:!uncertain && !!data?.transient, model:data?.model, uncertain};
-      let files;
+      let files, retry;
       journal.checkWriter();
       if (meta.task) {
         if (current.childPid && processGroupMembers(current.childPid,current.childIdentity).length) return { error:'cleanup_pending' };
         const probe = taskFinish(result, {meta:runMeta, probe:true});
         if (probe.error) return probe;
+        retry = probe.retry;
         if (probe.files) files = finalizeFiles(store, runMeta, ready, task, data.at);
       }
       const command = {id, digest:ready?.digest || inputDigest([id, reason])};
       return journal.atomic(() => {
         if (data) rememberSession(sid, data.changes);
+        for (const id of acceptedIds) steerAck?.({ run, id, state: 'accepted' });
         if (acked?.size) for (const claim of acked) steerAck?.({ run, claim, state: 'accepted' });
         patchRun(run, changes);
         if (uncertain) emit(run, {t:'err',text:uncertain});
         if (data?.reply && !uncertain) frontReply({run,text:data.reply});
         const done = { t:'done', code:data?.code ?? -1, ms:data?.ms ?? Math.max(0, Date.now()-current.started),
           ok:result.ok && !files?.error && !files?.publication?.pending, stopped:result.stopped, usage:data?.usage ?? null,
-          cost:data?.cost, effort:current.effort||'', ...(data?.model && current.agent!=='claude' ? {model:data.model,
+          cost:data?.cost, effort:current.effort||'', ...(retry ? {retry} : {}), ...(data?.model && current.agent!=='claude' ? {model:data.model,
             why:current.why, from:data.from, providerModel:data.providerModel} : {}), ...(current.plan ? {plan:true} : {}) };   // 天启的计划轮次：网页据此放计划卡片
         if (data?.recordStats) journal.append(statsFile(), {at:data.at, run, agent:current.agent, model:data.model||'',
           kind:current.routeKind||current.kind||'chat', why:current.why||'', ms:done.ms, from:data.from, fromErr:current.fromErr,
