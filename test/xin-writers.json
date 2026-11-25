@@ -6,7 +6,7 @@
   "扫不到的：通过 cp、tar、sqlite3 这类子进程写的文件。状态库里的写不在这里管，靠只读连接和写入口（vm-state.mjs 的 writing）。",
   "agentLines 是 vm-agent.mjs 的行数基线（只减不增）；rmw 是「读了再写」的条数；atomic 是各文件里直接开事务（journal.atomic）的次数。"
  ],
- "agentLines": 2949,
+ "agentLines": 2913,
  "rmw": 0,
  "atomic": {
   "vm-agent.mjs": 2,
@@ -28,7 +28,6 @@
   "vm-agent.mjs::loginOpen": { "calls": { "unlinkSync": 2 }, "kind": "safe", "what": "开登录窗口前清掉上一次留下的标记" },
   "vm-agent.mjs::runLoginWindow": { "calls": { "unlinkSync": 2 }, "kind": "safe", "what": "登录窗口结束时清掉自己的标记" },
   "vm-agent.mjs::logLine": { "calls": { "writeFileSync": 1, "renameSync": 1 }, "kind": "op", "what": "前台、浏览器、边界、清理与完整性日志：由状态进程追加并保留末尾，已忘掉的前台轮次拒绝迟报" },
-  "vm-agent.mjs::backupExport": { "calls": { "mkdirSync": 1, "mkdtempSync": 1, "DatabaseSync": 1, "writeFileSync": 1, "unlinkSync": 2, "chmodSync": 1, "renameSync": 1, "rmSync": 1 }, "kind": "safe", "what": "机外备份的打包：每次在自己的临时目录里做（打开的是复制出来的那份状态库），打好改名成带时间的文件，再删掉过期的" },
   "vm-agent.mjs::exportState": { "calls": { "mkdirSync": 1, "chmodSync": 1, "unlinkSync": 1 }, "kind": "safe", "what": "每天导出一份状态库到带日期的文件，删掉过期的" },
   "vm-agent.mjs::dropLogs": { "calls": { "rmSync": 2, "unlinkSync": 3 }, "kind": "outside", "what": "忘掉对话时删模型命令行工具自己的会话日志（Codex、Claude、天启），和小芯记的「这份日志是我起的」标记" },
   "vm-agent.mjs::dropConversationTraces": { "calls": { "unlinkSync": 1, "writeFileSync": 1 }, "kind": "op", "what": "忘掉对话时删它的消息和通知文件，改写前台诊断日志去掉它的条目。只在 forget、task_drop 操作里调用" },
@@ -54,6 +53,10 @@
   "vm-browser.mjs::loginWindow": { "calls": { "mkdirSync": 1 }, "kind": "outside", "what": "登录窗口的临时资料目录" },
   "vm-front-agy.mjs::openFrontProvider": { "calls": { "mkdirSync": 2, "writeFileSync": 1, "renameSync": 1 }, "kind": "safe", "what": "前台模型的工作目录和它的代理定义文件：内容由人设推出来，整份替换" },
   "vm-kernel-owner.mjs::Ownership.db": { "calls": { "mkdirSync": 1, "DatabaseSync": 1, "chmodSync": 1 }, "kind": "owner", "what": "状态进程启动时打开 owner.sqlite 并取得独占锁，普通客户端直接用套接字" },
+  "vm-kernel-state.mjs::freezeArchiveInputs": { "calls": { "mkdirSync": 2, "linkSync": 1 }, "kind": "safe", "what": "固定归档输入路径与文件长度：只建立临时硬链接，归档前的投影快照继续可读" },
+  "vm-kernel-state.mjs::snapshotArchiveDb": { "calls": { "DatabaseSync": 1, "chmodSync": 1, "writeFileSync": 1 }, "kind": "safe", "what": "在归档的私有目录建立 SQLite 快照与恢复停止记录" },
+  "vm-kernel-state.mjs::archiveState": { "calls": { "mkdtempSync": 1, "mkdirSync": 2, "createWriteStream": 1, "writeFileSync": 1, "chmodSync": 1, "renameSync": 1, "rmSync": 1 }, "kind": "safe", "what": "复制事件前缀、异步压缩及原子发布机外备份" },
+  "vm-kernel-state.mjs::createBackupExporter": { "calls": { "mkdirSync": 1, "unlinkSync": 1 }, "kind": "op", "what": "同一状态进程合并同日备份请求，成功后沿用原来的保留期" },
   "vm-kernel-state.mjs::snapshotBeforeSwitch": { "calls": { "mkdirSync": 1, "chmodSync": 2, "renameSync": 1, "unlinkSync": 2 }, "kind": "owner", "what": "切换前的一致备份 backups/owner-switch/workflow-<时间>.sqlite：只有刚从 legacy 拿到所有权的状态进程写，先写 .tmp 再改名，一天最多一次、留最新两份" },
   "vm-kernel-state.mjs::createStateServer": { "calls": { "unlinkSync": 2, "mkdirSync": 1, "chmodSync": 2 }, "kind": "owner", "what": "状态进程的套接字目录和套接字文件：只有拿到独占锁的主人建和删" },
   "vm-kernel.mjs::NonceStore.constructor": { "calls": { "DatabaseSync": 1, "chmodSync": 1 }, "kind": "shell", "what": "内核外壳的防重放库 kernel.sqlite" },
