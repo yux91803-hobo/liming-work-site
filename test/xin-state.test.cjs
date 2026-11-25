@@ -1,3 +1,4 @@
+const { budgetStore } = require('./helpers/budget-store.cjs');
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {spawnSync}=require('node:child_process');const {pathToFileURL}=require('node:url');
 const moduleUrl=pathToFileURL(path.join(__dirname,'../site/xin/vm-state.mjs')).href;
@@ -15,8 +16,8 @@ test('事务将元数据、完成事件和回执一起提交；投影重放不�
 });
 test('执行启动按用户、完成续接、例行顺序；重复完成只有一个收件项',async t=>{const {j}=await fixture(t);j.atomic(()=>{j.enqueueLaunch('rbackground','s1',2);j.enqueueLaunch('revent','s1',1);j.enqueueLaunch('ruser','s1',0);for(let n=0;n<3;n++)j.enqueueHandoff({id:'same',parent:'s1',task:'t1',version:'v1',payload:{ok:true}});});assert.deepEqual(j.pendingLaunches().map(x=>x.run),['ruser','revent','rbackground']);assert.equal(j.dueHandoffs().length,1);j.startHandoff('same','revent');j.settleHandoff('same','delivered');assert.equal(j.hasPendingHandoffs(),false);});
 test('续接共享 token 预算，缓存输入不重复加总，未知用量单独记录',async t=>{
- const {root}=await fixture(t),{requestBudget}=await import('../site/xin/vm-runtime.mjs');const file=root+'/budget.json',first=requestBudget(file,8,{tokens:100});assert.equal(first(),true);first.recordUsage({input_tokens:70,output_tokens:30,input_tokens_details:{cached_tokens:50}});
- const resumed=requestBudget(file,8,{tokens:100});assert.equal(resumed(),false);resumed.recordUsage(null);const b=JSON.parse(fs.readFileSync(file));assert.equal(b.total,100);assert.equal(b.cached,50);assert.equal(b.unknownUsage,1);assert.equal(b.used,1);
+ const {root}=await fixture(t),{requestBudget}=await import('../site/xin/vm-runtime.mjs');const file=root+'/budget.json',first=requestBudget(budgetStore(file),8,{tokens:100});assert.equal(first(),true);first.recordUsage({input_tokens:70,output_tokens:30,input_tokens_details:{cached_tokens:50}});
+ const resumed=requestBudget(budgetStore(file),8,{tokens:100});assert.equal(resumed(),false);resumed.recordUsage(null);const b=JSON.parse(fs.readFileSync(file));assert.equal(b.total,100);assert.equal(b.cached,50);assert.equal(b.unknownUsage,1);assert.equal(b.used,1);
 });
 test('删除指定对话同时清除日志索引与回执，恢复时不重建已删除记录',async t=>{
  const {root,j}=await fixture(t);for(const sid of ['sdelete01','skeep001'])j.atomic(()=>{j.write(root+'/sessions/'+sid+'.json',JSON.stringify({sid}));j.write(root+'/contexts/'+sid+'.json','{"excerpt":"private"}');return {sid};},{id:sid,digest:sid});
@@ -35,7 +36,7 @@ test('多个进程同时首次打开新的状态库：初始化遇忙重试，�
 test('另一连接正持有写锁时打开状态库：等锁释放后初始化成功，不立刻报 database is locked',async t=>{
  const {spawn}=require('node:child_process'),{DatabaseSync}=require('node:sqlite');
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'xin-state-lock-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
- const holder=new DatabaseSync(path.join(root,'workflow.sqlite'));holder.exec('CREATE TABLE x(a); BEGIN IMMEDIATE; INSERT INTO x VALUES(1)');
+ const holder=new DatabaseSync(path.join(root,'workflow.sqlite'));holder.exec('PRAGMA busy_timeout=2000; CREATE TABLE x(a); BEGIN IMMEDIATE; INSERT INTO x VALUES(1)');
  const source=`import {StateJournal} from ${JSON.stringify(moduleUrl)};const j=new StateJournal(${JSON.stringify(root)});j.recover();console.log('ready');j.close();`;
  const child=spawn(process.execPath,['--input-type=module','-e',source],{stdio:['ignore','pipe','pipe']});let out='',err='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);
  setTimeout(()=>{holder.exec('COMMIT');holder.close();},400);

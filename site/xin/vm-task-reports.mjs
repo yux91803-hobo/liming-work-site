@@ -8,6 +8,7 @@ import { hasFinalization, attemptError, finalizationEvidence } from './vm-run-at
 import { withCallContext } from './vm-kernel-context.mjs';
 import { inputDigest } from './vm-state.mjs';
 import { retainHostGrant } from './vm-steer.mjs';
+import { restoreBudget } from './vm-kernel-operations.mjs';
 
 export function taskBridgeSession(session, meta) {
   if (meta?.bridgeProtocol === undefined || meta.bridgeProtocol === 0) return session;
@@ -206,12 +207,13 @@ export function checkTaskResult(t, { active, emit, report, checking }) {
   }
 }
 
-export function recordRunnerResult(store, meta, {ackedSteers, ...data}, getSession, reports) {
+export function recordRunnerResult(store, meta, {ackedSteers, budgetSamples, ...data}, getSession, reports) {
   journal.checkWriter();
   const prepared = store.write(meta, 'prepared', data, {flushEvents:true});
   // Keep the existing prepared and ready envelopes readable during a rollback.
   // An older owner can finish the result and carry unconfirmed input forward.
   if (ackedSteers?.length) store.write(meta, 'steer', {prepared:prepared.digest, claims:ackedSteers});
+  if (budgetSamples?.length) store.write(meta, 'budget', {prepared:prepared.digest, samples:JSON.parse(JSON.stringify(budgetSamples))});
   reports.preparing();
   const ready = {prepared:prepared.digest};
   const t = getSession();
@@ -251,7 +253,7 @@ function finalizeFiles(store, meta, ready, task, at) {
 }
 
 export function createRunFinalizer({ store, loadRun, loadSession, taskFinish, emit, complete, rememberSession,
-  patchRun, frontReply, frontNotice, dailyDone, statsFile, steerAck }) {
+  patchRun, frontReply, frontNotice, dailyDone, statsFile, steerAck, sessionUsage }) {
   return function finalizeRun(meta, { digest, evidence = finalizationEvidence(store, meta), abandon = false } = {}) {
     if (!hasFinalization(meta)) return { error:'finalization_protocol' };
     const {run, attempt, sid} = meta, context = { locked:true, key:meta.task?'tasks':sid, run, attempt };
@@ -292,17 +294,28 @@ export function createRunFinalizer({ store, loadRun, loadSession, taskFinish, em
       const command = {id, digest:ready?.digest || inputDigest([id, reason])};
       return journal.atomic(() => {
         if (data) rememberSession(sid, data.changes);
+        let usage = data?.usage ?? null, delta = data?.delta;
+        const budget = prepared && store.read(current,'budget');
+        if (budget?.state === 'valid' && budget.data.prepared === prepared.digest && restoreBudget(budget.data.samples, current) && meta.task && sessionUsage) {
+          const latest = sessionUsage(loadSession(sid));
+          if (latest) {
+            delta = { ...delta };
+            for (const field of ['input','output','cached']) delta[field] = (delta[field] || 0) + Math.max(0, (latest[field] || 0) - (usage?.[field] || 0));
+            if (latest.incl) delta.incl = true;
+            usage = latest;
+          }
+        }
         if (acked?.size) for (const claim of acked) steerAck?.({ run, claim, state: 'accepted' });
         patchRun(run, changes);
         if (uncertain) emit(run, {t:'err',text:uncertain});
         if (data?.reply && !uncertain) frontReply({run,text:data.reply});
         const done = { t:'done', code:data?.code ?? -1, ms:data?.ms ?? Math.max(0, Date.now()-current.started),
-          ok:result.ok && !files?.error && !files?.publication?.pending, stopped:result.stopped, usage:data?.usage ?? null,
+          ok:result.ok && !files?.error && !files?.publication?.pending, stopped:result.stopped, usage,
           cost:data?.cost, effort:current.effort||'', ...(data?.model && current.agent!=='claude' ? {model:data.model,
             why:current.why, from:data.from, providerModel:data.providerModel} : {}), ...(current.plan ? {plan:true} : {}) };   // 天启的计划轮次：网页据此放计划卡片
         if (data?.recordStats) journal.append(statsFile(), {at:data.at, run, agent:current.agent, model:data.model||'',
           kind:current.routeKind||current.kind||'chat', why:current.why||'', ms:done.ms, from:data.from, fromErr:current.fromErr,
-          usage:data.delta, ok:done.ok, stopped:done.stopped});
+          usage:delta, ok:done.ok, stopped:done.stopped});
         const completed = complete({run, done, durable:true, uncertain});
         if (completed.error) return completed;
         if (meta.task) {

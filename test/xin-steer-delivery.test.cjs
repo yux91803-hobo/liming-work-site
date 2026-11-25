@@ -388,6 +388,9 @@ test('主人长失联跨过 steer_ack 直至收尾：扩展回执另存，恢复
   const receipt = JSON.parse(fs.readFileSync(path.join(dir, 'steer'), 'utf8').split('\n')[1]);
   assert.equal(receipt.data.prepared, fs.readFileSync(path.join(dir, 'prepared'), 'utf8').split('\n')[0]);
   assert.equal(receipt.data.claims.length, 1);
+  const offlineBudget = JSON.parse(fs.readFileSync(path.join(dir, 'budget'), 'utf8').split('\n')[1]);
+  assert.equal(offlineBudget.data.prepared, receipt.data.prepared);
+  assert.deepEqual(offlineBudget.data.samples.map(s => [s.action, s.usage.total_tokens]), [['cumulative', 30]]);
 
   // 重启主人后由持久收尾恢复：已消费的补充被终态包确认，任务直接 done，不会因为 steer_ack 当时没送到而多跑第二轮
   f.owner = f.startOwner({ XIN_STATE_TEST_FAULT: '' });
@@ -398,4 +401,8 @@ test('主人长失联跨过 steer_ack 直至收尾：扩展回执另存，恢复
   }, '主人恢复后应用终态包直接完成任务');
   assert.equal(h.runs.length, 1, '终态包携带已消费批次，不误起第二轮');
   assert.deepEqual(f.read(path.join(f.home, 'runs', run + '.json')).steers.map(x => [x.text, x.state]), [[said, 'accepted']]);
+  const budget = f.read(path.join(f.home, 'budgets', task.sid + '.json'));
+  assert.equal(budget.total, 30);
+  assert.equal(budget.used, 2);
+  assert.equal(h.runs[0].events.find(e => e.t === 'done').usage.total, 30);
 });
