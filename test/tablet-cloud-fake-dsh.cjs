@@ -207,11 +207,11 @@ function createFakeJobs() {
 }
 
 async function until(fn, ms = 3000) {
-  const start = Date.now();
+  const start = performance.now();
   for (;;) {
     const v = await fn();
     if (v) return v;
-    if (Date.now() - start > ms) return null;
+    if (performance.now() - start > ms) return null;
     await new Promise(r => setTimeout(r, 10));
   }
 }

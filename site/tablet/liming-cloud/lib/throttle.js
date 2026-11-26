@@ -6,7 +6,8 @@ export function byteLength(value) {
   return Buffer.byteLength(JSON.stringify(value ?? null), 'utf8');
 }
 
-export function createThrottledEmitter(emit, { intervalMs = 250, maxBytes = MAX_EMIT_BYTES, fit = null, now = Date.now } = {}) {
+// 间隔用单调时钟：平板校时、墙上时钟往回跳时，不会算出一个很长的等待、让状态条半天不更新
+export function createThrottledEmitter(emit, { intervalMs = 250, maxBytes = MAX_EMIT_BYTES, fit = null, now = () => performance.now() } = {}) {
   let last = -Infinity;
   let timer = null;
   let pending;

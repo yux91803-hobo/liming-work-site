@@ -69,7 +69,7 @@ export function createRunner({
       taskId, jobId: null, handle: null, client: null, abort: new AbortController(), settled: false,
       steps: [], events: [], seenSeq: task.lastSeq || 0, lastUserSeq: task.runUserSeq || 0, endSeq: task.runEndSeq || 0, endReason: task.runEndReason || null,
       cancelled: false, stopPromise: null,
-      lastSave: 0,
+      lastSave: -Infinity,
     };
     let resolveDone;
     const done = new Promise(resolve => { resolveDone = resolve; });
@@ -215,8 +215,8 @@ export function createRunner({
       if (step.kind === 'tool' || step.kind === 'say') progress(entry, step.text);
       changed(entry.taskId);
     }
-    if (now() - entry.lastSave > 5000) {
-      entry.lastSave = now();
+    if (performance.now() - entry.lastSave > 5000) {   // 间隔用单调时钟
+      entry.lastSave = performance.now();
       try { ledger.updateTask(entry.taskId, t => ({ ...t, ...position(entry, t) })); } catch {}
     }
   }

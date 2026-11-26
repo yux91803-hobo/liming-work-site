@@ -10,7 +10,7 @@ const { pathToFileURL } = require('node:url');
 const root = path.join(__dirname, '../site/tablet/liming-lease');
 const lib = file => import(pathToFileURL(path.join(root, 'lib', file)).href);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-async function until(fn, ms = 2000) { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) return null; await sleep(5); } }
+async function until(fn, ms = 2000) { const t0 = performance.now(); for (;;) { const v = await fn(); if (v) return v; if (performance.now() - t0 > ms) return null; await sleep(5); } }
 
 const KEY = 'ibk_write_SECRET_lease_9876';
 function fakeInstabox({ machines = [{ id: 'm_li2', name: 'li2' }], fail = null } = {}) {

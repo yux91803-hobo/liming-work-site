@@ -159,7 +159,7 @@ test('重启后对账：「停止中」的接着停完；机器醒着才连，�
   first.ledger.updateTask(a.taskId, cur => ({ ...cur, status: 'stopping', stopRequest: { source: 'panel', reason: '', requestedAt: 1 } }));
   const b = first.ledger.createTask({ machine: 'li', title: '睡着那台', tabletSessionId: 'tab-B', taskId: 't_sleep1' });
   first.ledger.updateTask(b.taskId, cur => ({ ...cur, status: 'running' }));
-  const t0 = Date.now();
+  const t0 = performance.now();
   const second = await setup(t, {
     dir: first.dir, cloud,
     statuses: { li2: { known: true, awake: true, cooldownUntil: null, remainingMin: 300 }, li: { known: true, awake: false, cooldownUntil: null, remainingMin: null } },
@@ -176,7 +176,7 @@ test('重启后对账：「停止中」的接着停完；机器醒着才连，�
   await third.recovery.sweep();
   assert.equal(third.counts.connect, 0, '冷却中先不连');
   assert.ok(await until(() => third.counts.connect >= 1, 3000), '冷却结束后连一次');
-  assert.ok(Date.now() - t0 >= 150);
+  assert.ok(performance.now() - t0 >= 150);
   assert.ok(connectsAfterStop >= 1);
 });
 

@@ -149,11 +149,11 @@ test('面板数据：每个任务的状态、用时、最近 3 步、结果摘�
 test('推送限流：100 毫秒里变 50 次，最多每 250 毫秒推一次，最后一次的数据一定推出去；关掉以后不再推', async () => {
   const { createThrottledEmitter } = await lib('throttle.js');
   const sent = [];
-  const e = createThrottledEmitter(d => sent.push({ d, at: Date.now() }), { intervalMs: 250 });
-  const t0 = Date.now();
+  const e = createThrottledEmitter(d => sent.push({ d, at: performance.now() }), { intervalMs: 250 });
+  const t0 = performance.now();
   for (let i = 0; i < 50; i++) { e.push({ n: i }); await new Promise(r => setTimeout(r, 2)); }
   await new Promise(r => setTimeout(r, 400));
-  const span = Date.now() - t0;
+  const span = performance.now() - t0;
   assert.ok(sent.length <= Math.ceil(span / 250) + 1, `${sent.length} 次 / ${span}ms`);
   for (let i = 1; i < sent.length; i++) assert.ok(sent[i].at - sent[i - 1].at >= 240, '两次之间至少 250ms');
   assert.deepEqual(sent.at(-1).d, { n: 49 });
@@ -177,9 +177,9 @@ test('面板动作：插话、接着做走 cloud_tell，停止要确认、停完
   let limit = 2;
   const settings = { get: () => ({ maxConcurrentPerMachine: limit }), set: p => { limit = p.maxConcurrentPerMachine; return { maxConcurrentPerMachine: limit }; } };
   const on = createPanelActions({ runner, settings, notify: () => {} });
-  const t0 = Date.now();
+  const t0 = performance.now();
   const tell = on({ sessionId: 'tab-A' }, { action: 'tell:t_a1', value: { values: { 'data.drafts.t_a1': '  加上 DMA  ' } } });
-  assert.ok(Date.now() - t0 < 100, '马上回');
+  assert.ok(performance.now() - t0 < 100, '马上回');
   assert.ok(tell.pending && typeof tell.result === 'function');
   const r = await tell.result(new AbortController().signal);
   assert.deepEqual(calls[0], ['tell', 't_a1', '加上 DMA']);
@@ -276,4 +276,21 @@ test('两段对话都开着面板：各自比较视图结构，没有变化就�
   for (let i = 0; i < 6; i++) { for (const l of listeners) l(null); await new Promise(r => setTimeout(r, 300)); }
   assert.equal(refresh, 0);
   a(); b();
+});
+
+test('推送限流用单调时钟：平板校时、墙上时钟往回跳一小时，下一次变化照样马上推出去', async (t) => {
+  const { createThrottledEmitter } = await lib('throttle.js');
+  const realNow = Date.now;
+  let offset = 0;
+  Date.now = () => realNow() + offset;   // 模拟墙上时钟：先装好，再建推送器
+  t.after(() => { Date.now = realNow; });
+  const sent = [];
+  const e = createThrottledEmitter(d => sent.push(d), { intervalMs: 250 });
+  e.push({ n: 1 });
+  offset = -3600e3;
+  await new Promise(r => setTimeout(r, 300));
+  e.push({ n: 2 });
+  await new Promise(r => setTimeout(r, 300));
+  e.close();
+  assert.deepEqual(sent.at(-1), { n: 2 });
 });

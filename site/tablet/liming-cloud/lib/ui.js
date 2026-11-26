@@ -206,7 +206,7 @@ export function attachUi(ctx, { runner, ledger, settings, readStatus, subscribe,
   let statusTimer = null;
   let watchers = 0;
   const lastKeys = new Map();   // 每段对话各自的视图结构
-  let lastRefresh = 0;
+  let lastRefresh = -Infinity;
 
   async function refreshStatuses() {
     await Promise.all(machines().map(async m => { try { statuses[m] = await readStatus(m); } catch {} }));
@@ -230,8 +230,8 @@ export function attachUi(ctx, { runner, ledger, settings, readStatus, subscribe,
     const key = structureKey({ tasks: ledger.listTasks(), sessionId });
     const prev = lastKeys.get(sessionId || '');
     lastKeys.set(sessionId || '', key);
-    if (prev !== undefined && key !== prev && now() - lastRefresh > 1000) {
-      lastRefresh = now();
+    if (prev !== undefined && key !== prev && performance.now() - lastRefresh > 1000) {   // 间隔用单调时钟
+      lastRefresh = performance.now();
       try { dshGo.refresh(PANEL_ID); } catch {}
     }
   }
