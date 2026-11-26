@@ -205,7 +205,7 @@ export function attachUi(ctx, { runner, ledger, settings, readStatus, subscribe,
   const statuses = {};
   let statusTimer = null;
   let watchers = 0;
-  let lastKey = null;
+  const lastKeys = new Map();   // 每段对话各自的视图结构
   let lastRefresh = 0;
 
   async function refreshStatuses() {
@@ -228,11 +228,12 @@ export function attachUi(ctx, { runner, ledger, settings, readStatus, subscribe,
 
   function maybeRefresh(sessionId) {
     const key = structureKey({ tasks: ledger.listTasks(), sessionId });
-    if (lastKey !== null && key !== lastKey && now() - lastRefresh > 1000) {
+    const prev = lastKeys.get(sessionId || '');
+    lastKeys.set(sessionId || '', key);
+    if (prev !== undefined && key !== prev && now() - lastRefresh > 1000) {
       lastRefresh = now();
       try { dshGo.refresh(PANEL_ID); } catch {}
     }
-    lastKey = key;
   }
 
   function live(scope, emit, build) {
@@ -251,7 +252,7 @@ export function attachUi(ctx, { runner, ledger, settings, readStatus, subscribe,
 
   dshGo.panel(PANEL_ID, {
     view: (scope, caps) => {
-      lastKey = structureKey({ tasks: ledger.listTasks(), sessionId: scope && scope.sessionId });
+      lastKeys.set((scope && scope.sessionId) || '', structureKey({ tasks: ledger.listTasks(), sessionId: scope && scope.sessionId }));
       return panelView({ tasks: ledger.listTasks(), sessionId: scope && scope.sessionId, caps });
     },
     data: (scope, emit) => {

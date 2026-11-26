@@ -220,3 +220,42 @@ test('跟完就放手：每次连接都释放，没有进行中的任务时不�
   await jobs.get(task.jobId).settled;
   assert.ok(await until(() => counts.release === counts.connect));
 });
+
+test('跟随中心跳碰上云端重启后没加载的对话（session/state 报 not-found）：不算对话不见了，接着等', async (t) => {
+  const { cloud, ledger, runner } = await setup(t);
+  const task = runner.dispatch({ machine: 'li2', title: '长任务', text: 'x', tabletSessionId: 'tab-A' });
+  const sid = task.cloudSessionId;
+  assert.ok(await until(() => cloud.sessions.get(sid) && cloud.sessions.get(sid).running));
+  cloud.coldSessions.add(sid);
+  await new Promise(r => setTimeout(r, 600));   // 跟随空闲 200ms 就心跳一次，至少碰上两次
+  assert.equal(ledger.getTask(task.taskId).status, 'running', JSON.stringify(ledger.getTask(task.taskId)));
+  cloud.coldSessions.delete(sid);
+  cloud.finishTurn(sid, '好了');
+  assert.ok(await until(() => ledger.getTask(task.taskId).status === 'completed'));
+});
+
+test('重连次数用完（比如长时间冷却）：只是暂时跟丢，台账还是进行中；之后再接上照样拿到结果', async (t) => {
+  const { createRunner } = await lib('runner.js');
+  const base = await setup(t);
+  const { cloud, ledger, jobs, recovery } = base;
+  const runner = createRunner({ jobs, ledger, outbox: base.outbox, remote: { machines: () => ['li2'], async connect(m) { if (cloud.offline) throw Object.assign(new Error('machine_cooldown'), { code: 'ECONNREFUSED' }); return { client: cloud.client(), release() {} }; }, async ensureProjectDir() {}, async killLeftovers() { return { found: [], remain: [] }; }, invalidate() {} }, followIdleMs: 200, reconnectMs: [10], maxReconnects: 3 });
+  t.after(() => runner.dispose());
+  const task = runner.dispatch({ machine: 'li2', title: '冷却里的任务', text: 'x', tabletSessionId: 'tab-A' });
+  const sid = task.cloudSessionId;
+  assert.ok(await until(() => cloud.sessions.get(sid) && cloud.sessions.get(sid).running));
+  cloud.offline = true;
+  cloud.dropStreams(sid);
+  const outcome = await jobs.get(task.jobId).settled;
+  assert.equal(outcome.status, 'failed');
+  assert.match(outcome.detail, /暂时跟丢/);
+  assert.equal(ledger.getTask(task.taskId).status, 'running', '不记失败，留给之后对账');
+  cloud.offline = false;
+  cloud.finishTurn(sid, '冷却完做完了');
+  base.agents.add('tab-A');
+  const { createRecovery } = await lib('recovery.js');
+  const rec = createRecovery({ runner, ledger, agents: base.agents, readStatus: async () => ({ known: false }), retryGraceMs: 0 });
+  t.after(() => rec.dispose());
+  await rec.attach(ledger.getTask(task.taskId), { userPresent: true });
+  assert.ok(await until(() => ledger.getTask(task.taskId).status === 'completed'));
+  assert.match(ledger.getTask(task.taskId).summary, /冷却完做完了/);
+});

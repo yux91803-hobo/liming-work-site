@@ -111,8 +111,9 @@ export function createRunner({
     const msg = redactText(err && err.message ? err.message : String(err));
     log('warn', `云端任务 ${entry.taskId} 失败：${msg}`);
     if (entry.cancelled) return { status: 'killed', detail: '已取消' };
+    const lost = err && err.code === 'LOST_TRACK';   // 只是平板这边跟丢了，云端可能还在跑：不改状态，留给对账
     try {
-      ledger.updateTask(entry.taskId, t => (ACTIVE.has(t.status) && t.status !== 'stopping'
+      ledger.updateTask(entry.taskId, t => (!lost && ACTIVE.has(t.status) && t.status !== 'stopping'
         ? { ...t, status: 'failed', endedAt: now(), lastError: msg, noticeState: 'pending', lastSeq: Math.max(t.lastSeq, entry.seenSeq) }
         : { ...t, lastError: msg }));
     } catch {}
@@ -147,7 +148,7 @@ export function createRunner({
         remote.invalidate?.(task.machine);
         attempt += 1;
         if (attempt > maxReconnects) {
-          throw new Error(`连不上 ${task.machine}，已重试 ${maxReconnects} 次。云端任务可能还在跑，台账留着，之后会再对账`);
+          throw Object.assign(new Error(`暂时跟丢了：连不上 ${task.machine}，已重试 ${maxReconnects} 次。云端任务可能还在跑（比如机器在冷却），台账留着；站长回到这段对话或打开面板时再接上`), { code: 'LOST_TRACK' });
         }
         const delay = reconnectMs[Math.min(attempt - 1, reconnectMs.length - 1)];
         const msg = redactText(err && err.message ? err.message : String(err));
@@ -199,8 +200,10 @@ export function createRunner({
   function observe(entry, event) {
     if (!event || typeof event.seq !== 'number' || event.seq <= entry.seenSeq) return;
     entry.seenSeq = event.seq;
-    const runIds = new Set(ledger.getTask(entry.taskId)?.runRequestIds || []);
-    if (event.type === 'user/message' && runIds.has(event.data?.source?.rpcId)) entry.lastUserSeq = event.seq;
+    if (event.type === 'user/message') {   // 只有用户消息才要读台账里这一轮的请求编号
+      const runIds = new Set(ledger.getTask(entry.taskId)?.runRequestIds || []);
+      if (runIds.has(event.data?.source?.rpcId)) entry.lastUserSeq = event.seq;
+    }
     if (event.type === 'turn/end') { entry.endSeq = event.seq; entry.endReason = event.data?.reason || null; }
     entry.events.push(event);
     if (entry.events.length > MAX_EVENTS) entry.events.splice(0, entry.events.length - MAX_EVENTS);
@@ -250,7 +253,8 @@ export function createRunner({
           frame = await stream.nextFrame(followIdleMs);
         } catch (err) {
           if (err && err.code === 'TIMEOUT' && !entry.abort.signal.aborted) {
-            await client.state(sid);   // 心跳：连接还在就继续等
+            // 心跳：连接还在就继续等。云端重启后没加载的对话 session/state 会报 not-found，那不是对话不见了
+            await client.state(sid).catch(e => { if (!notFound(e)) throw e; });
             continue;
           }
           throw err;

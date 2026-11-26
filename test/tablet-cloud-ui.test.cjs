@@ -256,3 +256,24 @@ test('cloud_run 的工具卡：只读、≤ 8 KiB、≤ 40 个组件、≤ 6 层
   const fail = toolCard((args, value) => receiptView(value))({}, { ok: false, reason: '两台都在冷却' });
   assert.match(fail['dsh-go/view'].title, /没派出去/);
 });
+
+test('两段对话都开着面板：各自比较视图结构，没有变化就不刷新', async () => {
+  const { attachUi } = await lib('ui.js');
+  let refresh = 0;
+  const panels = {};
+  const dshGo = { strip: () => {}, panel: (id, def) => { panels[id] = def; }, on: () => {}, refresh: () => { refresh += 1; } };
+  const listeners = new Set();
+  const tasks = [task(), task({ taskId: 't_b1', tabletSessionId: 'tab-B' })];
+  attachUi({ dshGo }, {
+    runner: { steps: () => [] }, ledger: { listTasks: () => tasks }, settings: { get: () => ({ maxConcurrentPerMachine: 2 }) },
+    readStatus: async () => ({ known: false }), subscribe: l => { listeners.add(l); return () => listeners.delete(l); },
+    recovery: null, machines: () => ['li', 'li2'], now: () => NOW,
+  });
+  panels['cloud-tasks'].view({ sessionId: 'tab-A' }, caps2);
+  panels['cloud-tasks'].view({ sessionId: 'tab-B' }, caps2);
+  const a = panels['cloud-tasks'].data({ sessionId: 'tab-A' }, () => {}, {});
+  const b = panels['cloud-tasks'].data({ sessionId: 'tab-B' }, () => {}, {});
+  for (let i = 0; i < 6; i++) { for (const l of listeners) l(null); await new Promise(r => setTimeout(r, 300)); }
+  assert.equal(refresh, 0);
+  a(); b();
+});
