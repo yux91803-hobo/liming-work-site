@@ -45,12 +45,7 @@ export function createOutbox(ledger, options = {}) {
     return run;
   }
 
-  // 先原子写入台账发件箱（status: 'pending'），不发任何网络请求。
-  function enqueue(taskId, message) {
-    const task = ledger.getTask(taskId);
-    if (!task) {
-      throw new OutboxError('OUTBOX_TASK_NOT_FOUND', `找不到任务：${taskId}`);
-    }
+  function makeMessage(message) {
     const text = typeof message?.text === 'string' ? message.text : '';
     if (!text) {
       throw new OutboxError('OUTBOX_EMPTY_TEXT', '发件箱消息正文不能为空');
@@ -59,20 +54,19 @@ export function createOutbox(ledger, options = {}) {
     if (mode !== 'queue' && mode !== 'steer') {
       throw new OutboxError('OUTBOX_INVALID_MODE', `不支持的发送模式：${mode}`);
     }
-    const requestId = message.requestId || genRequestId();
-    const sessionId = message.sessionId || task.cloudSessionId;
-    const cwd = message.cwd || task.cwd;
-    const createdAt = Number(now());
+    return { ...message, requestId: message.requestId || genRequestId(), text, mode, createdAt: Number(now()) };
+  }
 
-    const updated = ledger.appendOutboxEntry(taskId, {
-      requestId,
-      sessionId,
-      cwd,
-      text,
-      mode,
-      createdAt,
-    });
-    return updated.outbox.find(item => item.requestId === requestId);
+  // 首条消息和任务、随后消息和所属轮次，各自一次写入台账，落盘后再发。
+  function createTask(input, text) {
+    return ledger.createTask(input, makeMessage({ text, mode: 'queue' }));
+  }
+
+  function enqueue(taskId, message, updateRun) {
+    if (!ledger.getTask(taskId)) throw new OutboxError('OUTBOX_TASK_NOT_FOUND', `找不到任务：${taskId}`);
+    const queued = makeMessage(message);
+    const updated = ledger.appendOutboxEntry(taskId, queued, updateRun);
+    return updated.outbox.find(item => item.requestId === queued.requestId);
   }
 
   async function deliverSingle(taskId, requestId, client) {
@@ -109,7 +103,11 @@ export function createOutbox(ledger, options = {}) {
       });
     } catch (err) {
       if (err?.code === 'session/not-found') {
-        if (!maySend(ledger.getTask(taskId))) return null;
+        const current = ledger.getTask(taskId);
+        if (!maySend(current)) return null;
+        if (current.startedAt !== null || current.outbox.some(item => item.status === 'acked')) {
+          throw new OutboxError('SESSION_GONE', '云端对话不见了（可能被删了或云电脑重装过），不重新派');
+        }
         let created;
         try {
           created = await client.createSession({
@@ -233,6 +231,7 @@ export function createOutbox(ledger, options = {}) {
   }
 
   return {
+    createTask,
     enqueue,
     waitForIdle: taskId => taskLocks.get(taskId),
     deliverEntry: (taskId, requestId, client) => serializeTask(taskId, () => deliverSingle(taskId, requestId, client)),

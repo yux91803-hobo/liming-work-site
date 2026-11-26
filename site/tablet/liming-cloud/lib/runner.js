@@ -62,9 +62,7 @@ export function createRunner({
   function dispatch({ machine, title, project, text, tabletSessionId, model = null, toolCall }) {
     const other = project && otherProjectTask({ machine, project });
     if (other) throw Object.assign(new Error(`${machine} 上项目 ${project} 正由任务 ${other.taskId} 使用，可向该任务补充要求`), { code: 'PROJECT_BUSY' });
-    const task = ledger.createTask({ machine, title, project: project || undefined, tabletSessionId });
-    const entry = outbox.enqueue(task.taskId, { text, mode: 'queue' });
-    ledger.updateTask(task.taskId, t => ({ ...t, model: model || null, modelSelected: false, runRequestIds: [entry.requestId], runUserSeq: 0, runEndSeq: 0, runEndReason: null }));
+    const task = outbox.createTask({ machine, title, project: project || undefined, tabletSessionId, model }, text);
     const jobId = start(task.taskId, { toolCall });
     return { ...ledger.getTask(task.taskId), jobId };
   }
@@ -90,7 +88,7 @@ export function createRunner({
       changed(taskId);
     };
     live.set(taskId, entry);
-    const jobId = jobs.start({
+    const jobSpec = {
       kind: 'cloud',
       label: `${task.machine} · ${task.title}`,
       ...(task.tabletSessionId ? { owner: task.tabletSessionId } : {}),
@@ -104,7 +102,14 @@ export function createRunner({
           .then(outcome => entry.settle(outcome), err => entry.settle(failed(entry, err)));
         return { done, cancel: reason => onCancel(entry, reason) };
       },
-    });
+    };
+    let jobId;
+    try {
+      jobId = jobs.start(jobSpec);
+    } catch (err) {
+      entry.settle(detached());
+      throw err;
+    }
     entry.jobId = jobId;
     ledger.updateTask(taskId, t => ({ ...t, jobId }));
     changed(taskId);
@@ -341,13 +346,14 @@ export function createRunner({
     if (task.status === 'stopping') return { ok: false, taskId, reason: '这个任务正在停止，等停完再说' };
     const entry = live.get(taskId);
     if (ACTIVE.has(task.status)) {
-      const e = outbox.enqueue(taskId, { text, mode: 'steer' });
-      ledger.updateTask(taskId, t => ({ ...t, runRequestIds: [...(t.runRequestIds || []), e.requestId] }));
+      const e = outbox.enqueue(taskId, { text, mode: 'steer' }, (t, message) => ({
+        ...t, runRequestIds: [...(t.runRequestIds || []), message.requestId],
+      }));
       let delivered = false;
       if (entry?.client) {
         try {
           await outbox.flushOutbox(taskId, entry.client);
-          delivered = ledger.getTask(taskId)?.outbox.some(item => item.requestId === e.requestId && item.status === 'acked');
+          delivered = Boolean(ledger.getTask(taskId)?.outbox.some(item => item.requestId === e.requestId && item.status === 'acked'));
         } catch (err) { log('warn', `插话暂时没送到：${err && err.message}`); }
       }
       changed(taskId);
@@ -355,8 +361,10 @@ export function createRunner({
     }
     const other = otherProjectTask(task);
     if (other) return { ok: false, taskId, reason: `${task.machine} 上项目 ${task.project} 正由任务 ${other.taskId} 使用` };
-    const e = outbox.enqueue(taskId, { text, mode: 'queue' });
-    ledger.updateTask(taskId, t => ({ ...t, status: 'dispatching', runRequestIds: [e.requestId], runUserSeq: 0, runEndSeq: 0, runEndReason: null, endedAt: null, noticeState: 'none', summary: '', lastError: null, stopRequest: null }));
+    const e = outbox.enqueue(taskId, { text, mode: 'queue' }, (t, message) => ({
+      ...t, status: 'dispatching', runRequestIds: [message.requestId], runUserSeq: 0, runEndSeq: 0, runEndReason: null,
+      endedAt: null, noticeState: 'none', summary: '', lastError: null, stopRequest: null,
+    }));
     const jobId = start(taskId, { toolCall });
     return { ok: true, taskId, mode: 'queue', requestId: e.requestId, delivered: false, jobId };
   }
