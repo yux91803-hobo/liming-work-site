@@ -6,8 +6,9 @@
   - 新增平板上的 `ib`（按机器选账号的 key）和技能「云电脑」。
   - 装机脚本改用 InstaBox 命令行：两把 key，不再要 SSH 令牌；云电脑上给 Codex 接网关、装 Playwright 命令行。
   - 正式站的定时任务关掉。
+  - 正式发布不再跑小芯真模型联调：`deploy.yml` 的联调四步和联调脚本、判断脚本都删了，冒烟检查和失败回滚照旧。
 - **接手注意**：
-  - 小芯的常驻服务（`xin-kernel-resident`、`xin-reaper.timer`）、`~/.xin`、网关，以及网站上的小芯页面和天启工具都还在。正式发布时的小芯联调还依赖 li 上的小芯，所以动这些之前先问站长。
+  - 小芯的常驻服务（`xin-kernel-resident`、`xin-reaper.timer`）、`~/.xin`、网关，以及网站上的小芯页面和天启工具都还在。联调删了以后发布不再依赖它们，但要停要删先问站长。
   - li 上已经实际配好（2026-11-26，用会话里 li 账号的 key）：
     - `~/.codex/config.toml` 的 workbuddy 线路加了 `env_key`，备份是 `config.toml.bak-liming-20261126`；
     - `~/.config/liming/gateway.key` 和 `~/.profile` 里导出它的一行；

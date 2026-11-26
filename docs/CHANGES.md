@@ -20,12 +20,13 @@
     - Codex 的 `workbuddy` 线路补上 `env_key`（先备份）；
     - 装 Playwright 命令行和 Chromium；
     - 手动切主机的配置照旧。
+- **删掉小芯真模型联调**（站长：「小芯都不用了，为啥每次还要花这么长时间去跑联调」）：`deploy.yml` 里冒烟检查之后的四步（判断要不要跑、装 Python、装浏览器、跑联调）删掉，部署作业的超时从 55 分钟改成 20 分钟；冒烟检查和失败自动回滚照旧。联调脚本 `scripts/test-xin-live.py`、`xin_live_steer.py`、`xin_live_policy.py`、判断要不要跑的 `scripts/xin-live-scope.cjs`，以及只测它们的测试一起删掉。`test/ci-public.test.cjs` 加一项守护测试，先红后绿。以前的「只改平板文件就跳过联调」也就不需要了。
 - **正式站**：`wrangler.jsonc` 的 `crons` 置空。写成空数组，发布时才会撤掉已有的定时触发；`test/xin.test.cjs` 那一项的断言跟着改。`runCron` 的代码先留着。
 - **取舍（Claude Code 的决定）**：
   - 不接 MCP：InstaBox 的 MCP 没有后台任务和驱动 Codex 的功能；Playwright 官方也推荐编码代理用「命令行 + 技能」，而不是 MCP。
   - 不装 InstaBox 自带的技能包：4 个技能里有 3 个用不上，还会教它建、删机器。
   - 不改 `CODEX_HOME`：网站触发小芯也走登录 shell，改了会把小芯的 Codex 一起带走。小芯调用 Codex 时会用自己的参数覆盖 `env_key`，所以加这一行不影响小芯。
-  - 小芯的常驻服务、清理器和网站上的页面这次不动：它们不妨碍机器休眠（li 当天照常自动休眠过），正式发布时的小芯联调还依赖它们。
+  - 小芯的常驻服务、清理器和网站上的页面这次不动：它们不妨碍机器休眠（li 当天照常自动休眠过）。联调删掉以后，发布也不再依赖它们；要不要停、网站上的页面去留，等站长定。
   - Claude Code 在云上没登录，先不用；云上的 Harness 没给平板 AI 接线。
 - **参考**：
   - DSH Go `docs/architecture.md`：手机操控是经 Harness 自带的 MCP 客户端加一段 AGENTS 说明接进来的，「像操控平板一样操控云电脑」机制上不需要特殊东西。
