@@ -1,3 +1,26 @@
+## 2026-11-26 晚 · 平板 AI 直接操控 li、li2（Claude Code）
+
+- **谁做的**：Claude Code 设计、实现并自查，没有独立复核。站长批准方向。详见 [CHANGES 最新一条](CHANGES.md)、[设计](superpowers/specs/2026-11-26-tablet-cloud-direct-design.md)、[站长步骤](tablet.md)。
+- **已完成**：
+  - 删掉 #227 上线的 `liming-cloud`、`liming-lease`、契约套件和它们的测试。
+  - 新增平板上的 `ib`（按机器选账号的 key）和技能「云电脑」。
+  - 装机脚本改用 InstaBox 命令行：两把 key，不再要 SSH 令牌；云电脑上给 Codex 接网关、装 Playwright 命令行。
+  - 正式站的定时任务关掉。
+- **接手注意**：
+  - 小芯的常驻服务（`xin-kernel-resident`、`xin-reaper.timer`）、`~/.xin`、网关，以及网站上的小芯页面和天启工具都还在。正式发布时的小芯联调还依赖 li 上的小芯，所以动这些之前先问站长。
+  - li 上已经实际配好（2026-11-26，用会话里 li 账号的 key）：
+    - `~/.codex/config.toml` 的 workbuddy 线路加了 `env_key`，备份是 `config.toml.bak-liming-20261126`；
+    - `~/.config/liming/gateway.key` 和 `~/.profile` 里导出它的一行；
+    - Playwright 命令行 0.1.25 和 Chromium；
+    - 准备脚本写的 `dsh-tablet` 和 web 配置补丁；
+    - 试验留下的 `/data/workspace/tablet-spike` 已删。
+  - li2 还没配过，因为会话里没有 li2 账号的 key。站长重跑装机脚本时会配。
+  - 更正上一条交接：那里写「本分支不开 PR、不合并」，其实 #227 在 16:24 已合并上线。
+  - Codex 的 Harness 升级调研在分支 `codex/dsh-go-harness-upgrade-research-20261126`。站长决定先不升级、不 fork。
+- **下一步**：
+  1. 本分支的 PR 合并上线，核对正式站的 `/tablet/` 文件（旧插件路径应当回首页）。
+  2. 站长建两把 key、重跑装机脚本、新开对话，然后按 `docs/tablet.md`「装好后对照」逐条核对。
+
 ## 2026-11-26 晚 · 站长要求重新考虑平板调用云电脑的方案（Claude Code）
 
 - 站长实际用过平板后提出：新项目不受小芯、天启影响，把 li、li2 当两台普通云电脑；平板 AI 要能自己直接操控它们（终端、文件、浏览器），也能自己决定把复杂编程交给云上的 Codex、Claude Code、Harness 并亲自检查结果；不为兼容旧实现叠加，该删就删，不走小芯那种越来越大的自建架构。**先讨论方案，暂不改代码，也不写正式架构文档。**

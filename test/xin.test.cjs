@@ -536,10 +536,12 @@ test('wrangler：没有 XIN_STATE_OWNER 开关了（删旧模式第 2 步），�
   for (const part of [top, stg]) assert.match(part, /"version_metadata":\s*\{\s*"binding":\s*"CF_VERSION_METADATA"\s*\}/);
 });
 
-test('wrangler：正式站有两个定时任务，测试站一个都没有', () => {
+// 2026-11-26 站长：小芯、天启停用，每日清单（叫醒、签到、机外备份）不要了，正式站的定时任务关掉。
+// crons 写成空数组（而不是删掉这一行）：发布时 Cloudflare 才会把已有的定时触发撤掉。runCron 的代码和测试先留着，网站上小芯的去留以后定。
+test('wrangler：正式站和测试站都没有定时任务（空数组，发布时撤掉已有的触发）', () => {
   const src = fs.readFileSync(path.join(__dirname, '../wrangler.jsonc'), 'utf8');
   const top = src.slice(0, src.indexOf('"env"')), stg = src.slice(src.indexOf('"env"'));
-  assert.match(top, /"triggers":\s*\{\s*"crons":\s*\["55 0 \* \* \*", "10 1,13 \* \* \*"\]\s*\}/);
+  assert.match(top, /"triggers":\s*\{\s*"crons":\s*\[\]\s*\}/);
   assert.match(stg, /"triggers":\s*\{\s*"crons":\s*\[\]\s*\}/);
 });
 

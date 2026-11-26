@@ -28,8 +28,9 @@
   "vars": { "XIN_MACHINE": "li", "XIN_TQ_MACHINE": "li2", "XIN_TRANSPORT": "kernel", "XIN_INBOX": "1" },
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "ratelimits": [{ "name": "XIN_LOGIN_LIMIT", "namespace_id": "1801", "simple": { "limit": 5, "period": 60 } }],
-  // 小芯的每日任务（UTC）：0:55 = 北京 8:55 叫醒电脑（网关 9:00 自己签到）；1:10、13:10 = 北京 9:10、21:10 按清单做一遍
-  "triggers": { "crons": ["55 0 * * *", "10 1,13 * * *"] },
+  // 定时任务已关（2026-11-26 站长：小芯、天启停用，每日清单不要了）。以前是北京 8:55 叫醒电脑、9:10 / 21:10 让小芯按清单做一遍。
+  // 写成空数组：发布时 Cloudflare 会撤掉已有的定时触发。
+  "triggers": { "crons": [] },
   "routes": [
     { "pattern": "liming-work.com", "custom_domain": true },
     { "pattern": "www.liming-work.com", "custom_domain": true }

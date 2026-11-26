@@ -1,3 +1,50 @@
+# 修改清单 · 2026-11-26 晚（平板 AI 直接操控 li、li2；删掉云端任务插件；关掉正式站的定时任务）
+
+- **谁做的**：Claude Code 设计、实现并自查，没有独立复核。站长批准方向（「没意见，你继续做吧」）。设计 [2026-11-26-tablet-cloud-direct-design.md](superpowers/specs/2026-11-26-tablet-cloud-direct-design.md)，计划 [2026-11-26-tablet-cloud-direct-plan.md](superpowers/plans/2026-11-26-tablet-cloud-direct-plan.md)。
+- **为什么**：站长实际用过平板后说，想要的是平板 AI 自己直接操控云电脑（终端、文件、浏览器），像它操控平板一样；复杂编程可以交给云上的 Codex 等代理，再自己检查结果。li、li2 当两台普通云电脑，不受小芯、天启影响；不为兼容旧实现叠加，该删就删，别再造越来越大的自建架构。小芯、天启停用，每日清单（签到、积分、机外备份）不要了；机器不重建，网关和 key 照旧；不升级 DSH Go 的 Harness。
+- **删掉**（#227 已上线的旧方案）：
+  - `site/tablet/liming-cloud/`（派活、台账、停止、对账、面板）和 `site/tablet/liming-lease/`（活动租约）。
+  - Antigravity 的契约套件 `scripts/tablet-harness-contract/`，以及只测这些代码的 `test/tablet-cloud-*`、`test/tablet-lease.test.cjs`。
+  - 旧设计和旧计划开头标了「已作废」。
+- **新的做法**：平板 AI 用自己本来就有的终端，经 InstaBox 官方命令行操作两台云电脑，用一份技能教它用法。
+  - `site/tablet/ib.sh` 装成平板上的 `ib`：用法和 `instabox` 一样，按参数里的机器名选那台所在账号的 key，key 只经环境变量传，不打印。
+  - 技能 `site/tablet/skills/liming-cloud-computers/SKILL.md`，装到平板的 `~/.dsh/skills/`，DSH Go 重置运行环境默认会保留这个目录。
+  - 浏览器用云上的 `playwright-cli`，`--headed` 时站长可以在 Computer 页签里看、接手。复杂编程用 `ib agent prompt … --provider codex` 交给云上的 Codex，做完自己看 `git diff`、跑测试。
+- **装机脚本**：
+  - 不再要 SSH 令牌，只问两把 InstaBox key（只要 `machines:read`、`machines:write`）。用 `instabox get` 核对 key 看得到那台机器才存（权限 600），填反了会提示重来。
+  - 网关安装包改经 `instabox pull` 取。
+  - 平板上卸掉以前的 `liming-cloud`，删掉旧的令牌、只读 key 和台账。
+  - 每台云电脑经 `instabox exec --stdin` 跑一段准备脚本，每项各报一行结果、互不影响：
+    - 删以前的 `liming-lease` 和写 key；
+    - 本机网关的 key 复制到 `~/.config/liming`，并在 `~/.profile` 里导出；
+    - Codex 的 `workbuddy` 线路补上 `env_key`（先备份）；
+    - 装 Playwright 命令行和 Chromium；
+    - 手动切主机的配置照旧。
+- **正式站**：`wrangler.jsonc` 的 `crons` 置空。写成空数组，发布时才会撤掉已有的定时触发；`test/xin.test.cjs` 那一项的断言跟着改。`runCron` 的代码先留着。
+- **取舍（Claude Code 的决定）**：
+  - 不接 MCP：InstaBox 的 MCP 没有后台任务和驱动 Codex 的功能；Playwright 官方也推荐编码代理用「命令行 + 技能」，而不是 MCP。
+  - 不装 InstaBox 自带的技能包：4 个技能里有 3 个用不上，还会教它建、删机器。
+  - 不改 `CODEX_HOME`：网站触发小芯也走登录 shell，改了会把小芯的 Codex 一起带走。小芯调用 Codex 时会用自己的参数覆盖 `env_key`，所以加这一行不影响小芯。
+  - 小芯的常驻服务、清理器和网站上的页面这次不动：它们不妨碍机器休眠（li 当天照常自动休眠过），正式发布时的小芯联调还依赖它们。
+  - Claude Code 在云上没登录，先不用；云上的 Harness 没给平板 AI 接线。
+- **参考**：
+  - DSH Go `docs/architecture.md`：手机操控是经 Harness 自带的 MCP 客户端加一段 AGENTS 说明接进来的，「像操控平板一样操控云电脑」机制上不需要特殊东西。
+  - InstaBox 文档：mcp、use-cases/coding-agents、desktop、auto-pause，以及命令行 `instabox help`。
+  - Playwright CLI 的 README（编码代理用命令行加技能）。
+  - Harness 的 `dsh-tool-bash`（`run_in_background`）和 `dsh-skill-filesystem`（技能目录）的说明。
+  - 社区里有不少 SSH 类 MCP 服务，有了 InstaBox 官方命令行就用不着。
+- **验证**：
+  - li 上实测（2026-11-26）：
+    - `instabox exec` 能叫醒并执行命令。
+    - `instabox agent` 驱动 Codex：先因缺网关 key 报 401，补上 `env_key` 后建好了文件，对话状态为空闲。
+    - `playwright-cli` 能打开网页，下一次调用读到同一页面，`--headed` 的窗口出现在桌面上。
+    - 新的准备脚本实跑两次，各项 ok、没有 bash 警告。
+  - 本地 Harness rc.1（平板现用版本）：放在 `~/.dsh/skills` 的技能出现在模型的技能目录里；终端后台命令结束后，AI 被通知叫醒。
+  - 单测：平板相关 44 项（网关 14、配置 6、装机 17、ib 和技能 7），新增的先红后绿；装机准备脚本加了「运行时不能有 bash 警告」一项，抓到了 here-document 写在命令替换外面的问题。ShellCheck 0.11.0 没有警告。全量检查和浏览器测试的结果见本次 PR。
+- **更正**：#227 在北京时间 16:24 已由 Codex 合并，16:58 正式站验收通过，旧插件当时就上线了。Claude Code 之后对站长说「只在分支上、不会上线」，是因为没重新拉 main，说错了。这次 PR 把旧插件从正式站撤下，装机脚本会顺手清掉设备上装过的旧插件和旧 key。
+- **站长要做**：在两个 InstaBox 账号里各建一把 key（只勾 `machines:read`、`machines:write`），在平板上重跑装机脚本，然后新开一个对话。以前为云端任务建的只读 key、写 key 可以吊销。
+- **留给以后**：网站上的小芯、天启要不要下掉（小芯联调和云上的常驻服务跟着一起处理）；云上 Claude Code 的登录；云上 Harness 的接线；DSH Go fork 和升级 Harness（Codex 的调研在分支 `codex/dsh-go-harness-upgrade-research-20261126`）。
+
 # 修改清单 · 2026-11-26（平板跨设备协作独立审查）
 
 - Antigravity 实现第 1–2 阶段，Claude Code 接手核对并实现第 3–8 阶段。Codex 独立复核八阶段，并实现下面列出的缺陷修复和回归测试。按站长要求承接 `claude/dsh-go-customization-discussion-d5wt84`，保留原提交。
