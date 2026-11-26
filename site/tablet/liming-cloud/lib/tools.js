@@ -1,6 +1,7 @@
 // 给平板 AI 的三个工具（设计 §5.2）：cloud_run 派活或接着做、cloud_tell 补充要求、cloud_machines 看两台现状。
 // 看进度、列任务、停止直接用原生的 job_output、job_list、job_kill。参数和输出都是标准 JSON Schema（required 写数组）。
 import { ACTIVE_STATUSES, DEFAULT_MAX_PER_MACHINE, beijingHHMM, chooseMachine } from './selector.js';
+import { receiptView, toolCard } from './tool-card.js';
 
 // li、li2 上 web 配置的模型（site/tablet/dsh-tablet-profile.yml 的 xin-gateway 线路）；单测核对两边一致
 export const CLOUD_MODELS = Object.freeze(['deepseek-v4.1-flash', 'glm-5.4', 'kimi-k3.1-pro']);
@@ -76,6 +77,7 @@ export function createCloudTools({ runner, ledger, remote, readStatus, settings 
       render: (_args, v) => text(v.ok
         ? `已交给 ${v.machine}：任务 ${v.taskId}${v.project ? `，项目 ${v.project}` : ''}，后台任务 ${v.jobId}。挑选理由：${v.reason}${v.warning ? `。提醒：${v.warning}` : ''}`
         : `没派出去：${v.reason}`),
+      presentationMeta: toolCard((_args, v) => receiptView(v)),
     },
     async execute(args, exec) {
       const task = String(args.task || '').trim();

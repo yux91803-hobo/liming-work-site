@@ -11,6 +11,7 @@ import { createCloudTools } from './tools.js';
 import { createSettings } from './settings.js';
 import { readMachine } from './instabox-read.js';
 import { createRecovery } from './recovery.js';
+import { attachUi } from './ui.js';
 
 export const name = 'liming-cloud';
 export const inject = ['tools', 'jobs', 'agents', 'systemPrompt'];
@@ -64,7 +65,11 @@ export function apply(ctx, config = {}) {
   const { secrets, ledger, outbox, tunnels, logger } = runtime;
   const settings = createSettings({ dir: runtime.dir, config });
   const remote = createRemote({ secrets, tunnels, direct: config.direct || null, launchCommand: config.launchCommand });
-  const runner = createRunner({ jobs: ctx.jobs, ledger, outbox, remote, logger, provider: config.provider || 'xin-gateway' });
+  // 任务一有变化就通知界面（状态条、面板）
+  const listeners = new Set();
+  const notify = (taskId) => { for (const l of [...listeners]) { try { l(taskId); } catch {} } };
+  const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };
+  const runner = createRunner({ jobs: ctx.jobs, ledger, outbox, remote, logger, provider: config.provider || 'xin-gateway', onChange: notify });
   const readStatus = async (machine) => {
     if (config.statuses && config.statuses[machine]) return config.statuses[machine];
     let readKey = '';
@@ -72,10 +77,15 @@ export function apply(ctx, config = {}) {
     return readMachine({ readKey, name: machine });
   };
 
-  const recovery = createRecovery({ runner, ledger, agents: ctx.agents, readStatus, logger });
+  const recovery = createRecovery({ runner, ledger, agents: ctx.agents, readStatus, logger, onChange: notify });
 
   for (const def of createCloudTools({ runner, ledger, remote, readStatus, settings: () => settings.get() })) ctx.tools.register(def);
-  ctx.systemPrompt.section({ name: 'liming-cloud', order: ctx.systemPrompt.getSectionOrder('TOOL_JOBS'), text: GUIDANCE });
+  if (ctx.systemPrompt && typeof ctx.systemPrompt.section === 'function') {
+    ctx.systemPrompt.section({ name: 'liming-cloud', order: ctx.systemPrompt.getSectionOrder('TOOL_JOBS'), text: GUIDANCE });
+  }
+
+  // 状态条和「云端任务」面板：只在装了 dsh-go 桥接的主机上挂（写 ['dshGo']，不放进顶层 inject，见 DSH Go docs/plugins/slots.md）
+  ctx.inject(['dshGo'], (uiCtx) => attachUi(uiCtx, { runner, ledger, settings, readStatus, subscribe, recovery, machines: () => remote.machines() }));
 
   // 对话日志里出现通知才记「已告诉」；代理出现（站长回到某段对话）时补说、接上没在跟的任务
   ctx.on('session/event', (session, event) => { try { recovery.onSessionEvent(session, event); } catch (err) { logger.warn(`确认通知出错：${err.message}`); } });

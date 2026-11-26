@@ -26,7 +26,7 @@ export function noticeVia(task, event) {
   return null;
 }
 
-export function createRecovery({ runner, ledger, agents, readStatus, logger = null, now = Date.now, retryGraceMs = 30e3 } = {}) {
+export function createRecovery({ runner, ledger, agents, readStatus, logger = null, now = Date.now, retryGraceMs = 30e3, onChange = () => {} } = {}) {
   const timers = new Set();
   const sent = new Set();
   const busy = new Set();
@@ -43,6 +43,7 @@ export function createRecovery({ runner, ledger, agents, readStatus, logger = nu
 
   function confirm(taskId, via, seq) {
     ledger.updateTask(taskId, t => (t.noticeState === 'pending' ? { ...t, noticeState: 'confirmed', noticeMeta: { via, seq: seq ?? null, at: now() } } : t));
+    try { onChange(taskId); } catch {}
   }
 
   function onSessionEvent(session, event) {

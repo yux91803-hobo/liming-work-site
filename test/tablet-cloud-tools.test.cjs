@@ -87,6 +87,8 @@ test('cloud_run 立即返回，不等云端做完；后台任务归当前平板�
   assert.equal(cloud.sessions.get(sid).cwd, '/data/workspace/tablet/rtos-compare');
   assert.ok(await until(() => ledger.getTask(out.taskId).status === 'running'));
   assert.equal(ledger.getTask(out.taskId).outbox[0].status, 'acked');
+  const card = byName.cloud_run.output.presentationMeta({}, out);
+  assert.match(card['dsh-go/view'].title, /已交给 li2/, 'DSH Go 里画成原生工具卡');
   const rendered = byName.cloud_run.output.render({}, out);
   assert.match(rendered.map(b => b.text).join(''), /li2/);
 });

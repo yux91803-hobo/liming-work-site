@@ -527,6 +527,7 @@ test('liming-cloud 插件入口与 package.json 合规：零依赖，注册三�
   const tools = [];
   const sections = [];
   const listens = [];
+  const injected = [];
   const ctx = {
     effect: (fn) => effects.push(fn),
     tools: { register: (def) => { tools.push(def.name); return () => {}; } },
@@ -534,9 +535,10 @@ test('liming-cloud 插件入口与 package.json 合规：零依赖，注册三�
     agents: { get: () => undefined },
     systemPrompt: { section: (s) => { sections.push(s); return () => {}; }, getSectionOrder: () => 500 },
     on: (name) => { listens.push(name); return () => {}; },
-    inject: () => {},
+    inject: (deps, cb) => { injected.push({ deps, cb }); },
   };
   plugin.apply(ctx, { dir: cloudDir });
+  assert.deepEqual(injected.map(i => i.deps), [['dshGo']], '界面只在有 dsh-go 桥接的主机上挂：ctx.inject([\'dshGo\'], …)');
   assert.ok(listens.includes('session/event'), '看对话日志确认通知');
   assert.ok(listens.includes('agent/created'), '代理出现时补说、接上');
   assert.deepEqual(tools.sort(), ['cloud_machines', 'cloud_run', 'cloud_tell']);
