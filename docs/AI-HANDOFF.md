@@ -1,3 +1,16 @@
+## 2026-11-27 早 · 小人里专给聊天用的部分也删了（Claude Code）
+
+- **谁做的**：Claude Code 实现并自查，无独立复核。详见 [CHANGES 最新一条](CHANGES.md)。分支 `claude/dsh-go-customization-discussion-d5wt84`。
+- **接手注意**：
+  - 上一条交接的「下一步」都做完了：
+    - #231 正式部署 #529 全绿，v4 迁移跑了，正式站核对过。
+    - 小人里聊天用的接口这次删了。
+  - 小人现在的对外接口只剩它自己的动作和测试用的（`feel`、`hop`、`pose`、`obedient` 等）。浏览器测试用 `feel` 换表情。
+  - 专注、冷静、爱心眼这三种表情，以前只靠聊天命令触发，现在只有测试会用到，小人自己玩的时候不会出现。要不要给它们配上动作，以后看站长的意思。
+  - 本地 `npm run check` 256/256，`npm run test:e2e` 3 组 319 项全过。
+- **站长要做的**：同上一条：吊销网站用过的两把 InstaBox key，删掉 GitHub Secrets 里的三项小芯密钥，可选删掉 Cloudflare 上的三项机密。
+- **下一步**：本分支的 PR 合并上线后，核对正式站：小人正常，背包里 11 项。
+
 ## 2026-11-26 深夜 · 删掉网站上的小芯聊天和天启（Claude Code）
 
 - **谁做的**：Claude Code 实现并自查，无独立复核。站长：「小人留，其他删」。详见 [CHANGES 最新一条](CHANGES.md)、[计划](superpowers/plans/2026-11-26-remove-xin-tianqi-plan.md)。分支 `claude/dsh-go-customization-discussion-d5wt84`。

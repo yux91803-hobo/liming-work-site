@@ -821,35 +821,34 @@ async def main():
         ids = await pg.evaluate("[...document.querySelectorAll('.card[data-id]')].map(c => c.dataset.id)")
         check('首页没有互传和协作中心', 'transfer' not in ids and 'hub' not in ids, ids)
         check('小芯落在标题栏里', await pg.evaluate("LimingXin.mode") == 'idle')
-        await pg.evaluate("LimingXin.cmd('normal')")
+        await pg.evaluate("LimingXin.feel('')")
         await pg.wait_for_function("document.querySelector('.xin svg').dataset.face === 'eyes'")
         normal = await pg.evaluate("[...document.querySelectorAll('.xin .c-ew')].map(e => [+e.getAttribute('width'), +e.getAttribute('height')])")
         check('小芯常态使用图中的专注竖矩形眼，不是微笑', len(normal) == 2 and normal == [[1.5, 2.65], [1.5, 2.65]], normal)
         hands = await pg.evaluate("""(() => {
           const arms = svg => [...svg.querySelectorAll('rect')].filter(e => (e.getAttribute('fill') || '').includes('-pin)') && (+e.getAttribute('x') < 4 || +e.getAttribute('x') >= 16))
             .map(e => ['x', 'y', 'width', 'height'].map(a => +e.getAttribute(a)));
-          const avatar = document.createElement('div'); avatar.innerHTML = LimingXin.portrait();
-          return [arms(LimingXin.el.querySelector('svg')), arms(avatar.querySelector('svg'))];
+          return [arms(LimingXin.el.querySelector('svg'))];
         })()""")
-        check('常态和聊天头像的双手对称平伸，没有固定举手', all(len(a) == 2 and a[0][1:] == a[1][1:] and a[0][2] > a[0][3] and a[0][0] + a[0][2] + a[1][0] == 20 for a in hands), hands)
+        check('常态双手对称平伸，没有固定举手', all(len(a) == 2 and a[0][1:] == a[1][1:] and a[0][2] > a[0][3] and a[0][0] + a[0][2] + a[1][0] == 20 for a in hands), hands)
         expressions, cheeks = [], []
-        for cmd, face in [('smile', 'smile'), ('focus', 'focus'), ('happy', 'hap'), ('calm', 'calm'), ('wow', 'wow'), ('love', 'love')]:
-            await pg.evaluate('cmd => LimingXin.cmd(cmd)', cmd)
+        for mood, face in [('smile', 'smile'), ('focus', 'focus'), ('happy', 'hap'), ('calm', 'calm'), ('wow', 'wow'), ('love', 'love')]:
+            await pg.evaluate('m => LimingXin.feel(m)', mood)
             await pg.wait_for_function('face => document.querySelector(".xin svg").dataset.face === face', arg=face)
             pixels = await pg.evaluate("[...document.querySelectorAll('.xin .c-ew')].map(e => ['x','y','width','height'].map(a => e.getAttribute(a)))")
             expressions.append(json.dumps(pixels))
             cheeks.append(await pg.locator('.xin .c-rose').count())
         check('六种参考表情都能实际触发，而且图案各不相同', len(set(expressions)) == 6)
         check('腮红只在微笑、开心和喜欢时出现', cheeks == [4, 0, 4, 0, 0, 4], cheeks)
-        await pg.evaluate("LimingXin.cmd('normal'); LimingXin.feel('smile', 200)")
+        await pg.evaluate("LimingXin.feel(''); LimingXin.feel('smile', 200)")
         await pg.wait_for_function("document.querySelector('.xin svg').dataset.face === 'smile'")
         await pg.wait_for_function("document.querySelector('.xin svg').dataset.face === 'eyes'")
         check('微笑结束后自动恢复睁眼常态', await pg.evaluate('LimingXin.mood') == '')
         check('恢复常态时同时收起腮红', await pg.locator('.xin .c-rose').count() == 0)
-        await pg.evaluate("LimingXin.cmd('angry')")
+        await pg.evaluate("LimingXin.feel('angry')")
         await pg.wait_for_function("document.querySelector('.xin svg').dataset.face === 'angry'")
         check('生气能实际触发新眉眼，面板没有腮红', await pg.locator('.xin .c-rose').count() == 0)
-        await pg.evaluate("LimingXin.cmd('normal')")
+        await pg.evaluate("LimingXin.feel('')")
         await pg.click('#searchBtn'); await pg.fill('#q', 'zzzz'); await pg.wait_for_timeout(100)
         check('搜不到时小芯难过', await pg.evaluate("LimingXin.mood") == 'sad' and await pg.is_visible('#empty'))
         await pg.keyboard.press('Escape'); await pg.wait_for_timeout(100)
@@ -1270,12 +1269,6 @@ async def main():
         check('之前在学习台里收起来过，再把小芯扔进去：照样出来，没有小脑袋', await f.evaluate("[LimingXin.hidden, !!document.querySelector('.xin-peek:not([hidden])')]") == [False, False])
         await pg.context.close()
 
-        pg = await page(b, 390, 844, mobile=True)
-        await pg.goto(BASE + '/'); await pg.wait_for_timeout(2500)
-        await pg.evaluate("LimingXin.say('你好呀，这是一句比较长的话')"); await pg.wait_for_timeout(100)
-        st = await pg.evaluate("(() => { const r = document.querySelector('.xin-say').getBoundingClientRect(); return [r.left >= 0, r.right <= innerWidth, r.top >= 0, r.width > 80, document.documentElement.scrollWidth <= innerWidth]; })()")
-        check('手机：小芯的气泡完整显示在屏幕里，页面不横向滚动', st == [True, True, True, True, True], st)
-        await pg.context.close()
         # 直接打开学习台（不经过工具箱首页）：没有小芯
         pg = await page(b, 390, 844, mobile=True)
         await pg.goto(TOOL + '?v=topic&t=i2c&sec=code&cv=cd'); await pg.wait_for_timeout(2000)
