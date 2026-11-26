@@ -4,7 +4,8 @@
 - **现状**：平板的东西都在 [yux91803-hobo/tablet-setup](https://github.com/yux91803-hobo/tablet-setup)，Cloudflare Pages 把它的根目录发布到 https://tablet.liming-work.com/ 。改平板去那边（先读它的 AGENTS.md），不走这里的发布。这里只剩旧地址的提示脚本 `site/tablet/setup.sh` 和它的测试 `test/tablet-moved.test.cjs`。
 - **接手注意**：
   - 上一条交接的「下一步」第 1 项已完成：#229 已上线，正式部署 #524 全绿，定时任务已撤。
-  - 第 2 项照旧，但命令换成新地址：站长建两把 key，在平板上运行 `curl -fsSL https://tablet.liming-work.com/setup.sh | bash`，新开对话，然后按新仓库 README「装好后对照」逐条核对。
+  - 第 2 项站长已做完（11-26 深夜）：平板上两台云电脑都连上了，AI 能正常操控。以后重装用新地址 `curl -fsSL https://tablet.liming-work.com/setup.sh | bash`。
+  - 还没对照的：浏览器开着界面（Computer 页签能看到）、交给 Codex 再自己检查、空闲 30 分钟自动睡，见新仓库 README「装好后对照」。
 
 ## 2026-11-26 晚 · 平板 AI 直接操控 li、li2（Claude Code）
 
