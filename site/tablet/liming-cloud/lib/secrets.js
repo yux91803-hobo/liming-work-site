@@ -166,7 +166,7 @@ export function createSecretsStore(options = {}) {
     };
   }
 
-  function load({ strictPermissions = false } = {}) {
+  function load({ strictPermissions = true } = {}) {
     if (!fs.existsSync(filePath)) {
       return { schemaVersion: SECRETS_SCHEMA_VERSION, machines: {} };
     }
@@ -182,8 +182,8 @@ export function createSecretsStore(options = {}) {
     let parsed;
     try {
       parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    } catch (err) {
-      throw new SecretsError('SECRETS_CORRUPT', `无法解析 secrets.json：${err.message}`);
+    } catch {
+      throw new SecretsError('SECRETS_CORRUPT', '无法读取或解析 secrets.json');
     }
     return validateSecretsDoc(parsed);
   }
@@ -219,7 +219,7 @@ export function createSecretsStore(options = {}) {
 
   function knownSecrets() {
     try {
-      const doc = load();
+      const doc = load({ strictPermissions: false });
       const out = [];
       for (const m of Object.values(doc.machines)) {
         if (m.sshTarget) {

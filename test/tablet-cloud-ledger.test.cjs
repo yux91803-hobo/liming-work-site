@@ -456,7 +456,7 @@ test('secrets.json 强制 700/600 权限、拒绝 machines:delete 与写权限�
   fs.chmodSync(store.filePath, 0o644);
   assert.equal(store.inspectPermissions().secure, false);
   assert.throws(
-    () => store.load({ strictPermissions: true }),
+    () => store.getMachine('li2'),
     (err) => err.code === 'SECRETS_INSECURE_PERMISSIONS',
   );
 });

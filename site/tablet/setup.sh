@@ -8,6 +8,7 @@
 # 写 key 只经 SSH 存到那台云电脑的 ~/.liming-cloud/lease.key，不落平板。可以重复运行。
 #   --dry-run  只列出要做的事    --skip-li  不接 li
 # 设计和说明：liming-work-site 仓库 docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md、docs/tablet.md
+set +x
 set -euo pipefail
 
 BASE=${LIMING_BASE:-https://liming-work.com/tablet}
@@ -89,15 +90,21 @@ ask_key() {
 save_secret() {
   mkdir -p "$CLOUD_DIR"; chmod 700 "$CLOUD_DIR"
   LIMING_M="$1" LIMING_T="$2" LIMING_K="${3:-}" python3 - "$CLOUD_DIR/secrets.json" <<'PY'
-import json, os, sys
+import json, os, sys, tempfile
 path = sys.argv[1]
 try:
-    doc = json.load(open(path, encoding='utf-8'))
-    assert isinstance(doc, dict) and isinstance(doc.get('machines'), dict)
-except Exception:
+    with open(path, encoding='utf-8') as source:
+        doc = json.load(source)
+except FileNotFoundError:
     doc = {'schemaVersion': 1, 'machines': {}}
+except (OSError, ValueError):
+    sys.exit('无法读取现有密钥文件，原文件已保留。')
+if not isinstance(doc, dict) or doc.get('schemaVersion', 1) != 1 or not isinstance(doc.get('machines'), dict):
+    sys.exit('现有密钥文件格式不支持，原文件已保留。')
 m = os.environ['LIMING_M']
 cur = doc['machines'].get(m) or {}
+if not isinstance(cur, dict):
+    sys.exit('现有机器记录格式不支持，原文件已保留。')
 entry = {'sshTarget': os.environ['LIMING_T'], 'sshPort': 22}
 key = os.environ.get('LIMING_K', '')
 if key:
@@ -106,13 +113,19 @@ elif cur.get('readKey'):
     entry['readKey'] = cur['readKey']
 doc['schemaVersion'] = 1
 doc['machines'][m] = entry
-tmp = path + '.tmp'
-fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-with os.fdopen(fd, 'w', encoding='utf-8') as f:
-    json.dump(doc, f, ensure_ascii=False, indent=2)
-    f.write('\n')
-os.chmod(tmp, 0o600)
-os.replace(tmp, path)
+tmp = None
+try:
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=os.path.dirname(path), prefix='.secrets-', delete=False) as f:
+        tmp = f.name
+        json.dump(doc, f, ensure_ascii=False, indent=2)
+        f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    tmp = None
+finally:
+    if tmp is not None:
+        os.unlink(tmp)
 PY
 }
 
@@ -173,7 +186,7 @@ fetch_plugin() {
     case "$f" in
       package.json) marker="\"name\": \"$name\"";;
       cordis.patch.yml) marker=$name;;
-      *) marker=export;;
+      *) marker='export';;
     esac
     mkdir -p "$(dirname "$dest/$f")"
     fetch_file "$BASE/$name/$f" "$dest/$f" "$marker" || return 1
@@ -184,7 +197,7 @@ fetch_plugin() {
 # web 配置里原有别的补丁就先备份；只检查 key 文件在不在，不读出来。
 remote_script() {
   local wrapper=$1 profile=$2 machine=$3 lease_key=$4 lease_src=$5 f
-  printf 'LIMING_MACHINE=%q\nLEASE_KEY=%q\n' "$machine" "$lease_key"
+  printf 'set +x\nLIMING_MACHINE=%q\nLEASE_KEY=%q\n' "$machine" "$lease_key"
   cat <<'HEAD'
 set -eu
 umask 077
@@ -218,15 +231,15 @@ fi
 LEASE_KEY=''
 TAIL
   for f in $LEASE_FILES; do
-    printf 'cat > "$HOME/.liming-lease/%s" <<'"'"'LIMING_FILE_EOF'"'"'\n' "$f"
+    printf '%s\n' "cat > \"\$HOME/.liming-lease/$f\" <<'LIMING_FILE_EOF'"
     cat "$lease_src/$f"
     printf 'LIMING_FILE_EOF\n'
   done
   cat <<'END'
 LEASE=ok
 if [ ! -f "$HOME/.liming-lease/.added" ]; then
-  if out=$("$HOME/.local/bin/dsh" plugin --profile web add "$HOME/.liming-lease" </dev/null 2>&1); then : > "$HOME/.liming-lease/.added"
-  else LEASE=failed; printf '%s\n' "$out" | tail -n 3 | sed 's/^/LEASE_LOG /'; fi
+  if "$HOME/.local/bin/dsh" plugin --profile web add "$HOME/.liming-lease" </dev/null >/dev/null 2>&1; then : > "$HOME/.liming-lease/.added"
+  else LEASE=failed; fi
 fi
 [ -s "$HOME/.liming-cloud/lease.key" ] && K=yes || K=no
 echo "LEASE $LEASE $K"
@@ -241,7 +254,9 @@ remote_setup() {
     case "$out" in
       *NO_DSH*) say_err "$label 上没找到 ~/.local/bin/dsh（Harness 没装好）";;
       *NO_KEY*) say_err "$label 上没有 ~/.xin/harness.key（这台的网关还没配好）";;
-      *) say_err "$label 上配 web 配置失败：$(printf '%s\n' "$out" | tail -n 3)";;
+      *"Permission denied"*) say_err "$label 上配 web 配置失败：SSH 拒绝登录，请在 InstaBox 后台核对令牌";;
+      *"Host key verification failed"*) say_err "$label 上配 web 配置失败：SSH 主机指纹未通过校验";;
+      *) say_err "$label 上配 web 配置失败，请核对 SSH 连接和云电脑上的 Harness";;
     esac
     return 1
   fi
@@ -250,7 +265,7 @@ remote_setup() {
   read -r _ wrapper ws <<<"$line"
   line=$(printf '%s\n' "$out" | grep '^LEASE ' | tail -n 1) || true
   read -r _ lease leasekey <<<"${line:-LEASE failed no}"
-  [ "$lease" = ok ] || say_err "$label 上租约插件没挂上：$(printf '%s\n' "$out" | grep '^LEASE_LOG ' | sed 's/^LEASE_LOG //' | tail -n 2)"
+  [ "$lease" = ok ] || say_err "$label 上租约插件没挂上，请在云电脑上核对 Harness 的 web 配置"
   printf '%s\t%s\t%s\t%s\n' "$wrapper" "$ws" "$lease" "$leasekey"
 }
 

@@ -13,8 +13,12 @@ export function readLeaseFiles(dir) {
   let name = null;
   try {
     const file = path.join(dir, 'lease.key');
-    key = fs.readFileSync(file, 'utf8').trim() || null;
-    if (key && (fs.statSync(file).mode & 0o077)) warnings.push('lease.key 的权限太宽，应该是 600（chmod 600 ~/.liming-cloud/lease.key）');
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || (stat.mode & 0o077)) {
+      warnings.push('lease.key 要是权限为 600 的普通文件（chmod 600 ~/.liming-cloud/lease.key）');
+    } else {
+      key = fs.readFileSync(file, 'utf8').trim() || null;
+    }
   } catch {}
   try { name = fs.readFileSync(path.join(dir, 'machine-name'), 'utf8').trim() || null; } catch {}
   return { key, name, warnings };

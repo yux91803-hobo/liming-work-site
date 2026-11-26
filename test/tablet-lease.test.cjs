@@ -147,10 +147,11 @@ test('读 ~/.liming-cloud 下的 lease.key 和 machine-name；权限太宽会提
   fs.chmodSync(path.join(dir, 'lease.key'), 0o644);
   fs.writeFileSync(path.join(dir, 'machine-name'), 'li2\n');
   const r = readLeaseFiles(dir);
-  assert.equal(r.key, KEY);
+  assert.equal(r.key, null, '权限过宽的 key 不用于发请求');
   assert.equal(r.name, 'li2');
   assert.ok(r.warnings.some(w => /600/.test(w)));
   fs.chmodSync(path.join(dir, 'lease.key'), 0o600);
+  assert.equal(readLeaseFiles(dir).key, KEY);
   assert.deepEqual(readLeaseFiles(dir).warnings, []);
 });
 

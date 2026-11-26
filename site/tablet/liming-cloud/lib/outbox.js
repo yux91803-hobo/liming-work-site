@@ -105,7 +105,7 @@ export function createOutbox(ledger, options = {}) {
       if (err?.code === 'session/not-found') {
         const current = ledger.getTask(taskId);
         if (!maySend(current)) return null;
-        if (current.startedAt !== null || current.outbox.some(item => item.status === 'acked')) {
+        if (current.startedAt != null || current.outbox.some(item => item.status === 'acked')) {
           throw new OutboxError('SESSION_GONE', '云端对话不见了（可能被删了或云电脑重装过），不重新派');
         }
         let created;
