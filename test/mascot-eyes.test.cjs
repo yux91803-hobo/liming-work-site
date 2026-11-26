@@ -61,18 +61,6 @@ test('眨眼是细横线，六种参考表情及原有特殊表情均可绘制',
     assert.ok(FACE[mood], mood + ' 未丢失');
   }
 });
-test('六种表情能从聊天指令和自编动作进入，网页与电脑的校验名单一致', async () => {
-  const agent = await import('../site/xin/vm-agent.mjs');
-  const enums = js.slice(js.indexOf('  var MOVE_ARMS'), js.indexOf('  var MOVE_NUM'));
-  const front = vm.runInNewContext(enums + '\nMOVE_ENUM');
-  assert.deepEqual(Array.from(front.face), agent.MOVE_ENUM.face);
-  for (const [command, face] of [['smile', 'smile'], ['focus', 'focus'], ['happy', 'hap'], ['calm', 'calm'], ['wow', 'wow'], ['love', 'love']]) {
-    assert.ok(agent.ACTS[command]);
-    const move = agent.cleanMove(command, [{ face, t: 200 }]);
-    assert.equal(move.frames[0].face, face);
-    assert.ok(FACE[face]);
-  }
-});
 test('机身、头像与收起的小脑袋复用画法，独立的渐变不会串色', () => {
   const start = js.indexOf('  var LEG_X'), end = js.indexOf('  var layer =');
   const draw = vm.runInNewContext(js.slice(start, end) + '\ndraw');

@@ -380,12 +380,12 @@
     ['autocapitalize', 'autocomplete', 'autocorrect'].forEach(function (k) { ta.setAttribute(k, 'off'); });
     ta.setAttribute('aria-label', sig.label); ta.rows = rows; ta.placeholder = '粘贴函数体';
     ta.value = ui.lsGet(key) || '';
-    ta.addEventListener('input', function (e) { if(e.isTrusted)ta._xinTyped=true;ui.lsSet(key, ta.value); });
+    ta.addEventListener('input', function () { ui.lsSet(key, ta.value); });
     box.appendChild(ta);
     var end = el('pre', 'lab-ed-sig'); end.appendChild(ui.hlC(sig.tail)); box.appendChild(end);
     host.appendChild(box); return ta;
   }
-  function results(host, res, pane, onHint) {
+  function results(host, res, pane) {
     ui.clear(host);
     res.forEach(function (r) {
       var it = el('div', 'lab-r lab-r-' + r.k);
@@ -393,7 +393,6 @@
       if (r.hints) {
         var lv = 0, hs = el('div', 'lab-hints'), hb = ui.btn('lab-b', '提示');
         hb.addEventListener('click', function () {
-          if(onHint)onHint();
           var h = r.hints[lv];
           if (lv === r.hints.length - 1) hs.appendChild(ui.codeBlock(h, { title: '写法' }));
           else hs.appendChild(html('p', null, h));
@@ -406,12 +405,6 @@
     });
   }
   STAGE.check = function (body, ch, route, app, pane) {
-    var assisted=false;
-    function help(exercise){assisted=true;if(STM.learning)STM.learning.assisted(ch.topic,exercise,true);}
-    function proof(exercise,answers,res){if(!STM.learning||!answers.some(function(t){return t._xinTyped;}))return;
-      var ok=res.length>0&&res.every(function(r){return r.k==='ok';});
-      STM.learning.record({topic:ch.topic,exercise:exercise,kind:'code',answer:answers.map(function(t){return t.value;}).join('\n\n'),correct:ok,independent:!assisted&&!STM.learning.assisted(ch.topic,exercise)});
-    }
     var T = ch.transfer, ids = ch.exercises.map(function (x) { return x.id; }).concat(['key']);
     var lv = ids.indexOf(route.fn) >= 0 ? route.fn : ids[0];
     var pickBar = el('div', 'lb-chips');
@@ -446,8 +439,8 @@
       sp.appendChild(acts);
       var out = el('div', 'lab-res'); out.setAttribute('aria-live', 'polite'); sp.appendChild(out);
       var ref = el('div', 'lab-ref'); ref.hidden = true; sp.appendChild(ref);
-      bR.addEventListener('click', function () { help(ex.id);ref.hidden = !ref.hidden; ui.clear(ref); if (!ref.hidden) ex.fns.forEach(function (n) { ref.appendChild(ui.codeBlock(fns[n].sig + '\n{\n' + L.body(ch, n) + '\n}', { title: ch.cfile })); }); });
-      bC.addEventListener('click', function () { var answers=ex.fns.map(function(n){return ed[n];}),res=L[ex.check].apply(null,[ch].concat(answers.map(function(t){return t.value;})));proof(ex.id,answers,res);results(out,res,pane,function(){help(ex.id);}); });
+      bR.addEventListener('click', function () { ref.hidden = !ref.hidden; ui.clear(ref); if (!ref.hidden) ex.fns.forEach(function (n) { ref.appendChild(ui.codeBlock(fns[n].sig + '\n{\n' + L.body(ch, n) + '\n}', { title: ch.cfile })); }); });
+      bC.addEventListener('click', function () { var answers=ex.fns.map(function(n){return ed[n];}),res=L[ex.check].apply(null,[ch].concat(answers.map(function(t){return t.value;})));results(out,res,pane); });
       hideCards();
       return;
     }
@@ -468,8 +461,8 @@
     ka.appendChild(kc); ka.appendChild(kr); sw.appendChild(ka);
     var kout = el('div', 'lab-res'); kout.setAttribute('aria-live', 'polite'); sw.appendChild(kout);
     var kref = el('div', 'lab-ref'); kref.hidden = true; sw.appendChild(kref);
-    kr.addEventListener('click', function () { help('key');kref.hidden = !kref.hidden; ui.clear(kref); if (!kref.hidden) kref.appendChild(ui.codeBlock(T.ref, { title: '参考答案' })); });
-    kc.addEventListener('click', function () { var res=L[T.check].apply(null,[ch].concat(tas.map(function(t){return t.value;})));proof('key',tas,res);results(kout,res,pane,function(){help('key');}); });
+    kr.addEventListener('click', function () { kref.hidden = !kref.hidden; ui.clear(kref); if (!kref.hidden) kref.appendChild(ui.codeBlock(T.ref, { title: '参考答案' })); });
+    kc.addEventListener('click', function () { var res=L[T.check].apply(null,[ch].concat(tas.map(function(t){return t.value;})));results(kout,res,pane); });
     pane.show(T.doc);
   };
 

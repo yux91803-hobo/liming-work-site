@@ -14,14 +14,11 @@
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <script>
-  // 站长 2026-11-19：直接打开工作台（#xin-work）时首页先藏起来，工作台出来再放开（最多 3 秒），不再先闪一下首页
-  (function(){if(location.hash==='#xin-work'){var h=document.documentElement;h.classList.add('xc-boot-work');setTimeout(function(){h.classList.remove('xc-boot-work');},3000);}})();
   (function(){try{var t=localStorage.getItem('lm.theme')||'light';var d=t==='dark'||(t==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);var h=document.documentElement;h.dataset.theme=d?'dark':'light';h.dataset.pref=t;var m=document.getElementById('themeColor');if(m)m.setAttribute('content',d?'#1f1e1d':'#faf9f5');}catch(e){}})();
 </script>
-<link rel="stylesheet" href="/shell.css?v=cosmos-20261124">
+<link rel="stylesheet" href="/shell.css?v=noxin-20261126">
 <link rel="stylesheet" href="/pixel.css?v=px3">
 <link rel="stylesheet" href="/mascot.css?v=xr20">
-<link rel="stylesheet" href="/xin/chat.css?v=cosmos-20261124">
 </head>
 <body>
 <main id="home">
@@ -46,7 +43,6 @@
     <kbd>/</kbd>
   </label>
 
-  <section id="xinWork" class="xw" aria-label="小芯" hidden></section>
   <div id="grid" class="grid"></div>
   <p id="empty" class="empty" hidden>没有找到</p>
 </main>
@@ -54,11 +50,9 @@
 <div id="stage"></div>
 <div id="toast" role="status"></div>
 
-<script src="/tools.js?v=uipolish-20261124"></script>
+<script src="/tools.js?v=noxin-20261126"></script>
 <script src="/tools/stm32/study-core.js?v=stm-ops-20261106"></script>
-<script src="/shell.js?v=cosmos-20261124"></script>
-<script src="/mascot.js?v=xr29"></script>
-<script src="/xin/term.js?v=tq4-20261119"></script>
-<script src="/xin/chat.js?v=glm54-20261125"></script>
+<script src="/shell.js?v=noxin-20261126"></script>
+<script src="/mascot.js?v=noxin-20261126"></script>
 </body>
 </html>

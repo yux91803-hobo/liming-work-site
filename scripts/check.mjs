@@ -3,7 +3,6 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { hermeticTestEnv } from './test-env.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const site = path.join(root, 'site'), failures = [];
 function files(dir) { return fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? files(path.join(dir, e.name)) : [path.join(dir, e.name)]); }
@@ -35,4 +34,4 @@ visit(ctx.window);
 if (failures.length) { console.error(failures.join('\n')); process.exit(1); }
 console.log(`Syntax and local references passed: ${all.length} files, ${resources} asset references.`);
 const tests = files(path.join(root, 'test')).filter(f => f.endsWith('.test.cjs'));
-const result = spawnSync(process.execPath, ['--test', ...tests], { stdio: 'inherit', env: hermeticTestEnv() }); process.exit(result.status === null ? 1 : result.status);
+const result = spawnSync(process.execPath, ['--test', ...tests], { stdio: 'inherit' }); process.exit(result.status === null ? 1 : result.status);

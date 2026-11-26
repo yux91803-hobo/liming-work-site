@@ -49,7 +49,7 @@ test('正式发布只选对应合并的同仓库 PR 成功运行；失败运行�
 // 43572318127 再次出现相同启动编号的 409；名字必须对应实际上传快照，不能依赖测试开始时的环境变量。
 test('浏览器报告在测试结束后保存快照，再上传该快照：失败报告也保留，不覆盖先前结果',()=>{
   const yaml=fs.readFileSync(path.resolve(__dirname,'../.github/workflows/deploy.yml'),'utf8');
-  const last=yaml.indexOf('python test/e2e/xin_kernel_e2e.py'),snapshot=yaml.indexOf('准备浏览器检查报告快照'),upload=yaml.indexOf('保存浏览器检查报告');
+  const last=yaml.indexOf('python test/e2e/home_e2e.py'),snapshot=yaml.indexOf('准备浏览器检查报告快照'),upload=yaml.indexOf('保存浏览器检查报告');
   assert.ok(last>0&&snapshot>last&&upload>snapshot);
   const prepare=yaml.slice(snapshot,upload),save=yaml.slice(upload,yaml.indexOf('记录浏览器测试通过的代码树'));
   assert.match(prepare,/if: always\(\)/);assert.match(prepare,/id: e2e_report/);assert.match(prepare,/run: node scripts\/ci-e2e-report\.mjs/);
@@ -74,10 +74,10 @@ test('报告快照：相同内容的两次上传也使用新编号；不把其�
   const {snapshotReport}=await import('../scripts/ci-e2e-report.mjs');
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ci-report-')),root=path.join(dir,'checkout');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   fs.mkdirSync(path.join(root,'test-results/e2e'),{recursive:true});fs.writeFileSync(path.join(root,'test-results/e2e/one.log'),'PASS');fs.writeFileSync(path.join(root,'private.env'),'not a report');
-  fs.mkdirSync(path.join(root,'screens'));fs.writeFileSync(path.join(root,'screens/xin-web-failure-390.png'),'PNG');fs.writeFileSync(path.join(root,'screens/private.png'),'not a report');
+  fs.mkdirSync(path.join(root,'screens'));fs.writeFileSync(path.join(root,'screens/stm32-drag-failure.png'),'PNG');fs.writeFileSync(path.join(root,'screens/private.png'),'not a report');
   const options={root,temporary:path.join(dir,'tmp'),run:'3',attempt:'1'},a=snapshotReport(options),b=snapshotReport(options);
   assert.equal(a.digest,b.digest);assert.notEqual(a.name,b.name);assert.equal(fs.existsSync(path.join(a.path,'private.env')),false);
-  assert.deepEqual(a.files,['screens/xin-web-failure-390.png','test-results/e2e/one.log']);
+  assert.deepEqual(a.files,['screens/stm32-drag-failure.png','test-results/e2e/one.log']);
 });
 
 test('报告快照：拒绝指向其它文件的链接和不合法的运行编号',async t=>{

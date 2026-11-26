@@ -1,3 +1,46 @@
+# 修改清单 · 2026-11-26 深夜（删掉网站上的小芯聊天和天启，页面上的小人保留）
+
+- **谁做的**：Claude Code 实现并自查，没有独立复核。站长：「小人留，其他删」，同意连 Durable Object 里的数据一起删。计划 [2026-11-26-remove-xin-tianqi-plan.md](superpowers/plans/2026-11-26-remove-xin-tianqi-plan.md)。
+- **为什么**：小芯、天启当天已经停用：定时任务撤了，联调删了，云电脑上的服务也停了。网站上它们的代码只剩负担：单测大多是小芯的，浏览器测试 15 组里 13 组是小芯、天启的。li、li2 现在归平板 AI 用。
+- **删掉**：
+  - 小芯：聊天、工作台、终端、用量、备份、登录（`site/xin/`、`src/xin*.js`、`/api/xin/*`）。
+  - 天启：工具卡片和「天启」分类、首页的星盘卡、`/tools/tianqi/`、`/api/tq/*`。
+  - Worker 的 Durable Object `XinTaskSupervisor`：用迁移 v4（`deleted_classes`）删，里面还没送达的消息一起删。登录限流和 `XIN_*` 变量也删了。
+  - 发布流程里写小芯密钥的一步，以及冒烟检查里小芯和天启的地址。
+  - 学习台的 `learning.js`：它只把学习记录报给小芯。完整推导、自主推导、练习都照旧。
+  - 只测这些代码的单测和 13 组浏览器测试，以及 `scripts/xin-backup-decrypt.mjs`、`scripts/test-env.mjs`、`scripts/vm/setup-xin-runtime.sh`。
+  - 以前的设计、计划和修改记录是历史，没动。
+- **留下**：页面上的小人（`mascot.js`、`mascot.css`、标题栏的 `#xinTrack`，类名没改）、STM32 学习台、世界地图、首页。
+- **小人和聊天解绑**：
+  - `mascot.js` 删掉读聊天的三处（学会的动作、好感度、「陪它玩」上报），背包里的「聊天」也删了。小人只用自带的动作。
+  - 小人里专给聊天用的接口还在：提问框、AI 工作状态、命令、学会的动作、好感度、聊天头像。它们牵连一大段小人测试，下一个 PR 单独清理，免得这次把小人改坏。
+- **回滚的限制**：Cloudflare 文档「Rollbacks」写明，两个版本之间改过 Durable Object 类（这次 v4 删了一个），就不能回滚过去。所以这次发布以后，不能再回滚到这次以前的版本，出了问题只能往前修。发布流程里冒烟失败自动回滚的那一步，这次也会被 Cloudflare 拒绝。测试站会先跑同样的 v4 迁移。
+- **Worker**：只剩三件事：工具图片缺了回 404，`/api/*` 一律回 404，其余交给静态资源。旧链接 `/xin/`、`/tools/tianqi/` 照单页应用的兜底回首页。
+- **`sw.js` 换成自注销脚本**：
+  - 它以前只给小芯发推送通知。直接删掉的话，已经装过它的浏览器会一直留着旧版。
+  - 新版没有 fetch 处理，装上就退订推送、注销自己。浏览器下次打开网站检查更新时会换上它。
+  - 参考 Chrome 文档「Remove buggy service workers」的 no-op service worker（立即安装和激活，没有 fetch 处理），以及 GitHub 上 NekR/self-destroying-sw 的 README（激活时注销自己）。
+  - 没照它们强制刷新已经打开的页面：旧版本来就不拦截请求，不用刷新。
+- **测试**：
+  - 新守护测试 `test/no-xin.test.cjs`（首页不引用 `/xin/`、`tools.js` 里没有天启等 4 项）在旧 main 上是红的。
+  - `test/worker.test.cjs` 改成核对 `/api/xin/*`、`/api/tq/*` 回 404、没有 DO 导出、配置里有 v4 迁移；`test/sw.test.cjs` 核对自注销。
+  - 首页本身的动效检查（主题扩散换色、卡片插画、追光和火花）从删掉的小芯浏览器测试挪到新的 `test/e2e/home_e2e.py`。
+  - `stm32_e2e.py` 删掉小芯聊天的部分；首页分类、小人能站的地方两项改成只有世界地图和 STM32 两张卡。
+  - 删掉的 `xin_learning_e2e.py` 只测学习记录上报：练习判对后报给小芯，看过参考答案不算独立完成，关掉上报就不报。学习台本身的推导和练习，`stm32_e2e.py` 原来就在测。
+- **验证**：
+  - 本地 `npm run check`：255/255。main 上是 1105 项，净少 850 项，都是只测已删代码的；新加守护测试 4 项、自注销 1 项、Worker 1 项。
+  - 本地 `npm run test:e2e`：3 组 320 项全过（STM32 278、世界地图 38、首页 4）。
+  - 截图自查：首页 1280、1024、768、390 的浅色和深色，学习台 1280 和 390，都正常，页面没有报错。
+  - 测试站（PR 的 Actions 部署）：
+    - v4 迁移跑通：上一次部署还绑着 `XinTaskSupervisor`，这次部署成功，只剩静态资源。
+    - `/api/xin/me`、`/api/tq/me` 回 404。
+    - `/xin/`、`/tools/tianqi/` 打开是首页，地址改回 `/`。
+    - 浏览器里只有两张卡，小人在，没有报错。
+- **站长要做的**（不急，删完以后网站已经用不上这些）：
+  - InstaBox 后台吊销网站用过的两把 key，也就是 GitHub Secrets 里 `XIN_INSTABOX_API_KEY`、`XIN_TQ_INSTABOX_API_KEY` 对应的那两把。平板用的是另外两把，别吊销错。
+  - GitHub 仓库的 Settings › Secrets 删掉 `XIN_OWNER_PASSWORD`、`XIN_INSTABOX_API_KEY`、`XIN_TQ_INSTABOX_API_KEY`。
+  - 可选：Cloudflare 后台 liming-worldmap 的「设置 › 变量和机密」，删掉 `OWNER_PASSWORD`、`INSTABOX_API_KEY`、`TQ_INSTABOX_API_KEY`。Worker 已经不读它们了。以前的发布流程只把它们写进正式站，测试站没有。
+
 # 修改清单 · 2026-11-26 深夜（平板搬到单独的仓库 tablet-setup）
 
 - **谁做的**：Claude Code 实现并自查，没有独立复核。站长建了新仓库 [tablet-setup](https://github.com/yux91803-hobo/tablet-setup)，并在 Cloudflare 后台用 Pages 连上它，自定义域名 `tablet.liming-work.com`。
