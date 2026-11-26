@@ -1,3 +1,17 @@
+## 2026-11-26 · 正式联调卡住的根因、平板独立发布（Claude Code）
+
+- Claude Code 排查、处理并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)。
+- **已完成**：
+  - #222 之后正式部署一直回滚，根因是 li 网关 key「xin-codex (Codex)」的允许模型名单里没有 glm-5.4，网关当场 400。站长同意后，在 li 网关上给它加了 glm-5.4，给「li-cn (国内版)」加了 glm-5.4、kimi-k3.1-pro。备份在 `/data/workbuddy-gateway/accounts/settings.json.bak-20261126-glm54`。
+  - 手动正式部署 [#516](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45734738777) 全绿，#222、#224、#225（平板）都已上线。
+  - 平板文件改为独立发布：跳过名单加 `site/tablet/`、`scripts/tablet-`、`test/tablet-`。这次发布改了判断脚本本身，所以照跑联调。
+- **接手注意**：
+  - li 网关的 key 有允许模型名单。小芯、天启或平板换模型前，先在对应机器上用实际的 key 发一个最小请求确认；`/v1/models` 不按 key 过滤，不能当依据。
+  - 改网关设置要站长同意（CLAUDE.md：不替小芯动网关面板）。
+- **未完成，待复现**：
+  - Gemini → GLM → DeepSeek 第二次换模型时，DeepSeek 没发请求就判失败。证据只剩 li 的 `model-stats.jsonl` 和网关日志，具体见 CHANGES。
+  - #224 的不在岗解释会把这种失败算成 PASS。
+
 ## 2026-11-26 · 平板版 DSH Go 第一步（Claude Code）
 
 - Claude Code 实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。站长选「先插件后 fork」。 [设计](superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [计划](superpowers/plans/2026-11-25-tablet-dshgo-phase1.md) · [站长步骤](tablet.md) · [CHANGES 最新一条](CHANGES.md)

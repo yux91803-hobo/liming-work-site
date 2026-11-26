@@ -69,6 +69,7 @@
 
 - 网关日志在 `/root/workbuddy-gateway/logs/gateway.log`，插件日志在同目录的 `plugin.log`。
 - 插件 10 分钟内重启 3 次还起不来，就先停下，等下次重启引擎再试。日志写「8788 被其他程序占用」，说明端口被别的程序占了。
+- 连 li 或 li2 时某个模型报 400，说这个 Key 不允许该模型：到那台电脑的网关面板「设置 → API Key」，给对应的 key 在「允许模型」里加上它。li 上平板用的是「li-cn (国内版)」，11-26 已经加上 glm-5.4 和 kimi-k3.1-pro。
 - 重跑装机脚本不会重新下载网关，也不碰账号。插件在 App 里被删了、想重新挂上，先删掉 `/root/liming-gateway/.added` 再跑。
 - 只想看看脚本要做什么：`curl -fsSL https://liming-work.com/tablet/setup.sh | bash -s -- --dry-run`。
 
@@ -82,3 +83,5 @@
 | `site/tablet/dsh-tablet-profile.yml` | li、li2 上 `web` 配置的网关线路，由 `scripts/tablet-profile.mjs` 从天启的模型表生成 |
 
 网关程序（WorkBuddy2API-Hub）和任何账号、key 都不进仓库，因为仓库是公开的。装机脚本只写死原版安装包的大小和 SHA-256。
+
+这些文件单独发布：只改了 `site/tablet/`、`scripts/tablet-*`、`test/tablet-*` 和文档时，正式发布不跑小芯真模型联调（规则见 `scripts/xin-live-scope.cjs`）。

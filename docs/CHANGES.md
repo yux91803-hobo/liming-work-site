@@ -1,3 +1,26 @@
+# 修改清单 · 2026-11-26（正式联调卡住的根因：li 网关 key 不允许 glm-5.4；平板文件独立发布）
+
+- Claude Code 排查、处理并自查，无独立复核。
+- **现象**：#222 合并后，正式部署连续在小芯联调失败、自动回滚，正式站一直停在 11-25 21:39 的版本，平板文件也上不去。失败点依次是：点名网页没在岗（#222）、天启 GLM-5.4 读图（#224）、点名网页没做完、GLM-5.4 派工没完成（#225 及其重跑）。 [#222](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45635000867) · [#224](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45669911765) · [#225](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45676600676)
+- **根因**：
+  - li 的网关给小芯的 key「xin-codex (Codex)」设了允许模型名单：glm-5.3、glm-5.3-flash、kimi-k3.1-pro、deepseek-v4.1-flash。
+  - #222 把小芯切到 glm-5.4 以后，网关按 key 名单在本地当场返回 400（`_key_model_error`），不转发上游。网关日志里，从 11-25 22:49 起所有 glm-5.4 请求无一例外都是 400；之前的 glm-5.3 一直是 200。
+  - #222 核对的是 `/v1/models`，这个列表不按 key 名单过滤，所以 li 看上去也有 glm-5.4。
+  - 点名 Gemini 做网页的任务碰上 Gemini 额度冷却，会先换写代码的第一候选 GLM-5.4，因此也被拒。
+- **处理**（站长 11-26 同意；改的是 li 上网关的设置，不在仓库里）：
+  - li 网关「xin-codex (Codex)」加 glm-5.4。
+  - 「li-cn (国内版)」（li 的 `harness.key`，平板连 li 时用）加 glm-5.4、kimi-k3.1-pro。
+  - 改前备份为 `accounts/settings.json.bak-20261126-glm54`（600）。改后核对：除这两份名单外，设置其余内容不变；网关自己的 `key_allows_model` 放行。用小芯的 key 发一个最小 glm-5.4 请求，HTTP 200。网关每次请求重读设置，没有重启。
+- **结果**：手动正式部署 [#516](https://github.com/yux91803-hobo/liming-work-site/actions/runs/45734738777) 全绿。联调里「点名 Gemini 网页因真实额度冷却换模型做完」「小芯真实 GLM-5.4 后台派工」都通过。正式站上 `/tablet/` 的装机脚本和插件文件与仓库逐字节一致，平板文件已上线。
+- **平板文件独立发布**（站长 11-26：「应该独立部署的，不然每次都要进行小芯联调」）：
+  - `scripts/xin-live-scope.cjs` 的跳过名单加 `site/tablet/`、`scripts/tablet-`、`test/tablet-`。这些都不进 Worker、不碰小芯。
+  - 照 11-21 天启界面的现成做法：基准是上一次成功发布到正式站的提交，其间任何一个文件碰到小芯或服务端就照跑。这套做法本来就参考了 nrwl/nx-set-shas（取上次成功的提交当基准）和 dorny/paths-filter（按路径判断）。
+  - 先补 3 项测试：只改平板文件跳过、名字挨着的和小芯模型表照跑、以上次成功发布为基准时只改平板文件跳过。先红后绿，8/8。部署工作流里那句说明同步改了。
+- **遗留，待复现**：
+  - Gemini → GLM → DeepSeek 第二次换模型时，DeepSeek 没发出请求就判了失败。02:51:32、02:55:45 两次，网关日志里 GLM 的 400 之后都没有 DeepSeek 的执行请求。疑似 DeepSeek 续用 GLM 刚开的 Codex 线程、回滚失败轮次时出错。运行记录已被联调清理删掉，现在不改代码。
+  - #224 的「始终不在岗就按额度冷却解释」在 #225 重跑那次，把这个真实失败算成了 PASS。
+  - 以后换模型，要在每台机器上用实际的 key 发一个最小请求确认，不能只看 `/v1/models`。
+
 # 修改清单 · 2026-11-26（平板版 DSH Go 第一步：网关搬到平板、接上 li 和 li2）
 
 - Claude Code 实现并自查，无独立复核。站长想用 GitHub 上的 DSH Go（`ccch1mneyyy/dsh-go`，AGPL-3.0）在安卓平板上让 AI 操控平板、用自己网关的模型、接上 li 和 li2，界面以后再改；选了「先插件后 fork」。网关搬到平板是站长自己提的。 [设计](superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [计划](superpowers/plans/2026-11-25-tablet-dshgo-phase1.md) · [站长步骤](tablet.md)
