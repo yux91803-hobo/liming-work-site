@@ -35,6 +35,8 @@ function createFakeCloud() {
     sessions,
     calls,
     offline: false,
+    stubbornCancel: false,          // 停不下来：cancel 回 accepted 但这一轮照跑
+    coldSessions: new Set(),        // 云端重启后没加载的对话：cancel、state、job/list 报 session/not-found（实测）
     // 测试控制：结束当前一轮（AI 说一句话，然后 turn/end）
     finishTurn(id, text = '完成', reason = { kind: 'completed' }) {
       const s = session(id);
@@ -92,12 +94,14 @@ function createFakeCloud() {
         },
         async cancel(sessionId) {
           guard('session/cancel');
+          if (cloud.coldSessions.has(sessionId)) throw new RpcError('session/not-found', 'not attached');
           const s = session(sessionId);
-          if (s.running) cloud.finishTurn(sessionId, '', { kind: 'aborted', reason: { kind: 'user' } });
+          if (s.running && !cloud.stubbornCancel) cloud.finishTurn(sessionId, '', { kind: 'aborted', reason: { kind: 'user' } });
           return { accepted: true };
         },
         async state(sessionId) {
           guard('session/state');
+          if (cloud.coldSessions.has(sessionId)) throw new RpcError('session/not-found', 'not attached');
           const s = session(sessionId);
           return { cursor: s.seqBase, active: true, running: s.running, queue: s.queue.map(q => q.text), pendingInput: [] };
         },
@@ -123,6 +127,7 @@ function createFakeCloud() {
         },
         async readJobListOnce(sessionId) {
           guard('job/list');
+          if (cloud.coldSessions.has(sessionId)) throw new RpcError('session/not-found', 'not attached');
           return session(sessionId).jobs.map(j => ({ ...j }));
         },
         async killJob(sessionId, jobId) {
