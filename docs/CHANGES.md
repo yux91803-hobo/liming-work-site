@@ -31,10 +31,15 @@
   - 本地 `npm run check`：255/255。main 上是 1105 项，净少 850 项，都是只测已删代码的；新加守护测试 4 项、自注销 1 项、Worker 1 项。
   - 本地 `npm run test:e2e`：3 组 320 项全过（STM32 278、世界地图 38、首页 4）。
   - 截图自查：首页 1280、1024、768、390 的浅色和深色，学习台 1280 和 390，都正常，页面没有报错。
+  - 测试站（PR 的 Actions 部署）：
+    - v4 迁移跑通：上一次部署还绑着 `XinTaskSupervisor`，这次部署成功，只剩静态资源。
+    - `/api/xin/me`、`/api/tq/me` 回 404。
+    - `/xin/`、`/tools/tianqi/` 打开是首页，地址改回 `/`。
+    - 浏览器里只有两张卡，小人在，没有报错。
 - **站长要做的**（不急，删完以后网站已经用不上这些）：
   - InstaBox 后台吊销网站用过的两把 key，也就是 GitHub Secrets 里 `XIN_INSTABOX_API_KEY`、`XIN_TQ_INSTABOX_API_KEY` 对应的那两把。平板用的是另外两把，别吊销错。
   - GitHub 仓库的 Settings › Secrets 删掉 `XIN_OWNER_PASSWORD`、`XIN_INSTABOX_API_KEY`、`XIN_TQ_INSTABOX_API_KEY`。
-  - 可选：Cloudflare 后台 liming-worldmap 和测试站 liming-hub-staging 的「设置 › 变量和机密」，删掉 `OWNER_PASSWORD`、`INSTABOX_API_KEY`、`TQ_INSTABOX_API_KEY`。Worker 已经不读它们了。
+  - 可选：Cloudflare 后台 liming-worldmap 的「设置 › 变量和机密」，删掉 `OWNER_PASSWORD`、`INSTABOX_API_KEY`、`TQ_INSTABOX_API_KEY`。Worker 已经不读它们了。以前的发布流程只把它们写进正式站，测试站没有。
 
 # 修改清单 · 2026-11-26 深夜（平板搬到单独的仓库 tablet-setup）
 
