@@ -1,4 +1,0 @@
-# 装法：dsh plugin --profile web add /root/liming-cloud（装机脚本会做）
-- insert:
-    - id: liming-cloud
-      name: liming-cloud

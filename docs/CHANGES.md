@@ -1,3 +1,55 @@
+# 修改清单 · 2026-11-26 晚（平板 AI 直接操控 li、li2；删掉云端任务插件；关掉正式站的定时任务）
+
+- **谁做的**：Claude Code 设计、实现并自查，没有独立复核。站长批准方向（「没意见，你继续做吧」）。设计 [2026-11-26-tablet-cloud-direct-design.md](superpowers/specs/2026-11-26-tablet-cloud-direct-design.md)，计划 [2026-11-26-tablet-cloud-direct-plan.md](superpowers/plans/2026-11-26-tablet-cloud-direct-plan.md)。
+- **为什么**：站长实际用过平板后说，想要的是平板 AI 自己直接操控云电脑（终端、文件、浏览器），像它操控平板一样；复杂编程可以交给云上的 Codex 等代理，再自己检查结果。li、li2 当两台普通云电脑，不受小芯、天启影响；不为兼容旧实现叠加，该删就删，别再造越来越大的自建架构。小芯、天启停用，每日清单（签到、积分、机外备份）不要了；机器不重建，网关和 key 照旧；不升级 DSH Go 的 Harness。
+- **删掉**（#227 已上线的旧方案）：
+  - `site/tablet/liming-cloud/`（派活、台账、停止、对账、面板）和 `site/tablet/liming-lease/`（活动租约）。
+  - Antigravity 的契约套件 `scripts/tablet-harness-contract/`，以及只测这些代码的 `test/tablet-cloud-*`、`test/tablet-lease.test.cjs`。
+  - 旧设计和旧计划开头标了「已作废」。
+- **新的做法**：平板 AI 用自己本来就有的终端，经 InstaBox 官方命令行操作两台云电脑，用一份技能教它用法。
+  - `site/tablet/ib.sh` 装成平板上的 `ib`：用法和 `instabox` 一样，按参数里的机器名选那台所在账号的 key，key 只经环境变量传，不打印。
+  - 技能 `site/tablet/skills/liming-cloud-computers/SKILL.md`，装到平板的 `~/.dsh/skills/`，DSH Go 重置运行环境默认会保留这个目录。
+  - 浏览器用云上的 `playwright-cli`，`--headed` 时站长可以在 Computer 页签里看、接手。复杂编程用 `ib agent prompt … --provider codex` 交给云上的 Codex，做完自己看 `git diff`、跑测试。
+- **装机脚本**：
+  - 不再要 SSH 令牌，只问两把 InstaBox key（只要 `machines:read`、`machines:write`）。用 `instabox get` 核对 key 看得到那台机器才存（权限 600），填反了会提示重来。
+  - 网关安装包改经 `instabox pull` 取。
+  - 平板上卸掉以前的 `liming-cloud`，删掉旧的令牌、只读 key 和台账。
+  - 每台云电脑经 `instabox exec --stdin` 跑一段准备脚本，每项各报一行结果、互不影响：
+    - 删以前的 `liming-lease` 和写 key；
+    - 本机网关的 key 复制到 `~/.config/liming`，并在 `~/.profile` 里导出；
+    - Codex 的 `workbuddy` 线路补上 `env_key`（先备份）；
+    - 装 Playwright 命令行和 Chromium；
+    - 手动切主机的配置照旧。
+- **删掉小芯真模型联调**（站长：「小芯都不用了，为啥每次还要花这么长时间去跑联调」）：`deploy.yml` 里冒烟检查之后的四步（判断要不要跑、装 Python、装浏览器、跑联调）删掉，部署作业的超时从 55 分钟改成 20 分钟；冒烟检查和失败自动回滚照旧。联调脚本 `scripts/test-xin-live.py`、`xin_live_steer.py`、`xin_live_policy.py`、判断要不要跑的 `scripts/xin-live-scope.cjs`，以及只测它们的测试一起删掉。`test/ci-public.test.cjs` 加一项守护测试，先红后绿。以前的「只改平板文件就跳过联调」也就不需要了。
+- **停掉小芯、天启的后台服务**（站长：「可以停」）：
+  - li 上当天就停了：常驻内核 `xin-kernel-resident` 和清理器 `xin-reaper` 停下并关掉开机自启，两个孤儿进程（已删的 Antigravity IDE 留下的 `agy --hub`、Codex 常驻服务）结束。网关照常运行，停完用 `instabox agent` 让 Codex 实跑一轮，照样通过。
+  - 装机脚本的云端准备加了这一步，li2 在站长重跑时停；只关这两个服务，文件都不删，可以用 `systemctl --user enable --now` 恢复。测试先红后绿。
+  - 发布时的冒烟检查访问的 `/api/xin/me` 由网站自己回答，不连云电脑，所以停这些服务不影响发布。
+- **正式站**：`wrangler.jsonc` 的 `crons` 置空。写成空数组，发布时才会撤掉已有的定时触发；`test/xin.test.cjs` 那一项的断言跟着改。`runCron` 的代码先留着。
+- **取舍（Claude Code 的决定）**：
+  - 不接 MCP：InstaBox 的 MCP 没有后台任务和驱动 Codex 的功能；Playwright 官方也推荐编码代理用「命令行 + 技能」，而不是 MCP。
+  - 不装 InstaBox 自带的技能包：4 个技能里有 3 个用不上，还会教它建、删机器。
+  - 不改 `CODEX_HOME`：网站触发小芯也走登录 shell，改了会把小芯的 Codex 一起带走。小芯调用 Codex 时会用自己的参数覆盖 `env_key`，所以加这一行不影响小芯。
+  - 网站上的小芯页面和天启工具这次不动，以后再定。
+  - Claude Code 在云上没登录，先不用；云上的 Harness 没给平板 AI 接线。
+- **参考**：
+  - DSH Go `docs/architecture.md`：手机操控是经 Harness 自带的 MCP 客户端加一段 AGENTS 说明接进来的，「像操控平板一样操控云电脑」机制上不需要特殊东西。
+  - InstaBox 文档：mcp、use-cases/coding-agents、desktop、auto-pause，以及命令行 `instabox help`。
+  - Playwright CLI 的 README（编码代理用命令行加技能）。
+  - Harness 的 `dsh-tool-bash`（`run_in_background`）和 `dsh-skill-filesystem`（技能目录）的说明。
+  - 社区里有不少 SSH 类 MCP 服务，有了 InstaBox 官方命令行就用不着。
+- **验证**：
+  - li 上实测（2026-11-26）：
+    - `instabox exec` 能叫醒并执行命令。
+    - `instabox agent` 驱动 Codex：先因缺网关 key 报 401，补上 `env_key` 后建好了文件，对话状态为空闲。
+    - `playwright-cli` 能打开网页，下一次调用读到同一页面，`--headed` 的窗口出现在桌面上。
+    - 新的准备脚本实跑两次，各项 ok、没有 bash 警告。
+  - 本地 Harness rc.1（平板现用版本）：放在 `~/.dsh/skills` 的技能出现在模型的技能目录里；终端后台命令结束后，AI 被通知叫醒。
+  - 单测：平板相关 44 项（网关 14、配置 6、装机 17、ib 和技能 7），新增的先红后绿；装机准备脚本加了「运行时不能有 bash 警告」一项，抓到了 here-document 写在命令替换外面的问题。ShellCheck 0.11.0 没有警告。全量检查和浏览器测试的结果见本次 PR。
+- **更正**：#227 在北京时间 16:24 已由 Codex 合并，16:58 正式站验收通过，旧插件当时就上线了。Claude Code 之后对站长说「只在分支上、不会上线」，是因为没重新拉 main，说错了。这次 PR 把旧插件从正式站撤下，装机脚本会顺手清掉设备上装过的旧插件和旧 key。
+- **站长要做**：在两个 InstaBox 账号里各建一把 key（只勾 `machines:read`、`machines:write`），在平板上重跑装机脚本，然后新开一个对话。以前为云端任务建的只读 key、写 key 可以吊销。
+- **留给以后**：网站上的小芯、天启要不要下掉（小芯联调和云上的常驻服务跟着一起处理）；云上 Claude Code 的登录；云上 Harness 的接线；DSH Go fork 和升级 Harness（Codex 的调研在分支 `codex/dsh-go-harness-upgrade-research-20261126`）。
+
 # 修改清单 · 2026-11-26（平板跨设备协作独立审查）
 
 - Antigravity 实现第 1–2 阶段，Claude Code 接手核对并实现第 3–8 阶段。Codex 独立复核八阶段，并实现下面列出的缺陷修复和回归测试。按站长要求承接 `claude/dsh-go-customization-discussion-d5wt84`，保留原提交。
@@ -47,15 +99,16 @@
   - 重连次数用完（比如机器长时间冷却）原来记失败，之后就不会再对账。改成「暂时跟丢」：平板的后台任务结束并说明，台账保持进行中，站长回到对话、打开面板或引擎启动时再接上。
   - 面板判断视图结构变没变，原来全局只记一个值，两段对话同时开着面板会来回误刷新。改成每段对话各记各的。
   - 面板刷新有 1 秒节流。节流里的第二次结构变化（AI 一轮派两件、停止很快就确认）原来会丢：面板少一张卡，或者停完的还留在「进行中」。改成过了 1 秒补刷新一次。
-  - 推送限流、面板刷新、台账存盘的间隔原来用墙上时钟，平板校时往回跳一小时，推送就会停一小时。改用单调时钟（`performance.now()`）；任务时间戳这类当数据用的时间不变。测试里三处等待也改了，是仓库的等待时钟检查（`test/wait-clock.test.cjs`）抓到的。
+  - 推送限流、面板刷新、台账存盘的间隔原来用墙上时钟，平板校时往回跳一小时，推送就会停一小时。改用单调时钟（`performance.now()`）。建隧道的连接超时（`ssh-tunnel.js`，原实现是 Antigravity 的）也是这个问题，Codex 在独立复核里同时改了（见上一条），合并时用 Codex 的写法，Claude Code 这边补了一项「建隧道途中墙上时钟往前跳一小时」的测试；任务时间戳这类当数据用的时间不变。测试里三处等待也改了，是仓库的等待时钟检查（`test/wait-clock.test.cjs`）抓到的。
   - 跟随时原来每个云端事件都读一遍台账文件，改成只有用户消息才读。只是少读盘，行为不变，没加测试，由原有测试覆盖。
-  - 前五处各加了一项测试，改之前红、改之后绿。
+  - 以上除「少读台账」外，每处都加了测试，改之前红、改之后绿（时钟那处两项：推送、建隧道）。
+  - 在 `7f87a7d` 上跑全量检查，1225 项里红了 1 项：SSH 隧道单测（Antigravity 写的）在全量并发时偶发多看到一次掉线。原因在测试里的假 ssh：就绪探测连上就断，负载高时假 ssh 往回写碰上 RST（ECONNRESET），连接上没挂错误处理，整个进程崩了。真 ssh 某个转发连接被重置不会退出，所以改的是假 ssh（连接上挂错误处理），`ssh-tunnel.js` 的掉线判断不变。核对：4 个占满 CPU 的进程加 12 路并发，这一项各跑 6 次，改之前 72 次红 12 次，改之后 72 次全过。
 - **参考**：
   - DSH Go（MIT）：`docs/plugins` 的 slots、components、actions、inputs、design-rules、quickstart；工具卡 `toolCard()` 照 quickstart 的写法；`app/lib/remote/ssh/remote_bootstrap.dart`。
   - 真实 Harness 源码：`dsh-jobs-local` 的 `start` 要求活着的主人、释放类取消原因；`dsh-tool-jobs` 的完成通知；`dsh-api-session-controller` 的 `session/selectModel`、`session/page`；`dsh-session` 的 `TurnEndReason`。
   - InstaBox 文档：idle-suspend（什么会唤醒、免费版一轮的时长和冷却、活动租约）、api-keys（`machines:read`、`machines:write`）。
 - **验证**：
-  - 单测：平板相关 110 项、独立发布判断 11 项、测试等待时钟检查 2 项，共 123 项全过。新增 selector 10、steps 4、tools 10、stop 10、recovery 10、ui 12、lease 7、setup 5 项，都先红后绿。stop、断线补齐几项是先写的代码，另做了变异核对：改坏就变红。
+  - 单测（合并 Codex 复核之前）：平板相关 111 项、独立发布判断 11 项、测试等待时钟检查 2 项，共 124 项全过。新增 selector 10、steps 4、tools 10、stop 10、recovery 10、ui 12、lease 7、setup 5、transport 1 项，都先红后绿。stop、断线补齐几项是先写的代码，另做了变异核对：改坏就变红。
   - 真实 Harness 端到端（平板 0.2.2-rc.1 装插件，云端 0.2.2-rc.3，direct 模式，模拟模型）：
     - 派活到收到原生通知、平板 AI 被叫醒，12/12。
     - 通知写进日志才记已告诉；平板引擎被 SIGKILL 时云端照常做完，回到对话后接上、通知只有一条；平板 AI 用 `job_kill` 停任务，云端那轮 aborted、sleep 进程没了，11/11。

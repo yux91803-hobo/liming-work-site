@@ -1,3 +1,33 @@
+## 2026-11-26 晚 · 平板 AI 直接操控 li、li2（Claude Code）
+
+- **谁做的**：Claude Code 设计、实现并自查，没有独立复核。站长批准方向。详见 [CHANGES 最新一条](CHANGES.md)、[设计](superpowers/specs/2026-11-26-tablet-cloud-direct-design.md)、[站长步骤](tablet.md)。
+- **已完成**：
+  - 删掉 #227 上线的 `liming-cloud`、`liming-lease`、契约套件和它们的测试。
+  - 新增平板上的 `ib`（按机器选账号的 key）和技能「云电脑」。
+  - 装机脚本改用 InstaBox 命令行：两把 key，不再要 SSH 令牌；云电脑上给 Codex 接网关、装 Playwright 命令行。
+  - 正式站的定时任务关掉。
+  - 正式发布不再跑小芯真模型联调：`deploy.yml` 的联调四步和联调脚本、判断脚本都删了，冒烟检查和失败回滚照旧。
+- **接手注意**：
+  - 小芯的常驻服务（`xin-kernel-resident`、`xin-reaper.timer`）站长同意停：li 上已停并关掉自启，li2 等站长重跑装机脚本时停；文件和 `~/.xin` 没删，可以恢复。网关（`workbuddy-gateway.service`）照常运行，云上的 Codex 要用它，别停。网站上的小芯页面和天启工具以后再定。
+  - li 上已经实际配好（2026-11-26，用会话里 li 账号的 key）：
+    - `~/.codex/config.toml` 的 workbuddy 线路加了 `env_key`，备份是 `config.toml.bak-liming-20261126`；
+    - `~/.config/liming/gateway.key` 和 `~/.profile` 里导出它的一行；
+    - Playwright 命令行 0.1.25 和 Chromium；
+    - 准备脚本写的 `dsh-tablet` 和 web 配置补丁；
+    - 试验留下的 `/data/workspace/tablet-spike` 已删。
+  - li2 还没配过，因为会话里没有 li2 账号的 key。站长重跑装机脚本时会配。
+  - 更正上一条交接：那里写「本分支不开 PR、不合并」，其实 #227 在 16:24 已合并上线。
+  - Codex 的 Harness 升级调研在分支 `codex/dsh-go-harness-upgrade-research-20261126`。站长决定先不升级、不 fork。
+- **下一步**：
+  1. 本分支的 PR 合并上线，核对正式站的 `/tablet/` 文件（旧插件路径应当回首页）。
+  2. 站长建两把 key、重跑装机脚本、新开对话，然后按 `docs/tablet.md`「装好后对照」逐条核对。
+
+## 2026-11-26 晚 · 站长要求重新考虑平板调用云电脑的方案（Claude Code）
+
+- 站长实际用过平板后提出：新项目不受小芯、天启影响，把 li、li2 当两台普通云电脑；平板 AI 要能自己直接操控它们（终端、文件、浏览器），也能自己决定把复杂编程交给云上的 Codex、Claude Code、Harness 并亲自检查结果；不为兼容旧实现叠加，该删就删，不走小芯那种越来越大的自建架构。**先讨论方案，暂不改代码，也不写正式架构文档。**
+- Claude Code 的初步建议（待站长确认）：命令行优先，平板 AI 用自己的终端调 InstaBox 官方命令行（`exec`、文件、`agent prompt/events/steer/interrupt`）和云上的 Playwright CLI，用 Harness 技能说明教它用法；`liming-cloud`、`liming-lease` 可能整体删掉。本分支第 3–8 阶段和 Codex 的复核修复都不开 PR、不合并，等方案定了再处理。
+- 合并 Codex 复核时只有 `ssh-tunnel.js` 一处冲突（双方做了同样的单调时钟修改），取 Codex 的写法；Claude Code 这边保留的是 SSH 隧道单测里假 ssh 的 ECONNRESET 修复和一项建隧道校时测试。合并后平板相关单测 137 项全过，没有重跑全量检查。
+
 ## 2026-11-26 · 平板跨设备协作独立审查（Codex）
 
 - Antigravity 实现阶段 1–2，Claude Code 接手并实现阶段 3–8，Codex 独立核对设计、计划和实现，并修复审查发现的问题。使用 `claude/dsh-go-customization-discussion-d5wt84`，原始复核基线为 `7f87a7d`。
@@ -8,7 +38,7 @@
 ## 2026-11-26 · 平板调用云电脑第 3–8 阶段（Claude Code）
 
 - **谁做的**：Claude Code 接手实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)，站长步骤见 [docs/tablet.md](tablet.md)。
-- **已完成**：`liming-cloud`（三个工具、选机器、派活与跟随、四步停止、通知闭环、重启对账、状态条和面板、工具卡）、`liming-lease`、装机脚本、文档。整条分支自查后又改了六处（心跳误判、跟丢后再接上、面板刷新两处、单调时钟、少读台账），见 CHANGES。单测 123 项（平板 110、独立发布判断 11、等待时钟检查 2）；真实 Harness 端到端 26 项；DSH Go plugin-kit 核对 11 项。
+- **已完成**：`liming-cloud`（三个工具、选机器、派活与跟随、四步停止、通知闭环、重启对账、状态条和面板、工具卡）、`liming-lease`、装机脚本、文档。整条分支自查后又改了六处（心跳误判、跟丢后再接上、面板刷新两处、单调时钟含建隧道超时、少读台账），另修了 SSH 隧道单测里假 ssh 在并发下偶发崩溃，见 CHANGES。单测 124 项（合并 Codex 复核前：平板 111、独立发布判断 11、等待时钟检查 2）；真实 Harness 端到端 26 项；DSH Go plugin-kit 核对 11 项。
 - **接手注意**：
   - 后台任务的主人必须是活着的代理（`ctx.jobs` 的规定），所以引擎重启后要等站长回到那段对话，或者打开面板，才接上没在跟的任务。
   - 插件文件加了或删了，要同步改 `site/tablet/setup.sh` 的 `CLOUD_FILES` 或 `LEASE_FILES`，单测会红着提醒。

@@ -1,5 +1,7 @@
 # 平板 AI 主动调用 li、li2 实施计划
 
+> **已作废（2026-11-26 晚）**：方向改了，见新设计 [2026-11-26-tablet-cloud-direct-design.md](../specs/2026-11-26-tablet-cloud-direct-design.md) 和新计划 [2026-11-26-tablet-cloud-direct-plan.md](2026-11-26-tablet-cloud-direct-plan.md)。下文保留作记录。
+
 **设计依据：** [docs/superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md](../specs/2026-11-26-tablet-cloud-tasks-design.md)（Claude Code 编写，站长北京时间 2026-11-26 批准方案「A 云端对话 + 平板后台任务」完整版）。上一步计划见 [2026-11-25-tablet-dshgo-phase1.md](2026-11-25-tablet-dshgo-phase1.md)。
 
 **归属与分工：** 原设计由 Claude Code 编写；本实施计划由 Antigravity（Gemini 4 Neon）编写并自查，待 Muse 复核后再进入后续代码阶段。

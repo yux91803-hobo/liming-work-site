@@ -61,9 +61,9 @@ REA 开启时通过 MCP 兼容桥转换当前网关不接受的 pattern `allOf` 
 
 - **网关在平板上**：WorkBuddy 网关装进 App 的本机 Linux，跟着本机引擎一起启停（插件 `site/tablet/liming-gateway/`）。签到钟点设成全天，所以打开 App 就会签到。
 - **平板上的 AI**：用网关里的模型回话，开了手机操控后能读屏、点按、输入。
-- **li2、li**：平板上的 AI 自己把长任务、写代码、查资料派给它们（插件 `site/tablet/liming-cloud/` 的 `cloud_run`、`cloud_tell`、`cloud_machines`），派完接着聊；输入框上方一行状态条，点开「云端任务」面板能看进度、插话、停止、接着做，做完在对话里告诉站长。自动挑机器：冷却的不用、本轮快到头的靠后、醒着的和闲的优先，每台同时最多 2 件（面板里可改）。平板睡了、App 关了云端照常跑，回到对话时补说结果，只说一次。云端用的是那台 Harness 没人用的内置 `web` 配置和它本机的网关，不碰小芯、天启的 `headless` 配置；任务跑着时插件 `site/tablet/liming-lease/` 持有 InstaBox 活动租约，空闲后放掉。手动切主机只留着调试。
+- **li2、li**：平板上的 AI 自己操作这两台云电脑：用 InstaBox 官方命令行（平板上的 `ib`，按机器选那台所在账号的 key）看改文件、跑命令和编译，用云上的 Playwright 命令行打开网页操作（站长可以在 InstaBox 的 Computer 页签里看、接手），大的编程活交给云上的 Codex，做完自己检查改动和测试。怎么用写在技能 `site/tablet/skills/liming-cloud-computers/SKILL.md` 里，装机脚本装到平板的 `~/.dsh/skills/`。手动切主机只留着调试。小芯、天启 2026-11-26 停用，正式站的定时任务已关。
 
-网关程序、账号和任何 key 都不进仓库。站长要做的几步见 [docs/tablet.md](docs/tablet.md)；第二步 fork 改界面以后单独设计。 [设计](docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [平板调用云电脑的设计](docs/superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)
+网关程序、账号和任何 key 都不进仓库。站长要做的几步见 [docs/tablet.md](docs/tablet.md)；第二步 fork 改界面以后单独设计。 [设计](docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [平板 AI 直接操控 li、li2](docs/superpowers/specs/2026-11-26-tablet-cloud-direct-design.md)
 
 ## 小芯后台运行方式
 
@@ -177,4 +177,4 @@ AI 在云电脑里是完全放权的（不经确认就执行命令），云电�
 
 互传和协作中心删除时留下的 Cloudflare 资源（迁移 `v2` 已在两个站执行过）：D1 数据库 `liming-hub` 还在账号里，确认不要可以 `npx wrangler d1 delete liming-hub`；旧密钥 `TRANSFER_PASSWORD`、`TRANSFER_KEY`、`TRANSFER_PW_VERSION` 可以用 `npx wrangler secret delete <名字>` 删掉。
 
-GitHub Actions 的 check / e2e / deploy 全部在 GitHub 自带的执行机（`ubuntu-latest`，公开仓库用它不收费）上运行；以前的自托管执行机（box、站长笔记本）2026-11-15 已删掉——仓库公开后任何人都能开 PR，自托管执行机会跑别人的代码。只跑 main 和本仓库分支的 PR，fork 来的 PR 不跑、拿不到密钥。Actions 日志公开可见：部署列表进日志前隐去账号邮箱（`scripts/ci-redact.mjs`）；旧日志可以在 Actions 页手动运行「Clean old logs」删掉（只删日志，运行记录留着）。PR 和 main 都完整检查当前代码；PR 通过后部署测试站，合并后还会核对代码树与两份 PR 通过证据，再做正式站冒烟和真实模型联调。证据缺失或代码不同就停止部署。每套合成浏览器检查的独立日志和预览服务日志会在失败时照常上传，保留一天；正式站的真实聊天不放进这份报告。
+GitHub Actions 的 check / e2e / deploy 全部在 GitHub 自带的执行机（`ubuntu-latest`，公开仓库用它不收费）上运行；以前的自托管执行机（box、站长笔记本）2026-11-15 已删掉——仓库公开后任何人都能开 PR，自托管执行机会跑别人的代码。只跑 main 和本仓库分支的 PR，fork 来的 PR 不跑、拿不到密钥。Actions 日志公开可见：部署列表进日志前隐去账号邮箱（`scripts/ci-redact.mjs`）；旧日志可以在 Actions 页手动运行「Clean old logs」删掉（只删日志，运行记录留着）。PR 和 main 都完整检查当前代码；PR 通过后部署测试站，合并后还会核对代码树与两份 PR 通过证据，再做正式站冒烟检查（小芯真模型联调 2026-11-26 已删，站长不用小芯了）。证据缺失或代码不同就停止部署。每套合成浏览器检查的独立日志和预览服务日志会在失败时照常上传，保留一天；正式站的真实聊天不放进这份报告。

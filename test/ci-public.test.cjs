@@ -95,3 +95,14 @@ test('清理旧日志只能手动运行：只删 before 以前、已经结束的
     await assert.rejects(run(''), /before/);
   } finally { if (pause === undefined) delete process.env.CLEAN_PAUSE_MS; else process.env.CLEAN_PAUSE_MS = pause; }
 });
+
+// 站长 2026-11-26：小芯不用了，正式发布不再跑小芯真模型联调（每次十几到二十多分钟，还要叫醒 li）。
+// 冒烟检查（十几秒的网页访问）和失败自动回滚照旧；联调的脚本和只测它们的测试一起删掉。
+test('正式发布不再跑小芯真模型联调；冒烟检查和失败回滚照旧，联调脚本已删', () => {
+  const wf = read('deploy.yml');
+  for (const gone of ['test-xin-live.py', 'xin-live-scope', 'xin_scope', '小芯联调', 'live_xin']) assert.ok(!wf.includes(gone), 'deploy.yml 里不该还有 ' + gone);
+  assert.match(wf, /- name: 冒烟检查\n\s+id: smoke/);
+  assert.match(wf, /- name: 正式站检查失败，回滚到发布前记录的版本\n\s+if: failure\(\) && steps\.deploy\.outcome == 'success' && env\.TARGET == 'production'/);
+  for (const f of ['scripts/test-xin-live.py', 'scripts/xin_live_steer.py', 'scripts/xin_live_policy.py', 'scripts/xin-live-scope.cjs'])
+    assert.ok(!fs.existsSync(path.resolve(__dirname, '..', f)), f + ' 应该删掉');
+});

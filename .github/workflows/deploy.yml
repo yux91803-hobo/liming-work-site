@@ -150,7 +150,8 @@ jobs:
           overwrite: true
 
   deploy:
-    timeout-minutes: 55
+    # 以前留 55 分钟给小芯真模型联调；联调删掉以后，部署加冒烟检查几分钟就完
+    timeout-minutes: 20
     needs: [check, e2e]
     # 仅可信来源，且当前提交的两套测试都成功后才能部署。
     if: >-
@@ -314,45 +315,7 @@ jobs:
           echo "小芯聊天：$(curl -s --max-time 20 "$BASE/api/xin/me")"
           exit $fail
 
-      # 站长 2026-11-21、11-26：只改天启界面、平板文件、文档、浏览器测试时，不跑小芯真模型联调（规则和理由见 scripts/xin-live-scope.cjs）。
-      # 基准是上一次成功发布到正式站的提交，之间任何一个文件碰到小芯或服务端就照跑；判断不了也照跑。
-      - name: 判断这次要不要跑小芯联调
-        id: xin_scope
-        if: steps.smoke.outcome == 'success' && env.TARGET == 'production'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const {decide}=require(require('path').join(process.env.GITHUB_WORKSPACE,'scripts/xin-live-scope.cjs'));
-            const r=await decide({github,context,core});
-            core.info((r.run?'跑小芯联调：':'跳过小芯联调：')+r.reason);
-            await core.summary.addRaw((r.run?'小芯联调：照跑。':'小芯联调：跳过。')+r.reason+'\n').write();
-            core.setOutput('run',r.run?'true':'false');
-            core.setOutput('tianqi_vision',r.tianqiVision?'true':'false');
-
-      - uses: actions/setup-python@v6
-        if: steps.smoke.outcome == 'success' && env.TARGET == 'production' && steps.xin_scope.outputs.run != 'false'
-        with:
-          python-version: "3.12"
-
-      - name: 安装正式站联调浏览器
-        if: steps.smoke.outcome == 'success' && env.TARGET == 'production' && steps.xin_scope.outputs.run != 'false'
-        run: |
-          pip install playwright==1.64.1
-          if command -v google-chrome >/dev/null 2>&1; then
-            echo "CHROMIUM_PATH=$(command -v google-chrome)" >> "$GITHUB_ENV"
-          else
-            python -m playwright install --with-deps chromium
-          fi
-
-      - name: 正式站登录、真实模型、后台任务、奶龙网页和文件下载
-        id: live_xin
-        if: steps.smoke.outcome == 'success' && env.TARGET == 'production' && steps.xin_scope.outputs.run != 'false'
-        # 2026-11-17 加了插话的三段真模型联调（scripts/xin_live_steer.py，约 8–12 分钟）；整个作业 55 分钟，超时后回滚还来得及
-        timeout-minutes: 45
-        env:
-          XIN_OWNER_PASSWORD: ${{ secrets.XIN_OWNER_PASSWORD }}
-          CHECK_TIANQI_VISION: ${{ steps.xin_scope.outputs.tianqi_vision }}
-        run: python scripts/test-xin-live.py
+      # 站长 2026-11-26：小芯不用了，正式发布不再跑小芯真模型联调（以前冒烟检查之后在这里叫醒 li、装浏览器、用真模型走一遍小芯，十几到二十多分钟）。
 
       - name: 正式站检查失败，回滚到发布前记录的版本
         if: failure() && steps.deploy.outcome == 'success' && env.TARGET == 'production'
