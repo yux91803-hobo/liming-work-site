@@ -623,4 +623,14 @@ process.on('SIGINT', () => { srv.close(() => process.exit(0)); });
   for (const line of logs) {
     assert.ok(!line.includes('SuperSecretTunnelTok7788'), `日志泄露令牌：${line}`);
   }
+
+  await t.test('就绪轮询期间系统时钟向前校准不会提前超时', async (clockTest) => {
+    fs.writeFileSync(path.join(stateDir, 'mode.txt'), 'ok');
+    const wallTime = Date.now();
+    let reads = 0;
+    clockTest.mock.method(Date, 'now', () => wallTime + (reads++ === 0 ? 0 : 3600_000));
+
+    const tunnel = await manager.acquire('li2', 'task-clock', { sshTarget, remotePort: 3080 });
+    assert.ok(tunnel.localPort > 0);
+  });
 });
