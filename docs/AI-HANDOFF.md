@@ -1,3 +1,13 @@
+## 2026-11-26 · 接手平板调用云电脑（Claude Code）
+
+- **谁做的**：站长让 Claude Code 接手 Antigravity 的第 1–2 阶段（原定 Muse 复核）。Claude Code 核对、修改并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)。
+- **已完成**：
+  - 用真实 `dsh web` 0.2.2-rc.3 跑插件自己的 `dsh-client.js`，12/12 通过。
+  - 修好 SSH 隧道单测（就绪轮询的定时器不能 `unref`）。
+  - 修好独立发布的基准：手动发布到正式站的运行也算。#226 已由 #519 手动发布上线，正式站 7 个平板文件与 main 一致。
+- **接手注意**：`job/list` 里停掉的后台命令不会消失，而是 `status: killed`，判断「还有没有后台命令在跑」要看 `status === 'running'`。
+- **下一步**：按[实施计划](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md)做第 3–8 阶段。
+
 ## 2026-11-26 · 平板调用云电脑接手第二阶段（Antigravity / Gemini 4 Neon 实现，待 Muse 复核）
 
 - **谁做的**：原设计由 Claude Code 编写（[设计文档](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)）；阶段 2 由 Antigravity（Gemini 4 Neon）实现并自查，待 Muse 复核后再进入阶段 3（按任务书归属标注「Antigravity（Gemini 4 Neon）实现、Muse 复核」，当前待复核）。分支 `claude/dsh-go-customization-discussion-d5wt84`，基于阶段 1 提交 `ff3e289`。未改动 `src/`、`site/xin/`、`site/tools/tianqi/` 及小芯/天启任何代码与配置。

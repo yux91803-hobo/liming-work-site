@@ -50,11 +50,10 @@ function probeLoopbackPort(port, timeoutMs = 300) {
   });
 }
 
+// 就绪轮询用的等待不能 unref：ssh 在等待期间退出后，事件循环里可能只剩这个定时器，
+// unref 了循环会提前清空，acquire() 的 Promise 永远不结束（单测里表现为 cancelledByParent）。
 function sleep(ms) {
-  return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms);
-    t.unref?.();
-  });
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
 }
 
 function signalProcessGroup(child, sig) {

@@ -1,3 +1,17 @@
+# 修改清单 · 2026-11-26（接手平板调用云电脑：核对第 1–2 阶段、修 SSH 隧道单测；手动正式发布也算独立发布的基准）
+
+- **谁做的**：站长 11-26 让 Claude Code 接手（「别的ai改了点，你接手」）。第 1–2 阶段原由 Antigravity（Gemini 4 Neon）实现，原定 Muse 复核；现由 Claude Code 核对并修改，自查，没有第二位 AI 独立复核。
+- **核对第 1–2 阶段**：
+  - 插件自己的 `site/tablet/liming-cloud/lib/dsh-client.js` 以前只对假服务器测过。这次接上真实 `dsh web` 0.2.2-rc.3 和模拟模型，逐个调用接口，12/12 通过：登录换 Cookie、未知对话的 `session/prompt` 报 `session/not-found`、`session/create` 返回同一编号、同一请求编号重发只留一条消息、`session/list`、`session/page`、`session/state`、经 `/api/remote.mux` 的 `job/list`、`job/kill`（`requested`，之后列表里是 `killed`）、`session/follow`、空闲时 `session/cancel`。
+  - `test/tablet-cloud-transport.test.cjs` 的 SSH 隧道一项在本机每次都失败（`cancelledByParent`：Promise 没结束，事件循环先空了），原实现记录的是全过。原因：`ssh-tunnel.js` 等隧道就绪时，轮询间隔用了 `unref` 的定时器。假 ssh 在等待期间退出后，事件循环里只剩这个定时器，`acquire()` 就永远不返回。在 `dsh web` 里有 HTTP 服务撑着，碰不到；但这是真问题，测试是对的。改为普通定时器，最多等到连接超时（默认 15 秒）。别处请求超时用的 `unref` 定时器不变，那些情况下有连接在撑着。
+- **手动正式发布也算基准**：
+  - 原实现：`scripts/xin-live-scope.cjs` 拿「上一次成功发布」当基准时，只认合并触发的运行（`event: push`）。这是 11-21 的写法，11-26 #226 加平板前缀时照用。
+  - 问题：#222 之后合并触发的正式发布都失败了，后来是手动发布 #516、#519 绿的，所以基准一直停在 `f0182ea`。之后哪怕只改平板，比较范围也包含 #222、#224 的小芯改动，照样跑小芯联调。站长要的独立发布等于没生效。
+  - 改法：手动运行（`workflow_dispatch`）也算，但手动运行默认只 dry-run 或只发测试站，所以只认部署作业里「判断这次要不要跑小芯联调」这一步成功的：这一步只在真正发布到正式站、冒烟通过后才跑，#519 的作业记录里正是这样。认不出来就往前找，找不到照跑，跟原来一样宁可多跑。新增一项测试，核对部署流程里这一步还叫这个名字、条件没变，改名会红。
+- **验证**：
+  - `test/xin-live-scope.test.cjs` 新增 3 项，共 11/11。为了让假接口像真接口一样按 `event` 过滤，`fake()` 补了这一点；补之前「手动发布也算基准」那项是假通过，补之后改前失败、改后通过。另外 2 项改前改后都过：一项防止把 dry-run 和测试站运行当基准，一项核对步骤名。
+  - SSH 隧道单测连跑 3 次都通过；平板相关单测共 50/50。全量检查见本分支 PR。
+
 # 修改清单 · 2026-11-26（平板调用云电脑第二阶段：`liming-cloud` 插件骨架、台账、发件箱与云端传输原语）
 
 - **谁做的**：原设计由 Claude Code 编写（[设计文档](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)）；阶段 2 由 Antigravity（Gemini 4 Neon）实现并自查，待 Muse 复核（任务书要求标注「Antigravity（Gemini 4 Neon）实现、Muse 复核」，当前处于提交待复核状态）。分支 `claude/dsh-go-customization-discussion-d5wt84`，基线 `ff3e289`。未改动 `src/`、`site/xin/`、`site/tools/tianqi/`、小芯与天启既有代码和配置，也未越界提前实现阶段 3（模型工具）或阶段 4（UI 面板）。
