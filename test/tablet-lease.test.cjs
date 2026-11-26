@@ -117,12 +117,34 @@ test('卸载时清掉定时器，拿着租约就尽量放掉', async (t) => {
   assert.equal(ib.leaseCalls().length, n, '卸载后不再续');
 });
 
+test('续约时刻落在空闲缓冲期，再次忙起来会恢复续约', async (t) => {
+  const { k, ib } = await keeper(t, { renewMs: 40, releaseAfterMs: 1000 });
+  k.setBusy('agent:s1', true);
+  assert.ok(await until(() => k.state().held));
+  k.setBusy('agent:s1', false);
+  await sleep(100);
+  assert.equal(ib.leaseCalls().length, 1);
+  k.setBusy('agent:s1', true);
+  assert.ok(await until(() => ib.leaseCalls().some((call, index) => index > 0 && call.method === 'PUT'), 300));
+  assert.ok(!ib.leaseCalls().some(call => call.method === 'DELETE'));
+});
+
+test('首次 PUT 已发出但回执丢失，卸载时仍尝试释放', async (t) => {
+  const ib = fakeInstabox({ fail: method => method === 'PUT' ? new Error('connection closed') : null });
+  const { k } = await keeper(t, { ib });
+  k.setBusy('agent:s1', true);
+  assert.ok(await until(() => k.state().lastError));
+  await k.dispose();
+  assert.equal(ib.leaseCalls().at(-1).method, 'DELETE');
+});
+
 test('读 ~/.liming-cloud 下的 lease.key 和 machine-name；权限太宽会提醒', async (t) => {
   const { readLeaseFiles } = await lib('lease.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tablet-lease-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   assert.deepEqual(readLeaseFiles(dir), { key: null, name: null, warnings: [] });
-  fs.writeFileSync(path.join(dir, 'lease.key'), `${KEY}\n`, { mode: 0o644 });
+  fs.writeFileSync(path.join(dir, 'lease.key'), `${KEY}\n`, { mode: 0o600 });
+  fs.chmodSync(path.join(dir, 'lease.key'), 0o644);
   fs.writeFileSync(path.join(dir, 'machine-name'), 'li2\n');
   const r = readLeaseFiles(dir);
   assert.equal(r.key, KEY);

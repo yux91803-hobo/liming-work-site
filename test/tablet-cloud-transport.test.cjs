@@ -497,6 +497,39 @@ exit 2
   );
 });
 
+test('同一台云机的并发首连共用一次 Harness 冷启动，再分别登记隧道使用者', async (t) => {
+  const { createRemote } = await importLib('remote.js');
+  const srv = await startFakeDshWeb(t);
+  const target = 'ibssh_FakeParallelToken@li2.instabox.test';
+  const owners = new Set();
+  let starts = 0;
+  const tunnels = {
+    createSshShell() {
+      return {
+        async run(script) {
+          if (script.includes('nohup')) {
+            starts++;
+            await new Promise(resolve => setImmediate(resolve));
+            return { exitCode: 0, stdout: `DSHAPP started 123\nDSHAPP url ${srv.baseUrl}/?token=${srv.token}\n` };
+          }
+          return { exitCode: 0, stdout: '' };
+        },
+      };
+    },
+    status() { return { state: 'open', localPort: Number(new URL(srv.baseUrl).port) }; },
+    async acquire(_machine, ownerId) { owners.add(ownerId); return { localPort: this.status().localPort, baseUrl: srv.baseUrl }; },
+    release(_machine, ownerId) { owners.delete(ownerId); },
+  };
+  const remote = createRemote({ secrets: { getMachine: () => ({ sshTarget: target }) }, tunnels });
+  const [first, second] = await Promise.all([remote.connect('li2', 'first'), remote.connect('li2', 'second')]);
+  assert.equal(starts, 1);
+  assert.equal(first.client, second.client);
+  assert.deepEqual([...owners], ['first', 'second']);
+  await first.release();
+  await second.release();
+  assert.equal(owners.size, 0);
+});
+
 test('ssh-tunnel：假 ssh 按需建隧道、复用、无活跃任务自动关闭、掉线退避重连与零令牌泄露', async (t) => {
   const { createTunnelManager } = await importLib('ssh-tunnel.js');
   const root = tmpDir(t);
@@ -632,5 +665,22 @@ process.on('SIGINT', () => { srv.close(() => process.exit(0)); });
 
     const tunnel = await manager.acquire('li2', 'task-clock', { sshTarget, remotePort: 3080 });
     assert.ok(tunnel.localPort > 0);
+  });
+  await t.test('两个同时等待就绪的任务只开一条隧道', async () => {
+    const before = fs.readFileSync(spawnLog, 'utf8').trim().split('\n').length;
+    const opts = { sshTarget, remotePort: 3080 };
+    const [first, second] = await Promise.all([manager.acquire('parallel', 'task-3', opts), manager.acquire('parallel', 'task-4', opts)]);
+    const spawned = fs.readFileSync(spawnLog, 'utf8').trim().split('\n').slice(before).map(line => JSON.parse(line));
+    try {
+      assert.equal(first.localPort, second.localPort);
+      assert.equal(manager.status('parallel').activeOwners, 2);
+      assert.equal(spawned.length, 1);
+    } finally {
+      for (const { pid } of spawned) {
+        if (pid !== manager.status('parallel').pid) {
+          try { process.kill(pid, 'SIGTERM'); } catch {}
+        }
+      }
+    }
   });
 });

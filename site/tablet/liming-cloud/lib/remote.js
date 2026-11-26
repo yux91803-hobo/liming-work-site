@@ -47,6 +47,8 @@ export function parseLeftovers(stdout) {
 
 export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_COMMAND, direct = null, loginTimeoutMs = 15000 } = {}) {
   const cache = new Map();
+  const connecting = new Map();
+  const lifetime = new AbortController();
 
   function machines() {
     if (direct) return Object.keys(direct).sort();
@@ -70,13 +72,28 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
     return tunnels.createSshShell(machine, sshSpec(machine));
   }
 
-  async function connect(machine, ownerId) {
+  async function connect(machine, ownerId, { signal = lifetime.signal } = {}) {
+    const aborted = AbortSignal.any([lifetime.signal, signal]);
+    const previous = connecting.get(machine);
+    const pending = Promise.resolve(previous).catch(() => {}).then(() => {
+      aborted.throwIfAborted();
+      return connectOnce(machine, ownerId, aborted);
+    });
+    connecting.set(machine, pending);
+    try {
+      return await pending;
+    } finally {
+      if (connecting.get(machine) === pending) connecting.delete(machine);
+    }
+  }
+
+  async function connectOnce(machine, ownerId, signal) {
     if (direct) {
       const d = direct[machine];
       if (!d) throw new RemoteError('NO_SSH_TARGET', `没有配置机器 ${machine}`);
       let c = cache.get(machine);
       if (!c) {
-        c = { client: await DshClient.login(d.baseUrl, d.token, { timeoutMs: loginTimeoutMs }) };
+        c = { client: await DshClient.login(d.baseUrl, d.token, { timeoutMs: loginTimeoutMs, signal }) };
         cache.set(machine, c);
       }
       return { client: c.client, release() {} };
@@ -89,10 +106,12 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
     }
     if (!c) {
       const boot = createRemoteBootstrap(shellFor(machine), { launchCommand });
-      const info = await boot.ensureRunning();
+      const info = await boot.ensureRunning({ signal });
+      signal.throwIfAborted();
       const t = await tunnels.acquire(machine, ownerId, { ...spec, remotePort: info.port });
       try {
-        const client = await DshClient.login(t.baseUrl, info.token, { timeoutMs: loginTimeoutMs });
+        signal.throwIfAborted();
+        const client = await DshClient.login(t.baseUrl, info.token, { timeoutMs: loginTimeoutMs, signal });
         c = { client, localPort: t.localPort, remotePort: info.port };
         cache.set(machine, c);
       } catch (err) {
@@ -101,6 +120,10 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
       }
     } else {
       await tunnels.acquire(machine, ownerId, { ...spec, remotePort: c.remotePort });
+      if (signal.aborted) {
+        await tunnels.release(machine, ownerId);
+        signal.throwIfAborted();
+      }
     }
     let released = false;
     return { client: c.client, release: () => { if (!released) { released = true; return tunnels.release(machine, ownerId); } } };
@@ -111,7 +134,9 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
   }
 
   async function exec(machine, script, opts = {}) {
-    return shellFor(machine).run(script, opts);
+    const signal = opts.signal ? AbortSignal.any([lifetime.signal, opts.signal]) : lifetime.signal;
+    signal.throwIfAborted();
+    return shellFor(machine).run(script, { ...opts, signal });
   }
 
   async function ensureProjectDir(machine, cwd) {
@@ -126,5 +151,11 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
     return parsed;
   }
 
-  return { machines, connect, invalidate, exec, ensureProjectDir, killLeftovers };
+  async function dispose() {
+    lifetime.abort();
+    await Promise.allSettled(connecting.values());
+    cache.clear();
+  }
+
+  return { machines, connect, invalidate, exec, ensureProjectDir, killLeftovers, dispose };
 }

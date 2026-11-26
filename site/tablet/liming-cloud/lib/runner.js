@@ -140,14 +140,15 @@ export function createRunner({
       const task = ledger.getTask(entry.taskId);
       if (!task) throw Object.assign(new Error(`台账里没有任务 ${entry.taskId}`), { code: 'LEDGER_TASK_NOT_FOUND' });
       let conn = null;
+      let delay;
+      const seenAtConnect = entry.seenSeq;
       try {
         progress(entry, attempt ? `重新连接 ${task.machine}…` : `连接 ${task.machine}…`);
-        conn = await remote.connect(task.machine, entry.taskId);
+        conn = await remote.connect(task.machine, entry.taskId, { signal: entry.abort.signal });
         if (entry.abort.signal.aborted) continue;
         entry.client = conn.client;
         await prepare(entry, conn.client);
         if (entry.abort.signal.aborted) continue;
-        attempt = 0;
         return await follow(entry, conn.client);
       } catch (err) {
         if (entry.abort.signal.aborted) continue;
@@ -156,20 +157,21 @@ export function createRunner({
         }
         if (FATAL.has(err && err.code)) throw err;
         remote.invalidate?.(task.machine);
+        if (entry.seenSeq > seenAtConnect) attempt = 0;
         attempt += 1;
         if (attempt > maxReconnects) {
           throw Object.assign(new Error(`暂时跟丢了：连不上 ${task.machine}，已重试 ${maxReconnects} 次。云端任务可能还在跑（比如机器在冷却），台账留着；站长回到这段对话或打开面板时再接上`), { code: 'LOST_TRACK' });
         }
-        const delay = reconnectMs[Math.min(attempt - 1, reconnectMs.length - 1)];
+        delay = reconnectMs[Math.min(attempt - 1, reconnectMs.length - 1)];
         const msg = redactText(err && err.message ? err.message : String(err));
         log('warn', `云端任务 ${entry.taskId}：${msg}，${delay}ms 后重连`);
         progress(entry, `连不上 ${task.machine}，稍后重试：${clip(msg, 50)}`);
         try { ledger.updateTask(entry.taskId, t => ({ ...t, lastError: msg })); } catch {}
-        await sleep(delay, entry.abort.signal);
       } finally {
         entry.client = null;
         try { await conn?.release?.(); } catch {}
       }
+      await sleep(delay, entry.abort.signal);
     }
   }
 
