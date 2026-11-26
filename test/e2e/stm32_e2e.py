@@ -1,8 +1,7 @@
 """STM32 学习台端到端测试（需要 python playwright + chromium）
 先 npm run dev，再 python3 test/e2e/stm32_e2e.py [http://localhost:5173]"""
-import asyncio, json, os, sys
-from datetime import datetime, timezone
-from playwright.async_api import async_playwright, expect
+import asyncio, json, os, sys, time
+from playwright.async_api import async_playwright
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else 'http://localhost:5173'
 TOOL = BASE + '/tools/stm32/'
@@ -816,7 +815,7 @@ async def main():
         await pg.reload(); await pg.wait_for_timeout(1500)
         cats = await pg.evaluate("[...document.querySelectorAll('.cat-h')].map(h => h.textContent)")
         wide = await pg.evaluate("[...document.querySelectorAll('.card.wide')].map(c => c.dataset.id)")
-        check('首页按分类排：天启 / 工具 / 学习（站长 11-19：小芯、天启在上，世界地图第三，学习最后），世界地图是宽卡', cats == ['天启', '工具', '学习'] and 'map' in wide, (cats, wide))
+        check('首页按分类排：工具 / 学习（2026-11-26 天启删了，世界地图在前，学习最后），世界地图是宽卡', cats == ['工具', '学习'] and 'map' in wide, (cats, wide))
         hero = await pg.evaluate("(() => { const c = document.querySelector('.card.hero'); return c && [c.dataset.id, c.querySelector('.go').textContent]; })()")
         check('最近用过的 STM32 放大，写着上次看到哪', hero == ['stm32', 'I2C 代码推导'], hero)
         ids = await pg.evaluate("[...document.querySelectorAll('.card[data-id]')].map(c => c.dataset.id)")
@@ -871,8 +870,8 @@ async def main():
         check('回到首页，小芯掉回标题栏', await pg.evaluate("[location.pathname, LimingXin.mode]") == ['/', 'idle'])
         platforms = await pg.evaluate("LimingXin.plats().map(p => [p.kind, p.el.dataset.id || null])")
         kinds = [kind for kind, _ in platforms]
-        tools = ('map', 'stm32', 'tianqi')
-        check('首页能站的地方：标题栏 + 三张工具卡片各自的上沿和里面',
+        tools = ('map', 'stm32')
+        check('首页能站的地方：标题栏 + 两张工具卡片各自的上沿和里面',
               kinds.count('ground') == 1 and len(platforms) == 1 + 2 * len(tools)
               and all([kind, tool] in platforms for tool in tools for kind in ('top', 'in')), platforms)
         i_in = kinds.index('in')

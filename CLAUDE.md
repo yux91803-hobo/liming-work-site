@@ -39,4 +39,4 @@ Liming 工具箱 / STM32 学习工作台，正式站 https://liming-work.com （
 - README、docs/CHANGES.md 可能落后于代码；功能以代码和 docs/CHANGES.md 最新条目为准，改了功能顺手更新 README。
 - 测试不过不合并；不跳过、不删测试来变绿。
 - 会删数据的改动（Durable Object 迁移、删存储等）先停下问用户。
-- 手动回滚：Actions 里正式站失败会自动回滚；也可以先从 deployments list 选取已验证的版本 UUID，再用 `wrangler rollback <版本UUID> --name liming-worldmap`（不要假定上一份上传版本就是稳定版本）。
+- 手动回滚：Actions 里正式站失败会自动回滚；也可以先从 deployments list 选取已验证的版本 UUID，再用 `wrangler rollback <版本UUID> --name liming-worldmap`（不要假定上一份上传版本就是稳定版本）。2026-11-26 的 v4 迁移删了 Durable Object 类，Cloudflare 不允许回滚到那次以前的版本。
