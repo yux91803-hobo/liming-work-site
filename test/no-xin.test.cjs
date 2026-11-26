@@ -30,3 +30,16 @@ test('发布流程不再写小芯的密钥，冒烟检查不再查小芯和天�
   for (const gone of ['XIN_', 'secret bulk', '/api/xin', '/api/tq', '/tools/tianqi', 'xin_'])
     assert.ok(!wf.includes(gone), gone);
 });
+
+test('小人不再带专给聊天用的部分：说话气泡、提问框、AI 工作状态、命令、学会的动作、好感度、额外背包项、聊天头像', () => {
+  const js = read('site/mascot.js');
+  const at = js.indexOf('window.LimingXin = {');
+  assert.ok(at > 0, '小人的对外接口还在');
+  const api = js.slice(at);
+  for (const key of ['say', 'ask', 'closeAsk', 'asking', 'ai', 'aiState', 'cmd', 'learn', 'learned', 'bond', 'addBag', 'removeBag', 'home', 'portrait'])
+    assert.doesNotMatch(api, new RegExp('(^|[\\s{,])(get )?' + key + '\\s*[:(]', 'm'), key);
+  for (const gone of ['xin-say', 'xin-ask', 'xin-portrait', 'LimingXinChat', 'xin move'])
+    assert.ok(!js.includes(gone), gone);
+  const css = read('site/mascot.css');
+  for (const gone of ['.xin-say', '.xin-ask', '.xin-portrait']) assert.ok(!css.includes(gone), gone);
+});
