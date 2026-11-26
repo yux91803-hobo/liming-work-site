@@ -508,33 +508,40 @@ test('redact 100% 屏蔽 SSH 令牌、InstaBox key、网关 key、DSH Cookie 与
   assert.ok(!logged[0].includes(rawSecrets[4]));
 });
 
-test('liming-cloud 阶段 2 插件骨架最小入口与 package.json 合规（不越界注册工具或 UI）', async (t) => {
+// 阶段 3 起入口要注册三个工具和一段使用说明（原阶段 2 这项断言「不注册工具」，按计划在阶段 3 改成下面这样）
+test('liming-cloud 插件入口与 package.json 合规：零依赖，注册三个工具和使用说明，台账权限 700/600', async (t) => {
   const pkg = JSON.parse(fs.readFileSync(path.join(pluginRoot, 'package.json'), 'utf8'));
   assert.equal(pkg.name, 'liming-cloud');
   assert.equal(pkg.type, 'module');
   assert.equal(pkg.engines.dsh, '>=0.2.1-rc.2 <0.3.0-0');
   assert.equal(pkg.engines.node, '>=22.19');
   assert.equal(pkg.dependencies, undefined, '零外部依赖');
-  assert.equal(pkg.dshGo, undefined, '阶段 2 不提前声明 dshGo UI 面板');
 
   const plugin = await importLib('index.js');
   assert.equal(plugin.name, 'liming-cloud');
-  assert.equal(plugin.inject, undefined, '阶段 2 不注入 tools/dshGo');
+  assert.deepEqual([...plugin.inject].sort(), ['agents', 'jobs', 'systemPrompt', 'tools']);
+  assert.ok(!plugin.inject.includes('dshGo') && !plugin.inject.includes('dshGo?'), 'dshGo 只能用 ctx.inject([\'dshGo\'], …) 挂，不放顶层');
 
   const cloudDir = path.join(tmpDir(t), '.liming-cloud');
   const effects = [];
-  let toolsTouched = false;
-  let dshGoTouched = false;
+  const tools = [];
+  const sections = [];
   const ctx = {
     effect: (fn) => effects.push(fn),
-    tools: { register: () => { toolsTouched = true; } },
-    inject: () => { dshGoTouched = true; },
+    tools: { register: (def) => { tools.push(def.name); return () => {}; } },
+    jobs: { start: () => { throw new Error('入口不该直接起任务'); } },
+    agents: { get: () => undefined },
+    systemPrompt: { section: (s) => { sections.push(s); return () => {}; }, getSectionOrder: () => 500 },
+    on: () => () => {},
+    inject: () => {},
   };
   plugin.apply(ctx, { dir: cloudDir });
+  assert.deepEqual(tools.sort(), ['cloud_machines', 'cloud_run', 'cloud_tell']);
+  assert.equal(sections.length, 1);
+  assert.equal(sections[0].name, 'liming-cloud');
+  assert.match(sections[0].text, /cloud_run/);
   assert.equal(effects.length, 1);
   const dispose = effects[0]();
-  assert.equal(toolsTouched, false);
-  assert.equal(dshGoTouched, false);
   assert.ok(fs.existsSync(path.join(cloudDir, 'tasks.json')));
   assert.equal(modeOf(cloudDir), 0o700);
   assert.equal(modeOf(path.join(cloudDir, 'tasks.json')), 0o600);

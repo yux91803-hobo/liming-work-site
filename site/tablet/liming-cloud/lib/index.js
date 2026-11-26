@@ -1,19 +1,29 @@
-// DSH（Cordis）插件入口（阶段 2 最小骨架）：挂载台账、密钥存储、发件箱、SSH 隧道与生命周期清理。
-// 本阶段不注册面向模型的工具、不挂载 UI 面板（分别在阶段 3、4 接入）。
+// DSH（Cordis）插件入口：平板本机 AI 按需把活派给 li、li2 云电脑（设计 docs/superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md）。
+// 注册 cloud_run、cloud_tell、cloud_machines 三个工具和一段使用说明；任务的进度、列表、停止复用原生 job_output、job_list、job_kill。
 import { DEFAULT_CLOUD_DIR, createLedger } from './ledger.js';
 import { createOutbox } from './outbox.js';
 import { createRedactingLogger } from './redact.js';
 import { createSecretsStore } from './secrets.js';
 import { createTunnelManager } from './ssh-tunnel.js';
+import { createRemote } from './remote.js';
+import { createRunner } from './runner.js';
+import { createCloudTools } from './tools.js';
+import { createSettings } from './settings.js';
+import { readMachine } from './instabox-read.js';
 
 export const name = 'liming-cloud';
+export const inject = ['tools', 'jobs', 'agents', 'systemPrompt'];
+
+export const GUIDANCE = [
+  '你可以把活交给站长的两台云电脑（li、li2）在后台做：用 cloud_run。',
+  '长任务、写代码和编译、查资料写报告、要用云端浏览器的事就派；随手能答的不派。派之前不用问站长，派完接着和站长聊，不要干等。',
+  '进度用 job_output 看，job_list 列出，job_kill 停止；做完会自动通知你，再把结果告诉站长。补充要求或接着做用 cloud_tell。',
+  '两台现状用 cloud_machines 看。挑机器的理由和提醒（比如「大约 N 分钟后会暂停」）照实转告站长。',
+].join('\n');
 
 export function createCloudRuntime(config = {}) {
   const dir = config.dir || DEFAULT_CLOUD_DIR;
-  const secrets = createSecretsStore({
-    dir,
-    filePath: config.secretsFile,
-  });
+  const secrets = createSecretsStore({ dir, filePath: config.secretsFile });
   const logger = createRedactingLogger(config.logger, () => secrets.knownSecrets());
   const ledger = createLedger({
     dir,
@@ -22,10 +32,7 @@ export function createCloudRuntime(config = {}) {
     migrations: config.migrations,
     now: config.now,
   });
-  const outbox = createOutbox(ledger, {
-    now: config.now,
-    generateRequestId: config.generateRequestId,
-  });
+  const outbox = createOutbox(ledger, { now: config.now, generateRequestId: config.generateRequestId });
   const tunnels = createTunnelManager({
     sshBin: config.sshBin,
     controlDir: config.controlDir,
@@ -39,37 +46,44 @@ export function createCloudRuntime(config = {}) {
 
   function start() {
     ledger.init();
-    logger.info('liming-cloud 核心台账与传输骨架已就绪');
+    logger.info('liming-cloud 已就绪');
   }
 
   async function stop() {
     await tunnels.closeAll();
-    logger.info('liming-cloud 隧道与资源已清理');
   }
 
-  return {
-    dir,
-    secrets,
-    ledger,
-    outbox,
-    tunnels,
-    logger,
-    start,
-    stop,
-  };
+  return { dir, secrets, ledger, outbox, tunnels, logger, start, stop };
 }
 
 export function apply(ctx, config = {}) {
   let rawLogger = null;
   try { rawLogger = typeof ctx.logger === 'function' ? ctx.logger(name) : null; } catch {}
   const runtime = createCloudRuntime({ ...config, logger: config.logger || rawLogger });
+  const { secrets, ledger, outbox, tunnels, logger } = runtime;
+  const settings = createSettings({ dir: runtime.dir, config });
+  const remote = createRemote({ secrets, tunnels, direct: config.direct || null, launchCommand: config.launchCommand });
+  const runner = createRunner({ jobs: ctx.jobs, ledger, outbox, remote, logger, provider: config.provider || 'xin-gateway' });
+  const readStatus = async (machine) => {
+    if (config.statuses && config.statuses[machine]) return config.statuses[machine];
+    let readKey = '';
+    try { readKey = secrets.getMachine(machine)?.readKey || ''; } catch {}
+    return readMachine({ readKey, name: machine });
+  };
+
+  for (const def of createCloudTools({ runner, ledger, remote, readStatus, settings: () => settings.get() })) ctx.tools.register(def);
+  ctx.systemPrompt.section({ name: 'liming-cloud', order: ctx.systemPrompt.getSectionOrder('TOOL_JOBS'), text: GUIDANCE });
+
   ctx.effect(() => {
     try {
       runtime.start();
     } catch (err) {
-      runtime.logger.error(`liming-cloud 初始化失败：${err.message}`);
+      logger.error(`liming-cloud 初始化失败：${err.message}`);
     }
-    return () => runtime.stop();
+    return async () => {
+      await runner.dispose();
+      await runtime.stop();
+    };
   });
-  return runtime;
+  return { ...runtime, settings, remote, runner };
 }
