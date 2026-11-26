@@ -101,6 +101,7 @@ export function apply(ctx, config = {}) {
     return async () => {
       recovery.dispose();
       await runner.dispose();
+      await remote.dispose();
       await runtime.stop();
     };
   });

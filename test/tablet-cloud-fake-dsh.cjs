@@ -104,7 +104,7 @@ function createFakeCloud() {
           guard('session/state');
           if (cloud.coldSessions.has(sessionId)) throw new RpcError('session/not-found', 'not attached');
           const s = session(sessionId);
-          return { cursor: s.seqBase, active: true, running: s.running, queue: s.queue.map(q => q.text), pendingInput: [] };
+          return { cursor: s.seqBase, active: s.active !== false, running: s.running, queue: s.active === false ? null : s.queue.map(q => ({ id: q.requestId, rpcId: q.requestId, placement: 'queued' })), pendingInput: [] };
         },
         async listSessions() {
           guard('session/list');
@@ -119,6 +119,14 @@ function createFakeCloud() {
         },
         async rpc(endpoint, args) {
           guard(endpoint);
+          if (endpoint === 'session/projections') return null;
+          if (endpoint === 'session/updateQueue') {
+            const s = session(args.request.sessionId);
+            const index = s.queue.findIndex(q => q.requestId === args.request.itemId);
+            if (index < 0) throw new RpcError('session/queue-item-not-found');
+            s.queue.splice(index, 1);
+            return { accepted: true };
+          }
           if (endpoint === 'session/selectModel') {
             const s = session(args.request.sessionId);
             s.model = { provider: args.request.provider, model: args.request.model };

@@ -5,7 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn, execFileSync } = require('node:child_process');
+const { spawn, execFile, execFileSync } = require('node:child_process');
+const { once } = require('node:events');
+const { promisify } = require('node:util');
 const { pathToFileURL } = require('node:url');
 const { createFakeCloud, createFakeJobs, until } = require('./tablet-cloud-fake-dsh.cjs');
 
@@ -38,7 +40,7 @@ async function setup(t) {
     assert.ok(await until(() => cloud.sessions.get(sid) && cloud.sessions.get(sid).running));
     return { ...task, sid };
   }
-  return { cloud, jobs, ledger, runner, leftovers, running };
+  return { cloud, jobs, ledger, outbox, runner, leftovers, remote, running };
 }
 
 test('四步停止：一轮停了、后台命令清空、残留进程清零，都复核过才记「已停止」', async (t) => {
@@ -150,6 +152,87 @@ test('面板「停止」直接走停止协议，停完结掉平板这边的后�
   assert.equal(outcome.status, 'killed');
   assert.equal(ledger.getTask(task.taskId).stopRequest.source, 'panel');
   assert.equal((await runner.stopFromPanel(task.taskId)).status, 'stopped', '已经停了再点也不出错');
+});
+
+test('停止等正在发送的消息，合并重复停止，接着做时不补发已撤销的消息', async (t) => {
+  const { cloud, ledger, outbox, runner, running } = await setup(t);
+  const task = await running();
+  const arrived = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  t.after(release.resolve);
+  const client = cloud.client();
+  const send = outbox.enqueueAndFlush(task.taskId, { text: '正在发送的插话', mode: 'steer' }, {
+    async prompt(...args) {
+      arrived.resolve();
+      await release.promise;
+      return client.prompt(...args);
+    },
+  });
+  await arrived.promise;
+  outbox.enqueue(task.taskId, { text: '还未发送的插话', mode: 'steer' });
+  const first = runner.stopFromPanel(task.taskId);
+  const second = runner.stop(task.taskId, { source: 'resume' });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(ledger.getTask(task.taskId).status, 'stopping');
+    assert.ok(!cloud.calls.includes('session/cancel'), '发送中的请求结清后才开始云端停止');
+  } finally {
+    release.resolve();
+    await Promise.allSettled([send, first, second]);
+  }
+  await send;
+  assert.deepEqual(await first, await second);
+  assert.equal(ledger.getTask(task.taskId).status, 'stopped');
+  assert.equal(cloud.sessions.get(task.sid).running, false);
+  assert.equal(cloud.calls.filter(x => x === 'session/cancel').length, 1);
+  await runner.tell(task.taskId, '请继续');
+  assert.ok(await until(() => cloud.userMessages(task.sid).some(m => m.text === '请继续')));
+  assert.deepEqual(cloud.userMessages(task.sid).map(m => m.text), ['跑个长任务', '正在发送的插话', '请继续']);
+});
+
+test('停止先撤回仍在 Harness 里排队的本任务消息，再验证当前轮结束', async (t) => {
+  const { cloud, ledger, outbox, runner, running } = await setup(t);
+  const task = await running();
+  const client = cloud.client();
+  await outbox.enqueueAndFlush(task.taskId, { text: '排到下轮的旧请求', mode: 'queue' }, client);
+  assert.equal(cloud.sessions.get(task.sid).queue.length, 1);
+  assert.equal((await runner.stopFromPanel(task.taskId)).status, 'stopped');
+  assert.equal(ledger.getTask(task.taskId).status, 'stopped');
+  assert.equal(cloud.sessions.get(task.sid).running, false);
+  assert.deepEqual(cloud.userMessages(task.sid).map(m => m.text), ['跑个长任务']);
+});
+
+test('同一机器同一项目只允许一个活动任务，旧台账有重叠时不扫别人的进程', async (t) => {
+  const { cloud, ledger, runner, leftovers } = await setup(t);
+  const request = { machine: 'li2', project: 'shared-project', title: '任务', text: '开始', tabletSessionId: 'tab-A' };
+  const first = runner.dispatch(request);
+  assert.throws(() => runner.dispatch(request), { code: 'PROJECT_BUSY' });
+  assert.ok(await until(() => cloud.sessions.get(first.cloudSessionId)?.running));
+  const old = ledger.createTask({ ...request, status: 'running' });
+  const r = await runner.stopFromPanel(first.taskId);
+  assert.equal(r.status, 'stopping');
+  assert.match(r.detail, new RegExp(old.taskId));
+  assert.equal(leftovers.calls, 0, '项目目录仍被另一个任务使用');
+});
+
+test('清理项目进程在 TERM 后重新扫描，仍在项目里的子进程不会被漏掉', { timeout: 10000 }, async (t) => {
+  const { leftoverScript, parseLeftovers } = await lib('remote.js');
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tablet-stop-rescan-'));
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  const startProcess = () => {
+    const child = spawn('sleep', ['30'], { cwd, stdio: 'ignore' });
+    t.after(() => child.kill('SIGKILL'));
+    return child;
+  };
+  const first = startProcess();
+  const exited = once(first, 'exit');
+  const cleanup = promisify(execFile)('/bin/sh', ['-c', leftoverScript(cwd)]);
+  await exited;
+  const late = startProcess();
+  const { found, remain } = parseLeftovers((await cleanup).stdout);
+  assert.ok(found.includes(late.pid));
+  assert.deepEqual(remain, []);
+  assert.ok(await until(() => late.exitCode !== null || late.signalCode !== null));
 });
 
 // Harness 释放类原因防漂移：设了 DSH_HARNESS_ROOT（含 node_modules/@deepseek-ai 的目录）就扫它的源码；

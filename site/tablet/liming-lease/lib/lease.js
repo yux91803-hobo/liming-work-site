@@ -13,8 +13,12 @@ export function readLeaseFiles(dir) {
   let name = null;
   try {
     const file = path.join(dir, 'lease.key');
-    key = fs.readFileSync(file, 'utf8').trim() || null;
-    if (key && (fs.statSync(file).mode & 0o077)) warnings.push('lease.key 的权限太宽，应该是 600（chmod 600 ~/.liming-cloud/lease.key）');
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || (stat.mode & 0o077)) {
+      warnings.push('lease.key 要是权限为 600 的普通文件（chmod 600 ~/.liming-cloud/lease.key）');
+    } else {
+      key = fs.readFileSync(file, 'utf8').trim() || null;
+    }
   } catch {}
   try { name = fs.readFileSync(path.join(dir, 'machine-name'), 'utf8').trim() || null; } catch {}
   return { key, name, warnings };
@@ -34,6 +38,7 @@ export function createLeaseKeeper({
 } = {}) {
   const busy = new Set();
   let held = false;
+  let mayHaveLease = false;
   let machineId = null;
   let renewTimer = null;
   let releaseTimer = null;
@@ -50,6 +55,7 @@ export function createLeaseKeeper({
   async function call(method, urlPath, key, body) {
     const res = await fetchImpl(`${baseUrl}${urlPath}`, {
       method,
+      redirect: 'error',
       headers: { 'X-API-Key': key, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(timeoutMs),
@@ -74,16 +80,19 @@ export function createLeaseKeeper({
 
   async function acquire() {
     if (disposed || busy.size === 0) return;
+    retryTimer = clear(retryTimer);
     const key = readKey();
     if (!key) { log('warn', '没有 ~/.liming-cloud/lease.key，不拿租约（任务照常跑，只是长时间没输出时机器可能被暂停）'); return; }
     try {
       const id = await resolveId(key);
+      if (disposed || !busy.size) return;
+      mayHaveLease = true;
       await call('PUT', `/v1/machines/${id}/activity-leases/${LEASE_ID}`, key, { ttlSeconds });
       if (!held) log('info', `拿到租约 ${LEASE_ID}`);
       held = true;
       lastError = null;
       renewTimer = clear(renewTimer);
-      renewTimer = timer(() => { renewTimer = null; if (busy.size) run(acquire); }, renewMs);
+      if (!disposed && busy.size) renewTimer = timer(() => { renewTimer = null; if (busy.size) run(acquire); }, renewMs);
     } catch (err) {
       lastError = hide(err && err.message, key);
       log('warn', `拿租约失败：${lastError}`, key);
@@ -95,11 +104,13 @@ export function createLeaseKeeper({
   }
 
   async function release() {
+    if (busy.size) return;
     renewTimer = clear(renewTimer);
     retryTimer = clear(retryTimer);
-    if (!held || !machineId) return;
+    if (!mayHaveLease || !machineId) return;
     const key = readKey();
     held = false;
+    mayHaveLease = false;
     if (!key) return;
     try {
       await call('DELETE', `/v1/machines/${machineId}/activity-leases/${LEASE_ID}`, key);
@@ -123,7 +134,7 @@ export function createLeaseKeeper({
     if (isBusy) busy.add(source); else busy.delete(source);
     if (busy.size > 0) {
       releaseTimer = clear(releaseTimer);
-      if (before === 0 && !held) run(acquire);
+      if (before === 0 && (!held || !renewTimer)) run(acquire);
     } else if (before > 0) {
       releaseTimer = clear(releaseTimer);
       releaseTimer = timer(() => { releaseTimer = null; if (busy.size === 0) run(release); }, releaseAfterMs);
@@ -132,10 +143,10 @@ export function createLeaseKeeper({
 
   async function dispose() {
     if (disposed) return;
+    disposed = true;
     releaseTimer = clear(releaseTimer);
     busy.clear();
     await run(release);
-    disposed = true;
   }
 
   function state() {

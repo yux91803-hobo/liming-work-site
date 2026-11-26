@@ -24,6 +24,9 @@ export function apply(ctx, config = {}) {
   ctx.on('agent/status', ({ agent, status }) => {
     if (agent && agent.id) keeper.setBusy(`agent:${agent.id}`, status === 'running');
   });
+  ctx.on('agent/disposed', ({ agent }) => {
+    if (agent && agent.id) keeper.setBusy(`agent:${agent.id}`, false);
+  });
   ctx.on('session/event', (_session, event) => {
     const jobId = event && event.data && event.data.jobId;
     if (!jobId) return;

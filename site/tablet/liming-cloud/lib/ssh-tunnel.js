@@ -163,6 +163,7 @@ export function createTunnelManager(options = {}) {
         reconnectTimer: null,
         reconnects: 0,
         connectingPromise: null,
+        closingPromise: null,
         intentionalClose: false,
         lastError: null,
       };
@@ -181,7 +182,14 @@ export function createTunnelManager(options = {}) {
     try { fs.unlinkSync(filePath); } catch {}
   }
 
-  async function stopTunnelProcess(st) {
+  function stopTunnelProcess(st) {
+    if (st.closingPromise) return st.closingPromise;
+    const pending = close(st).finally(() => { st.closingPromise = null; });
+    st.closingPromise = pending;
+    return pending;
+  }
+
+  async function close(st) {
     clearTimers(st);
     const child = st.child;
     const sock = st.controlPath;
@@ -191,6 +199,7 @@ export function createTunnelManager(options = {}) {
     if (child) {
       await stopChildProcess(child, stopGraceMs);
     }
+    await st.connectingPromise?.catch(() => {});
     safeUnlink(sock);
     st.state = 'closed';
   }
@@ -208,7 +217,7 @@ export function createTunnelManager(options = {}) {
     st.reconnectTimer = setTimeout(() => {
       st.reconnectTimer = null;
       if (st.owners.size === 0 || st.intentionalClose) return;
-      openTunnelInternal(st, {
+      openTunnel(st, {
         sshTarget: st.sshTarget,
         sshPort: st.sshPort,
         remotePort: st.remotePort,
@@ -225,6 +234,14 @@ export function createTunnelManager(options = {}) {
     st.reconnectTimer.unref?.();
   }
 
+  function openTunnel(st, spec) {
+    const pending = openTunnelInternal(st, spec);
+    st.connectingPromise = pending;
+    const clear = () => { if (st.connectingPromise === pending) st.connectingPromise = null; };
+    pending.then(clear, clear);
+    return pending;
+  }
+
   async function openTunnelInternal(st, { sshTarget, sshPort = 22, remotePort }) {
     const target = parseSshTarget(sshTarget);
     rememberTarget(target);
@@ -234,7 +251,16 @@ export function createTunnelManager(options = {}) {
 
     const controlPath = controlPathFor(st.machine);
     safeUnlink(controlPath);
+    st.state = 'connecting';
+    st.intentionalClose = false;
+    st.sshTarget = target;
+    st.sshPort = sshPort;
+    st.remotePort = remotePort;
+    st.controlPath = controlPath;
     const localPort = await allocateLoopbackPort();
+    if (st.intentionalClose || st.owners.size === 0) {
+      throw new SshTunnelError('TUNNEL_CLOSED', `[${st.machine}] SSH 隧道在就绪前已关闭`, extraSecrets);
+    }
     const connectSec = Math.max(1, Math.ceil(connectTimeoutMs / 1000));
     const args = [
       '-N',
@@ -247,12 +273,6 @@ export function createTunnelManager(options = {}) {
       target,
     ];
 
-    st.state = 'connecting';
-    st.intentionalClose = false;
-    st.sshTarget = target;
-    st.sshPort = sshPort;
-    st.remotePort = remotePort;
-    st.controlPath = controlPath;
     st.localPort = localPort;
 
     let stderrBuf = '';
@@ -306,7 +326,7 @@ export function createTunnelManager(options = {}) {
     child.once('error', (err) => onUnexpectedExit(null, null, err));
     child.once('exit', (code, signal) => onUnexpectedExit(code, signal, null));
 
-    const deadline = performance.now() + connectTimeoutMs;   // 单调时钟：平板校时不会提前判超时或一直等
+    const deadline = performance.now() + connectTimeoutMs;
     while (performance.now() < deadline) {
       if (exitedEarly) {
         await stopChildProcess(child, stopGraceMs);
@@ -322,7 +342,8 @@ export function createTunnelManager(options = {}) {
       if (st.intentionalClose || st.child !== child) {
         throw new SshTunnelError('TUNNEL_CLOSED', `[${st.machine}] SSH 隧道在就绪前已关闭`, extraSecrets);
       }
-      if (await probeLoopbackPort(localPort, Math.min(250, connectTimeoutMs))) {
+      const ready = await probeLoopbackPort(localPort, Math.min(250, connectTimeoutMs));
+      if (ready && !exitedEarly && !st.intentionalClose && st.child === child) {
         st.state = 'open';
         st.reconnects = 0;
         st.lastError = null;
@@ -357,6 +378,7 @@ export function createTunnelManager(options = {}) {
     const target = parseSshTarget(sshTarget);
     rememberTarget(target);
     const st = getOrCreateState(machine);
+    if (st.closingPromise) await st.closingPromise;
     if (st.idleTimer) { clearTimeout(st.idleTimer); st.idleTimer = null; }
     if (st.reconnectTimer) { clearTimeout(st.reconnectTimer); st.reconnectTimer = null; }
     st.owners.add(ownerId);
@@ -382,19 +404,15 @@ export function createTunnelManager(options = {}) {
       }
     }
 
-    if (st.child) {
+    if (st.child || st.connectingPromise) {
       await stopTunnelProcess(st);
     }
 
-    const promise = openTunnelInternal(st, { sshTarget: target, sshPort, remotePort });
-    st.connectingPromise = promise;
     try {
-      return await promise;
+      return await openTunnel(st, { sshTarget: target, sshPort, remotePort });
     } catch (err) {
       st.owners.delete(ownerId);
       throw err;
-    } finally {
-      if (st.connectingPromise === promise) st.connectingPromise = null;
     }
   }
 

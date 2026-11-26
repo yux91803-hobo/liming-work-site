@@ -99,16 +99,21 @@ export function createCloudTools({ runner, ledger, remote, readStatus, settings 
         now: now(),
       });
       if (!choice.ok) return { ok: false, reason: choice.reason };
-      const t = runner.dispatch({
-        machine: choice.machine,
-        title: titleOf(task),
-        project,
-        text: task,
-        tabletSessionId: exec && exec.agent && exec.agent.id ? String(exec.agent.id) : '',
-        model: args.model || null,
-        toolCall: toolCallOf(exec),
-      });
-      return { ok: true, taskId: t.taskId, jobId: t.jobId, machine: t.machine, project: t.project, reason: choice.reason, ...(choice.warning ? { warning: choice.warning } : {}) };
+      try {
+        const t = runner.dispatch({
+          machine: choice.machine,
+          title: titleOf(task),
+          project,
+          text: task,
+          tabletSessionId: exec && exec.agent && exec.agent.id ? String(exec.agent.id) : '',
+          model: args.model || null,
+          toolCall: toolCallOf(exec),
+        });
+        return { ok: true, taskId: t.taskId, jobId: t.jobId, machine: t.machine, project: t.project, reason: choice.reason, ...(choice.warning ? { warning: choice.warning } : {}) };
+      } catch (err) {
+        if (err?.code !== 'PROJECT_BUSY') throw err;
+        return { ok: false, reason: err.message };
+      }
     },
   };
 

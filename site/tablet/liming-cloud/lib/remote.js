@@ -18,18 +18,19 @@ export function leftoverScript(cwd) {
   const d = shQuote(cwd);
   return [
     `D=${d}`,
-    'alive() { s=$(sed "s/.*) //" "/proc/$1/stat" 2>/dev/null | cut -d" " -f1) || return 1; [ -n "$s" ] && [ "$s" != Z ]; }',
-    'P=""',
-    'for p in /proc/[0-9]*; do',
-    '  pid=${p#/proc/}; [ "$pid" = "$$" ] && continue',
-    '  c=$(readlink "$p/cwd" 2>/dev/null) || continue',
-    '  case "$c" in "$D"|"$D"/*) P="$P $pid";; esac',
-    'done',
-    'L=""',
-    'if [ -n "$P" ]; then kill -TERM $P 2>/dev/null; sleep 3; for pid in $P; do alive "$pid" && L="$L $pid"; done; fi',
-    'R=""',
-    'if [ -n "$L" ]; then kill -KILL $L 2>/dev/null; sleep 1; for pid in $L; do alive "$pid" && R="$R $pid"; done; fi',
-    'printf "LMC found%s\\n" "$P"',
+    'scan() {',
+    '  for p in /proc/[0-9]*; do',
+    '    pid=${p#/proc/}; [ "$pid" = "$$" ] && continue',
+    '    c=$(readlink "$p/cwd" 2>/dev/null) || continue',
+    '    case "$c" in "$D"|"$D"/*) printf " %s" "$pid";; esac',
+    '  done',
+    '}',
+    'P=$(scan)',
+    'if [ -n "$P" ]; then kill -TERM $P 2>/dev/null; sleep 3; fi',
+    'L=$(scan)',
+    'if [ -n "$L" ]; then kill -KILL $L 2>/dev/null; sleep 1; fi',
+    'R=$(scan)',
+    'printf "LMC found%s\\n" "$P$L"',
     'printf "LMC remain%s\\n" "$R"',
   ].join('\n');
 }
@@ -37,7 +38,7 @@ export function leftoverScript(cwd) {
 export function parseLeftovers(stdout) {
   const pick = key => {
     const line = String(stdout || '').split('\n').find(l => l.startsWith(`LMC ${key}`));
-    return line ? line.slice(`LMC ${key}`.length).trim().split(/\s+/).filter(Boolean).map(Number) : null;
+    return line ? [...new Set(line.slice(`LMC ${key}`.length).trim().split(/\s+/).filter(Boolean).map(Number))] : null;
   };
   const found = pick('found');
   const remain = pick('remain');
@@ -47,6 +48,8 @@ export function parseLeftovers(stdout) {
 
 export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_COMMAND, direct = null, loginTimeoutMs = 15000 } = {}) {
   const cache = new Map();
+  const connecting = new Map();
+  const lifetime = new AbortController();
 
   function machines() {
     if (direct) return Object.keys(direct).sort();
@@ -70,13 +73,28 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
     return tunnels.createSshShell(machine, sshSpec(machine));
   }
 
-  async function connect(machine, ownerId) {
+  async function connect(machine, ownerId, { signal = lifetime.signal } = {}) {
+    const aborted = AbortSignal.any([lifetime.signal, signal]);
+    const previous = connecting.get(machine);
+    const pending = Promise.resolve(previous).catch(() => {}).then(() => {
+      aborted.throwIfAborted();
+      return connectOnce(machine, ownerId, aborted);
+    });
+    connecting.set(machine, pending);
+    try {
+      return await pending;
+    } finally {
+      if (connecting.get(machine) === pending) connecting.delete(machine);
+    }
+  }
+
+  async function connectOnce(machine, ownerId, signal) {
     if (direct) {
       const d = direct[machine];
       if (!d) throw new RemoteError('NO_SSH_TARGET', `没有配置机器 ${machine}`);
       let c = cache.get(machine);
       if (!c) {
-        c = { client: await DshClient.login(d.baseUrl, d.token, { timeoutMs: loginTimeoutMs }) };
+        c = { client: await DshClient.login(d.baseUrl, d.token, { timeoutMs: loginTimeoutMs, signal }) };
         cache.set(machine, c);
       }
       return { client: c.client, release() {} };
@@ -89,10 +107,12 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
     }
     if (!c) {
       const boot = createRemoteBootstrap(shellFor(machine), { launchCommand });
-      const info = await boot.ensureRunning();
+      const info = await boot.ensureRunning({ signal });
+      signal.throwIfAborted();
       const t = await tunnels.acquire(machine, ownerId, { ...spec, remotePort: info.port });
       try {
-        const client = await DshClient.login(t.baseUrl, info.token, { timeoutMs: loginTimeoutMs });
+        signal.throwIfAborted();
+        const client = await DshClient.login(t.baseUrl, info.token, { timeoutMs: loginTimeoutMs, signal });
         c = { client, localPort: t.localPort, remotePort: info.port };
         cache.set(machine, c);
       } catch (err) {
@@ -101,6 +121,10 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
       }
     } else {
       await tunnels.acquire(machine, ownerId, { ...spec, remotePort: c.remotePort });
+      if (signal.aborted) {
+        await tunnels.release(machine, ownerId);
+        signal.throwIfAborted();
+      }
     }
     let released = false;
     return { client: c.client, release: () => { if (!released) { released = true; return tunnels.release(machine, ownerId); } } };
@@ -111,7 +135,9 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
   }
 
   async function exec(machine, script, opts = {}) {
-    return shellFor(machine).run(script, opts);
+    const signal = opts.signal ? AbortSignal.any([lifetime.signal, opts.signal]) : lifetime.signal;
+    signal.throwIfAborted();
+    return shellFor(machine).run(script, { ...opts, signal });
   }
 
   async function ensureProjectDir(machine, cwd) {
@@ -122,9 +148,15 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
   async function killLeftovers(machine, cwd) {
     const r = await exec(machine, leftoverScript(cwd), { timeoutMs: 30000 });
     const parsed = parseLeftovers(r.stdout);
-    if (!parsed) throw new RemoteError('LEFTOVER_CHECK_FAILED', `${machine} 上查残留进程失败：${String(r.stderr || '').trim().slice(0, 200)}`);
+    if (r.exitCode !== 0 || !parsed) throw new RemoteError('LEFTOVER_CHECK_FAILED', `${machine} 上查残留进程失败：${String(r.stderr || '').trim().slice(0, 200)}`);
     return parsed;
   }
 
-  return { machines, connect, invalidate, exec, ensureProjectDir, killLeftovers };
+  async function dispose() {
+    lifetime.abort();
+    await Promise.allSettled(connecting.values());
+    cache.clear();
+  }
+
+  return { machines, connect, invalidate, exec, ensureProjectDir, killLeftovers, dispose };
 }

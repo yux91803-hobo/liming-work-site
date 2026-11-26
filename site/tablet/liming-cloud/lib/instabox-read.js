@@ -10,7 +10,7 @@ export async function readMachine({ readKey, name = null, fetchImpl = globalThis
   const hide = text => redactText(String(text || '').split(key).join('[REDACTED]'));
   let res;
   try {
-    res = await fetchImpl(`${baseUrl}/v1/machines`, { method: 'GET', headers: { 'X-API-Key': key, Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+    res = await fetchImpl(`${baseUrl}/v1/machines`, { method: 'GET', redirect: 'error', headers: { 'X-API-Key': key, Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
   } catch (err) {
     return { known: false, reason: hide(`读不到状态：${err && err.message}`) };
   }

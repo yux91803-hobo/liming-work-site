@@ -1,7 +1,20 @@
+## 2026-11-26 晚 · 站长要求重新考虑平板调用云电脑的方案（Claude Code）
+
+- 站长实际用过平板后提出：新项目不受小芯、天启影响，把 li、li2 当两台普通云电脑；平板 AI 要能自己直接操控它们（终端、文件、浏览器），也能自己决定把复杂编程交给云上的 Codex、Claude Code、Harness 并亲自检查结果；不为兼容旧实现叠加，该删就删，不走小芯那种越来越大的自建架构。**先讨论方案，暂不改代码，也不写正式架构文档。**
+- Claude Code 的初步建议（待站长确认）：命令行优先，平板 AI 用自己的终端调 InstaBox 官方命令行（`exec`、文件、`agent prompt/events/steer/interrupt`）和云上的 Playwright CLI，用 Harness 技能说明教它用法；`liming-cloud`、`liming-lease` 可能整体删掉。本分支第 3–8 阶段和 Codex 的复核修复都不开 PR、不合并，等方案定了再处理。
+- 合并 Codex 复核时只有 `ssh-tunnel.js` 一处冲突（双方做了同样的单调时钟修改），取 Codex 的写法；Claude Code 这边保留的是 SSH 隧道单测里假 ssh 的 ECONNRESET 修复和一项建隧道校时测试。合并后平板相关单测 137 项全过，没有重跑全量检查。
+
+## 2026-11-26 · 平板跨设备协作独立审查（Codex）
+
+- Antigravity 实现阶段 1–2，Claude Code 接手并实现阶段 3–8，Codex 独立核对设计、计划和实现，并修复审查发现的问题。使用 `claude/dsh-go-customization-discussion-d5wt84`，原始复核基线为 `7f87a7d`。
+- 已推送 SSH 单调超时 `a00845c`、停止与排队协调 `ac581b2`、复用与租约 `3ebfad4`、发件箱原子提交 `5c44187`、凭据保护 `7b8fb18`、冷态收件与残留进程复核 `57d78af`。修改原因和参考源码记在变更记录。[CHANGES](CHANGES.md)
+- 真实 Harness 契约 22/22。真实 rc.3 运行中与强杀后冷态停止 2/2，模型使用本机模拟。定向回归覆盖旧版失败和修复通过。全量结果、测试站及正式发布见本分支 PR。
+- 安卓实机、实际 SSH 转发、锁屏租约和冷却暂未实测。Harness 的 `accepted` 可以先于磁盘落盘，恢复时以远端历史判断，缺证据则记中断，等用户确认后再继续。核对正式站静态文件之后，在设备上完成验收。[平板说明](tablet.md)
+
 ## 2026-11-26 · 平板调用云电脑第 3–8 阶段（Claude Code）
 
 - **谁做的**：Claude Code 接手实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)，站长步骤见 [docs/tablet.md](tablet.md)。
-- **已完成**：`liming-cloud`（三个工具、选机器、派活与跟随、四步停止、通知闭环、重启对账、状态条和面板、工具卡）、`liming-lease`、装机脚本、文档。整条分支自查后又改了六处（心跳误判、跟丢后再接上、面板刷新两处、单调时钟含建隧道超时、少读台账），另修了 SSH 隧道单测里假 ssh 在并发下偶发崩溃，见 CHANGES。单测 124 项（平板 111、独立发布判断 11、等待时钟检查 2）；真实 Harness 端到端 26 项；DSH Go plugin-kit 核对 11 项。
+- **已完成**：`liming-cloud`（三个工具、选机器、派活与跟随、四步停止、通知闭环、重启对账、状态条和面板、工具卡）、`liming-lease`、装机脚本、文档。整条分支自查后又改了六处（心跳误判、跟丢后再接上、面板刷新两处、单调时钟含建隧道超时、少读台账），另修了 SSH 隧道单测里假 ssh 在并发下偶发崩溃，见 CHANGES。单测 124 项（合并 Codex 复核前：平板 111、独立发布判断 11、等待时钟检查 2）；真实 Harness 端到端 26 项；DSH Go plugin-kit 核对 11 项。
 - **接手注意**：
   - 后台任务的主人必须是活着的代理（`ctx.jobs` 的规定），所以引擎重启后要等站长回到那段对话，或者打开面板，才接上没在跟的任务。
   - 插件文件加了或删了，要同步改 `site/tablet/setup.sh` 的 `CLOUD_FILES` 或 `LEASE_FILES`，单测会红着提醒。

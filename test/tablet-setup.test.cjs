@@ -12,7 +12,7 @@ host=\${target#*@}
 printf '%s %s\\n' "$target" "\${cmd[*]}" >> "$FAKE_DIR/ssh.log"
 case "\${cmd[*]}" in
   "cat "*) [ -f "$FAKE_DIR/no-zip-$host" ] && { echo "cat: no such file" >&2; exit 1; }; cat "$FAKE_ZIP";;
-  "bash -s") HOME="$FAKE_DIR/home-$host" LIMING_REMOTE_WS="$FAKE_DIR/ws-$host" bash -s;;
+  "bash -s") [ -f "$FAKE_DIR/reject-$host" ] && { echo "Permission denied for $target" >&2; exit 255; }; HOME="$FAKE_DIR/home-$host" LIMING_REMOTE_WS="$FAKE_DIR/ws-$host" bash -s;;
   *) echo "unexpected: \${cmd[*]}" >&2; exit 2;;
 esac
 `;
@@ -62,6 +62,25 @@ test('令牌行各种粘法都认得；不是令牌行就拒绝，而且不回�
     const r=lib('parse_token_line "$1"',line);assert.equal(r.status,0,JSON.stringify(line));assert.equal(r.stdout,'ibssh_ab12@x.instabox.sh\n');}
   for(const line of ['ssh root@x','ibssh_ab12','ssh ibssh_ab12@x; rm -rf /','ssh -p 22 ibssh_ab12@x','']){
     const r=lib('parse_token_line "$1"',line);assert.notEqual(r.status,0,JSON.stringify(line));assert.ok(!(r.stdout+r.stderr).includes('ab12'));}
+});
+
+test('远端 SSH 拒绝连接时，装机日志不回显登录令牌', t => {
+  const {d,run}=rig(t);
+  fs.writeFileSync(path.join(d,'reject-li2.example'),'');
+  const r=run('--skip-li');
+  assert.match(r.stderr,/li2 上配 web 配置失败/);
+  assert.equal((r.stdout+r.stderr).includes('ibssh_li2token'),false);
+});
+
+test('装机遇到新版密钥文件时，拒绝覆写原文件', t => {
+  const {env,lib}=rig(t);
+  fs.mkdirSync(env.LIMING_CLOUD_DIR,{mode:0o700});
+  const file=path.join(env.LIMING_CLOUD_DIR,'secrets.json');
+  const old='{"schemaVersion":2,"machines":{},"futureSetting":true}\n';
+  fs.writeFileSync(file,old,{mode:0o600});
+  const r=lib('save_secret li2 "$1" "$2"','ibssh_li2token@li2.example',KEYS.li2read);
+  assert.notEqual(r.status,0);
+  assert.equal(fs.readFileSync(file,'utf8'),old);
 });
 
 test('下载到的是网站首页（不存在的路径回首页）或内容不对就停，不留半截文件',t=>{

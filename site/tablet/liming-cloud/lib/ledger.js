@@ -166,6 +166,21 @@ function validateOutboxEntry(entry, index) {
   }
 }
 
+function newOutboxEntry(task, entry, createdAt) {
+  return {
+    requestId: entry.requestId,
+    sessionId: entry.sessionId || task.cloudSessionId,
+    cwd: entry.cwd || task.cwd,
+    text: entry.text,
+    mode: entry.mode || 'queue',
+    status: 'pending',
+    createdAt: entry.createdAt ?? createdAt,
+    ackedAt: null,
+    attempts: 0,
+    lastError: null,
+  };
+}
+
 function validateTaskRecord(task, key) {
   if (!isPlainObject(task)) {
     throw new LedgerError('LEDGER_CORRUPT', `台账任务 ${key} 结构非法`);
@@ -294,7 +309,7 @@ export function createLedger(options = {}) {
     return doc;
   }
 
-  function createTask(input) {
+  function createTask(input, firstMessage) {
     if (!isPlainObject(input)) {
       throw new LedgerError('LEDGER_INVALID_TASK', '创建任务参数必须是对象');
     }
@@ -339,6 +354,12 @@ export function createLedger(options = {}) {
       jobId: input.jobId || null,
       lastError: null,
     };
+    if (firstMessage) {
+      record.outbox.push(newOutboxEntry(record, firstMessage, ts));
+      record.runRequestIds = [firstMessage.requestId];
+      record.model = input.model || null;
+      record.modelSelected = false;
+    }
     const doc = load();
     if (Object.hasOwn(doc.tasks, taskId)) {
       throw new LedgerError('LEDGER_DUPLICATE_TASK', `任务已存在：${taskId}`);
@@ -383,22 +404,13 @@ export function createLedger(options = {}) {
     return cloneJson(next);
   }
 
-  function appendOutboxEntry(taskId, entry) {
+  function appendOutboxEntry(taskId, entry, updateRun) {
     return updateTask(taskId, task => {
       const existing = task.outbox.find(item => item.requestId === entry.requestId);
       if (existing) return task;
-      task.outbox.push({
-        requestId: entry.requestId,
-        sessionId: entry.sessionId || task.cloudSessionId,
-        cwd: entry.cwd || task.cwd,
-        text: entry.text,
-        mode: entry.mode || 'queue',
-        status: 'pending',
-        createdAt: entry.createdAt ?? Number(now()),
-        ackedAt: null,
-        attempts: 0,
-        lastError: null,
-      });
+      const message = newOutboxEntry(task, entry, Number(now()));
+      task.outbox.push(message);
+      if (updateRun) return updateRun(task, message);
       return task;
     });
   }

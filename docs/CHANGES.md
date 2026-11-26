@@ -1,3 +1,14 @@
+# 修改清单 · 2026-11-26（平板跨设备协作独立审查）
+
+- Antigravity 实现第 1–2 阶段，Claude Code 接手核对并实现第 3–8 阶段。Codex 独立复核八阶段，并实现下面列出的缺陷修复和回归测试。按站长要求承接 `claude/dsh-go-customization-discussion-d5wt84`，保留原提交。
+- **SSH 建连**改用单调时钟。Claude Code 交接指出的最后一处连接超时，在远端 `7f87a7d` 仍用墙上时钟。校时向前跳一小时的回归里，原实现约 4 毫秒就报告达到 3 秒超时。两项并发首连回归也曾拉起两套 Harness 或两条隧道，修后同机复用，断线退避前释放连接，引擎卸载取消本地建连。
+- **派发与恢复**现在把首条派发和追加消息与所属轮次编号一次落盘。已派过的云端会话消失时，即使有待发插话也标明失败，避免重建后重跑。实际 Harness 测到 HTTP `accepted` 可以早于磁盘落盘。冷态缺最后一条请求的完成证据时记云端中断并保留原文，等用户确认后继续。最后一条请求还没处理时，上一轮的结果不能结束任务。
+- **停止**现在先记意图，等正在发送的请求结清，再移除属于该任务的排队消息并复核轮次、后台任务和项目进程。重复停止合并处理，撤回的待发消息不会随继续操作送出。进程清理每次发信号后重查目录。同一云机上的一个项目目录只接一件活动任务，旧台账有重叠时暂停目录清理。
+- **租约**在空闲缓冲期错过续租后会恢复续约。首次 PUT 回执丢失时，卸载仍尝试 DELETE。装机失败提示使用固定诊断，密钥文件写入前核对格式及版本，使用私有临时文件替换。运行时拒绝读取权限过宽的凭据，向 InstaBox 发送带 key 的请求时限制重定向。
+- SSH 截止时间参考 OpenSSH `misc.c` 的 `monotime_ts`，托管文件和 PID 参考 DSH Go `remote_bootstrap.dart`。停止与恢复参考 DeepSeek Harness `session-controller/src/commands.ts` 的 `keepInbox`、`updateQueue`、冷读 inbox 投影，以及 `session-persistence-jsonl` 的日志批写。InstaBox 的 `machines:write` 包含机器读取权限。[InstaBox API key 权限](https://instabox.sh/docs/api-keys.md)
+- 真实 Harness 契约 `0.2.2-rc.3` 14/14、`0.2.2-rc.1` 8/8。另用 `liming-cloud` 的实际客户端和停止代码，在真实 rc.3 上核对正在运行和强杀后冷态两种停止路径，两次都从队列移除了本任务的请求并确认没有项目进程。模型和外部服务使用隔离测试数据。全量检查和发布证据随 PR 记录。
+- 装机后在安卓实机验收 DSH Go 面板、真实 InstaBox SSH 转发、锁屏后续租、冷却和空闲暂停。网站回滚只影响下载文件，设备上已经安装的插件可通过插件管理停用并重启引擎，台账和密钥留在各自设备。[平板验收清单](tablet.md#真机验收装好后对照)
+
 # 修改清单 · 2026-11-26（平板调用云电脑第 3–8 阶段：工具、选机器、面板、停止、对账通知、云端租约、装机）
 
 - **谁做的**：Claude Code 接手后实现第 3–8 阶段并自查，没有第二位 AI 独立复核。第 1–2 阶段原由 Antigravity 实现，接手核对见下一条。分支 `claude/dsh-go-customization-discussion-d5wt84`。网站页面、Worker、小芯、天启的代码和配置都没动；新文件都在 `site/tablet/`、`test/tablet-*`、`docs/`，走平板独立发布。
@@ -36,16 +47,16 @@
   - 重连次数用完（比如机器长时间冷却）原来记失败，之后就不会再对账。改成「暂时跟丢」：平板的后台任务结束并说明，台账保持进行中，站长回到对话、打开面板或引擎启动时再接上。
   - 面板判断视图结构变没变，原来全局只记一个值，两段对话同时开着面板会来回误刷新。改成每段对话各记各的。
   - 面板刷新有 1 秒节流。节流里的第二次结构变化（AI 一轮派两件、停止很快就确认）原来会丢：面板少一张卡，或者停完的还留在「进行中」。改成过了 1 秒补刷新一次。
-  - 推送限流、面板刷新、台账存盘的间隔，以及建隧道的连接超时（`ssh-tunnel.js`，原实现是 Antigravity 的），原来用墙上时钟。平板校时往回跳一小时，推送就会停一小时；往前跳，建隧道会提前判超时。改用单调时钟（`performance.now()`）；任务时间戳这类当数据用的时间不变。测试里三处等待也改了，是仓库的等待时钟检查（`test/wait-clock.test.cjs`）抓到的。
+  - 推送限流、面板刷新、台账存盘的间隔原来用墙上时钟，平板校时往回跳一小时，推送就会停一小时。改用单调时钟（`performance.now()`）。建隧道的连接超时（`ssh-tunnel.js`，原实现是 Antigravity 的）也是这个问题，Codex 在独立复核里同时改了（见上一条），合并时用 Codex 的写法，Claude Code 这边补了一项「建隧道途中墙上时钟往前跳一小时」的测试；任务时间戳这类当数据用的时间不变。测试里三处等待也改了，是仓库的等待时钟检查（`test/wait-clock.test.cjs`）抓到的。
   - 跟随时原来每个云端事件都读一遍台账文件，改成只有用户消息才读。只是少读盘，行为不变，没加测试，由原有测试覆盖。
   - 以上除「少读台账」外，每处都加了测试，改之前红、改之后绿（时钟那处两项：推送、建隧道）。
-  - 最终提交上的全量检查红了 1 项（1225 项里）：SSH 隧道单测（Antigravity 写的）在全量并发时偶发多看到一次掉线。原因在测试里的假 ssh：就绪探测连上就断，负载高时假 ssh 往回写碰上 RST（ECONNRESET），连接上没挂错误处理，整个进程崩了。真 ssh 某个转发连接被重置不会退出，所以改的是假 ssh（连接上挂错误处理），`ssh-tunnel.js` 的掉线判断不变。核对：4 个占满 CPU 的进程加 12 路并发，这一项各跑 6 次，改之前 72 次红 12 次，改之后 72 次全过。
+  - 在 `7f87a7d` 上跑全量检查，1225 项里红了 1 项：SSH 隧道单测（Antigravity 写的）在全量并发时偶发多看到一次掉线。原因在测试里的假 ssh：就绪探测连上就断，负载高时假 ssh 往回写碰上 RST（ECONNRESET），连接上没挂错误处理，整个进程崩了。真 ssh 某个转发连接被重置不会退出，所以改的是假 ssh（连接上挂错误处理），`ssh-tunnel.js` 的掉线判断不变。核对：4 个占满 CPU 的进程加 12 路并发，这一项各跑 6 次，改之前 72 次红 12 次，改之后 72 次全过。
 - **参考**：
   - DSH Go（MIT）：`docs/plugins` 的 slots、components、actions、inputs、design-rules、quickstart；工具卡 `toolCard()` 照 quickstart 的写法；`app/lib/remote/ssh/remote_bootstrap.dart`。
   - 真实 Harness 源码：`dsh-jobs-local` 的 `start` 要求活着的主人、释放类取消原因；`dsh-tool-jobs` 的完成通知；`dsh-api-session-controller` 的 `session/selectModel`、`session/page`；`dsh-session` 的 `TurnEndReason`。
   - InstaBox 文档：idle-suspend（什么会唤醒、免费版一轮的时长和冷却、活动租约）、api-keys（`machines:read`、`machines:write`）。
 - **验证**：
-  - 单测：平板相关 111 项、独立发布判断 11 项、测试等待时钟检查 2 项，共 124 项全过。新增 selector 10、steps 4、tools 10、stop 10、recovery 10、ui 12、lease 7、setup 5、transport 1 项，都先红后绿。stop、断线补齐几项是先写的代码，另做了变异核对：改坏就变红。
+  - 单测（合并 Codex 复核之前）：平板相关 111 项、独立发布判断 11 项、测试等待时钟检查 2 项，共 124 项全过。新增 selector 10、steps 4、tools 10、stop 10、recovery 10、ui 12、lease 7、setup 5、transport 1 项，都先红后绿。stop、断线补齐几项是先写的代码，另做了变异核对：改坏就变红。
   - 真实 Harness 端到端（平板 0.2.2-rc.1 装插件，云端 0.2.2-rc.3，direct 模式，模拟模型）：
     - 派活到收到原生通知、平板 AI 被叫醒，12/12。
     - 通知写进日志才记已告诉；平板引擎被 SIGKILL 时云端照常做完，回到对话后接上、通知只有一条；平板 AI 用 `job_kill` 停任务，云端那轮 aborted、sleep 进程没了，11/11。
