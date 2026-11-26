@@ -30,6 +30,10 @@ export function createOutbox(ledger, options = {}) {
   const genRequestId = options.generateRequestId || generateRequestId;
   const taskLocks = new Map();
 
+  function maySend(task) {
+    return task?.status === 'dispatching' || task?.status === 'running';
+  }
+
   function serializeTask(taskId, fn) {
     const prev = taskLocks.get(taskId) || Promise.resolve();
     const run = prev.then(() => fn(), () => fn());
@@ -89,6 +93,7 @@ export function createOutbox(ledger, options = {}) {
         createdSession: false,
       };
     }
+    if (!maySend(task)) return null;
 
     ledger.updateOutboxEntry(taskId, requestId, cur => ({
       ...cur,
@@ -104,6 +109,7 @@ export function createOutbox(ledger, options = {}) {
       });
     } catch (err) {
       if (err?.code === 'session/not-found') {
+        if (!maySend(ledger.getTask(taskId))) return null;
         let created;
         try {
           created = await client.createSession({
@@ -132,6 +138,7 @@ export function createOutbox(ledger, options = {}) {
           throw mismatch;
         }
         createdSession = true;
+        if (!maySend(ledger.getTask(taskId))) return null;
         try {
           promptRes = await client.prompt(entry.sessionId, entry.text, {
             requestId: entry.requestId,
@@ -210,6 +217,7 @@ export function createOutbox(ledger, options = {}) {
           continue;
         }
         const res = await deliverSingle(taskId, entry.requestId, client);
+        if (!res) break;
         sent.push(res);
       }
       const latest = ledger.getTask(taskId);
@@ -226,6 +234,7 @@ export function createOutbox(ledger, options = {}) {
 
   return {
     enqueue,
+    waitForIdle: taskId => taskLocks.get(taskId),
     deliverEntry: (taskId, requestId, client) => serializeTask(taskId, () => deliverSingle(taskId, requestId, client)),
     flushOutbox,
     enqueueAndFlush,
