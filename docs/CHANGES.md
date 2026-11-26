@@ -36,15 +36,16 @@
   - 重连次数用完（比如机器长时间冷却）原来记失败，之后就不会再对账。改成「暂时跟丢」：平板的后台任务结束并说明，台账保持进行中，站长回到对话、打开面板或引擎启动时再接上。
   - 面板判断视图结构变没变，原来全局只记一个值，两段对话同时开着面板会来回误刷新。改成每段对话各记各的。
   - 面板刷新有 1 秒节流。节流里的第二次结构变化（AI 一轮派两件、停止很快就确认）原来会丢：面板少一张卡，或者停完的还留在「进行中」。改成过了 1 秒补刷新一次。
-  - 推送限流、面板刷新、台账存盘的间隔原来用墙上时钟，平板校时往回跳一小时，推送就会停一小时。改用单调时钟（`performance.now()`）；任务时间戳这类当数据用的时间不变。测试里三处等待也改了，是仓库的等待时钟检查（`test/wait-clock.test.cjs`）抓到的。
+  - 推送限流、面板刷新、台账存盘的间隔，以及建隧道的连接超时（`ssh-tunnel.js`，原实现是 Antigravity 的），原来用墙上时钟。平板校时往回跳一小时，推送就会停一小时；往前跳，建隧道会提前判超时。改用单调时钟（`performance.now()`）；任务时间戳这类当数据用的时间不变。测试里三处等待也改了，是仓库的等待时钟检查（`test/wait-clock.test.cjs`）抓到的。
   - 跟随时原来每个云端事件都读一遍台账文件，改成只有用户消息才读。只是少读盘，行为不变，没加测试，由原有测试覆盖。
-  - 前五处各加了一项测试，改之前红、改之后绿。
+  - 以上除「少读台账」外，每处都加了测试，改之前红、改之后绿（时钟那处两项：推送、建隧道）。
+  - 最终提交上的全量检查红了 1 项（1225 项里）：SSH 隧道单测（Antigravity 写的）在全量并发时偶发多看到一次掉线。原因在测试里的假 ssh：就绪探测连上就断，负载高时假 ssh 往回写碰上 RST（ECONNRESET），连接上没挂错误处理，整个进程崩了。真 ssh 某个转发连接被重置不会退出，所以改的是假 ssh（连接上挂错误处理），`ssh-tunnel.js` 的掉线判断不变。核对：4 个占满 CPU 的进程加 12 路并发，这一项各跑 6 次，改之前 72 次红 12 次，改之后 72 次全过。
 - **参考**：
   - DSH Go（MIT）：`docs/plugins` 的 slots、components、actions、inputs、design-rules、quickstart；工具卡 `toolCard()` 照 quickstart 的写法；`app/lib/remote/ssh/remote_bootstrap.dart`。
   - 真实 Harness 源码：`dsh-jobs-local` 的 `start` 要求活着的主人、释放类取消原因；`dsh-tool-jobs` 的完成通知；`dsh-api-session-controller` 的 `session/selectModel`、`session/page`；`dsh-session` 的 `TurnEndReason`。
   - InstaBox 文档：idle-suspend（什么会唤醒、免费版一轮的时长和冷却、活动租约）、api-keys（`machines:read`、`machines:write`）。
 - **验证**：
-  - 单测：平板相关 110 项、独立发布判断 11 项、测试等待时钟检查 2 项，共 123 项全过。新增 selector 10、steps 4、tools 10、stop 10、recovery 10、ui 12、lease 7、setup 5 项，都先红后绿。stop、断线补齐几项是先写的代码，另做了变异核对：改坏就变红。
+  - 单测：平板相关 111 项、独立发布判断 11 项、测试等待时钟检查 2 项，共 124 项全过。新增 selector 10、steps 4、tools 10、stop 10、recovery 10、ui 12、lease 7、setup 5、transport 1 项，都先红后绿。stop、断线补齐几项是先写的代码，另做了变异核对：改坏就变红。
   - 真实 Harness 端到端（平板 0.2.2-rc.1 装插件，云端 0.2.2-rc.3，direct 模式，模拟模型）：
     - 派活到收到原生通知、平板 AI 被叫醒，12/12。
     - 通知写进日志才记已告诉；平板引擎被 SIGKILL 时云端照常做完，回到对话后接上、通知只有一条；平板 AI 用 `job_kill` 停任务，云端那轮 aborted、sleep 进程没了，11/11。

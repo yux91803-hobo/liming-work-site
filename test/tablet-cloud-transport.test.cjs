@@ -541,6 +541,9 @@ if (remoteCmd === 'sh -s') {
 
 const localPort = Number(forward.split(':')[1]);
 const srv = net.createServer((sock) => {
+  // 就绪探测连上就断，负载高时这边写回去会碰上 RST（ECONNRESET）。
+  // 真 ssh 某个转发连接被重置不会整个退出，假 ssh 也不能因此崩掉（否则管理器会多看到一次掉线）。
+  sock.on('error', () => {});
   sock.write('TUNNEL_OK\\n');
   sock.end();
 });
@@ -623,4 +626,33 @@ process.on('SIGINT', () => { srv.close(() => process.exit(0)); });
   for (const line of logs) {
     assert.ok(!line.includes('SuperSecretTunnelTok7788'), `日志泄露令牌：${line}`);
   }
+});
+
+test('ssh-tunnel：连接超时用单调时钟——建隧道途中平板校时、墙上时钟往前跳一小时，不提前判超时', async (t) => {
+  const { createTunnelManager } = await importLib('ssh-tunnel.js');
+  const root = tmpDir(t);
+  const fakeSsh = path.join(root, 'fake-ssh');
+  // 假 ssh：300 毫秒后才开始监听（像握手慢一点的 SSH）
+  fs.writeFileSync(fakeSsh, `#!${process.execPath}
+const net = require('node:net');
+const args = process.argv.slice(2);
+const localPort = Number(args[args.indexOf('-L') + 1].split(':')[1]);
+setTimeout(() => {
+  const srv = net.createServer((sock) => { sock.on('error', () => {}); sock.end(); });
+  srv.listen(localPort, '127.0.0.1');
+  process.on('SIGTERM', () => { srv.close(() => process.exit(0)); });
+}, 300);
+`, { mode: 0o755 });
+  const realNow = Date.now;
+  let offset = 0;
+  Date.now = () => realNow() + offset;   // 模拟墙上时钟：先装好，再建管理器
+  t.after(() => { Date.now = realNow; });
+  const manager = createTunnelManager({ sshBin: fakeSsh, controlDir: path.join(root, 'ctrl'), connectTimeoutMs: 3000, readyPollIntervalMs: 20, stopGraceMs: 500, idleCloseMs: 60000 });
+  t.after(() => manager.closeAll());
+  const pending = manager.acquire('li2', 'task-1', { sshTarget: 'ibssh_ClockTok1@li2.instabox.test', remotePort: 3080 });
+  await sleep(100);
+  offset = 3600e3;
+  const info = await pending;
+  assert.ok(info.localPort > 0);
+  assert.equal(manager.status('li2').state, 'open');
 });

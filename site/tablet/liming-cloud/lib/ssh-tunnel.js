@@ -306,8 +306,8 @@ export function createTunnelManager(options = {}) {
     child.once('error', (err) => onUnexpectedExit(null, null, err));
     child.once('exit', (code, signal) => onUnexpectedExit(code, signal, null));
 
-    const deadline = Date.now() + connectTimeoutMs;
-    while (Date.now() < deadline) {
+    const deadline = performance.now() + connectTimeoutMs;   // 单调时钟：平板校时不会提前判超时或一直等
+    while (performance.now() < deadline) {
       if (exitedEarly) {
         await stopChildProcess(child, stopGraceMs);
         safeUnlink(controlPath);
