@@ -18,18 +18,19 @@ export function leftoverScript(cwd) {
   const d = shQuote(cwd);
   return [
     `D=${d}`,
-    'alive() { s=$(sed "s/.*) //" "/proc/$1/stat" 2>/dev/null | cut -d" " -f1) || return 1; [ -n "$s" ] && [ "$s" != Z ]; }',
-    'P=""',
-    'for p in /proc/[0-9]*; do',
-    '  pid=${p#/proc/}; [ "$pid" = "$$" ] && continue',
-    '  c=$(readlink "$p/cwd" 2>/dev/null) || continue',
-    '  case "$c" in "$D"|"$D"/*) P="$P $pid";; esac',
-    'done',
-    'L=""',
-    'if [ -n "$P" ]; then kill -TERM $P 2>/dev/null; sleep 3; for pid in $P; do alive "$pid" && L="$L $pid"; done; fi',
-    'R=""',
-    'if [ -n "$L" ]; then kill -KILL $L 2>/dev/null; sleep 1; for pid in $L; do alive "$pid" && R="$R $pid"; done; fi',
-    'printf "LMC found%s\\n" "$P"',
+    'scan() {',
+    '  for p in /proc/[0-9]*; do',
+    '    pid=${p#/proc/}; [ "$pid" = "$$" ] && continue',
+    '    c=$(readlink "$p/cwd" 2>/dev/null) || continue',
+    '    case "$c" in "$D"|"$D"/*) printf " %s" "$pid";; esac',
+    '  done',
+    '}',
+    'P=$(scan)',
+    'if [ -n "$P" ]; then kill -TERM $P 2>/dev/null; sleep 3; fi',
+    'L=$(scan)',
+    'if [ -n "$L" ]; then kill -KILL $L 2>/dev/null; sleep 1; fi',
+    'R=$(scan)',
+    'printf "LMC found%s\\n" "$P$L"',
     'printf "LMC remain%s\\n" "$R"',
   ].join('\n');
 }
@@ -37,7 +38,7 @@ export function leftoverScript(cwd) {
 export function parseLeftovers(stdout) {
   const pick = key => {
     const line = String(stdout || '').split('\n').find(l => l.startsWith(`LMC ${key}`));
-    return line ? line.slice(`LMC ${key}`.length).trim().split(/\s+/).filter(Boolean).map(Number) : null;
+    return line ? [...new Set(line.slice(`LMC ${key}`.length).trim().split(/\s+/).filter(Boolean).map(Number))] : null;
   };
   const found = pick('found');
   const remain = pick('remain');
@@ -147,7 +148,7 @@ export function createRemote({ secrets, tunnels, launchCommand = DEFAULT_LAUNCH_
   async function killLeftovers(machine, cwd) {
     const r = await exec(machine, leftoverScript(cwd), { timeoutMs: 30000 });
     const parsed = parseLeftovers(r.stdout);
-    if (!parsed) throw new RemoteError('LEFTOVER_CHECK_FAILED', `${machine} 上查残留进程失败：${String(r.stderr || '').trim().slice(0, 200)}`);
+    if (r.exitCode !== 0 || !parsed) throw new RemoteError('LEFTOVER_CHECK_FAILED', `${machine} 上查残留进程失败：${String(r.stderr || '').trim().slice(0, 200)}`);
     return parsed;
   }
 

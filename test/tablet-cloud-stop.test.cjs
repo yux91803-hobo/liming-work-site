@@ -5,7 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn, execFileSync } = require('node:child_process');
+const { spawn, execFile, execFileSync } = require('node:child_process');
+const { once } = require('node:events');
+const { promisify } = require('node:util');
 const { pathToFileURL } = require('node:url');
 const { createFakeCloud, createFakeJobs, until } = require('./tablet-cloud-fake-dsh.cjs');
 
@@ -211,6 +213,26 @@ test('同一机器同一项目只允许一个活动任务，旧台账有重叠�
   assert.equal(r.status, 'stopping');
   assert.match(r.detail, new RegExp(old.taskId));
   assert.equal(leftovers.calls, 0, '项目目录仍被另一个任务使用');
+});
+
+test('清理项目进程在 TERM 后重新扫描，仍在项目里的子进程不会被漏掉', { timeout: 10000 }, async (t) => {
+  const { leftoverScript, parseLeftovers } = await lib('remote.js');
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tablet-stop-rescan-'));
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  const startProcess = () => {
+    const child = spawn('sleep', ['30'], { cwd, stdio: 'ignore' });
+    t.after(() => child.kill('SIGKILL'));
+    return child;
+  };
+  const first = startProcess();
+  const exited = once(first, 'exit');
+  const cleanup = promisify(execFile)('/bin/sh', ['-c', leftoverScript(cwd)]);
+  await exited;
+  const late = startProcess();
+  const { found, remain } = parseLeftovers((await cleanup).stdout);
+  assert.ok(found.includes(late.pid));
+  assert.deepEqual(remain, []);
+  assert.ok(await until(() => late.exitCode !== null || late.signalCode !== null));
 });
 
 // Harness 释放类原因防漂移：设了 DSH_HARNESS_ROOT（含 node_modules/@deepseek-ai 的目录）就扫它的源码；

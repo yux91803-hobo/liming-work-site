@@ -104,7 +104,7 @@ function createFakeCloud() {
           guard('session/state');
           if (cloud.coldSessions.has(sessionId)) throw new RpcError('session/not-found', 'not attached');
           const s = session(sessionId);
-          return { cursor: s.seqBase, active: true, running: s.running, queue: s.queue.map(q => ({ id: q.requestId, rpcId: q.requestId, placement: 'queued' })), pendingInput: [] };
+          return { cursor: s.seqBase, active: s.active !== false, running: s.running, queue: s.active === false ? null : s.queue.map(q => ({ id: q.requestId, rpcId: q.requestId, placement: 'queued' })), pendingInput: [] };
         },
         async listSessions() {
           guard('session/list');

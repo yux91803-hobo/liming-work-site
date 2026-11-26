@@ -229,6 +229,31 @@ test('云端对话不见了：有待发送插话也记失败，不重派', async
   assert.equal(cloud.sessions.has(task.cloudSessionId), false, '没有重新建对话');
 });
 
+test('云端收到插话但日志未落盘就崩溃：标中断并保留原文，不把上一次回复当结果或重新派', async (t) => {
+  const first = await setup(t);
+  const { cloud } = first;
+  const task = first.runner.dispatch({ machine: 'li2', title: '会中断的', text: '先做', tabletSessionId: 'tab-A' });
+  assert.ok(await until(() => cloud.sessions.get(task.cloudSessionId)?.running));
+  const session = cloud.sessions.get(task.cloudSessionId);
+  const onDisk = session.events.slice();
+  const accepted = await first.runner.tell(task.taskId, '补充要求');
+  assert.equal(accepted.delivered, true);
+  await first.runner.dispose();
+  session.events = onDisk;
+  session.active = false;
+  session.running = false;
+  const promptsBefore = session.prompts.length;
+
+  const second = await setup(t, { dir: first.dir, cloud });
+  second.agents.add('tab-A');
+  second.recovery.onAgentCreated(second.agents.get('tab-A'));
+  assert.ok(await until(() => second.ledger.getTask(task.taskId).status === 'interrupted'));
+  const result = second.ledger.getTask(task.taskId);
+  assert.match(result.summary, /未能确认/);
+  assert.ok(result.outbox.some(item => item.requestId === accepted.requestId && item.text === '补充要求'));
+  assert.equal(session.prompts.length, promptsBefore);
+});
+
 test('跟完就放手：每次连接都释放，没有进行中的任务时不占着连接', async (t) => {
   const { cloud, jobs, runner, counts } = await setup(t);
   const task = runner.dispatch({ machine: 'li2', title: '短任务', text: 'x', tabletSessionId: 'tab-A' });

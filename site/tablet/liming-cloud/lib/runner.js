@@ -74,6 +74,7 @@ export function createRunner({
     const entry = {
       taskId, jobId: null, handle: null, client: null, abort: new AbortController(), settled: false,
       steps: [], events: [], seenSeq: task.lastSeq || 0, lastUserSeq: task.runUserSeq || 0, endSeq: task.runEndSeq || 0, endReason: task.runEndReason || null,
+      lastRequestId: task.runUserRequestId ?? (task.runUserSeq > 0 ? task.runRequestIds?.at(-1) : null),
       cancelled: false, stopPromise: null,
       lastSave: -Infinity,
     };
@@ -213,7 +214,7 @@ export function createRunner({
 
   // 这一轮看到哪了：lastSeq、本轮我们那条消息的位置、本轮结束的位置一起存，重启后接着跟的时候用
   function position(entry, t) {
-    return { lastSeq: Math.max(t.lastSeq, entry.seenSeq), runUserSeq: entry.lastUserSeq, runEndSeq: entry.endSeq, runEndReason: entry.endReason };
+    return { lastSeq: Math.max(t.lastSeq, entry.seenSeq), runUserSeq: entry.lastUserSeq, runUserRequestId: entry.lastRequestId, runEndSeq: entry.endSeq, runEndReason: entry.endReason };
   }
 
   function observe(entry, event) {
@@ -221,7 +222,11 @@ export function createRunner({
     entry.seenSeq = event.seq;
     if (event.type === 'user/message') {   // 只有用户消息才要读台账里这一轮的请求编号
       const runIds = new Set(ledger.getTask(entry.taskId)?.runRequestIds || []);
-      if (runIds.has(event.data?.source?.rpcId)) entry.lastUserSeq = event.seq;
+      const requestId = event.data?.source?.rpcId;
+      if (runIds.has(requestId)) {
+        entry.lastUserSeq = event.seq;
+        entry.lastRequestId = requestId;
+      }
     }
     if (event.type === 'turn/end') { entry.endSeq = event.seq; entry.endReason = event.data?.reason || null; }
     entry.events.push(event);
@@ -287,12 +292,21 @@ export function createRunner({
         if (v.type === 'snapshot') events = await catchUp(entry, client, sid, (v.records || []).map(r => r.event).filter(Boolean), v.hasMore);
         else if (v.type === 'event' && v.event) events = [v.event];
         for (const e of events) observe(entry, e);
-        if (!doneNow(entry)) continue;
-        if (pendingOutbox(entry.taskId)) {   // 这一轮结束时还有没送到的补充要求：现在补发，接着等
+        const ended = doneNow(entry);
+        if (!ended && v.type !== 'snapshot') continue;
+        const current = ledger.getTask(entry.taskId);
+        const outstanding = current?.outbox.some(item => item.status !== 'acked');
+        if (ended && outstanding) {   // 这一轮结束时还有没送到的补充要求：现在补发，接着等
           await outbox.flushOutbox(entry.taskId, client);
           continue;
         }
-        return await finish(entry);
+        const latestRequestId = current?.runRequestIds?.at(-1);
+        if (ended && (!latestRequestId || latestRequestId === entry.lastRequestId)) return await finish(entry);
+        if (v.type === 'snapshot' && latestRequestId && !outstanding) {
+          // Harness 回 accepted 时写入可能还在批处理。冷态日志没有最后一条请求的完成证明，不引用上一轮结果或自动重派。
+          const st = await client.state(sid).catch(err => { if (!notFound(err)) throw err; return null; });
+          if (st?.active === false && !st.running) return await finish(entry, { unconfirmed: true });
+        }
       }
     } finally {
       entry.abort.signal.removeEventListener('abort', onAbort);
@@ -300,15 +314,17 @@ export function createRunner({
     }
   }
 
-  async function finish(entry) {
+  async function finish(entry, { unconfirmed = false } = {}) {
     const current = ledger.getTask(entry.taskId);
     if (current && current.status === 'stopping') {
       // 停止请求已经记下：结果以四步停止的复核为准
       const r = entry.stopPromise ? await entry.stopPromise : await stop(entry.taskId, { reason: current.stopRequest?.reason || '', source: current.stopRequest?.source || 'resume' });
       return stoppedOutcome(r);
     }
-    const outcome = turnOutcome(entry.endReason);
-    const summary = redactText(lastAssistantText(entry.events, { fromSeq: entry.lastUserSeq }));
+    const outcome = turnOutcome(unconfirmed ? { kind: 'interrupted' } : entry.endReason);
+    const summary = unconfirmed
+      ? '云端重启后未能确认最后一条请求完成，原文已保留；确认后可以接着做。'
+      : redactText(lastAssistantText(entry.events, { fromSeq: entry.lastUserSeq }));
     let leftoverPids;
     if (outcome.status === 'interrupted' && !otherProjectTask(current)) {
       // 云端 Harness 崩过：原来的前台命令会变成孤儿接着跑（实测 E6），清掉这个项目目录下的残留进程
@@ -363,6 +379,7 @@ export function createRunner({
     if (other) return { ok: false, taskId, reason: `${task.machine} 上项目 ${task.project} 正由任务 ${other.taskId} 使用` };
     const e = outbox.enqueue(taskId, { text, mode: 'queue' }, (t, message) => ({
       ...t, status: 'dispatching', runRequestIds: [message.requestId], runUserSeq: 0, runEndSeq: 0, runEndReason: null,
+      runUserRequestId: null,
       endedAt: null, noticeState: 'none', summary: '', lastError: null, stopRequest: null,
     }));
     const jobId = start(taskId, { toolCall });
