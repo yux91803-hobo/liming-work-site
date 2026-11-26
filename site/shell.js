@@ -177,46 +177,6 @@
     s.appendChild(bc);
     return s;
   }
-  // 天启夜空星盘：错峰闪烁像素星、悬停连亮的北斗星群、正反双轨星盘与划空流星
-  var SKY_STARS = [
-    [18, 22, 2], [44, 14, 2], [72, 34, 3], [98, 18, 2], [134, 28, 2], [166, 16, 3], [202, 24, 2], [308, 20, 2], [326, 44, 3],
-    [28, 74, 2], [62, 96, 2], [92, 126, 3], [128, 114, 2], [160, 142, 2], [194, 132, 3], [216, 56, 2], [318, 118, 2], [298, 146, 3]
-  ];
-  var SKY_NODES = [[38, 52], [68, 44], [98, 58], [124, 78], [132, 108], [168, 114], [182, 84]];
-  function artSky() {
-    var s = sv('svg', { viewBox: '0 0 340 168', 'class': 'art art-sky', 'aria-hidden': 'true' });
-    var st = sv('g', { 'class': 'sky-stars' });
-    SKY_STARS.forEach(function (p, i) {
-      var r = sv('rect', { x: p[0], y: p[1], width: p[2], height: p[2], 'class': 'st' });
-      r.style.setProperty('--d', ((i % 7) * 0.37).toFixed(2) + 's');
-      st.appendChild(r);
-    });
-    s.appendChild(st);
-    var cs = sv('g', { 'class': 'sky-const' });
-    cs.appendChild(sv('path', { d: 'M38 52L68 44L98 58L124 78L132 108L168 114L182 84L124 78', 'class': 'c-line' }));
-    SKY_NODES.forEach(function (p, i) {
-      var nd = sv('rect', { x: p[0] - 2, y: p[1] - 2, width: 4, height: 4, 'class': 'c-node' });
-      nd.style.setProperty('--d', (i * 0.08).toFixed(2) + 's');
-      cs.appendChild(nd);
-    });
-    s.appendChild(cs);
-    var mt = sv('g', { 'class': 'sky-meteor' });
-    mt.appendChild(sv('path', { d: 'M176 22L134 46', 'class': 'm-tail' }));
-    mt.appendChild(sv('rect', { x: 132, y: 45, width: 3, height: 3, 'class': 'm-head' }));
-    s.appendChild(mt);
-    var ob = sv('g', { 'class': 'sky-orb' });
-    ob.appendChild(sv('circle', { cx: 254, cy: 84, r: 54, 'class': 'orb-outer' }));
-    ob.appendChild(sv('circle', { cx: 254, cy: 84, r: 36, 'class': 'orb-inner' }));
-    ob.appendChild(sv('path', { d: 'M254 18v12M254 138v12M188 84h12M308 84h12', 'class': 'orb-ticks' }));
-    var sat = sv('g', { 'class': 'orb-sat' });
-    sat.appendChild(sv('rect', { x: 251, y: 27, width: 6, height: 6, 'class': 'orb-planet' }));
-    sat.appendChild(sv('rect', { x: 288, y: 82, width: 4, height: 4, 'class': 'orb-moon' }));
-    ob.appendChild(sat);
-    ob.appendChild(sv('path', { d: 'M254 66l4 14 14 4-14 4-4 14-4-14-14-4 14-4Z', 'class': 'orb-core' }));
-    ob.appendChild(sv('rect', { x: 252.5, y: 82.5, width: 3, height: 3, 'class': 'orb-heart' }));
-    s.appendChild(ob);
-    return s;
-  }
   function artIcon(t) { var s = svg(t.icon); s.setAttribute('class', 'art art-icon'); return s; }
 
   function card(t, wide, hero) {
@@ -225,7 +185,6 @@
     var where = t.id === 'stm32' ? stmWhere(ls('lm.shell.stm32')) : null;
     if (t.art === 'chip') a.appendChild(artChip(where && where.t ? TOPIC_PINS[where.t] : []));
     else if (t.art === 'world') a.appendChild(artWorld());
-    else if (t.art === 'sky') a.appendChild(artSky());
     else a.appendChild(artIcon(t));
     var tx = el('span', 'tx');
     tx.appendChild(iconBox(t));
@@ -271,7 +230,7 @@
   var spotRaf = 0, spotEl = null, spotX = 0, spotY = 0;
   home.addEventListener('pointermove', function (e) {
     if (e.pointerType === 'touch') return;
-    var t = e.target && e.target.closest ? e.target.closest('.card, .xw-card') : null;
+    var t = e.target && e.target.closest ? e.target.closest('.card') : null;
     if (!t) return;
     spotEl = t; spotX = e.clientX; spotY = e.clientY;
     if (spotRaf) return;
@@ -345,12 +304,12 @@
     if (e.key === 'Escape') searching(false);
   });
   document.addEventListener('keydown', function (e) {
-    // 小芯聊天已经处理过的键不再处理：在聊天里按 Esc 只收聊天那一层，不顺带关掉工具
+    // 页面里别的地方已经处理过的键不再处理
     if (e.defaultPrevented) return;
     if (current) { if (e.key === 'Escape') back(); return; }
-    // 小芯聊天开着时 Ctrl/⌘ K 归它的命令面板；在输入框里打「/」就是在打字（比如路径）
+    // 在输入框里打「/」就是在打字（比如路径）
     var t = e.target, typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-    if (document.body.classList.contains('xc-open') || (e.key === '/' && typing)) return;
+    if (e.key === '/' && typing) return;
     if ((e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) && document.activeElement !== q) { e.preventDefault(); searching(true); }
   });
 
@@ -392,7 +351,7 @@
     html.classList.toggle('kb-pre', !!c);
     if (c) html.style.setProperty('--kb-bg', c); else if (!html.classList.contains('kb-up')) html.style.removeProperty('--kb-bg');
   }
-  var tqSafeBottom = 0, kbToolCol = '', kbLast = { top: null, h: null, up: false, bg: '', overlap: null, anim: false };
+  var kbToolCol = '', kbLast = { top: null, h: null, up: false, bg: '', anim: false };
   function kbRoot() {
     try { var p = current && panels[current]; return p ? p._frame.contentDocument.documentElement : null; } catch (e) { return null; }
   }
@@ -403,7 +362,7 @@
     var root = kbRoot();
     if (root) root.classList.toggle('kb-anim', on);
   }
-  function kbCover(on, overlap) {
+  function kbCover(on) {
     on = !!on;
     var c = on ? (kbToolCol || (kbToolCol = toolColor())) : '';
     if (kbLast.up !== on) {
@@ -416,19 +375,9 @@
       kbLast.bg = ''; html.style.removeProperty('--kb-bg');
     }
     if (!on) kbToolCol = '';
-    // 工具里也知道键盘在不在：键盘盖住了 iPhone 底下那条横条，工具不用再给它留白（天启的 --sb）
+    // 工具里也知道键盘在不在（html.kb-up），需要的话自己调整留白
     var root = kbRoot();
     if (!root) return;
-    if (tqIOSKeyboard()) {
-      if (on && !root.classList.contains('kb-up')) tqSafeBottom = parseFloat(getComputedStyle(root).getPropertyValue('--tq-safe-bottom')) || 0;
-      var ov = on && overlap < tqSafeBottom ? Math.round(overlap * 2) / 2 : null;
-      if (kbLast.overlap !== ov) {
-        kbLast.overlap = ov;
-        // 覆盖整个安全区以后保持 0px 留白，免得每帧改 iframe 里的 CSS 变量。
-        if (ov != null) root.style.setProperty('--tq-kb-overlap', ov + 'px');
-        else root.style.removeProperty('--tq-kb-overlap');
-      }
-    }
     if (root.classList.contains('kb-up') !== on) root.classList.toggle('kb-up', on);
   }
   /* 站长 11-21 15:08 真 iPhone 录屏（#203 上线后复测）及 11-23 卡顿排查：
@@ -436,7 +385,7 @@
      2. 记住相对键盘高度 kbHeight（full - target，同步到 sessionStorage），地址栏显隐变化时仍对准键盘顶，且同会话后续打开首次即跟随。
      3. 只有系统连续报出 2 个以上中间高度才算跟手拖拽收起；键盘变矮（如收起预测栏）的单步 resize 走平滑改目标，不再一帧跳变。
      4. 收起后加单调保护窗口（参考 caelinsutch/keyboard-playground.html）：若 Safari 晚于 210ms 才把 visualViewport 恢复满屏，不再把输入框拽回半空。
-     5. 缓存内联样式避免每帧重复写 DOM/CSS 变量，并通过 html.kb-anim 通知天启在动画的 210–382ms 内暂停夜空重绘，把帧预算全让给键盘跟随。 */
+     5. 缓存内联样式避免每帧重复写 DOM/CSS 变量，并通过 html.kb-anim 告诉工具页面键盘正在动，重的动画可以先停，把帧预算让给键盘跟随。 */
   var KB_OPEN = [[0, 0], [15, .116], [32, .244], [48, .391], [65, .513], [82, .619], [98, .712], [115, .783], [132, .842], [148, .882], [165, .914],
     [182, .937], [198, .954], [215, .967], [232, .977], [248, .983], [265, .988], [282, .992], [298, .994], [332, .997], [382, 1]];
   var KB_CLOSE = [[0, 0], [3, .017], [20, .115], [36, .265], [53, .404], [70, .534], [86, .637], [103, .722], [120, .793], [136, .847], [153, .889],
@@ -499,17 +448,15 @@
     kbSyncAnim(true);
     settleStage();
   }
-  function tqIOSKeyboard() { return isIOS && current === 'tianqi'; }
   function kbStartLate(dir, fromH, toH, now, delay) {
-    // Safari 可能只在键盘移动后报告一次高度。从此刻画出来的高度走完剩下的曲线，避免把已过去的那段位移补成一跳。
-    if (tqIOSKeyboard()) kbStart(dir, fromH, toH, now, delay);
-    else kbStart(dir, fromH, toH, now - delay);
+    // Safari 可能只在键盘移动后报告一次高度：把动画起点往前挪 delay，接上已经走过的那段
+    kbStart(dir, fromH, toH, now - delay);
   }
   function kbPlace(vv, h, full) {
     var s = stage.style, top = Math.max(0, Math.round(vv.offsetTop)), rh = Math.round(h);
     if (kbLast.top !== top) { kbLast.top = top; s.top = top + 'px'; }
     if (kbLast.h !== rh) { kbLast.h = rh; s.height = rh + 'px'; s.bottom = 'auto'; }
-    kbCover(true, Math.max(0, full - rh));
+    kbCover(true);
   }
   function kbRestore() {
     var s = stage.style;
@@ -527,7 +474,7 @@
       kbSession = true; kbClosingUntil = 0;
       if (kbAnim && kbAnim.dir === 'open') return;
       if (kbAnim && kbAnim.dir === 'close') {   // 收起一半又点回来：从眼下的高度转头往上走
-        if (openTo) kbStart('open', tqIOSKeyboard() ? stageH() : kbAnimAt(kbAnim, now).h, openTo, now); else kbPending = true;
+        if (openTo) kbStart('open', kbAnimAt(kbAnim, now).h, openTo, now); else kbPending = true;
         return;
       }
       if (html.classList.contains('kb-up')) return;   // 键盘已经升着（只是换了个输入框），不用重走一遍
@@ -537,7 +484,7 @@
       kbPending = false;
       if (e && e.relatedTarget && typingEl(e.relatedTarget)) return;   // 只是换了个输入框，键盘不收
       kbSession = false;
-      var h = kbAnim && !tqIOSKeyboard() ? kbAnimAt(kbAnim, now).h : stageH();
+      var h = kbAnim ? kbAnimAt(kbAnim, now).h : stageH();
       if (h < innerHeight - 2) kbStart('close', h, innerHeight, now);
       else { kbAnim = null; kbSyncAnim(false); }
     }
@@ -597,7 +544,7 @@
     saveKbHeight(full - target);
     if (typingNow()) kbSession = true;
     if (kbPending) {
-      kbPending = false; kbStartLate('open', tqIOSKeyboard() ? stageH() : full, target, now, KB_LATE_OPEN); fitStage(now); return;
+      kbPending = false; kbStartLate('open', full, target, now, KB_LATE_OPEN); fitStage(now); return;
     }
     kbPlace(vv, target, full);
   }
@@ -632,18 +579,11 @@
   }
   /* 站长 11-21 10:07 iPhone（4G）：有字的对话点输入框，「一点也不丝滑，上去的时候会弹一下」。
      做法照 frizynn/nenu #173（useFocusInPlace）和 React Aria #8888：WebKit 对带 preventScroll 的 focus 不做整页挪动。
-     手指点没获得焦点的输入框（或输入框外框 .tq-entry 的空白处），由我们自己 focus({ preventScroll: true })，页面一点不挪。 */
+     手指点没获得焦点的输入框，由我们自己 focus({ preventScroll: true })，页面一点不挪。 */
   function focusInPlace(d) {
     var start = null;
     function editable(el) { return !!el && !el.disabled && !el.readOnly && (el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|tel|password|number|)$/.test(el.type || ''))); }
-    function resolveTarget(t) {
-      if (editable(t)) return t;
-      if (!t || !t.closest || t.closest('button, a, select, input, label, [role=button]')) return null;
-      var entry = t.closest('.tq-entry, .tq-box');
-      if (!entry) return null;
-      var ta = entry.querySelector('textarea');
-      return editable(ta) ? ta : null;
-    }
+    function resolveTarget(t) { return editable(t) ? t : null; }
     d.addEventListener('touchstart', function (e) { var t = e.touches[0]; start = e.touches.length === 1 ? [t.clientX, t.clientY] : null; }, { capture: true, passive: true });
     d.addEventListener('touchmove', function (e) {
       var t = e.touches[0];
@@ -652,7 +592,7 @@
       if (e.touches.length !== 1 || !html.classList.contains('kb-up')) return;
       var vv = window.visualViewport;
       if (vv && Math.abs((vv.scale || 1) - 1) > 0.01) return;
-      var sc = e.target && e.target.closest ? e.target.closest('.xc-body, .xc-dr-sc, .tq-pane, .tq-set-body, .xc-pal-l, .xc-sh-list, .tq-r-head, .xc-sh-hd, pre, .xc-tbl, textarea, input') : null;
+      var sc = e.target && e.target.closest ? e.target.closest('pre, textarea, input') : null;
       if (!sc || (sc.tagName === 'TEXTAREA' && sc.scrollHeight <= sc.clientHeight + 1)) e.preventDefault();
     }, { capture: true, passive: false });
     d.addEventListener('touchend', function (e) {
@@ -660,13 +600,7 @@
       if (!tap || e.touches.length) return;
       var el = resolveTarget(e.target);
       if (!el) return;
-      if (el === d.activeElement) {
-        // 系统收键盘后，原输入框可能仍有焦点；再点它时不会收到 focusin。
-        if (tqIOSKeyboard() && (!html.classList.contains('kb-up') || (kbAnim && kbAnim.dir === 'close'))) {
-          kbFocus(true, e); settleStage();
-        }
-        return;
-      }
+      if (el === d.activeElement) return;
       e.preventDefault();   // 不让系统自己 focus（它会挪整页）；配合 Searls 屏外位移护栏彻底阻止 iframe 内 WebKit 异步滚屏
       var prevTf = el.style.transform;
       el.style.transform = 'translateY(-8000px)';

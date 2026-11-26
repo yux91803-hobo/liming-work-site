@@ -11,9 +11,7 @@ chars = set(chr(c) for c in range(0x20, 0x7f))
 for f in ('index.html', 'shell.js', 'shell.css', 'pixel.css', 'tools.js', 'mascot.js', 'tools/stm32/study-core.js'):
     try: chars |= set(open(os.path.join(ROOT, f), encoding='utf8').read())
     except Exception: pass
-# 首页以外用点阵字的：小芯聊天欢迎页的大标题「小芯」「天启」（site/xin/chat.js 的 welcome）、侧边栏的小标题「对话」、
-# 「小芯的电脑」终端的标题；第二轮的「嗨，我是小芯」也留着（旧缓存的页面还会用到）
-chars |= set('嗨，我是小芯天启对话的电脑')
+# 小芯聊天和天启 2026-11-26 删了，它们标题用的点阵字不再单独加（现有字体文件多出这几个字不碍事，下次重新生成时去掉）
 chars = {c for c in chars if ord(c) >= 0x20}
 opts = subset.Options()
 opts.flavor = 'woff'; opts.layout_features = []; opts.name_IDs = [1, 2, 3, 4, 6]

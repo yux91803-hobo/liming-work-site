@@ -31,7 +31,7 @@ export function snapshotReport({root,temporary,run,attempt,nonce=randomUUID()}) 
     for (const name of fs.readdirSync(full).sort()) if(match(name))files.push(`${dir}/${name}`);
   };
   collect('test-results/e2e',name=>name.endsWith('.log'));
-  collect('screens',name=>/^xin-web-failure-.*\.png$/.test(name)||name==='stm32-drag-failure.png');
+  collect('screens',name=>name==='stm32-drag-failure.png');
   try { fs.lstatSync(path.join(root,'preview.log'));files.push('preview.log'); } catch(e) { if(e.code!=='ENOENT')throw e; }
   files.sort();
   fs.mkdirSync(temporary,{recursive:true});

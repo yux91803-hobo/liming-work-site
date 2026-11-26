@@ -7,27 +7,17 @@
     "directory": "./site",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/tools/*/assets/*", "/xin/vm-*"]
+    "run_worker_first": ["/api/*", "/tools/*/assets/*"]
   },
   // 互传（Space）和登录限流（Limiter）已删除：v2 迁移会在部署时连同里面存的数据一起删掉
+  // 小芯的任务看护（XinTaskSupervisor）2026-11-26 随小芯、天启一起删：v4 迁移连同里面存的待送达消息一起删（站长同意）
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Space", "Limiter"] },
     { "tag": "v2", "deleted_classes": ["Space", "Limiter"] },
-    { "tag": "v3", "new_sqlite_classes": ["XinTaskSupervisor"] }
+    { "tag": "v3", "new_sqlite_classes": ["XinTaskSupervisor"] },
+    { "tag": "v4", "deleted_classes": ["XinTaskSupervisor"] }
   ],
   "observability": { "enabled": false },
-  "durable_objects": { "bindings": [{ "name": "XIN_TASK_SUPERVISOR", "class_name": "XinTaskSupervisor" }] },
-  // 小芯聊天（src/xin.js）：云电脑的名字；登录每个 IP 每分钟最多试 5 次
-  // 密钥 OWNER_PASSWORD、INSTABOX_API_KEY 由 Actions 从 GitHub Secrets 写进正式站（XIN_OWNER_PASSWORD、XIN_INSTABOX_API_KEY），测试站不配，功能关着
-  // 小芯内核第 1 步（docs/xin-kernel-design.md）：XIN_TRANSPORT=kernel 走电脑上常驻内核的私有端口（不写或写 exec 就照旧走 InstaBox exec）；
-  // XIN_INBOX=1 发消息先存进待送达再送。回滚优先改这两个开关；整版回滚前先确认待送达里没有没送完的消息。
-  // 小芯的状态只由电脑上常驻的状态进程管（内核外壳拉起、看住）。删旧模式第 2 步（docs/superpowers/specs/2026-11-17-xin-remove-legacy-design.md）
-  // 去掉了 XIN_STATE_OWNER 开关，没有旧方式可切了。部署代号由 Durable Object 按下面的版本信息发。
-  // 天启（docs/superpowers/specs/2026-11-18-tianqi-li2-design.md）：/api/tq/* 连第二台电脑 XIN_TQ_MACHINE。
-  // 密钥 TQ_INSTABOX_API_KEY（li2 那个 InstaBox 账号的 key）由 Actions 从 GitHub Secret XIN_TQ_INSTABOX_API_KEY 写进正式站；没配时天启显示「还没配好」
-  "vars": { "XIN_MACHINE": "li", "XIN_TQ_MACHINE": "li2", "XIN_TRANSPORT": "kernel", "XIN_INBOX": "1" },
-  "version_metadata": { "binding": "CF_VERSION_METADATA" },
-  "ratelimits": [{ "name": "XIN_LOGIN_LIMIT", "namespace_id": "1801", "simple": { "limit": 5, "period": 60 } }],
   // 定时任务已关（2026-11-26 站长：小芯、天启停用，每日清单不要了）。以前是北京 8:55 叫醒电脑、9:10 / 21:10 让小芯按清单做一遍。
   // 写成空数组：发布时 Cloudflare 会撤掉已有的定时触发。
   "triggers": { "crons": [] },
@@ -42,16 +32,12 @@
       "name": "liming-hub-staging",
       "routes": [],
       "workers_dev": true,
-      "durable_objects": { "bindings": [{ "name": "XIN_TASK_SUPERVISOR", "class_name": "XinTaskSupervisor" }] },
-      "vars": { "XIN_MACHINE": "li" },
-      "version_metadata": { "binding": "CF_VERSION_METADATA" },
-      "ratelimits": [{ "name": "XIN_LOGIN_LIMIT", "namespace_id": "1802", "simple": { "limit": 5, "period": 60 } }],
       "triggers": { "crons": [] },   // 测试站不跑定时任务
       "assets": {
         "directory": "./site",
         "binding": "ASSETS",
         "not_found_handling": "single-page-application",
-        "run_worker_first": ["/api/*", "/tools/*/assets/*", "/xin/vm-*"]
+        "run_worker_first": ["/api/*", "/tools/*/assets/*"]
       }
     }
   }

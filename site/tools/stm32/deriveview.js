@@ -96,11 +96,8 @@
       var bodyB = el('div', 'dv-ask-b'), fb = el('div', 'dv-fb'); fb.setAttribute('aria-live', 'polite');
       box.appendChild(bodyB); box.appendChild(fb);
       var tries = 0, solved = false, reveal = null;
-      var assisted=o.mode==='full';
-      function proof(answer,correct,independent){if(STM.learning)STM.learning.record({topic:ch.topic,exercise:a.id,step:ASK[a.id]&&ASK[a.id].stepId||'',kind:'answer',answer:String(answer),correct:correct,independent:independent&&!assisted&&tries===0&&!STM.learning.assisted(ch.topic,a.id)});}
       function miss(back, assume) {
         tries++;
-        if(STM.learning)STM.learning.assisted(ch.topic,a.id,true);
         if (o.mode === 'review') return;
         edit(ch.id, function (s) { C.recordMiss(s.stuck = s.stuck || {}, a.id, back || ASK[a.id] && ASK[a.id].stepId, assume); });
       }
@@ -133,7 +130,7 @@
       function offerReveal(fn) {
         if (reveal || solved) return;
         reveal = ui.btn('textbtn dv-reveal', '看答案');
-        reveal.addEventListener('click', function(){assisted=true;if(STM.learning)STM.learning.assisted(ch.topic,a.id,true);fn();}); box.appendChild(reveal);
+        reveal.addEventListener('click', function () { fn(); }); box.appendChild(reveal);
       }
       if (o.mode === 'full') offerReveal(function () { revealAll(); });
       var revealAll = function () { done(true); };
@@ -146,7 +143,6 @@
           var b = ui.btn('dv-opt'); b.appendChild(el('i', 'dv-dot')); b.appendChild(rich(it.x.t, 'span'));
           b.addEventListener('click', function (event) {
             if (solved || b.disabled) return;
-            if(event.isTrusted)proof(it.x.t,!!it.x.ok,true);
             if (it.x.ok) { b.classList.add('right'); btns.forEach(function (y) { y.disabled = true; }); done(false); return; }
             b.classList.add('wrong'); b.disabled = true; b.setAttribute('aria-label', it.x.t + '（不对）');
             miss(it.x.back, it.x.assume);
@@ -164,11 +160,9 @@
         inp.setAttribute('aria-label', '你的答案'); inp.setAttribute('autocomplete', 'off'); inp.setAttribute('autocapitalize', 'off'); inp.setAttribute('spellcheck', 'false'); inp.setAttribute('enterkeyhint', 'done');
         row.appendChild(inp); row.appendChild(go); bodyB.appendChild(row);
         var acc = a.answers.map(function (x) { return String(x).toLowerCase().replace(/\s+/g, ''); });
-        var typed=false;inp.addEventListener('input',function(e){if(e.isTrusted)typed=true;});
         function test() {
           if (solved) return;
           var v = inp.value.toLowerCase().replace(/\s+/g, ''); if (!v) { inp.focus(); return; }
-          if(typed)proof(inp.value,acc.indexOf(v)>-1,true);
           if (acc.indexOf(v) > -1) { inp.classList.add('right'); inp.readOnly = true; go.hidden = true; done(false); return; }
           miss(ASK[a.id] && ASK[a.id].stepId, null);
           inp.classList.remove('shake'); void inp.offsetWidth; inp.classList.add('shake');
@@ -184,7 +178,6 @@
 
       else if (a.type === 'explain') {
         var ta = el('textarea', 'dv-ta'); ta.rows = 4; ta.placeholder = '先别看下面，自己写几句。写得不完整也没关系。';
-        ta.addEventListener('input',function(e){if(e.isTrusted)ta._xinTyped=true;});
         ta.setAttribute('aria-label', '你的解释');
         var cmp = ui.btn('pill solid', '写好了，对照要点');
         bodyB.appendChild(ta); var r2 = el('div', 'dv-row'); r2.appendChild(cmp); bodyB.appendChild(r2);
@@ -193,7 +186,6 @@
           if (solved) return;
           var txt = ta.value.trim();
           if (!txt && o.mode !== 'full') { ta.focus(); ui.toast('先写几句再对照'); return; }
-          if(txt&&ta._xinTyped)proof(txt,null,false);
           cmp.hidden = true; ta.readOnly = true; ui.clear(res);
           res.appendChild(el('p', 'dv-explain-h', '你的解释里有没有说到这几点？（自动勾了可能提到的，你可以自己改）'));
           var checks = [];
@@ -249,7 +241,6 @@
         }
         chk.addEventListener('click', function (event) {
           var r = C.checkOrder(texts, placed, it.rules);
-          if(event.isTrusted)proof(placed.map(function(i){return texts[i];}).join('\n'),!!r.ok,true);
           ui.clear(simBox);
           if (r.ok) {
             draw(); ans.classList.add('ok');

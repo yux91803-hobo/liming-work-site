@@ -194,7 +194,7 @@
   var seq = null, lastSig = '', tick = 0, forced = null;
   var lastInput = Date.now(), idleTm = 0, blinkTm = 0, zTm = 0, taps = [];
   var music = false, energy = 0;   // 戴着耳机听歌；吃了电池以后一段时间跑得飞快
-  // 好感度（小芯电脑上记着，xin/chat.js 告诉这里是第几级）：越熟越听话，叛逆的概率从 0.3 降到 0.08
+  // 好感度：越熟越听话，叛逆的概率从 0.3 降到 0.08。以前由小芯聊天告诉这里是第几级；2026-11-26 小芯删了，接口留给后续清理
   var bondLv = 0, obedientF = false, REBEL_BY_BOND = [0.3, 0.22, 0.14, 0.08];
   function rebelBase() { return obedientF ? 0 : REBEL_BY_BOND[bondLv]; }
   function setBond(lv) { bondLv = Math.max(0, Math.min(3, lv | 0)); REBEL = rebelBase(); }
@@ -234,21 +234,12 @@
     learned = learned.slice(-30);
   }
   function findMove(name) { for (var i = 0; i < learned.length; i++) if (learned[i].name === name) return learned[i]; return null; }
-  // 学习台里的小芯（iframe）：学会的动作、好感度在外面工具箱页面的 xin/chat.js 那里，拿过来
-  function syncLearned() {
-    if (!STM || window.parent === window) return;
-    try { var c = window.parent.LimingXinChat, st = c && c.state; if (st && st.moves && st.moves.length !== learned.length) learn(st.moves); if (st && st.bond) setBond(st.bond.level); } catch (e) { /* 别的源 */ }
-  }
   function doMove(m) {
     if (!m || reduce || paused() || mode === 'away') return false;
     if (mode === 'sleep') { clearTimeout(zTm); clearTimeout(sleepTm); }
     stopWalk(); setMood(''); setMode('play');
     playSeq(m.frames.map(function (f) { return mix({}, f); }), function () { if (mode === 'play') { mode = 'idle'; render(); } schedule(); });
     return true;
-  }
-  // 你在网页上喂它、陪它玩：告诉 xin/chat.js，小芯电脑那边加好感（一天最多 +3）
-  function played(kind) {
-    try { var c = window.LimingXinChat || (STM && window.parent !== window ? window.parent.LimingXinChat : null); if (c && c.played) c.played(kind); } catch (e) { /* 别的源 */ }
   }
   var grr = 0, grrT = 0, ragePending = false;   // 脾气：被惹多了就发火砸东西
   var musicAt = 0, boreAt = 0, phonesBroke = 0, ate = [];
@@ -1196,7 +1187,6 @@
     } else if (!reduce && r < 0.7) {
       if (swing()) return;
     } else if (!reduce && r < 0.73) {
-      syncLearned();
       if (learned.length && Math.random() < 0.5 && doMove(learned[Math.floor(Math.random() * learned.length)])) return;
       dance(); return;
     } else if (!reduce && r < 0.75 && REBEL > 0 && plat.kind !== 'ground') {
@@ -1520,7 +1510,7 @@
         case 'code': code(true, 'ok'); break;
         case 'rage': idleNow(); rage(); break;
         case 'tongue': idleNow(); var r = el.getBoundingClientRect(); tease(r.left + r.width); break;
-        case 'move': idleNow(); syncLearned(); if (!doMove(findMove(arg))) { setMood('confused', 1600); schedule(1800); } break;
+        case 'move': idleNow(); if (!doMove(findMove(arg))) { setMood('confused', 1600); schedule(1800); } break;
         default: break;
       }
     });
@@ -1563,12 +1553,12 @@
     var out = [
       ['cookie', '饼干', function () { feed('cookie'); }],
       ['batt', '电池', function () { feed('batt'); }],
-      ['ball', '小球', function () { playToy('ball', true); played('ball'); }],
-      ['led', 'LED', function () { playToy('led', true); played('led'); }],
-      ['phones', music ? '摘耳机' : '耳机', function () { if (!music && Date.now() - phonesBroke < 30000) refuse(); else { setMusic(!music); if (music) played('phones'); } }],   // 刚砸完：不戴
+      ['ball', '小球', function () { playToy('ball', true); }],
+      ['led', 'LED', function () { playToy('led', true); }],
+      ['phones', music ? '摘耳机' : '耳机', function () { if (!music && Date.now() - phonesBroke < 30000) refuse(); else { setMusic(!music); } }],   // 刚砸完：不戴
       ['pc', '敲代码', function () { code(true); }],
-      ['dance', '跳舞', function () { dance(); played('dance'); }],
-      ['swing', '秋千', function () { if (mode === 'play') setMode('idle'); stopWalk(); if (!swing()) jump(4); played('swing'); }],
+      ['dance', '跳舞', function () { dance(); }],
+      ['swing', '秋千', function () { if (mode === 'play') setMode('idle'); stopWalk(); if (!swing()) jump(4); }],
       mode === 'sleep' ? ['sun', '叫醒', function () { wake(true); }] : ['moon', '睡觉', function () {
         if (mode === 'play') setMode('idle'); stopWalk(); setMood('');
         // 叛逆：刚吃了电池精神得很、或者就是不想睡——摇头、吐舌头、背过身；嘴上说不要，过一会儿自己就睡着了
@@ -1576,12 +1566,8 @@
         sleep(true);
       }]
     ];
-    syncLearned();
     if (learned.length) out.push(['star', '新动作', function () { var m = learned[learnI++ % learned.length]; if (doMove(m)) say(m.name, 1800); }]);
     extraBag.forEach(function (it) { out.push([it.icon, it.label, it.fn]); });
-    // 学习台里的小芯：聊天面板在外面的工具箱页面上（xin/chat.js），从这里叫它打开
-    var chat = null; try { chat = STM && window.parent !== window ? window.parent.LimingXinChat : null; } catch (e) { chat = null; }
-    if (chat && chat.state && chat.state.enabled) out.push(['chat', '聊天', function () { if (chat.ask) chat.ask(window.LimingXin); else chat.open(); }]);
     if (HOME) {
       out.push(['home', '回标题栏', function () { var g = plats().filter(function (q) { return q.kind === 'ground'; })[0]; if (g && !same(g, plat)) come(function () { hop(g, g.x0 + (g.x1 - g.x0) * 0.4); }); }]);
       out.push(['hide', '收起来', function () { setOff(true); }]);
@@ -1595,7 +1581,7 @@
   function feed(name) {
     var t = Date.now(); ate = ate.filter(function (v) { return t - v < 40000; });
     if (ate.length >= 2) { refuse(); return; }
-    ate.push(t); playToy(name, true); played(name);
+    ate.push(t); playToy(name, true);
   }
   // 叫它过来：有时候先背过身不理你，磨蹭一会儿才过来
   function come(go) { if (rebel()) refuse(go); else go(); }
