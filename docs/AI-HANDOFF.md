@@ -8,7 +8,7 @@
   - 正式站的定时任务关掉。
   - 正式发布不再跑小芯真模型联调：`deploy.yml` 的联调四步和联调脚本、判断脚本都删了，冒烟检查和失败回滚照旧。
 - **接手注意**：
-  - 小芯的常驻服务（`xin-kernel-resident`、`xin-reaper.timer`）、`~/.xin`、网关，以及网站上的小芯页面和天启工具都还在。联调删了以后发布不再依赖它们，但要停要删先问站长。
+  - 小芯的常驻服务（`xin-kernel-resident`、`xin-reaper.timer`）站长同意停：li 上已停并关掉自启，li2 等站长重跑装机脚本时停；文件和 `~/.xin` 没删，可以恢复。网关（`workbuddy-gateway.service`）照常运行，云上的 Codex 要用它，别停。网站上的小芯页面和天启工具以后再定。
   - li 上已经实际配好（2026-11-26，用会话里 li 账号的 key）：
     - `~/.codex/config.toml` 的 workbuddy 线路加了 `env_key`，备份是 `config.toml.bak-liming-20261126`；
     - `~/.config/liming/gateway.key` 和 `~/.profile` 里导出它的一行；

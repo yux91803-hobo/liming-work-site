@@ -202,6 +202,18 @@ remote_script() {
 set -u
 umask 077
 st() { printf 'LMC %s %s\n' "$1" "$2"; }
+# 0. 小芯、天启已停用（站长 2026-11-26）：关掉并停下它们的用户级常驻服务。文件不删，想恢复用 systemctl --user enable --now
+XU="$HOME/.config/systemd/user"
+if [ -f "$XU/xin-kernel-resident.service" ] || [ -f "$XU/xin-reaper.timer" ]; then
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  for u in xin-kernel-resident.service xin-reaper.timer; do
+    if [ -f "$XU/$u" ]; then systemctl --user disable --now "$u" </dev/null >/dev/null 2>&1 || true; fi
+  done
+  systemctl --user stop xin-reaper.service </dev/null >/dev/null 2>&1 || true
+  st xin-services stopped
+else
+  st xin-services none
+fi
 # 1. 以前的租约插件（liming-lease）和它的写 key
 if [ -d "$HOME/.liming-lease" ] || [ -d "$HOME/.liming-cloud" ]; then
   if [ -x "$HOME/.local/bin/dsh" ]; then "$HOME/.local/bin/dsh" plugin --profile web remove liming-lease </dev/null >/dev/null 2>&1 || true; fi
@@ -335,6 +347,7 @@ remote_setup() {
   fi
   lmc() { printf '%s\n' "$out" | sed -n "s/^LMC $1 //p" | tail -n 1; }
   [ "$(lmc old-lease)" = removed ] && OLD_REMOVED=1
+  [ "$(lmc xin-services)" = stopped ] && notes="$notes；停了小芯、天启的后台服务（文件没删）"
   [ "$(lmc gateway-key)" = missing ] && notes="$notes；没找到本机网关的 key，云上的 Codex 用不了模型"
   case "$(lmc codex)" in
     none) notes="$notes；没装 Codex";;
@@ -365,7 +378,7 @@ dry_run_plan() {
   say "4. 网关没装就从 li2（不行再从 li）取安装包 $REMOTE_ZIP，核对大小和 SHA-256 后解到 $GW_DIR；插件放到 $PLUGIN_DIR，第一次装时挂进 web 配置。"
   say "5. 以前装过云端任务插件（$OLD_CLOUD_PLUGIN_DIR、$OLD_CLOUD_DIR）就卸掉删掉。"
   say "6. 装 ib 到 $BIN_DIR/ib，技能到 $SKILL_DIR/SKILL.md。"
-  say "7. 在每台云电脑上：删以前的租约插件；把本机网关的 key 给 Codex（~/.config/liming、~/.profile 一行、Codex 配置的本机网关线路，先备份）；"
+  say "7. 在每台云电脑上：停掉小芯、天启的后台服务（xin-kernel-resident、xin-reaper，文件不删）；删以前的租约插件；把本机网关的 key 给 Codex（~/.config/liming、~/.profile 一行、Codex 配置的本机网关线路，先备份）；"
   say "   装浏览器命令行 @playwright/cli@$PLAYWRIGHT_CLI_VERSION 和 Chromium；照旧写手动切主机用的 dsh-tablet 和 web 配置。"
 }
 

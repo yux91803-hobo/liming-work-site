@@ -272,3 +272,35 @@ test('没装 InstaBox 命令行：用 npm 装指定版本；装完还找不到�
   const ok=spawnSync('bash',['-c','source "$0"; ensure_instabox',setup],{env:{...env,LIMING_SETUP_LIB:'1'},encoding:'utf8'});
   assert.equal(ok.status,0,ok.stderr);
 });
+
+test('云端：小芯、天启已停用——它们的用户级常驻服务（xin-kernel-resident、xin-reaper）关掉并停下，文件不删；没有就不动',t=>{
+  const {d,lib}=rig(t);
+  const h=remoteHome(d,'li7',{codexConfig:LI_CODEX});
+  const units=path.join(h,'.config/systemd/user');fs.mkdirSync(units,{recursive:true});
+  for(const u of ['xin-kernel-resident.service','xin-reaper.timer','xin-reaper.service'])fs.writeFileSync(path.join(units,u),'[Unit]\n');
+  fs.writeFileSync(path.join(h,'bin/systemctl'),'#!/bin/sh\necho "systemctl $*" >> "$HOME/remote.log"\n',{mode:0o755});
+  const script=lib('remote_script li7 "$1" "$2"',path.join(tablet,'dsh-tablet.sh'),path.join(tablet,'dsh-tablet-profile.yml'));
+  const run=()=>spawnSync('bash',['-s'],{input:script.stdout,encoding:'utf8',env:{PATH:path.join(h,'bin')+':'+process.env.PATH,HOME:h,LIMING_REMOTE_WS:path.join(d,'ws-li7')}});
+  const r=run();assert.equal(r.status,0,r.stderr);assert.equal(r.stderr,'');
+  const log=fs.readFileSync(path.join(h,'remote.log'),'utf8');
+  assert.match(log,/^systemctl --user disable --now xin-kernel-resident\.service$/m,'逐个关：缺一个不影响另一个');
+  assert.match(log,/^systemctl --user disable --now xin-reaper\.timer$/m);
+  assert.match(log,/^systemctl --user stop xin-reaper\.service$/m);
+  assert.match(r.stdout,/^LMC xin-services stopped$/m);
+  for(const u of ['xin-kernel-resident.service','xin-reaper.timer'])assert.ok(fs.existsSync(path.join(units,u)),u+' 文件留着，想恢复能再开');
+  // 没有这些服务的机器：不调 systemctl
+  const h2=remoteHome(d,'li6');fs.writeFileSync(path.join(h2,'bin/systemctl'),'#!/bin/sh\necho "systemctl $*" >> "$HOME/remote.log"\n',{mode:0o755});
+  const r2=spawnSync('bash',['-s'],{input:lib('remote_script li6 "$1" "$2"',path.join(tablet,'dsh-tablet.sh'),path.join(tablet,'dsh-tablet-profile.yml')).stdout,encoding:'utf8',env:{PATH:path.join(h2,'bin')+':'+process.env.PATH,HOME:h2,LIMING_REMOTE_WS:path.join(d,'ws-li6')}});
+  assert.equal(r2.status,0,r2.stderr);assert.match(r2.stdout,/^LMC xin-services none$/m);
+  assert.doesNotMatch(fs.readFileSync(path.join(h2,'remote.log'),'utf8'),/systemctl/);
+});
+
+test('装机结果里说明哪台停了小芯、天启的后台服务',t=>{
+  const {d,run}=rig(t);
+  const units=path.join(d,'home-li2/.config/systemd/user');fs.mkdirSync(units,{recursive:true});
+  fs.writeFileSync(path.join(units,'xin-reaper.timer'),'[Unit]\n');
+  fs.writeFileSync(path.join(d,'home-li2/bin/systemctl'),'#!/bin/sh\nexit 0\n',{mode:0o755});
+  const r=run();assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.match(r.stdout,/li2：准备好了.*停了小芯、天启的后台服务/);
+  assert.doesNotMatch(r.stdout,/li：准备好了.*停了小芯/);
+});
