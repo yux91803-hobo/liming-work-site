@@ -32,7 +32,7 @@ Liming 工具箱 / STM32 学习工作台，正式站 https://liming-work.com （
 
 部署配置：`wrangler.jsonc`（顶层 = 正式站，`env.staging` = 测试站），`.github/workflows/deploy.yml`（`DEPLOY_ENABLED` 是总开关）。令牌在 GitHub Secrets（`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`），会话里读不到，部署只走 Actions。
 
-小芯聊天（`src/xin.js`、`site/xin/`）：站长登录后经 InstaBox 云电脑里的 AI 聊天干活。正式站密钥 `XIN_OWNER_PASSWORD`、`XIN_INSTABOX_API_KEY` 也在 GitHub Secrets，由 Actions 写进 Worker；测试站不配，功能关着。云电脑里的 AI 是用户确认过的完全放权模式；会话里可能有 `INSTABOX_API_KEY` 环境变量，调 InstaBox API 前先读 https://instabox.sh/llms.txt ，删机器或快照前必须先问用户。2026-11-26 站长：小芯、天启停用，正式站的定时任务（原来北京 8:55 叫醒云电脑、9:10 / 21:10 跑小芯的每日任务，`src/xin.js` 的 `runCron`）已关，每日签到也不要了；li、li2 现在归平板上的 AI 用（见 [docs/tablet.md](docs/tablet.md)），网站上的小芯页面和天启工具以后再定。不要用会话里的凭据去登录用户的网关面板。
+小芯聊天（`src/xin.js`、`site/xin/`）：站长登录后经 InstaBox 云电脑里的 AI 聊天干活。正式站密钥 `XIN_OWNER_PASSWORD`、`XIN_INSTABOX_API_KEY` 也在 GitHub Secrets，由 Actions 写进 Worker；测试站不配，功能关着。云电脑里的 AI 是用户确认过的完全放权模式；会话里可能有 `INSTABOX_API_KEY` 环境变量，调 InstaBox API 前先读 https://instabox.sh/llms.txt ，删机器或快照前必须先问用户。2026-11-26 站长：小芯、天启停用，正式站的定时任务（原来北京 8:55 叫醒云电脑、9:10 / 21:10 跑小芯的每日任务，`src/xin.js` 的 `runCron`）已关，每日签到也不要了；li、li2 现在归平板上的 AI 用，平板的东西在 [tablet-setup](https://github.com/yux91803-hobo/tablet-setup) 仓库（改平板去那边，不走这里的发布）；网站上的小芯页面和天启工具以后再定。不要用会话里的凭据去登录用户的网关面板。
 
 ## 底线
 

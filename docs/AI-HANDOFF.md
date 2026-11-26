@@ -1,6 +1,15 @@
+## 2026-11-26 深夜 · 平板搬到单独的仓库 tablet-setup（Claude Code）
+
+- **谁做的**：Claude Code 实现并自查，无独立复核。详见 [CHANGES 最新一条](CHANGES.md)。
+- **现状**：平板的东西都在 [yux91803-hobo/tablet-setup](https://github.com/yux91803-hobo/tablet-setup)，Cloudflare Pages 把它的根目录发布到 https://tablet.liming-work.com/ 。改平板去那边（先读它的 AGENTS.md），不走这里的发布。这里只剩旧地址的提示脚本 `site/tablet/setup.sh` 和它的测试 `test/tablet-moved.test.cjs`。
+- **接手注意**：
+  - 上一条交接的「下一步」第 1 项已完成：#229 已上线，正式部署 #524 全绿，定时任务已撤。
+  - 第 2 项站长已做完（11-26 深夜）：平板上两台云电脑都连上了，AI 能正常操控。以后重装用新地址 `curl -fsSL https://tablet.liming-work.com/setup.sh | bash`。
+  - 还没对照的：浏览器开着界面（Computer 页签能看到）、交给 Codex 再自己检查、空闲 30 分钟自动睡，见新仓库 README「装好后对照」。
+
 ## 2026-11-26 晚 · 平板 AI 直接操控 li、li2（Claude Code）
 
-- **谁做的**：Claude Code 设计、实现并自查，没有独立复核。站长批准方向。详见 [CHANGES 最新一条](CHANGES.md)、[设计](superpowers/specs/2026-11-26-tablet-cloud-direct-design.md)、[站长步骤](tablet.md)。
+- **谁做的**：Claude Code 设计、实现并自查，没有独立复核。站长批准方向。详见 [CHANGES 最新一条](CHANGES.md)、[设计](superpowers/specs/2026-11-26-tablet-cloud-direct-design.md)、[站长步骤](https://github.com/yux91803-hobo/tablet-setup#readme)。
 - **已完成**：
   - 删掉 #227 上线的 `liming-cloud`、`liming-lease`、契约套件和它们的测试。
   - 新增平板上的 `ib`（按机器选账号的 key）和技能「云电脑」。
@@ -33,11 +42,11 @@
 - Antigravity 实现阶段 1–2，Claude Code 接手并实现阶段 3–8，Codex 独立核对设计、计划和实现，并修复审查发现的问题。使用 `claude/dsh-go-customization-discussion-d5wt84`，原始复核基线为 `7f87a7d`。
 - 已推送 SSH 单调超时 `a00845c`、停止与排队协调 `ac581b2`、复用与租约 `3ebfad4`、发件箱原子提交 `5c44187`、凭据保护 `7b8fb18`、冷态收件与残留进程复核 `57d78af`。修改原因和参考源码记在变更记录。[CHANGES](CHANGES.md)
 - 真实 Harness 契约 22/22。真实 rc.3 运行中与强杀后冷态停止 2/2，模型使用本机模拟。定向回归覆盖旧版失败和修复通过。全量结果、测试站及正式发布见本分支 PR。
-- 安卓实机、实际 SSH 转发、锁屏租约和冷却暂未实测。Harness 的 `accepted` 可以先于磁盘落盘，恢复时以远端历史判断，缺证据则记中断，等用户确认后再继续。核对正式站静态文件之后，在设备上完成验收。[平板说明](tablet.md)
+- 安卓实机、实际 SSH 转发、锁屏租约和冷却暂未实测。Harness 的 `accepted` 可以先于磁盘落盘，恢复时以远端历史判断，缺证据则记中断，等用户确认后再继续。核对正式站静态文件之后，在设备上完成验收。[平板说明](https://github.com/yux91803-hobo/tablet-setup#readme)
 
 ## 2026-11-26 · 平板调用云电脑第 3–8 阶段（Claude Code）
 
-- **谁做的**：Claude Code 接手实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)，站长步骤见 [docs/tablet.md](tablet.md)。
+- **谁做的**：Claude Code 接手实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)，站长步骤见 [docs/tablet.md](https://github.com/yux91803-hobo/tablet-setup#readme)。
 - **已完成**：`liming-cloud`（三个工具、选机器、派活与跟随、四步停止、通知闭环、重启对账、状态条和面板、工具卡）、`liming-lease`、装机脚本、文档。整条分支自查后又改了六处（心跳误判、跟丢后再接上、面板刷新两处、单调时钟含建隧道超时、少读台账），另修了 SSH 隧道单测里假 ssh 在并发下偶发崩溃，见 CHANGES。单测 124 项（合并 Codex 复核前：平板 111、独立发布判断 11、等待时钟检查 2）；真实 Harness 端到端 26 项；DSH Go plugin-kit 核对 11 项。
 - **接手注意**：
   - 后台任务的主人必须是活着的代理（`ctx.jobs` 的规定），所以引擎重启后要等站长回到那段对话，或者打开面板，才接上没在跟的任务。
@@ -116,7 +125,7 @@
 
 ## 2026-11-26 · 平板版 DSH Go 第一步（Claude Code）
 
-- Claude Code 实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。站长选「先插件后 fork」。 [设计](superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [计划](superpowers/plans/2026-11-25-tablet-dshgo-phase1.md) · [站长步骤](tablet.md) · [CHANGES 最新一条](CHANGES.md)
+- Claude Code 实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。站长选「先插件后 fork」。 [设计](superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [计划](superpowers/plans/2026-11-25-tablet-dshgo-phase1.md) · [站长步骤](https://github.com/yux91803-hobo/tablet-setup#readme) · [CHANGES 最新一条](CHANGES.md)
 - 做了：`site/tablet/` 下的装机脚本、网关插件、li/li2 包装脚本和网关补丁。都是新文件，网站页面、Worker、小芯和天启的代码没动。li 只读：查网关程序、取 zip 核对。li2 没碰。
 - **接手注意**：
   - li、li2 上平板用的是 Harness 内置的 `web` 配置，不是 `tablet`：自定义配置名不会自动建，`dsh web` 就是 `dsh --profile web`。DSH Go 的启动命令只填 `/data/home/.local/bin/dsh-tablet`，后面别加 `web`。

@@ -57,13 +57,7 @@ REA 开启时通过 MCP 兼容桥转换当前网关不接受的 pattern `allOf` 
 
 ## 平板（DSH Go）
 
-站长自用的安卓平板，第一步装原版 [DSH Go](https://github.com/ccch1mneyyy/dsh-go)（DeepSeek Harness 的安卓 App），不改 App。装法是在 App 的终端里运行 `apt-get update && apt-get install -y curl && curl -fsSL https://liming-work.com/tablet/setup.sh | bash`：
-
-- **网关在平板上**：WorkBuddy 网关装进 App 的本机 Linux，跟着本机引擎一起启停（插件 `site/tablet/liming-gateway/`）。签到钟点设成全天，所以打开 App 就会签到。
-- **平板上的 AI**：用网关里的模型回话，开了手机操控后能读屏、点按、输入。
-- **li2、li**：平板上的 AI 自己操作这两台云电脑：用 InstaBox 官方命令行（平板上的 `ib`，按机器选那台所在账号的 key）看改文件、跑命令和编译，用云上的 Playwright 命令行打开网页操作（站长可以在 InstaBox 的 Computer 页签里看、接手），大的编程活交给云上的 Codex，做完自己检查改动和测试。怎么用写在技能 `site/tablet/skills/liming-cloud-computers/SKILL.md` 里，装机脚本装到平板的 `~/.dsh/skills/`。手动切主机只留着调试。小芯、天启 2026-11-26 停用，正式站的定时任务已关。
-
-网关程序、账号和任何 key 都不进仓库。站长要做的几步见 [docs/tablet.md](docs/tablet.md)；第二步 fork 改界面以后单独设计。 [设计](docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [平板 AI 直接操控 li、li2](docs/superpowers/specs/2026-11-26-tablet-cloud-direct-design.md)
+站长自用安卓平板上的原版 [DSH Go](https://github.com/ccch1mneyyy/dsh-go)：网关装在平板上，平板上的 AI 自己操作 li、li2 两台云电脑。2026-11-26 起平板的东西单独放在 [tablet-setup](https://github.com/yux91803-hobo/tablet-setup) 仓库，由 Cloudflare Pages 发布到 https://tablet.liming-work.com/ ，装机命令和说明见那边的 README；改平板不再跑这里的测试和部署。这里的 `site/tablet/setup.sh` 只是旧下载地址的提示：运行后告诉你新命令，什么都不装。 以前的设计：[平板版 DSH Go 第一步](docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [平板 AI 直接操控 li、li2](docs/superpowers/specs/2026-11-26-tablet-cloud-direct-design.md)
 
 ## 小芯后台运行方式
 
