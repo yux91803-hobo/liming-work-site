@@ -1,7 +1,7 @@
 ## 2026-11-26 · 平板调用云电脑第 3–8 阶段（Claude Code）
 
 - **谁做的**：Claude Code 接手实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)，站长步骤见 [docs/tablet.md](tablet.md)。
-- **已完成**：`liming-cloud`（三个工具、选机器、派活与跟随、四步停止、通知闭环、重启对账、状态条和面板、工具卡）、`liming-lease`、装机脚本、文档。单测 116 项；真实 Harness 端到端 26 项；DSH Go plugin-kit 核对 11 项。
+- **已完成**：`liming-cloud`（三个工具、选机器、派活与跟随、四步停止、通知闭环、重启对账、状态条和面板、工具卡）、`liming-lease`、装机脚本、文档。整条分支自查后又改了六处（心跳误判、跟丢后再接上、面板刷新两处、单调时钟、少读台账），见 CHANGES。单测 123 项（平板 110、独立发布判断 11、等待时钟检查 2）；真实 Harness 端到端 26 项；DSH Go plugin-kit 核对 11 项。
 - **接手注意**：
   - 后台任务的主人必须是活着的代理（`ctx.jobs` 的规定），所以引擎重启后要等站长回到那段对话，或者打开面板，才接上没在跟的任务。
   - 插件文件加了或删了，要同步改 `site/tablet/setup.sh` 的 `CLOUD_FILES` 或 `LEASE_FILES`，单测会红着提醒。

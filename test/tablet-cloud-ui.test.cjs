@@ -278,6 +278,38 @@ test('两段对话都开着面板：各自比较视图结构，没有变化就�
   a(); b();
 });
 
+test('1 秒里视图结构连变两次（AI 一轮派两件、停止很快确认）：第二次不丢，过了 1 秒补刷新一次，App 取到的视图两件都有', async () => {
+  const { attachUi } = await lib('ui.js');
+  const panels = {};
+  let refresh = 0;
+  let shown = null;
+  // 假 App：一叫刷新就立刻重取视图（最容易漏掉第二次变化的时机）
+  const dshGo = { strip: () => {}, panel: (id, def) => { panels[id] = def; }, on: () => {}, refresh: () => { refresh += 1; shown = JSON.stringify(panels['cloud-tasks'].view({ sessionId: 'tab-A' }, caps2)); } };
+  const listeners = new Set();
+  let tasks = [task()];
+  attachUi({ dshGo }, {
+    runner: { steps: () => [] }, ledger: { listTasks: () => tasks }, settings: { get: () => ({ maxConcurrentPerMachine: 2 }) },
+    readStatus: async () => ({ known: false }), subscribe: l => { listeners.add(l); return () => listeners.delete(l); },
+    recovery: null, machines: () => ['li', 'li2'], now: () => NOW,
+  });
+  shown = JSON.stringify(panels['cloud-tasks'].view({ sessionId: 'tab-A' }, caps2));
+  const cancel = panels['cloud-tasks'].data({ sessionId: 'tab-A' }, () => {}, {});
+  await new Promise(r => setTimeout(r, 30));
+  tasks = [task({ taskId: 't_new1', createdAt: NOW - 60e3 }), ...tasks];
+  for (const l of listeners) l('t_new1');
+  assert.equal(refresh, 1);
+  assert.ok(shown.includes('t_new1'));
+  await new Promise(r => setTimeout(r, 100));
+  tasks = [task({ taskId: 't_new2', createdAt: NOW - 30e3 }), ...tasks];
+  for (const l of listeners) l('t_new2');
+  await new Promise(r => setTimeout(r, 1300));
+  assert.equal(refresh, 2, '节流过后补刷新一次');
+  assert.ok(shown.includes('t_new2'), 'App 最后取到的视图里有第二件');
+  await new Promise(r => setTimeout(r, 1100));
+  assert.equal(refresh, 2, '结构没再变就不再刷新');
+  cancel();
+});
+
 test('推送限流用单调时钟：平板校时、墙上时钟往回跳一小时，下一次变化照样马上推出去', async (t) => {
   const { createThrottledEmitter } = await lib('throttle.js');
   const realNow = Date.now;

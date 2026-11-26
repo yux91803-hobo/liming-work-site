@@ -226,14 +226,25 @@ export function attachUi(ctx, { runner, ledger, settings, readStatus, subscribe,
   function changed(taskId) { for (const s of [...subs]) s(taskId); }
   subscribe(changed);
 
+  let refreshTimer = null;
   function maybeRefresh(sessionId) {
+    const sid = sessionId || '';
     const key = structureKey({ tasks: ledger.listTasks(), sessionId });
-    const prev = lastKeys.get(sessionId || '');
-    lastKeys.set(sessionId || '', key);
-    if (prev !== undefined && key !== prev && performance.now() - lastRefresh > 1000) {   // 间隔用单调时钟
-      lastRefresh = performance.now();
-      try { dshGo.refresh(PANEL_ID); } catch {}
+    const prev = lastKeys.get(sid);
+    if (prev === undefined) { lastKeys.set(sid, key); return; }
+    if (key === prev) return;
+    const wait = lastRefresh + 1000 - performance.now();   // 间隔用单调时钟
+    if (wait > 0) {
+      // 1 秒内又变了：先不记新结构，到点让开着的面板都重算一次，这次变化不丢
+      if (!refreshTimer) {
+        refreshTimer = setTimeout(() => { refreshTimer = null; changed(null); }, Math.ceil(wait) + 5);
+        refreshTimer.unref?.();
+      }
+      return;
     }
+    lastRefresh = performance.now();
+    lastKeys.set(sid, key);
+    try { dshGo.refresh(PANEL_ID); } catch {}
   }
 
   function live(scope, emit, build) {
