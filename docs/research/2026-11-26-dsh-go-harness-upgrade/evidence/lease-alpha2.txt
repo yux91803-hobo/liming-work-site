@@ -1,0 +1,2 @@
+Candidate engine: @deepseek-ai/dsh 0.2.3-alpha.2 (fixture argument: DSH_RC3_BIN)
+PASS real Harness rc3 lease acquires, renews during a background command and releases after settlement with a local InstaBox fixture

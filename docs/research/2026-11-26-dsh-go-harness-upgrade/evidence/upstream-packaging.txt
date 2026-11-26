@@ -1,0 +1,37 @@
+test_android_and_builder_share_the_exact_non_overlapping_owned_paths (runtime.tests.test_runtime_upgrade.RuntimeUpgradePackaging.test_android_and_builder_share_the_exact_non_overlapping_owned_paths) ... ok
+test_real_assembler_and_manifest_emit_the_same_upgrade_contract (runtime.tests.test_runtime_upgrade.RuntimeUpgradePackaging.test_real_assembler_and_manifest_emit_the_same_upgrade_contract) ... ok
+test_system_identity_ignores_engine_versions_and_deb_order (runtime.tests.test_runtime_upgrade.RuntimeUpgradePackaging.test_system_identity_ignores_engine_versions_and_deb_order) ... ok
+test_compatibility_resolves_parent_and_file_links_without_host_reads (runtime.tests.test_runtime_layers.BaseCache.test_compatibility_resolves_parent_and_file_links_without_host_reads) ... ok
+test_failed_rebuild_does_not_publish_a_valid_cache_record (runtime.tests.test_runtime_layers.BaseCache.test_failed_rebuild_does_not_publish_a_valid_cache_record) ... ok
+test_invalid_cache_is_rebuilt_including_tar_hash_only_mismatch (runtime.tests.test_runtime_layers.BaseCache.test_invalid_cache_is_rebuilt_including_tar_hash_only_mismatch) ... ok
+test_key_covers_inputs_and_final_tree_without_changing_base_id (runtime.tests.test_runtime_layers.BaseCache.test_key_covers_inputs_and_final_tree_without_changing_base_id) ... ok
+test_layer_xz_policy_ignores_ambient_options (runtime.tests.test_runtime_layers.BaseCache.test_layer_xz_policy_ignores_ambient_options) ... ok
+test_valid_xz_cache_is_reused_without_any_compressor_call (runtime.tests.test_runtime_layers.BaseCache.test_valid_xz_cache_is_reused_without_any_compressor_call) ... ok
+test_assembly_without_file_digest_keeps_archives_and_report (runtime.tests.test_runtime_layers.LayerPackaging.test_assembly_without_file_digest_keeps_archives_and_report) ... ok
+test_cli_requires_one_mode_and_stable_layer_names (runtime.tests.test_runtime_layers.LayerPackaging.test_cli_requires_one_mode_and_stable_layer_names) ... ok
+test_engine_only_changes_reuse_base_bytes (runtime.tests.test_runtime_layers.LayerPackaging.test_engine_only_changes_reuse_base_bytes) ... ok
+test_layers_reconstruct_legacy_tree_and_manifest_contract (runtime.tests.test_runtime_layers.LayerPackaging.test_layers_reconstruct_legacy_tree_and_manifest_contract) ... ok
+test_manifest_rejects_mixed_or_wrong_abi_report (runtime.tests.test_runtime_layers.LayerPackaging.test_manifest_rejects_mixed_or_wrong_abi_report) ... ok
+test_no_python_is_explicit_null_in_both_documents (runtime.tests.test_runtime_layers.LayerPackaging.test_no_python_is_explicit_null_in_both_documents) ... ok
+test_real_xz_layer_cli_and_manifest (runtime.tests.test_runtime_layers.LayerPackaging.test_real_xz_layer_cli_and_manifest) ... ok
+test_tree_read_error_aborts_assembly_without_success_report (runtime.tests.test_runtime_layers.LayerPackaging.test_tree_read_error_aborts_assembly_without_success_report) ... ok
+test_typescript_source_pruning_keeps_runtime_files_and_licenses (runtime.tests.test_runtime_layers.LayerPackaging.test_typescript_source_pruning_keeps_runtime_files_and_licenses) ... ok
+test_build_arguments_keep_default_and_quote_paths (runtime.tests.test_runtime_consumers.RuntimeConsumers.test_build_arguments_keep_default_and_quote_paths) ... ok
+test_host_and_direct_unpack_all_archives_from_another_directory (runtime.tests.test_runtime_consumers.RuntimeConsumers.test_host_and_direct_unpack_all_archives_from_another_directory) ... ok
+test_host_selects_legacy_or_base_then_engine (runtime.tests.test_runtime_consumers.RuntimeConsumers.test_host_selects_legacy_or_base_then_engine) ... ok
+test_index_preserves_legacy_then_layered_format (runtime.tests.test_runtime_consumers.RuntimeConsumers.test_index_preserves_legacy_then_layered_format) ... ok
+test_interrupted_manifest_does_not_block_the_other_abi_index (runtime.tests.test_runtime_consumers.RuntimeConsumers.test_interrupted_manifest_does_not_block_the_other_abi_index) ... <dsh-go-v1.4.0>/runtime/lib/rtbuild.py:1822: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/tmp32ii6e3g/consumers/x86_64/build-report.json' mode='r' encoding='UTF-8'>
+  report = json.load(open(args.report))
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+<dsh-go-v1.4.0>/runtime/lib/rtbuild.py:1823: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/tmp32ii6e3g/jni.json' mode='r' encoding='UTF-8'>
+  jni = json.load(open(args.jnilibs))
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+<dsh-go-v1.4.0>/runtime/lib/rtbuild.py:1822: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/tmp32ii6e3g/consumers/arm64-v8a/build-report.json' mode='r' encoding='UTF-8'>
+  report = json.load(open(args.report))
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+
+----------------------------------------------------------------------
+Ran 23 tests in 2.575s
+
+OK

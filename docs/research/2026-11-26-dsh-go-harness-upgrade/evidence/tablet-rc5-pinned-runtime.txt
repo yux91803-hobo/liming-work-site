@@ -1,0 +1,9 @@
+PASS 0.2.2-rc.5 rc.1 baseline: real plugin install, protected bridge, durable history and cloud task
+PASS 0.2.2-rc.5 same profile dependencies, config, ledger, gateway account, usage and file modes
+PASS 0.2.2-rc.5 real gateway supervisor starts and restarts the synthetic WorkBuddy process
+PASS 0.2.2-rc.5 real DSH Go bridge authenticates and serves contributions, cloud panel and its live stream
+PASS 0.2.2-rc.5 rc.1 history lists, reads and continues with the same id and old model context
+PASS 0.2.2-rc.5 actual cloud_run dispatch to unchanged rc.3, single delivery and logged receipt
+PASS 0.2.2-rc.5 candidate restart retains completed task and history without repeating the receipt
+PASS 0.2.2-rc.5 restore pre-upgrade snapshot and start rc.1 with matching history and settings
+SUMMARY 0.2.2-rc.5 8/8 passes

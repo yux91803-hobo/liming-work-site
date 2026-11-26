@@ -1,3 +1,7 @@
+# 修改清单 · 2026-11-26（DSH Go 引擎调研归档）
+
+- Codex 完成 Harness rc.5、alpha.2 源码对照、隔离测试与证据归档。报告记录了 Android 版本补丁、旧桥接鉴权、旧会话与配置迁移以及可复用的上游 APK 发布事务。应用代码与部署配置未变更。[研究报告与测试日志](research/2026-11-26-dsh-go-harness-upgrade/README.md)
+
 # 修改清单 · 2026-11-26（平板跨设备协作独立审查）
 
 - Antigravity 实现第 1–2 阶段，Claude Code 接手核对并实现第 3–8 阶段。Codex 独立复核八阶段，并实现下面列出的缺陷修复和回归测试。按站长要求承接 `claude/dsh-go-customization-discussion-d5wt84`，保留原提交。

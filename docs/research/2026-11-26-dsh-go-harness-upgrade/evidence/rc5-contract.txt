@@ -1,0 +1,36 @@
+Mock Responses 服务已启动：http://127.0.0.1:43715/v1
+目标 rc3：dsh 0.2.2-rc.5 (<candidate-prefix>/rc5/node_modules/.bin/dsh)
+
+=== 运行目标 rc3 (dsh 0.2.2-rc.5)，共 14 项 ===
+[PASS] rc3/E1 (6995ms) 重复建对话（同编号同目录幂等、换目录冲突、非空会话边界）
+       同目录空白幂等(tablet-e1-4c32d64d)，换目录报 session/conflict，非空再建分配新号(session-717ccb7c-daef-4883-ac83-700782712566)
+[PASS] rc3/E2 (8151ms) 请求编号幂等（连发两次、空闲重发、云端 SIGKILL 重启后重发）
+       4 次发送同 requestId（含 SIGKILL 重启后），用户消息=1，轮次=1，模型请求=1
+[PASS] rc3/E3 (4187ms) 插话进同一轮（前台 bash 运行中 steer，不另起新轮）
+       单轮内完成插话（turns=1，steps=1.1,1.2，step 2 收到 STEER_TOKEN_E3_IN_SAME_TURN）
+[PASS] rc3/E4 (3840ms) 停止前台工具（进程被杀、aborted/user 结束、空闲重复停仍回 accepted）
+       前台宿主 PID 156788 已退出，turn/end=aborted/user，空闲复停 accepted=true
+[PASS] rc3/E5 (4425ms) 停止对话不停后台命令 + job/list 可见 + job/kill 才停（重复停回 already-finished）
+       session/cancel 后后台宿主 PID 156814 仍存活，job/kill(bash-9a0a85d50ba94af9) 停掉并退出，复停回 already-finished
+[PASS] rc3/E6 (8526ms) 强杀云端 Harness：孤儿进程存活、重启后无 turn/end、job/list 清空、原 requestId 仍幂等
+       孤儿宿主 PID fg=156847/bg=156840 存活并可按 cwd 清理；重启后 running=false、冷读合成 turn/end(interrupted)（磁盘原始日志无 turn/end）、job/list=0、原 requestId 幂等
+[PASS] rc3/E7a (10261ms) 后台任务空闲完成：仅唤醒 1 次、通知含 jobId、无多余唤醒 + agent/status 切换
+       空闲完成唤醒次数=1，通知含 cloud-2d3cdafa74ce4b00，agent/status 序列=running→idle→running→idle
+[PASS] rc3/E7b (9463ms) 取消原因实测：模型调 job_kill 透传自定义原因原文
+       模型 job_kill 取消原因原样透传："user changed mind for E7b"
+[PASS] rc3/E7c (9495ms) 取消原因实测：POST /api/job/kill 接口传入 "cancelled by the user"
+       POST /api/job/kill 取消原因="cancelled by the user"
+[PASS] rc3/E7d (9169ms) 取消原因实测：归档平板对话传入 "session archived"
+       workspace/archiveSession 取消原因="session archived"
+[PASS] rc3/E7e (9245ms) 取消原因实测：引擎正常退出传入 "owner disposed" + 源码释放原因清单核对
+       SIGTERM 取消原因="owner disposed"；源码释放原因清单=["jobs service disposed","jobs teardown","owner disposed","teardown"]
+[PASS] rc3/E7f (14394ms) 通知写进日志后重启：日志保留 tool-jobs/notice 且含 jobId，重启不重复补投
+       重启后日志留存 tool-jobs/notice（seq=26），代理加载时按日志去重不补发
+[PASS] rc3/C1 (11435ms) 设计 §7 补验 1：插件进程内确认通知写进日志（session/event）后才记「已告诉」
+       先写 pending，经进程内 session/event（seq=26）确认写进日志后才改为 confirmed
+[PASS] rc3/C2 (20091ms) 设计 §7 补验 2：引擎重启后代理出现（agent/created）时补投通知且日志里只有一条
+       重启未加载前保持 pending；agent/created 时补投（followup，seq=25）并确认；二次重启按日志去重，日志共 1 条
+
+=== 汇总 ===
+- rc3 (dsh 0.2.2-rc.5): 14/14 PASS, 0 FAIL
+总计：14/14 PASS，0 FAIL
