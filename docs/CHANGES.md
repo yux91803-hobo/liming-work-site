@@ -1,3 +1,139 @@
+# 修改清单 · 2026-11-26（平板跨设备协作独立审查）
+
+- Antigravity 实现第 1–2 阶段，Claude Code 接手核对并实现第 3–8 阶段。Codex 独立复核八阶段，并实现下面列出的缺陷修复和回归测试。按站长要求承接 `claude/dsh-go-customization-discussion-d5wt84`，保留原提交。
+- **SSH 建连**改用单调时钟。Claude Code 交接指出的最后一处连接超时，在远端 `7f87a7d` 仍用墙上时钟。校时向前跳一小时的回归里，原实现约 4 毫秒就报告达到 3 秒超时。两项并发首连回归也曾拉起两套 Harness 或两条隧道，修后同机复用，断线退避前释放连接，引擎卸载取消本地建连。
+- **派发与恢复**现在把首条派发和追加消息与所属轮次编号一次落盘。已派过的云端会话消失时，即使有待发插话也标明失败，避免重建后重跑。实际 Harness 测到 HTTP `accepted` 可以早于磁盘落盘。冷态缺最后一条请求的完成证据时记云端中断并保留原文，等用户确认后继续。最后一条请求还没处理时，上一轮的结果不能结束任务。
+- **停止**现在先记意图，等正在发送的请求结清，再移除属于该任务的排队消息并复核轮次、后台任务和项目进程。重复停止合并处理，撤回的待发消息不会随继续操作送出。进程清理每次发信号后重查目录。同一云机上的一个项目目录只接一件活动任务，旧台账有重叠时暂停目录清理。
+- **租约**在空闲缓冲期错过续租后会恢复续约。首次 PUT 回执丢失时，卸载仍尝试 DELETE。装机失败提示使用固定诊断，密钥文件写入前核对格式及版本，使用私有临时文件替换。运行时拒绝读取权限过宽的凭据，向 InstaBox 发送带 key 的请求时限制重定向。
+- SSH 截止时间参考 OpenSSH `misc.c` 的 `monotime_ts`，托管文件和 PID 参考 DSH Go `remote_bootstrap.dart`。停止与恢复参考 DeepSeek Harness `session-controller/src/commands.ts` 的 `keepInbox`、`updateQueue`、冷读 inbox 投影，以及 `session-persistence-jsonl` 的日志批写。InstaBox 的 `machines:write` 包含机器读取权限。[InstaBox API key 权限](https://instabox.sh/docs/api-keys.md)
+- 真实 Harness 契约 `0.2.2-rc.3` 14/14、`0.2.2-rc.1` 8/8。另用 `liming-cloud` 的实际客户端和停止代码，在真实 rc.3 上核对正在运行和强杀后冷态两种停止路径，两次都从队列移除了本任务的请求并确认没有项目进程。模型和外部服务使用隔离测试数据。全量检查和发布证据随 PR 记录。
+- 装机后在安卓实机验收 DSH Go 面板、真实 InstaBox SSH 转发、锁屏后续租、冷却和空闲暂停。网站回滚只影响下载文件，设备上已经安装的插件可通过插件管理停用并重启引擎，台账和密钥留在各自设备。[平板验收清单](tablet.md#真机验收装好后对照)
+
+# 修改清单 · 2026-11-26（平板调用云电脑第 3–8 阶段：工具、选机器、面板、停止、对账通知、云端租约、装机）
+
+- **谁做的**：Claude Code 接手后实现第 3–8 阶段并自查，没有第二位 AI 独立复核。第 1–2 阶段原由 Antigravity 实现，接手核对见下一条。分支 `claude/dsh-go-customization-discussion-d5wt84`。网站页面、Worker、小芯、天启的代码和配置都没动；新文件都在 `site/tablet/`、`test/tablet-*`、`docs/`，走平板独立发布。
+- **做了什么**（设计 [2026-11-26-tablet-cloud-tasks-design.md](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)，计划 [2026-11-26-tablet-cloud-tasks-plan.md](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md)）：
+  - **平板插件 `liming-cloud`**：
+    - 给平板 AI 三个工具：`cloud_run` 派活，立即返回任务号、机器、挑选理由；`cloud_tell` 进行中插话、做完在原对话里接着做；`cloud_machines` 看两台现状。外加一段使用说明（`systemPrompt.section`）。看进度、停止复用原生 `job_output`、`job_list`、`job_kill`。
+    - 云端任务登记成平板的后台任务（`kind: cloud`，归当前对话）。做完由上游 tool-jobs 发原生完成通知，通知里带步骤和结果。
+  - **选机器**（`selector.js`）：照设计 §5.3。状态只读 `GET /v1/machines`，不唤醒机器（`instabox-read.js`，实测字段 `state`、`runStartedAt`、`maxRunMinutes`、`cooldownUntil`）。每台上限默认 2。
+  - **派活与跟随**（`runner.js`、`remote.js`）：
+    - 先记台账和发件箱，再在后台经 SSH 确保常驻 dsh web、开隧道、登录、建对话（确定性编号）。带了 `model` 就先 `session/selectModel`（线路 `xin-gateway`），然后发消息、跟随到这一轮结束。
+    - 断线退避重连，接回时用 `session/page` 往回补齐。
+  - **停止**（`runner.stop`，设计 §5.6）：四步，都确认了才记「已停止」；可重复执行。取消原因表在 `cancel-reasons.js`，引擎退出类只解除跟踪。
+  - **通知闭环和重启对账**（`recovery.js`，设计 §5.5、§5.7）：
+    - 对话日志里看到通知才记「已告诉」。引擎重启后站长回到那段对话时，补说或接上。
+    - 停止中的接着停。冷却中的机器到点再连，睡着的不叫醒。
+    - 云端中断就清残留进程、不自动重派；云端对话不见了就记失败、不重派。
+  - **界面**（`ui.js`、`throttle.js`、`tool-card.js`，照 DSH Go docs/plugins）：
+    - 输入框上方状态条；「云端任务」面板放在聊天页弹层和对话详情「插件」页签，可以插话、停止（要确认）、接着做、改每台上限。
+    - `cloud_run` 有只读工具卡。推送 ≤ 4 次每秒、≤ 32 KiB。
+  - **云端插件 `liming-lease`**（设计 §5.8）：装在 li、li2 的 web 配置里。平板的活在跑时持有活动租约 `tablet-cloud`，空闲 2 分钟后释放；只用写 key（`machines:write`）。
+  - **装机脚本**：
+    - 装 `liming-cloud`。问每台账号的只读 key 和写 key（不回显，回车跳过或保留原来的）。
+    - SSH 令牌和只读 key 存平板 `~/.liming-cloud/secrets.json`（600）；写 key 只经 SSH 存到那台的 `~/.liming-cloud/lease.key`（600）。
+    - 在 li、li2 上装 `liming-lease` 并写 `machine-name`。
+    - 注意：之前令牌「用完不存」，现在为了让插件自己连云电脑要存下来；`docs/tablet.md` 写了怎么吊销。
+  - **文档**：`docs/tablet.md` 改成「日常在本机聊，AI 主动调 li、li2；手动切主机只为调试」，加上 key 的建法、云端任务一节、真机验收 5 项。README 同步。
+- **和计划、设计不一样的地方（Claude Code 的取舍）**：
+  - 选机器不比 CPU：InstaBox 读进程和 CPU 的接口会唤醒机器，只用 `GET /v1/machines`。
+  - 每台上限不进 App 原生的插件配置表单：表单要插件导出 schemastery 的 `Config`，而本地路径安装的插件是链接目录，拿不到宿主的 schemastery。改成面板里的步进器，写进 `~/.liming-cloud/settings.json`，`cordis.patch.yml` 的插件配置也能设。
+  - 步骤只取工具调用、AI 回话、本轮结束三类：真实 Harness 里前台 bash 也会登记 `job/registered`，和 `tool/call` 重复。
+  - 引擎重启后要等那段对话的代理出现才接上：上游 `ctx.jobs` 要求后台任务的主人是活着的代理。打开面板也算站长在场。
+  - 「本轮剩不到 30 分钟」只在状态条、面板、`cloud_run` 和 `cloud_machines` 的回复里提醒，不每轮往 AI 的上下文里加读数。
+  - 插话用面板里的表单（视图 v2），老 App 退回成往输入框放一句。
+- **整条分支自查后改的**（Claude Code 自查，没有独立复核）：
+  - 跟随时的心跳用 `session/state`。云端重启后没加载的对话会报 not-found，原来被当成「云端对话不见了」记失败；心跳里的 not-found 现在不算。
+  - 重连次数用完（比如机器长时间冷却）原来记失败，之后就不会再对账。改成「暂时跟丢」：平板的后台任务结束并说明，台账保持进行中，站长回到对话、打开面板或引擎启动时再接上。
+  - 面板判断视图结构变没变，原来全局只记一个值，两段对话同时开着面板会来回误刷新。改成每段对话各记各的。
+  - 面板刷新有 1 秒节流。节流里的第二次结构变化（AI 一轮派两件、停止很快就确认）原来会丢：面板少一张卡，或者停完的还留在「进行中」。改成过了 1 秒补刷新一次。
+  - 推送限流、面板刷新、台账存盘的间隔原来用墙上时钟，平板校时往回跳一小时，推送就会停一小时。改用单调时钟（`performance.now()`）；任务时间戳这类当数据用的时间不变。测试里三处等待也改了，是仓库的等待时钟检查（`test/wait-clock.test.cjs`）抓到的。
+  - 跟随时原来每个云端事件都读一遍台账文件，改成只有用户消息才读。只是少读盘，行为不变，没加测试，由原有测试覆盖。
+  - 前五处各加了一项测试，改之前红、改之后绿。
+- **参考**：
+  - DSH Go（MIT）：`docs/plugins` 的 slots、components、actions、inputs、design-rules、quickstart；工具卡 `toolCard()` 照 quickstart 的写法；`app/lib/remote/ssh/remote_bootstrap.dart`。
+  - 真实 Harness 源码：`dsh-jobs-local` 的 `start` 要求活着的主人、释放类取消原因；`dsh-tool-jobs` 的完成通知；`dsh-api-session-controller` 的 `session/selectModel`、`session/page`；`dsh-session` 的 `TurnEndReason`。
+  - InstaBox 文档：idle-suspend（什么会唤醒、免费版一轮的时长和冷却、活动租约）、api-keys（`machines:read`、`machines:write`）。
+- **验证**：
+  - 单测：平板相关 110 项、独立发布判断 11 项、测试等待时钟检查 2 项，共 123 项全过。新增 selector 10、steps 4、tools 10、stop 10、recovery 10、ui 12、lease 7、setup 5 项，都先红后绿。stop、断线补齐几项是先写的代码，另做了变异核对：改坏就变红。
+  - 真实 Harness 端到端（平板 0.2.2-rc.1 装插件，云端 0.2.2-rc.3，direct 模式，模拟模型）：
+    - 派活到收到原生通知、平板 AI 被叫醒，12/12。
+    - 通知写进日志才记已告诉；平板引擎被 SIGKILL 时云端照常做完，回到对话后接上、通知只有一条；平板 AI 用 `job_kill` 停任务，云端那轮 aborted、sleep 进程没了，11/11。
+    - 云端装 `liming-lease` 加本机假 InstaBox：忙了就 PUT，后台命令还在就不放，空闲后 DELETE，3/3。
+  - 生产路径（不用 direct，经本机 sshd 模拟「ibssh_…@主机」登录）8/8：
+    - 照 DSH Go 的 `~/.dsh-app-remote` 约定经 SSH 拉起云端常驻实例（web.pid、web.st、web.cmd、web.log），开隧道、登录，经 SSH 建项目目录，最后收到完成通知、记「已告诉」。
+    - 第二件任务复用同一个实例。
+    - `job_kill` 经 SSH 走完四步停止，云端进程确实没了。
+  - DSH Go 自带的 plugin-kit（`check --load`、测试宿主、`checkView`，和 App 解析器共享对照用例）11/11：清单能显示、三个工具注册上、面板视图（v2 和老 App）合规、推送数据不超限、四种点按被桥接接受、0 违规。
+  - Antigravity 的真实 Harness 契约套件 `scripts/tablet-harness-contract/` 两个版本 22/22。第一次跑 rc.3 的 E6 没过：套件判断进程还活着用的是 `kill(pid, 0)`，把僵尸进程也算活着，这个容器的 1 号进程回收得慢。改成状态 Z 不算活着、SIGKILL 后最多等 3 秒，原实现是 Antigravity 的；改后 E6 通过。
+  - 全量检查、浏览器测试结果见本分支 PR。
+- **没验证、等站长在平板上装**：DSH Go 里状态条和面板的真实样子、InstaBox 的 SSH 网关能不能开本机隧道（`-L`）、真实活动租约、真实冷却。设计 §7 的真机 5 项写在 `docs/tablet.md`。
+
+# 修改清单 · 2026-11-26（接手平板调用云电脑：核对第 1–2 阶段、修 SSH 隧道单测；手动正式发布也算独立发布的基准）
+
+- **谁做的**：站长 11-26 让 Claude Code 接手（「别的ai改了点，你接手」）。第 1–2 阶段原由 Antigravity（Gemini 4 Neon）实现，原定 Muse 复核；现由 Claude Code 核对并修改，自查，没有第二位 AI 独立复核。
+- **核对第 1–2 阶段**：
+  - 插件自己的 `site/tablet/liming-cloud/lib/dsh-client.js` 以前只对假服务器测过。这次接上真实 `dsh web` 0.2.2-rc.3 和模拟模型，逐个调用接口，12/12 通过：登录换 Cookie、未知对话的 `session/prompt` 报 `session/not-found`、`session/create` 返回同一编号、同一请求编号重发只留一条消息、`session/list`、`session/page`、`session/state`、经 `/api/remote.mux` 的 `job/list`、`job/kill`（`requested`，之后列表里是 `killed`）、`session/follow`、空闲时 `session/cancel`。
+  - `test/tablet-cloud-transport.test.cjs` 的 SSH 隧道一项在本机每次都失败（`cancelledByParent`：Promise 没结束，事件循环先空了），原实现记录的是全过。原因：`ssh-tunnel.js` 等隧道就绪时，轮询间隔用了 `unref` 的定时器。假 ssh 在等待期间退出后，事件循环里只剩这个定时器，`acquire()` 就永远不返回。在 `dsh web` 里有 HTTP 服务撑着，碰不到；但这是真问题，测试是对的。改为普通定时器，最多等到连接超时（默认 15 秒）。别处请求超时用的 `unref` 定时器不变，那些情况下有连接在撑着。
+- **手动正式发布也算基准**：
+  - 原实现：`scripts/xin-live-scope.cjs` 拿「上一次成功发布」当基准时，只认合并触发的运行（`event: push`）。这是 11-21 的写法，11-26 #226 加平板前缀时照用。
+  - 问题：#222 之后合并触发的正式发布都失败了，后来是手动发布 #516、#519 绿的，所以基准一直停在 `f0182ea`。之后哪怕只改平板，比较范围也包含 #222、#224 的小芯改动，照样跑小芯联调。站长要的独立发布等于没生效。
+  - 改法：手动运行（`workflow_dispatch`）也算，但手动运行默认只 dry-run 或只发测试站，所以只认部署作业里「判断这次要不要跑小芯联调」这一步成功的：这一步只在真正发布到正式站、冒烟通过后才跑，#519 的作业记录里正是这样。认不出来就往前找，找不到照跑，跟原来一样宁可多跑。新增一项测试，核对部署流程里这一步还叫这个名字、条件没变，改名会红。
+- **验证**：
+  - `test/xin-live-scope.test.cjs` 新增 3 项，共 11/11。为了让假接口像真接口一样按 `event` 过滤，`fake()` 补了这一点；补之前「手动发布也算基准」那项是假通过，补之后改前失败、改后通过。另外 2 项改前改后都过：一项防止把 dry-run 和测试站运行当基准，一项核对步骤名。
+  - SSH 隧道单测连跑 3 次都通过；平板相关单测共 50/50。全量检查见本分支 PR。
+
+# 修改清单 · 2026-11-26（平板调用云电脑第二阶段：`liming-cloud` 插件骨架、台账、发件箱与云端传输原语）
+
+- **谁做的**：原设计由 Claude Code 编写（[设计文档](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)）；阶段 2 由 Antigravity（Gemini 4 Neon）实现并自查，待 Muse 复核（任务书要求标注「Antigravity（Gemini 4 Neon）实现、Muse 复核」，当前处于提交待复核状态）。分支 `claude/dsh-go-customization-discussion-d5wt84`，基线 `ff3e289`。未改动 `src/`、`site/xin/`、`site/tools/tianqi/`、小芯与天启既有代码和配置，也未越界提前实现阶段 3（模型工具）或阶段 4（UI 面板）。
+- **已完成**：
+  1. **插件骨架与最小入口** `site/tablet/liming-cloud/`（原生 ESM、零外部依赖、`engines.dsh: ">=0.2.1-rc.2 <0.3.0-0"`、`engines.node: ">=22.19"`，命中 `scripts/xin-live-scope.cjs` 的 `site/tablet/` 独立发布白名单）：
+     - `package.json`、`cordis.patch.yml`：将 `liming-cloud` 挂入平板 `web` 配置，不提前声明 `dshGo` 面板。
+     - `lib/index.js`：最小 Cordis 入口，初始化台账与脱敏日志，在 `ctx.effect` 清理函数中关闭所有 SSH 隧道与定时器。
+  2. **脱敏、密钥存储、台账与发件箱**：
+     - `lib/redact.js`：统一脱敏器（`redactText`、`redactValue`、`redactError`、`createRedactingLogger`），按安全优先级屏蔽 `x-dsh-auth-token`、`x-api-key`、`Bearer`、`ibssh_*`、`ibk_*`、`sk-*`、`dsh-auth-*` 与 `token=*`。
+     - `lib/secrets.js`：读写 `~/.liming-cloud/secrets.json`（强制目录 `700`、文件 `600`、原子写），严格校验 SSH 目标格式与只读范围，拒绝写入含 `machines:delete` / `machines:write` / `writeKey` / `leaseKey` / `deleteKey` 或非法结构的数据，报错绝不回显密钥原文。
+     - `lib/ledger.js`：持久化 `~/.liming-cloud/tasks.json`（目录 `700`、文件 `600`、临时文件 + `fsync` + `chmod 600` + `rename` 原子写），支持 `schemaVersion: 1`、迁移钩子与未知高版本拒绝覆写保护；提供确定性云端对话编号 `tablet-<taskId>`、纯 ASCII + 短编号项目目录生成与严格路径穿越校验。
+     - `lib/outbox.js`：「先写台账（`pending`），再发云端」发件箱引擎。严格遵守阶段 1 真实 Harness 契约边界：先调 `session/prompt(sessionId, requestId)`，仅在云端返回 `session/not-found` 时才调 `session/create({ sessionId, cwd })` 并核对返回 `sessionId` 一致（不一致直接拒发、`session/conflict` 如实报错）；云端返回 `{ accepted: true }` 后原子标记 `acked`，支持按序幂等重放。
+  3. **云端传输原语**：
+     - `lib/dsh-client.js`：零依赖 `dsh web` HTTP + WebSocket Mux 客户端（`GET /?token=` 换 `dsh-auth-*` Cookie、绝不发 `Origin` 头、`POST /api/<端点>` 一元 RPC、`/api/remote.mux` 订阅 `session/follow`/`job/list`/`session/control`、HTTP 与 WS 401 自动重登及 `onTokenRefresh`、超时与 `AbortSignal` 取消、流异常断开统一报 `STREAM_DISCONNECTED`）。
+     - `lib/remote-bootstrap.js`：独立隔离 DSH Go `~/.dsh-app-remote/` 托管启动协议（`web.pid`、`web.st` `/proc/$pid/stat` 第 22 字段防 PID 复用、`web.cmd` 一致性核对、`web.log` 解析 `token=`、默认固定 `/data/home/.local/bin/dsh-tablet`）；发现运行中且 `web.cmd` 不一致的共享实例时，在 `probe` / `ensureRunning` / `start` / `stop` 全路径均不杀进程并报 `shared` 错误。
+     - `lib/ssh-tunnel.js`：基于系统 `ssh`（ControlMaster + `-L 127.0.0.1:<local>:127.0.0.1:<remote>`）的每机单隧道复用器，支持按需建立、活跃任务计数复用、归零自动关闭、掉线指数退避重连、进程组干净退出与 `execRemote`/`createSshShell`，全路径脱敏不泄露 `ibssh_` 令牌。
+  4. **离线单测套件（纳入 `npm run check`）**：
+     - `test/tablet-cloud-ledger.test.cjs`（8 项）：覆盖权限 `700`/`600`、原子写中断无损与零残留 `.tmp`、`schemaVersion` 迁移与高版本保护、确定性会话号与路径穿越拒绝、发件箱三种崩溃点重放后云端严格 1 份对话 / 1 条消息 / 1 轮、`cloud_tell` 重发只多 1 轮、已有轮次恢复不误调 `session/create`、`sessionId` 不一致与 `session/conflict` 守卫、`secrets.json` 权限与高权限拒绝、`redact` 100% 屏蔽、最小插件入口合规。
+     - `test/tablet-cloud-transport.test.cjs`（4 项）：用纯 Node 假 `dsh web`（HTTP + RFC 6455 WebSocket）测登录换 Cookie、401 自动重登与 token 刷新、一元 RPC、超时取消、Mux 流式读取与断线报错；用本机 `/bin/sh` 实跑 `remote-bootstrap.js` 测首次启动、复用、`web.cmd` 不一致不杀报 `shared`、正常停止、PID 死亡重拉、`web.st` 防 PID 复用不误杀无关进程与失败日志脱敏；用假 `ssh` 测隧道按需建立、复用、掉线退避重连、空闲自动关闭、远端命令执行与零 `ibssh_` 泄露。
+- **参考的成熟做法**：
+  - 上游 DSH Go（`ccch1mneyyy/dsh-go`）：`app/lib/remote/ssh/remote_bootstrap.dart`、`remote_shell.dart`（`DSHAPP` 标签协议、`_st()`/`ours()` PID 复用防线、`web.cmd` 共享实例保护）与 `packages/dsh_client/lib/src/{connection,carrier,rpc,mux}.dart`（authority 绑定 Cookie、不发 `Origin`、一元 RPC 信封与 `/api/remote.mux` 帧格式）。
+  - 真实 Harness `0.2.2-rc.3` 源码（`@deepseek-ai/dsh-client-connection`）：核实 loopback `Host` 栅栏与按请求 `Host` 签发 `dsh-auth-*` Cookie 行为。
+- **验证证据**：
+  - 定向单测 `node --test test/tablet-*.test.cjs test/xin-live-scope.test.cjs`：**50/50 PASS（0 FAIL，0 SKIP）**，其中新增 `test/tablet-cloud-ledger.test.cjs` 8/8、`test/tablet-cloud-transport.test.cjs` 4/4；`test/tablet-setup.test.cjs` 全仓 `site/tablet/` 密钥扫描通过。
+  - 隔离环境全仓 `XIN_AGY_HOME=/tmp/no-agy-home XIN_ANTIGRAVITY_BIN= npm run check`：
+    - 静态语法与资源引用检查：`Syntax and local references passed: 320 files, 231 asset references`（覆盖新增 `site/tablet/liming-cloud/` 全部 10 个文件）。
+    - 全仓单测：**1134/1154 PASS**、18 跳过、2 失败——全部非通过项均属本机隔离容器无独立无头 Chromium 的已知环境缺失（`test/xin-browser.test.cjs` 18 项跳过、`test/xin-web.test.cjs` 2 项报 `需要 Chromium：设置 CHROMIUM_PATH`）；**真实代码失败 0 项**。
+
+# 修改清单 · 2026-11-26（平板调用云电脑第一阶段：实施计划与真实 Harness 契约验证脚本）
+
+- **谁做的**：原设计由 Claude Code 编写（[设计文档](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)）；第一阶段产出（实施计划与真实 Harness 契约验证脚本）由 Antigravity（Gemini 4 Neon）实现并自查，待 Muse 复核。分支 `claude/dsh-go-customization-discussion-d5wt84`，未改动 `src/`、`site/xin/`、小芯与天启相关代码。
+- **已完成**：
+  1. **实施计划** [docs/superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md)：按 8 个可独立提交、独立验收的阶段拆分设计（1 真实 Harness 契约脚本 → 2 `liming-cloud` 骨架/台账/发件箱/传输原语 → 3 三工具与 §5.3 选机器规则 → 4 面板与状态条 32 KiB / 4 Hz 限额 → 5 §5.6 四步停止与取消原因表 → 6 §5.5 通知闭环与 §5.7 断线对账恢复 → 7 云端 `liming-lease` → 8 `setup.sh` 与 `docs/tablet.md`），将设计 §7 自动化条目逐条落到具体 `test/tablet-*.test.cjs` 文件名。
+  2. **真实 Harness 契约验证脚本** `scripts/tablet-harness-contract/`（命中 `scripts/xin-live-scope.cjs` 的 `scripts/tablet-` 独立发布白名单，不进每次 PR 默认 CI）：
+     - `install-harness.sh`：在仓库外缓存目录（`~/.cache/liming-dsh-contract`）安装云端 `@deepseek-ai/dsh@0.2.2-rc.3`、照 DSH Go `runtime/locks/dsh-0.2.2-rc.1` 锁定的平板 `0.2.2-rc.1` 以及本地 `pnpm`。
+     - `mock-responses-server.mjs`：零依赖 OpenAI Responses SSE 流式模拟模型服务（自动分离 `session-title-llm` 无工具辅助请求，避免干扰对话步骤编排）。
+     - `dsh-client.mjs`：零依赖 `dsh web` 客户端（`/?token=` 登录换 `dsh-auth-*` Cookie、`POST /api/<端点>` 一元 RPC、`/api/remote.mux` WebSocket 流）。
+     - `dsh-runner.mjs`：隔离临时 `HOME`/`DSH_HOME` 启停、强杀、重启真实 `dsh web` 与宿主机 `/proc/<pid>/cwd` 孤儿进程扫描清理。
+     - `probe-plugin/`：零依赖探针插件（标准 JSON Schema 工具输出、可控后台任务、`cancel(reason)` 与 `agent/status` 记录、进程内 `session/event` 通知确认与 `agent/created` 重启补投去重）。
+     - `cases.mjs`、`run.mjs`、`README.md`：覆盖 E1–E6、E7a–E7f 与设计 §7 补验 C1、C2，逐项输出 `PASS`/`FAIL` 与汇总。
+- **参考与实测关键发现（已同步补入实施计划全局约束，供后续阶段避坑）**：
+  - 参考上游 DSH Go（`ccch1mneyyy/dsh-Go`）的 `remote_bootstrap.dart`、`packages/dsh_client`、`docs/plugins/*` 及 InstaBox `idle-suspend.md` / `api/machines.md`。
+  - **发现 1（E1 非空会话边界）**：`session/create` 携带 `sessionId` 仅对空白会话（无 `turn/start`）幂等复用原编号，对已有轮次会话会新分配 `session-<uuid>`；故阶段 2 发件箱恢复须先尝试 `session/prompt`，仅报 `session/not-found` 时再建会话。
+  - **发现 2（E6 强杀后冷读合成中断）**：强杀云端 Harness 后磁盘原始 `.jsonl.zstd` 确实没有 `turn/end`，但公开接口 `session/page` 冷读会经 `dsh-session-query` 的 `interruptedTurnClosers()` 合成一条 `turn/end(reason.kind="interrupted")`；阶段 6 对账需同时识别无 `turn/end` 与 `reason.kind === 'interrupted'`。此外装有 `bwrap` 的宿主机在 `workspace-write` 下带 `--unshare-pid --die-with-parent`，而无 `bwrap` 云机（Landlock）或 `danger-full-access` 下强杀确留孤儿进程。
+  - **发现 3（冷态 `session/cancel`）**：云端重启后冷态未附着会话调 `session/cancel` 返回 `session/not-found`，阶段 5 停止协议需结合 `running === false` 正常推进后续清理。
+- **验证证据**：
+  - 真实 Harness 契约套件 `node scripts/tablet-harness-contract/run.mjs --target both`：**22/22 全部 PASS（0 FAIL）**——`rc3`（`0.2.2-rc.3`）14/14 PASS（E1–E6、E7a–E7f、C1、C2），`rc1`（`0.2.2-rc.1`，DSH Go 锁定安装）8/8 PASS（E7a–E7f、C1、C2）。
+  - 语法与引用检查（`scripts/check.mjs`）：`Syntax and local references passed: 310 files, 231 asset references`（自动覆盖新增 `scripts/tablet-harness-contract/` 全部 `.mjs`/`.js`），另 `install-harness.sh` 经 `bash -n` 通过。
+  - 平板与发布范围定向测试（`node --test test/tablet-*.test.cjs test/xin-live-scope.test.cjs`）：**38/38 PASS**。
+  - 隔离环境全仓 `npm run check`（`XIN_AGY_HOME=/tmp/no-agy-home XIN_ANTIGRAVITY_BIN=`）：**1121/1142 PASS**、18 跳过（`test/xin-browser.test.cjs` 缺独立 Chromium）、3 失败——其中 2 项为本容器无独立无头 Chromium（`test/xin-web.test.cjs` 报 `需要 Chromium：设置 CHROMIUM_PATH`，容器内置 `/opt/meta-chromium/chrome` 拒绝脱离策略单独启动），1 项为并发负载下的瞬时时序失败（`test/xin-runner-report-recovery.test.cjs` 第 171 行），立即单独复跑该文件 **16/16 全绿**；本次未触碰 `src/`、`site/xin/` 及已有 `test/`。
+
 # 修改清单 · 2026-11-26（正式联调卡住的根因：li 网关 key 不允许 glm-5.4；平板文件独立发布）
 
 - Claude Code 排查、处理并自查，无独立复核。

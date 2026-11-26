@@ -12,7 +12,7 @@ host=\${target#*@}
 printf '%s %s\\n' "$target" "\${cmd[*]}" >> "$FAKE_DIR/ssh.log"
 case "\${cmd[*]}" in
   "cat "*) [ -f "$FAKE_DIR/no-zip-$host" ] && { echo "cat: no such file" >&2; exit 1; }; cat "$FAKE_ZIP";;
-  "bash -s") HOME="$FAKE_DIR/home-$host" LIMING_REMOTE_WS="$FAKE_DIR/ws-$host" bash -s;;
+  "bash -s") [ -f "$FAKE_DIR/reject-$host" ] && { echo "Permission denied for $target" >&2; exit 255; }; HOME="$FAKE_DIR/home-$host" LIMING_REMOTE_WS="$FAKE_DIR/ws-$host" bash -s;;
   *) echo "unexpected: \${cmd[*]}" >&2; exit 2;;
 esac
 `;
@@ -24,10 +24,13 @@ function makeZip(file,extra={}){
 }
 function remoteHome(dir,host){
   const h=path.join(dir,'home-'+host);fs.mkdirSync(path.join(h,'.local/bin'),{recursive:true});fs.mkdirSync(path.join(h,'.xin'));
-  fs.writeFileSync(path.join(h,'.local/bin/dsh'),'#!/bin/sh\n',{mode:0o755});fs.writeFileSync(path.join(h,'.xin/harness.key'),'remote-secret-key\n',{mode:0o600});
+  fs.writeFileSync(path.join(h,'.local/bin/dsh'),'#!/bin/sh\necho "$*" >> "$HOME/dsh.log"\n',{mode:0o755});fs.writeFileSync(path.join(h,'.xin/harness.key'),'remote-secret-key\n',{mode:0o600});
   return h;
 }
-function rig(t,tokens=['ssh ibssh_li2token@li2.example','ssh ibssh_litoken@li.example']){
+// 终端里依次输入：li2 令牌、li2 只读 key、li2 写 key、li 令牌、li 只读 key、li 写 key（空行 = 回车跳过或保留原来的）
+const KEYS={li2read:'ibk_li2read_SECRET111',li2write:'ibk_li2write_SECRET222',liread:'ibk_liread_SECRET333',liwrite:'ibk_liwrite_SECRET444'};
+const INPUT=['ssh ibssh_li2token@li2.example',KEYS.li2read,KEYS.li2write,'ssh ibssh_litoken@li.example',KEYS.liread,KEYS.liwrite];
+function rig(t,tokens=INPUT){
   const d=tmp(t),bin=path.join(d,'bin');fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin,'ssh'),FAKE_SSH,{mode:0o755});
   fs.writeFileSync(path.join(bin,'dsh'),'#!/bin/sh\necho "$*" >> "$FAKE_DIR/dsh.log"\n',{mode:0o755});
@@ -35,7 +38,7 @@ function rig(t,tokens=['ssh ibssh_li2token@li2.example','ssh ibssh_litoken@li.ex
   fs.writeFileSync(path.join(d,'tty'),tokens.join('\n')+'\n');
   const zip=path.join(d,'gw.zip'),z=makeZip(zip);
   remoteHome(d,'li2.example');remoteHome(d,'li.example');
-  const env={...process.env,FAKE_DIR:d,FAKE_ZIP:zip,LIMING_BASE:'file://'+tablet,LIMING_GW_DIR:path.join(d,'gw'),LIMING_PLUGIN_DIR:path.join(d,'plugin'),
+  const env={...process.env,FAKE_DIR:d,FAKE_ZIP:zip,LIMING_BASE:'file://'+tablet,LIMING_GW_DIR:path.join(d,'gw'),LIMING_PLUGIN_DIR:path.join(d,'plugin'),LIMING_CLOUD_PLUGIN_DIR:path.join(d,'cloud-plugin'),LIMING_CLOUD_DIR:path.join(d,'cloud'),
     LIMING_SSH:path.join(bin,'ssh'),LIMING_DSH:path.join(bin,'dsh'),LIMING_APT:path.join(bin,'apt-get'),LIMING_TTY:path.join(d,'tty'),LIMING_ZIP_SIZE:z.size,LIMING_ZIP_SHA256:z.sha};
   const run=(...args)=>spawnSync('bash',[setup,...args],{env,encoding:'utf8',input:''});
   const lib=(code,...args)=>spawnSync('bash',['-c','source "$0"; '+code,setup,...args],{env:{...env,LIMING_SETUP_LIB:'1'},encoding:'utf8'});
@@ -59,6 +62,25 @@ test('令牌行各种粘法都认得；不是令牌行就拒绝，而且不回�
     const r=lib('parse_token_line "$1"',line);assert.equal(r.status,0,JSON.stringify(line));assert.equal(r.stdout,'ibssh_ab12@x.instabox.sh\n');}
   for(const line of ['ssh root@x','ibssh_ab12','ssh ibssh_ab12@x; rm -rf /','ssh -p 22 ibssh_ab12@x','']){
     const r=lib('parse_token_line "$1"',line);assert.notEqual(r.status,0,JSON.stringify(line));assert.ok(!(r.stdout+r.stderr).includes('ab12'));}
+});
+
+test('远端 SSH 拒绝连接时，装机日志不回显登录令牌', t => {
+  const {d,run}=rig(t);
+  fs.writeFileSync(path.join(d,'reject-li2.example'),'');
+  const r=run('--skip-li');
+  assert.match(r.stderr,/li2 上配 web 配置失败/);
+  assert.equal((r.stdout+r.stderr).includes('ibssh_li2token'),false);
+});
+
+test('装机遇到新版密钥文件时，拒绝覆写原文件', t => {
+  const {env,lib}=rig(t);
+  fs.mkdirSync(env.LIMING_CLOUD_DIR,{mode:0o700});
+  const file=path.join(env.LIMING_CLOUD_DIR,'secrets.json');
+  const old='{"schemaVersion":2,"machines":{},"futureSetting":true}\n';
+  fs.writeFileSync(file,old,{mode:0o600});
+  const r=lib('save_secret li2 "$1" "$2"','ibssh_li2token@li2.example',KEYS.li2read);
+  assert.notEqual(r.status,0);
+  assert.equal(fs.readFileSync(file,'utf8'),old);
 });
 
 test('下载到的是网站首页（不存在的路径回首页）或内容不对就停，不留半截文件',t=>{
@@ -94,7 +116,7 @@ test('整套装一遍：网关解好、插件挂上、li2 和 li 上建好 table
   for(const sub of ['accounts','usage','logs'])assert.equal(mode(path.join(gw,sub)),0o700,sub);
   for(const f of ['package.json','cordis.patch.yml','lib/index.js','lib/gateway.js'])
     assert.equal(fs.readFileSync(path.join(pl,f),'utf8'),fs.readFileSync(path.join(tablet,'liming-gateway',f),'utf8'),f);
-  assert.equal(read('dsh.log'),'plugin --profile web add '+pl+'\n');
+  assert.equal(read('dsh.log'),'plugin --profile web add '+pl+'\nplugin --profile web add '+env.LIMING_CLOUD_PLUGIN_DIR+'\n');
   for(const host of ['li2.example','li.example']){
     const h=path.join(d,'home-'+host);
     assert.equal(fs.readFileSync(path.join(h,'.local/bin/dsh-tablet'),'utf8'),fs.readFileSync(path.join(tablet,'dsh-tablet.sh'),'utf8'));
@@ -105,7 +127,7 @@ test('整套装一遍：网关解好、插件挂上、li2 和 li 上建好 table
     assert.ok(r.stdout.includes('启动命令 '+path.join(h,'.local/bin/dsh-tablet')+'，工作目录 '+path.join(d,'ws-'+host)),'打印 '+host+' 的启动命令（后面不加 web）');
   }
   const all=r.stdout+r.stderr;
-  for(const secret of ['remote-secret-key','li2token','litoken'])assert.ok(!all.includes(secret),'输出里不该有 '+secret);
+  for(const secret of ['remote-secret-key','li2token','litoken',...Object.values(KEYS)])assert.ok(!all.includes(secret),'输出里不该有 '+secret);
   assert.ok(all.includes('http://127.0.0.1:8788/v1'));assert.ok(all.includes('Responses'));
 });
 
@@ -127,16 +149,16 @@ test('重复跑：不再下载安装包、不碰 accounts、不重复挂插件',
   const r=run();assert.equal(r.status,0,r.stdout+r.stderr);
   assert.equal(read('ssh.log').split('\n').filter(l=>/ cat /.test(l)).length,before);
   assert.equal(fs.readFileSync(path.join(gw,'accounts/acct.json'),'utf8'),'{"keep":true}');
-  assert.equal(read('dsh.log').split('\n').filter(Boolean).length,1);
+  assert.equal(read('dsh.log').split('\n').filter(Boolean).length,2,'网关插件和云端任务插件各挂一次');
 });
 
 test('li2 上没有安装包就从 li 取，li 的令牌后面接着用，不再问第三次',t=>{
-  const {d,env,run,read}=rig(t);fs.writeFileSync(path.join(d,'no-zip-li2.example'),'');
+  const {d,env,run,read}=rig(t,['ssh ibssh_li2token@li2.example','ssh ibssh_litoken@li.example',KEYS.li2read,KEYS.li2write,KEYS.liread,KEYS.liwrite]);fs.writeFileSync(path.join(d,'no-zip-li2.example'),'');
   const r=run();assert.equal(r.status,0,r.stdout+r.stderr);
   assert.ok(fs.existsSync(path.join(env.LIMING_GW_DIR,'current/wb_proxy.py')));
   const cats=read('ssh.log').split('\n').filter(l=>/ cat /.test(l)).map(l=>l.split(' ')[0]);
   assert.deepEqual(cats,['ibssh_li2token@li2.example','ibssh_litoken@li.example']);
-  assert.equal(r.stderr.match(/粘贴/g)?.length,2);
+  assert.equal(r.stderr.match(/SSH 令牌行/g)?.length,2,'令牌只问两次');
   assert.ok(fs.existsSync(path.join(d,'home-li.example/.local/bin/dsh-tablet')));
 });
 
@@ -149,9 +171,74 @@ test('--dry-run 只列步骤，什么都不改、什么命令都不跑',t=>{
 });
 
 test('--skip-li 只问 li2 的令牌，不碰 li',t=>{
-  const {d,run,read}=rig(t,['ssh ibssh_li2token@li2.example']);
+  const {d,run,read}=rig(t,['ssh ibssh_li2token@li2.example',KEYS.li2read,KEYS.li2write]);
   const r=run('--skip-li');assert.equal(r.status,0,r.stdout+r.stderr);
-  assert.equal(r.stderr.match(/粘贴/g)?.length,1);
+  assert.equal(r.stderr.match(/SSH 令牌行/g)?.length,1);
   assert.ok(!read('ssh.log').includes('li.example '));
   assert.ok(!fs.existsSync(path.join(d,'home-li.example/.local/bin/dsh-tablet')));
+});
+
+// ---- 平板调用云电脑（docs/superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md §5.10、§5.11）----
+const listFiles=dir=>fs.readdirSync(dir,{recursive:true,withFileTypes:true}).filter(e=>e.isFile()).map(e=>path.relative(dir,path.join(e.parentPath??e.path,e.name))).sort();
+
+test('装机脚本里的两个插件文件清单和仓库里的一致（加了文件忘了改脚本会红）',t=>{
+  const {lib}=rig(t);
+  for(const [name,v] of [['liming-cloud','CLOUD_FILES'],['liming-lease','LEASE_FILES']]){
+    const r=lib('printf "%s\\n" $'+v);assert.equal(r.status,0,r.stderr);
+    assert.deepEqual(r.stdout.trim().split('\n').sort(),listFiles(path.join(tablet,name)),name);
+  }
+});
+
+test('平板：装 liming-cloud 并挂进 web 配置；secrets.json 权限 600，记 SSH 目标和只读 key，绝不含写 key',t=>{
+  const {d,env,run}=rig(t);
+  const r=run();assert.equal(r.status,0,r.stdout+r.stderr);
+  for(const f of listFiles(path.join(tablet,'liming-cloud')))
+    assert.equal(fs.readFileSync(path.join(env.LIMING_CLOUD_PLUGIN_DIR,f),'utf8'),fs.readFileSync(path.join(tablet,'liming-cloud',f),'utf8'),f);
+  const sec=path.join(env.LIMING_CLOUD_DIR,'secrets.json');
+  assert.equal(mode(env.LIMING_CLOUD_DIR),0o700);assert.equal(mode(sec),0o600);
+  const doc=JSON.parse(fs.readFileSync(sec,'utf8'));
+  assert.equal(doc.schemaVersion,1);
+  assert.deepEqual(doc.machines.li2,{sshTarget:'ibssh_li2token@li2.example',sshPort:22,readKey:KEYS.li2read});
+  assert.deepEqual(doc.machines.li,{sshTarget:'ibssh_litoken@li.example',sshPort:22,readKey:KEYS.liread});
+  const raw=fs.readFileSync(sec,'utf8');
+  for(const w of [KEYS.li2write,KEYS.liwrite])assert.ok(!raw.includes(w),'写 key 不落平板');
+  const all=fs.readdirSync(d,{recursive:true}).filter(f=>!String(f).startsWith('home-')&&String(f)!=='tty').map(f=>path.join(d,String(f))).filter(f=>fs.statSync(f).isFile());  // tty 是测试里模拟站长在终端里敲的字
+  for(const f of all){const c=fs.readFileSync(f,'utf8');for(const w of [KEYS.li2write,KEYS.liwrite])assert.ok(!c.includes(w),`写 key 出现在平板的 ${f}`);}
+});
+
+test('li2、li：装 liming-lease 并第一次挂进 web 配置；lease.key（600）和 machine-name 写在那台上',t=>{
+  const {d,run}=rig(t);
+  const r=run();assert.equal(r.status,0,r.stdout+r.stderr);
+  for(const [host,name,key] of [['li2.example','li2',KEYS.li2write],['li.example','li',KEYS.liwrite]]){
+    const h=path.join(d,'home-'+host);
+    for(const f of listFiles(path.join(tablet,'liming-lease')))
+      assert.equal(fs.readFileSync(path.join(h,'.liming-lease',f),'utf8'),fs.readFileSync(path.join(tablet,'liming-lease',f),'utf8'),host+' '+f);
+    assert.equal(mode(path.join(h,'.liming-cloud')),0o700);
+    assert.equal(fs.readFileSync(path.join(h,'.liming-cloud/lease.key'),'utf8'),key+'\n');
+    assert.equal(mode(path.join(h,'.liming-cloud/lease.key')),0o600);
+    assert.equal(fs.readFileSync(path.join(h,'.liming-cloud/machine-name'),'utf8'),name+'\n');
+    assert.equal(fs.readFileSync(path.join(h,'dsh.log'),'utf8'),'plugin --profile web add '+path.join(h,'.liming-lease')+'\n');
+  }
+});
+
+test('重复跑：直接回车保留原来的只读 key 和写 key，插件不重复挂',t=>{
+  const {d,env,run}=rig(t);
+  assert.equal(run().status,0);
+  fs.writeFileSync(path.join(d,'tty'),['ssh ibssh_li2token@li2.example','','','ssh ibssh_litoken@li.example','',''].join('\n')+'\n');
+  const r=run();assert.equal(r.status,0,r.stdout+r.stderr);
+  const doc=JSON.parse(fs.readFileSync(path.join(env.LIMING_CLOUD_DIR,'secrets.json'),'utf8'));
+  assert.equal(doc.machines.li2.readKey,KEYS.li2read);assert.equal(doc.machines.li.readKey,KEYS.liread);
+  const h=path.join(d,'home-li2.example');
+  assert.equal(fs.readFileSync(path.join(h,'.liming-cloud/lease.key'),'utf8'),KEYS.li2write+'\n');
+  assert.equal(fs.readFileSync(path.join(h,'dsh.log'),'utf8').split('\n').filter(Boolean).length,1);
+});
+
+test('只读 key 一开始就没给：secrets.json 里不写 readKey（插件按「状态未知」退回精简判断）；写 key 没给就不写 lease.key',t=>{
+  const {d,env,run}=rig(t,['ssh ibssh_li2token@li2.example','','','ssh ibssh_litoken@li.example','','']);
+  const r=run();assert.equal(r.status,0,r.stdout+r.stderr);
+  const doc=JSON.parse(fs.readFileSync(path.join(env.LIMING_CLOUD_DIR,'secrets.json'),'utf8'));
+  assert.deepEqual(doc.machines.li2,{sshTarget:'ibssh_li2token@li2.example',sshPort:22});
+  assert.ok(!fs.existsSync(path.join(d,'home-li2.example/.liming-cloud/lease.key')));
+  assert.equal(fs.readFileSync(path.join(d,'home-li2.example/.liming-cloud/machine-name'),'utf8'),'li2\n');
+  assert.match(r.stdout,/没装写 key/);
 });

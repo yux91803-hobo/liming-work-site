@@ -4,8 +4,12 @@
    参考 dorny/paths-filter：按路径判断。只有下面这些路径全都不碰小芯和服务端时才跳过，其它一律照跑（宁可多跑）。
    找不到基准、文件太多（GitHub 比较接口最多列 300 个）或读接口出错，都照跑。
    站长 2026-11-26：平板（DSH Go）的文件要独立发布，不跟着小芯联调。site/tablet/ 只是给平板下载的静态文件，
-   scripts/tablet-、test/tablet- 是生成脚本和单测，都不进 Worker、不碰小芯。 */
+   scripts/tablet-、test/tablet- 是生成脚本和单测，都不进 Worker、不碰小芯。
+   「上一次成功发布」包括合并触发的发布（push）和在 Actions 页手动发布到正式站的运行（workflow_dispatch，如 11-26 的 #516、#519）；
+   手动运行默认只 dry-run 或只发测试站，所以要看它的部署作业里 PRODUCTION_MARK_STEP 这一步确实成功了（这一步只在正式站
+   部署且冒烟通过后才跑）。认不出来就往前找，找不到就照跑。 */
 const SKIP_PREFIXES = ['site/tools/tianqi/', 'site/tablet/', 'scripts/tablet-', 'test/tablet-', 'docs/', 'test/e2e/'];
+const PRODUCTION_MARK_STEP = '判断这次要不要跑小芯联调';
 const TIANQI_VISION_FILES = new Set(['site/xin/vm-persona.mjs', 'site/xin/vm-models.mjs', 'scripts/test-xin-live.py']);
 
 function skippable(file) {
@@ -21,12 +25,24 @@ function needsXinLive(files, truncated) {
   return !files.every(skippable);
 }
 
+// 这次成功的运行是不是真的发布到了正式站：合并触发的一定是；手动的要看部署作业里那一步跑成了
+async function deployedProduction(github, owner, repo, run) {
+  if (run.event === 'push') return true;
+  if (run.event !== 'workflow_dispatch') return false;
+  const { data } = await github.rest.actions.listJobsForWorkflowRun({ owner, repo, run_id: run.id, filter: 'latest', per_page: 50 });
+  return (data.jobs || []).some(j => (j.steps || []).some(s => s.name === PRODUCTION_MARK_STEP && s.conclusion === 'success'));
+}
+
 /* 在 actions/github-script 里调用。只在 Harness 模型配置或联调变化时另外唤醒 li2。 */
 async function decide({ github, context, core }) {
   const { owner, repo } = context.repo, head = context.sha;
   try {
-    const { data } = await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: 'deploy.yml', branch: 'main', event: 'push', status: 'success', per_page: 20 });
-    const last = data.workflow_runs.find(r => r.conclusion === 'success' && r.head_sha !== head && r.id !== context.runId);
+    const { data } = await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: 'deploy.yml', branch: 'main', status: 'success', per_page: 30 });
+    let last = null;
+    for (const r of data.workflow_runs) {
+      if (r.conclusion !== 'success' || r.head_sha === head || r.id === context.runId) continue;
+      if (await deployedProduction(github, owner, repo, r)) { last = r; break; }
+    }
     if (!last) return { run: true, tianqiVision: true, reason: '找不到上一次成功发布到正式站的运行' };
     const { data: cmp } = await github.rest.repos.compareCommits({ owner, repo, base: last.head_sha, head, per_page: 300 });
     if (cmp.status !== 'ahead') return { run: true, tianqiVision: true, reason: `基准 ${last.head_sha.slice(0, 7)} 不在这次提交之前（${cmp.status}）` };
@@ -41,4 +57,4 @@ async function decide({ github, context, core }) {
   }
 }
 
-module.exports = { SKIP_PREFIXES, skippable, needsXinLive, decide };
+module.exports = { SKIP_PREFIXES, PRODUCTION_MARK_STEP, skippable, needsXinLive, decide };

@@ -61,9 +61,9 @@ REA 开启时通过 MCP 兼容桥转换当前网关不接受的 pattern `allOf` 
 
 - **网关在平板上**：WorkBuddy 网关装进 App 的本机 Linux，跟着本机引擎一起启停（插件 `site/tablet/liming-gateway/`）。签到钟点设成全天，所以打开 App 就会签到。
 - **平板上的 AI**：用网关里的模型回话，开了手机操控后能读屏、点按、输入。
-- **li2、li**：作为 SSH 远程主机。平板连过去用的是那台 Harness 没人用的内置 `web` 配置和它本机的网关，不碰小芯、天启的 `headless` 配置。
+- **li2、li**：平板上的 AI 自己把长任务、写代码、查资料派给它们（插件 `site/tablet/liming-cloud/` 的 `cloud_run`、`cloud_tell`、`cloud_machines`），派完接着聊；输入框上方一行状态条，点开「云端任务」面板能看进度、插话、停止、接着做，做完在对话里告诉站长。自动挑机器：冷却的不用、本轮快到头的靠后、醒着的和闲的优先，每台同时最多 2 件（面板里可改）。平板睡了、App 关了云端照常跑，回到对话时补说结果，只说一次。云端用的是那台 Harness 没人用的内置 `web` 配置和它本机的网关，不碰小芯、天启的 `headless` 配置；任务跑着时插件 `site/tablet/liming-lease/` 持有 InstaBox 活动租约，空闲后放掉。手动切主机只留着调试。
 
-网关程序和账号不进仓库。站长要做的几步见 [docs/tablet.md](docs/tablet.md)；第二步 fork 改界面以后单独设计。 [设计](docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md)
+网关程序、账号和任何 key 都不进仓库。站长要做的几步见 [docs/tablet.md](docs/tablet.md)；第二步 fork 改界面以后单独设计。 [设计](docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [平板调用云电脑的设计](docs/superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)
 
 ## 小芯后台运行方式
 

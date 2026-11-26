@@ -2,15 +2,20 @@
 # Liming 平板装机：在 DSH Go 的终端里（打开一个对话 → 全部功能 → 终端）运行
 #   apt-get update && apt-get install -y curl && curl -fsSL https://liming-work.com/tablet/setup.sh | bash
 # （App 里的 Ubuntu 是精简版，没有 curl、python3、openssh-client；curl 由这行先装，后两个脚本自己装。）
-# 装好随本机引擎启停的 WorkBuddy 网关和插件，并在 li2、li 上配好给平板用的 Harness web 配置。
-# 脚本里不含任何密钥；InstaBox 的 SSH 令牌只用来连 li2、li，用完不存。可以重复运行。
+# 装好随本机引擎启停的 WorkBuddy 网关和插件，并在 li2、li 上配好给平板用的 Harness web 配置；
+# 再装「平板调用云电脑」：平板上的 liming-cloud（让本机 AI 把活派给 li、li2），li、li2 上的 liming-lease（任务跑着时不让机器睡）。
+# 脚本里不含任何密钥。SSH 令牌和只读 key 存在平板 ~/.liming-cloud/secrets.json（权限 600），给 liming-cloud 连 li、li2、看机器状态；
+# 写 key 只经 SSH 存到那台云电脑的 ~/.liming-cloud/lease.key，不落平板。可以重复运行。
 #   --dry-run  只列出要做的事    --skip-li  不接 li
 # 设计和说明：liming-work-site 仓库 docs/superpowers/specs/2026-11-25-tablet-dshgo-design.md、docs/tablet.md
+set +x
 set -euo pipefail
 
 BASE=${LIMING_BASE:-https://liming-work.com/tablet}
 GW_DIR=${LIMING_GW_DIR:-/root/workbuddy-gateway}
 PLUGIN_DIR=${LIMING_PLUGIN_DIR:-/root/liming-gateway}
+CLOUD_PLUGIN_DIR=${LIMING_CLOUD_PLUGIN_DIR:-/root/liming-cloud}
+CLOUD_DIR=${LIMING_CLOUD_DIR:-${HOME:-/root}/.liming-cloud}
 SSH=${LIMING_SSH:-ssh}
 DSH=${LIMING_DSH:-dsh}
 APT=${LIMING_APT:-apt-get}
@@ -21,6 +26,10 @@ ZIP_SIZE=${LIMING_ZIP_SIZE:-22962873}
 ZIP_SHA256=${LIMING_ZIP_SHA256:-b322c73b9a18f09c6560bff0e4b748e9acdc26272c339b4f5fce2413bb500cc6}
 REMOTE_ZIP=/data/workbuddy-gateway/releases/workbuddy2api-hub-$VERSION.zip
 WORK=''
+GATEWAY_FILES='package.json cordis.patch.yml lib/index.js lib/gateway.js'
+# 两个插件的文件清单（单测核对和仓库一致）
+CLOUD_FILES='package.json cordis.patch.yml lib/cancel-reasons.js lib/dsh-client.js lib/index.js lib/instabox-read.js lib/ledger.js lib/outbox.js lib/recovery.js lib/redact.js lib/remote-bootstrap.js lib/remote.js lib/runner.js lib/secrets.js lib/selector.js lib/settings.js lib/ssh-tunnel.js lib/steps.js lib/throttle.js lib/tool-card.js lib/tools.js lib/ui.js'
+LEASE_FILES='package.json cordis.patch.yml lib/index.js lib/lease.js'
 
 say() { printf '%s\n' "$*"; }
 say_err() { printf '%s\n' "$*" >&2; }
@@ -60,6 +69,64 @@ ask_token() {
     [ "$eof" = 1 ] && break
   done
   die "$label 的令牌不对"
+}
+
+# 读一把 InstaBox key（不回显、不打印）；直接回车返回 1（跳过，或保留原来的）。
+ask_key() {
+  local label=$1 hint=$2 line=''
+  while true; do
+    printf '%s' "粘贴 $label（$hint；直接回车跳过或保留原来的）：" >&2
+    IFS= read -rs line <&3 || true
+    printf '\n' >&2
+    line=$(trim "$line")
+    [ -n "$line" ] || return 1
+    if printf '%s' "$line" | grep -Eq '^[!-~]{8,256}$'; then printf '%s' "$line"; return 0; fi
+    say_err "格式不对：key 是一串不带空格的字符，在 InstaBox 后台 API keys 里新建后复制。"
+  done
+}
+
+# 把一台机器的 SSH 目标和只读 key 记进 ~/.liming-cloud/secrets.json（目录 700、文件 600、先写临时文件再改名）。
+# 只读 key 为空时保留原来的；写 key 从来不经过这里。
+save_secret() {
+  mkdir -p "$CLOUD_DIR"; chmod 700 "$CLOUD_DIR"
+  LIMING_M="$1" LIMING_T="$2" LIMING_K="${3:-}" python3 - "$CLOUD_DIR/secrets.json" <<'PY'
+import json, os, sys, tempfile
+path = sys.argv[1]
+try:
+    with open(path, encoding='utf-8') as source:
+        doc = json.load(source)
+except FileNotFoundError:
+    doc = {'schemaVersion': 1, 'machines': {}}
+except (OSError, ValueError):
+    sys.exit('无法读取现有密钥文件，原文件已保留。')
+if not isinstance(doc, dict) or doc.get('schemaVersion', 1) != 1 or not isinstance(doc.get('machines'), dict):
+    sys.exit('现有密钥文件格式不支持，原文件已保留。')
+m = os.environ['LIMING_M']
+cur = doc['machines'].get(m) or {}
+if not isinstance(cur, dict):
+    sys.exit('现有机器记录格式不支持，原文件已保留。')
+entry = {'sshTarget': os.environ['LIMING_T'], 'sshPort': 22}
+key = os.environ.get('LIMING_K', '')
+if key:
+    entry['readKey'] = key
+elif cur.get('readKey'):
+    entry['readKey'] = cur['readKey']
+doc['schemaVersion'] = 1
+doc['machines'][m] = entry
+tmp = None
+try:
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=os.path.dirname(path), prefix='.secrets-', delete=False) as f:
+        tmp = f.name
+        json.dump(doc, f, ensure_ascii=False, indent=2)
+        f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    tmp = None
+finally:
+    if tmp is not None:
+        os.unlink(tmp)
+PY
 }
 
 # 下载一个文件；内容里要有 marker，开头不能是「<」（网站对不存在的路径会回首页 HTML）。失败时不留文件。
@@ -104,20 +171,33 @@ install_gateway() {
 
 # 插件文件每次都更新（本地路径安装是链接目录，重启引擎就用上新的）；只在第一次挂进 web 配置。
 install_plugin() {
-  local src=$1
-  mkdir -p "$PLUGIN_DIR/lib"
-  cp -f "$src/package.json" "$src/cordis.patch.yml" "$PLUGIN_DIR/"
-  cp -f "$src/lib/index.js" "$src/lib/gateway.js" "$PLUGIN_DIR/lib/"
-  if [ ! -f "$PLUGIN_DIR/.added" ]; then
-    "$DSH" plugin --profile web add "$PLUGIN_DIR" </dev/null || { say_err "插件挂不上，看上面 dsh 的报错"; return 1; }
-    : > "$PLUGIN_DIR/.added"
+  local src=$1 dest=$2 files=$3 f
+  for f in $files; do mkdir -p "$(dirname "$dest/$f")"; cp -f "$src/$f" "$dest/$f"; done
+  if [ ! -f "$dest/.added" ]; then
+    "$DSH" plugin --profile web add "$dest" </dev/null || { say_err "插件挂不上，看上面 dsh 的报错"; return 1; }
+    : > "$dest/.added"
   fi
+}
+
+# 下载一个插件的全部文件到 $2；按文件类型核对内容（网站对不存在的路径会回首页）。
+fetch_plugin() {
+  local name=$1 dest=$2 files=$3 f marker
+  for f in $files; do
+    case "$f" in
+      package.json) marker="\"name\": \"$name\"";;
+      cordis.patch.yml) marker=$name;;
+      *) marker='export';;
+    esac
+    mkdir -p "$(dirname "$dest/$f")"
+    fetch_file "$BASE/$name/$f" "$dest/$f" "$marker" || return 1
+  done
 }
 
 # 在 li2、li 上执行的脚本：只写包装脚本、web 配置的补丁和工作目录（web 配置那台电脑上没人用：小芯、天启用 headless）；
 # web 配置里原有别的补丁就先备份；只检查 key 文件在不在，不读出来。
 remote_script() {
-  local wrapper=$1 profile=$2
+  local wrapper=$1 profile=$2 machine=$3 lease_key=$4 lease_src=$5 f
+  printf 'set +x\nLIMING_MACHINE=%q\nLEASE_KEY=%q\n' "$machine" "$lease_key"
   cat <<'HEAD'
 set -eu
 umask 077
@@ -140,25 +220,62 @@ MID
 LIMING_PROFILE_EOF
 if [ -s "$P" ] && ! grep -q "scripts/tablet-profile.mjs" "$P"; then mv -f "$P" "$P.bak.$(date +%Y%m%d%H%M%S)"; fi
 mv -f "$P.new" "$P"
-echo "OK $HOME/.local/bin/dsh-tablet $WS"
+mkdir -p "$HOME/.liming-cloud" "$HOME/.liming-lease/lib"
+chmod 700 "$HOME/.liming-cloud"
+printf '%s\n' "$LIMING_MACHINE" > "$HOME/.liming-cloud/machine-name"
+if [ -n "$LEASE_KEY" ]; then
+  printf '%s\n' "$LEASE_KEY" > "$HOME/.liming-cloud/lease.key.tmp"
+  chmod 600 "$HOME/.liming-cloud/lease.key.tmp"
+  mv -f "$HOME/.liming-cloud/lease.key.tmp" "$HOME/.liming-cloud/lease.key"
+fi
+LEASE_KEY=''
 TAIL
+  for f in $LEASE_FILES; do
+    printf '%s\n' "cat > \"\$HOME/.liming-lease/$f\" <<'LIMING_FILE_EOF'"
+    cat "$lease_src/$f"
+    printf 'LIMING_FILE_EOF\n'
+  done
+  cat <<'END'
+LEASE=ok
+if [ ! -f "$HOME/.liming-lease/.added" ]; then
+  if "$HOME/.local/bin/dsh" plugin --profile web add "$HOME/.liming-lease" </dev/null >/dev/null 2>&1; then : > "$HOME/.liming-lease/.added"
+  else LEASE=failed; fi
+fi
+[ -s "$HOME/.liming-cloud/lease.key" ] && K=yes || K=no
+echo "LEASE $LEASE $K"
+echo "OK $HOME/.local/bin/dsh-tablet $WS"
+END
 }
 
-# 输出「包装脚本路径<TAB>工作目录」。
+# 输出「包装脚本路径<TAB>工作目录<TAB>租约插件 ok/failed<TAB>写 key yes/no」。
 remote_setup() {
-  local target=$1 label=$2 out line wrapper ws
-  if ! out=$(remote_script "$WORK/dsh-tablet.sh" "$WORK/dsh-tablet-profile.yml" | rssh "$target" 'bash -s' 2>&1); then
+  local target=$1 label=$2 lease_key=${3:-} out line wrapper ws lease leasekey
+  if ! out=$(remote_script "$WORK/dsh-tablet.sh" "$WORK/dsh-tablet-profile.yml" "$label" "$lease_key" "$WORK/lease" | rssh "$target" 'bash -s' 2>&1); then
     case "$out" in
       *NO_DSH*) say_err "$label 上没找到 ~/.local/bin/dsh（Harness 没装好）";;
       *NO_KEY*) say_err "$label 上没有 ~/.xin/harness.key（这台的网关还没配好）";;
-      *) say_err "$label 上配 web 配置失败：$(printf '%s\n' "$out" | tail -n 3)";;
+      *"Permission denied"*) say_err "$label 上配 web 配置失败：SSH 拒绝登录，请在 InstaBox 后台核对令牌";;
+      *"Host key verification failed"*) say_err "$label 上配 web 配置失败：SSH 主机指纹未通过校验";;
+      *) say_err "$label 上配 web 配置失败，请核对 SSH 连接和云电脑上的 Harness";;
     esac
     return 1
   fi
   line=$(printf '%s\n' "$out" | grep '^OK ' | tail -n 1) || true
   [ -n "$line" ] || { say_err "$label 没有回 OK"; return 1; }
   read -r _ wrapper ws <<<"$line"
-  printf '%s\t%s\n' "$wrapper" "$ws"
+  line=$(printf '%s\n' "$out" | grep '^LEASE ' | tail -n 1) || true
+  read -r _ lease leasekey <<<"${line:-LEASE failed no}"
+  [ "$lease" = ok ] || say_err "$label 上租约插件没挂上，请在云电脑上核对 Harness 的 web 配置"
+  printf '%s\t%s\t%s\t%s\n' "$wrapper" "$ws" "$lease" "$leasekey"
+}
+
+# 问这台的只读 key 和写 key，把 SSH 目标和只读 key 记进平板，写 key 交给 remote_setup 经 SSH 存到那台上
+setup_machine() {
+  local target=$1 label=$2 rk wk
+  rk=$(ask_key "$label 账号的只读 key" "InstaBox 后台 API keys 新建，只勾 machines:read；用来看机器醒没醒，不会叫醒它") || rk=''
+  wk=$(ask_key "$label 账号的写 key" "只勾 machines:write，别勾删除；只存到 $label 上，任务跑着时不让它睡") || wk=''
+  save_secret "$label" "$target" "$rk" || { say_err "记不下 $label 的连接信息"; return 1; }
+  remote_setup "$target" "$label" "$wk"
 }
 
 ensure_packages() {
@@ -177,20 +294,28 @@ dry_run_plan() {
   say "2. 从 $BASE 下载插件和 li、li2 用的配置。"
   say "3. 问 li2 的 SSH 令牌；网关没装就从 li2 取安装包 $REMOTE_ZIP，核对大小和 SHA-256 后解到 $GW_DIR。"
   say "4. 插件放到 $PLUGIN_DIR；第一次装时 dsh plugin --profile web add。"
-  say "5. 在 li2 上写 ~/.local/bin/dsh-tablet、~/.dsh/profiles/web/cordis.patch.yml（原有别的就先备份）、建 /data/workspace/tablet。"
-  if [ "$1" = 1 ]; then say "6. --skip-li：不接 li。"; else say "6. 问 li 的令牌（可以直接回车跳过），在 li 上做同样的事。"; fi
+  say "5. 云端任务插件放到 $CLOUD_PLUGIN_DIR；第一次装时 dsh plugin --profile web add。"
+  say "6. 问 li2 账号的只读 key 和写 key（都可以回车跳过）；SSH 目标和只读 key 记进 $CLOUD_DIR/secrets.json（权限 600）。"
+  say "7. 在 li2 上写 ~/.local/bin/dsh-tablet、~/.dsh/profiles/web/cordis.patch.yml（原有别的就先备份）、建 /data/workspace/tablet；"
+  say "   装租约插件 ~/.liming-lease、写 ~/.liming-cloud/machine-name，给了写 key 就存成 ~/.liming-cloud/lease.key（权限 600）。"
+  if [ "$1" = 1 ]; then say "8. --skip-li：不接 li。"; else say "8. 问 li 的令牌（可以直接回车跳过），在 li 上做同样的事。"; fi
 }
 
 summary() {
-  local w ws
+  local w ws line
   say ""
   say "装好了。"
   say "· 网关：$GW_DIR/current（$VERSION），日志在 $GW_DIR/logs/"
-  say "· 插件：$PLUGIN_DIR"
-  IFS=$'\t' read -r w ws <<<"$1"
-  say "· li2：启动命令 $w，工作目录 $ws"
-  if [ -n "$2" ]; then IFS=$'\t' read -r w ws <<<"$2"; say "· li：启动命令 $w，工作目录 $ws"
-  else say "· li：没接（以后想接，再跑一次这个脚本）"; fi
+  say "· 插件：$PLUGIN_DIR（网关），$CLOUD_PLUGIN_DIR（云端任务）"
+  local name lease leasekey
+  for name in li2 li; do
+    if [ "$name" = li2 ]; then line=$1; else line=$2; fi
+    if [ -z "$line" ]; then say "· li：没接（以后想接，再跑一次这个脚本）"; continue; fi
+    IFS=$'\t' read -r w ws lease leasekey <<<"$line"
+    say "· $name：启动命令 $w，工作目录 $ws"
+    if [ "$leasekey" = yes ]; then say "  租约插件已装、写 key 已存：任务跑着时 $name 不会被当成空闲暂停"
+    else say "  $name 上没装写 key：任务长时间没输出时，$name 可能被当成空闲暂停（重跑脚本时补上）"; fi
+  done
   cat <<'EOF'
 
 接下来在 App 里：
@@ -227,6 +352,8 @@ main() {
   fetch_file "$BASE/liming-gateway/cordis.patch.yml" "$WORK/plugin/cordis.patch.yml" 'liming-gateway' || die "插件没下载下来"
   fetch_file "$BASE/liming-gateway/lib/index.js" "$WORK/plugin/lib/index.js" 'liming-gateway' || die "插件没下载下来"
   fetch_file "$BASE/liming-gateway/lib/gateway.js" "$WORK/plugin/lib/gateway.js" 'createSupervisor' || die "插件没下载下来"
+  fetch_plugin liming-cloud "$WORK/cloud" "$CLOUD_FILES" || die "云端任务插件没下载下来"
+  fetch_plugin liming-lease "$WORK/lease" "$LEASE_FILES" || die "租约插件没下载下来"
   fetch_file "$BASE/dsh-tablet.sh" "$WORK/dsh-tablet.sh" 'dsh-tablet' || die "包装脚本没下载下来"
   fetch_file "$BASE/dsh-tablet-profile.yml" "$WORK/dsh-tablet-profile.yml" '- id: llm-pi-ai' || die "tablet 配置没下载下来"
 
@@ -244,13 +371,15 @@ main() {
     install_gateway "$WORK/gw.zip" || die "网关没装上"
     say "网关装好了：$GW_DIR/current"
   fi
-  install_plugin "$WORK/plugin" || die "插件没装上"
+  install_plugin "$WORK/plugin" "$PLUGIN_DIR" "$GATEWAY_FILES" || die "插件没装上"
   say "插件装好了：$PLUGIN_DIR"
+  install_plugin "$WORK/cloud" "$CLOUD_PLUGIN_DIR" "$CLOUD_FILES" || die "云端任务插件没装上"
+  say "云端任务插件装好了：$CLOUD_PLUGIN_DIR"
 
-  r2=$(remote_setup "$li2" li2) || die "li2 上的配置没配好"
+  r2=$(setup_machine "$li2" li2) || die "li2 上的配置没配好"
   if [ "$skip_li" = 0 ]; then
     if [ "$li_asked" = 0 ]; then li=$(ask_token 'li（小芯那台）' 1) || li=''; fi
-    if [ -n "$li" ]; then r1=$(remote_setup "$li" li) || die "li 上的配置没配好"; fi
+    if [ -n "$li" ]; then r1=$(setup_machine "$li" li) || die "li 上的配置没配好"; fi
   fi
   summary "$r2" "$r1"
 }
