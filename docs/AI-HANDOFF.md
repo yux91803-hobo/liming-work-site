@@ -1,3 +1,10 @@
+## 2026-11-26 · 平板跨设备协作独立审查（Codex）
+
+- Antigravity 实现阶段 1–2，Claude Code 接手并实现阶段 3–8，Codex 独立核对设计、计划和实现，并修复审查发现的问题。使用 `claude/dsh-go-customization-discussion-d5wt84`，原始复核基线为 `7f87a7d`。
+- 已推送 SSH 单调超时 `a00845c`、停止与排队协调 `ac581b2`、复用与租约 `3ebfad4`、发件箱原子提交 `5c44187`、凭据保护 `7b8fb18`、冷态收件与残留进程复核 `57d78af`。修改原因和参考源码记在变更记录。[CHANGES](CHANGES.md)
+- 真实 Harness 契约 22/22。真实 rc.3 运行中与强杀后冷态停止 2/2，模型使用本机模拟。定向回归覆盖旧版失败和修复通过。全量结果、测试站及正式发布见本分支 PR。
+- 安卓实机、实际 SSH 转发、锁屏租约和冷却暂未实测。Harness 的 `accepted` 可以先于磁盘落盘，恢复时以远端历史判断，缺证据则记中断，等用户确认后再继续。核对正式站静态文件之后，在设备上完成验收。[平板说明](tablet.md)
+
 ## 2026-11-26 · 平板调用云电脑第 3–8 阶段（Claude Code）
 
 - **谁做的**：Claude Code 接手实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)，站长步骤见 [docs/tablet.md](tablet.md)。
