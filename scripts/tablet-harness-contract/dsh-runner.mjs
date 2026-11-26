@@ -28,14 +28,20 @@ export async function waitFor(fn, { timeoutMs = 15000, intervalMs = 50, label = 
   throw new Error(`timed out after ${timeoutMs}ms waiting for ${label}${lastErr ? `: ${lastErr.message}` : ''}`);
 }
 
+// 僵尸进程（状态 Z）不算活着：孤儿被杀后要等 1 号进程回收，有的容器里 1 号进程迟迟不回收，kill(pid, 0) 仍然成功
 export function pidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const state = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0];
+    if (state === 'Z' || state === 'X') return false;
+  } catch {}
+  return true;
 }
 
 export function findProcessesInDir(targetDir, marker = null) {
@@ -69,6 +75,8 @@ export async function killProcessesInDir(targetDir) {
     for (const p of findProcessesInDir(targetDir)) {
       try { process.kill(p.pid, 'SIGKILL'); } catch {}
     }
+    const deadline = Date.now() + 3000;
+    while (first.some(p => pidAlive(p.pid)) && Date.now() < deadline) await sleep(50);
   }
   return first;
 }

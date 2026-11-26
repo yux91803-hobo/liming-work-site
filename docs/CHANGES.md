@@ -41,8 +41,13 @@
     - 派活到收到原生通知、平板 AI 被叫醒，12/12。
     - 通知写进日志才记已告诉；平板引擎被 SIGKILL 时云端照常做完，回到对话后接上、通知只有一条；平板 AI 用 `job_kill` 停任务，云端那轮 aborted、sleep 进程没了，11/11。
     - 云端装 `liming-lease` 加本机假 InstaBox：忙了就 PUT，后台命令还在就不放，空闲后 DELETE，3/3。
+  - 生产路径（不用 direct，经本机 sshd 模拟「ibssh_…@主机」登录）8/8：
+    - 照 DSH Go 的 `~/.dsh-app-remote` 约定经 SSH 拉起云端常驻实例（web.pid、web.st、web.cmd、web.log），开隧道、登录，经 SSH 建项目目录，最后收到完成通知、记「已告诉」。
+    - 第二件任务复用同一个实例。
+    - `job_kill` 经 SSH 走完四步停止，云端进程确实没了。
   - DSH Go 自带的 plugin-kit（`check --load`、测试宿主、`checkView`，和 App 解析器共享对照用例）11/11：清单能显示、三个工具注册上、面板视图（v2 和老 App）合规、推送数据不超限、四种点按被桥接接受、0 违规。
-  - 全量检查、浏览器测试、Antigravity 的真实 Harness 契约套件（两个版本）结果见本分支 PR。
+  - Antigravity 的真实 Harness 契约套件 `scripts/tablet-harness-contract/` 两个版本 22/22。第一次跑 rc.3 的 E6 没过：套件判断进程还活着用的是 `kill(pid, 0)`，把僵尸进程也算活着，这个容器的 1 号进程回收得慢。改成状态 Z 不算活着、SIGKILL 后最多等 3 秒，原实现是 Antigravity 的；改后 E6 通过。
+  - 全量检查、浏览器测试结果见本分支 PR。
 - **没验证、等站长在平板上装**：DSH Go 里状态条和面板的真实样子、InstaBox 的 SSH 网关能不能开本机隧道（`-L`）、真实活动租约、真实冷却。设计 §7 的真机 5 项写在 `docs/tablet.md`。
 
 # 修改清单 · 2026-11-26（接手平板调用云电脑：核对第 1–2 阶段、修 SSH 隧道单测；手动正式发布也算独立发布的基准）
