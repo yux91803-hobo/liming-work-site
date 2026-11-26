@@ -4,6 +4,8 @@
 
 **归属与分工：** 原设计由 Claude Code 编写；本实施计划由 Antigravity（Gemini 4 Neon）编写并自查，待 Muse 复核后再进入后续代码阶段。
 
+**实施状态（2026-11-26）：** 阶段 1–2 由 Antigravity 实现，站长让 Claude Code 接手后核对并修了一处（SSH 隧道就绪轮询）；阶段 3–8 由 Claude Code 实现，均已完成并自查。和本计划不一样的地方：不比 CPU、每台上限放面板里而不是原生配置表单、步骤只取三类、重启后等对话的代理出现再接上、剩余时间不往 AI 上下文里加读数。原因见 [docs/CHANGES.md](../../CHANGES.md) 2026-11-26「平板调用云电脑第 3–8 阶段」。
+
 **目标：** 在不 fork DSH Go、不引入小芯式复杂内核与调度器、不改动小芯与天启既有代码和配置的前提下，通过平板插件 `liming-cloud`、云端插件 `liming-lease` 及装机脚本扩展，让平板上的本机 AI 作为日常交互主体按需派发、追踪、插话、停止和恢复运行在 `li` / `li2` 上的云端任务。
 
 **技术栈：** Node 22/24（ESM 插件，零需要编译的外部依赖，直接使用 Node 内置 `http`/`fetch`/`WebSocket`/`child_process`/`fs`/`crypto`；`node:test` CJS 单测），Bash（`setup.sh`），DeepSeek Harness `0.2.2-rc.1`（平板，对应 DSH Go `runtime/locks/dsh-0.2.2-rc.1`）与 `0.2.2-rc.3`（`li`/`li2` 云端）。

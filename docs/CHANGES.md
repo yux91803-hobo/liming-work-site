@@ -1,3 +1,50 @@
+# 修改清单 · 2026-11-26（平板调用云电脑第 3–8 阶段：工具、选机器、面板、停止、对账通知、云端租约、装机）
+
+- **谁做的**：Claude Code 接手后实现第 3–8 阶段并自查，没有第二位 AI 独立复核。第 1–2 阶段原由 Antigravity 实现，接手核对见下一条。分支 `claude/dsh-go-customization-discussion-d5wt84`。网站页面、Worker、小芯、天启的代码和配置都没动；新文件都在 `site/tablet/`、`test/tablet-*`、`docs/`，走平板独立发布。
+- **做了什么**（设计 [2026-11-26-tablet-cloud-tasks-design.md](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)，计划 [2026-11-26-tablet-cloud-tasks-plan.md](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md)）：
+  - **平板插件 `liming-cloud`**：
+    - 给平板 AI 三个工具：`cloud_run` 派活，立即返回任务号、机器、挑选理由；`cloud_tell` 进行中插话、做完在原对话里接着做；`cloud_machines` 看两台现状。外加一段使用说明（`systemPrompt.section`）。看进度、停止复用原生 `job_output`、`job_list`、`job_kill`。
+    - 云端任务登记成平板的后台任务（`kind: cloud`，归当前对话）。做完由上游 tool-jobs 发原生完成通知，通知里带步骤和结果。
+  - **选机器**（`selector.js`）：照设计 §5.3。状态只读 `GET /v1/machines`，不唤醒机器（`instabox-read.js`，实测字段 `state`、`runStartedAt`、`maxRunMinutes`、`cooldownUntil`）。每台上限默认 2。
+  - **派活与跟随**（`runner.js`、`remote.js`）：
+    - 先记台账和发件箱，再在后台经 SSH 确保常驻 dsh web、开隧道、登录、建对话（确定性编号）。带了 `model` 就先 `session/selectModel`（线路 `xin-gateway`），然后发消息、跟随到这一轮结束。
+    - 断线退避重连，接回时用 `session/page` 往回补齐。
+  - **停止**（`runner.stop`，设计 §5.6）：四步，都确认了才记「已停止」；可重复执行。取消原因表在 `cancel-reasons.js`，引擎退出类只解除跟踪。
+  - **通知闭环和重启对账**（`recovery.js`，设计 §5.5、§5.7）：
+    - 对话日志里看到通知才记「已告诉」。引擎重启后站长回到那段对话时，补说或接上。
+    - 停止中的接着停。冷却中的机器到点再连，睡着的不叫醒。
+    - 云端中断就清残留进程、不自动重派；云端对话不见了就记失败、不重派。
+  - **界面**（`ui.js`、`throttle.js`、`tool-card.js`，照 DSH Go docs/plugins）：
+    - 输入框上方状态条；「云端任务」面板放在聊天页弹层和对话详情「插件」页签，可以插话、停止（要确认）、接着做、改每台上限。
+    - `cloud_run` 有只读工具卡。推送 ≤ 4 次每秒、≤ 32 KiB。
+  - **云端插件 `liming-lease`**（设计 §5.8）：装在 li、li2 的 web 配置里。平板的活在跑时持有活动租约 `tablet-cloud`，空闲 2 分钟后释放；只用写 key（`machines:write`）。
+  - **装机脚本**：
+    - 装 `liming-cloud`。问每台账号的只读 key 和写 key（不回显，回车跳过或保留原来的）。
+    - SSH 令牌和只读 key 存平板 `~/.liming-cloud/secrets.json`（600）；写 key 只经 SSH 存到那台的 `~/.liming-cloud/lease.key`（600）。
+    - 在 li、li2 上装 `liming-lease` 并写 `machine-name`。
+    - 注意：之前令牌「用完不存」，现在为了让插件自己连云电脑要存下来；`docs/tablet.md` 写了怎么吊销。
+  - **文档**：`docs/tablet.md` 改成「日常在本机聊，AI 主动调 li、li2；手动切主机只为调试」，加上 key 的建法、云端任务一节、真机验收 5 项。README 同步。
+- **和计划、设计不一样的地方（Claude Code 的取舍）**：
+  - 选机器不比 CPU：InstaBox 读进程和 CPU 的接口会唤醒机器，只用 `GET /v1/machines`。
+  - 每台上限不进 App 原生的插件配置表单：表单要插件导出 schemastery 的 `Config`，而本地路径安装的插件是链接目录，拿不到宿主的 schemastery。改成面板里的步进器，写进 `~/.liming-cloud/settings.json`，`cordis.patch.yml` 的插件配置也能设。
+  - 步骤只取工具调用、AI 回话、本轮结束三类：真实 Harness 里前台 bash 也会登记 `job/registered`，和 `tool/call` 重复。
+  - 引擎重启后要等那段对话的代理出现才接上：上游 `ctx.jobs` 要求后台任务的主人是活着的代理。打开面板也算站长在场。
+  - 「本轮剩不到 30 分钟」只在状态条、面板、`cloud_run` 和 `cloud_machines` 的回复里提醒，不每轮往 AI 的上下文里加读数。
+  - 插话用面板里的表单（视图 v2），老 App 退回成往输入框放一句。
+- **参考**：
+  - DSH Go（MIT）：`docs/plugins` 的 slots、components、actions、inputs、design-rules、quickstart；工具卡 `toolCard()` 照 quickstart 的写法；`app/lib/remote/ssh/remote_bootstrap.dart`。
+  - 真实 Harness 源码：`dsh-jobs-local` 的 `start` 要求活着的主人、释放类取消原因；`dsh-tool-jobs` 的完成通知；`dsh-api-session-controller` 的 `session/selectModel`、`session/page`；`dsh-session` 的 `TurnEndReason`。
+  - InstaBox 文档：idle-suspend（什么会唤醒、免费版一轮的时长和冷却、活动租约）、api-keys（`machines:read`、`machines:write`）。
+- **验证**：
+  - 单测：平板相关 116 项全过。新增 selector 10、steps 4、tools 10、stop 10、recovery 8、ui 9、lease 7、setup 5 项，都先红后绿。stop、断线补齐几项是先写的代码，另做了变异核对：改坏就变红。
+  - 真实 Harness 端到端（平板 0.2.2-rc.1 装插件，云端 0.2.2-rc.3，direct 模式，模拟模型）：
+    - 派活到收到原生通知、平板 AI 被叫醒，12/12。
+    - 通知写进日志才记已告诉；平板引擎被 SIGKILL 时云端照常做完，回到对话后接上、通知只有一条；平板 AI 用 `job_kill` 停任务，云端那轮 aborted、sleep 进程没了，11/11。
+    - 云端装 `liming-lease` 加本机假 InstaBox：忙了就 PUT，后台命令还在就不放，空闲后 DELETE，3/3。
+  - DSH Go 自带的 plugin-kit（`check --load`、测试宿主、`checkView`，和 App 解析器共享对照用例）11/11：清单能显示、三个工具注册上、面板视图（v2 和老 App）合规、推送数据不超限、四种点按被桥接接受、0 违规。
+  - 全量检查、浏览器测试、Antigravity 的真实 Harness 契约套件（两个版本）结果见本分支 PR。
+- **没验证、等站长在平板上装**：DSH Go 里状态条和面板的真实样子、InstaBox 的 SSH 网关能不能开本机隧道（`-L`）、真实活动租约、真实冷却。设计 §7 的真机 5 项写在 `docs/tablet.md`。
+
 # 修改清单 · 2026-11-26（接手平板调用云电脑：核对第 1–2 阶段、修 SSH 隧道单测；手动正式发布也算独立发布的基准）
 
 - **谁做的**：站长 11-26 让 Claude Code 接手（「别的ai改了点，你接手」）。第 1–2 阶段原由 Antigravity（Gemini 4 Neon）实现，原定 Muse 复核；现由 Claude Code 核对并修改，自查，没有第二位 AI 独立复核。

@@ -1,3 +1,18 @@
+## 2026-11-26 · 平板调用云电脑第 3–8 阶段（Claude Code）
+
+- **谁做的**：Claude Code 接手实现并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)，站长步骤见 [docs/tablet.md](tablet.md)。
+- **已完成**：`liming-cloud`（三个工具、选机器、派活与跟随、四步停止、通知闭环、重启对账、状态条和面板、工具卡）、`liming-lease`、装机脚本、文档。单测 116 项；真实 Harness 端到端 26 项；DSH Go plugin-kit 核对 11 项。
+- **接手注意**：
+  - 后台任务的主人必须是活着的代理（`ctx.jobs` 的规定），所以引擎重启后要等站长回到那段对话，或者打开面板，才接上没在跟的任务。
+  - 插件文件加了或删了，要同步改 `site/tablet/setup.sh` 的 `CLOUD_FILES` 或 `LEASE_FILES`，单测会红着提醒。
+  - 天启换模型表后，`liming-cloud/lib/tools.js` 的 `CLOUD_MODELS` 也要跟着改，单测会红着提醒。
+  - 真实 Harness 核对脚本在 scratchpad 里，不入库；契约套件在 `scripts/tablet-harness-contract/`。
+- **没验证**：
+  - DSH Go 里的真实界面。
+  - InstaBox SSH 网关能否开隧道（`-L`）。DSH Go 自己连远程主机也要开端口转发，所以大概率能；不行就要改走 DSH Remote。
+  - 真实租约和冷却。等站长照 `docs/tablet.md` 的真机验收 5 项装好后对照。
+- **下一步**：合并上线；站长重跑装机脚本、建 4 把 key；按真机验收清单逐条核对。
+
 ## 2026-11-26 · 接手平板调用云电脑（Claude Code）
 
 - **谁做的**：站长让 Claude Code 接手 Antigravity 的第 1–2 阶段（原定 Muse 复核）。Claude Code 核对、修改并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)。
