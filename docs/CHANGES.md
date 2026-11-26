@@ -1,3 +1,23 @@
+# 修改清单 · 2026-11-26 深夜（平板搬到单独的仓库 tablet-setup）
+
+- **谁做的**：Claude Code 实现并自查，没有独立复核。站长建了新仓库 [tablet-setup](https://github.com/yux91803-hobo/tablet-setup)，并在 Cloudflare 后台用 Pages 连上它，自定义域名 `tablet.liming-work.com`。
+- **为什么**：站长问「为啥不建一个新仓库搞这个？不然你这部署还要跑之前的东西。」平板文件放在这里时，只改一个平板文件，也要跑 1150 项单测、15 组浏览器测试和整站部署，大约 20 分钟。新仓库只跑平板的 47 项测试，GitHub 上 11 秒跑完。
+- **新仓库**（[tablet-setup#1](https://github.com/yux91803-hobo/tablet-setup/pull/1)，已合并上线）：
+  - `site/tablet/` 的全部文件和 4 组测试搬过去，放在根目录由 Pages 发布。
+  - 装机命令换成 `curl -fsSL https://tablet.liming-work.com/setup.sh | bash`。
+  - `dsh-tablet-profile.yml` 改手动维护，以前由 `scripts/tablet-profile.mjs` 从天启的模型表生成。
+  - 加了 404 页、GitHub Actions、README 和 AGENTS.md。原因和取舍写在那边的 CHANGES.md。
+- **这里删掉**：
+  - `site/tablet/` 下除 `setup.sh` 以外的文件和 `scripts/tablet-profile.mjs`。
+  - `test/tablet-setup|ib|gateway|profile.test.cjs`：搬到新仓库了，不是删测试。
+  - `docs/tablet.md`：成了新仓库的 README。
+- **旧地址只留提示**：`site/tablet/setup.sh` 换成三行的提示脚本。旧命令 `curl -fsSL https://liming-work.com/tablet/setup.sh | bash` 运行后只告诉你新命令、退出码 1，什么都不装。
+  - 不转到新地址：那样等于两个地址都能用。
+  - 也不能什么都不留：网站会把首页当成缺的文件返回 200，`curl … | bash` 就会把网页当命令跑。
+  - 新测试 `test/tablet-moved.test.cjs` 先红后绿。它照旧命令的样子把脚本从标准输入喂给 bash，PATH 指向空目录，核对脚本不调用任何外部命令。
+- **文档**：README 的平板一节和 `CLAUDE.md` 指向新仓库。CHANGES 和交接里旧条目指向 `docs/tablet.md` 的链接，改指新仓库的 README。
+- **新仓库上线核对**：`tablet.liming-work.com` 上 9 个下载文件和 main 逐字节一致，缺的路径回 404，根地址显示装机命令；main 上的 GitHub Actions 是绿的。
+
 # 修改清单 · 2026-11-26 晚（平板 AI 直接操控 li、li2；删掉云端任务插件；关掉正式站的定时任务）
 
 - **谁做的**：Claude Code 设计、实现并自查，没有独立复核。站长批准方向（「没意见，你继续做吧」）。设计 [2026-11-26-tablet-cloud-direct-design.md](superpowers/specs/2026-11-26-tablet-cloud-direct-design.md)，计划 [2026-11-26-tablet-cloud-direct-plan.md](superpowers/plans/2026-11-26-tablet-cloud-direct-plan.md)。
@@ -59,7 +79,7 @@
 - **租约**在空闲缓冲期错过续租后会恢复续约。首次 PUT 回执丢失时，卸载仍尝试 DELETE。装机失败提示使用固定诊断，密钥文件写入前核对格式及版本，使用私有临时文件替换。运行时拒绝读取权限过宽的凭据，向 InstaBox 发送带 key 的请求时限制重定向。
 - SSH 截止时间参考 OpenSSH `misc.c` 的 `monotime_ts`，托管文件和 PID 参考 DSH Go `remote_bootstrap.dart`。停止与恢复参考 DeepSeek Harness `session-controller/src/commands.ts` 的 `keepInbox`、`updateQueue`、冷读 inbox 投影，以及 `session-persistence-jsonl` 的日志批写。InstaBox 的 `machines:write` 包含机器读取权限。[InstaBox API key 权限](https://instabox.sh/docs/api-keys.md)
 - 真实 Harness 契约 `0.2.2-rc.3` 14/14、`0.2.2-rc.1` 8/8。另用 `liming-cloud` 的实际客户端和停止代码，在真实 rc.3 上核对正在运行和强杀后冷态两种停止路径，两次都从队列移除了本任务的请求并确认没有项目进程。模型和外部服务使用隔离测试数据。全量检查和发布证据随 PR 记录。
-- 装机后在安卓实机验收 DSH Go 面板、真实 InstaBox SSH 转发、锁屏后续租、冷却和空闲暂停。网站回滚只影响下载文件，设备上已经安装的插件可通过插件管理停用并重启引擎，台账和密钥留在各自设备。[平板验收清单](tablet.md#真机验收装好后对照)
+- 装机后在安卓实机验收 DSH Go 面板、真实 InstaBox SSH 转发、锁屏后续租、冷却和空闲暂停。网站回滚只影响下载文件，设备上已经安装的插件可通过插件管理停用并重启引擎，台账和密钥留在各自设备。[平板验收清单](https://github.com/yux91803-hobo/tablet-setup#装好后对照)
 
 # 修改清单 · 2026-11-26（平板调用云电脑第 3–8 阶段：工具、选机器、面板、停止、对账通知、云端租约、装机）
 
@@ -212,7 +232,7 @@
 
 # 修改清单 · 2026-11-26（平板版 DSH Go 第一步：网关搬到平板、接上 li 和 li2）
 
-- Claude Code 实现并自查，无独立复核。站长想用 GitHub 上的 DSH Go（`ccch1mneyyy/dsh-go`，AGPL-3.0）在安卓平板上让 AI 操控平板、用自己网关的模型、接上 li 和 li2，界面以后再改；选了「先插件后 fork」。网关搬到平板是站长自己提的。 [设计](superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [计划](superpowers/plans/2026-11-25-tablet-dshgo-phase1.md) · [站长步骤](tablet.md)
+- Claude Code 实现并自查，无独立复核。站长想用 GitHub 上的 DSH Go（`ccch1mneyyy/dsh-go`，AGPL-3.0）在安卓平板上让 AI 操控平板、用自己网关的模型、接上 li 和 li2，界面以后再改；选了「先插件后 fork」。网关搬到平板是站长自己提的。 [设计](superpowers/specs/2026-11-25-tablet-dshgo-design.md) · [计划](superpowers/plans/2026-11-25-tablet-dshgo-phase1.md) · [站长步骤](https://github.com/yux91803-hobo/tablet-setup#readme)
 - 新增 `site/tablet/`，都是新文件，网站页面、Worker、小芯和天启的代码没动：
   - `setup.sh`：在平板终端里一行装好。经 InstaBox SSH 令牌从 li2 取原版网关 zip（取不到就从 li 取），按写死的大小和 SHA-256 校验后解压；装插件；在 li2、li 上写包装脚本 `dsh-tablet` 和 Harness `web` 配置的网关补丁。
   - `liming-gateway/`：DSH 插件。引擎启动时拉起网关。网关单独一个进程组，停止时对整组先发 SIGINT，网关当 Ctrl+C 正常退出，顺带收掉它自己起的 TLS 组件；5 秒后还在就整组 SIGKILL。端口上已有网关在答就沿用，沿用的没了就接手；意外退出按退避重启，有次数上限；首次启动前把签到钟点设为全天。
