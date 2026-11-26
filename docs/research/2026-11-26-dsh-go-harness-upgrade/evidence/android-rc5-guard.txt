@@ -1,0 +1,2 @@
+DSH patch target: android; selected 229 of 265 declared patches
+patch cordis-effect-dispose-completion.diff has no pin for DSH 0.2.2-rc.5 and target android: review the upstream files, then record the declared target set

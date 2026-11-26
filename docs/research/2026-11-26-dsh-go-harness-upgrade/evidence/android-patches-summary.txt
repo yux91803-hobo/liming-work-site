@@ -1,0 +1,36 @@
+rc.1 raw files equal to locked rc.1 124/124 {'applies': 229}
+  route-guard.diff applies
+  -direct-runtime.diff applies
+  -session-deletion.diff applies
+  -phone-caller-bundle.diff applies
+  -phone-caller.diff applies
+  -phone-run-end.diff applies
+  -phone-run-end-schema.diff applies
+  -phone-run-end-retry.diff applies
+  -phone-run-end-live-retry.diff applies
+  profile-runtime-version-validation.diff applies
+  profile-runtime-version-preflight.diff applies
+rc.5 raw files equal to locked rc.1 59/124 {'applies': 168, 'does-not-apply-in-sequence': 55, 'missing-target': 6}
+  route-guard.diff applies
+  -direct-runtime.diff does-not-apply-in-sequence
+  -session-deletion.diff does-not-apply-in-sequence
+  -phone-caller-bundle.diff applies
+  -phone-caller.diff does-not-apply-in-sequence
+  -phone-run-end.diff does-not-apply-in-sequence
+  -phone-run-end-schema.diff does-not-apply-in-sequence
+  -phone-run-end-retry.diff does-not-apply-in-sequence
+  -phone-run-end-live-retry.diff does-not-apply-in-sequence
+  profile-runtime-version-validation.diff applies
+  profile-runtime-version-preflight.diff applies
+alpha.2 raw files equal to locked rc.1 27/124 {'applies': 142, 'does-not-apply-in-sequence': 78, 'missing-target': 8, 'matches-exact-postimage': 1}
+  route-guard.diff does-not-apply-in-sequence
+  -direct-runtime.diff does-not-apply-in-sequence
+  -session-deletion.diff does-not-apply-in-sequence
+  -phone-caller-bundle.diff applies
+  -phone-caller.diff missing-target
+  -phone-run-end.diff missing-target
+  -phone-run-end-schema.diff does-not-apply-in-sequence
+  -phone-run-end-retry.diff does-not-apply-in-sequence
+  -phone-run-end-live-retry.diff does-not-apply-in-sequence
+  profile-runtime-version-validation.diff applies
+  profile-runtime-version-preflight.diff applies

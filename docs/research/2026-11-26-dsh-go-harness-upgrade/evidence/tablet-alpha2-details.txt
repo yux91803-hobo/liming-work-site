@@ -1,0 +1,23 @@
+PASS 0.2.3-alpha.2 rc.1 baseline: real plugin install, protected bridge, durable history and cloud task
+PASS 0.2.3-alpha.2 same profile dependencies, config, ledger, gateway account, usage and file modes
+PASS 0.2.3-alpha.2 real gateway supervisor starts and restarts the synthetic WorkBuddy process
+FAIL 0.2.3-alpha.2 DSH Go v1.4.0 bridge contributions returned HTTP 400 after cookie login
+Error: HTTP 400 from /api/session/list:
+    at DshClient.rpc (file://<liming-work-site>/scripts/tablet-harness-contract/dsh-client.mjs:68:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async file://<research-workspace>/tablet-engine-upgrade-matrix.mjs:237:31
+isolated local engine log tail:
+dsh web: http://127.0.0.1:42779/?token=[fixture-token]
+
+isolated remote engine log tail:
+dsh web: http://127.0.0.1:37367/?token=[fixture-token]
+
+file://<research-workspace>/tablet-engine-upgrade-matrix.mjs:284
+  throw new Error('integration fixture failed for ' + target);
+        ^
+
+Error: integration fixture failed for 0.2.3-alpha.2
+    at file://<research-workspace>/tablet-engine-upgrade-matrix.mjs:284:9
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+Node.js v24.22.3
