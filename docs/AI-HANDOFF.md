@@ -1,3 +1,17 @@
+## 2026-11-26 · 平板调用云电脑接手第一阶段（Antigravity / Gemini 4 Neon 实现，待 Muse 复核）
+
+- **谁做的**：原设计由 Claude Code 编写（分支 `claude/dsh-go-customization-discussion-d5wt84`，基线 `e699a64`）；本次由 Antigravity（Gemini 4 Neon）接手实现并自查，待 Muse 复核后再推送/合并。不切换分支，不触碰 `src/`、`site/xin/`、小芯与天启代码和配置。
+- **已完成**：
+  - 编写并提交实施计划 [docs/superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md)（8 阶段拆分、完整交付物/依赖/设计 §7 测试映射表/完成定义，同步核实上游 DSH Go 与真实 Harness 0.2.2-rc.3 / 0.2.2-rc.1 源码边界）。
+  - 本机已在缓存目录安装真实 `@deepseek-ai/dsh@0.2.2-rc.3` 与照 DSH Go `runtime/locks/dsh-0.2.2-rc.1` 锁定的 `0.2.2-rc.1`（不进仓库），准备执行契约验证。
+- **未完成（本阶段进行中）**：
+  - 真实 Harness 契约验证脚本 `scripts/tablet-harness-contract/` 尚待落地与双版本实跑。
+  - 阶段 2–8 插件业务代码与装机脚本扩展（待本阶段完成并经 Muse 复核后启动）。
+- **测试结果**：本提交为纯文档计划，待紧接完成契约脚本后一并跑真实双版本契约套件与全仓 `npm run check`。
+- **当前风险与关键发现**：
+  - 实查真实 `0.2.2-rc.3` 源码发现：`session/create` 指定 `sessionId` 仅在会话空白（尚无 `turn/start`）时复用原编号，若已有轮次会另建 `session-<uuid>`；另外云端重启后冷态会话调 `session/cancel` 返回 `session/not-found`。两处均已记入实施计划全局约束，后续阶段 2/5 实现不可踩坑。
+- **下一步**：完成 `scripts/tablet-harness-contract/`，在 `0.2.2-rc.3` 与 `0.2.2-rc.1` 上实跑 E1–E7 及设计 §7 两项补验，提交推送并汇报停下等 Muse 复核。
+
 ## 2026-11-26 · 正式联调卡住的根因、平板独立发布（Claude Code）
 
 - Claude Code 排查、处理并自查，无独立复核。分支 `claude/dsh-go-customization-discussion-d5wt84`。详见 [CHANGES 最新一条](CHANGES.md)。

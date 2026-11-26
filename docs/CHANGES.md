@@ -1,3 +1,14 @@
+# 修改清单 · 2026-11-26（平板调用云电脑第一阶段：实施计划）
+
+- **谁做的**：原设计由 Claude Code 编写（[设计文档](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)）；本实施计划由 Antigravity（Gemini 4 Neon）编写并自查，待 Muse 复核。分支 `claude/dsh-go-customization-discussion-d5wt84`，仅新增计划与变更/交接记录，未改动 `src/`、`site/xin/`、小芯与天启相关代码。
+- **已完成**：
+  - 新增实施计划 [docs/superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md)，按 8 个可独立提交、独立验收的阶段拆分设计：1) 真实 Harness 契约验证脚本（定位于 `scripts/tablet-harness-contract/`，命中平板独立发布跳过名单且不进默认 PR CI）；2) `liming-cloud` 骨架（台账原子写与版本号、发件箱幂等重放、密钥脱敏、零依赖 `dsh web` 客户端、SSH 隧道、DSH Go `~/.dsh-app-remote` 托管启动隔离模块）；3) `cloud_run` / `cloud_tell` / `cloud_machines` 与 §5.3 选机器规则；4) 面板与状态条（32 KiB / 4 Hz 推流限额）；5) §5.6 四步停止协议与取消原因映射表；6) §5.5 通知闭环与 §5.7 断线对账恢复；7) 云端 `liming-lease` 租约插件；8) `setup.sh` 装机扩展与 `docs/tablet.md` 更新。
+  - 将设计 §7 全部自动化验收项逐条映射到具体离线单测文件名（`test/tablet-cloud-*.test.cjs`、`test/tablet-lease.test.cjs`、`test/tablet-setup.test.cjs`）。
+- **参考与源码核实**：
+  - 核对上游 DSH Go（`ccch1mneyyy/dsh-Go`）的 `app/lib/remote/ssh/remote_bootstrap.dart`、`packages/dsh_client/lib/src/{connection,carrier,rpc,rpc_envelope,session_api,features_api,mux}.dart` 与 `docs/plugins/{slots,actions,components,inputs,quickstart,checklist}.md`，以及 InstaBox 官方 `docs/idle-suspend.md`、`docs/api/machines.md`。
+  - 在本机缓存目录安装真实 `@deepseek-ai/dsh@0.2.2-rc.3` 及照 DSH Go `runtime/locks/dsh-0.2.2-rc.1` 锁定的 `0.2.2-rc.1`，核实两处影响后续实现的重要上游语义并写入计划备忘：1）`session/create` 指定 `sessionId` 仅对空白会话（无 `turn/start`）复用原编号，对已有轮次会话会新分配 `session-<uuid>`，故发件箱恢复应先尝试 `session/prompt`、仅在 `session/not-found` 时建会话；2）云端重启后冷态未附着会话调 `session/cancel` 返回 `session/not-found`，停止协议需配合 `running === false` 正常推进后续清理。
+- **下一步**：继续第一阶段第二项——落地 `scripts/tablet-harness-contract/` 并在真实 `0.2.2-rc.3` 与 `0.2.2-rc.1` 上执行全套契约检查。
+
 # 修改清单 · 2026-11-26（正式联调卡住的根因：li 网关 key 不允许 glm-5.4；平板文件独立发布）
 
 - Claude Code 排查、处理并自查，无独立复核。
