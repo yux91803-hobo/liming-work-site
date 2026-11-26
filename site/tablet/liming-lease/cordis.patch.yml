@@ -1,0 +1,4 @@
+# 装法：在 li、li2 上 dsh plugin --profile web add ~/.liming-lease（平板装机脚本经 SSH 做），只进 web 配置，不碰小芯、天启的 headless
+- insert:
+    - id: liming-lease
+      name: liming-lease
