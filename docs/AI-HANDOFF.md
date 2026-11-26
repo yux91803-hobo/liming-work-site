@@ -1,3 +1,23 @@
+## 2026-11-26 · 平板调用云电脑接手第二阶段（Antigravity / Gemini 4 Neon 实现，待 Muse 复核）
+
+- **谁做的**：原设计由 Claude Code 编写（[设计文档](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)）；阶段 2 由 Antigravity（Gemini 4 Neon）实现并自查，待 Muse 复核后再进入阶段 3（按任务书归属标注「Antigravity（Gemini 4 Neon）实现、Muse 复核」，当前待复核）。分支 `claude/dsh-go-customization-discussion-d5wt84`，基于阶段 1 提交 `ff3e289`。未改动 `src/`、`site/xin/`、`site/tools/tianqi/` 及小芯/天启任何代码与配置。
+- **已完成**：
+  - `site/tablet/liming-cloud/` 插件骨架（原生 ESM、零外部依赖，完整命中 `site/tablet/` 独立发布白名单）：`package.json`、`cordis.patch.yml`、`lib/redact.js`、`lib/secrets.js`、`lib/ledger.js`、`lib/outbox.js`、`lib/dsh-client.js`、`lib/remote-bootstrap.js`、`lib/ssh-tunnel.js`、`lib/index.js`（最小入口，未越界注册模型工具或 UI 面板）。
+  - 两份离线单测套件（进入 `npm run check`）：`test/tablet-cloud-ledger.test.cjs`（8 项）与 `test/tablet-cloud-transport.test.cjs`（4 项），覆盖台账权限 `700`/`600` 与原子写中断无损、`schemaVersion` 迁移与高版本保护、确定性云端会话号 `tablet-<taskId>` 与纯 ASCII 项目目录防穿越、发件箱三种崩溃点重放幂等与已有轮次不误调 `session/create`、`secrets.json` 权限与拒绝 `machines:delete`/`machines:write`、`redact` 100% 屏蔽、假 `dsh web`（HTTP + RFC 6455 WS）传输与 401 自动重登、本机 `/bin/sh` 实跑 `remote-bootstrap.js`（含 `web.st` 防 PID 复用与 `web.cmd` 不一致不杀报 `shared`）、假 `ssh` 隧道复用/退避重连/空闲自动关闭与零令牌泄露。
+  - 详细改法与上游对照（`ccch1mneyyy/dsh-go` 的 `remote_bootstrap.dart`、`dsh_client` 及 Harness `dsh-client-connection`）见 [docs/CHANGES.md](CHANGES.md) 最新一条。
+- **测试结果**：
+  - 定向单测 `node --test test/tablet-*.test.cjs test/xin-live-scope.test.cjs`：**50/50 PASS，0 FAIL，0 SKIP**（`tablet-cloud-ledger` 8/8、`tablet-cloud-transport` 4/4、`tablet-gateway` 14/14、`tablet-profile` 6/6、`tablet-setup` 10/10、`xin-live-scope` 8/8）。
+  - 隔离环境全仓 `XIN_AGY_HOME=/tmp/no-agy-home XIN_ANTIGRAVITY_BIN= npm run check`：
+    - 静态语法与资源引用检查通过：`Syntax and local references passed: 320 files, 231 asset references.`
+    - 单测结果：**1134/1154 PASS**，18 跳过，2 失败。
+    - **环境缺失 vs 真实失败区分**：全部 2 项失败（`test/xin-web.test.cjs` 第 178、199 行，报 `需要 Chromium：设置 CHROMIUM_PATH`）与 18 项跳过（`test/xin-browser.test.cjs`）均属本机隔离容器缺少独立无头 Chromium 的已知环境缺口；**真实代码失败为 0 项**。未触碰小芯/天启/Worker 代码，完整含 Chromium 检查以 GitHub Actions 为准。
+- **未完成**：
+  - 实施计划阶段 3–8（三工具与选机器规则、UI 面板与状态条、四步停止协议、断线对账与通知闭环、云端 `liming-lease`、`setup.sh` 与 `docs/tablet.md`），按纪律停下等 Muse 复核，未越界提前动工。
+- **当前风险与后续阶段注意**：
+  - `dsh-client.js` 通过 SSH 隧道的 `http://127.0.0.1:<localPort>` 访问云端 `dsh web`，已核实真实 `dsh-client-connection` 接受任意 loopback `Host` 并按登录时的 `Host` 签发绑定 Cookie；若隧道重连换了本地端口，需以新端口重建 `DshClient` 或更新 `baseUrl` 后触发重登（阶段 3/6 接线时注意）。
+  - `remote-bootstrap.js` 严格对齐上游 `remote_bootstrap.dart`；若未来 DSH Go 升级改动 `~/.dsh-app-remote/` 约定，只需同步维护该单一模块及其单测。
+- **下一步**：停下等 Muse 复核阶段 2 代码与测试；复核通过后再按 [实施计划](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md) 进入阶段 3（`cloud_run`/`cloud_tell`/`cloud_machines` 工具与 §5.3 选机器规则）。
+
 ## 2026-11-26 · 平板调用云电脑接手第一阶段（Antigravity / Gemini 4 Neon 实现，待 Muse 复核）
 
 - **谁做的**：原设计由 Claude Code 编写（分支 `claude/dsh-go-customization-discussion-d5wt84`，基线 `e699a64`）；第一阶段产出由 Antigravity（Gemini 4 Neon）实现并自查，待 Muse 复核后再进入后续阶段与合并。未改动 `src/`、`site/xin/`、小芯与天启代码和配置。

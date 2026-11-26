@@ -1,3 +1,31 @@
+# 修改清单 · 2026-11-26（平板调用云电脑第二阶段：`liming-cloud` 插件骨架、台账、发件箱与云端传输原语）
+
+- **谁做的**：原设计由 Claude Code 编写（[设计文档](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)）；阶段 2 由 Antigravity（Gemini 4 Neon）实现并自查，待 Muse 复核（任务书要求标注「Antigravity（Gemini 4 Neon）实现、Muse 复核」，当前处于提交待复核状态）。分支 `claude/dsh-go-customization-discussion-d5wt84`，基线 `ff3e289`。未改动 `src/`、`site/xin/`、`site/tools/tianqi/`、小芯与天启既有代码和配置，也未越界提前实现阶段 3（模型工具）或阶段 4（UI 面板）。
+- **已完成**：
+  1. **插件骨架与最小入口** `site/tablet/liming-cloud/`（原生 ESM、零外部依赖、`engines.dsh: ">=0.2.1-rc.2 <0.3.0-0"`、`engines.node: ">=22.19"`，命中 `scripts/xin-live-scope.cjs` 的 `site/tablet/` 独立发布白名单）：
+     - `package.json`、`cordis.patch.yml`：将 `liming-cloud` 挂入平板 `web` 配置，不提前声明 `dshGo` 面板。
+     - `lib/index.js`：最小 Cordis 入口，初始化台账与脱敏日志，在 `ctx.effect` 清理函数中关闭所有 SSH 隧道与定时器。
+  2. **脱敏、密钥存储、台账与发件箱**：
+     - `lib/redact.js`：统一脱敏器（`redactText`、`redactValue`、`redactError`、`createRedactingLogger`），按安全优先级屏蔽 `x-dsh-auth-token`、`x-api-key`、`Bearer`、`ibssh_*`、`ibk_*`、`sk-*`、`dsh-auth-*` 与 `token=*`。
+     - `lib/secrets.js`：读写 `~/.liming-cloud/secrets.json`（强制目录 `700`、文件 `600`、原子写），严格校验 SSH 目标格式与只读范围，拒绝写入含 `machines:delete` / `machines:write` / `writeKey` / `leaseKey` / `deleteKey` 或非法结构的数据，报错绝不回显密钥原文。
+     - `lib/ledger.js`：持久化 `~/.liming-cloud/tasks.json`（目录 `700`、文件 `600`、临时文件 + `fsync` + `chmod 600` + `rename` 原子写），支持 `schemaVersion: 1`、迁移钩子与未知高版本拒绝覆写保护；提供确定性云端对话编号 `tablet-<taskId>`、纯 ASCII + 短编号项目目录生成与严格路径穿越校验。
+     - `lib/outbox.js`：「先写台账（`pending`），再发云端」发件箱引擎。严格遵守阶段 1 真实 Harness 契约边界：先调 `session/prompt(sessionId, requestId)`，仅在云端返回 `session/not-found` 时才调 `session/create({ sessionId, cwd })` 并核对返回 `sessionId` 一致（不一致直接拒发、`session/conflict` 如实报错）；云端返回 `{ accepted: true }` 后原子标记 `acked`，支持按序幂等重放。
+  3. **云端传输原语**：
+     - `lib/dsh-client.js`：零依赖 `dsh web` HTTP + WebSocket Mux 客户端（`GET /?token=` 换 `dsh-auth-*` Cookie、绝不发 `Origin` 头、`POST /api/<端点>` 一元 RPC、`/api/remote.mux` 订阅 `session/follow`/`job/list`/`session/control`、HTTP 与 WS 401 自动重登及 `onTokenRefresh`、超时与 `AbortSignal` 取消、流异常断开统一报 `STREAM_DISCONNECTED`）。
+     - `lib/remote-bootstrap.js`：独立隔离 DSH Go `~/.dsh-app-remote/` 托管启动协议（`web.pid`、`web.st` `/proc/$pid/stat` 第 22 字段防 PID 复用、`web.cmd` 一致性核对、`web.log` 解析 `token=`、默认固定 `/data/home/.local/bin/dsh-tablet`）；发现运行中且 `web.cmd` 不一致的共享实例时，在 `probe` / `ensureRunning` / `start` / `stop` 全路径均不杀进程并报 `shared` 错误。
+     - `lib/ssh-tunnel.js`：基于系统 `ssh`（ControlMaster + `-L 127.0.0.1:<local>:127.0.0.1:<remote>`）的每机单隧道复用器，支持按需建立、活跃任务计数复用、归零自动关闭、掉线指数退避重连、进程组干净退出与 `execRemote`/`createSshShell`，全路径脱敏不泄露 `ibssh_` 令牌。
+  4. **离线单测套件（纳入 `npm run check`）**：
+     - `test/tablet-cloud-ledger.test.cjs`（8 项）：覆盖权限 `700`/`600`、原子写中断无损与零残留 `.tmp`、`schemaVersion` 迁移与高版本保护、确定性会话号与路径穿越拒绝、发件箱三种崩溃点重放后云端严格 1 份对话 / 1 条消息 / 1 轮、`cloud_tell` 重发只多 1 轮、已有轮次恢复不误调 `session/create`、`sessionId` 不一致与 `session/conflict` 守卫、`secrets.json` 权限与高权限拒绝、`redact` 100% 屏蔽、最小插件入口合规。
+     - `test/tablet-cloud-transport.test.cjs`（4 项）：用纯 Node 假 `dsh web`（HTTP + RFC 6455 WebSocket）测登录换 Cookie、401 自动重登与 token 刷新、一元 RPC、超时取消、Mux 流式读取与断线报错；用本机 `/bin/sh` 实跑 `remote-bootstrap.js` 测首次启动、复用、`web.cmd` 不一致不杀报 `shared`、正常停止、PID 死亡重拉、`web.st` 防 PID 复用不误杀无关进程与失败日志脱敏；用假 `ssh` 测隧道按需建立、复用、掉线退避重连、空闲自动关闭、远端命令执行与零 `ibssh_` 泄露。
+- **参考的成熟做法**：
+  - 上游 DSH Go（`ccch1mneyyy/dsh-go`）：`app/lib/remote/ssh/remote_bootstrap.dart`、`remote_shell.dart`（`DSHAPP` 标签协议、`_st()`/`ours()` PID 复用防线、`web.cmd` 共享实例保护）与 `packages/dsh_client/lib/src/{connection,carrier,rpc,mux}.dart`（authority 绑定 Cookie、不发 `Origin`、一元 RPC 信封与 `/api/remote.mux` 帧格式）。
+  - 真实 Harness `0.2.2-rc.3` 源码（`@deepseek-ai/dsh-client-connection`）：核实 loopback `Host` 栅栏与按请求 `Host` 签发 `dsh-auth-*` Cookie 行为。
+- **验证证据**：
+  - 定向单测 `node --test test/tablet-*.test.cjs test/xin-live-scope.test.cjs`：**50/50 PASS（0 FAIL，0 SKIP）**，其中新增 `test/tablet-cloud-ledger.test.cjs` 8/8、`test/tablet-cloud-transport.test.cjs` 4/4；`test/tablet-setup.test.cjs` 全仓 `site/tablet/` 密钥扫描通过。
+  - 隔离环境全仓 `XIN_AGY_HOME=/tmp/no-agy-home XIN_ANTIGRAVITY_BIN= npm run check`：
+    - 静态语法与资源引用检查：`Syntax and local references passed: 320 files, 231 asset references`（覆盖新增 `site/tablet/liming-cloud/` 全部 10 个文件）。
+    - 全仓单测：**1134/1154 PASS**、18 跳过、2 失败——全部非通过项均属本机隔离容器无独立无头 Chromium 的已知环境缺失（`test/xin-browser.test.cjs` 18 项跳过、`test/xin-web.test.cjs` 2 项报 `需要 Chromium：设置 CHROMIUM_PATH`）；**真实代码失败 0 项**。
+
 # 修改清单 · 2026-11-26（平板调用云电脑第一阶段：实施计划与真实 Harness 契约验证脚本）
 
 - **谁做的**：原设计由 Claude Code 编写（[设计文档](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)）；第一阶段产出（实施计划与真实 Harness 契约验证脚本）由 Antigravity（Gemini 4 Neon）实现并自查，待 Muse 复核。分支 `claude/dsh-go-customization-discussion-d5wt84`，未改动 `src/`、`site/xin/`、小芯与天启相关代码。
