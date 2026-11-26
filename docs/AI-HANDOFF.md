@@ -1,16 +1,22 @@
 ## 2026-11-26 · 平板调用云电脑接手第一阶段（Antigravity / Gemini 4 Neon 实现，待 Muse 复核）
 
-- **谁做的**：原设计由 Claude Code 编写（分支 `claude/dsh-go-customization-discussion-d5wt84`，基线 `e699a64`）；本次由 Antigravity（Gemini 4 Neon）接手实现并自查，待 Muse 复核后再推送/合并。不切换分支，不触碰 `src/`、`site/xin/`、小芯与天启代码和配置。
+- **谁做的**：原设计由 Claude Code 编写（分支 `claude/dsh-go-customization-discussion-d5wt84`，基线 `e699a64`）；第一阶段产出由 Antigravity（Gemini 4 Neon）实现并自查，待 Muse 复核后再进入后续阶段与合并。未改动 `src/`、`site/xin/`、小芯与天启代码和配置。
 - **已完成**：
-  - 编写并提交实施计划 [docs/superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md)（8 阶段拆分、完整交付物/依赖/设计 §7 测试映射表/完成定义，同步核实上游 DSH Go 与真实 Harness 0.2.2-rc.3 / 0.2.2-rc.1 源码边界）。
-  - 本机已在缓存目录安装真实 `@deepseek-ai/dsh@0.2.2-rc.3` 与照 DSH Go `runtime/locks/dsh-0.2.2-rc.1` 锁定的 `0.2.2-rc.1`（不进仓库），准备执行契约验证。
-- **未完成（本阶段进行中）**：
-  - 真实 Harness 契约验证脚本 `scripts/tablet-harness-contract/` 尚待落地与双版本实跑。
-  - 阶段 2–8 插件业务代码与装机脚本扩展（待本阶段完成并经 Muse 复核后启动）。
-- **测试结果**：本提交为纯文档计划，待紧接完成契约脚本后一并跑真实双版本契约套件与全仓 `npm run check`。
-- **当前风险与关键发现**：
-  - 实查真实 `0.2.2-rc.3` 源码发现：`session/create` 指定 `sessionId` 仅在会话空白（尚无 `turn/start`）时复用原编号，若已有轮次会另建 `session-<uuid>`；另外云端重启后冷态会话调 `session/cancel` 返回 `session/not-found`。两处均已记入实施计划全局约束，后续阶段 2/5 实现不可踩坑。
-- **下一步**：完成 `scripts/tablet-harness-contract/`，在 `0.2.2-rc.3` 与 `0.2.2-rc.1` 上实跑 E1–E7 及设计 §7 两项补验，提交推送并汇报停下等 Muse 复核。
+  - 实施计划：[docs/superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md)（首版提交 `ea0e6fc`，后随 E6 实测发现补充 `session/page` 冷读合成 `interrupted` 备忘）。8 阶段拆分，设计 §7 所有自动化条目逐条落到具体 `test/tablet-*.test.cjs` 文件名。
+  - 真实 Harness 契约验证脚本：`scripts/tablet-harness-contract/`（`install-harness.sh`、`mock-responses-server.mjs`、`dsh-client.mjs`、`dsh-runner.mjs`、`probe-plugin/`、`cases.mjs`、`run.mjs`、`README.md`），零外部依赖，命中 `scripts/tablet-` 独立发布跳过名单，不进每次 PR 默认 CI。
+- **测试结果（本机实跑真实 Harness，无跳过）**：
+  - `node scripts/tablet-harness-contract/run.mjs --target both`：**22/22 PASS，0 FAIL**：
+    - 云端 `0.2.2-rc.3`：**14/14 PASS**（`E1`、`E2`、`E3`、`E4`、`E5`、`E6`、`E7a`、`E7b`、`E7c`、`E7d`、`E7e`、`E7f`、`C1`、`C2`）。
+    - 平板 `0.2.2-rc.1`（照 DSH Go `runtime/locks/dsh-0.2.2-rc.1` 锁定安装）：**8/8 PASS**（`E7a`、`E7b`、`E7c`、`E7d`、`E7e`、`E7f`、`C1`、`C2`）。
+  - 语法与引用检查：`scripts/check.mjs` 静态检查通过（`310 files, 231 asset references`，含新增全部契约脚本）；`node --check` 全部 `.mjs`/`.js` 通过，`bash -n install-harness.sh` 通过（本机未装 `shellcheck`）。
+  - 平板与发布范围定向测试：`node --test test/tablet-*.test.cjs test/xin-live-scope.test.cjs` **38/38 PASS**。
+  - 隔离环境全仓 `npm run check`：**1121/1142 PASS**、18 跳过（`test/xin-browser.test.cjs` 无独立 Chromium）、3 失败（2 项为 `test/xin-web.test.cjs` 缺独立无头 Chromium——容器仅有受策略限制的 `/opt/meta-chromium/chrome`；1 项为 `test/xin-runner-report-recovery.test.cjs` 并发瞬时失败，单跑该文件 **16/16 PASS**）。未触碰小芯/天启/Worker 代码，完整含 Chromium 检查以 GitHub Actions 为准。
+- **未完成**：
+  - 实施计划阶段 2–8 的全部插件业务代码与装机脚本扩展（`liming-cloud`、`liming-lease`、`setup.sh`、`docs/tablet.md`），按要求停下等 Muse 复核本阶段后再启动。
+- **当前风险与关键发现（供复核与后续阶段注意）**：
+  - **上游真实契约三点边界**（已写入实施计划）：1）`session/create` 指定 `sessionId` 仅空白会话幂等，已有轮次会另建 `session-<uuid>`（发件箱恢复应先 `session/prompt`、遇 `session/not-found` 才 `session/create`）；2）云端被 `SIGKILL` 后磁盘 `.jsonl.zstd` 确实无 `turn/end`，但公开接口 `session/page` 冷读会合成 `turn/end(reason.kind="interrupted")`（阶段 6 对账须同时识别两者）；3）云端重启后冷态未附着会话调 `session/cancel` 返回 `session/not-found`。
+  - **环境插曲**：北京时间 12:01 前后仓库工作树曾被外部进程切到 `main` 并执行 `pull -q`，已切回 `claude/dsh-go-customization-discussion-d5wt84`（未丢任何改动）；后续若在同一目录长跑任务建议留意外部自动同步或采用独立 worktree。
+- **下一步**：停下等 Muse 复核实施计划与 `scripts/tablet-harness-contract/`，复核通过后按计划进入阶段 2（`liming-cloud` 插件骨架、台账、发件箱与云端传输原语）。
 
 ## 2026-11-26 · 正式联调卡住的根因、平板独立发布（Claude Code）
 

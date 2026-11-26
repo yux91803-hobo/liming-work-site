@@ -1,13 +1,25 @@
-# 修改清单 · 2026-11-26（平板调用云电脑第一阶段：实施计划）
+# 修改清单 · 2026-11-26（平板调用云电脑第一阶段：实施计划与真实 Harness 契约验证脚本）
 
-- **谁做的**：原设计由 Claude Code 编写（[设计文档](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)）；本实施计划由 Antigravity（Gemini 4 Neon）编写并自查，待 Muse 复核。分支 `claude/dsh-go-customization-discussion-d5wt84`，仅新增计划与变更/交接记录，未改动 `src/`、`site/xin/`、小芯与天启相关代码。
+- **谁做的**：原设计由 Claude Code 编写（[设计文档](superpowers/specs/2026-11-26-tablet-cloud-tasks-design.md)）；第一阶段产出（实施计划与真实 Harness 契约验证脚本）由 Antigravity（Gemini 4 Neon）实现并自查，待 Muse 复核。分支 `claude/dsh-go-customization-discussion-d5wt84`，未改动 `src/`、`site/xin/`、小芯与天启相关代码。
 - **已完成**：
-  - 新增实施计划 [docs/superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md)，按 8 个可独立提交、独立验收的阶段拆分设计：1) 真实 Harness 契约验证脚本（定位于 `scripts/tablet-harness-contract/`，命中平板独立发布跳过名单且不进默认 PR CI）；2) `liming-cloud` 骨架（台账原子写与版本号、发件箱幂等重放、密钥脱敏、零依赖 `dsh web` 客户端、SSH 隧道、DSH Go `~/.dsh-app-remote` 托管启动隔离模块）；3) `cloud_run` / `cloud_tell` / `cloud_machines` 与 §5.3 选机器规则；4) 面板与状态条（32 KiB / 4 Hz 推流限额）；5) §5.6 四步停止协议与取消原因映射表；6) §5.5 通知闭环与 §5.7 断线对账恢复；7) 云端 `liming-lease` 租约插件；8) `setup.sh` 装机扩展与 `docs/tablet.md` 更新。
-  - 将设计 §7 全部自动化验收项逐条映射到具体离线单测文件名（`test/tablet-cloud-*.test.cjs`、`test/tablet-lease.test.cjs`、`test/tablet-setup.test.cjs`）。
-- **参考与源码核实**：
-  - 核对上游 DSH Go（`ccch1mneyyy/dsh-Go`）的 `app/lib/remote/ssh/remote_bootstrap.dart`、`packages/dsh_client/lib/src/{connection,carrier,rpc,rpc_envelope,session_api,features_api,mux}.dart` 与 `docs/plugins/{slots,actions,components,inputs,quickstart,checklist}.md`，以及 InstaBox 官方 `docs/idle-suspend.md`、`docs/api/machines.md`。
-  - 在本机缓存目录安装真实 `@deepseek-ai/dsh@0.2.2-rc.3` 及照 DSH Go `runtime/locks/dsh-0.2.2-rc.1` 锁定的 `0.2.2-rc.1`，核实两处影响后续实现的重要上游语义并写入计划备忘：1）`session/create` 指定 `sessionId` 仅对空白会话（无 `turn/start`）复用原编号，对已有轮次会话会新分配 `session-<uuid>`，故发件箱恢复应先尝试 `session/prompt`、仅在 `session/not-found` 时建会话；2）云端重启后冷态未附着会话调 `session/cancel` 返回 `session/not-found`，停止协议需配合 `running === false` 正常推进后续清理。
-- **下一步**：继续第一阶段第二项——落地 `scripts/tablet-harness-contract/` 并在真实 `0.2.2-rc.3` 与 `0.2.2-rc.1` 上执行全套契约检查。
+  1. **实施计划** [docs/superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md](superpowers/plans/2026-11-26-tablet-cloud-tasks-plan.md)：按 8 个可独立提交、独立验收的阶段拆分设计（1 真实 Harness 契约脚本 → 2 `liming-cloud` 骨架/台账/发件箱/传输原语 → 3 三工具与 §5.3 选机器规则 → 4 面板与状态条 32 KiB / 4 Hz 限额 → 5 §5.6 四步停止与取消原因表 → 6 §5.5 通知闭环与 §5.7 断线对账恢复 → 7 云端 `liming-lease` → 8 `setup.sh` 与 `docs/tablet.md`），将设计 §7 自动化条目逐条落到具体 `test/tablet-*.test.cjs` 文件名。
+  2. **真实 Harness 契约验证脚本** `scripts/tablet-harness-contract/`（命中 `scripts/xin-live-scope.cjs` 的 `scripts/tablet-` 独立发布白名单，不进每次 PR 默认 CI）：
+     - `install-harness.sh`：在仓库外缓存目录（`~/.cache/liming-dsh-contract`）安装云端 `@deepseek-ai/dsh@0.2.2-rc.3`、照 DSH Go `runtime/locks/dsh-0.2.2-rc.1` 锁定的平板 `0.2.2-rc.1` 以及本地 `pnpm`。
+     - `mock-responses-server.mjs`：零依赖 OpenAI Responses SSE 流式模拟模型服务（自动分离 `session-title-llm` 无工具辅助请求，避免干扰对话步骤编排）。
+     - `dsh-client.mjs`：零依赖 `dsh web` 客户端（`/?token=` 登录换 `dsh-auth-*` Cookie、`POST /api/<端点>` 一元 RPC、`/api/remote.mux` WebSocket 流）。
+     - `dsh-runner.mjs`：隔离临时 `HOME`/`DSH_HOME` 启停、强杀、重启真实 `dsh web` 与宿主机 `/proc/<pid>/cwd` 孤儿进程扫描清理。
+     - `probe-plugin/`：零依赖探针插件（标准 JSON Schema 工具输出、可控后台任务、`cancel(reason)` 与 `agent/status` 记录、进程内 `session/event` 通知确认与 `agent/created` 重启补投去重）。
+     - `cases.mjs`、`run.mjs`、`README.md`：覆盖 E1–E6、E7a–E7f 与设计 §7 补验 C1、C2，逐项输出 `PASS`/`FAIL` 与汇总。
+- **参考与实测关键发现（已同步补入实施计划全局约束，供后续阶段避坑）**：
+  - 参考上游 DSH Go（`ccch1mneyyy/dsh-Go`）的 `remote_bootstrap.dart`、`packages/dsh_client`、`docs/plugins/*` 及 InstaBox `idle-suspend.md` / `api/machines.md`。
+  - **发现 1（E1 非空会话边界）**：`session/create` 携带 `sessionId` 仅对空白会话（无 `turn/start`）幂等复用原编号，对已有轮次会话会新分配 `session-<uuid>`；故阶段 2 发件箱恢复须先尝试 `session/prompt`，仅报 `session/not-found` 时再建会话。
+  - **发现 2（E6 强杀后冷读合成中断）**：强杀云端 Harness 后磁盘原始 `.jsonl.zstd` 确实没有 `turn/end`，但公开接口 `session/page` 冷读会经 `dsh-session-query` 的 `interruptedTurnClosers()` 合成一条 `turn/end(reason.kind="interrupted")`；阶段 6 对账需同时识别无 `turn/end` 与 `reason.kind === 'interrupted'`。此外装有 `bwrap` 的宿主机在 `workspace-write` 下带 `--unshare-pid --die-with-parent`，而无 `bwrap` 云机（Landlock）或 `danger-full-access` 下强杀确留孤儿进程。
+  - **发现 3（冷态 `session/cancel`）**：云端重启后冷态未附着会话调 `session/cancel` 返回 `session/not-found`，阶段 5 停止协议需结合 `running === false` 正常推进后续清理。
+- **验证证据**：
+  - 真实 Harness 契约套件 `node scripts/tablet-harness-contract/run.mjs --target both`：**22/22 全部 PASS（0 FAIL）**——`rc3`（`0.2.2-rc.3`）14/14 PASS（E1–E6、E7a–E7f、C1、C2），`rc1`（`0.2.2-rc.1`，DSH Go 锁定安装）8/8 PASS（E7a–E7f、C1、C2）。
+  - 语法与引用检查（`scripts/check.mjs`）：`Syntax and local references passed: 310 files, 231 asset references`（自动覆盖新增 `scripts/tablet-harness-contract/` 全部 `.mjs`/`.js`），另 `install-harness.sh` 经 `bash -n` 通过。
+  - 平板与发布范围定向测试（`node --test test/tablet-*.test.cjs test/xin-live-scope.test.cjs`）：**38/38 PASS**。
+  - 隔离环境全仓 `npm run check`（`XIN_AGY_HOME=/tmp/no-agy-home XIN_ANTIGRAVITY_BIN=`）：**1121/1142 PASS**、18 跳过（`test/xin-browser.test.cjs` 缺独立 Chromium）、3 失败——其中 2 项为本容器无独立无头 Chromium（`test/xin-web.test.cjs` 报 `需要 Chromium：设置 CHROMIUM_PATH`，容器内置 `/opt/meta-chromium/chrome` 拒绝脱离策略单独启动），1 项为并发负载下的瞬时时序失败（`test/xin-runner-report-recovery.test.cjs` 第 171 行），立即单独复跑该文件 **16/16 全绿**；本次未触碰 `src/`、`site/xin/` 及已有 `test/`。
 
 # 修改清单 · 2026-11-26（正式联调卡住的根因：li 网关 key 不允许 glm-5.4；平板文件独立发布）
 

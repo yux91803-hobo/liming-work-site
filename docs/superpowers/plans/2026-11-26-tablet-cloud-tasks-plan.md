@@ -44,6 +44,7 @@
 4. **真实 Harness 源码核实出的关键边界（阶段 2、5、6 实现必守）：**
    - **`session/create` 对非空会话的语义：** 在真实 `0.2.2-rc.3` 的 `ApiSessionAgentController.claim()` 中，携带 `sessionId` 调 `session/create` 时，同 `cwd` 且**尚未开始任何轮次（blank）**才会复用原 `sessionId`；换 `cwd` 报 `session/conflict`；若该会话**已经开始过轮次**，`session/create` 会新生成另一个 `session-<uuid>`。因此阶段 2 发件箱在崩溃恢复补发时，**不得**对已发过轮次的会话盲调 `session/create`，而应先尝试 `session/prompt`（或先查 `session/list` / `session/state` 确认会话不存在），仅当云端报 `session/not-found` 时才调 `session/create(sessionId, cwd)`，并核对返回的 `sessionId` 与预期一致。
    - **`session/cancel` 对冷态未附着会话的语义：** 云端 Harness 崩溃重启后，磁盘上的历史会话未加载进 `ctx.agents`，直接调 `session/cancel` 会返回 `session/not-found`（`not attached`）而非 `{ accepted: true }`。阶段 5 停止协议第 1 步须将 `session/not-found`（且 `session/list` 或 `session/state` 确认 `running === false`）视为「无活动轮次」，继续执行后续后台命令核对与残留进程清理，不得死循环重试。
+   - **云端强杀后的 `session/page` 合成中断记录：** 真实 `0.2.2-rc.3` 中，云端 Harness 被 `SIGKILL` 强杀后，磁盘原始会话日志确实没有 `turn/end`，但通过公开接口 `session/page` 冷读时，`dsh-session-query` 会经 `interruptedTurnClosers()` 在内存中自动合成一条 `turn/end`（`reason: { kind: 'interrupted' }`），恢复后亦落盘该事件。因此阶段 6 对账判定「云端中断」时，须同时识别 `turnEnds.length < turnStarts.length` **以及** 最后一轮 `turn/end.data.reason.kind === 'interrupted'`，切勿只检查「没有 `turn/end`」。
    - **流式端点归属 `/api/remote.mux`：** `job/list`、`session/follow`、`session/control` 在 Harness 中为流式端点，需通过带登录 Cookie 的 WebSocket `/api/remote.mux` 发送 `{ type: 'open', streamId, endpoint, payload: { args } }` 打开；`session/create`、`session/prompt`、`session/cancel`、`session/list`、`session/page`、`session/state`、`job/kill` 为一元 RPC（`POST /api/<endpoint>`，信封 `{ type: 'client-request', rpcId, method, payload: { args } }`）。
 
 ---
@@ -272,8 +273,8 @@
     - 发件箱有 `pending` → 按阶段 2 幂等补发；
     - 云端 `session/list` 找不到该对话 → 标 `failed`（「云端对话不见了」），不重派；
     - 云端仍在跑（`running: true`）→ 补齐步骤、重建平板 `ctx.jobs` 把手并恢复跟随；
-    - 云端已停且最后一轮有 `turn/end` → 补齐结果、走 `notifier.js` 补说；
-    - 云端已停（`running: false`）且最后一轮有 `turn/start` 却**无 `turn/end`** → 标 `interrupted`（「云端中断」），按阶段 5 第 3 步清理该项目目录残留进程，面板展示「接着做」按钮，不自动重派。
+    - 云端已停且最后一轮有正常 `turn/end`（非 `interrupted`）→ 补齐结果、走 `notifier.js` 补说；
+    - 云端已停（`running: false`）且最后一轮无 `turn/end` 或 `session/page` 返回 `turn/end(reason.kind === 'interrupted')` → 标 `interrupted`（「云端中断」），按阶段 5 第 3 步清理该项目目录残留进程，面板展示「接着做」按钮，不自动重派。
 - 更新 `site/tablet/liming-cloud/lib/index.js` 串联全部生命周期。
 
 **依赖：** 阶段 2、3、4、5。
