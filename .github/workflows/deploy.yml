@@ -314,7 +314,7 @@ jobs:
           echo "小芯聊天：$(curl -s --max-time 20 "$BASE/api/xin/me")"
           exit $fail
 
-      # 站长 2026-11-21：只改天启界面、文档、浏览器测试时，不跑小芯真模型联调（规则和理由见 scripts/xin-live-scope.cjs）。
+      # 站长 2026-11-21、11-26：只改天启界面、平板文件、文档、浏览器测试时，不跑小芯真模型联调（规则和理由见 scripts/xin-live-scope.cjs）。
       # 基准是上一次成功发布到正式站的提交，之间任何一个文件碰到小芯或服务端就照跑；判断不了也照跑。
       - name: 判断这次要不要跑小芯联调
         id: xin_scope

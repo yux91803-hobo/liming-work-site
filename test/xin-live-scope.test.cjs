@@ -11,6 +11,17 @@ test('碰到小芯、服务端、配置或流程就照跑', () => {
     assert.equal(needsXinLive(['site/tools/tianqi/sky.js', f]), true, f);
 });
 
+test('只改平板文件（站点 tablet 目录、平板脚本和单测）时也跳过小芯联调', () => {
+  assert.equal(needsXinLive(['site/tablet/setup.sh', 'site/tablet/liming-gateway/lib/gateway.js', 'site/tablet/dsh-tablet-profile.yml',
+    'scripts/tablet-profile.mjs', 'test/tablet-gateway.test.cjs', 'docs/tablet.md', 'README.md']), false);
+});
+
+test('平板只认这几个前缀：名字挨着的文件和小芯模型表照跑', () => {
+  for (const f of ['site/tablets/x.js', 'site/tablet.js', 'scripts/tablet.mjs', 'scripts/xin-tablet-profile.mjs', 'test/tablet.test.cjs',
+    'site/tablet/../xin/vm-agent.mjs', 'site/xin/vm-models.mjs'])
+    assert.equal(needsXinLive(['site/tablet/setup.sh', f]), true, f);
+});
+
 test('拿不到文件列表或被截断时照跑', () => {
   assert.equal(needsXinLive([], false), true);
   assert.equal(needsXinLive(null, false), true);
@@ -38,6 +49,13 @@ test('以上一次成功发布为基准比较', async () => {
   assert.equal((await decide(fake({ runs, cmp: { status: 'diverged', files: [] } }))).run, true);
   assert.equal((await decide(fake({ runs: [], cmp: {} }))).run, true);
   assert.equal((await decide(fake({ fail: true }))).run, true);
+});
+
+test('上一次成功发布之后只改了平板文件就跳过，也不测天启读图', async () => {
+  const runs = [{ id: 7, head_sha: 'b'.repeat(40), conclusion: 'success' }];
+  const r = await decide(fake({ runs, cmp: { status: 'ahead', files: [{ filename: 'site/tablet/setup.sh' }, { filename: 'test/tablet-setup.test.cjs' }] } }));
+  assert.equal(r.run, false);
+  assert.equal(r.tianqiVision, false);
 });
 
 test('模型目录或 Harness 配置变化时验证 li2 读图，普通内核改动只测小芯', async () => {
