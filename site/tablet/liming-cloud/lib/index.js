@@ -10,6 +10,7 @@ import { createRunner } from './runner.js';
 import { createCloudTools } from './tools.js';
 import { createSettings } from './settings.js';
 import { readMachine } from './instabox-read.js';
+import { createRecovery } from './recovery.js';
 
 export const name = 'liming-cloud';
 export const inject = ['tools', 'jobs', 'agents', 'systemPrompt'];
@@ -71,19 +72,27 @@ export function apply(ctx, config = {}) {
     return readMachine({ readKey, name: machine });
   };
 
+  const recovery = createRecovery({ runner, ledger, agents: ctx.agents, readStatus, logger });
+
   for (const def of createCloudTools({ runner, ledger, remote, readStatus, settings: () => settings.get() })) ctx.tools.register(def);
   ctx.systemPrompt.section({ name: 'liming-cloud', order: ctx.systemPrompt.getSectionOrder('TOOL_JOBS'), text: GUIDANCE });
+
+  // 对话日志里出现通知才记「已告诉」；代理出现（站长回到某段对话）时补说、接上没在跟的任务
+  ctx.on('session/event', (session, event) => { try { recovery.onSessionEvent(session, event); } catch (err) { logger.warn(`确认通知出错：${err.message}`); } });
+  ctx.on('agent/created', ({ agent }) => { try { recovery.onAgentCreated(agent); } catch (err) { logger.warn(`对账出错：${err.message}`); } });
 
   ctx.effect(() => {
     try {
       runtime.start();
+      recovery.sweep().catch(err => logger.warn(`启动对账出错：${err.message}`));
     } catch (err) {
       logger.error(`liming-cloud 初始化失败：${err.message}`);
     }
     return async () => {
+      recovery.dispose();
       await runner.dispose();
       await runtime.stop();
     };
   });
-  return { ...runtime, settings, remote, runner };
+  return { ...runtime, settings, remote, runner, recovery };
 }

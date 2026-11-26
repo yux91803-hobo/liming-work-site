@@ -526,16 +526,19 @@ test('liming-cloud 插件入口与 package.json 合规：零依赖，注册三�
   const effects = [];
   const tools = [];
   const sections = [];
+  const listens = [];
   const ctx = {
     effect: (fn) => effects.push(fn),
     tools: { register: (def) => { tools.push(def.name); return () => {}; } },
     jobs: { start: () => { throw new Error('入口不该直接起任务'); } },
     agents: { get: () => undefined },
     systemPrompt: { section: (s) => { sections.push(s); return () => {}; }, getSectionOrder: () => 500 },
-    on: () => () => {},
+    on: (name) => { listens.push(name); return () => {}; },
     inject: () => {},
   };
   plugin.apply(ctx, { dir: cloudDir });
+  assert.ok(listens.includes('session/event'), '看对话日志确认通知');
+  assert.ok(listens.includes('agent/created'), '代理出现时补说、接上');
   assert.deepEqual(tools.sort(), ['cloud_machines', 'cloud_run', 'cloud_tell']);
   assert.equal(sections.length, 1);
   assert.equal(sections[0].name, 'liming-cloud');

@@ -9,7 +9,7 @@ import { lastAssistantText, stepOf, turnOutcome, clip } from './steps.js';
 
 export const ACTIVE_STATUSES = Object.freeze(['dispatching', 'running', 'stopping']);
 const ACTIVE = new Set(ACTIVE_STATUSES);
-const FATAL = new Set(['NO_SSH_TARGET', 'session/conflict', 'OUTBOX_SESSION_ID_MISMATCH', 'shared', 'MKDIR_FAILED', 'LEDGER_TASK_NOT_FOUND']);
+const FATAL = new Set(['NO_SSH_TARGET', 'session/conflict', 'OUTBOX_SESSION_ID_MISMATCH', 'shared', 'MKDIR_FAILED', 'LEDGER_TASK_NOT_FOUND', 'SESSION_GONE']);
 const PREFIX = { tool: '▸ ', say: '· ', end: '■ ' };
 const MAX_STEPS = 50;
 const MAX_EVENTS = 400;
@@ -56,7 +56,7 @@ export function createRunner({
   function dispatch({ machine, title, project, text, tabletSessionId, model = null, toolCall }) {
     const task = ledger.createTask({ machine, title, project: project || undefined, tabletSessionId });
     const entry = outbox.enqueue(task.taskId, { text, mode: 'queue' });
-    ledger.updateTask(task.taskId, t => ({ ...t, model: model || null, modelSelected: false, runRequestIds: [entry.requestId] }));
+    ledger.updateTask(task.taskId, t => ({ ...t, model: model || null, modelSelected: false, runRequestIds: [entry.requestId], runUserSeq: 0, runEndSeq: 0, runEndReason: null }));
     const jobId = start(task.taskId, { toolCall });
     return { ...ledger.getTask(task.taskId), jobId };
   }
@@ -67,7 +67,8 @@ export function createRunner({
     if (live.has(taskId)) return live.get(taskId).jobId;
     const entry = {
       taskId, jobId: null, handle: null, client: null, abort: new AbortController(), settled: false,
-      steps: [], events: [], seenSeq: task.lastSeq || 0, lastUserSeq: 0, endSeq: 0, endReason: null, cancelled: false, stopPromise: null,
+      steps: [], events: [], seenSeq: task.lastSeq || 0, lastUserSeq: task.runUserSeq || 0, endSeq: task.runEndSeq || 0, endReason: task.runEndReason || null,
+      cancelled: false, stopPromise: null,
       lastSave: 0,
     };
     let resolveDone;
@@ -139,6 +140,9 @@ export function createRunner({
         return await follow(entry, conn.client);
       } catch (err) {
         if (entry.abort.signal.aborted) continue;
+        if (notFound(err) && !pendingOutbox(entry.taskId)) {
+          throw Object.assign(new Error('云端对话不见了（可能被删了或云电脑重装过），不重新派'), { code: 'SESSION_GONE' });
+        }
         if (FATAL.has(err && err.code)) throw err;
         remote.invalidate?.(task.machine);
         attempt += 1;
@@ -187,6 +191,11 @@ export function createRunner({
     return t ? t.outbox.some(e => e.status !== 'acked') : false;
   }
 
+  // 这一轮看到哪了：lastSeq、本轮我们那条消息的位置、本轮结束的位置一起存，重启后接着跟的时候用
+  function position(entry, t) {
+    return { lastSeq: Math.max(t.lastSeq, entry.seenSeq), runUserSeq: entry.lastUserSeq, runEndSeq: entry.endSeq, runEndReason: entry.endReason };
+  }
+
   function observe(entry, event) {
     if (!event || typeof event.seq !== 'number' || event.seq <= entry.seenSeq) return;
     entry.seenSeq = event.seq;
@@ -205,7 +214,7 @@ export function createRunner({
     }
     if (now() - entry.lastSave > 5000) {
       entry.lastSave = now();
-      try { ledger.updateTask(entry.taskId, t => ({ ...t, lastSeq: Math.max(t.lastSeq, entry.seenSeq) })); } catch {}
+      try { ledger.updateTask(entry.taskId, t => ({ ...t, ...position(entry, t) })); } catch {}
     }
   }
 
@@ -277,8 +286,14 @@ export function createRunner({
     }
     const outcome = turnOutcome(entry.endReason);
     const summary = redactText(lastAssistantText(entry.events, { fromSeq: entry.lastUserSeq }));
+    let leftoverPids;
+    if (outcome.status === 'interrupted') {
+      // 云端 Harness 崩过：原来的前台命令会变成孤儿接着跑（实测 E6），清掉这个项目目录下的残留进程
+      try { leftoverPids = (await remote.killLeftovers(current.machine, current.cwd)).found; } catch (err) { log('warn', `云端中断后清残留进程失败：${err && err.message}`); }
+    }
     ledger.updateTask(entry.taskId, t => ({
-      ...t, status: outcome.status, endedAt: now(), summary, noticeState: 'pending', lastError: null, lastSeq: Math.max(t.lastSeq, entry.seenSeq),
+      ...t, ...position(entry, t), status: outcome.status, endedAt: now(), summary, noticeState: 'pending', lastError: null,
+      ...(leftoverPids ? { leftoverPids } : {}),
     }));
     try { entry.handle?.append(`\n结果（${outcome.label}）：${summary || '（这一轮没有文字总结）'}\n`); } catch {}
     return { status: outcome.job, detail: outcome.label };
@@ -317,7 +332,7 @@ export function createRunner({
       return { ok: true, taskId, mode: 'steer', requestId: e.requestId, delivered, jobId: entry.jobId };
     }
     const e = outbox.enqueue(taskId, { text, mode: 'queue' });
-    ledger.updateTask(taskId, t => ({ ...t, status: 'dispatching', runRequestIds: [e.requestId], endedAt: null, noticeState: 'none', summary: '', lastError: null, stopRequest: null }));
+    ledger.updateTask(taskId, t => ({ ...t, status: 'dispatching', runRequestIds: [e.requestId], runUserSeq: 0, runEndSeq: 0, runEndReason: null, endedAt: null, noticeState: 'none', summary: '', lastError: null, stopRequest: null }));
     const jobId = start(taskId, { toolCall });
     return { ok: true, taskId, mode: 'queue', requestId: e.requestId, delivered: false, jobId };
   }

@@ -37,6 +37,7 @@ function createFakeCloud() {
     offline: false,
     stubbornCancel: false,          // 停不下来：cancel 回 accepted 但这一轮照跑
     coldSessions: new Set(),        // 云端重启后没加载的对话：cancel、state、job/list 报 session/not-found（实测）
+    followTail: Infinity,           // session/follow 第一帧只给最近几条（真实的也是一页），其余靠 session/page 往回补
     // 测试控制：结束当前一轮（AI 说一句话，然后 turn/end）
     finishTurn(id, text = '完成', reason = { kind: 'completed' }) {
       const s = session(id);
@@ -137,7 +138,7 @@ function createFakeCloud() {
           if (!j.unkillable) { j.status = 'killed'; j.detail = 'cancelled by the user'; }
           return { outcome: 'requested' };
         },
-        followSession(sessionId, { tailRecords = Infinity } = {}) {
+        followSession(sessionId, { tailRecords = cloud.followTail } = {}) {
           guard('session/follow');
           const s = session(sessionId);
           const queue = [];
