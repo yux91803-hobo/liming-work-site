@@ -5,6 +5,7 @@
   - 网站只剩首页、世界地图、STM32 学习台和页面上的小人。
   - Worker 只剩静态资源和 404。Durable Object 迁移到 v4，`XinTaskSupervisor` 连数据一起删了。
   - 浏览器测试剩 3 组：`stm32_e2e.py`、`map_e2e.py`、`home_e2e.py`。
+  - 本地 `npm run check` 255/255，`npm run test:e2e` 3 组 320 项全过。
 - **接手注意**：
   - 小人里专给聊天用的接口还在：`ask`、`ai`、`cmd`、`learn`、`bond`、`portrait`、`addBag`。`stm32_e2e.py` 的小人检查用到其中几项，比如用 `cmd` 换表情、用 `portrait` 画头像。下一个 PR 清理：删接口的同时，把这些检查改成由小人自己的动作触发，不是删测试。
   - 云电脑上小芯、天启的文件还在，服务已停。`~/.xin` 里的网关 key 平板还在用，别删。

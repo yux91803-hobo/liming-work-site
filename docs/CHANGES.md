@@ -26,6 +26,11 @@
   - `test/worker.test.cjs` 改成核对 `/api/xin/*`、`/api/tq/*` 回 404、没有 DO 导出、配置里有 v4 迁移；`test/sw.test.cjs` 核对自注销。
   - 首页本身的动效检查（主题扩散换色、卡片插画、追光和火花）从删掉的小芯浏览器测试挪到新的 `test/e2e/home_e2e.py`。
   - `stm32_e2e.py` 删掉小芯聊天的部分；首页分类、小人能站的地方两项改成只有世界地图和 STM32 两张卡。
+  - 删掉的 `xin_learning_e2e.py` 只测学习记录上报：练习判对后报给小芯，看过参考答案不算独立完成，关掉上报就不报。学习台本身的推导和练习，`stm32_e2e.py` 原来就在测。
+- **验证**：
+  - 本地 `npm run check`：255/255。main 上是 1105 项，净少 850 项，都是只测已删代码的；新加守护测试 4 项、自注销 1 项、Worker 1 项。
+  - 本地 `npm run test:e2e`：3 组 320 项全过（STM32 278、世界地图 38、首页 4）。
+  - 截图自查：首页 1280、1024、768、390 的浅色和深色，学习台 1280 和 390，都正常，页面没有报错。
 - **站长要做的**（不急，删完以后网站已经用不上这些）：
   - InstaBox 后台吊销网站用过的两把 key，也就是 GitHub Secrets 里 `XIN_INSTABOX_API_KEY`、`XIN_TQ_INSTABOX_API_KEY` 对应的那两把。平板用的是另外两把，别吊销错。
   - GitHub 仓库的 Settings › Secrets 删掉 `XIN_OWNER_PASSWORD`、`XIN_INSTABOX_API_KEY`、`XIN_TQ_INSTABOX_API_KEY`。
